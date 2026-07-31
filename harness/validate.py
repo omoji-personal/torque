@@ -277,8 +277,8 @@ def self_test():
     orig = spf.read_text()
     try:
         spf.write_text(orig.replace(
-            "def anchor_ref(tok, cwd=None) -> bool:",
-            "def anchor_ref(tok, cwd=None) -> bool:\n    return False  # MUTANT", 1))
+            "def anchor_ref(tok, cwd=None, varmap=None) -> bool:",
+            "def anchor_ref(tok, cwd=None, varmap=None) -> bool:\n    return False  # MUTANT", 1))
         ev = json.dumps({"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/secret"}})
         r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
                            input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
@@ -309,11 +309,12 @@ def self_test():
     spf = ROOT / "hooks" / "shellparse.py"
     orig = spf.read_text()
     try:
-        spf.write_text(re.sub(r'REDIR_FUSED = re\.compile\(r".*"\)',
-                              'REDIR_FUSED = re.compile(r"NEVERMATCHES")', orig, count=1))
+        spf.write_text(orig.replace(
+            "def _write_shape_targets(argv):",
+            "def _write_shape_targets(argv):\n    return \"\", []  # MUTANT", 1))
         # target a protected-DIR file that is NOT basename-listed, so ONLY redirect detection
-        # can catch it — proving REDIR_FUSED is load-bearing (a basename-listed file would be
-        # denied regardless of the redirect parse).
+        # can catch it — proving the write-shape target extraction is load-bearing (a basename-
+        # listed file would be denied regardless of the redirect parse).
         ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
             "echo x > harness/checks/check_p2_probe.py"}})
         r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
@@ -344,8 +345,8 @@ def self_test():
     orig3 = spf.read_text()
     try:
         spf.write_text(orig3.replace(
-            "def _abs_pattern(tok, cwd=None):",
-            "def _abs_pattern(tok, cwd=None):\n    return os.path.expanduser(tok)  # MUTANT", 1))
+            "def _abs_pattern(tok, cwd=None, varmap=None):",
+            "def _abs_pattern(tok, cwd=None, varmap=None):\n    return os.path.expanduser(tok)  # MUTANT", 1))
         ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
             "a=.tor; b=que; cat ~/$a$b/secret"}})
         r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],

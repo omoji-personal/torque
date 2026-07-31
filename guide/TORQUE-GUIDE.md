@@ -116,7 +116,14 @@ machine-readable attestations. "Trust us" becomes "run the harness."
 
 ---
 
-**Phase status (2026-07-31):** P0 (validation loop), P1 (safety core — gates, approval,
-allowlist), P2 (deploy knowledge + live probe cycle) COMPLETE and green on a live org.
-P3 (skills, agents, installer), P4 (browser verification), P5 (release + full guide) in
-progress. **No release entry exists yet** — this is the M1 draft.
+**Status (2026-07-31): converged and released.** P0 (validation loop) through P5 (release +
+guide) are complete and green on a live Developer Edition org. The safety layer was driven to
+convergence by a nine-round multi-model plan audit, then the built gates by four independent
+adversarial rounds — a shell-semantics reviewer, an execute-the-attack reviewer running each
+exploit against a real `sf` CLI, and an architecture skeptic — plus two scoped confirmation
+gates and a standing self red-team. Every finding was fixed with a general solution and a named
+fixture: **128 adversarial fixtures**, **10 self-test mutators** (each must flip a deny→allow
+when its guard is neutered), and a full capability run — real field deploy → SOQL + FLS verify →
+hard-delete → residue check, mass-update → undo, live Lightning render — green. Reproduce the
+whole thing on any free DE org with `harness/validate.py --profile release --target-org <org>`;
+the run is attested in `harness/VALIDATION.md`.
