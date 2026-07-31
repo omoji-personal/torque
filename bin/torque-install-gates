@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Optional: register Torque's gates at USER level (~/.claude/settings.json) so they bind
+in any workspace. Records TORQUE_HOME so gate inputs resolve from it, never CWD. Gates
+no-op-with-notice when TORQUE_HOME is unset. Idempotent."""
+import json, os, sys
+from pathlib import Path
+
+HOME_SETTINGS = Path.home() / ".claude" / "settings.json"
+TORQUE_HOME = Path(__file__).resolve().parent.parent
+
+def main():
+    HOME_SETTINGS.parent.mkdir(exist_ok=True)
+    cfg = {}
+    if HOME_SETTINGS.exists():
+        cfg = json.loads(HOME_SETTINGS.read_text() or "{}")
+    hooks = cfg.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    marker = f"TORQUE_HOME={TORQUE_HOME}"
+    # remove any prior torque registration (idempotent)
+    hooks[:] = [h for h in hooks if "torque" not in json.dumps(h).lower()]
+    cmd = (f'TORQUE_HOME="{TORQUE_HOME}" python3 "{TORQUE_HOME}/hooks/prod_write_gate.py"')
+    dcmd = (f'TORQUE_HOME="{TORQUE_HOME}" python3 "{TORQUE_HOME}/hooks/destructive_data_gate.py"')
+    hooks.append({"matcher": "Bash", "hooks": [
+        {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
+    hooks.append({"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": cmd}]})
+    cfg.setdefault("_torque", {})["home"] = str(TORQUE_HOME)
+    HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
+    print(f"installed: gates registered at user level, TORQUE_HOME={TORQUE_HOME}")
+
+if __name__ == "__main__":
+    main()

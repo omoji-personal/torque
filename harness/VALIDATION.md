@@ -84,3 +84,21 @@ self-matching (the plan's U4 principle, met in practice).
 **M1 basis:** all-PASS capability run (incl. the excepted-org and credential-posture
 checks), guide DRAFT present (`guide/TORQUE-GUIDE.md`), no images, phase-status table
 stating no release entry exists yet. **M1 is sendable.**
+
+---
+
+## P3 — skills, agents, installer · 2026-07-31
+
+**Target:** sf-coffee · **Verdict: PASS** (21 checks)
+
+Five skills (orgs, audit-org, safe-deploy, mass-update, session-log), each justifying what
+it adds over the raw CLI. Two subagents: org-explorer (read-only `tools:` allowlist) and
+hostile-qa (no write tools). Optional user-level gate installer records TORQUE_HOME so gate
+inputs resolve independent of CWD.
+
+`mass_update_cycle` ran a REAL cycle on the live org: created two flagged test Accounts →
+previewed the exact ID set → bounded per-Id update → verified persistence → undo restored
+before-values → teardown BY ID ONLY. Residue verified zero. Checks added: skills_justified,
+agents_readonly, mass_update_cycle, installer_roundtrip.
+
+**Phase status:** P0–P3 complete. P4 (browser verification) next.
