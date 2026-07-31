@@ -1,0 +1,8 @@
+{
+  "tree": "bfb7b2405ee797dddc67709aeb1dc722ec0f7191",
+  "head": "af928a85ff69e08f4805fe8331e1b5f515218e87",
+  "sf": "@salesforce/cli/2.144.6 darwin-arm64 nod",
+  "node": "v24.11.1",
+  "denylist_digest": "129a9dfe7db454b8",
+  "reproduce": "python3 harness/validate.py --profile release --target-org <your-DE-org>"
+}

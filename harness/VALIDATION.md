@@ -188,3 +188,31 @@ and Read tools. The residual is the explicitly disclaimed **Layer 0**: a same-ui
 forges a login session with a bespoke program, discloses the secret by OS means (/proc,
 ptrace), or spawns `sf` from a script it writes and runs. Those are credentials/OS trust, not
 adjudicable by a PreToolUse hook, and the guide states them plainly.
+
+Two scoped confirmation gates after the four rounds each found deeper variants of the *same*
+fronts — an inline var holding an absolute path (`d=.tor;p=$HOME/$d…;cat $p/secret`), multiple
+glued redirects, camelCase/acronym MCP names — which were closed with GENERAL solutions (a
+command-local var map, `finditer` over every redirect target, server-namespace-scoped MCP write
+classification), not one-off patches.
+
+---
+
+## P5 — release · converged and shipped · 2026-07-31
+
+**Attestation:** commit `af928a8`, tree `bfb7b24`, sf 2.144.6, node v24.11.1, denylist digest
+`129a9dfe…` (`harness/attest/attest-af928a8.json`) · **profile: release · verdict: PASS**
+
+`python3 harness/validate.py --profile release --target-org sf-coffee` is green end to end:
+
+- **self-test** — 10 catastrophe-class mutators, all caught: each flips a deny→allow (or a
+  static check FAIL→PASS) *only* when its guard is neutered, then restores source. Guards proven
+  load-bearing: clean-IP ×4, anchor, destructive-token, redirect-detection, wrapper, expansion,
+  glob-matcher.
+- **24 capability checks** — incl. the live probe cycle (deploy → SOQL+FLS verify → purge,
+  residue 0), mass-update → undo, and a real headless Lightning render.
+- **4 release-only checks** — excepted-org hard-fail (no client-prod exception, so the published
+  claim stays absolute), a bypass suite over 7 shapes drawn from every audit front, image
+  manifest, deliverable coverage (52 tracked paths, all classified).
+- **128 adversarial fixtures** across base + r11 + r12 + r13 + confirmation.
+
+Reproduce on any free DE org with the command above. **Torque is converged and shippable.**
