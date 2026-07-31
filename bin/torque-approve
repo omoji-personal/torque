@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""torque approve — mint a single-use approval token. OPERATOR-PRESENT ONLY.
+
+Refuses unless invoked from a real interactive TTY whose process ancestry is clear of the
+Claude Code agent process. This makes accidental/casual agent self-approval impossible;
+deliberate PTY allocation + detachment is adversarial and out of scope (Layer 0). The
+agent can REQUEST approval; only a present operator runs this.
+
+Usage: torque approve <orgId> <op_class> [body-digest]   (interactive confirm)
+"""
+import json, os, sys, time, hashlib
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+import lib
+
+def _has_tty():
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR)
+        os.close(fd)
+        return sys.stdin.isatty()
+    except OSError:
+        return False
+
+def _ancestry_clear():
+    """True if no ancestor process looks like the Claude Code agent."""
+    try:
+        pid = os.getppid()
+        for _ in range(20):
+            if pid <= 1: break
+            with open(f"/proc/{pid}/comm") as f:      # linux
+                name = f.read().strip().lower()
+            if "claude" in name or "node" in name: return False
+            pid = int(open(f"/proc/{pid}/stat").read().split()[3])
+        return True
+    except Exception:
+        # macOS: no /proc — use ps ancestry
+        import subprocess
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(os.getppid())],
+                                 capture_output=True, text=True).stdout.lower()
+            return "claude" not in out and "node" not in out
+        except Exception:
+            return True
+
+def main():
+    if not _has_tty():
+        print("torque approve: refused — no interactive TTY (operator presence required)", file=sys.stderr)
+        sys.exit(3)
+    if not _ancestry_clear():
+        print("torque approve: refused — invoked under the agent process ancestry", file=sys.stderr)
+        sys.exit(3)
+    if len(sys.argv) < 3:
+        print("usage: torque approve <orgId> <op_class> [digest]", file=sys.stderr); sys.exit(2)
+    orgid = lib.norm_id(sys.argv[1]); op = sys.argv[2]; digest = sys.argv[3] if len(sys.argv) > 3 else ""
+    with open("/dev/tty") as tty:
+        sys.stderr.write(f"Approve {op} on org {orgid}{' digest '+digest if digest else ''}? [type YES]: ")
+        sys.stderr.flush()
+        if tty.readline().strip() != "YES":
+            print("aborted", file=sys.stderr); sys.exit(1)
+    lib.TOKENS.mkdir(parents=True, exist_ok=True)
+    p = lib.token_path(orgid, op, digest)
+    p.write_text(json.dumps({"orgId": orgid, "op": op, "digest": digest,
+                             "exp": time.time() + 300, "iat": time.time()}))
+    os.chmod(p, 0o600)
+    print(f"approved: single-use token for {op} on {orgid} (5 min)")
+
+if __name__ == "__main__":
+    main()

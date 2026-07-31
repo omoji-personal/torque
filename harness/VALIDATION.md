@@ -33,3 +33,31 @@ history, removed from HEAD) · clean_ip fail-closed (denylist absent) — **all 
 
 **Phase status:** P0 complete. P1 (safety core: gates, TTY-bound approval, allowlist) not
 yet built. No release entry exists yet.
+
+---
+
+## P1 — safety core binds · 2026-07-31
+
+**Target:** sf-coffee (developer, disposable, allowlisted) · **Verdict: PASS** (16 checks)
+
+Two deterministic hooks registered on Bash, MCP-write, and Edit/Write matchers:
+
+- **prod_write_gate** — authorizes writes by identity: explicit `--target-org` required
+  (no-target, compound `config set target-org && write`, and inline `SF_TARGET_ORG=`
+  shapes all denied), org must be on the allowlist AND classify non-production live.
+  Agent Edit of the allowlist / protected-objects is denied.
+- **destructive_data_gate** — bulk/hard delete, WHERE-less update, destructive metadata,
+  and anonymous Apex require an operator-present token; `--file` required for Apex
+  (stdin denied); protected sObjects (Account, Contact, Opportunity — sf-coffee's demo
+  data) shielded on every org.
+
+**The approval boundary, proven live:** `torque approve` refused from the agent shell
+(no TTY) and from a `script`-wrapped pty; a planted operator token authorized a bulk
+delete exactly once and was denied on reuse (single-use). *An agent can request approval;
+it cannot mint one.*
+
+Checks added: gate_write_authz (5 cases), gate_destructive (4), approval_boundary,
+preflight_credentials (54 orgs enumerated), local_hygiene (0600 enforced), enforcement_map
+(hook-enforced labels resolve to registered hooks).
+
+**Phase status:** P0, P1 complete. P2 (probe cycle → M1) next.

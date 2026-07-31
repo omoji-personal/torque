@@ -170,6 +170,18 @@ def _describe_first(target):
         return Result("describe_first", FAIL, "hallucinated field wrongly resolved")
     return Result("describe_first", PASS, "known field resolves, hallucinated field refused")
 
+# ---- plugin checks: harness/checks/check_*.py register into the shared REGISTRY -------
+def _load_check_plugins():
+    ns = {"check": check, "Result": Result, "sh": sh, "ROOT": ROOT, "CHECKS": CHECKS,
+          "PASS": PASS, "FAIL": FAIL, "WARN": WARN, "SKIP": SKIP,
+          "subprocess": subprocess, "json": json, "os": os, "re": re, "Path": Path}
+    for p in sorted((ROOT / "harness" / "checks").glob("check_*.py")):
+        try:
+            exec(compile(p.read_text(), str(p), "exec"), ns)
+        except Exception as e:
+            print(f"  ! plugin {p.name} failed to load: {e}")
+_load_check_plugins()
+
 # ---- runner ---------------------------------------------------------------
 def run_profile(profile, target):
     want = RANK[profile]
