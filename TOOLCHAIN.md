@@ -12,6 +12,7 @@ matchers).
 | git | >= 2.40 | `git rev-list --objects --all` and `cat-file` behave |
 | Claude Code | >= 2.x | `claude -p` headless probe returns the rules token |
 | @salesforce/mcp | LOCKED (recorded on P1 pin) | tool inventory derivation |
+| Playwright | >= 1.55 | chromium binary present; real render probe |
 
 Preflight records observed versions into every run header. The Bash write surface is
 re-derived from `sf commands --json` at every preflight; drift FAILS the harness (not the

@@ -1,0 +1,16 @@
+{
+  "name": "torque",
+  "version": "1.0.0",
+  "description": "**An AI operations workspace for any Salesforce org — built on Claude Code, governed by deterministic gates, proven by a live validation harness.**",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}

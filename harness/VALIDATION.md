@@ -102,3 +102,21 @@ before-values → teardown BY ID ONLY. Residue verified zero. Checks added: skil
 agents_readonly, mass_update_cycle, installer_roundtrip.
 
 **Phase status:** P0–P3 complete. P4 (browser verification) next.
+
+---
+
+## P4 — browser verification · 2026-07-31
+
+**Target:** sf-coffee · **Verdict: PASS** (23 checks)
+
+`frontdoor_noecho` proves the auth handoff writes the session URL to a mode-0600 file and
+**prints only the path — the token never reaches stdout**. `browser_render` launched a real
+headless Chromium, followed the frontdoor→Lightning redirect, and asserted the
+`one-app-nav-bar` shell rendered live (title "Home | Salesforce") — a genuine render, not a
+binary-presence guess. The settle-poll pattern encodes the "never networkidle on Lightning"
+rule. When no browser binary is present the check BLOCKs with a dated reason (honest
+non-green), never faked. `capture.py` is the sole guide-image writer (crop, EXIF-strip,
+content-bound manifest); browser-testing.md carries the frontdoor rule and the 2026-07-01
+MFA-enforcement fact.
+
+**Phase status:** P0–P4 complete and green live. P5 (release + full guide) next.

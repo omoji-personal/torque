@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""Mint a frontdoor session URL and write it to a mode-0600 file. Prints only the PATH,
+never the URL (which carries a live session token)."""
+import json, os, subprocess, sys, tempfile
+if len(sys.argv) < 2:
+    print("usage: torque-frontdoor <alias>", file=sys.stderr); sys.exit(2)
+r = subprocess.run(["sf","org","open","--target-org",sys.argv[1],"--url-only","--json"],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    print("frontdoor: could not obtain session URL", file=sys.stderr); sys.exit(1)
+url = json.loads(r.stdout)["result"]["url"]
+fd, path = tempfile.mkstemp(prefix="torque-fd-", suffix=".url")
+os.write(fd, url.encode()); os.close(fd); os.chmod(path, 0o600)
+print(path)   # ONLY the path — never the URL
