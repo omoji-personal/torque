@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""torque init <org-alias> — take a fresh clone to a working install. Safe and idempotent.
+
+    python3 bin/torque-init my-dev-org
+
+What it does, in order, refusing rather than guessing:
+  1. checks prerequisites (python3, sf CLI; node/browser are optional and only affect one check)
+  2. resolves the org and classifies it with a LIVE query — and REFUSES a production org
+  3. creates the trust anchor ~/.torque (0700) and its signing secret (0600), outside the repo
+  4. writes local/writable-orgs.json — the allowlist — with the verified orgId (gitignored)
+  5. confirms the gates are registered and actually deny a known attack
+  6. prints exactly what to run next
+
+The allowlist is deliberately NOT in the repo: an org you can write to is a decision only the
+person at the keyboard can make. This command is how you make it, once, explicitly.
+"""
+import json, os, shutil, subprocess, sys, time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "hooks"))
+G, R, Y, DIM, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
+OK, BAD, WARN = f"{G}✓{RST}", f"{R}✗{RST}", f"{Y}!{RST}"
+
+
+def die(msg, fix=""):
+    print(f"  {BAD} {msg}")
+    if fix:
+        print(f"    {DIM}{fix}{RST}")
+    sys.exit(1)
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1].startswith("-"):
+        print(__doc__)
+        print("  Need an org? A free Developer Edition works:\n"
+              "    https://developer.salesforce.com/signup   then:  sf org login web --alias my-dev-org\n")
+        sys.exit(2)
+    alias = sys.argv[1]
+    print(f"\nTorque init — {alias}\n")
+
+    # 1. prerequisites ------------------------------------------------------
+    if sys.version_info < (3, 8):
+        die(f"python {sys.version_info.major}.{sys.version_info.minor} is too old", "need python 3.8+")
+    print(f"  {OK} python {sys.version_info.major}.{sys.version_info.minor}")
+    if not shutil.which("sf"):
+        die("the Salesforce CLI (`sf`) is not on PATH",
+            "install: npm install -g @salesforce/cli   (docs: developer.salesforce.com/tools/salesforcecli)")
+    ver = subprocess.run(["sf", "--version"], capture_output=True, text=True).stdout.strip()[:44]
+    print(f"  {OK} {ver}")
+    if not shutil.which("node"):
+        print(f"  {WARN} node not found — the live browser-render check will report BLOCKED (everything else runs)")
+
+    # 2. classify the org LIVE, and refuse production ------------------------
+    import lib
+    print(f"  {DIM}… classifying {alias} (live query, not a guess){RST}")
+    verdict, orgid, username = lib.classify_live(alias)
+    if not orgid:
+        die(f"could not reach '{alias}'",
+            f"authenticate it first:  sf org login web --alias {alias}")
+    if verdict == "production":
+        die(f"'{alias}' classifies PRODUCTION (or could not be verified) — refusing to allowlist it",
+            "Torque never allowlists production. Use a sandbox, scratch, or Developer Edition org.\n"
+            "    A free DE org: https://developer.salesforce.com/signup")
+    print(f"  {OK} {alias} → {verdict}  (org {orgid}, {username})")
+
+    # 3. trust anchor, outside the repo --------------------------------------
+    lib.ANCHOR.mkdir(parents=True, exist_ok=True); os.chmod(lib.ANCHOR, 0o700)
+    if not lib.SECRET.exists():
+        lib.SECRET.write_bytes(os.urandom(32)); os.chmod(lib.SECRET, 0o600)
+        print(f"  {OK} trust anchor created at {lib.ANCHOR} (0700) with a fresh signing secret (0600)")
+    else:
+        print(f"  {OK} trust anchor present at {lib.ANCHOR}")
+    for d in (lib.TOKENS, lib.APPROVED, lib.PROD_SESSIONS):
+        d.mkdir(parents=True, exist_ok=True); os.chmod(d, 0o700)
+
+    # 4. the allowlist --------------------------------------------------------
+    lib.LOCAL.mkdir(parents=True, exist_ok=True)
+    existing = []
+    if lib.ALLOWLIST.exists():
+        try:
+            existing = json.loads(lib.ALLOWLIST.read_text()).get("orgs", [])
+        except Exception:
+            existing = []
+    entry = {"orgId": orgid, "username": username, "verdict": verdict,
+             "verified": int(time.time()), "disposable": True,
+             "disposable_justification": f"operator-declared writable org, verified {verdict} at init"}
+    orgs = [e for e in existing if lib.norm_id(e.get("orgId", "")) != orgid] + [entry]
+    lib.ALLOWLIST.write_text(json.dumps({"orgs": orgs}, indent=2))
+    os.chmod(lib.ALLOWLIST, 0o600)
+    print(f"  {OK} allowlist: {len(orgs)} org(s) writable  {DIM}({lib.ALLOWLIST}, 0600, gitignored){RST}")
+
+    # 5. prove the gates actually bind ---------------------------------------
+    attack = {"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/secret"}}
+    p = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                       input=json.dumps(attack), capture_output=True, text=True, cwd=ROOT)
+    if p.returncode != 2:
+        die("the write gate did NOT deny a known attack — do not rely on this install",
+            "run `python3 bin/torque-demo` and open an issue with the output")
+    print(f"  {OK} gates bind (a secret-read attack was denied, exit 2)")
+    settings = ROOT / ".claude" / "settings.json"
+    if settings.exists() and "prod_write_gate" in settings.read_text():
+        print(f"  {OK} hooks registered in .claude/settings.json "
+              f"{DIM}(they fire when this folder is opened in Claude Code){RST}")
+    else:
+        print(f"  {WARN} .claude/settings.json is missing the hook registration")
+
+    print(f"\n{G}Ready.{RST} Next:\n")
+    print(f"    python3 bin/torque-demo                                   {DIM}# 30s, no org: watch attacks get refused{RST}")
+    print(f"    python3 harness/validate.py --profile release --target-org {alias}")
+    print(f"        {DIM}# the full proof: 128 attack fixtures, 10 mutation tests, and a live{RST}")
+    print(f"        {DIM}# deploy → verify → purge cycle against {alias}. Takes a few minutes.{RST}\n")
+    print(f"    {DIM}Then open this folder in Claude Code and operate. Production stays denied unless{RST}")
+    print(f"    {DIM}you personally run `bin/torque-approve` from a real terminal.{RST}\n")
+
+
+if __name__ == "__main__":
+    main()

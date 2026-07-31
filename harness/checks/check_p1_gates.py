@@ -120,8 +120,10 @@ def _gate_adversarial_fixtures(target):
     # (parser evasion, compound/quote, legacy verbs, decoy target, secret-read self-mint,
     # protected-path redirect, MCP destructive, apex TOCTOU, forged signature). The attack
     # strings live as DATA in the JSON so they never touch a Bash command line.
+    import os as _os
     r = subprocess.run(["python3", str(ROOT / "harness" / "tests" / "run_gate_fixtures.py")],
-                       capture_output=True, text=True, cwd=ROOT, timeout=300)
+                       capture_output=True, text=True, cwd=ROOT, timeout=300,
+                       env={**_os.environ, "TORQUE_TEST_ORG": target})   # portable to any org
     if r.returncode != 0:
         tail = (r.stdout.strip().splitlines() or [""])[-1]
         return Result("gate_adversarial_fixtures", FAIL, f"gate fixtures failed — {tail}")

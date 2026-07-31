@@ -21,7 +21,17 @@ PROFILES = ("static", "capability", "release")
 RANK = {p: i for i, p in enumerate(PROFILES)}
 
 # ---- outcomes -------------------------------------------------------------
-PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
+# NA = an operator-only check a third party structurally cannot run (it needs a private input
+# that is deliberately not published). It is reported honestly and does NOT degrade the verdict
+# — otherwise every stranger's first run is red for a reason that has nothing to do with them.
+PASS, FAIL, WARN, SKIP, NA = "PASS", "FAIL", "WARN", "SKIP", "N/A"
+
+def _operator_mode():
+    """True on the author's machine — where the private denylist MUST exist and its absence is a
+    hard failure. Detected by the planning directory (a third-party clone never has it), or an
+    explicit override. This keeps clean-IP fail-closed for the operator while letting a stranger
+    run everything else green."""
+    return os.environ.get("TORQUE_OPERATOR") == "1" or DENYLIST.parent.exists()
 
 class Result:
     def __init__(self, name, outcome, detail="", third_party=True):
@@ -85,7 +95,12 @@ def _load_denylist():
 def _clean_ip():
     pats, err = _load_denylist()
     if err:
-        return Result("clean_ip", FAIL, f"FAIL-CLOSED: {err}", third_party=False)
+        if _operator_mode():                      # author's machine: absence is a HARD failure
+            return Result("clean_ip", FAIL, f"FAIL-CLOSED: {err}", third_party=False)
+        # third-party clone: the denylist is private by design, so this check cannot run here.
+        return Result("clean_ip", NA, "operator-only check (private denylist not published); "
+                      "the published tree was scanned clean at release — see harness/VALIDATION.md",
+                      third_party=False)
     joined = "|".join(f"({p})" for p in pats)
     rx = re.compile(joined, re.I); rxb = re.compile(joined.encode(), re.I)
     for f_ in sh("git", "ls-files").stdout.splitlines():                    # (1) tracked contents
@@ -200,11 +215,12 @@ def print_report(profile, results):
     print(f"\n=== Torque validation — profile: {profile} ===")
     verdict = PASS
     for r in results:
-        mark = {PASS:"✓", FAIL:"✗", WARN:"!", SKIP:"−"}[r.outcome]
+        mark = {PASS:"✓", FAIL:"✗", WARN:"!", SKIP:"−", NA:"·"}[r.outcome]
         tp = "" if r.third_party else " [operator-reproducible]"
         print(f"  {mark} {r.name:22} {r.outcome:5} {r.detail}{tp}")
         if r.outcome == FAIL: verdict = FAIL
         elif r.outcome == SKIP and verdict == PASS: verdict = "DEGRADED"
+        # NA never degrades: it is an operator-only check, reported honestly, not a gap.
     print(f"  → verdict: {verdict}")
     return verdict
 

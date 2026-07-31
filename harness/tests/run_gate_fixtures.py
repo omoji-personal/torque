@@ -26,11 +26,16 @@ def run_gate(gate, event):
 
 
 def main():
+    # Fixtures name a WRITABLE org (allowlisted, non-production) and unreachable ones that must
+    # classify production. The writable alias is substituted at load time so a third party's own
+    # Developer Edition org fills that slot — otherwise the suite only passes on the author's
+    # machine. Deny cases need no substitution: any unauthenticated alias classifies production.
+    org = os.environ.get("TORQUE_TEST_ORG", "sf-coffee")
     fixtures = []
     for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json", "gate_fixtures_conf.json"):
         p = ROOT / "harness/tests" / fn
         if p.exists():
-            fixtures += json.loads(p.read_text()).get("fixtures", [])
+            fixtures += json.loads(p.read_text().replace("sf-coffee", org)).get("fixtures", [])
     passed = failed = 0
     fails = []
     for fx in fixtures:
@@ -52,9 +57,9 @@ def main():
         lib.SECRET.write_bytes(os.urandom(32)); os.chmod(lib.SECRET, 0o600)
     lib.TOKENS.mkdir(parents=True, exist_ok=True)
     lib.APPROVED.mkdir(parents=True, exist_ok=True)
-    verdict, orgid, _ = lib.classify_live("sf-coffee")
+    verdict, orgid, _ = lib.classify_live(org)
     if not orgid:
-        print(f"  {RED}skip valid-token tests — sf-coffee not reachable{RST}")
+        print(f"  {RED}skip valid-token tests — {org} not reachable{RST}")
     else:
         def mint(op, digest=""):
             payload = {"orgId": orgid, "op": op, "digest": digest,

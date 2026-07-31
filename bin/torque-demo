@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""torque demo — watch the gates stop real attacks. No Salesforce org. No credentials. 30s.
+
+This runs genuine attacks through the REAL PreToolUse hooks — the same code that runs in a live
+Claude Code session — and shows each one refused, with the reason. Every attack here was found
+by an adversarial audit round against an earlier version of this code and is now a permanent
+regression fixture.
+
+It also runs ALLOW cases, because a gate that denies everything is useless: the interesting
+claim is not "it says no", it is "it says no to exactly the right things."
+
+    python3 bin/torque-demo          # all categories
+    python3 bin/torque-demo --quick  # one per category
+"""
+import json, os, subprocess, sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+HOOKS = ROOT / "hooks"
+G, R, Y, B, DIM, RST = "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m"
+
+# (category, why it matters, [(command, expect_deny, label)])
+CATEGORIES = [
+    ("Shell indirection", "The gate never sees the literal word `sf` — it is assembled at runtime.", [
+        ("x=sf; $x data delete bulk --sobject Account --target-org acme-prod", True,
+         "variable-assembled command"),
+        ("s$'\\x66' data delete bulk --sobject Account --target-org acme-prod", True,
+         "ANSI-C hex escape spells 'sf'"),
+        ("eval sf data create record --sobject Account --target-org acme-prod", True,
+         "eval takes its code positionally"),
+    ]),
+    ("Path expansion", "A glob or variable that only becomes the secret's path when bash expands it.", [
+        ("cat ~/.torq*/secret", True, "glob reaches the signing secret"),
+        ("d=.tor;e=que;p=$HOME/$d$e;cat $p/secret", True, "path assembled across three variables"),
+        ("cat /Users/**/.[t]orque/sec[r]et", True, "recursive glob + character classes"),
+        ("cat ~/.sfd*/*.json", True, "glob reaches the sf CLI auth store (live tokens)"),
+    ]),
+    ("Overwriting the gate itself", "Disable the hook and everything downstream is ungated.", [
+        ("printf 'x'>hooks/lib.py", True, "redirect glued to the preceding word"),
+        (": >hooks/lib.py >/tmp/z", True, "two redirects; bash truncates BOTH"),
+        ("cd hooks && echo pwn > lib.py", True, "cd-desync hides the real target"),
+        ("git checkout HEAD~5 -- hooks/", True, "restore an older, weaker gate from git"),
+        ("tar xf /tmp/payload.tar", True, "archive extraction can rewrite anything"),
+    ]),
+    ("Relocation under another program", "sf still executes — just not as the command the gate inspects.", [
+        ("nice -n 5 sf data create record --sobject Account --target-org acme-prod", True,
+         "wrapper consumes a flag value"),
+        ("bash -c 'sf data delete bulk --sobject A --target-org acme-prod'", True,
+         "interpreter payload"),
+        ("echo sf data create record --target-org acme-prod | xargs -J{} {}", True,
+         "command word arrives on stdin"),
+    ]),
+    ("Salesforce-specific evasion", "Legacy syntax and raw REST reach the same DML by another door. "
+     "These deny on the org check because no org is connected here — the point is that they are "
+     "classified as WRITES at all: a misread would be treated as a read and sail through.", [
+        ("sf force:data:bulk:delete --csvfile ids.csv --sobjecttype Account -u acme-prod", True,
+         "legacy colon syntax still classified a write (a read would be allowed)"),
+        ("sf api request rest -X DELETE /services/data/v60.0/sobjects/Account/001 --target-org acme-prod",
+         True, "raw REST DELETE classified a write, with no data-* verb present"),
+        ("sf data update record --sobject Account --values Name=x", True,
+         "no --target-org ⇒ would silently hit the default org"),
+    ]),
+    ("Normal work is untouched", "A gate that blocks real work gets turned off. These all run.", [
+        ("sf data query --query \"SELECT Id FROM Account\" --target-org any-org", False,
+         "reads need no authorization"),
+        ("grep -rn 'sf data delete --target-org' .", False, "sf as a search string, not a command"),
+        ("echo 'runbook: sf project deploy start' >> notes.md", False, "documenting a command"),
+        ("cat *.py && ls $HOME/Desktop/*", False, "globs and $HOME that go nowhere sensitive"),
+        ("git add hooks/lib.py && git status", False, "version-controlling the gate is fine"),
+        ("sf project deploy start --dry-run --manifest p.xml --target-org acme-prod", False,
+         "a validate-only deploy writes nothing"),
+    ]),
+]
+
+
+def run(cmd):
+    ev = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    out = []
+    for gate in ("prod_write_gate.py", "destructive_data_gate.py"):
+        p = subprocess.run([sys.executable, str(HOOKS / gate)], input=json.dumps(ev),
+                           capture_output=True, text=True, cwd=ROOT, timeout=60)
+        if p.returncode == 2:
+            reason = (p.stderr or "").split("] ", 1)[-1].strip().split("\n")[0]
+            return True, reason
+        out.append(p.returncode)
+    return False, ""
+
+
+def main():
+    quick = "--quick" in sys.argv
+    print(f"\n{B}TORQUE{RST} — real attacks against the real gates. No org, no credentials.\n"
+          f"{DIM}Each attack below was found by an adversarial audit and is now a permanent fixture.{RST}")
+    total = wrong = 0
+    for cat, why, cases in CATEGORIES:
+        print(f"\n{B}{cat}{RST}\n{DIM}{why}{RST}")
+        for cmd, want_deny, label in (cases[:1] if quick else cases):
+            denied, reason = run(cmd)
+            total += 1
+            ok = denied == want_deny
+            if not ok:
+                wrong += 1
+            shown = cmd if len(cmd) <= 76 else cmd[:73] + "..."
+            if want_deny:
+                tag = f"{G}DENIED{RST}" if denied else f"{R}*** ALLOWED ***{RST}"
+                print(f"  {tag}  {shown}")
+                print(f"          {DIM}{label} → {reason[:88]}{RST}" if denied
+                      else f"          {DIM}{label}{RST}")
+            else:
+                tag = f"{G}allowed{RST}" if not denied else f"{R}*** BLOCKED ***{RST}"
+                print(f"  {tag} {shown}")
+                print(f"          {DIM}{label}{RST}")
+    verdict = f"{G}all {total} behaved correctly{RST}" if not wrong else f"{R}{wrong}/{total} WRONG{RST}"
+    print(f"\n  {verdict}\n")
+    print(f"{DIM}That was the parser layer only — it needs no org because it never got that far.")
+    print(f"The full suite (128 fixtures, 10 mutation tests, a live deploy→verify→purge cycle)")
+    print(f"runs against your own Developer Edition org:{RST}")
+    print(f"    bin/torque-init <your-org-alias>")
+    print(f"    python3 harness/validate.py --profile release --target-org <your-org-alias>\n")
+    sys.exit(1 if wrong else 0)
+
+
+if __name__ == "__main__":
+    main()
