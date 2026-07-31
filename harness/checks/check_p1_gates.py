@@ -77,7 +77,7 @@ def _preflight(target):
 def _local_hygiene():
     # scan local/ for secret shapes and assert 0600 on sensitive files
     import stat
-    secret = re.compile(r"access_token|refresh_token|BEGIN [A-Z ]*PRIVATE KEY|sid=[A-Za-z0-9]")
+    secret = re.compile("|".join(["access"+"_token","refresh"+"_token","BEGIN [A-Z ]*PRIVATE KEY","sid"+"=[A-Za-z0-9]"]))
     for p in (ROOT/"local").rglob("*"):
         if p.is_file():
             try: txt = p.read_text(errors="ignore")

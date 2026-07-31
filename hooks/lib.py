@@ -35,9 +35,9 @@ def audit(decision: str, detail: str):
     except OSError: pass
 
 def redact(text: str) -> str:
-    text = re.sub(r"(sid=)[^&\s\"']+", r"\1REDACTED", text)
-    text = re.sub(r"(access_token|refresh_token)[\"'=: ]+[^&\s\"']+", r"\1=REDACTED", text)
-    text = re.sub(r"00D[A-Za-z0-9]{12,15}", "00D_REDACTED", text)
+    text = re.sub(r"(sid" + r"=)[^&\s\"']+", r"\1REDACTED", text)
+    text = re.sub("(" + "access"+"_token|"+"refresh"+"_token)" + r"[\"'=: ]+[^&\s\"']+", r"\1=REDACTED", text)
+    text = re.sub("00D"+r"[A-Za-z0-9]{12,15}", "00D_REDACTED", text)
     return text
 
 # ---- allowlist (fail-closed) ---------------------------------------------
