@@ -60,7 +60,7 @@ def _coverage():
     # nonblocking-style report: every tracked path is a known kind (rule/skill/hook/check/doc).
     tracked = _sp.run(["git","ls-files"], capture_output=True, text=True, cwd=ROOT).stdout.split()
     unknown = [t for t in tracked if not any(t.startswith(p) or t in (
-        "CLAUDE.md","README.md","TOOLCHAIN.md","LICENSE",".gitignore","sfdx-project.json","package.json","package-lock.json")
+        "CLAUDE.md","README.md","TOOLCHAIN.md","LICENSE","SECURITY.md",".gitignore","sfdx-project.json","package.json","package-lock.json")
         for p in (".claude/",".git","hooks/","bin/","harness/","guide/","force-app/"))]
     if unknown:
         return Result("deliverable_coverage", WARN, f"unclassified tracked paths: {unknown[:5]}")

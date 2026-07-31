@@ -132,6 +132,9 @@ production org authenticated in an autonomous session. Closing the subprocess ch
 needs a PATH-level shim that classifies before `exec` — that is the v2 roadmap, and it is not
 built yet. Saying so is the point: a safety claim you cannot reproduce is marketing, not security.
 
+**Found a way through?** That's the whole point — every fixture in the suite exists because a
+review beat an earlier version of this code. See [`SECURITY.md`](SECURITY.md) for where to send it.
+
 ---
 
 ## What it isn't

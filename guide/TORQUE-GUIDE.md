@@ -49,7 +49,7 @@ obfuscated command. Not "asks first" — *structurally gated.*
 ## Threat model — what the gates bind, and where the boundary honestly sits
 
 Overclaiming is the fastest way to lose a security reviewer's trust, so here is the exact
-line. The gates are proven — by 117 adversarial fixtures, and four full adversarial rounds
+line. The gates are proven — by 128 adversarial fixtures, and four full adversarial rounds
 across three independent lenses (a shell-semantics reviewer, an execute-the-attack reviewer
 that ran each exploit against a real `sf` CLI, and an architecture skeptic) plus a standing
 self red-team — to stop **both** categories that matter:

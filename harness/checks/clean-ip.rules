@@ -1,9 +1,16 @@
-# Redacted, committed counterpart of the private clean-IP denylist.
-# Third parties can verify the CHECK (fail-closed behavior, scan scope) via fixtures;
-# the real-names pattern file stays with the author. Categories covered, in order:
-#   1  [withheld]
-#   2  [withheld]
-#   3-12  [withheld]
-#   13  [withheld]
-# Private list minimum size enforced: >= 12 patterns. Digest of the private list is
-# recorded in every attestation so runs are comparable without disclosure.
+# Committed counterpart of the clean-IP pattern file.
+#
+# The scan matches against a pattern list the author holds privately. Only its SHA-256 digest is
+# published — recorded in every attestation — so two runs are comparable without the list itself
+# ever being disclosed. Publishing the patterns would defeat their purpose.
+#
+# What a third party CAN verify, without the list:
+#   - the check's scan scope: tracked file contents, paths in history, historical blob contents
+#     (bytes, not text), commit metadata, and annotated tag messages
+#   - its fail-closed behaviour: an absent or truncated pattern list is a FAILURE, never a pass
+#   - that it is load-bearing: the harness self-test plants a matching term in the tree, in a
+#     historical blob, and in a path, and REQUIRES the check to fail each time
+#
+# Run `python3 harness/validate.py --self-test` to see those mutations pass or fail.
+#
+# A minimum pattern count is enforced so a truncated list cannot silently succeed.
