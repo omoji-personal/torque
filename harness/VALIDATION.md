@@ -169,10 +169,16 @@ score of the *findings* fell in severity, which is the convergence signal:
 | 12 | New front — the gates judged PRE-EXPANSION text (`cat ~/.torq*/secret` read the secret); + alias TOCTOU, PATH-injected `who`/`ps`, one-token-two-deletes; + 6 usability regressions | expansion-aware path guards |
 | 13 | Completion of the round-12 front — `**` recursive-glob + char-class basenames misaligned the component matcher | a proper DP glob-prefix matcher |
 
-Every fixed class carries a named fixture (**109 total** across base + r11 + r12 + r13) and each
+Every fixed class carries a named fixture (**117 total** across base + r11 + r12 + r13) and each
 catastrophe-class guard carries a **self-test mutator** that must flip a deny→allow when the
 guard is neutered (**10 mutators**, all caught): clean-IP ×4, anchor-guard, destructive-token,
 redirect-detection, wrapper (`wrapped_sf`), expansion-awareness, glob-matcher (`_glob_reaches`).
+
+A final scoped confirmation pass then found 5 more refinements of the same fronts — a `$HOME`
+that wildcarded to the wrong anchor, a redirect glued to a preceding word, raw `sf api request`
+DML, camelCase MCP tool names, and an `ln -s ~/.sfdx` symlink-then-read — each fixed with a
+fixture. The convergence signal was severity, not volume: every later round's findings were
+refinements of known fronts (expansion, redirect, MCP naming), never a new architectural class.
 
 **What the rounds established as SOUND (confirmed holding across rounds):** the HMAC token core
 (atomic single-use claim, forged-signature rejected), `torque-approve`'s login-TTY + full-

@@ -27,7 +27,7 @@ def run_gate(gate, event):
 
 def main():
     fixtures = []
-    for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json"):
+    for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json", "gate_fixtures_conf.json"):
         p = ROOT / "harness/tests" / fn
         if p.exists():
             fixtures += json.loads(p.read_text()).get("fixtures", [])

@@ -114,23 +114,47 @@ def grouping_or_subst(cmd: str) -> bool:
             or bool(re.search(r"(?:^|[\s;&|])[({]", cmd)))
 
 
-def _abs_pattern(tok, cwd=None):
+def _abs_pattern(tok, cwd=None, varmap=None):
     """A token as an ABSOLUTE glob PATTERN, expansion-aware: ~ expanded, $var/${}/backtick → '*'
     (any shell var could construct any path), relative made absolute against cwd. The gate sees
     PRE-EXPANSION text; bash expands globs/vars AFTER the hook (audit T12-01/02), so trust
     decisions must be made on what the token COULD become, not its literal form."""
-    t = os.path.expanduser(tok)
-    # expand ENV vars ($HOME/$PWD/$TMPDIR…) from the hook's environment FIRST — they resolve to
-    # absolute paths at exec time, so wildcarding them to '*' and re-anchoring to cwd would model
-    # `$HOME/.torque/secret` as `<cwd>/*/...` and miss the anchor (audit TQ-F1). Inline agent vars
-    # (`d=.torque`) aren't in the env, so they remain and are wildcarded below.
+    # Resolve command-local vars FIRST (inline `p=$HOME/$d$e` assignments — a single Bash call is
+    # a fresh shell, so every $var is either inline-assigned or an env/profile var, audit TQ-F1),
+    # then ~ , then env vars, then any still-undefined var → empty (bash semantics). Backtick
+    # command-substitution → ** (its output is unknown; the substitution guard denies sf ones).
+    t = _sub_vars(tok, varmap or {})
+    t = os.path.expanduser(t)
     t = os.path.expandvars(t)
-    t = re.sub(r"\$\{[^}]*\}|\$\w+|`[^`]*`", "*", t)
+    t = re.sub(r"\$\{\w+\}|\$\w+", "", t)             # undefined var → empty, like bash
+    t = re.sub(r"`[^`]*`", "**", t)
     if not os.path.isabs(t):
         t = os.path.join(str(cwd if cwd is not None else _safe_cwd()), t)
     # realpath (not normpath) so a symlinked prefix (macOS /tmp→/private/tmp) matches the
     # anchor's own .resolve(); wildcard components that don't exist are left intact (audit R11-10)
     return os.path.realpath(t)
+
+
+def _sub_vars(s, varmap):
+    def rep(m):
+        v = m.group(1) or m.group(2)
+        return varmap[v] if v in varmap else m.group(0)   # leave env/undefined for the next stages
+    return re.sub(r"\$\{(\w+)\}|\$(\w+)", rep, s)
+
+
+def _command_vars(cmd):
+    """Map of VAR→resolved value for every `VAR=value` assignment in the command, resolved in
+    order against earlier vars + env, so an inline var holding an absolute path is known when a
+    later token uses it (audit TQ-F1)."""
+    varmap = {}
+    for m in re.finditer(r"(?:^|[;\s&|(])(\w+)=(\"[^\"]*\"|'[^']*'|[^;\s|&()]*)", cmd):
+        name, val = m.group(1), m.group(2)
+        if val[:1] in ("\"", "'"):
+            val = val[1:-1]
+        val = _sub_vars(val, varmap)
+        val = os.path.expandvars(val)
+        varmap[name] = val
+    return varmap
 
 
 def _safe_cwd():
@@ -165,12 +189,12 @@ def _pattern_reaches_dir(pat, dirpath):
     return _glob_reaches(pat.split(os.sep), dirpath.split(os.sep))
 
 
-def anchor_ref(tok, cwd=None) -> bool:
+def anchor_ref(tok, cwd=None, varmap=None) -> bool:
     """Deny any reference to the trust anchor EXCEPT a read of the approved-apex copy — resolved
     against the ACTUAL anchor paths AND expansion-aware, so `cat ~/.torq*/secret`,
     `a=.tor;b=que;cat ~/$a$b/secret`, `cat /Users/**/.../.[t]orque/sec[r]et`, and a custom
     TORQUE_ANCHOR all deny (audit T12-01 / round 13)."""
-    pat = _abs_pattern(tok, cwd)
+    pat = _abs_pattern(tok, cwd, varmap)
     approved = str(lib.APPROVED.resolve())
     if pat == approved or pat.startswith(approved + os.sep):
         return False                                  # the approved-apex copy is readable
@@ -183,11 +207,11 @@ def anchor_ref(tok, cwd=None) -> bool:
     return False
 
 
-def sf_auth_ref(tok) -> bool:
+def sf_auth_ref(tok, varmap=None) -> bool:
     """The sf CLI auth store (~/.sfdx, ~/.sf) holds live access tokens — an agent reading it via
     Bash (`cat ~/.sfd*/x.json`) could lift a token and curl the REST API, bypassing sf entirely.
     Expansion-aware, same as anchor_ref (audit T12-01 applied to the auth store)."""
-    pat = _abs_pattern(tok)
+    pat = _abs_pattern(tok, None, varmap)
     for d in ("~/.sfdx", "~/.sf"):
         if _pattern_reaches_dir(pat, os.path.realpath(os.path.expanduser(d))):
             return True
@@ -380,28 +404,28 @@ def _write_shape_targets(argv):
         # a redirect operator ANYWHERE in the token: leading fused (`2>path`), OR glued to a
         # preceding word (`printf x>hooks/lib.py` — shlex keeps it one token, audit TQ-F2). The
         # RHS after the last `>` run is the target; a bare trailing `>` → the next token.
-        m = re.search(r">{1,2}[|!&]?([^>]*)$", tok)
-        if m:
+        found = False
+        for m in re.finditer(r">{1,2}[|!&]?([^>]*?)(?=>|$)", tok):  # EVERY glued target (TQ-F2)
             if m.group(1):
-                cand.append(m.group(1))
-            elif i + 1 < len(argv):
-                cand.append(argv[i + 1])
+                cand.append(m.group(1)); found = True
+        if not found and re.search(r">{1,2}[|!&]?$", tok) and i + 1 < len(argv):
+            cand.append(argv[i + 1])                  # bare trailing `>` → next token
     if base0 in WRITE_SHAPE_CMDS or (base0 == "sed" and _sed_inplace(argv)) or base0 in PERM_CMDS:
         cand += [a for a in argv[1:] if not a.startswith("-")]
         cand += [a.split("=", 1)[1] for a in argv if a.startswith("of=")]
     return base0, cand
 
 
-def _protected_path(pathlike, cwd=None):
+def _protected_path(pathlike, cwd=None, varmap=None):
     if not pathlike:
         return False
-    pat = _abs_pattern(pathlike, cwd)
+    pat = _abs_pattern(pathlike, cwd, varmap)
     base = os.path.basename(pat.rstrip("/")) or pat
     # literal OR globbed basename of a distinctive gate file (`settings.jso*` → settings.json)
     for b in PROTECTED_BASENAMES:
         if fnmatch.fnmatch(b, base) or fnmatch.fnmatch(base, b):
             return True
-    if anchor_ref(pathlike, cwd) or sf_auth_ref(pathlike):
+    if anchor_ref(pathlike, cwd, varmap) or sf_auth_ref(pathlike, varmap):
         return True                                   # incl. `ln -s ~/.sfdx x` symlink source (TQ-F5)
     dirs = lib.protected_write_paths() + [str((lib.TORQUE_HOME / ".claude").resolve()),
                                           str(lib.LOCAL.resolve())]
@@ -417,7 +441,7 @@ def _under_local(path_str):
     return rp == lp or rp.startswith(lp + os.sep)
 
 
-def check_write_shapes(segs):
+def check_write_shapes(segs, varmap=None):
     """Walk segments tracking cwd (cd-desync); deny a write/perm/opaque-writer op that reaches a
     protected path or the gate itself. Returns (reason, fingerprint) or None. Fails closed on
     opaque extractors/patchers and VCS restores that could rewrite the gate (audit R11-03)."""
@@ -445,7 +469,7 @@ def check_write_shapes(segs):
                 newcwd = Path(tgt) if os.path.isabs(tgt) else (cwd / tgt)
                 try:
                     r = newcwd.resolve()
-                    if lib.is_protected_target(str(r)) or anchor_ref(str(r)) or ".torque" in str(r).lower():
+                    if lib.is_protected_target(str(r)) or anchor_ref(str(r), varmap=varmap) or ".torque" in str(r).lower():
                         return ("cd into a protected directory (gate/anchor) — refused", "cd-protected")
                 except Exception:
                     pass
@@ -479,7 +503,7 @@ def check_write_shapes(segs):
                 after = argv[gi + 1:]
                 paths = after[after.index("--") + 1:] if "--" in after else [a for a in after if not a.startswith("-")]
                 for p in paths:
-                    if _protected_path(p, cwd) or _protected_path(p, initial) \
+                    if _protected_path(p, cwd, varmap) or _protected_path(p, initial, varmap) \
                        or os.path.basename(p.rstrip("/")) in ("hooks", "bin", ".claude", "checks"):
                         return (f"git {sub} targeting protected paths — refused", "protected-write")
             continue
@@ -487,7 +511,7 @@ def check_write_shapes(segs):
         for c in cands:
             # union of tracked cwd AND the real starting cwd — a subshell `(cd x)` cannot
             # persist, so a relative write still resolves against the original dir (audit T12-06)
-            if _protected_path(c, cwd) or _protected_path(c, initial):
+            if _protected_path(c, cwd, varmap) or _protected_path(c, initial, varmap):
                 return (f"write to a protected path: {c}", "protected-write")
     return None
 
@@ -507,7 +531,8 @@ def analyze_bash(cmd: str):
     if grouping_or_subst(cmd) and (SF_SUSPICIOUS.search(cmd) or SF_WORD.search(cmd)):
         return {"deny": ("command grouping/substitution around a Salesforce operation — "
                          "not statically authorizable", "substitution")}
-    ws = check_write_shapes(segs)
+    varmap = _command_vars(cmd)                       # resolve inline `VAR=...` for path guards (TQ-F1)
+    ws = check_write_shapes(segs, varmap)
     if ws:
         return {"deny": ws}
     if re.search(r"(?:^|[\s;&|])(xargs|parallel)\b", cmd) and (SF_WORD.search(cmd) or SF_SUSPICIOUS.search(cmd)):
@@ -526,10 +551,10 @@ def analyze_bash(cmd: str):
         if not argv:
             continue
         for tok in argv:
-            if anchor_ref(tok):
+            if anchor_ref(tok, varmap=varmap):
                 return {"deny": ("reference to the trust anchor (~/.torque) — secret and tokens "
                                  "are operator-only", "anchor-ref")}
-            if sf_auth_ref(tok):
+            if sf_auth_ref(tok, varmap):
                 return {"deny": ("reference to the sf auth store (~/.sfdx, ~/.sf) — it holds live "
                                  "access tokens", "auth-ref")}
         a, assign_vals = _strip_assignments(argv)
@@ -589,8 +614,11 @@ def mcp_target(tinput):
 
 
 def _name_comps(name):
-    # split on _ - AND camelCase boundaries so `bulkDeleteRecords` → {bulk,delete,records} (TQ-F4)
-    return set(re.split(r"[_-]", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()))
+    # split on _ - AND camelCase AND ACRONYM boundaries so `bulkDeleteRecords` and `HTTPDelete`
+    # both yield {…,delete,…} (audit TQ-F4 / F5)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)   # HTTPDelete → HTTP_Delete
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)         # bulkDelete → bulk_Delete
+    return set(re.split(r"[_-]", s.lower()))
 
 
 def _mcp_destructive(name, tinput):
@@ -619,20 +647,25 @@ def _mcp_destructive(name, tinput):
 def mcp_analyze(tool, tinput):
     """{'read':True} | {'write':target, 'destructive':(op,digest,body)|None}. TRUE default-deny:
     an org-touching tool that is not clearly a read is a write (audit R11-04/R11-05)."""
-    name = tool.split("__")[-1]                        # RAW (preserve camelCase for _name_comps)
+    parts = tool.split("__")
+    server = parts[1].lower() if len(parts) > 2 else ""
+    name = parts[-1]                                   # RAW (preserve camelCase for _name_comps)
     nl = name.lower()
     target = mcp_target(tinput)
     comps = _name_comps(name)
     dest = _mcp_destructive(name, tinput)
+    # a Salesforce-namespaced server (or an org param) is what we gate; a non-SF MCP server's
+    # write tool with no org param (e.g. GitHub `createIssue`) is out of scope (audit TQ-F3).
+    is_sf = bool(re.match(r"(sf|salesforce|sfdx)\b", server)) or target is not None
     # ANY write verb anywhere in the name makes it a write (get_or_create_record, audit TQ-008)
     writeish = bool(comps & MCP_WRITE_LEADS) or "apex" in nl or "anonymous" in nl
     readish = bool(comps & MCP_READ_LEADS) or nl.startswith(("soql", "tooling", "schema"))
-    if writeish or dest:
-        return {"write": target, "destructive": dest}
-    if readish and not target:
+    if dest:
+        return {"write": target, "destructive": dest}  # destructive shape ⇒ token (org checked by prod gate)
+    if writeish:
+        return {"write": target, "destructive": None} if is_sf else {"read": True}
+    if readish:
         return {"read": True}
-    if readish and target:
-        return {"read": True}                          # a named read with an org param is a read
     if target is not None:
         return {"write": target, "destructive": None}  # org-touching, unknown verb ⇒ default-deny
     return {"read": True}                               # no org, not writeish ⇒ local tool

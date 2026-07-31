@@ -67,7 +67,8 @@ def _is_gate_file(path):
 
 def handle_edit(tinput):
     path = tinput.get("file_path", "")
-    if lib.is_protected_target(path) or shellparse.anchor_ref(path) or _is_gate_file(path):
+    if lib.is_protected_target(path) or shellparse.anchor_ref(path) or _is_gate_file(path) \
+       or _is_sf_auth(path) or shellparse.sf_auth_ref(path):    # auth store too (audit TQ-F4)
         lib.deny(f"agent modification of protected file {os.path.basename(path)} is denied; "
                  "operator-present issuance only", "artifact-edit", HOOK)
     lib.allow()

@@ -49,9 +49,10 @@ obfuscated command. Not "asks first" — *structurally gated.*
 ## Threat model — what the gates bind, and where the boundary honestly sits
 
 Overclaiming is the fastest way to lose a security reviewer's trust, so here is the exact
-line. The gates are proven — by 48 adversarial fixtures, and three independent audit lenses
-(a shell-semantics reviewer, an execute-the-attack reviewer that ran each exploit against a
-real `sf` CLI, and an architecture skeptic) — to stop **both** categories that matter:
+line. The gates are proven — by 117 adversarial fixtures, and four full adversarial rounds
+across three independent lenses (a shell-semantics reviewer, an execute-the-attack reviewer
+that ran each exploit against a real `sf` CLI, and an architecture skeptic) plus a standing
+self red-team — to stop **both** categories that matter:
 
 - **Accidents**, with certainty: a wrong alias, a forgotten `--target-org` (which would
   silently use the default org), a fat-fingered bulk delete. This is the dominant real-world
@@ -59,9 +60,12 @@ real `sf` CLI, and an architecture skeptic) — to stop **both** categories that
 - **Enumerable circumvention** by a capable agent through its tool surface: parameter and
   ANSI-C indirection, subshell/brace/process-substitution grouping, wrapper runners, `eval`
   and here-strings, `xargs` stdin commands, quote tricks, legacy CLI verbs, decoy targets,
-  redirects or a `cd`-desync aimed at the gate's own files, forged or unsigned tokens, and
-  destructive operations routed through MCP under a non-obvious tool name. Each has a named,
-  runnable fixture that must deny; the parser fails closed on any indirection it cannot resolve.
+  glob and `$var` **path expansion** aimed at the signing secret (`cat ~/.torq*/secret`),
+  redirects — fused, fd-prefixed, or glued to a word — and `cd`-desync aimed at the gate's own
+  files, forged or unsigned tokens, and destructive operations routed through MCP under a
+  non-obvious (or camelCase) tool name. Each has a named, runnable fixture that must deny; the
+  parser fails closed on any indirection it cannot resolve, and every path guard reasons about
+  what a glob/variable *could* expand to, not just its literal text.
 
 What the gates **do not** claim to stop — and no PreToolUse hook honestly can — is a
 same-user actor who steps *outside* the tool surface by executing arbitrary code:
