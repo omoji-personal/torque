@@ -26,8 +26,11 @@ def run_gate(gate, event):
 
 
 def main():
-    data = json.loads((ROOT / "harness/tests/gate_fixtures.json").read_text())
-    fixtures = data["fixtures"]
+    fixtures = []
+    for fn in ("gate_fixtures.json", "gate_fixtures_r11.json"):
+        p = ROOT / "harness/tests" / fn
+        if p.exists():
+            fixtures += json.loads(p.read_text()).get("fixtures", [])
     passed = failed = 0
     fails = []
     for fx in fixtures:

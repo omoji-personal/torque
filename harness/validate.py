@@ -304,6 +304,38 @@ def self_test():
         ok &= passed
     finally:
         dg.write_text(orig_d)
+    # redirect-detection mutator: neuter the fused-redirect regex; a `2>gate` write must then
+    # NO LONGER be denied — proving the write-shape guard catches gate-truncation (audit R11-02).
+    spf = ROOT / "hooks" / "shellparse.py"
+    orig = spf.read_text()
+    try:
+        spf.write_text(orig.replace(
+            'REDIR_FUSED = re.compile(r"^(?:\\d+|&)?>{1,2}[|&]?(.*)$")',
+            'REDIR_FUSED = re.compile(r"^\\0NEVER\\0$")', 1))
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
+            "sf data query --query x -o sf-coffee 2>hooks/lib.py"}})
+        r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                           input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
+        passed = r.returncode != 2
+        print(f"  {'✓' if passed else '✗'} redirect-detection mutator: expected NOT-deny, got exit {r.returncode}")
+        ok &= passed
+    finally:
+        spf.write_text(orig)
+    # wrapper mutator: neuter wrapped_sf; `nice sf … -o prod` must then be allowed — proving the
+    # runner guard is what denies relocation-under-a-wrapper (audit R11-04/R11-06).
+    orig2 = spf.read_text()
+    try:
+        spf.write_text(orig2.replace("def wrapped_sf(argv):",
+                                     "def wrapped_sf(argv):\n    return False  # MUTANT", 1))
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
+            "nice -n 5 sf data create record --sobject Account --values Name=x --target-org acme-prod"}})
+        r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                           input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
+        passed = r.returncode != 2
+        print(f"  {'✓' if passed else '✗'} wrapper (wrapped_sf) mutator: expected NOT-deny, got exit {r.returncode}")
+        ok &= passed
+    finally:
+        spf.write_text(orig2)
     print(f"\n  self-test: {'ALL MUTATORS CAUGHT' if ok else 'FAILURE — a check did not fail when it should'}")
     return ok
 

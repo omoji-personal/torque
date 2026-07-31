@@ -109,9 +109,9 @@ def _is_scratch_org(orgid: str, username: str) -> bool:
     except Exception:
         return False
     for e in res.get("scratchOrgs", []):
-        if norm_id(e.get("orgId", "")) == orgid:
-            return True
-        if username and (e.get("username") == username or e.get("alias") == username):
+        # Match by orgId ONLY. username/alias equality was forgeable via `sf alias set`
+        # (audit R11-07), which would let a trial PRODUCTION org classify as scratch.
+        if orgid and norm_id(e.get("orgId", "")) == orgid:
             return True
     return False
 
@@ -229,14 +229,19 @@ def token_path(orgid: str, op_class: str, digest: str = "") -> Path:
     return TOKENS / f"{key}.token"
 
 def consume_token(orgid: str, op_class: str, digest: str = "") -> bool:
-    """Verify a single-use, HMAC-SIGNED token. Forging requires the anchor secret, which
-    lives outside the workspace and is Bash-read-denied — so an agent cannot mint one by
-    writing a token file. Same-uid disclosure of the secret is the Layer-0 boundary."""
+    """Verify a single-use, HMAC-SIGNED token. Consumed via an ATOMIC rename-claim BEFORE
+    reading (audit R11-09): two concurrent gate processes cannot both read the same token —
+    only the winner of os.rename proceeds; the loser gets ENOENT. Forging requires the anchor
+    secret (operator-only); same-uid disclosure of the secret is the Layer-0 boundary."""
     p = token_path(orgid, op_class, digest)
-    if not p.exists(): return False
+    claim = Path(str(p) + f".claim.{os.getpid()}")
     try:
-        payload = json.loads(p.read_text())
-        p.unlink()                                    # single-use, consumed on read
+        os.rename(p, claim)                           # atomic single-use claim
+    except OSError:
+        return False
+    try:
+        payload = json.loads(claim.read_text())
+        claim.unlink()
         sig = payload.pop("sig", None)
         if not sig or not _hmac.compare_digest(sig, sign(payload)):
             audit("DENY", f"token signature invalid for {op_class} on {orgid}")
@@ -244,6 +249,8 @@ def consume_token(orgid: str, op_class: str, digest: str = "") -> bool:
         return payload.get("orgId") == orgid and payload.get("op") == op_class \
             and payload.get("digest", "") == digest and payload.get("exp", 0) > time.time()
     except Exception:
+        try: claim.unlink()
+        except OSError: pass
         return False
 
 # ---- protected objects ---------------------------------------------------
@@ -279,13 +286,14 @@ def run_gate(main_fn, hook_id: str):
 # ---- protected paths: agent Bash must not write these (realpath-resolved) -------------
 def protected_write_paths():
     hd = TORQUE_HOME
+    # every entry .resolve()'d so a symlink cannot dodge the equality/prefix match (audit R11 RU)
     return [str((hd/"hooks").resolve()), str((hd/"bin").resolve()),
             str((hd/".claude"/"settings.json").resolve()),
             str((hd/"harness"/"checks").resolve()),
             str(ALLOWLIST.resolve()), str(PROTECTED.resolve()),
-            str((hd/"harness"/"checks"/"cli-write-surface.json")),
+            str((hd/"harness"/"checks"/"cli-write-surface.json").resolve()),
             str((hd/"harness"/"checks"/"clean-ip.rules").resolve()),
-            str(CACHE), str(ANCHOR.resolve())]
+            str(CACHE.resolve()), str(ANCHOR.resolve())]
 
 def is_protected_target(path_str: str) -> bool:
     try: rp = str(Path(path_str).resolve())

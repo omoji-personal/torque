@@ -1,20 +1,12 @@
 """Shared shell + Salesforce-CLI analysis for the Torque gates.
 
 ONE classifier, used by BOTH prod_write_gate and destructive_data_gate, so the two hooks can
-never disagree about whether a command runs `sf` or which subcommand it is. The round-10
-panel (codex + kimi executed-vs-real-sf + Claude hostile-qa) proved the gates must decide
-"is this sf, and which subcommand" from a single, shared, expansion-aware argv classifier —
-never from raw-text regex, and never by resolving through wrappers.
-
-Design law: FAIL CLOSED on any segment that could reach `sf` but whose command cannot be
-statically resolved to the literal program `sf`/`sfdx`. This process performs NO shell
-expansion, so anything that only becomes `sf` at exec time is denied, not guessed:
-  - parameter/ANSI-C indirection  x=sf; $x …   /   s$'\\x66' …            (indirect argv0)
-  - command/process substitution  $(…) `…` <(…) >(…)  and ( ) { } groups
-  - wrappers & unknown runners     nice -n 5 sf …  sudo -u root sf …  caffeinate sf …
-  - interpreters & here-strings    bash -c '…sf…'   eval sf …   bash <<< 'sf …'
-  - xargs/parallel stdin commands  echo sf … | xargs -J{} {}
-  - cd-desync writes to the gate   cd hooks && echo x > lib.py
+never disagree about whether a command runs `sf`. Rounds 10–11 (codex shell-semantics, kimi
+executed-vs-real-sf, Claude hostile-qa) proved the gates must decide "is this sf, and which
+subcommand" from parsed argv — never raw-text regex — and must FAIL CLOSED on any indirection
+that could reach `sf` but cannot be statically resolved. Every bypass found routed AROUND the
+sf-base0 classifier (relocation under a runner, glued redirect, legacy colon syntax, MCP
+naming), so the fixes harden those seams while keeping direct-`sf` authorization intact.
 """
 import os, re, shlex, hashlib
 from pathlib import Path
@@ -22,25 +14,28 @@ import lib
 
 TARGET_FLAGS = {"--target-org", "-o", "--targetusername", "-u"}
 INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "eval", "source", ".",
-                "python", "python2", "python3", "perl", "ruby", "node", "deno", "awk",
-                "xargs", "parallel"}
-# Programs that exec another command given as their argument(s). We never resolve THROUGH them
-# (arity is unsound — audit R10-04); if one is argv0 and any literal `sf` token appears, deny.
-WRAPPERS = {"env", "nice", "sudo", "doas", "ionice", "stdbuf", "nohup", "setsid", "time",
-            "command", "exec", "builtin", "caffeinate", "arch", "timeout", "flock", "script",
-            "watch", "chrt", "taskset", "unbuffer", "gtimeout", "proxychains", "strace", "ltrace"}
+                "python", "python2", "python3", "perl", "ruby", "node", "deno", "awk"}
+# sf CLI topics — a standalone `sf` token followed by one of these (or a target flag) is an sf
+# invocation, even under an unknown runner. Lets `grep sf file` through (no topic follows).
+SF_TOPICS = {"data", "sobject", "org", "project", "apex", "package", "schema", "alias",
+             "config", "limits", "user", "community", "agent", "api", "auth", "doctor",
+             "plugins", "which", "autocomplete", "info", "version", "help", "deploy",
+             "retrieve", "source", "mdapi", "lightning", "static-resource"}
+# sf global flags that may precede the verb; skipped when locating the subcommand.
+GLOBAL_FLAGS = {"--json", "--loglevel", "--flags-dir"}
+# opaque file writers that can rewrite the gate without naming a simple target (extract/patch).
+OPAQUE_WRITERS = {"patch", "unzip", "cpio", "ditto", "unar", "7z", "7za", "gpatch"}
+GIT_WRITE_SUBS = {"checkout", "restore", "reset", "switch", "rm", "mv", "clean", "stash",
+                  "apply", "am", "revert", "cherry-pick"}
 
-# sf/sfdx subcommands that only READ — no org authorization required. Broad prefixes that hide
-# writes (package version create/promote, plugins install) were removed (audit T10-05/R10-R1).
 SF_READS = {
-    ("data", "query"), ("data", "search"), ("data", "export"), ("data", "resume"),
-    ("sobject", "describe"), ("sobject", "list"),
-    ("limits",), ("doctor",), ("version",), ("help",), ("which",),
+    ("data", "query"), ("data", "search"), ("data", "export"), ("sobject", "describe"),
+    ("sobject", "list"), ("limits",), ("doctor",), ("version",), ("help",), ("which",),
     ("org", "display"), ("org", "list"), ("org", "open"), ("org", "login"), ("org", "logout"),
-    ("apex", "list"), ("apex", "tail"), ("apex", "get"),
-    ("project", "retrieve"), ("project", "generate"), ("project", "convert"),
-    ("package", "installed"), ("config", "get"), ("config", "list"),
-    ("alias",), ("autocomplete",), ("info",), ("community", "list"), ("agent", "preview"),
+    ("apex", "list"), ("apex", "tail"), ("apex", "get"), ("project", "retrieve"),
+    ("project", "generate"), ("project", "convert"), ("package", "installed"),
+    ("config", "get"), ("config", "list"), ("alias",), ("autocomplete",), ("info",),
+    ("community", "list"), ("agent", "preview"),
 }
 SF_READ3 = {("package", "version", "list"), ("package", "version", "report"),
             ("package", "version", "displayancestry"), ("package", "version", "displaydependencies"),
@@ -51,23 +46,18 @@ COLON_READ = ("force:schema", "force:org:display", "force:org:list", "force:org:
               "force:data:tree:export", "force:mdapi:retrieve", "force:source:retrieve",
               "force:package:installed", "force:apex:log", "force:apex:class:list")
 
-# "sf-suspicious": a sign of a Salesforce WRITE. Keyed on the long org flags and write-shaped
-# subcommand verbs — NOT the short -o/-u (which false-positive on `ls -o`, `sort -o`) and NOT
-# the literal token "sf" (which false-positives on `grep sf`). Over-broad here only ever fires
-# a deny on a NON-literal-sf command, which is safe.
 SF_SUSPICIOUS = re.compile(
     r"(--target-org|--targetusername|--flags-dir|"
     r"\b(apex\s+run|data\s+(create|update|delete|upsert|import)|"
     r"project\s+deploy|project\s+delete\s+source|org\s+(assign|create|delete|enable|disable)|"
     r"user\s+(create|password)|package\s+(version|install|uninstall|create|delete|promote)|"
-    r"force:(data|apex|source|mdapi|package)|force:org:(create|delete)))", re.I)
+    r"api\s+request|force:(data|apex|source|mdapi|package)|force:org:(create|delete)))", re.I)
 SF_WORD = re.compile(r"(?:^|[\s'\";|&(`])s\s*f(?:dx)?(?:[\s'\";|&)`]|$)", re.I)
 
 WRITE_SHAPE_CMDS = {"cp", "mv", "dd", "tee", "ln", "install", "truncate", "rsync"}
 PERM_CMDS = {"chmod", "chown", "chgrp", "chflags", "rm", "rmdir", "unlink", "shred"}
-REDIR_RE = re.compile(r"^&?\d*>>?\|?$")
-# Distinctive gate/config filenames that must never be a write target, at ANY path (audit
-# R10-06 defense-in-depth — resolves the cd-desync class even if cwd tracking is imperfect).
+CD_FLAGS = {"-P", "-L", "-e", "-@", "-"}
+REDIR_FUSED = re.compile(r"^(?:\d+|&)?>{1,2}[|&]?(.*)$")   # > >> 1> 2>> &> >| >& (+ glued path)
 PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destructive_data_gate.py",
                        "lib_cli.py", "settings.json", "writable-orgs.json", "protected-objects",
                        "cli-write-surface.json", "clean-ip.rules", ".classify-cache.json",
@@ -76,7 +66,7 @@ PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destruc
 
 
 def strip_continuations(cmd: str) -> str:
-    return re.sub(r"\\\n", "", cmd)                   # shell removes backslash-newline
+    return re.sub(r"\\\n", "", cmd)
 
 
 def split_segments(cmd: str):
@@ -97,7 +87,9 @@ def split_segments(cmd: str):
             buf.append(c); buf.append(cmd[i + 1]); i += 2; continue
         if cmd[i:i + 2] in ("&&", "||"):
             segs.append("".join(buf)); buf = []; i += 2; continue
-        if c in (";", "|", "&", "\n", "{", "}", "(", ")"):     # groups are boundaries (R10-02)
+        if c == "|" and buf and buf[-1] == ">":       # noclobber `>|` is a redirect, not a pipe
+            buf.append(c); i += 1; continue
+        if c in (";", "|", "&", "\n", "{", "}", "(", ")"):
             segs.append("".join(buf)); buf = []; i += 1; continue
         buf.append(c); i += 1
     if quote:
@@ -112,10 +104,26 @@ def grouping_or_subst(cmd: str) -> bool:
 
 
 def anchor_ref(tok: str) -> bool:
+    """Deny any reference to the trust anchor EXCEPT a read of the approved-apex copy. Resolves
+    against the ACTUAL anchor paths (audit R11-01/R11-10 — a custom TORQUE_ANCHOR or a path
+    without the literal '.torque' would slip a substring-only test)."""
     low = tok.lower()
-    if ".torque" not in low:
+    if ".torque" in low and "/approved/" not in low and not low.rstrip("/").endswith(".torque/approved"):
+        return True
+    try:
+        rp = Path(os.path.expanduser(tok)).resolve()
+        rps = str(rp)
+    except Exception:
         return False
-    return "/approved/" not in low and not low.rstrip("/").endswith(".torque/approved")
+    for base in (lib.SECRET, lib.TOKENS):
+        b = str(base.resolve())
+        if rps == b or rps.startswith(b + os.sep):
+            return True
+    a = str(lib.ANCHOR.resolve())
+    ap = str(lib.APPROVED.resolve())
+    if (rps == a or rps.startswith(a + os.sep)) and not (rps == ap or rps.startswith(ap + os.sep)):
+        return True
+    return False
 
 
 def indirect(tok: str) -> bool:
@@ -158,17 +166,6 @@ def is_dry_run(sf_args):
     return any(a in ("--dry-run", "--checkonly", "--check-only") for a in sf_args)
 
 
-def subcommand(sf_args):
-    """The leading positional subcommand path (`sf <topic> <action> …`), stopping at the first
-    flag — flag VALUES are not part of the subcommand and must not pollute it."""
-    out = []
-    for a in _cut_ddash(sf_args):
-        if a.startswith("-"):
-            break
-        out.append(a.lower())
-    return tuple(out)
-
-
 def has_record_id(sf_args):
     for a in _cut_ddash(sf_args):
         if a in ("-i", "--record-id") or a.startswith("--record-id=") or re.match(r"^-i\S", a):
@@ -186,35 +183,40 @@ def file_value(sf_args):
     return None
 
 
-def classify_destructive(sf_args):
-    """Return op_class if the parsed sf write is destructive, else None. Parsed argv only —
-    never raw-text regex (audit T10-02/R10-R2)."""
-    sub = subcommand(sf_args)
-    if not sub:
-        return None
-    if sub[:2] == ("apex", "run") or sub[0].startswith("force:apex"):
-        return "apex"
-    if sub[:3] == ("data", "delete", "bulk") or "--hard-delete" in sf_args:
-        return "bulk-delete"
-    if sub[:3] == ("data", "update", "bulk") or sub[:2] == ("data", "import") \
-       or sub[:2] == ("data", "upsert"):
-        return "bulk-write"
-    if sub[:3] == ("data", "delete", "record") and not has_record_id(sf_args):
-        return "where-delete"
-    if sub[:3] == ("data", "update", "record") and not has_record_id(sf_args):
-        return "where-update"
-    if sub[:3] == ("project", "delete", "source") or sub[0].startswith("force:source:delete") \
-       or any(a in ("--pre-destructive-changes", "--post-destructive-changes")
-              or a.startswith(("--pre-destructive-changes=", "--post-destructive-changes="))
-              for a in sf_args):
-        return "destructive-metadata"
+def sobject_value(sf_args):
+    args = _cut_ddash(sf_args)
+    for i, a in enumerate(args):
+        if a in ("--sobject", "-s", "--sobjecttype", "--sobjecttypecategory") and i + 1 < len(args):
+            return args[i + 1]
+        for f in ("--sobject=", "-s=", "--sobjecttype="):
+            if a.startswith(f):
+                return a[len(f):]
     return None
+
+
+def subcommand(sf_args):
+    """Leading positional subcommand path, skipping global flags (and their values) that may
+    precede the verb (audit R11-10). Stops at the first non-global flag."""
+    args = _cut_ddash(sf_args)
+    out, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("-"):
+            base = a.split("=", 1)[0]
+            if base in GLOBAL_FLAGS:
+                if "=" not in a and base in ("--loglevel", "--flags-dir") and i + 1 < len(args):
+                    i += 2; continue
+                i += 1; continue
+            break
+        out.append(a.lower()); i += 1
+    return tuple(out)
 
 
 def is_read(sf_args) -> bool:
     pos = subcommand(sf_args)
     if not pos:
-        return True
+        # empty subcommand but real args ⇒ a global flag hid the verb (or malformed) ⇒ NOT read
+        return not any(not a.startswith("-") for a in _cut_ddash(sf_args))
     first = pos[0]
     if ":" in first:
         return first.startswith(COLON_READ)
@@ -222,7 +224,6 @@ def is_read(sf_args) -> bool:
         return pos[:3] in SF_READ3
     if first == "schema" and len(pos) >= 3:
         return pos[:3] in SF_READ3
-    # a validate-only / dry-run deploy pulls nothing and writes nothing → treat as a read
     if pos[:2] == ("project", "deploy") and is_dry_run(sf_args):
         return True
     key1 = (first,)
@@ -230,29 +231,108 @@ def is_read(sf_args) -> bool:
     return key1 in SF_READS or (key2 is not None and key2 in SF_READS)
 
 
+def classify_destructive(sf_args):
+    """Op-class if the parsed sf write is destructive, else None. Covers modern space syntax AND
+    legacy colon syntax (audit R11-04/R11-05) and async-resume completion of bulk jobs."""
+    sub = subcommand(sf_args)
+    if not sub:
+        return None
+    f = sub[0]
+    if sub[:2] == ("apex", "run") or f.startswith("force:apex"):
+        return "apex"
+    if sub[:3] == ("data", "delete", "bulk") or "--hard-delete" in sf_args \
+       or f.startswith("force:data:bulk:delete"):
+        return "bulk-delete"
+    if sub[:3] == ("data", "update", "bulk") or sub[:2] == ("data", "import") \
+       or sub[:2] == ("data", "upsert") or f.startswith(("force:data:bulk:upsert",
+       "force:data:bulk:update", "force:data:tree:import")):
+        return "bulk-write"
+    if (sub[:3] == ("data", "delete", "record") or f.startswith("force:data:record:delete")) \
+       and not has_record_id(sf_args):
+        return "where-delete"
+    if (sub[:3] == ("data", "update", "record") or f.startswith("force:data:record:update")) \
+       and not has_record_id(sf_args):
+        return "where-update"
+    if sub[:3] in (("data", "delete", "resume"), ("data", "update", "resume"),
+                   ("data", "upsert", "resume")):
+        return "bulk-write"
+    if sub[:3] == ("project", "delete", "source") or f.startswith("force:source:delete") \
+       or any(a in ("--pre-destructive-changes", "--post-destructive-changes")
+              or a.startswith(("--pre-destructive-changes=", "--post-destructive-changes="))
+              for a in sf_args) or "destructivechanges" in " ".join(sf_args).lower():
+        return "destructive-metadata"
+    return None
+
+
+def wrapped_sf(argv):
+    """True if some token is a standalone sf/sfdx AND the tokens after it look like an sf
+    invocation (an sf topic, colon-form, or a target flag). Distinguishes `nice sf data delete`
+    (deny) from `grep sf file` / `echo 'sf ...'` (sf is a search/quoted arg — allow)."""
+    for i, t in enumerate(argv):
+        if os.path.basename(t).lower() in ("sf", "sfdx"):
+            rest = argv[i + 1:]
+            if not rest:
+                continue
+            first = rest[0].lower()
+            if first.startswith("force:") or first.split(":")[0] in SF_TOPICS or first in SF_TOPICS:
+                return True
+            if any(x in TARGET_FLAGS or x.startswith(("--target-org", "--targetusername"))
+                   or re.match(r"^-[ou]\S", x) for x in rest):
+                return True
+    return False
+
+
+def _sed_inplace(argv):
+    return any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in argv[1:])
+
+
 def _write_shape_targets(argv):
     base0 = os.path.basename(argv[0]).lower() if argv else ""
     cand = []
     for i, tok in enumerate(argv):
-        if REDIR_RE.match(tok) and i + 1 < len(argv):
-            cand.append(argv[i + 1])
-        elif tok.startswith((">", ">>")) and len(tok.lstrip(">|&")) > 0:
-            cand.append(tok.lstrip(">|&"))
-    if base0 in WRITE_SHAPE_CMDS or (base0 == "sed" and "-i" in argv) or base0 in PERM_CMDS:
+        m = REDIR_FUSED.match(tok)
+        if m:
+            if m.group(1):
+                cand.append(m.group(1))               # fused: 2>path, >|path, >&path
+            elif i + 1 < len(argv):
+                cand.append(argv[i + 1])              # bare: > path
+    if base0 in WRITE_SHAPE_CMDS or (base0 == "sed" and _sed_inplace(argv)) or base0 in PERM_CMDS:
         cand += [a for a in argv[1:] if not a.startswith("-")]
         cand += [a.split("=", 1)[1] for a in argv if a.startswith("of=")]
     return base0, cand
 
 
+def _protected_path(pathlike, cwd):
+    if not pathlike:
+        return False
+    if os.path.basename(pathlike) in PROTECTED_BASENAMES:
+        return True
+    cc = os.path.expanduser(pathlike)
+    rp = cc if os.path.isabs(cc) else str((cwd / cc))
+    try:
+        rp = str(Path(rp).resolve())
+    except Exception:
+        pass
+    return anchor_ref(rp) or lib.is_protected_target(rp) or _under_local(rp)
+
+
+def _under_local(path_str):
+    try:
+        rp = str(Path(os.path.expanduser(path_str)).resolve())
+    except Exception:
+        return False
+    lp = str(lib.LOCAL.resolve())
+    return rp == lp or rp.startswith(lp + os.sep)
+
+
 def check_write_shapes(segs):
-    """Walk segments tracking cwd (cd-desync, R10-06); deny a write/perm op whose target is the
-    trust anchor, a protected path, the local store, or a distinctive gate filename. Returns a
-    (reason, fingerprint) deny tuple or None."""
-    cwd = Path(os.environ.get("TORQUE_HOME", os.getcwd()))
+    """Walk segments tracking cwd (cd-desync); deny a write/perm/opaque-writer op that reaches a
+    protected path or the gate itself. Returns (reason, fingerprint) or None. Fails closed on
+    opaque extractors/patchers and VCS restores that could rewrite the gate (audit R11-03)."""
     try:
         cwd = Path(os.getcwd())
     except Exception:
-        pass
+        cwd = Path(os.environ.get("TORQUE_HOME", "."))
     for seg in segs:
         seg = seg.strip()
         if not seg:
@@ -264,47 +344,43 @@ def check_write_shapes(segs):
         if not argv:
             continue
         base0 = os.path.basename(argv[0]).lower()
-        if base0 in ("cd", "pushd") and len(argv) > 1:
-            tgt = os.path.expanduser(argv[1])
-            newcwd = Path(tgt) if os.path.isabs(tgt) else (cwd / tgt)
-            # cd INTO a protected dir is itself the R10-06 setup → deny
-            try:
-                r = newcwd.resolve()
-                if lib.is_protected_target(str(r)) or anchor_ref(str(r)) or ".torque" in str(r).lower():
-                    return ("cd into a protected directory (gate/anchor) — refused", "cd-protected")
-            except Exception:
-                pass
-            cwd = newcwd
+        if base0 in ("cd", "pushd"):
+            rest = [a for a in argv[1:] if a not in CD_FLAGS and not a.startswith("-")]
+            if rest:
+                tgt = os.path.expanduser(rest[0])
+                newcwd = Path(tgt) if os.path.isabs(tgt) else (cwd / tgt)
+                try:
+                    r = newcwd.resolve()
+                    if lib.is_protected_target(str(r)) or anchor_ref(str(r)) or ".torque" in str(r).lower():
+                        return ("cd into a protected directory (gate/anchor) — refused", "cd-protected")
+                except Exception:
+                    pass
+                cwd = newcwd
+            continue
+        # opaque extractors / patchers: cannot see their targets → fail closed
+        if base0 in OPAQUE_WRITERS:
+            return (f"opaque file writer ({base0}) can rewrite gate files — refused", "opaque-writer")
+        if base0 in ("tar", "bsdtar", "gtar", "pax"):
+            if "--extract" in argv or any(re.match(r"^-?[A-Za-z]*x", a) for a in argv[1:] if not a.startswith("--")):
+                return (f"archive extraction ({base0}) can rewrite gate files — refused", "opaque-writer")
+        if base0 == "git":
+            sub = next((a for a in argv[1:] if not a.startswith("-")), "")
+            if sub in GIT_WRITE_SUBS:
+                if sub in ("apply", "am", "stash", "cherry-pick", "revert"):
+                    return (f"git {sub} can rewrite tracked gate files — refused", "opaque-writer")
+                paths = argv[argv.index("--") + 1:] if "--" in argv else [a for a in argv[2:] if not a.startswith("-")]
+                for p in paths:
+                    if _protected_path(p, cwd) or os.path.basename(p.rstrip("/")) in ("hooks", "bin", ".claude"):
+                        return (f"git {sub} targeting protected paths — refused", "protected-write")
             continue
         _, cands = _write_shape_targets(argv)
         for c in cands:
-            if not c:
-                continue
-            if os.path.basename(c) in PROTECTED_BASENAMES:
-                return (f"write to a protected gate file: {os.path.basename(c)}", "protected-write")
-            cc = os.path.expanduser(c)
-            rp = cc if os.path.isabs(cc) else str((cwd / cc))
-            try:
-                rp = str(Path(rp).resolve())
-            except Exception:
-                pass
-            if (anchor_ref(rp) or lib.is_protected_target(rp) or _under_local(rp)):
+            if _protected_path(c, cwd):
                 return (f"write to a protected path: {c}", "protected-write")
     return None
 
 
-def _under_local(path_str):
-    try:
-        rp = str(Path(os.path.expanduser(path_str)).resolve())
-    except Exception:
-        return False
-    lp = str(lib.LOCAL.resolve())
-    return rp == lp or rp.startswith(lp + "/")
-
-
 def analyze_bash(cmd: str):
-    """{'deny': (reason, fingerprint)} to block, or {'deny': None, 'writes': [sf_args, …]}.
-    `writes` = args AFTER the sf/sfdx token for each DIRECT sf WRITE. Fails closed throughout."""
     cmd = strip_continuations(cmd)
     segs, ok = split_segments(cmd)
     if not ok:
@@ -315,7 +391,6 @@ def analyze_bash(cmd: str):
     ws = check_write_shapes(segs)
     if ws:
         return {"deny": ws}
-    # xargs/parallel take the command word from stdin — undecidable; deny if sf appears anywhere
     if re.search(r"(?:^|[\s;&|])(xargs|parallel)\b", cmd) and (SF_WORD.search(cmd) or SF_SUSPICIOUS.search(cmd)):
         return {"deny": ("sf routed through xargs/parallel — target not authorizable", "indirect-sf")}
     writes = []
@@ -336,15 +411,13 @@ def analyze_bash(cmd: str):
                 return {"deny": ("reference to the trust anchor (~/.torque) — secret and tokens "
                                  "are operator-only", "anchor-ref")}
         a, assign_vals = _strip_assignments(argv)
-        # an assignment whose VALUE carries a Salesforce op is a hide-then-expand (R10-03)
         for v in assign_vals:
-            if SF_SUSPICIOUS.search(v):
+            if SF_SUSPICIOUS.search(v) or os.path.basename(v).lower() in ("sf", "sfdx"):
                 return {"deny": ("Salesforce operation hidden in a shell assignment value",
                                  "indirect-sf")}
         if not a:
             continue
         base0 = os.path.basename(a[0]).lower()
-        suspicious = bool(SF_SUSPICIOUS.search(seg))
         if base0 in ("sf", "sfdx"):
             sf_args = a[1:]
             if has_flags_dir(sf_args) and not is_read(sf_args):
@@ -357,54 +430,68 @@ def analyze_bash(cmd: str):
         if indirect(a[0]):
             return {"deny": ("indirect command invocation ($VAR/$()/backtick) cannot be "
                              "authorized — call `sf` literally", "indirect-argv0")}
-        if base0 in INTERPRETERS and (suspicious or SF_WORD.search(seg)):
+        if base0 in INTERPRETERS and (SF_WORD.search(seg) or SF_SUSPICIOUS.search(seg)
+                                      or "$" in seg or "`" in seg):
             return {"deny": (f"Salesforce operation via interpreter/here-string ({base0}) — "
                              "not authorizable", "interp-sf")}
-        if base0 in WRAPPERS and (suspicious or SF_WORD.search(seg)):
-            return {"deny": (f"Salesforce operation under a wrapper/runner ({base0}) — call "
-                             "`sf` directly", "wrapper-sf")}
-        if suspicious:
-            return {"deny": ("Salesforce operation under an unrecognized command — not "
-                             "authorizable", "wrapper-sf")}
+        if wrapped_sf(a):
+            return {"deny": ("Salesforce operation under a wrapper/runner — call `sf` directly",
+                             "wrapper-sf")}
+        # else: a non-sf command with sf only as data (grep sf, echo 'sf ...') → allowed
     return {"deny": None, "writes": writes}
 
 
-# ---- MCP surface (shared) -------------------------------------------------
+# ---- MCP surface (shared, TRUE default-deny) ------------------------------
 MCP_ORG_KEYS = ("targetOrg", "target-org", "targetusername", "username", "usernameOrAlias", "org")
-MCP_READ = re.compile(r"(query|describe|list|get|retrieve|report|preview|display|overview|"
-                      r"logs?|read|search|installed|status|resume|analyze|rules?|username)$", re.I)
-MCP_WRITEISH = re.compile(r"(deploy|delete|create|update|upsert|assign|execute|apex|anonymous|"
-                          r"bulk|purge|destroy|install|uninstall|import|merge|undelete)", re.I)
+MCP_WRITE_LEADS = {"deploy", "delete", "create", "update", "upsert", "assign", "execute", "purge",
+                   "destroy", "remove", "drop", "truncate", "erase", "install", "uninstall",
+                   "import", "merge", "undelete", "activate", "deactivate", "enable", "disable",
+                   "publish", "submit", "approve", "reject", "convert", "restore", "schedule",
+                   "promote", "refresh", "set", "add", "modify", "insert", "write", "complete",
+                   "cancel", "abort", "quick", "undeploy", "apex", "anonymous"}
+MCP_READ_LEADS = {"query", "get", "list", "describe", "retrieve", "read", "search", "preview",
+                  "display", "overview", "status", "count", "fetch", "show", "find", "explain",
+                  "inspect", "view", "check", "lookup", "soql", "tooling", "schema"}
 
 
 def mcp_target(tinput):
     return next((tinput.get(k) for k in MCP_ORG_KEYS if tinput.get(k)), None)
 
 
+def _mcp_destructive(name, tinput):
+    no_id = not (tinput.get("recordId") or tinput.get("id") or tinput.get("record-id"))
+    if "apex" in name or "anonymous" in name:
+        body = tinput.get("apexCode") or tinput.get("apex") or tinput.get("code") or ""
+        return ("apex", hashlib.sha256(body.encode()).hexdigest()[:16], body)
+    if re.search(r"(delete|purge|destroy|remove|erase|truncate|drop)", name):
+        if re.search(r"(bulk|hard|all|mass)", name):
+            return ("bulk-delete", "", str(tinput))
+        return ("where-delete" if no_id else None, "", str(tinput)) if no_id else None
+    if re.search(r"bulk|import", name):
+        return ("bulk-write", "", str(tinput))
+    if re.search(r"(update|upsert)", name) and no_id:
+        return ("where-update", "", str(tinput))
+    if "deploy" in name and (tinput.get("preDestructiveChanges") or tinput.get("postDestructiveChanges")
+                             or tinput.get("pre-destructive-changes") or tinput.get("post-destructive-changes")):
+        return ("destructive-metadata", "", str(tinput))
+    return None
+
+
 def mcp_analyze(tool, tinput):
-    """{'read':True} | {'write':target, 'destructive':(op,digest,body)|None}. DEFAULT-DENY: an
-    org-touching tool not on the read allowlist is a write (audit T10-04/R10-08)."""
+    """{'read':True} | {'write':target, 'destructive':(op,digest,body)|None}. TRUE default-deny:
+    an org-touching tool that is not clearly a read is a write (audit R11-04/R11-05)."""
     name = tool.split("__")[-1].lower()
     target = mcp_target(tinput)
-    if MCP_READ.search(name):
+    lead = re.split(r"[_-]", name)[0]
+    dest = _mcp_destructive(name, tinput)
+    writeish = lead in MCP_WRITE_LEADS or "apex" in name or "anonymous" in name
+    readish = lead in MCP_READ_LEADS or name.startswith(("soql", "tooling", "schema"))
+    if writeish or dest:
+        return {"write": target, "destructive": dest}
+    if readish and not target:
         return {"read": True}
-    if target is None and not MCP_WRITEISH.search(name):
-        return {"read": True}
-    dest = None
-    if re.search(r"(execute_)?(anonymous_)?apex|anonymous", name):
-        body = tinput.get("apexCode") or tinput.get("apex") or tinput.get("code") or ""
-        dest = ("apex", hashlib.sha256(body.encode()).hexdigest()[:16], body)
-    elif re.search(r"(delete|purge|destroy)", name) and re.search(r"(bulk|hard)", name):
-        dest = ("bulk-delete", "", str(tinput))
-    elif re.search(r"bulk|import", name):
-        dest = ("bulk-write", "", str(tinput))
-    elif re.search(r"delete_records?$", name) and not (tinput.get("recordId") or tinput.get("id")
-                                                       or tinput.get("record-id")):
-        dest = ("where-delete", "", str(tinput))
-    elif re.search(r"(update|upsert)_records?$", name) and not (tinput.get("recordId")
-             or tinput.get("id") or tinput.get("record-id")):
-        dest = ("where-update", "", str(tinput))
-    elif "deploy" in name and (tinput.get("preDestructiveChanges") or tinput.get("postDestructiveChanges")
-                               or tinput.get("pre-destructive-changes") or tinput.get("post-destructive-changes")):
-        dest = ("destructive-metadata", "", str(tinput))
-    return {"write": target, "destructive": dest}
+    if readish and target:
+        return {"read": True}                          # a named read with an org param is a read
+    if target is not None:
+        return {"write": target, "destructive": None}  # org-touching, unknown verb ⇒ default-deny
+    return {"read": True}                               # no org, not writeish ⇒ local tool

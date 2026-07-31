@@ -10,8 +10,12 @@ approved immutable copy at ~/.torque/approved/<digest>.apex (TOCTOU-safe).
 """
 import os, sys, hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import lib
-import shellparse
+try:
+    import lib
+    import shellparse
+except Exception as _e:
+    print(f"TORQUE GATE: import failed, failing closed: {_e}", file=sys.stderr)
+    sys.exit(2)
 from pathlib import Path
 
 HOOK = "destructive_data_gate"
@@ -67,8 +71,13 @@ def _gate_write(sf_args):
     if tset:
         _, oid, _ = lib.classify(next(iter(tset)))
         orgid = oid or "?"
-    # protected-object shield over the SHLEX-DECODED positional token stream (audit R10-R3)
-    _shield_tokens([a for a in sf_args if not a.startswith("-")], orgid)
+    # protected-object shield over the SHLEX-DECODED positional token stream (audit R10-R3),
+    # PLUS the parsed --sobject/-s value incl. the equals form --sobject=X (audit R11-07)
+    shield_toks = [a for a in sf_args if not a.startswith("-")]
+    sv = shellparse.sobject_value(sf_args)
+    if sv:
+        shield_toks.append(sv)
+    _shield_tokens(shield_toks, orgid)
     if op == "apex":
         fpath = shellparse.file_value(sf_args)
         if not fpath:

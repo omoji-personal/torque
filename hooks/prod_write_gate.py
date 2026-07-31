@@ -7,11 +7,30 @@ command runs sf. This gate answers one question per write: is the resolved targe
 Non-production ⇒ allowlist + live verdict. Production ⇒ operator override only (lib handles it).
 """
 import os, sys
+from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import lib
-import shellparse
+try:
+    import lib
+    import shellparse
+except Exception as _e:                                # a tampered lib/shellparse must NOT fail open
+    print(f"TORQUE GATE: import failed, failing closed: {_e}", file=sys.stderr)
+    sys.exit(2)
 
 HOOK = "prod_write_gate"
+
+
+def _is_sf_auth(path):
+    """The sf CLI auth store (~/.sfdx, ~/.sf) holds accessToken/sfdxAuthUrl — reading it via the
+    Read tool would let the agent lift a live token and bypass sf entirely (audit R11-06)."""
+    try:
+        rp = str(Path(os.path.expanduser(path)).resolve())
+    except Exception:
+        return False
+    for d in (Path.home() / ".sfdx", Path.home() / ".sf"):
+        dp = str(d.resolve())
+        if rp == dp or rp.startswith(dp + os.sep):
+            return True
+    return False
 
 
 def handle_bash(cmd):
@@ -63,6 +82,9 @@ def handle_read(tinput):
     path = tinput.get("file_path", "")
     if shellparse.anchor_ref(path):
         lib.deny("reading the trust anchor (signing secret / tokens) is denied", "anchor-read", HOOK)
+    if _is_sf_auth(path):
+        lib.deny("reading the sf CLI auth store (~/.sfdx, ~/.sf) is denied — it holds live "
+                 "access tokens", "auth-read", HOOK)
     lib.allow()
 
 

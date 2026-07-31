@@ -46,7 +46,11 @@ def _tty_is_login():
         who = subprocess.run(["who"], capture_output=True, text=True, timeout=10).stdout
     except Exception:
         return False
-    return any(short in ln.split()[1:2] or short in ln for ln in who.splitlines())
+    for ln in who.splitlines():                        # exact tty-column match (audit R11-R1)
+        parts = ln.split()
+        if len(parts) >= 2 and parts[1] == short:
+            return True
+    return False
 
 
 def _ancestry_names():
@@ -128,8 +132,10 @@ def _mint(op, orgid, digest=""):
 def _write_approved_apex(apex_src):
     body = Path(os.path.expanduser(apex_src)).read_bytes()
     digest = hashlib.sha256(body).hexdigest()[:16]
-    sys.stderr.write("\n----- apex to approve -----\n"
-                     + body.decode("utf-8", "replace")[:2000] + "\n---------------------------\n")
+    text = body.decode("utf-8", "replace")
+    # show the FULL apex — never truncate (audit R11-09: a payload could hide past a cutoff)
+    sys.stderr.write(f"\n----- apex to approve ({text.count(chr(10)) + 1} lines, sha {digest}) -----\n"
+                     + text + "\n--------------------------------------------------\n")
     lib.APPROVED.mkdir(parents=True, exist_ok=True); os.chmod(lib.APPROVED, 0o700)
     dst = lib.APPROVED / f"{digest}.apex"
     dst.write_bytes(body); os.chmod(dst, 0o400)
