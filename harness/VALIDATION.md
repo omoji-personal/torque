@@ -12,7 +12,7 @@ needs no org at all.
 
 ## P0 — the loop proves itself · 2026-07-31
 
-**Commit:** `dbe9122` · **Target:** sf-coffee (personal Developer Edition) · **Verdict: PASS**
+**Commit:** `1ca3e22` · **Target:** sf-coffee (personal Developer Edition) · **Verdict: PASS**
 
 | Profile | Checks | Result |
 |---|---|---|
@@ -125,7 +125,7 @@ MFA-enforcement fact.
 
 ## Security hardening — round 10 panel + production override · 2026-07-31
 
-**Commit:** `d3ceb27` · **Target:** sf-coffee · **Verdict: PASS** (23 checks, 6 mutators, 48 fixtures)
+**Commit:** `ad3e931` · **Target:** sf-coffee · **Verdict: PASS** (23 checks, 6 mutators, 48 fixtures)
 
 After P4, the built gates were re-audited by three independent lenses — a shell-semantics
 reviewer, an execute-the-attack reviewer (each exploit run against real `sf` 2.144.6), and an
@@ -155,7 +155,7 @@ Round 11 re-audits the shared parser and the override.
 
 ## Security hardening — rounds 11–13 (adversarial convergence) · 2026-07-31
 
-**Commits:** `d4827b9` → `c97f7c2` · **Target:** sf-coffee · **Verdict: PASS** (23 checks, 10 mutators, 109 fixtures)
+**Commits:** `953c1db` → `47d6d32` · **Target:** sf-coffee · **Verdict: PASS** (23 checks, 10 mutators, 109 fixtures)
 
 The built gates were driven through four full adversarial rounds — three independent lenses
 each (a shell-semantics reviewer, an execute-the-attack reviewer running exploits against a
@@ -199,7 +199,7 @@ classification), not one-off patches.
 
 ## P5 — release · converged and shipped · 2026-07-31
 
-**Attestation:** commit `af928a8`, tree `bfb7b24`, sf 2.144.6, node v24.11.1, denylist digest
+**Attestation:** commit `a33c59c`, tree `bfb7b24`, sf 2.144.6, node v24.11.1, denylist digest
 `129a9dfe…` (`harness/attest/attest-af928a8.json`) · **profile: release · verdict: PASS**
 
 `python3 harness/validate.py --profile release --target-org sf-coffee` is green end to end:
