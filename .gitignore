@@ -1,0 +1,9 @@
+# Content mount — per-firm client work, credentials context, run artifacts. Never publishes.
+local/
+
+# Tooling set — enumerated in harness/checks/tooling-ignore.allowed with reasons.
+__pycache__/
+.sf/
+.sfdx/
+node_modules/
+.venv/
