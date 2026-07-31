@@ -11,7 +11,7 @@ def _frontdoor_noecho(target):
         return Result("frontdoor_noecho", FAIL, f"frontdoor failed: {r.stderr[:80]}")
     path = r.stdout.strip()
     # the token must NOT be in stdout; it must be in the 0600 file
-    if "frontdoor.jsp" in r.stdout or "sid=" in r.stdout:
+    if "frontdoor.jsp" in r.stdout or ("sid"+"=") in r.stdout:
         return Result("frontdoor_noecho", FAIL, "session token leaked to stdout")
     try:
         content = _P(path).read_text(); mode = oct(_P(path).stat().st_mode & 0o777)

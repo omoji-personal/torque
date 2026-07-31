@@ -11,7 +11,8 @@
       {
         "matcher": "mcp__.*__(deploy_metadata|execute_anonymous_apex|create_record|update_record|delete_record|upsert_record|assign_permission_set|bulk_.*)",
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"" }
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"" },
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/destructive_data_gate.py\"" }
         ]
       },
       {

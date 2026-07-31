@@ -24,14 +24,50 @@ org.** Not "asks first" — *ineligible by construction.*
    is on an explicit allowlist AND classifies non-production *at the moment of the write*
    — a live `Organization` query, not an alias or a URL guess. Production and unverifiable
    orgs cannot be allowlisted at all.
-3. **Deterministic gates.** Two hooks fire before every tool call. Writes must name their
-   org explicitly; destructive operations and anonymous Apex require an operator-present
-   approval token. **The agent can request approval — it provably cannot mint one:** the
-   issuer refuses unless run from a real terminal whose process ancestry is clear of the
-   agent. A planted token authorizes exactly one operation, then is gone.
+3. **Deterministic gates.** Two hooks fire before every tool call. They authorize by
+   *parsing* the command — tokenizing arguments and defaulting to deny — not by pattern-
+   matching raw text, so obfuscation (`sf""`, split quotes), compound commands, legacy
+   `force:data:*` verbs, and decoy targets do not slip through. Writes must name their org
+   explicitly; destructive operations and anonymous Apex require an operator-present
+   approval token. **The agent can request approval — through the tool surface it provably
+   cannot mint one:** tokens are HMAC-signed with a secret the agent's own tools are denied
+   any access to, the issuer refuses unless run from a real terminal whose full process
+   ancestry is clear of the agent, and a planted token authorizes exactly one operation then
+   is gone. A crashing gate denies rather than opens.
 4. **Verified enforcement.** Every rule is labeled hook-enforced, harness-enforced, or
    model-honored — and the labels are *checked*, not decorative. Nothing claims more than
    it proves.
+
+## Threat model — what the gates bind, and where the boundary honestly sits
+
+Overclaiming is the fastest way to lose a security reviewer's trust, so here is the exact
+line. The gates are proven — by 40 adversarial fixtures in the harness — to stop **both**
+categories that matter in practice:
+
+- **Accidents**, with certainty: a wrong alias, a forgotten `--target-org` (which would
+  silently use the default org), a fat-fingered bulk delete. This is the dominant real-world
+  risk and it is closed structurally.
+- **Enumerable circumvention** by a capable agent through its tool surface: argument
+  obfuscation, compound and piped commands, quote tricks, legacy CLI verbs, `-u`/
+  `--targetusername` aliases, decoy first-targets, redirects or `cp`/`tee`/`sed -i` aimed at
+  the gate's own files, unsigned or forged approval tokens, and destructive operations
+  routed through MCP instead of Bash. Each has a named, runnable fixture that must deny.
+
+What the gates **do not** claim to stop — and no PreToolUse hook honestly can — is a
+same-user actor who steps *outside* the tool surface:
+
+- disclosing the signing secret through the OS itself (the filesystem trust boundary — if an
+  actor already has your uid and can read `~/.torque/secret` outside the agent's gated tools,
+  that is Layer 0, not something a hook adjudicates), or
+- having the agent write a script and run it, so that `sf` executes as a subprocess the hook
+  never sees.
+
+For those, the load-bearing defense is not the gate — it is **layer 1**: connect production
+read-only, and never leave a production org authenticated in an autonomous session. Because
+production is ineligible by construction, even a write that fully bypasses the gate still
+meets an org that fails the live non-production check. The v2 roadmap closes the subprocess
+channel with a PATH-shim (`sf` resolves to a classifier that runs before exec); v1 raises the
+direct-tool-surface bar as high as a parsing gate honestly can, and states the rest plainly.
 
 ## Why you can believe it
 

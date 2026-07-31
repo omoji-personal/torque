@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Emit a machine-readable attestation of a release run: check outcomes, org verdict,
+toolchain versions, denylist digest, git tree hash. VALIDATION.md is rendered from this."""
+import hashlib, json, subprocess, sys, os
+from pathlib import Path
+ROOT = Path(__file__).resolve().parent.parent
+def sh(*a): return subprocess.run(a, capture_output=True, text=True, cwd=ROOT).stdout.strip()
+DENY = Path.home()/"Desktop"/"torque-planning"/"denylist.txt"
+att = {
+  "tree": sh("git","write-tree"),
+  "head": sh("git","rev-parse","HEAD"),
+  "sf": sh("sf","--version")[:40],
+  "node": sh("node","--version"),
+  "denylist_digest": hashlib.sha256(DENY.read_bytes()).hexdigest()[:16] if DENY.exists() else "ABSENT",
+  "reproduce": "python3 harness/validate.py --profile release --target-org <your-DE-org>",
+}
+out = ROOT/"harness"/"attest"/f"attest-{att['head'][:8]}.json"
+out.parent.mkdir(exist_ok=True); out.write_text(json.dumps(att, indent=2))
+print(json.dumps(att, indent=2))

@@ -271,6 +271,39 @@ def self_test():
             ok &= passed
         finally:
             bak.rename(DENYLIST)
+    # gate anchor-guard mutator: neuter _ref_secret_or_token; a secret-read must then NO
+    # LONGER be denied — proving that guard is what denies it (audit K-1). Restored in finally.
+    pg = ROOT / "hooks" / "prod_write_gate.py"
+    orig = pg.read_text()
+    try:
+        pg.write_text(orig.replace(
+            "def _ref_secret_or_token(tok: str) -> bool:",
+            "def _ref_secret_or_token(tok: str) -> bool:\n    return False  # MUTANT", 1))
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/secret"}})
+        r = subprocess.run([sys.executable, str(pg)], input=ev, capture_output=True,
+                           text=True, cwd=ROOT, timeout=30)
+        passed = r.returncode != 2                     # guard removed ⇒ no longer a deny
+        print(f"  {'✓' if passed else '✗'} gate anchor-guard mutator: expected NOT-deny, got exit {r.returncode}")
+        ok &= passed
+    finally:
+        pg.write_text(orig)
+    # destructive token mutator: neuter _need_token; a bulk delete must then be ALLOWED —
+    # proving the token requirement is load-bearing (audit K-8/CLAUDE-4). Restored in finally.
+    dg = ROOT / "hooks" / "destructive_data_gate.py"
+    orig_d = dg.read_text()
+    try:
+        dg.write_text(orig_d.replace(
+            'def _need_token(orgid, op_class, digest=""):',
+            'def _need_token(orgid, op_class, digest=""):\n    lib.allow()  # MUTANT', 1))
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
+            "sf data delete bulk --sobject Log__c --file ids.csv --target-org sf-coffee"}})
+        r = subprocess.run([sys.executable, str(dg)], input=ev, capture_output=True,
+                           text=True, cwd=ROOT, timeout=90)
+        passed = r.returncode == 0                      # token requirement removed ⇒ allowed
+        print(f"  {'✓' if passed else '✗'} destructive token mutator: expected ALLOW, got exit {r.returncode}")
+        ok &= passed
+    finally:
+        dg.write_text(orig_d)
     print(f"\n  self-test: {'ALL MUTATORS CAUGHT' if ok else 'FAILURE — a check did not fail when it should'}")
     return ok
 
