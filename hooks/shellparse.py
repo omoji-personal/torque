@@ -8,7 +8,7 @@ that could reach `sf` but cannot be statically resolved. Every bypass found rout
 sf-base0 classifier (relocation under a runner, glued redirect, legacy colon syntax, MCP
 naming), so the fixes harden those seams while keeping direct-`sf` authorization intact.
 """
-import os, re, shlex, hashlib
+import os, re, shlex, hashlib, fnmatch
 from pathlib import Path
 import lib
 
@@ -29,7 +29,8 @@ GIT_WRITE_SUBS = {"checkout", "restore", "reset", "switch", "rm", "mv", "clean",
                   "apply", "am", "revert", "cherry-pick"}
 
 SF_READS = {
-    ("data", "query"), ("data", "search"), ("data", "export"), ("sobject", "describe"),
+    ("data", "query"), ("data", "search"), ("data", "export"), ("data", "resume"),
+    ("sobject", "describe"),
     ("sobject", "list"), ("limits",), ("doctor",), ("version",), ("help",), ("which",),
     ("org", "display"), ("org", "list"), ("org", "open"), ("org", "login"), ("org", "logout"),
     ("apex", "list"), ("apex", "tail"), ("apex", "get"), ("project", "retrieve"),
@@ -57,7 +58,7 @@ SF_WORD = re.compile(r"(?:^|[\s'\";|&(`])s\s*f(?:dx)?(?:[\s'\";|&)`]|$)", re.I)
 WRITE_SHAPE_CMDS = {"cp", "mv", "dd", "tee", "ln", "install", "truncate", "rsync"}
 PERM_CMDS = {"chmod", "chown", "chgrp", "chflags", "rm", "rmdir", "unlink", "shred"}
 CD_FLAGS = {"-P", "-L", "-e", "-@", "-"}
-REDIR_FUSED = re.compile(r"^(?:\d+|&)?>{1,2}[|&]?(.*)$")   # > >> 1> 2>> &> >| >& (+ glued path)
+REDIR_FUSED = re.compile(r"^(?:\{\w+\}|&|\d+)?<?>{1,2}[|!&]?(.*)$")  # > >> 1> 2<> &> >| >& {fd}> >! (+ glued path)
 PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destructive_data_gate.py",
                        "lib_cli.py", "settings.json", "writable-orgs.json", "protected-objects",
                        "cli-write-surface.json", "clean-ip.rules", ".classify-cache.json",
@@ -87,9 +88,19 @@ def split_segments(cmd: str):
             buf.append(c); buf.append(cmd[i + 1]); i += 2; continue
         if cmd[i:i + 2] in ("&&", "||"):
             segs.append("".join(buf)); buf = []; i += 2; continue
-        if c == "|" and buf and buf[-1] == ">":       # noclobber `>|` is a redirect, not a pipe
+        if c in ("|", "&") and buf and buf[-1] == ">":  # `>|` noclobber / `>&` dup are redirects
             buf.append(c); i += 1; continue
-        if c in (";", "|", "&", "\n", "{", "}", "(", ")"):
+        if c == "&" and i + 1 < n and cmd[i + 1] == ">":  # `&>` redirect, not a background op
+            buf.append(c); i += 1; continue
+        if c in ("{", "}"):
+            # a brace is a group boundary only as a STANDALONE token (space/start/`;` around it);
+            # inside a word (`Name=foo{bar}`, named-fd `{fd}>`) it stays part of the token (TQ-009)
+            prev = buf[-1] if buf else " "
+            nxt = cmd[i + 1] if i + 1 < n else " "
+            if prev in (" ", "\t", "\n", ";", "") and nxt in (" ", "\t", "\n", ";", ""):
+                segs.append("".join(buf)); buf = []; i += 1; continue
+            buf.append(c); i += 1; continue
+        if c in (";", "|", "&", "\n", "(", ")"):
             segs.append("".join(buf)); buf = []; i += 1; continue
         buf.append(c); i += 1
     if quote:
@@ -103,26 +114,65 @@ def grouping_or_subst(cmd: str) -> bool:
             or bool(re.search(r"(?:^|[\s;&|])[({]", cmd)))
 
 
-def anchor_ref(tok: str) -> bool:
-    """Deny any reference to the trust anchor EXCEPT a read of the approved-apex copy. Resolves
-    against the ACTUAL anchor paths (audit R11-01/R11-10 — a custom TORQUE_ANCHOR or a path
-    without the literal '.torque' would slip a substring-only test)."""
-    low = tok.lower()
-    if ".torque" in low and "/approved/" not in low and not low.rstrip("/").endswith(".torque/approved"):
-        return True
+def _abs_pattern(tok, cwd=None):
+    """A token as an ABSOLUTE glob PATTERN, expansion-aware: ~ expanded, $var/${}/backtick → '*'
+    (any shell var could construct any path), relative made absolute against cwd. The gate sees
+    PRE-EXPANSION text; bash expands globs/vars AFTER the hook (audit T12-01/02), so trust
+    decisions must be made on what the token COULD become, not its literal form."""
+    t = os.path.expanduser(tok)
+    t = re.sub(r"\$\{[^}]*\}|\$\w+|`[^`]*`", "*", t)
+    if not os.path.isabs(t):
+        t = os.path.join(str(cwd if cwd is not None else _safe_cwd()), t)
+    # realpath (not normpath) so a symlinked prefix (macOS /tmp→/private/tmp) matches the
+    # anchor's own .resolve(); wildcard components that don't exist are left intact (audit R11-10)
+    return os.path.realpath(t)
+
+
+def _safe_cwd():
     try:
-        rp = Path(os.path.expanduser(tok)).resolve()
-        rps = str(rp)
+        return os.getcwd()
     except Exception:
+        return os.environ.get("TORQUE_HOME", "/")
+
+
+def _pattern_reaches_dir(pat, dirpath):
+    """True if glob PATTERN `pat` could match a path AT or UNDER `dirpath`, comparing components
+    with fnmatch (so `~/.torq*` matches the `.torque` component and `$a$b`→`*` matches it too)."""
+    pc, dc = pat.split(os.sep), dirpath.split(os.sep)
+    if len(pc) < len(dc):
         return False
-    for base in (lib.SECRET, lib.TOKENS):
-        b = str(base.resolve())
-        if rps == b or rps.startswith(b + os.sep):
-            return True
-    a = str(lib.ANCHOR.resolve())
-    ap = str(lib.APPROVED.resolve())
-    if (rps == a or rps.startswith(a + os.sep)) and not (rps == ap or rps.startswith(ap + os.sep)):
+    return all(fnmatch.fnmatch(d, pc[i]) for i, d in enumerate(dc))
+
+
+def anchor_ref(tok, cwd=None) -> bool:
+    """Deny any reference to the trust anchor EXCEPT a read of the approved-apex copy — resolved
+    against the ACTUAL anchor paths AND expansion-aware, so `cat ~/.torq*/secret`,
+    `a=.tor;b=que;cat ~/$a$b/secret`, and a custom TORQUE_ANCHOR all deny (audit T12-01)."""
+    pat = _abs_pattern(tok, cwd)
+    approved = str(lib.APPROVED.resolve())
+    if pat == approved or pat.startswith(approved + os.sep):
+        return False                                  # the approved-apex copy is readable
+    if ".torque" in tok.lower() and "/approved/" not in tok.lower():
         return True
+    if fnmatch.fnmatch(str(lib.SECRET.resolve()), pat):
+        return True
+    if _pattern_reaches_dir(pat, str(lib.ANCHOR.resolve())):
+        return True
+    base = os.path.basename(pat)
+    if any(c in pat for c in "*?[") and (base == "secret" or fnmatch.fnmatch(base, "*.token")
+                                         or fnmatch.fnmatch(base, "*.grant")):
+        return True
+    return False
+
+
+def sf_auth_ref(tok) -> bool:
+    """The sf CLI auth store (~/.sfdx, ~/.sf) holds live access tokens — an agent reading it via
+    Bash (`cat ~/.sfd*/x.json`) could lift a token and curl the REST API, bypassing sf entirely.
+    Expansion-aware, same as anchor_ref (audit T12-01 applied to the auth store)."""
+    pat = _abs_pattern(tok)
+    for d in ("~/.sfdx", "~/.sf"):
+        if _pattern_reaches_dir(pat, os.path.realpath(os.path.expanduser(d))):
+            return True
     return False
 
 
@@ -215,8 +265,9 @@ def subcommand(sf_args):
 def is_read(sf_args) -> bool:
     pos = subcommand(sf_args)
     if not pos:
-        # empty subcommand but real args ⇒ a global flag hid the verb (or malformed) ⇒ NOT read
-        return not any(not a.startswith("-") for a in _cut_ddash(sf_args))
+        # empty subcommand but a positional exists (a leading `--` or unknown flag hid the verb)
+        # ⇒ fail CLOSED, treat as NOT read (audit T12-04). Scan the FULL args, not _cut_ddash.
+        return not any(not a.startswith("-") for a in sf_args)
     first = pos[0]
     if ":" in first:
         return first.startswith(COLON_READ)
@@ -236,10 +287,15 @@ def classify_destructive(sf_args):
     legacy colon syntax (audit R11-04/R11-05) and async-resume completion of bulk jobs."""
     sub = subcommand(sf_args)
     if not sub:
-        return None
+        # a leading `--`/unknown flag hid the verb — re-scan ALL positionals, fail CLOSED (T12-04)
+        sub = tuple(a.lower() for a in sf_args if not a.startswith("-"))
+        if not sub:
+            return None
     f = sub[0]
-    if sub[:2] == ("apex", "run") or f.startswith("force:apex"):
-        return "apex"
+    if sub[:2] == ("apex", "run") or f.startswith("force:apex:execute"):
+        return "apex"                                 # NOT force:apex:test:run (that's a test, TQ-011)
+    if sub[:2] == ("org", "delete") or f.startswith("force:org:delete"):
+        return "org-delete"                           # destroy a sandbox/scratch org (RU-2)
     if sub[:3] == ("data", "delete", "bulk") or "--hard-delete" in sf_args \
        or f.startswith("force:data:bulk:delete"):
         return "bulk-delete"
@@ -273,11 +329,11 @@ def wrapped_sf(argv):
             rest = argv[i + 1:]
             if not rest:
                 continue
-            first = rest[0].lower()
-            if first.startswith("force:") or first.split(":")[0] in SF_TOPICS or first in SF_TOPICS:
+            if targets(rest):                       # any explicit target flag
                 return True
-            if any(x in TARGET_FLAGS or x.startswith(("--target-org", "--targetusername"))
-                   or re.match(r"^-[ou]\S", x) for x in rest):
+            sub = subcommand(rest)                  # skips leading global flags + values (TQ-004)
+            if sub and (sub[0].startswith("force:") or sub[0].split(":")[0] in SF_TOPICS
+                        or sub[0] in SF_TOPICS):
                 return True
     return False
 
@@ -302,18 +358,20 @@ def _write_shape_targets(argv):
     return base0, cand
 
 
-def _protected_path(pathlike, cwd):
+def _protected_path(pathlike, cwd=None):
     if not pathlike:
         return False
-    if os.path.basename(pathlike) in PROTECTED_BASENAMES:
+    pat = _abs_pattern(pathlike, cwd)
+    base = os.path.basename(pat.rstrip("/")) or pat
+    # literal OR globbed basename of a distinctive gate file (`settings.jso*` → settings.json)
+    for b in PROTECTED_BASENAMES:
+        if fnmatch.fnmatch(b, base) or fnmatch.fnmatch(base, b):
+            return True
+    if anchor_ref(pathlike, cwd):
         return True
-    cc = os.path.expanduser(pathlike)
-    rp = cc if os.path.isabs(cc) else str((cwd / cc))
-    try:
-        rp = str(Path(rp).resolve())
-    except Exception:
-        pass
-    return anchor_ref(rp) or lib.is_protected_target(rp) or _under_local(rp)
+    dirs = lib.protected_write_paths() + [str((lib.TORQUE_HOME / ".claude").resolve()),
+                                          str(lib.LOCAL.resolve())]
+    return any(_pattern_reaches_dir(pat, d) or pat == d or pat.startswith(d + os.sep) for d in dirs)
 
 
 def _under_local(path_str):
@@ -330,9 +388,11 @@ def check_write_shapes(segs):
     protected path or the gate itself. Returns (reason, fingerprint) or None. Fails closed on
     opaque extractors/patchers and VCS restores that could rewrite the gate (audit R11-03)."""
     try:
-        cwd = Path(os.getcwd())
+        initial = Path(os.getcwd())
     except Exception:
-        cwd = Path(os.environ.get("TORQUE_HOME", "."))
+        initial = Path(os.environ.get("TORQUE_HOME", "."))
+    cwd = initial
+    home = Path(os.path.expanduser("~"))
     for seg in segs:
         seg = seg.strip()
         if not seg:
@@ -346,7 +406,7 @@ def check_write_shapes(segs):
         base0 = os.path.basename(argv[0]).lower()
         if base0 in ("cd", "pushd"):
             rest = [a for a in argv[1:] if a not in CD_FLAGS and not a.startswith("-")]
-            if rest:
+            if rest:                                    # cd <dir>
                 tgt = os.path.expanduser(rest[0])
                 newcwd = Path(tgt) if os.path.isabs(tgt) else (cwd / tgt)
                 try:
@@ -356,28 +416,53 @@ def check_write_shapes(segs):
                 except Exception:
                     pass
                 cwd = newcwd
+            else:
+                cwd = home                              # bare `cd` → HOME (audit TQ-006)
             continue
-        # opaque extractors / patchers: cannot see their targets → fail closed
         if base0 in OPAQUE_WRITERS:
             return (f"opaque file writer ({base0}) can rewrite gate files — refused", "opaque-writer")
         if base0 in ("tar", "bsdtar", "gtar", "pax"):
-            if "--extract" in argv or any(re.match(r"^-?[A-Za-z]*x", a) for a in argv[1:] if not a.startswith("--")):
+            opts = [a for a in argv[1:] if a.startswith("-")]
+            mode1 = argv[1] if len(argv) > 1 and not argv[1].startswith("-") else ""
+            extracting = ("--extract" in argv
+                          or any("x" in o.lstrip("-") for o in opts)
+                          or (mode1 and "x" in mode1 and all(ch in "xtczjJvfahmpPkWO" for ch in mode1)))
+            if extracting:                              # only genuine extract, not `tar -tf x.tar` (TQ-012)
                 return (f"archive extraction ({base0}) can rewrite gate files — refused", "opaque-writer")
         if base0 == "git":
-            sub = next((a for a in argv[1:] if not a.startswith("-")), "")
+            gi = 1                                      # skip git global options + values (TQ-007)
+            while gi < len(argv):
+                a = argv[gi]
+                if a in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+                    gi += 2; continue
+                if a.startswith("-"):
+                    gi += 1; continue
+                break
+            sub = argv[gi] if gi < len(argv) else ""
             if sub in GIT_WRITE_SUBS:
                 if sub in ("apply", "am", "stash", "cherry-pick", "revert"):
                     return (f"git {sub} can rewrite tracked gate files — refused", "opaque-writer")
-                paths = argv[argv.index("--") + 1:] if "--" in argv else [a for a in argv[2:] if not a.startswith("-")]
+                after = argv[gi + 1:]
+                paths = after[after.index("--") + 1:] if "--" in after else [a for a in after if not a.startswith("-")]
                 for p in paths:
-                    if _protected_path(p, cwd) or os.path.basename(p.rstrip("/")) in ("hooks", "bin", ".claude"):
+                    if _protected_path(p, cwd) or _protected_path(p, initial) \
+                       or os.path.basename(p.rstrip("/")) in ("hooks", "bin", ".claude", "checks"):
                         return (f"git {sub} targeting protected paths — refused", "protected-write")
             continue
         _, cands = _write_shape_targets(argv)
         for c in cands:
-            if _protected_path(c, cwd):
+            # union of tracked cwd AND the real starting cwd — a subshell `(cd x)` cannot
+            # persist, so a relative write still resolves against the original dir (audit T12-06)
+            if _protected_path(c, cwd) or _protected_path(c, initial):
                 return (f"write to a protected path: {c}", "protected-write")
     return None
+
+
+def _is_org_mutation(sf_args):
+    """sf subcommands that change the alias/config/auth mapping a later target resolves through."""
+    sub = subcommand(sf_args)
+    return sub[:2] in (("alias", "set"), ("alias", "unset"), ("config", "set"),
+                       ("config", "unset"), ("org", "login"), ("org", "logout"))
 
 
 def analyze_bash(cmd: str):
@@ -393,7 +478,7 @@ def analyze_bash(cmd: str):
         return {"deny": ws}
     if re.search(r"(?:^|[\s;&|])(xargs|parallel)\b", cmd) and (SF_WORD.search(cmd) or SF_SUSPICIOUS.search(cmd)):
         return {"deny": ("sf routed through xargs/parallel — target not authorizable", "indirect-sf")}
-    writes = []
+    writes, mutations = [], []
     for seg in segs:
         seg = seg.strip()
         if not seg:
@@ -410,6 +495,9 @@ def analyze_bash(cmd: str):
             if anchor_ref(tok):
                 return {"deny": ("reference to the trust anchor (~/.torque) — secret and tokens "
                                  "are operator-only", "anchor-ref")}
+            if sf_auth_ref(tok):
+                return {"deny": ("reference to the sf auth store (~/.sfdx, ~/.sf) — it holds live "
+                                 "access tokens", "auth-ref")}
         a, assign_vals = _strip_assignments(argv)
         for v in assign_vals:
             if SF_SUSPICIOUS.search(v) or os.path.basename(v).lower() in ("sf", "sfdx"):
@@ -420,6 +508,8 @@ def analyze_bash(cmd: str):
         base0 = os.path.basename(a[0]).lower()
         if base0 in ("sf", "sfdx"):
             sf_args = a[1:]
+            if _is_org_mutation(sf_args):
+                mutations.append(sf_args)             # alias/config/login re-points a target (TQ-002)
             if has_flags_dir(sf_args) and not is_read(sf_args):
                 return {"deny": ("sf --flags-dir can inject a target from a file — unsupported "
                                  "on writes", "flags-dir")}
@@ -438,11 +528,17 @@ def analyze_bash(cmd: str):
             return {"deny": ("Salesforce operation under a wrapper/runner — call `sf` directly",
                              "wrapper-sf")}
         # else: a non-sf command with sf only as data (grep sf, echo 'sf ...') → allowed
+    # an org-alias/config/login mutation in the SAME command as a write can re-point the write's
+    # target between this check and execution (TOCTOU, audit TQ-002) — refuse the combination
+    if mutations and writes:
+        return {"deny": ("a Salesforce alias/config/login change combined with a write in one "
+                         "command can re-point the target — run them separately", "mutate-then-write")}
     return {"deny": None, "writes": writes}
 
 
 # ---- MCP surface (shared, TRUE default-deny) ------------------------------
-MCP_ORG_KEYS = ("targetOrg", "target-org", "targetusername", "username", "usernameOrAlias", "org")
+MCP_ORG_KEYS = ("targetOrg", "target-org", "targetusername", "username", "usernameOrAlias", "org",
+                "alias", "orgId", "orgid", "connection", "instanceUrl", "instanceurl", "targetOrgId")
 MCP_WRITE_LEADS = {"deploy", "delete", "create", "update", "upsert", "assign", "execute", "purge",
                    "destroy", "remove", "drop", "truncate", "erase", "install", "uninstall",
                    "import", "merge", "undelete", "activate", "deactivate", "enable", "disable",
@@ -459,20 +555,22 @@ def mcp_target(tinput):
 
 
 def _mcp_destructive(name, tinput):
+    # component-matched (so `get_settings` doesn't match `set`, audit T12-03)
+    comps = set(re.split(r"[_-]", name))
     no_id = not (tinput.get("recordId") or tinput.get("id") or tinput.get("record-id"))
-    if "apex" in name or "anonymous" in name:
+    if "apex" in comps or "anonymous" in comps or "apex" in name:
         body = tinput.get("apexCode") or tinput.get("apex") or tinput.get("code") or ""
         return ("apex", hashlib.sha256(body.encode()).hexdigest()[:16], body)
-    if re.search(r"(delete|purge|destroy|remove|erase|truncate|drop)", name):
-        if re.search(r"(bulk|hard|all|mass)", name):
+    if comps & {"delete", "purge", "destroy", "remove", "erase", "truncate", "drop"}:
+        if comps & {"bulk", "hard", "all", "mass"}:
             return ("bulk-delete", "", str(tinput))
-        return ("where-delete" if no_id else None, "", str(tinput)) if no_id else None
-    if re.search(r"bulk|import", name):
+        return ("where-delete", "", str(tinput)) if no_id else None
+    if comps & {"bulk", "import"}:
         return ("bulk-write", "", str(tinput))
-    if re.search(r"(update|upsert)", name) and no_id:
+    if (comps & {"update", "upsert", "modify", "patch", "set", "write", "edit"}) and no_id:
         return ("where-update", "", str(tinput))
-    if "deploy" in name and (tinput.get("preDestructiveChanges") or tinput.get("postDestructiveChanges")
-                             or tinput.get("pre-destructive-changes") or tinput.get("post-destructive-changes")):
+    if "deploy" in comps and (tinput.get("preDestructiveChanges") or tinput.get("postDestructiveChanges")
+                              or tinput.get("pre-destructive-changes") or tinput.get("post-destructive-changes")):
         return ("destructive-metadata", "", str(tinput))
     return None
 
@@ -482,10 +580,11 @@ def mcp_analyze(tool, tinput):
     an org-touching tool that is not clearly a read is a write (audit R11-04/R11-05)."""
     name = tool.split("__")[-1].lower()
     target = mcp_target(tinput)
-    lead = re.split(r"[_-]", name)[0]
+    comps = set(re.split(r"[_-]", name))
     dest = _mcp_destructive(name, tinput)
-    writeish = lead in MCP_WRITE_LEADS or "apex" in name or "anonymous" in name
-    readish = lead in MCP_READ_LEADS or name.startswith(("soql", "tooling", "schema"))
+    # ANY write verb anywhere in the name makes it a write (get_or_create_record, audit TQ-008)
+    writeish = bool(comps & MCP_WRITE_LEADS) or "apex" in name or "anonymous" in name
+    readish = bool(comps & MCP_READ_LEADS) or name.startswith(("soql", "tooling", "schema"))
     if writeish or dest:
         return {"write": target, "destructive": dest}
     if readish and not target:

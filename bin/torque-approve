@@ -25,6 +25,20 @@ DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-u
 SESSION_MAX_MIN = 120
 
 
+def _trusted(*names):
+    for n in names:
+        if os.path.exists(n):
+            return n
+    return names[0]
+
+
+# Absolute, PATH-independent binaries + a fixed env — a PATH-injected fake `who`/`ps` must not
+# be able to forge operator presence (audit TQ-001).
+_WHO = _trusted("/usr/bin/who", "/bin/who")
+_PS = _trusted("/bin/ps", "/usr/bin/ps")
+_TRUSTED_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": os.environ.get("HOME", "")}
+
+
 def _has_tty():
     try:
         fd = os.open("/dev/tty", os.O_RDWR); os.close(fd)
@@ -43,7 +57,8 @@ def _tty_is_login():
         return False
     short = os.path.basename(name)
     try:
-        who = subprocess.run(["who"], capture_output=True, text=True, timeout=10).stdout
+        who = subprocess.run([_WHO], capture_output=True, text=True, timeout=10,
+                             env=_TRUSTED_ENV).stdout
     except Exception:
         return False
     for ln in who.splitlines():                        # exact tty-column match (audit R11-R1)
@@ -69,8 +84,9 @@ def _ancestry_names():
         if pid <= 1:
             break
         try:
-            out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
-                                 capture_output=True, text=True, timeout=10).stdout.strip()
+            out = subprocess.run([_PS, "-o", "ppid=,comm=", "-p", str(pid)],
+                                 capture_output=True, text=True, timeout=10,
+                                 env=_TRUSTED_ENV).stdout.strip()
             if not out:
                 break
             parts = out.split(None, 1)

@@ -21,14 +21,11 @@ HOOK = "prod_write_gate"
 
 def _is_sf_auth(path):
     """The sf CLI auth store (~/.sfdx, ~/.sf) holds accessToken/sfdxAuthUrl — reading it via the
-    Read tool would let the agent lift a live token and bypass sf entirely (audit R11-06)."""
-    try:
-        rp = str(Path(os.path.expanduser(path)).resolve())
-    except Exception:
-        return False
+    Read tool would let the agent lift a live token and bypass sf entirely (audit R11-06).
+    Expansion-aware so `~/.sfd*/alias.json` is caught too (audit T12-01)."""
+    pat = shellparse._abs_pattern(path)
     for d in (Path.home() / ".sfdx", Path.home() / ".sf"):
-        dp = str(d.resolve())
-        if rp == dp or rp.startswith(dp + os.sep):
+        if shellparse._pattern_reaches_dir(pat, str(d.resolve())):
             return True
     return False
 

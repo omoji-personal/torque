@@ -22,9 +22,11 @@ HOOK = "destructive_data_gate"
 
 
 def _need_token(orgid, op, digest=""):
+    # returns on success (does NOT allow()/exit) so EVERY write in a compound command is checked
+    # before the gate allows — one token must not authorize two ops in `A && B` (audit TQ-003)
     if lib.consume_token(orgid, op, digest):
         lib.audit("ALLOW", f"[{HOOK}] token accepted for {op} on {orgid}")
-        lib.allow()
+        return
     lib.deny(f"{op} requires operator-present approval (bin/torque-approve). "
              "An agent cannot mint an HMAC-signed token.", op, HOOK)
 
@@ -86,6 +88,7 @@ def _gate_write(sf_args):
         digest, body = _apex_digest(fpath)
         _shield_text(body, orgid)
         _need_token(orgid, "apex", digest)
+        return
     _need_token(orgid, op)
 
 

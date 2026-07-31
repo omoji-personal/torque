@@ -277,8 +277,8 @@ def self_test():
     orig = spf.read_text()
     try:
         spf.write_text(orig.replace(
-            "def anchor_ref(tok: str) -> bool:",
-            "def anchor_ref(tok: str) -> bool:\n    return False  # MUTANT", 1))
+            "def anchor_ref(tok, cwd=None) -> bool:",
+            "def anchor_ref(tok, cwd=None) -> bool:\n    return False  # MUTANT", 1))
         ev = json.dumps({"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/secret"}})
         r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
                            input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
@@ -309,11 +309,13 @@ def self_test():
     spf = ROOT / "hooks" / "shellparse.py"
     orig = spf.read_text()
     try:
-        spf.write_text(orig.replace(
-            'REDIR_FUSED = re.compile(r"^(?:\\d+|&)?>{1,2}[|&]?(.*)$")',
-            'REDIR_FUSED = re.compile(r"^\\0NEVER\\0$")', 1))
+        spf.write_text(re.sub(r'REDIR_FUSED = re\.compile\(r".*"\)',
+                              'REDIR_FUSED = re.compile(r"NEVERMATCHES")', orig, count=1))
+        # target a protected-DIR file that is NOT basename-listed, so ONLY redirect detection
+        # can catch it — proving REDIR_FUSED is load-bearing (a basename-listed file would be
+        # denied regardless of the redirect parse).
         ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
-            "sf data query --query x -o sf-coffee 2>hooks/lib.py"}})
+            "echo x > harness/checks/check_p2_probe.py"}})
         r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
                            input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
         passed = r.returncode != 2
@@ -336,6 +338,23 @@ def self_test():
         ok &= passed
     finally:
         spf.write_text(orig2)
+    # expansion-awareness mutator: neuter _abs_pattern's var/glob wildcarding; a var-constructed
+    # secret read must then NO LONGER be denied — proving the guard reasons about post-expansion
+    # paths, not literal text (audit T12-01). Restored in finally.
+    orig3 = spf.read_text()
+    try:
+        spf.write_text(orig3.replace(
+            "def _abs_pattern(tok, cwd=None):",
+            "def _abs_pattern(tok, cwd=None):\n    return os.path.expanduser(tok)  # MUTANT", 1))
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
+            "a=.tor; b=que; cat ~/$a$b/secret"}})
+        r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                           input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
+        passed = r.returncode != 2
+        print(f"  {'✓' if passed else '✗'} expansion-awareness mutator: expected NOT-deny, got exit {r.returncode}")
+        ok &= passed
+    finally:
+        spf.write_text(orig3)
     print(f"\n  self-test: {'ALL MUTATORS CAUGHT' if ok else 'FAILURE — a check did not fail when it should'}")
     return ok
 
