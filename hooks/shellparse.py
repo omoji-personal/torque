@@ -135,33 +135,46 @@ def _safe_cwd():
         return os.environ.get("TORQUE_HOME", "/")
 
 
+def _glob_reaches(pat_parts, tgt_parts):
+    """True if a glob path (pat_parts) could match a path AT or UNDER tgt_parts — i.e. some PREFIX
+    of the glob consumes ALL of tgt. `**` matches ZERO OR MORE components; `*`/`?`/`[...]` match
+    within one component via fnmatch. A positional compare (the prior version) misaligned on `**`
+    and let `/Users/**/.../.[t]orque/sec[r]et` slip (audit round 13). This is a proper glob match."""
+    m, n = len(pat_parts), len(tgt_parts)
+    dp = [[False] * (n + 1) for _ in range(m + 1)]
+    dp[0][0] = True
+    for i in range(1, m + 1):
+        p = pat_parts[i - 1]
+        if p == "**":
+            dp[i][0] = dp[i - 1][0]
+            for j in range(1, n + 1):
+                dp[i][j] = dp[i - 1][j] or dp[i][j - 1]   # `**` consumes 0 or ≥1 components
+        else:
+            for j in range(1, n + 1):
+                if fnmatch.fnmatch(tgt_parts[j - 1], p):
+                    dp[i][j] = dp[i - 1][j - 1]
+    return any(dp[i][n] for i in range(m + 1))
+
+
 def _pattern_reaches_dir(pat, dirpath):
-    """True if glob PATTERN `pat` could match a path AT or UNDER `dirpath`, comparing components
-    with fnmatch (so `~/.torq*` matches the `.torque` component and `$a$b`→`*` matches it too)."""
-    pc, dc = pat.split(os.sep), dirpath.split(os.sep)
-    if len(pc) < len(dc):
-        return False
-    return all(fnmatch.fnmatch(d, pc[i]) for i, d in enumerate(dc))
+    return _glob_reaches(pat.split(os.sep), dirpath.split(os.sep))
 
 
 def anchor_ref(tok, cwd=None) -> bool:
     """Deny any reference to the trust anchor EXCEPT a read of the approved-apex copy — resolved
     against the ACTUAL anchor paths AND expansion-aware, so `cat ~/.torq*/secret`,
-    `a=.tor;b=que;cat ~/$a$b/secret`, and a custom TORQUE_ANCHOR all deny (audit T12-01)."""
+    `a=.tor;b=que;cat ~/$a$b/secret`, `cat /Users/**/.../.[t]orque/sec[r]et`, and a custom
+    TORQUE_ANCHOR all deny (audit T12-01 / round 13)."""
     pat = _abs_pattern(tok, cwd)
     approved = str(lib.APPROVED.resolve())
     if pat == approved or pat.startswith(approved + os.sep):
         return False                                  # the approved-apex copy is readable
-    if ".torque" in tok.lower() and "/approved/" not in tok.lower():
-        return True
-    if fnmatch.fnmatch(str(lib.SECRET.resolve()), pat):
-        return True
+    if re.search(r"(^|/)\.torque(/|$)", tok.lower()) and "/approved/" not in tok.lower():
+        return True                                   # `.torque` as a COMPONENT (not `.torquerc`)
+    if _glob_reaches(pat.split(os.sep), str(lib.SECRET.resolve()).split(os.sep)):
+        return True                                   # the secret file, reached by any glob/**/char-class
     if _pattern_reaches_dir(pat, str(lib.ANCHOR.resolve())):
-        return True
-    base = os.path.basename(pat)
-    if any(c in pat for c in "*?[") and (base == "secret" or fnmatch.fnmatch(base, "*.token")
-                                         or fnmatch.fnmatch(base, "*.grant")):
-        return True
+        return True                                   # anything at/under the anchor dir (tokens, grants)
     return False
 
 

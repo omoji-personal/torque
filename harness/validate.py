@@ -355,6 +355,22 @@ def self_test():
         ok &= passed
     finally:
         spf.write_text(orig3)
+    # glob-matcher mutator: neuter the DP _glob_reaches; a **/char-class secret read must then NO
+    # LONGER be denied — proving the recursive-glob matcher is load-bearing (audit round 13).
+    orig4 = spf.read_text()
+    try:
+        spf.write_text(orig4.replace(
+            "def _glob_reaches(pat_parts, tgt_parts):",
+            "def _glob_reaches(pat_parts, tgt_parts):\n    return False  # MUTANT", 1))
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
+            "cat /Users/**/omidmojtahedi/.[t]orque/sec[r]et"}})
+        r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                           input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
+        passed = r.returncode != 2
+        print(f"  {'✓' if passed else '✗'} glob-matcher (_glob_reaches) mutator: expected NOT-deny, got exit {r.returncode}")
+        ok &= passed
+    finally:
+        spf.write_text(orig4)
     print(f"\n  self-test: {'ALL MUTATORS CAUGHT' if ok else 'FAILURE — a check did not fail when it should'}")
     return ok
 
