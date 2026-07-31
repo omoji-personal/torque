@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""torque approve — mint a single-use, HMAC-SIGNED approval token. OPERATOR-PRESENT ONLY.
+"""torque approve — mint single-use, HMAC-SIGNED approvals. OPERATOR-PRESENT ONLY.
 
-Refuses unless invoked from a real interactive TTY whose FULL process ancestry is clear of
-the Claude Code agent (walked to the top on both Linux /proc and macOS ps — a one-hop check
-was launderable via `script`, audit HM3). The token is signed with a secret that lives at
-~/.torque/secret (mode 0600, created here on first use); the agent's Bash tool is denied any
-reference to it, so an agent cannot compute a valid signature and mint its own token.
+Presence proof (hardened after audit R10-07): a real interactive /dev/tty, whose device is an
+ACTIVE LOGIN SESSION in `who` (a synthetic pty the agent forges is not a login and is refused),
+and whose process ancestry is clear of the agent. The signing secret at ~/.torque/secret is
+never exposed to the agent's tools, so a valid signature cannot be produced without a present
+operator. (A same-uid actor executing a bespoke pty-reparenting + utmp-injection program is the
+disclaimed Layer-0 boundary — that is arbitrary code execution, not the tool surface.)
 
 Usage:
-  torque approve <orgId> <op_class> [digest]
-  torque approve <orgId> apex --apex-file <path>   # writes the approved immutable copy and
-                                                   # binds the token to its content digest
-op_class ∈ apex | bulk-delete | bulk-write | where-delete | where-update | destructive-metadata
+  torque approve <org> <op> [digest|--apex-file <path>]     # non-prod destructive op token
+  torque approve <org> <op> --prod [--apex-file <path>]     # PRODUCTION single-op override
+  torque approve <org> --session <minutes>                  # PRODUCTION window (<=120 min)
+  torque approve <org> --end-session                        # revoke the window
+op ∈ apex | bulk-delete | bulk-write | where-delete | where-update | destructive-metadata | write
 """
 import json, os, sys, time, hashlib, subprocess
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
 import lib
+
+DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-update",
+                   "destructive-metadata"}
+SESSION_MAX_MIN = 120
 
 
 def _has_tty():
@@ -25,6 +31,22 @@ def _has_tty():
         return sys.stdin.isatty()
     except OSError:
         return False
+
+
+def _tty_is_login():
+    """The controlling tty must be an active login session in utmp (`who`). A pty the agent
+    forges via openpty is NOT a login session, so it fails here (audit R10-07)."""
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR)
+        name = os.ttyname(fd); os.close(fd)
+    except OSError:
+        return False
+    short = os.path.basename(name)
+    try:
+        who = subprocess.run(["who"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return False
+    return any(short in ln.split()[1:2] or short in ln for ln in who.splitlines())
 
 
 def _ancestry_names():
@@ -39,12 +61,12 @@ def _ancestry_names():
             except Exception:
                 break
         return names
-    for _ in range(40):                               # macOS: walk the full ps ppid chain
+    for _ in range(40):
         if pid <= 1:
             break
         try:
             out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
-                                 capture_output=True, text=True).stdout.strip()
+                                 capture_output=True, text=True, timeout=10).stdout.strip()
             if not out:
                 break
             parts = out.split(None, 1)
@@ -59,12 +81,23 @@ def _ancestry_clear():
     return not any("claude" in n or "node" in n for n in _ancestry_names())
 
 
+def _operator_present():
+    return _has_tty() and _tty_is_login() and _ancestry_clear()
+
+
 def _ensure_secret():
-    lib.ANCHOR.mkdir(parents=True, exist_ok=True)
-    os.chmod(lib.ANCHOR, 0o700)
+    lib.ANCHOR.mkdir(parents=True, exist_ok=True); os.chmod(lib.ANCHOR, 0o700)
     if not lib.SECRET.exists():
-        lib.SECRET.write_bytes(os.urandom(32))
-        os.chmod(lib.SECRET, 0o600)
+        lib.SECRET.write_bytes(os.urandom(32)); os.chmod(lib.SECRET, 0o600)
+
+
+def _org_details(target):
+    r = lib._sf("org", "display", "--target-org", target, "--json")
+    try:
+        d = json.loads(r.stdout)["result"]
+        return lib.norm_id(d.get("id")), d.get("username"), d.get("instanceUrl")
+    except Exception:
+        return None, None, None
 
 
 def _confirm(prompt):
@@ -73,54 +106,95 @@ def _confirm(prompt):
         return tty.readline().strip() == "YES"
 
 
+def _confirm_prod(target, orgid, username, instance):
+    with open("/dev/tty") as tty:
+        sys.stderr.write(
+            f"\n*** PRODUCTION WRITE ***\n  org:      {target}  ({orgid})\n"
+            f"  user:     {username}\n  instance: {instance}\n"
+            f"Type exactly  WRITE PRODUCTION  to authorize: ")
+        sys.stderr.flush()
+        return tty.readline().strip() == "WRITE PRODUCTION"
+
+
+def _mint(op, orgid, digest=""):
+    lib.TOKENS.mkdir(parents=True, exist_ok=True); os.chmod(lib.TOKENS, 0o700)
+    payload = {"orgId": orgid, "op": op, "digest": digest,
+               "exp": int(time.time()) + 300, "iat": int(time.time())}
+    payload["sig"] = lib.sign(payload)
+    p = lib.token_path(orgid, op, digest)
+    p.write_text(json.dumps(payload)); os.chmod(p, 0o600)
+
+
+def _write_approved_apex(apex_src):
+    body = Path(os.path.expanduser(apex_src)).read_bytes()
+    digest = hashlib.sha256(body).hexdigest()[:16]
+    sys.stderr.write("\n----- apex to approve -----\n"
+                     + body.decode("utf-8", "replace")[:2000] + "\n---------------------------\n")
+    lib.APPROVED.mkdir(parents=True, exist_ok=True); os.chmod(lib.APPROVED, 0o700)
+    dst = lib.APPROVED / f"{digest}.apex"
+    dst.write_bytes(body); os.chmod(dst, 0o400)
+    return digest
+
+
 def main():
-    if not _has_tty():
-        print("torque approve: refused — no interactive TTY (operator presence required)",
-              file=sys.stderr); sys.exit(3)
-    if not _ancestry_clear():
-        print("torque approve: refused — invoked under the agent process ancestry",
-              file=sys.stderr); sys.exit(3)
+    if not _operator_present():
+        print("torque approve: refused — operator presence not proven (needs a real login TTY, "
+              "clear of the agent process)", file=sys.stderr)
+        sys.exit(3)
     args = sys.argv[1:]
     if len(args) < 2:
-        print("usage: torque approve <orgId> <op_class> [digest | --apex-file <path>]",
-              file=sys.stderr); sys.exit(2)
-    orgid, op = lib.norm_id(args[0]), args[1]
-    digest = ""
-    apex_src = None
-    if "--apex-file" in args:
-        apex_src = args[args.index("--apex-file") + 1]
-    elif len(args) > 2:
-        digest = args[2]
-
+        print(__doc__, file=sys.stderr); sys.exit(2)
+    target = args[0]
+    orgid, username, instance = _org_details(target)
+    if not orgid:
+        print(f"torque approve: cannot resolve org '{target}'", file=sys.stderr); sys.exit(2)
     _ensure_secret()
 
-    # Anonymous Apex: write the operator-approved IMMUTABLE copy under the anchor and bind the
-    # token to its content digest. The gate re-reads THIS copy (agent cannot alter it).
+    # ---- production session window ----
+    if "--session" in args:
+        try:
+            mins = min(int(args[args.index("--session") + 1]), SESSION_MAX_MIN)
+        except Exception:
+            print("usage: torque approve <org> --session <minutes>", file=sys.stderr); sys.exit(2)
+        if not _confirm_prod(target, orgid, username, instance):
+            print("aborted", file=sys.stderr); sys.exit(1)
+        lib.PROD_SESSIONS.mkdir(parents=True, exist_ok=True); os.chmod(lib.PROD_SESSIONS, 0o700)
+        grant = {"orgId": orgid, "exp": int(time.time()) + mins * 60, "iat": int(time.time())}
+        grant["sig"] = lib.sign(grant)
+        p = lib.PROD_SESSIONS / f"{orgid}.grant"
+        p.write_text(json.dumps(grant)); os.chmod(p, 0o600)
+        print(f"PRODUCTION session opened for {target} — {mins} min. Every write is audited. "
+              f"Revoke: torque approve {target} --end-session")
+        return
+    if "--end-session" in args:
+        (lib.PROD_SESSIONS / f"{orgid}.grant").unlink(missing_ok=True)
+        print(f"production session for {target} revoked"); return
+
+    op = args[1]
+    is_prod = "--prod" in args
+    digest = ""
     if op == "apex":
-        if not apex_src:
+        if "--apex-file" not in args:
             print("apex approval requires --apex-file <path>", file=sys.stderr); sys.exit(2)
-        body = Path(os.path.expanduser(apex_src)).read_bytes()
-        digest = hashlib.sha256(body).hexdigest()[:16]
-        preview = body.decode("utf-8", "replace")
-        sys.stderr.write("\n----- apex to approve -----\n" + preview[:2000] +
-                         ("\n... (truncated)\n" if len(preview) > 2000 else "\n") +
-                         "---------------------------\n")
-        lib.APPROVED.mkdir(parents=True, exist_ok=True); os.chmod(lib.APPROVED, 0o700)
-        dst = lib.APPROVED / f"{digest}.apex"
-        dst.write_bytes(body); os.chmod(dst, 0o400)   # read-only approved copy
+        digest = _write_approved_apex(args[args.index("--apex-file") + 1])
+    elif len(args) > 2 and not args[2].startswith("--"):
+        digest = args[2]
+
+    if is_prod:
+        if not _confirm_prod(target, orgid, username, instance):
+            print("aborted", file=sys.stderr); sys.exit(1)
+        _mint("prod-write", orgid, "")                 # authorizes the prod write itself
+        if op in DESTRUCTIVE_OPS:
+            _mint(op, orgid, digest)                   # + the destructive-class token
+        print(f"PRODUCTION override minted for {op} on {target} (single use, 5 min)"
+              + (f"; apex copy at {lib.APPROVED / (digest + '.apex')}" if op == "apex" else ""))
+        return
 
     if not _confirm(f"Approve {op} on org {orgid}"
                     f"{' digest ' + digest if digest else ''}? [type YES]: "):
         print("aborted", file=sys.stderr); sys.exit(1)
-
-    lib.TOKENS.mkdir(parents=True, exist_ok=True); os.chmod(lib.TOKENS, 0o700)
-    payload = {"orgId": orgid, "op": op, "digest": digest,
-               "exp": int(time.time()) + 300, "iat": int(time.time())}
-    payload["sig"] = lib.sign(payload)                # HMAC over the payload (sans sig)
-    p = lib.token_path(orgid, op, digest)
-    p.write_text(json.dumps(payload)); os.chmod(p, 0o600)
-    print(f"approved: single-use HMAC token for {op} on {orgid} (5 min)"
-          + (f"; apex copy at {dst}" if op == "apex" else ""))
+    _mint(op, orgid, digest)
+    print(f"approved: single-use token for {op} on {orgid} (5 min)")
 
 
 if __name__ == "__main__":

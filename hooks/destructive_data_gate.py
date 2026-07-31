@@ -1,57 +1,45 @@
 #!/usr/bin/env python3
 """PreToolUse gate: destructive operations require an operator-present approval token.
 
-Destructive classes — bulk/hard delete, WHERE-bounded-but-not-record-id delete/update,
-destructive metadata deploy (--pre/--post-destructive-changes, project delete source),
-and anonymous Apex — each require a single-use HMAC token an agent cannot mint. Enforced on
-BOTH the Bash surface and the MCP surface (an MCP execute_anonymous_apex bypassed this gate
-entirely before — audit K-8/CLAUDE-4). Protected sObjects are shielded on any org.
-
-Anonymous Apex additionally must run from the OPERATOR-APPROVED IMMUTABLE COPY at
-~/.torque/approved/<digest>.apex — not an agent-writable path that can be swapped between
-the hook's digest check and sf's read (TOCTOU, audit CODEX-6). torque-approve writes that
-copy; the agent cannot (anchor writes are Bash-denied). The gate re-digests the copy itself.
+Shares the shellparse classifier with prod_write_gate (audit round 10 — the destructive side
+is NO LONGER raw-text regex, which quote/space/indirection trivially evaded). Destructive
+classes (bulk/hard delete, WHERE-not-record-id delete/update, destructive-metadata deploy,
+anonymous Apex) each need a single-use HMAC token an agent cannot mint. Protected sObjects are
+shielded over the SHLEX-DECODED token stream. Anonymous Apex must run from the operator-
+approved immutable copy at ~/.torque/approved/<digest>.apex (TOCTOU-safe).
 """
-import hashlib, os, re, sys
+import os, sys, hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
+import shellparse
 from pathlib import Path
 
 HOOK = "destructive_data_gate"
 
-# --- Bash patterns --------------------------------------------------------
-BULK_DELETE = re.compile(r"\bsf(dx)?\s+data\s+(delete\s+bulk|bulk\s+delete)|--hard-delete\b", re.I)
-BULK_UPDATE = re.compile(r"\bsf(dx)?\s+data\s+(update\s+bulk|bulk\s+upsert|upsert\s+bulk|import)\b", re.I)
-RECORD_DELETE = re.compile(r"\bsf(dx)?\s+(data\s+delete\s+record|force:data:record:delete)\b", re.I)
-RECORD_UPDATE = re.compile(r"\bsf(dx)?\s+(data\s+update\s+record|force:data:record:update)\b", re.I)
-# A record-id is a bound of exactly one. A bare --where is NOT a safe bound: "Id != null" is a
-# tautology that touches every row (audit K-7). Only --record-id/-i exempts from a token.
-RECORD_ID = re.compile(r"(--record-id|-i)\b", re.I)
-DESTRUCTIVE_META = re.compile(
-    r"destructiveChanges|\bsf(dx)?\s+project\s+delete\s+source\b|force:source:delete|"
-    r"force:mdapi:deploy.*destructiveChanges|--(pre|post)-destructive-changes\b", re.I)
-APEX = re.compile(r"\bsf(dx)?\s+(.*\s)?apex\s+run\b|force:apex:execute", re.I)
-FILE_FLAG = re.compile(r"(?:--file|-f)[=\s]+([^\s;|&]+)")
-TARGET_RE = re.compile(r"(?:--target-org|--targetusername|-o|-u)[=\s]+([^\s;|&]+)")
 
-
-def _need_token(orgid, op_class, digest=""):
-    if lib.consume_token(orgid, op_class, digest):
-        lib.audit("ALLOW", f"[{HOOK}] token accepted for {op_class} on {orgid}")
+def _need_token(orgid, op, digest=""):
+    if lib.consume_token(orgid, op, digest):
+        lib.audit("ALLOW", f"[{HOOK}] token accepted for {op} on {orgid}")
         lib.allow()
-    lib.deny(f"{op_class} requires operator-present approval (bin/torque-approve). "
-             "An agent cannot mint an HMAC-signed token.", op_class, HOOK)
+    lib.deny(f"{op} requires operator-present approval (bin/torque-approve). "
+             "An agent cannot mint an HMAC-signed token.", op, HOOK)
 
 
-def _shield(text, orgid):
+def _shield_tokens(tokens, orgid):
+    prot = lib.protected_objects()
+    for t in tokens:
+        if t in prot:
+            lib.deny(f"operation targets protected sObject {t}", "protected-object", HOOK)
+
+
+def _shield_text(text, orgid):
+    import re
     for obj in lib.protected_objects():
         if re.search(rf"\b{re.escape(obj)}\b", text):
-            lib.deny(f"operation targets protected sObject {obj}", "protected-object", HOOK)
+            lib.deny(f"operation references protected sObject {obj}", "protected-object", HOOK)
 
 
-def _apex_digest_from_file(path_str):
-    """The apex file MUST be the operator-approved immutable copy under the anchor; re-digest
-    THAT file (agent cannot alter it) so a post-check swap is impossible (TOCTOU CODEX-6)."""
+def _apex_digest(path_str):
     try:
         rp = Path(os.path.expanduser(path_str)).resolve()
     except Exception:
@@ -59,75 +47,68 @@ def _apex_digest_from_file(path_str):
     approved = lib.APPROVED.resolve()
     if not (str(rp) == str(approved) or str(rp).startswith(str(approved) + os.sep)):
         lib.deny("anonymous Apex --file must be the operator-approved copy at "
-                 "~/.torque/approved/<digest>.apex (agent-writable paths are TOCTOU-unsafe)",
-                 "apex-not-approved", HOOK)
+                 "~/.torque/approved/<digest>.apex", "apex-not-approved", HOOK)
     try:
         body = rp.read_bytes()
     except Exception:
         lib.deny("approved apex copy unreadable", "apex-unreadable", HOOK)
     digest = hashlib.sha256(body).hexdigest()[:16]
-    if rp.stem != digest:                             # filename encodes the content digest
-        lib.deny("approved apex digest mismatch (copy was altered)", "apex-digest", HOOK)
+    if rp.stem != digest:
+        lib.deny("approved apex digest mismatch (copy altered)", "apex-digest", HOOK)
     return digest, body.decode("utf-8", "replace")
 
 
-def handle_bash(cmd: str):
-    m = TARGET_RE.search(cmd)
-    orgid = None
-    if m:
-        _, orgid, _ = lib.classify(m.group(1))
-    orgid = orgid or "?"
-
-    if BULK_DELETE.search(cmd) or DESTRUCTIVE_META.search(cmd):
-        _shield(cmd, orgid)
-
-    if APEX.search(cmd):
-        fm = FILE_FLAG.search(cmd)
-        if not fm:
+def _gate_write(sf_args):
+    op = shellparse.classify_destructive(sf_args)
+    if not op:
+        return
+    orgid = "?"
+    tset = set(shellparse.targets(sf_args))
+    if tset:
+        _, oid, _ = lib.classify(next(iter(tset)))
+        orgid = oid or "?"
+    # protected-object shield over the SHLEX-DECODED positional token stream (audit R10-R3)
+    _shield_tokens([a for a in sf_args if not a.startswith("-")], orgid)
+    if op == "apex":
+        fpath = shellparse.file_value(sf_args)
+        if not fpath:
             lib.deny("anonymous Apex without --file (stdin/inline cannot be digest-bound)",
                      "apex-stdin", HOOK)
-        digest, body = _apex_digest_from_file(fm.group(1))
-        _shield(body, orgid)
+        digest, body = _apex_digest(fpath)
+        _shield_text(body, orgid)
         _need_token(orgid, "apex", digest)
-    if BULK_DELETE.search(cmd):
-        _need_token(orgid, "bulk-delete")
-    if BULK_UPDATE.search(cmd):
-        _need_token(orgid, "bulk-write")
-    if RECORD_DELETE.search(cmd) and not RECORD_ID.search(cmd):
-        _need_token(orgid, "where-delete")
-    if RECORD_UPDATE.search(cmd) and not RECORD_ID.search(cmd):
-        _need_token(orgid, "where-update")
-    if DESTRUCTIVE_META.search(cmd):
-        _need_token(orgid, "destructive-metadata")
+    _need_token(orgid, op)
+
+
+def handle_bash(cmd):
+    r = shellparse.analyze_bash(cmd)
+    if r["deny"]:
+        lib.deny(r["deny"][0], r["deny"][1], HOOK)
+    for sf_args in r.get("writes", []):
+        _gate_write(sf_args)
     lib.allow()
 
 
-def handle_mcp(tool: str, tinput: dict):
-    low = tool.lower()
-    target = (tinput.get("targetOrg") or tinput.get("target-org")
-              or tinput.get("username") or tinput.get("usernameOrAlias"))
+def handle_mcp(tool, tinput):
+    r = shellparse.mcp_analyze(tool, tinput)
+    if r.get("read"):
+        lib.allow()
+    dest = r.get("destructive")
+    if not dest:
+        lib.allow()
+    op, digest, body = dest
+    if op == "apex":
+        # inline MCP apex cannot be bound to an operator-reviewed immutable copy — route it
+        # through `sf apex run --file ~/.torque/approved/<digest>.apex` instead.
+        lib.deny("anonymous Apex via MCP is not approvable; use sf apex run --file with an "
+                 "operator-approved copy", "apex-mcp", HOOK)
+    target = r.get("write")
     orgid = "?"
     if target:
         _, oid, _ = lib.classify(target)
         orgid = oid or "?"
-
-    if "execute_anonymous_apex" in low or low.endswith("__anonymous_apex"):
-        body = (tinput.get("apexCode") or tinput.get("apex") or tinput.get("code") or "")
-        _shield(body, orgid)
-        digest = hashlib.sha256(body.encode()).hexdigest()[:16]
-        _need_token(orgid, "apex", digest)
-    if "bulk" in low and "delete" in low:
-        _shield(str(tinput), orgid); _need_token(orgid, "bulk-delete")
-    if "bulk" in low:
-        _need_token(orgid, "bulk-write")
-    if low.endswith("delete_record"):
-        if not (tinput.get("recordId") or tinput.get("id") or tinput.get("record-id")):
-            _need_token(orgid, "where-delete")
-    if "deploy_metadata" in low:
-        if tinput.get("preDestructiveChanges") or tinput.get("postDestructiveChanges") \
-           or tinput.get("pre-destructive-changes") or tinput.get("post-destructive-changes"):
-            _shield(str(tinput), orgid); _need_token(orgid, "destructive-metadata")
-    lib.allow()
+    _shield_text(body or "", orgid)
+    _need_token(orgid, op, "")
 
 
 def main():

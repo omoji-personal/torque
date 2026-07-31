@@ -21,6 +21,7 @@ LOCAL = TORQUE_HOME / "local"
 ANCHOR = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
 SECRET = ANCHOR / "secret"
 APPROVED = ANCHOR / "approved"
+PROD_SESSIONS = ANCHOR / "prod-sessions"           # signed, time-boxed prod-write windows
 ALLOWLIST = LOCAL / "writable-orgs.json"
 CACHE = LOCAL / ".classify-cache.json"
 TOKENS = ANCHOR / "tokens"
@@ -29,8 +30,17 @@ PROTECTED = TORQUE_HOME / "harness" / "checks" / "protected-objects"
 
 ELIGIBLE = {"sandbox", "developer", "scratch"}   # NOT production, NOT unverifiable
 
-def _sf(*args):
-    return subprocess.run(["sf", *args], capture_output=True, text=True)
+def _sf(*args, timeout=45):
+    # A hung `sf` inside a PreToolUse hook would let Claude Code time the hook out with a
+    # non-2 status ⇒ fail-OPEN (audit T10-07). Bound every callout and fail safe on timeout.
+    try:
+        return subprocess.run(["sf", *args], capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        class _R:
+            returncode = 124
+            stdout = ""
+            stderr = "sf callout timed out or failed"
+        return _R()
 
 def audit(decision: str, detail: str):
     # Never raises: a gate that can't write its audit line must still be able to DENY.
@@ -106,9 +116,11 @@ def _is_scratch_org(orgid: str, username: str) -> bool:
     return False
 
 def _verdict_from_org_record(rec, orgid, username):
-    if rec.get("IsSandbox"):
+    # Strict type checks: a malformed/adversarial `"IsSandbox":"false"` is a truthy STRING in
+    # Python and would misclassify production as sandbox (audit codex #10). Demand a real bool.
+    if rec.get("IsSandbox") is True:
         return "sandbox"
-    if (rec.get("OrganizationType") or "") == "Developer Edition":
+    if isinstance(rec.get("OrganizationType"), str) and rec.get("OrganizationType") == "Developer Edition":
         return "developer"
     if rec.get("TrialExpirationDate"):
         return "scratch" if _is_scratch_org(orgid, username) else "production"
@@ -159,18 +171,45 @@ def classify(target: str):
     return verdict, orgid, username
 
 # ---- write authorization (identity, verified at write time) --------------
-def authorize_write(target: str):
-    """(ok, reason). ok only if target is on the allowlist AND classifies non-production
-    NOW. Membership is necessary, never sufficient."""
+def authorize_write(target: str, op_hint: str = "write"):
+    """(ok, reason). Non-production: allowlist membership + live non-prod verdict. Production:
+    DENIED BY DEFAULT; allowed only through a deliberate operator-present override — a valid
+    time-boxed session grant, or a single-use prod token minted by bin/torque-approve. The
+    agent can request either; it cannot mint one."""
+    verdict, orgid, username = classify_live(target)   # security path: never trust the cache
+    if verdict == "production":
+        if _prod_session_valid(orgid):
+            audit("PROD-WRITE", f"session-authorized {op_hint} on {orgid} ({target})")
+            return True, f"{target}: PRODUCTION write authorized via active operator session"
+        if consume_token(orgid, "prod-write"):
+            audit("PROD-WRITE", f"token-authorized {op_hint} on {orgid} ({target})")
+            return True, f"{target}: PRODUCTION write authorized via single-use operator token"
+        return False, (f"{target} is PRODUCTION — denied by default. Operator override: "
+                       f"`torque approve {target} <op> --prod` (one operation) or "
+                       f"`torque approve {target} --session <minutes>` (a window).")
     allow = load_allowlist()
     if allow is None:
         return False, "allowlist absent/unreadable/malformed — fail-closed deny"
-    verdict, orgid, username = classify_live(target)   # security path: never trust the cache
-    if verdict == "production":
-        return False, f"{target} classifies production/unverifiable — ineligible by construction"
     if orgid not in allow:
         return False, f"{target} (org {orgid}) is not on the write allowlist"
     return True, f"{target} authorized: on allowlist, verdict={verdict}"
+
+def _prod_session_valid(orgid: str) -> bool:
+    """A signed, unexpired, orgId-bound production-write window. Not single-use (it is a
+    window); revoked by deleting the grant. Forging needs the anchor secret (operator-only)."""
+    if not orgid:
+        return False
+    p = PROD_SESSIONS / f"{orgid}.grant"
+    if not p.exists():
+        return False
+    try:
+        g = json.loads(p.read_text())
+    except Exception:
+        return False
+    sig = g.pop("sig", None)
+    if not sig or not _hmac.compare_digest(sig, sign(g)):
+        return False
+    return g.get("orgId") == orgid and g.get("exp", 0) > time.time()
 
 # ---- approval tokens (consulted here; MINTED only by bin/torque-approve) --
 import hmac as _hmac
