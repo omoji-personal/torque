@@ -1,0 +1,8 @@
+# sObjects protected from bulk/unscoped delete-shaped operations on ANY org.
+# sf-coffee's demo data lives on standard objects (verified 2026-07-31: 30 Accounts
+# incl. the coffee-business dataset; zero custom objects — the custom build went to a
+# different org). Run-scoped by-Id fixture teardown composes with this: by-Id deletes of
+# run-created records pass; bulk shapes against these objects block.
+Account
+Contact
+Opportunity

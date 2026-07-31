@@ -1,0 +1,9 @@
+# Redacted, committed counterpart of the private clean-IP denylist.
+# Third parties can verify the CHECK (fail-closed behavior, scan scope) via fixtures;
+# the real-names pattern file stays with the author. Categories covered, in order:
+#   1  [withheld]
+#   2  [withheld]
+#   3-12  [withheld]
+#   13  [withheld]
+# Private list minimum size enforced: >= 12 patterns. Digest of the private list is
+# recorded in every attestation so runs are comparable without disclosure.
