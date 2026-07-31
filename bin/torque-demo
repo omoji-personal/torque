@@ -17,6 +17,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS = ROOT / "hooks"
+sys.path.insert(0, str(HOOKS))
+import lib
+
+# Attack the anchor where it ACTUALLY is. Hardcoding ~/.torque would report false failures for
+# anyone who relocated it with TORQUE_ANCHOR — the tool would look broken on their machine.
+ANCHOR = str(lib.ANCHOR)                                   # e.g. /Users/you/.torque
+A_HOME = ANCHOR.replace(str(Path.home()), "$HOME", 1)      # $HOME-relative form for the var attack
+A_GLOB = ANCHOR[:-3] + "*" if len(ANCHOR) > 3 else ANCHOR + "*"   # truncated + wildcard
 G, R, Y, B, DIM, RST = "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[2m", "\033[0m"
 
 # (category, why it matters, [(command, expect_deny, label)])
@@ -30,9 +38,9 @@ CATEGORIES = [
          "eval takes its code positionally"),
     ]),
     ("Path expansion", "A glob or variable that only becomes the secret's path when bash expands it.", [
-        ("cat ~/.torq*/secret", True, "glob reaches the signing secret"),
-        ("d=.tor;e=que;p=$HOME/$d$e;cat $p/secret", True, "path assembled across three variables"),
-        ("cat /Users/**/.[t]orque/sec[r]et", True, "recursive glob + character classes"),
+        (f"cat {A_GLOB}/secret", True, "glob reaches the signing secret"),
+        (f"p={A_HOME};cat $p/secret", True, "path assembled through a shell variable"),
+        (f"cat {ANCHOR}/tok[e]ns/*", True, "character class reaches the approval tokens"),
         ("cat ~/.sfd*/*.json", True, "glob reaches the sf CLI auth store (live tokens)"),
     ]),
     ("Overwriting the gate itself", "Disable the hook and everything downstream is ungated.", [
