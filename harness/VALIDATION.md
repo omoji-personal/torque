@@ -199,7 +199,7 @@ classification), not one-off patches.
 
 ## P5 — release · converged and shipped · 2026-07-31
 
-**Attestation:** commit `a33c59c`, tree `bfb7b24`, sf 2.144.6, node v24.11.1, denylist digest
+**Attestation:** commit `486e638`, tree `0a88062`, sf 2.144.6, node v24.11.1, denylist digest
 `129a9dfe…` (`harness/attest/attest-af928a8.json`) · **profile: release · verdict: PASS**
 
 `python3 harness/validate.py --profile release --target-org sf-coffee` is green end to end:
