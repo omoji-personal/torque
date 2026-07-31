@@ -150,3 +150,35 @@ Override precedence unit-tested 6/6 (deny-by-default, session allow, expired den
 deny, token allow+consume, single-use).
 
 Round 11 re-audits the shared parser and the override.
+
+---
+
+## Security hardening — rounds 11–13 (adversarial convergence) · 2026-07-31
+
+**Commits:** `d4827b9` → `c97f7c2` · **Target:** sf-coffee · **Verdict: PASS** (23 checks, 10 mutators, 109 fixtures)
+
+The built gates were driven through four full adversarial rounds — three independent lenses
+each (a shell-semantics reviewer, an execute-the-attack reviewer running exploits against a
+real `sf` 2.144.6, and an architecture skeptic) plus a standing self red-team. Each round the
+score of the *findings* fell in severity, which is the convergence signal:
+
+| Round | Character of findings | Outcome |
+|---|---|---|
+| 10 | Architectural — regex is not a security boundary | shared parse-argv classifier |
+| 11 | Refinement — legacy `force:data:*` verbs, MCP name-evasion, indirection, decoy targets | 74 fixtures |
+| 12 | New front — the gates judged PRE-EXPANSION text (`cat ~/.torq*/secret` read the secret); + alias TOCTOU, PATH-injected `who`/`ps`, one-token-two-deletes; + 6 usability regressions | expansion-aware path guards |
+| 13 | Completion of the round-12 front — `**` recursive-glob + char-class basenames misaligned the component matcher | a proper DP glob-prefix matcher |
+
+Every fixed class carries a named fixture (**109 total** across base + r11 + r12 + r13) and each
+catastrophe-class guard carries a **self-test mutator** that must flip a deny→allow when the
+guard is neutered (**10 mutators**, all caught): clean-IP ×4, anchor-guard, destructive-token,
+redirect-detection, wrapper (`wrapped_sf`), expansion-awareness, glob-matcher (`_glob_reaches`).
+
+**What the rounds established as SOUND (confirmed holding across rounds):** the HMAC token core
+(atomic single-use claim, forged-signature rejected), `torque-approve`'s login-TTY + full-
+ancestry refusal of the agent, non-cache-poisonability, allowlist protection, and — after the
+expansion fix — the anchor/auth-store being unreachable through the agent's Bash, Edit/Write,
+and Read tools. The residual is the explicitly disclaimed **Layer 0**: a same-uid actor who
+forges a login session with a bespoke program, discloses the secret by OS means (/proc,
+ptrace), or spawns `sf` from a script it writes and runs. Those are credentials/OS trust, not
+adjudicable by a PreToolUse hook, and the guide states them plainly.

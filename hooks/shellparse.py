@@ -120,6 +120,11 @@ def _abs_pattern(tok, cwd=None):
     PRE-EXPANSION text; bash expands globs/vars AFTER the hook (audit T12-01/02), so trust
     decisions must be made on what the token COULD become, not its literal form."""
     t = os.path.expanduser(tok)
+    # expand ENV vars ($HOME/$PWD/$TMPDIR…) from the hook's environment FIRST — they resolve to
+    # absolute paths at exec time, so wildcarding them to '*' and re-anchoring to cwd would model
+    # `$HOME/.torque/secret` as `<cwd>/*/...` and miss the anchor (audit TQ-F1). Inline agent vars
+    # (`d=.torque`) aren't in the env, so they remain and are wildcarded below.
+    t = os.path.expandvars(t)
     t = re.sub(r"\$\{[^}]*\}|\$\w+|`[^`]*`", "*", t)
     if not os.path.isabs(t):
         t = os.path.join(str(cwd if cwd is not None else _safe_cwd()), t)
@@ -246,6 +251,16 @@ def file_value(sf_args):
     return None
 
 
+def _api_method(sf_args):
+    args = _cut_ddash(sf_args)
+    for i, a in enumerate(args):
+        if a in ("-X", "--method") and i + 1 < len(args):
+            return args[i + 1].upper()
+        if a.startswith("--method="):
+            return a.split("=", 1)[1].upper()
+    return "GET"
+
+
 def sobject_value(sf_args):
     args = _cut_ddash(sf_args)
     for i, a in enumerate(args):
@@ -309,6 +324,9 @@ def classify_destructive(sf_args):
         return "apex"                                 # NOT force:apex:test:run (that's a test, TQ-011)
     if sub[:2] == ("org", "delete") or f.startswith("force:org:delete"):
         return "org-delete"                           # destroy a sandbox/scratch org (RU-2)
+    if (sub[:2] == ("api", "request") or f.startswith("force:api")) \
+       and _api_method(sf_args) in ("POST", "PUT", "PATCH", "DELETE"):
+        return "destructive-metadata"                 # raw REST DML bypasses data-* verbs (TQ-F3)
     if sub[:3] == ("data", "delete", "bulk") or "--hard-delete" in sf_args \
        or f.startswith("force:data:bulk:delete"):
         return "bulk-delete"
@@ -359,12 +377,15 @@ def _write_shape_targets(argv):
     base0 = os.path.basename(argv[0]).lower() if argv else ""
     cand = []
     for i, tok in enumerate(argv):
-        m = REDIR_FUSED.match(tok)
+        # a redirect operator ANYWHERE in the token: leading fused (`2>path`), OR glued to a
+        # preceding word (`printf x>hooks/lib.py` — shlex keeps it one token, audit TQ-F2). The
+        # RHS after the last `>` run is the target; a bare trailing `>` → the next token.
+        m = re.search(r">{1,2}[|!&]?([^>]*)$", tok)
         if m:
             if m.group(1):
-                cand.append(m.group(1))               # fused: 2>path, >|path, >&path
+                cand.append(m.group(1))
             elif i + 1 < len(argv):
-                cand.append(argv[i + 1])              # bare: > path
+                cand.append(argv[i + 1])
     if base0 in WRITE_SHAPE_CMDS or (base0 == "sed" and _sed_inplace(argv)) or base0 in PERM_CMDS:
         cand += [a for a in argv[1:] if not a.startswith("-")]
         cand += [a.split("=", 1)[1] for a in argv if a.startswith("of=")]
@@ -380,8 +401,8 @@ def _protected_path(pathlike, cwd=None):
     for b in PROTECTED_BASENAMES:
         if fnmatch.fnmatch(b, base) or fnmatch.fnmatch(base, b):
             return True
-    if anchor_ref(pathlike, cwd):
-        return True
+    if anchor_ref(pathlike, cwd) or sf_auth_ref(pathlike):
+        return True                                   # incl. `ln -s ~/.sfdx x` symlink source (TQ-F5)
     dirs = lib.protected_write_paths() + [str((lib.TORQUE_HOME / ".claude").resolve()),
                                           str(lib.LOCAL.resolve())]
     return any(_pattern_reaches_dir(pat, d) or pat == d or pat.startswith(d + os.sep) for d in dirs)
@@ -567,11 +588,18 @@ def mcp_target(tinput):
     return next((tinput.get(k) for k in MCP_ORG_KEYS if tinput.get(k)), None)
 
 
+def _name_comps(name):
+    # split on _ - AND camelCase boundaries so `bulkDeleteRecords` → {bulk,delete,records} (TQ-F4)
+    return set(re.split(r"[_-]", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()))
+
+
 def _mcp_destructive(name, tinput):
-    # component-matched (so `get_settings` doesn't match `set`, audit T12-03)
-    comps = set(re.split(r"[_-]", name))
+    # component-matched (so `get_settings` doesn't match `set`, audit T12-03); name is RAW so
+    # camelCase survives into _name_comps (audit TQ-F4)
+    comps = _name_comps(name)
+    nl = name.lower()
     no_id = not (tinput.get("recordId") or tinput.get("id") or tinput.get("record-id"))
-    if "apex" in comps or "anonymous" in comps or "apex" in name:
+    if "apex" in comps or "anonymous" in comps or "apex" in nl:
         body = tinput.get("apexCode") or tinput.get("apex") or tinput.get("code") or ""
         return ("apex", hashlib.sha256(body.encode()).hexdigest()[:16], body)
     if comps & {"delete", "purge", "destroy", "remove", "erase", "truncate", "drop"}:
@@ -591,13 +619,14 @@ def _mcp_destructive(name, tinput):
 def mcp_analyze(tool, tinput):
     """{'read':True} | {'write':target, 'destructive':(op,digest,body)|None}. TRUE default-deny:
     an org-touching tool that is not clearly a read is a write (audit R11-04/R11-05)."""
-    name = tool.split("__")[-1].lower()
+    name = tool.split("__")[-1]                        # RAW (preserve camelCase for _name_comps)
+    nl = name.lower()
     target = mcp_target(tinput)
-    comps = set(re.split(r"[_-]", name))
+    comps = _name_comps(name)
     dest = _mcp_destructive(name, tinput)
     # ANY write verb anywhere in the name makes it a write (get_or_create_record, audit TQ-008)
-    writeish = bool(comps & MCP_WRITE_LEADS) or "apex" in name or "anonymous" in name
-    readish = bool(comps & MCP_READ_LEADS) or name.startswith(("soql", "tooling", "schema"))
+    writeish = bool(comps & MCP_WRITE_LEADS) or "apex" in nl or "anonymous" in nl
+    readish = bool(comps & MCP_READ_LEADS) or nl.startswith(("soql", "tooling", "schema"))
     if writeish or dest:
         return {"write": target, "destructive": dest}
     if readish and not target:

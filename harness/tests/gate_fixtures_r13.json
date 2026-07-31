@@ -16,6 +16,22 @@
     {"id": "R13 FP glob dir listing", "gate": "prod_write_gate", "expect": "allow",
      "event": {"tool_name": "Bash", "tool_input": {"command": "ls dir/*/ && cat *.py"}}},
     {"id": "R13 .. traversal into anchor", "gate": "prod_write_gate", "expect": "deny",
-     "event": {"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/tokens/../secret"}}}
+     "event": {"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/tokens/../secret"}}},
+    {"id": "TQ-F1 var-hidden .torque secret read", "gate": "prod_write_gate", "expect": "deny",
+     "event": {"tool_name": "Bash", "tool_input": {"command": "d=.torque; cat \"$HOME/$d/secret\""}}},
+    {"id": "TQ-F1 env $HOME auth read", "gate": "prod_write_gate", "expect": "deny",
+     "event": {"tool_name": "Bash", "tool_input": {"command": "cat $HOME/.sfdx/x.json"}}},
+    {"id": "TQ-F2 glued redirect to gate", "gate": "prod_write_gate", "expect": "deny",
+     "event": {"tool_name": "Bash", "tool_input": {"command": "printf 'x'>hooks/lib.py"}}},
+    {"id": "TQ-F2 null-cmd glued redirect", "gate": "prod_write_gate", "expect": "deny",
+     "event": {"tool_name": "Bash", "tool_input": {"command": ":>hooks/prod_write_gate.py"}}},
+    {"id": "TQ-F3 sf api request DELETE", "gate": "destructive_data_gate", "expect": "deny",
+     "event": {"tool_name": "Bash", "tool_input": {"command": "sf api request rest -X DELETE /services/data/v60.0/sobjects/Contact/003 --target-org sf-coffee"}}},
+    {"id": "TQ-F4 camelCase bulkDeleteRecords", "gate": "destructive_data_gate", "expect": "deny",
+     "event": {"tool_name": "mcp__sf__bulkDeleteRecords", "tool_input": {"targetOrg": "sf-coffee", "sobject": "Log__c"}}},
+    {"id": "TQ-F5 symlink to auth store", "gate": "prod_write_gate", "expect": "deny",
+     "event": {"tool_name": "Bash", "tool_input": {"command": "ln -s ~/.sfdx x"}}},
+    {"id": "TQ-F FP redirect to safe file", "gate": "prod_write_gate", "expect": "allow",
+     "event": {"tool_name": "Bash", "tool_input": {"command": "echo ok > /tmp/safe.txt"}}}
   ]
 }
