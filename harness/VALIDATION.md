@@ -120,3 +120,33 @@ content-bound manifest); browser-testing.md carries the frontdoor rule and the 2
 MFA-enforcement fact.
 
 **Phase status:** P0–P4 complete and green live. P5 (release + full guide) next.
+
+---
+
+## Security hardening — round 10 panel + production override · 2026-07-31
+
+**Commit:** `d3ceb27` · **Target:** sf-coffee · **Verdict: PASS** (23 checks, 6 mutators, 48 fixtures)
+
+After P4, the built gates were re-audited by three independent lenses — a shell-semantics
+reviewer, an execute-the-attack reviewer (each exploit run against real `sf` 2.144.6), and an
+architecture skeptic. They found **17 P0/P1**: the first cut still trusted raw-text regex on
+the destructive side, and shell indirection (`$x`, `s$'\x66'`), grouping (`( )`, `{ }`, `<( )`),
+wrapper runners (`nice`, `sudo`, `caffeinate`), `eval`/here-strings, `xargs` stdin, a
+`cd`-desync that could overwrite the gate itself, package-lifecycle-as-read, and MCP
+name-evasion all defeated argv0 matching.
+
+**Fix:** both hooks were consolidated onto ONE shared, expansion-aware classifier
+(`hooks/shellparse.py`) that fails closed on any indirection reaching `sf`. `_sf` gained a
+fail-safe timeout; `IsSandbox` is now a strict boolean check; the Read tool is gated on the
+anchor. Every fixed class has a named fixture (**48 total**) and the two gate guards each have
+a self-test mutator proving they can fail.
+
+**Production override** (operator decision — real consultancy work includes deploying to a
+client's prod): production is denied by default; `torque approve <org> <op> --prod` mints a
+single-use HMAC token and `torque approve <org> --session <min≤120>` opens a signed, revocable
+window, both issued only from a real login TTY clear of the agent. Precedence when production:
+session grant → single-use token → deny. Every prod write is audited `PROD-WRITE`.
+Override precedence unit-tested 6/6 (deny-by-default, session allow, expired deny, forged-sig
+deny, token allow+consume, single-use).
+
+Round 11 re-audits the shared parser and the override.
