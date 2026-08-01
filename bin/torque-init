@@ -76,6 +76,23 @@ def main():
         d.mkdir(parents=True, exist_ok=True); os.chmod(d, 0o700)
 
     # 4. the allowlist --------------------------------------------------------
+    # Making an org writable IS the authorization decision, so it needs the operator that the
+    # entry it writes claims made it. Without this, an agent could run `torque init` through
+    # Bash and grant itself a writable org — the entry would then record the grant as
+    # "operator-declared" on no evidence at all.
+    if not lib.operator_present():
+        die("`torque init` grants an org write eligibility, so it requires a real operator "
+            "terminal — the same bar as `torque approve`",
+            "Run it yourself from a login shell, not through an agent.")
+    try:
+        with open("/dev/tty") as _tty:
+            sys.stderr.write(f"\n  Make {alias} ({orgid}, {verdict}) writable by Torque? "
+                             f"[type YES]: ")
+            sys.stderr.flush()
+            if _tty.readline().strip() != "YES":
+                die("aborted", "nothing was written")
+    except OSError:
+        die("no controlling terminal", "run `torque init` from a login shell")
     lib.LOCAL.mkdir(parents=True, exist_ok=True)
     existing = []
     if lib.ALLOWLIST.exists():
@@ -85,7 +102,7 @@ def main():
             existing = []
     entry = {"orgId": orgid, "username": username, "verdict": verdict,
              "verified": int(time.time()), "disposable": True,
-             "disposable_justification": f"operator-declared writable org, verified {verdict} at init"}
+             "disposable_justification": f"operator confirmed at a login terminal; verified {verdict} at init"}
     orgs = [e for e in existing if lib.norm_id(e.get("orgId", "")) != orgid] + [entry]
     lib.ALLOWLIST.write_text(json.dumps({"orgs": orgs}, indent=2))
     os.chmod(lib.ALLOWLIST, 0o600)

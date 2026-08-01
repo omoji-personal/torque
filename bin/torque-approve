@@ -27,86 +27,6 @@ DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-u
 SESSION_MAX_MIN = 120
 
 
-def _trusted(*names):
-    for n in names:
-        if os.path.exists(n):
-            return n
-    return names[0]
-
-
-# Absolute, PATH-independent binaries + a fixed env — a PATH-injected fake `who`/`ps` must not
-# be able to forge operator presence (audit TQ-001).
-_WHO = _trusted("/usr/bin/who", "/bin/who")
-_PS = _trusted("/bin/ps", "/usr/bin/ps")
-_TRUSTED_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": os.environ.get("HOME", "")}
-
-
-def _has_tty():
-    try:
-        fd = os.open("/dev/tty", os.O_RDWR); os.close(fd)
-        return sys.stdin.isatty()
-    except OSError:
-        return False
-
-
-def _tty_is_login():
-    """The controlling tty must be an active login session in utmp (`who`). A pty the agent
-    forges via openpty is NOT a login session, so it fails here (audit R10-07)."""
-    try:
-        fd = os.open("/dev/tty", os.O_RDWR)
-        name = os.ttyname(fd); os.close(fd)
-    except OSError:
-        return False
-    short = os.path.basename(name)
-    try:
-        who = subprocess.run([_WHO], capture_output=True, text=True, timeout=10,
-                             env=_TRUSTED_ENV).stdout
-    except Exception:
-        return False
-    for ln in who.splitlines():                        # exact tty-column match (audit R11-R1)
-        parts = ln.split()
-        if len(parts) >= 2 and parts[1] == short:
-            return True
-    return False
-
-
-def _ancestry_names():
-    names, pid = [], os.getppid()
-    if os.path.isdir("/proc"):
-        for _ in range(40):
-            if pid <= 1:
-                break
-            try:
-                names.append(open(f"/proc/{pid}/comm").read().strip().lower())
-                pid = int(open(f"/proc/{pid}/stat").read().split()[3])
-            except Exception:
-                break
-        return names
-    for _ in range(40):
-        if pid <= 1:
-            break
-        try:
-            out = subprocess.run([_PS, "-o", "ppid=,comm=", "-p", str(pid)],
-                                 capture_output=True, text=True, timeout=10,
-                                 env=_TRUSTED_ENV).stdout.strip()
-            if not out:
-                break
-            parts = out.split(None, 1)
-            names.append((parts[1] if len(parts) > 1 else "").lower())
-            pid = int(parts[0])
-        except Exception:
-            break
-    return names
-
-
-def _ancestry_clear():
-    return not any("claude" in n or "node" in n for n in _ancestry_names())
-
-
-def _operator_present():
-    return _has_tty() and _tty_is_login() and _ancestry_clear()
-
-
 def _ensure_secret():
     lib.ANCHOR.mkdir(parents=True, exist_ok=True); os.chmod(lib.ANCHOR, 0o700)
     if not lib.SECRET.exists():
@@ -219,6 +139,10 @@ def _write_approved_apex(apex_src):
     dst = lib.APPROVED / f"{digest}.apex"
     dst.write_bytes(body); os.chmod(dst, 0o400)
     return digest
+
+
+def _operator_present():
+    return lib.operator_present()      # one implementation, in lib
 
 
 def main():

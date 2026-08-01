@@ -63,7 +63,10 @@ def handle_mcp(tool, tinput):
 
 
 def _is_gate_file(path):
-    return os.path.basename(path) in shellparse.PROTECTED_BASENAMES
+    if os.path.basename(path) in shellparse.PROTECTED_BASENAMES:
+        return True
+    norm = os.path.normpath(path).replace(os.sep, "/")
+    return any(f"/{d}" in f"/{norm}" for d in shellparse.PROTECTED_DIRS)
 
 
 def _tool_paths(tinput):

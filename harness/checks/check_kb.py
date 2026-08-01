@@ -1261,3 +1261,98 @@ def _public_description_accurate(target):
     return Result("public_description_accurate", PASS,
                   f"every number in the public description matches a real metric "
                   f"{sorted(real)}")
+
+
+@check("runnable_implies_unwritable", "static", catastrophe=True)
+def _runnable_implies_unwritable():
+    """Anything the gate lets the agent RUN, the agent must not be able to WRITE.
+
+    The interpreter rule refuses `python3 …` against a Salesforce target, because an interpreter
+    is opaque. That also refused two first-party read-only commands the guide tells operators to
+    run, so they are now exempt — and the exemption is only sound while the agent cannot edit the
+    file it would then be allowed to execute.
+
+    That is a coupling between two lists in different files, which is the kind of thing that
+    silently comes apart. Asserted here in both directions.
+    """
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_shellparse", ROOT / "hooks" / "shellparse.py")
+    sp = _il.module_from_spec(spec); spec.loader.exec_module(sp)
+
+    for d in ("bin/", "hooks/"):
+        if d not in sp.PROTECTED_DIRS:
+            return Result("runnable_implies_unwritable", FAIL,
+                          f"{d} is executable-by-exemption but not in PROTECTED_DIRS — the agent "
+                          f"could write the file it is then permitted to run")
+
+    def gate(payload):
+        r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                       input=_kb_json.dumps(payload), capture_output=True, text=True,
+                       cwd=ROOT, timeout=60)
+        return r.returncode
+
+    # every first-party entry point: runnable, and not writable
+    runnable = [p for p in (ROOT / "bin").glob("torque*") if p.is_file()]
+    if not runnable:
+        return Result("runnable_implies_unwritable", FAIL, "no first-party commands found")
+    for f in runnable:
+        rel = f"bin/{f.name}"
+        if gate({"tool_name": "Write", "tool_input": {"file_path": rel, "content": "x"}}) != 2:
+            return Result("runnable_implies_unwritable", FAIL,
+                          f"the agent can WRITE {rel}, which it is also allowed to run")
+    # and a foreign script with an org target is still refused
+    if gate({"tool_name": "Bash",
+             "tool_input": {"command": "python3 /tmp/not-torque.py --target-org acme"}}) != 2:
+        return Result("runnable_implies_unwritable", FAIL,
+                      "a script outside TORQUE_HOME was authorized against an org")
+    ok = gate({"tool_name": "Bash",
+               "tool_input": {"command": "python3 bin/torque checkup --target-org acme"}})
+    if ok != 0:
+        return Result("runnable_implies_unwritable", FAIL,
+                      f"a first-party read-only command was refused (exit {ok})")
+    return Result("runnable_implies_unwritable", PASS,
+                  f"{len(runnable)} first-party command(s) runnable and none writable; "
+                  f"foreign interpreters still refused")
+
+
+@check("init_requires_operator", "static", catastrophe=True)
+def _init_requires_operator():
+    """Granting an org write eligibility requires the operator the entry claims made the grant.
+
+    `torque init` classified an org and wrote it to the allowlist with the justification
+    "operator-declared writable org" — with no check that an operator was anywhere near it. The
+    agent could run it through Bash and grant itself a writable org, and the record would assert
+    an operator decision on no evidence. Asserting the fact you were supposed to establish is the
+    same defect as a manifest recording that metadata was stripped from a file nobody opened.
+
+    It matters more than "it is only a sandbox": full and partial copy sandboxes hold real
+    production data, which is itself an entry in this repo's own catalogue.
+    """
+    src = (ROOT / "bin" / "torque-init").read_text()
+    if "operator_present()" not in src:
+        return Result("init_requires_operator", FAIL,
+                      "torque-init writes the allowlist without an operator-presence check")
+
+    before = (ROOT / "local" / "writable-orgs.json")
+    snapshot = before.read_bytes() if before.exists() else None
+    r = _kb_sp.run([_kb_sys.executable, str(ROOT / "bin" / "torque-init"), "torque-fake-org-zzz"],
+                   capture_output=True, text=True, cwd=ROOT, timeout=180,
+                   stdin=_kb_sp.DEVNULL)
+    after = before.read_bytes() if before.exists() else None
+    if after != snapshot:
+        return Result("init_requires_operator", FAIL,
+                      "an agent-context `torque init` MODIFIED the allowlist")
+    if r.returncode == 0:
+        return Result("init_requires_operator", FAIL,
+                      "an agent-context `torque init` exited 0 — it must refuse without a "
+                      "real operator terminal")
+
+    # and there must be exactly one implementation of the presence check
+    ap = (ROOT / "bin" / "torque-approve").read_text()
+    if "def _has_tty" in ap:
+        return Result("init_requires_operator", FAIL,
+                      "torque-approve carries its own copy of the presence check — two "
+                      "implementations of an authorization boundary will drift")
+    return Result("init_requires_operator", PASS,
+                  "init refuses without a login terminal and wrote nothing; approve and init "
+                  "share one presence implementation")

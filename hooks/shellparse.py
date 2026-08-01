@@ -65,23 +65,43 @@ PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destruc
                        "lib_cli.py", "settings.json", "writable-orgs.json", "protected-objects",
                        "cli-write-surface.json", "clean-ip.rules", ".classify-cache.json",
                        "audit.log", "torque-approve", "torque-frontdoor", "torque-install-gates",
-                       "validate.py"}
+                       "validate.py",
+                       # The catalogue and the alias index feed regular expressions into the
+                       # gate's own note rendering, and the per-org store feeds it text. They
+                       # were writable through the agent's Write tool, which made a courtesy
+                       # feature into an input the agent controls on the path of a blocking
+                       # decision (release panel, codex/gpt-5.6-sol).
+                       "salesforce-platform.yml", ".alias-index.json"}
+
+# Directories the agent may not write into for the same reason: their contents are read by the
+# gate. Basename matching is not enough here — a per-org file is named after an org Id.
+PROTECTED_DIRS = ("knowledge/", "local/orgs/", "bin/", "hooks/")
 
 
 def _is_own_harness(argv) -> bool:
-    """True only for `python[3] <TORQUE_HOME>/harness/validate.py ...`.
+    """True only for Torque's own scripts, resolved under TORQUE_HOME.
 
-    Deliberately narrow: one script, resolved under TORQUE_HOME, and that script is itself
-    gate-protected from agent writes. Any other interpreter invocation still falls through to
-    the deny above.
+    The interpreter rule refuses `python3 …` when a Salesforce target is present, because an
+    interpreter can do anything opaquely. That correctly refused `python3 bin/torque checkup
+    --target-org X` and `blast-radius` — two first-party, READ-ONLY commands the guide tells
+    operators to run. A gate that refuses the tool's own documented commands is a gate people
+    route around, which costs more safety than it buys.
+
+    The exemption stays narrow in the way that matters: the script must resolve inside
+    TORQUE_HOME, to harness/validate.py or something under bin/, and BOTH directories are now
+    in PROTECTED_DIRS — so the agent cannot write the file it would then be allowed to run.
+    That equivalence is the whole argument; if bin/ ever leaves PROTECTED_DIRS this becomes a
+    bypass, which is why bin_is_protected asserts the pair.
     """
     if len(argv) < 2 or os.path.basename(argv[0]).split(".")[0] not in ("python", "python2", "python3"):
         return False
     try:
-        script = (lib.TORQUE_HOME / "harness" / "validate.py").resolve()
+        home = lib.TORQUE_HOME.resolve()
         cand = Path(argv[1])
         cand = (cand if cand.is_absolute() else (lib.TORQUE_HOME / cand)).resolve()
-        return cand == script
+        if cand == (home / "harness" / "validate.py"):
+            return True
+        return cand.parent == (home / "bin") and cand.name.startswith("torque")
     except Exception:
         return False
 

@@ -97,6 +97,96 @@ def redact(text: str) -> str:
     text = re.sub("00D"+r"[A-Za-z0-9]{12,15}", "00D_REDACTED", text)
     return text
 
+
+# ── operator presence ──────────────────────────────────────────────────────────────────────
+# Lifted verbatim out of bin/torque-approve so `init` and `approve` share ONE implementation.
+# torque-init wrote an allowlist entry justified as "operator-declared writable org" without
+# ever checking that an operator was there — it asserted the fact it was supposed to establish,
+# the same shape as an image manifest recording that metadata was stripped from a file nobody
+# opened (release panel, codex/gpt-5.6-sol). Duplicating the check into a second file would
+# have been the other way to get this wrong.
+
+def _trusted(*names):
+    for n in names:
+        if os.path.exists(n):
+            return n
+    return names[0]
+
+
+# Absolute, PATH-independent binaries + a fixed env — a PATH-injected fake `who`/`ps` must not
+# be able to forge operator presence (audit TQ-001).
+_WHO = _trusted("/usr/bin/who", "/bin/who")
+_PS = _trusted("/bin/ps", "/usr/bin/ps")
+_TRUSTED_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": os.environ.get("HOME", "")}
+
+
+def _has_tty():
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR); os.close(fd)
+        return sys.stdin.isatty()
+    except OSError:
+        return False
+
+
+def _tty_is_login():
+    """The controlling tty must be an active login session in utmp (`who`). A pty the agent
+    forges via openpty is NOT a login session, so it fails here (audit R10-07)."""
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR)
+        name = os.ttyname(fd); os.close(fd)
+    except OSError:
+        return False
+    short = os.path.basename(name)
+    try:
+        who = subprocess.run([_WHO], capture_output=True, text=True, timeout=10,
+                             env=_TRUSTED_ENV).stdout
+    except Exception:
+        return False
+    for ln in who.splitlines():                        # exact tty-column match (audit R11-R1)
+        parts = ln.split()
+        if len(parts) >= 2 and parts[1] == short:
+            return True
+    return False
+
+
+def _ancestry_names():
+    names, pid = [], os.getppid()
+    if os.path.isdir("/proc"):
+        for _ in range(40):
+            if pid <= 1:
+                break
+            try:
+                names.append(open(f"/proc/{pid}/comm").read().strip().lower())
+                pid = int(open(f"/proc/{pid}/stat").read().split()[3])
+            except Exception:
+                break
+        return names
+    for _ in range(40):
+        if pid <= 1:
+            break
+        try:
+            out = subprocess.run([_PS, "-o", "ppid=,comm=", "-p", str(pid)],
+                                 capture_output=True, text=True, timeout=10,
+                                 env=_TRUSTED_ENV).stdout.strip()
+            if not out:
+                break
+            parts = out.split(None, 1)
+            names.append((parts[1] if len(parts) > 1 else "").lower())
+            pid = int(parts[0])
+        except Exception:
+            break
+    return names
+
+
+def _ancestry_clear():
+    return not any("claude" in n or "node" in n for n in _ancestry_names())
+
+
+def operator_present():
+    return _has_tty() and _tty_is_login() and _ancestry_clear()
+
+
+
 # ---- allowlist (fail-closed) ---------------------------------------------
 def load_allowlist():
     """Returns dict keyed by 18-char orgId, or None (⇒ deny) on any problem."""
