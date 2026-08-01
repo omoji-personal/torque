@@ -251,3 +251,45 @@ The previous entry claimed "converged and shipped" and cited an attestation file
 written, because the generator of the day recorded tool versions and hashes while its own
 docstring promised check outcomes and an org verdict. That is corrected above, and the generator
 now refuses to write an attestation containing no outcomes.
+
+---
+
+## P7 — release · after four adversarial rounds · 2026-08-01
+
+**Attestation:** `harness/attest/attest-0c9b805b.json` — commit `0c9b805b`, tree
+`c2f6d98f`, working tree clean · **profile: release · verdict: PASS**
+
+Target `sf-cb-test` (id sha256/16 `262d2e15e8e6f90c`): sf-cb-test classified 'developer' (IsSandbox=False, Developer Edition)
+
+**59/59 checks pass. 11
+mutators, all caught.** 196 adversarial fixtures, 128 differential-fuzz cases.
+
+### What four rounds found
+
+| Round | Findings | Character |
+|---|---|---|
+| 1 | 2 P0, 11 P1, 2 P2 | a fail-open introduced by that week's feature; `init` self-authorizing |
+| 2 | 16 | mostly defects in round 1's fixes |
+| 3 | 10 | every one in code written that day |
+| 4 | 1 P0, 5 doc errors | first round on a FROZEN tree — found a pre-existing P0 |
+
+The round-4 P0 is the one worth reading the code for. On a case-insensitive filesystem
+`HOOKS/LIB.PY` and `hooks/lib.py` are the same file; the path guard compared case-sensitively, so
+the agent could overwrite the gate's own source by shifting the case of a directory. It was the
+third case-sensitivity defect, in guards that are not copies of one another — so what they shared
+was an assumption, not code, and no duplication check could have seen it.
+
+That changed the method. Code cannot be enumerated; assumptions can. Every path guard is now swept
+against ten ways a path can name the same file, which immediately found a fourth instance in all
+three guards at once.
+
+### What this run is evidence of, and what it is not
+
+One run, one disposable Developer Edition org, by the author. **Not** independent verification.
+The attestation records commit, tree, working-tree cleanliness, the org's identity as a digest,
+every check outcome and every mutator — enough for a reader to reproduce it and disagree.
+
+Two earlier entries are worth reading as a pair with this one: P5 claimed "converged and shipped"
+while citing an attestation file that had never been written, because the generator of the day
+recorded tool versions while its own docstring promised check outcomes. P6 corrected that. This
+entry exists because a fourth round found a P0 after P6 was written.
