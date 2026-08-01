@@ -1,19 +1,108 @@
 #!/usr/bin/env python3
-"""Emit a machine-readable attestation of a release run: check outcomes, org verdict,
-toolchain versions, denylist digest, git tree hash. VALIDATION.md is rendered from this."""
-import hashlib, json, subprocess, sys, os
+"""Run the release profile and record exactly what happened.
+
+An attestation is the artifact a stranger uses to decide whether to believe the rest. This one
+claimed, in its own docstring, to record "check outcomes, org verdict" — and wrote a file
+containing tool versions, two hashes and a reproduce command. Neither of the two things it named.
+That is the same defect as an image manifest recording that metadata was stripped from a file
+nobody opened, and it sat in the artifact whose only job is to be trustworthy.
+
+It now runs the validation itself and records the result: commit and tree, the target org's
+classification with its Id digested rather than published, every check with its outcome, every
+mutator, the self-test verdict, the final verdict, and when. If the run is not a pass, the
+attestation says so — an attestation that could only ever describe success is a press release.
+
+    torque attest --target-org <alias> [--profile release]
+"""
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+import time
 from pathlib import Path
+
 ROOT = Path(__file__).resolve().parent.parent
-def sh(*a): return subprocess.run(a, capture_output=True, text=True, cwd=ROOT).stdout.strip()
-DENY = Path.home()/"Desktop"/"torque-planning"/"denylist.txt"
-att = {
-  "tree": sh("git","write-tree"),
-  "head": sh("git","rev-parse","HEAD"),
-  "sf": sh("sf","--version")[:40],
-  "node": sh("node","--version"),
-  "denylist_digest": hashlib.sha256(DENY.read_bytes()).hexdigest()[:16] if DENY.exists() else "ABSENT",
-  "reproduce": "python3 harness/validate.py --profile release --target-org <your-DE-org>",
-}
-out = ROOT/"harness"/"attest"/f"attest-{att['head'][:8]}.json"
-out.parent.mkdir(exist_ok=True); out.write_text(json.dumps(att, indent=2))
-print(json.dumps(att, indent=2))
+OUT = ROOT / "harness" / "attest"
+DENY = Path.home() / "Desktop" / "torque-planning" / "denylist.txt"
+
+
+def sh(*a):
+    return subprocess.run(a, capture_output=True, text=True, cwd=ROOT).stdout.strip()
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="torque attest", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--target-org", required=True)
+    ap.add_argument("--profile", default="release",
+                    choices=["static", "capability", "release"])
+    a = ap.parse_args()
+
+    dirty = sh("git", "status", "--porcelain")
+    started = int(time.time())
+    run = subprocess.run([sys.executable, str(ROOT / "harness" / "validate.py"),
+                          "--profile", a.profile, "--target-org", a.target_org],
+                         capture_output=True, text=True, cwd=ROOT)
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", run.stdout + run.stderr)
+
+    checks = [{"check": m.group(1), "outcome": m.group(2), "detail": m.group(3).strip()}
+              for m in re.finditer(
+                  r"^\s+[✓✗!−·⧗]\s+(\S+)\s+(PASS|FAIL|WARN|SKIP|N/A|LIMIT)\s+(.*)$", clean, re.M)]
+    mutators = [m.group(1) for m in re.finditer(r"^\s+✓\s+(.+?) mutator:", clean, re.M)]
+    self_test = re.search(r"ALL (\d+) MUTATORS CAUGHT", clean)
+    verdict = (re.search(r"→ verdict:\s+(\S+)", clean) or [None, "UNKNOWN"])[1]
+
+    # The org's identity is attested without being published: a reader can confirm two runs hit
+    # the same org, and cannot learn which org that is.
+    try:
+        d = json.loads(subprocess.run(
+            ["sf", "org", "display", "--target-org", a.target_org, "--json"],
+            capture_output=True, text=True).stdout)["result"]
+        org = {"alias": a.target_org,
+               "org_id_sha256_16": hashlib.sha256((d.get("id") or "").encode()).hexdigest()[:16]}
+    except Exception:
+        org = {"alias": a.target_org, "org_id_sha256_16": None, "note": "org did not answer"}
+
+    att = {
+        "schema": "torque.attestation/2",
+        "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
+        "duration_s": int(time.time()) - started,
+        "head": sh("git", "rev-parse", "HEAD"),
+        "tree": sh("git", "write-tree"),
+        "working_tree_clean": not dirty,
+        "profile": a.profile,
+        "org": org,
+        "org_classification": next(
+            (c["detail"] for c in checks if c["check"] == "org_classify"), None),
+        "verdict": verdict,
+        "exit_code": run.returncode,
+        "counts": {"checks": len(checks),
+                   **{k.lower().replace("/", ""): sum(1 for c in checks if c["outcome"] == k)
+                      for k in ("PASS", "FAIL", "WARN", "SKIP", "N/A", "LIMIT")}},
+        "self_test": {"mutators_caught": int(self_test.group(1)) if self_test else 0,
+                      "all_caught": bool(self_test), "mutators": mutators},
+        "checks": checks,
+        "toolchain": {"sf": sh("sf", "--version")[:60], "node": sh("node", "--version"),
+                      "python": sys.version.split()[0]},
+        "denylist_digest": (hashlib.sha256(DENY.read_bytes()).hexdigest()[:16]
+                            if DENY.exists() else "ABSENT"),
+        "reproduce": f"python3 harness/validate.py --profile {a.profile} "
+                     f"--target-org <your-disposable-org>",
+    }
+    if not checks:
+        print("refusing to write an attestation with no check outcomes — the validation run "
+              "produced nothing parseable", file=sys.stderr)
+        return 2
+    OUT.mkdir(parents=True, exist_ok=True)
+    f = OUT / f"attest-{att['head'][:8]}.json"
+    f.write_text(json.dumps(att, indent=2) + "\n")
+    print(f"{f.relative_to(ROOT)}  verdict={verdict}  "
+          f"{att['counts']['pass']}/{len(checks)} passed  "
+          f"{att['self_test']['mutators_caught']} mutators caught")
+    return 0 if verdict == "PASS" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
