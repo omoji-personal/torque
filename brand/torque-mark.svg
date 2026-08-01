@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120" width="320" height="120"
+     role="img" aria-label="Torque">
+  <!-- The mark is a torque-wrench scale: a graduated arc with a set limit and a click past it.
+       A torque wrench is the tool that applies force through leverage and mechanically refuses
+       to exceed its setting. That is the product, so it is the mark. -->
+  <defs>
+    <style>
+      .g   { stroke:#2B3138; stroke-width:1.4; fill:none; stroke-linecap:butt; }
+      .gs  { stroke:#2B3138; stroke-width:1.4; }
+      .lim { stroke:#B4451F; stroke-width:2.6; }
+      .wm  { font-family:Futura,"Gill Sans","Avenir Next",sans-serif; font-weight:500;
+             font-size:38px; letter-spacing:6.5px; fill:#1A1D21; }
+      .sub { font-family:"Andale Mono","SF Mono",Menlo,monospace; font-size:8.5px;
+             letter-spacing:2.6px; fill:#6B7580; }
+    </style>
+  </defs>
+
+  <!-- graduated scale: ticks grow toward the limit, then stop -->
+  <g class="gs">
+    <line x1="14" y1="46" x2="14" y2="34"/>
+    <line x1="26" y1="46" x2="26" y2="38"/>
+    <line x1="38" y1="46" x2="38" y2="38"/>
+    <line x1="50" y1="46" x2="50" y2="34"/>
+    <line x1="62" y1="46" x2="62" y2="38"/>
+    <line x1="74" y1="46" x2="74" y2="38"/>
+    <line x1="86" y1="46" x2="86" y2="30"/>
+  </g>
+  <!-- the set limit — force stops here -->
+  <line class="lim" x1="86" y1="52" x2="86" y2="22"/>
+  <!-- the beam, bearing load up to the limit -->
+  <path class="g" d="M14 46 H86" />
+  <!-- past the limit: the click. deliberately broken, not continuous. -->
+  <path class="g" stroke-dasharray="3 5" stroke="#98A2AD" d="M92 46 H120"/>
+
+  <text class="wm" x="14" y="98">TORQUE</text>
+  <text class="sub" x="17" y="114">FORCE · THROUGH LEVERAGE · TO A LIMIT</text>
+</svg>

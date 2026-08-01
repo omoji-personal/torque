@@ -35,12 +35,17 @@ await page.pdf({
   displayHeaderFooter: true,
   headerTemplate: '<div></div>',       // empty header; Chromium requires a node
   footerTemplate: `
-    <div style="width:100%; font-family:Charter,Georgia,serif; font-size:8pt; color:#8A8580;
-                padding:0 0.75in; display:flex; justify-content:space-between;">
-      <span>Torque — github.com/omoji-personal/torque</span>
+    <div style="width:100%; font-family:'Andale Mono',Menlo,monospace; font-size:7pt;
+                color:#5B6672; letter-spacing:0.06em; padding:0 0.8in;
+                display:flex; justify-content:space-between; align-items:center;">
+      <span>TORQUE</span>
+      <span style="color:#6C747D;">github.com/omoji-personal/torque</span>
       <span class="pageNumber"></span>
     </div>`,
-  margin: { top: '0.7in', bottom: '0.75in', left: '0.85in', right: '0.85in' },
+  // Page geometry lives HERE, not in @page — preferCSSPageSize:false means these win, and two
+  // disagreeing sources would mean Cmd-P on the HTML produced a different document than the
+  // shipped PDF. The @page rule was removed from the stylesheet rather than left to rot.
+  margin: { top: '0.68in', bottom: '0.72in', left: '0.8in', right: '0.8in' },
   preferCSSPageSize: false,
 });
 

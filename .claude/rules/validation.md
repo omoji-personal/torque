@@ -1,5 +1,7 @@
 # Validation — the contract
 
+ENFORCEMENT: harness-enforced (deliverable_coverage)
+
 Profiles: **release ⊇ capability ⊇ static** — every lower-profile check runs in the
 higher profile. `--self-test` (fixture-based, offline) runs AS PART OF static and re-runs
 in capability and release.

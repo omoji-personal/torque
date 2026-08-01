@@ -22,16 +22,17 @@ Real attacks, run through the real hooks:
 Shell indirection
 The gate never sees the literal word `sf` — it is assembled at runtime.
   DENIED  x=sf; $x data delete bulk --sobject Account --target-org acme-prod
-          variable-assembled command → indirect command invocation cannot be authorized
+          variable-assembled command → Salesforce operation hidden in a shell assignment value
   DENIED  s$'\x66' data delete bulk --sobject Account --target-org acme-prod
-          ANSI-C hex escape spells 'sf' → indirect command invocation cannot be authorized
+          ANSI-C hex escape spells 'sf' → Salesforce operation hidden in an escape sequence
 
 Path expansion
 A glob or variable that only becomes the secret's path when bash expands it.
-  DENIED  cat ~/.torq*/secret
-          glob reaches the signing secret → reference to the trust anchor is operator-only
-  DENIED  d=.tor;e=que;p=$HOME/$d$e;cat $p/secret
-          path assembled across three variables → reference to the trust anchor is operator-only
+  DENIED  cat /Users/you/.tor*/secret
+          glob reaches the signing secret → reference to the trust anchor (~/.torque) —
+          secret and tokens are operator-only
+  DENIED  p=$HOME/.torque;cat $p/secret
+          path assembled through a shell variable → reference to the trust anchor (~/.torque)
 
 Overwriting the gate itself
 Disable the hook and everything downstream is ungated.
@@ -79,13 +80,14 @@ blocks real work gets switched off.**
 
 ## Run it against your own org
 
-Prerequisites: `python3` ≥ 3.8, the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli),
+Prerequisites: [Claude Code](https://claude.com/claude-code) (the hooks are its PreToolUse surface),
+`git`, `python3` ≥ 3.11, the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) ≥ 2.60,
 and any non-production org — a [free Developer Edition](https://developer.salesforce.com/signup) is fine.
 (`node` is optional; it only affects the live browser check.)
 
 ```
 sf org login web --alias my-dev-org
-python3 bin/torque-init my-dev-org        # verifies the org is NOT production, then configures
+python3 bin/torque init my-dev-org        # verifies the org is NOT production, then configures
 npm install                               # optional: only the live browser check needs this
 python3 harness/validate.py --profile release --target-org my-dev-org
 ```
@@ -94,7 +96,7 @@ Skip `npm install` and everything still runs — the browser check reports `BLOC
 reason and the verdict is `DEGRADED` rather than `PASS`. That is deliberate: a check that cannot
 run is never reported as green.
 
-`torque-init` refuses to allowlist a production org, creates the trust anchor outside the repo,
+`torque init` refuses to allowlist a production org, creates the trust anchor outside the repo,
 and proves the gates bind before telling you it worked. The allowlist is deliberately not shipped:
 which org you may write to is a decision only the person at the keyboard can make.
 
@@ -109,9 +111,11 @@ Torque validates itself the way it validates Salesforce work. `--profile release
 - **128 adversarial fixtures** — every attack class found across the audits, each one a named,
   runnable test.
 - **11 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
-  attack to succeed. A check that cannot fail proves nothing; these prove each guard is
-  load-bearing. (Eight run anywhere; three exercise the clean-IP scan and need the private
-  pattern list, so on your clone they report as operator-only rather than pretending to pass.)
+  attack to succeed (or, for the static scanners, requires the check to FAIL). A check that
+  cannot fail proves nothing; these prove each guard is load-bearing. Seven run on any clone;
+  three exercise the clean-IP scan and need the private pattern list, so they report as
+  operator-only rather than pretending to pass; the eleventh needs `--target-org`, because the
+  check it neuters queries an org. A skipped mutator is never reported as caught.
 - **A live capability cycle** against your org — deploy a field, verify it by SOQL, verify
   field-level security, hard-delete it, confirm zero residue; a mass-update with a working undo;
   a real headless Lightning render.

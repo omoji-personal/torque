@@ -240,10 +240,12 @@ def self_test(target=None):
     os.environ["TORQUE_IN_SELFTEST"] = "1"
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
+    skipped = []                   # mutators that could not run — never allowed to read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
         print("  · clean_ip mutators (3): operator-only — the private pattern list is not "
               "published, so they are skipped rather than failed")
+        skipped.append("clean_ip ×3 (operator-only)")
     # clean_ip: a tracked file with a denied term must FAIL. Use the synthetic sentinel
     # pattern (in the private denylist) so the harness source never embeds a real
     # prohibited name — otherwise clean_ip would flag its own mutator.
@@ -427,7 +429,19 @@ def self_test(target=None):
             ok &= passed
         finally:
             _lib_mod.redact = _real_redact                     # always restore
-    print(f"\n  self-test: {'ALL MUTATORS CAUGHT' if ok else 'FAILURE — a check did not fail when it should'}")
+    else:
+        # Without an org the session-log check cannot run, so neither can its mutator. SAY SO.
+        # Printing "ALL MUTATORS CAUGHT" while silently omitting one is exactly the false-green
+        # this harness exists to prevent: a skip must never be able to read as a pass.
+        print("  · redaction mutator: needs --target-org (the session-log check queries an org) "
+              "— skipped rather than counted")
+        skipped.append("redaction (needs --target-org)")
+    if ok:
+        verdict = ("ALL 11 MUTATORS CAUGHT" if not skipped else
+                   f"all runnable mutators caught — NOT RUN: {'; '.join(skipped)}")
+    else:
+        verdict = "FAILURE — a check did not fail when it should"
+    print(f"\n  self-test: {verdict}")
     return ok
 
 def main():

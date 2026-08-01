@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""torque — one entry point for the operator-facing tools.
+
+WHY THIS EXISTS: every deny message tells the operator to run `torque approve ...`.
+Before this shim there was no such command — only `bin/torque-approve` — so the single
+most important instruction the product ever prints did not work as written. A safety
+control the operator cannot invoke is not a safety control.
+
+Dispatches `torque <sub> [args...]` to `bin/torque-<sub>`, so the documented form and
+the real form are the same string.
+"""
+import os
+import sys
+from pathlib import Path
+
+BIN = Path(__file__).resolve().parent
+SUBS = sorted(p.name[len("torque-"):] for p in BIN.glob("torque-*") if p.is_file())
+
+
+def _usage(problem=""):
+    if problem:
+        print(f"torque: {problem}\n", file=sys.stderr)
+    print(f"usage: torque <command> [args...]\n\ncommands:", file=sys.stderr)
+    for s in SUBS:
+        print(f"  {s}", file=sys.stderr)
+    print(f"\nEach is also runnable directly as {BIN}/torque-<command>.", file=sys.stderr)
+    return 2
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        return _usage()
+    sub, rest = sys.argv[1], sys.argv[2:]
+    target = BIN / f"torque-{sub}"
+    if not target.is_file():
+        return _usage(f"unknown command {sub!r}")
+    # exec rather than subprocess: the child inherits this terminal unchanged, which the
+    # approval flow REQUIRES — torque-approve refuses unless it is attached to a real TTY,
+    # and a wrapper that broke that would silently disable operator-presence checking.
+    os.execv(sys.executable, [sys.executable, str(target), *rest])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

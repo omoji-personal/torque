@@ -169,10 +169,12 @@ score of the *findings* fell in severity, which is the convergence signal:
 | 12 | New front — the gates judged PRE-EXPANSION text (`cat ~/.torq*/secret` read the secret); + alias TOCTOU, PATH-injected `who`/`ps`, one-token-two-deletes; + 6 usability regressions | expansion-aware path guards |
 | 13 | Completion of the round-12 front — `**` recursive-glob + char-class basenames misaligned the component matcher | a proper DP glob-prefix matcher |
 
-Every fixed class carries a named fixture (**117 total** across base + r11 + r12 + r13) and each
+Every fixed class carries a named fixture (**128 total** — 114 across base + r11 + r12 + r13, 11
+in the confirmation set, and 3 valid-token allow-path cases the runner constructs) and each
 catastrophe-class guard carries a **self-test mutator** that must flip a deny→allow when the
-guard is neutered (**11 mutators**, all caught): clean-IP ×4, anchor-guard, destructive-token,
-redirect-detection, wrapper (`wrapped_sf`), expansion-awareness, glob-matcher (`_glob_reaches`).
+guard is neutered (**11 mutators**, all caught with `--target-org`): clean-IP ×3 (operator-only — the pattern
+list is private), redaction (needs an org), secret-scan, anchor-guard, destructive-token, redirect-detection, wrapper
+(`wrapped_sf`), expansion-awareness, glob-matcher (`_glob_reaches`).
 
 A final scoped confirmation pass then found 5 more refinements of the same fronts — a `$HOME`
 that wildcarded to the wrong anchor, a redirect glued to a preceding word, raw `sf api request`
@@ -206,11 +208,11 @@ classification), not one-off patches.
 
 - **self-test** — 10 catastrophe-class mutators, all caught: each flips a deny→allow (or a
   static check FAIL→PASS) *only* when its guard is neutered, then restores source. Guards proven
-  load-bearing: clean-IP ×4, anchor, destructive-token, redirect-detection, wrapper, expansion,
+  load-bearing: clean-IP ×3, secret-scan, anchor, destructive-token, redirect-detection, wrapper, expansion,
   glob-matcher.
 - **24 capability checks** — incl. the live probe cycle (deploy → SOQL+FLS verify → purge,
   residue 0), mass-update → undo, and a real headless Lightning render.
-- **4 release-only checks** — excepted-org hard-fail (no client-prod exception, so the published
+- **3 release-only checks** — excepted-org hard-fail (no client-prod exception, so the published
   claim stays absolute), a bypass suite over 7 shapes drawn from every audit front, image
   manifest, deliverable coverage (52 tracked paths, all classified).
 - **128 adversarial fixtures** across base + r11 + r12 + r13 + confirmation.
