@@ -1,20 +1,50 @@
-# Platform quirks (assertions; dated detail in reference/platform-quirks-detail.md)
+# Platform knowledge — consult the catalogue before you assert
 
-- `sf apex run` HTML-escapes `|` — use a different delimiter for Apex→shell payloads.
-- History objects: `NewValue`/`OldValue` cannot be filtered in SOQL — pull and filter client-side.
-- A bare `COUNT()` breaks under an auto-appended `LIMIT` — group or scope it.
-- `FlowDefinitionView` is a STANDARD-API object — querying it via the Tooling API errors, which
-  some clients surface as 0 rows. Read `FlowDefinition.ActiveVersionId` (Tooling) or
-  `FlowDefinitionView.IsActive` (standard). Do NOT grep `<status>` from a retrieve: since API v44
-  a retrieve returns only the latest version, so an active v3 reads Draft once someone clones it.
-- A deleted custom field sits 15 days in the deleted-fields queue and keeps counting against the
-  object's field limit. Salesforce renames it with a `_del` suffix, freeing the original API name
-  once; a second delete of the same name cannot append `_del` and the name is then blocked.
-  `purgeOnDelete` makes a component ELIGIBLE for deletion — it does not erase it, so a `_del`
-  tombstone is expected after teardown and residue checks must look for it.
+The catalogue is `knowledge/salesforce-platform.yml`. It is structured, dated, and every entry
+declares how it is known: `verified-live` (re-checked against a real org by `kb_live_claims`),
+`documented` (with the Salesforce source named), or `practitioner` (learned by being burned,
+and said so). Read it with `grep`, or load the YAML — it is designed to be queried by symptom,
+not read front to back.
 
-ENFORCEMENT: model-honored (observable: every entry states a symptom and a remedy, and the
-dated entries with reproductions live in reference/platform-quirks-detail.md. NOT every
-entry carries a reproduction — the first three are assertions from practice, and this line
-used to claim otherwise. No single deterministic check spans the catalogue; probe_cycle
-exercises the field-delete and purgeOnDelete entries specifically.)
+## When to consult it — objective triggers, not "when unsure"
+
+1. **Before deploying metadata** — `deploy`. Field-level security, deploy order, profile
+   semantics, what a Flow retrieve actually returns, what a deleted field does to its own name.
+2. **Before any bulk data change** — `data`, `limits`. What a no-op update really costs, what is
+   filterable, which permission a hard delete needs, the governor limits that bite at 200 rows.
+3. **Before claiming a flow is active, or that automation ran** — `deploy`, `automation`. Order
+   of execution, and why an entry condition will not re-fire.
+4. **Before writing or reviewing Apex that touches user data** — `security`. `with sharing` is
+   not FLS; a formula field can expose the fields it references.
+5. **When an API name does not resolve** — `packaging`. The namespace prefix appears in the
+   packaging org too, not only in subscriber orgs.
+6. **Before treating an org as safe because of its type** — `orgs`. Developer Edition is neither
+   a sandbox nor production; Full and Partial Copy sandboxes hold real customer data.
+7. **When browser or login automation fails** — `auth`. Phishing-resistant MFA, and what
+   actually breaks the frontdoor session handoff.
+8. **Whenever a result looks green but wrong** — the API reported success and the outcome is
+   still wrong. That is the failure this catalogue exists for; search it by symptom first.
+
+If none of these apply, this rule is silent. It is a lookup, not a ritual.
+
+## Why a catalogue rather than model knowledge
+
+Salesforce ships three releases a year, so anything learned from training data decays on a
+schedule, and hallucinated API names are the most common cause of a failed deploy. The
+catalogue is narrower than the platform and more reliable than recall: it holds the specific
+behaviours that produce a *successful* API call with a *wrong* outcome — the failure an agent
+cannot detect by reading return codes.
+
+It is deliberately NOT a copy of Salesforce's documentation. Raw docs are neither usable at
+this granularity nor redistributable; the useful form is the digested one — symptom, cause,
+remedy, and how the claim is known.
+
+## The rule that keeps it honest
+
+An entry marked `verified-live` must name a `verify` function the harness RUNS against a real
+org. `kb_integrity` fails the build if a `verified-live` entry has no runnable check, or if a
+`documented` entry cites no source. `kb_live_claims` re-runs every live verification and fails
+if a platform claim no longer holds — which is exactly what a Salesforce release is most likely
+to do to this file.
+
+ENFORCEMENT: harness-enforced (kb_integrity, kb_live_claims)

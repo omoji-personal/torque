@@ -7,3 +7,8 @@ __pycache__/
 .sfdx/
 node_modules/
 .venv/
+
+# Retrieved documentation cache — built locally by scripts/kb-fetch.py, never committed.
+# Raw vendor docs are not redistributable and are not usable at this granularity anyway;
+# what ships is the DIGESTED catalogue in knowledge/salesforce-platform.yml.
+knowledge/cache/

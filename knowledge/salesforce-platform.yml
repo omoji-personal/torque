@@ -1,0 +1,398 @@
+# Salesforce platform behaviour — the things that silently produce wrong answers.
+#
+# WHY THIS FILE EXISTS
+# An agent operating a Salesforce org fails in a characteristic way: the API returns success
+# and the outcome is still wrong. A field deploys and nobody can see it. A flow reads Active in
+# one place and is absent in another. A "no-op" update rewrites who last touched 40,000
+# records. None of that is exotic — it is the platform behaving exactly as documented, in ways
+# that are easy to not know. This catalogue is the difference between an agent that knows the
+# platform and one that has read about it.
+#
+# HOW TO READ AN ENTRY
+# Every entry declares HOW IT IS KNOWN, because a catalogue that does not is a listicle:
+#   confidence: verified-live  — re-checked against a real org by harness/checks/check_kb.py
+#   confidence: documented     — Salesforce's own documentation says so; `source` names it
+#   confidence: practitioner   — learned by being burned; no citation, stated as such
+# `detect` is a command or query that answers "is this happening to me right now".
+#
+# ADDING AN ENTRY
+# Required: id, domain, title, symptom, cause, remedy, confidence, updated.
+# `verified-live` additionally requires `verify`, which the harness RUNS. Claiming
+# verified-live without a runnable check fails the build — see check_kb.py.
+
+meta:
+  version: 1
+  updated: 2026-08-01
+  domains: [deploy, data, limits, security, automation, packaging, orgs, auth, api]
+
+entries:
+
+# ── DEPLOY / METADATA ──────────────────────────────────────────────────────────────────────
+- id: fls-not-automatic
+  domain: deploy
+  title: No custom field deployed through the Metadata API receives field-level security
+  symptom: >
+    The deploy reports success, the field exists, and it is invisible in layouts, list views,
+    reports and SOQL — for every profile, System Administrator included. It is usually
+    misdiagnosed as a failed deploy or a caching problem.
+  cause: >
+    Field-level security is not part of the CustomField metadata. Nothing grants it implicitly.
+  remedy: >
+    Ship a PermissionSet (or Profile) carrying fieldPermissions in the same deploy, then verify
+    by querying FieldPermissions rather than by reading the deploy status.
+  gotcha: >
+    A formula field's entry must be <editable>false</editable> — formula fields are read-only
+    and an editable=true entry fails the whole deploy. The boilerplate that works for every
+    other field breaks on them.
+  detect: "SELECT Field, Parent.Name FROM FieldPermissions WHERE Field = 'Account.My_Field__c'"
+  confidence: verified-live
+  verify: fls_absent_without_permset
+  updated: 2026-08-01
+
+- id: deleted-field-rename
+  domain: deploy
+  title: A deleted custom field is renamed with `_del`, and the name is freed exactly once
+  symptom: >
+    Re-creating a field with the name you just deleted works the first time and collides the
+    second time, with no obvious difference between the two attempts.
+  cause: >
+    On delete Salesforce appends `_del` to the developer name and parks the field in the
+    deleted-fields queue for 15 days, where it still counts against the object's field limit.
+    The original name is therefore free. A second delete of the same name cannot append `_del`
+    (that name is taken), so the field keeps its original name and now blocks reuse.
+  remedy: >
+    Use run-scoped field names in anything repeatable, and purge rather than assume deletion.
+  gotcha: >
+    `--purge-on-delete` makes a component ELIGIBLE for deletion; it does not erase it. Expect a
+    `_del` tombstone after teardown and write residue checks that look for it, or the check
+    passes whether or not the purge worked.
+  detect: "SELECT DeveloperName FROM CustomField WHERE TableEnumOrId='Account' AND DeveloperName LIKE '%_del'"
+  confidence: verified-live
+  verify: del_tombstones_visible
+  updated: 2026-08-01
+
+- id: flow-retrieve-latest-only
+  domain: deploy
+  title: Retrieving a Flow returns only the latest version, so `<status>` is not activation
+  symptom: >
+    A retrieve shows `<status>Draft</status>` for a flow that is demonstrably running in the org.
+  cause: >
+    Since API v44 a Flow retrieve returns the latest version only. Cloning an active flow to
+    edit it — the normal way flows are changed — makes the latest version a draft while an
+    older version stays active.
+  remedy: >
+    Ask a definition-scoped question. Tooling `SELECT DeveloperName, ActiveVersionId FROM
+    FlowDefinition`, or standard-API `FlowDefinitionView.IsActive`.
+  detect: "sf data query --use-tooling-api --query \"SELECT DeveloperName, ActiveVersionId FROM FlowDefinition\""
+  confidence: verified-live
+  verify: flowdefinition_queryable
+  updated: 2026-08-01
+
+- id: flowdefinitionview-is-standard-api
+  domain: deploy
+  title: FlowDefinitionView is a standard-API object; querying it via Tooling errors
+  symptom: >
+    "Zero rows" from FlowDefinitionView, leading to the conclusion that the view is unreliable.
+  cause: >
+    It is not a Tooling object. Some clients surface the resulting error as an empty result set
+    rather than as a failure.
+  remedy: "Query it on the standard API. Do not pass --use-tooling-api."
+  detect: "sf data query --query \"SELECT ApiName, IsActive FROM FlowDefinitionView\""
+  confidence: verified-live
+  verify: flowdefinitionview_standard_api
+  updated: 2026-08-01
+
+- id: deploy-order
+  domain: deploy
+  title: Deploy order is not cosmetic — dependencies fail in a fixed direction
+  symptom: "Deploys fail with missing-component errors that disappear if you re-run them."
+  cause: "Components reference each other, and the Metadata API does not reorder for you."
+  remedy: >
+    Objects and fields first, then permission sets (so FLS exists before anything references
+    the fields), then Apex, then flows, then layouts and FlexiPages, then profiles last and
+    minimal. Re-running a failed deploy "fixing itself" is a dependency-order smell, not luck.
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: full-profile-deploy
+  domain: deploy
+  title: Deploying a full profile overwrites permissions it does not mention
+  symptom: "Access disappears for users after an unrelated deploy."
+  cause: >
+    Profile metadata is declarative and destructive: what is absent from the file is removed.
+  remedy: >
+    Deploy minimal profile XML containing only what you intend to change, or move the grant to
+    a permission set and leave profiles alone.
+  confidence: documented
+  source: "Salesforce Metadata API Developer Guide — Profile"
+  updated: 2026-08-01
+
+# ── DATA / DML ─────────────────────────────────────────────────────────────────────────────
+- id: no-op-update-is-not-free
+  domain: data
+  title: A no-op update is a real write
+  symptom: >
+    A bulk "correction" that changed nothing still fires automation, and every touched record
+    now shows the integration user as its last modifier.
+  cause: >
+    Salesforce does not diff before writing. An update with identical values still stamps
+    LastModifiedDate and LastModifiedById, fires triggers, and fires flows whose entry criteria
+    are not scoped to "only when updated to meet the condition".
+  remedy: >
+    Diff first and write only the records that actually change. Beyond the automation cost,
+    rewriting LastModifiedById destroys "who last touched this" for the client's reporting.
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: history-fields-unfilterable
+  domain: data
+  title: History objects cannot be filtered on NewValue / OldValue
+  symptom: "\"field cannot be filtered in a query call\" on a *History object."
+  cause: "Those fields are not filterable; the platform stores them polymorphically."
+  remedy: "Select the rows you need by parent Id and date, then filter client-side."
+  detect: "SELECT NewValue FROM AccountHistory WHERE NewValue = 'x'   -- expect an error"
+  confidence: documented
+  source: "Salesforce Object Reference — History objects"
+  updated: 2026-08-01
+
+- id: hard-delete-permission
+  domain: data
+  title: Bulk API hard delete needs a user permission most integration users lack
+  symptom: "A hard delete silently behaves like a normal delete, or the job fails outright."
+  cause: "hardDelete requires the \"Bulk API Hard Delete\" user permission."
+  remedy: >
+    Grant it deliberately and narrowly. Note that a normal delete is recoverable from the
+    Recycle Bin for 15 days and a hard delete is not — that difference is usually the reason
+    someone wanted it, and also the reason to be careful.
+  confidence: documented
+  source: "Bulk API Developer Guide — hardDelete"
+  updated: 2026-08-01
+
+# ── LIMITS ─────────────────────────────────────────────────────────────────────────────────
+- id: governor-limits-core
+  domain: limits
+  title: The synchronous limits that actually bite
+  symptom: "\"Too many SOQL queries: 101\" or \"Too many DML statements: 151\" under load only."
+  cause: >
+    Per-transaction governor limits: 100 SOQL queries synchronous (200 asynchronous), 150 DML
+    statements, 50,000 rows retrieved by SOQL, 10,000 records per DML operation, 6 MB heap
+    synchronous (12 MB async), 10,000 ms CPU synchronous (60,000 ms async).
+  remedy: >
+    Bulkify: no SOQL or DML inside a loop, ever. These limits are per transaction, so code that
+    passes with one record fails at 200 — which is exactly the batch size the platform uses.
+  confidence: documented
+  source: "Apex Developer Guide — Execution Governors and Limits"
+  updated: 2026-08-01
+
+- id: query-auto-limit
+  domain: limits
+  title: A bare COUNT() can be broken by an auto-appended LIMIT
+  symptom: "A COUNT() returns a suspiciously round number, or an unexpected shape."
+  cause: "Some clients append a LIMIT to queries that do not carry one."
+  remedy: "Scope the count, or use COUNT(Id) with an explicit grouping, and sanity-check totals."
+  confidence: practitioner
+  updated: 2026-08-01
+
+# ── SECURITY / SHARING ─────────────────────────────────────────────────────────────────────
+- id: with-sharing-is-not-fls
+  domain: security
+  title: "`with sharing` enforces record access, not field or object access"
+  symptom: >
+    A security review finds that Apex marked `with sharing` still returns fields the running
+    user cannot see.
+  cause: >
+    Sharing rules and FLS/CRUD are different systems. `with sharing` addresses only the first.
+  remedy: >
+    Run queries in USER_MODE (or use WITH SECURITY_ENFORCED), and strip inaccessible fields
+    with Security.stripInaccessible before returning data.
+  confidence: documented
+  source: "Apex Developer Guide — Enforcing Object and Field Permissions"
+  updated: 2026-08-01
+
+- id: formula-fields-bypass-fls
+  domain: security
+  title: A formula field can expose a field the user cannot read
+  symptom: "A user sees a value derived from a field their profile denies."
+  cause: >
+    FLS is evaluated on the formula field itself, not on the fields it references.
+  remedy: >
+    Treat formula fields that reference sensitive data as sensitive, and set their FLS
+    accordingly. This is a common finding in a client's first security review.
+  confidence: documented
+  source: "Salesforce Help — Field-Level Security considerations"
+  updated: 2026-08-01
+
+- id: view-all-data-vs-fls
+  domain: security
+  title: '"View All Data" bypasses sharing but not field-level security'
+  symptom: "An admin-adjacent profile can see every record but still not every field."
+  cause: "The two controls are independent; VAD is a sharing-layer grant."
+  remedy: "Do not use VAD to diagnose a missing field — check FieldPermissions."
+  confidence: documented
+  source: "Salesforce Help — User Permissions"
+  updated: 2026-08-01
+
+# ── AUTOMATION ─────────────────────────────────────────────────────────────────────────────
+- id: order-of-execution
+  domain: automation
+  title: Order of execution decides whether your automation sees the value
+  symptom: >
+    A flow reads a field as empty that a trigger "already set", or a validation rule fires
+    against a value that later automation would have corrected.
+  cause: >
+    The order is fixed: before-save flows, before triggers, system validation, custom
+    validation rules, after triggers, assignment rules, auto-response, workflow rules,
+    processes and after-save flows, escalation rules, roll-up summaries and parent recalculation,
+    criteria-based sharing, then commit.
+  remedy: >
+    Choose the automation type by WHERE in that order it needs to run, not by preference.
+    Same-record field updates belong in a before-save flow — no DML, and it runs first.
+  confidence: documented
+  source: "Salesforce Help — Triggers and Order of Execution"
+  updated: 2026-08-01
+
+- id: entry-condition-requirements
+  domain: automation
+  title: "\"Only when a record is updated to meet the condition\" will not re-fire"
+  symptom: >
+    A record already meeting the criteria is updated again and the flow does not run — which
+    reads as a broken flow.
+  cause: "That entry setting fires only on the transition into the condition, not while in it."
+  remedy: >
+    Pick the entry condition deliberately. It is also why a no-op mass update fires SOME
+    automation and not other automation — the unconditioned kind runs, this kind does not.
+  confidence: documented
+  source: "Salesforce Help — Flow entry conditions"
+  updated: 2026-08-01
+
+# ── PACKAGING / NAMESPACE ──────────────────────────────────────────────────────────────────
+- id: namespace-in-packaging-org
+  domain: packaging
+  title: The namespace prefix appears in the packaging org too, not only in subscriber orgs
+  symptom: >
+    Source says `Thing__c`, the org's describe says `ns__Thing__c`, and code written from the
+    source names fails against the org it was developed in.
+  cause: >
+    Once a namespace is registered, the org applies the prefix to packaged components. The
+    distinction is source-versus-org, not developer-versus-subscriber.
+  remedy: >
+    Resolve every API name against the org the code will run in, never against the repository.
+    Unlocked/2GP packages built without a namespace carry no prefix anywhere, and packaged
+    custom fields on STANDARD objects carry the prefix while the object does not.
+  confidence: documented
+  source: "Salesforce Developer Guide — Namespaces"
+  updated: 2026-08-01
+
+- id: managed-fields-immutable
+  domain: packaging
+  title: A subscriber cannot modify managed-package components
+  symptom: >
+    "Cannot modify managed object" on a deploy that looks harmless — often from changing a
+    field set's description or label.
+  cause: "Managed components are locked; even metadata that looks cosmetic is part of them."
+  remedy: >
+    Deploy managed field sets with their ORIGINAL description and label, and extend behaviour
+    from subscriber-side components instead of editing packaged ones.
+  confidence: practitioner
+  updated: 2026-08-01
+
+# ── ORG TYPES ──────────────────────────────────────────────────────────────────────────────
+- id: developer-edition-is-not-sandbox
+  domain: orgs
+  title: A Developer Edition org reports IsSandbox = false and is not production either
+  symptom: >
+    Tooling that classifies orgs as "sandbox or production" marks a Developer Edition org as
+    production, and everything is blocked — or, worse, marks it writable by inverting the test.
+  cause: >
+    IsSandbox distinguishes sandboxes from everything else. Developer Edition, scratch orgs and
+    trials are all "not a sandbox" without being production.
+  remedy: >
+    Classify with at least three values, reading OrganizationType and TrialExpirationDate as
+    well as IsSandbox. Two-valued classification is wrong for a large fraction of real orgs.
+  detect: "sf org display --target-org <alias> --json   # inspect isSandbox + organizationType"
+  confidence: verified-live
+  verify: de_org_reports_not_sandbox
+  updated: 2026-08-01
+
+- id: sandbox-contains-real-data
+  domain: orgs
+  title: Full and Partial Copy sandboxes contain real production data
+  symptom: >
+    A "safe because it is a sandbox" bulk operation touches real customer records, including
+    personal data.
+  cause: >
+    Only Developer and Developer Pro sandboxes are empty of production records. Full and
+    Partial Copy are seeded from production, and Organization.IsSandbox cannot tell you which
+    kind you are in.
+  remedy: >
+    Treat "sandbox" as insufficient grounds for a destructive operation. Confirm the sandbox
+    TYPE, and remember that data masking is opt-in and frequently not configured.
+  confidence: documented
+  source: "Salesforce Help — Sandbox types and templates"
+  updated: 2026-08-01
+
+# ── AUTH / BROWSER ─────────────────────────────────────────────────────────────────────────
+- id: mfa-phishing-resistant
+  domain: auth
+  title: Phishing-resistant MFA removed TOTP as an option for privileged users
+  symptom: "A scripted UI login that worked for years now stops at an authenticator prompt."
+  cause: >
+    Salesforce's phishing-resistant MFA enforcement (production from 20 July 2026, staggered;
+    the widely-quoted 1 July date was withdrawn) restricts privileged users — System
+    Administrator, or Modify All Data / View All Data / Customize Application / Author Apex —
+    to FIDO2/WebAuthn. The change that breaks automation is that TOTP no longer qualifies: a
+    shared secret could be handed to a script, an authenticator cannot.
+  remedy: >
+    Do not log in from automation. Hand off from an already-authenticated CLI session, which
+    MFA does not re-challenge.
+  confidence: documented
+  source: "Salesforce Help — Phishing-resistant MFA enforcement"
+  updated: 2026-08-01
+
+- id: frontdoor-session-handoff
+  domain: auth
+  title: frontdoor.jsp carries a live session in the URL, and some orgs refuse it
+  symptom: >
+    The handoff works everywhere except the one client org that matters, where it silently
+    redirects to login.
+  cause: >
+    "Lock sessions to the IP address from which they originated" breaks the handoff whenever
+    the browser's egress IP differs from the CLI's. Experience Cloud site sessions and
+    Visualforce GETSESSIONID sessions are also unsupported for frontdoor.
+  remedy: >
+    Never echo the URL — it contains a live token that lands in shell history, browser history
+    and the first-navigation Referer. Write it to a mode-0600 file and pass the path.
+  confidence: documented
+  source: "Salesforce Help — frontdoor.jsp"
+  updated: 2026-08-01
+
+# ── API / VERSIONING ───────────────────────────────────────────────────────────────────────
+- id: api-version-is-behaviour
+  domain: api
+  title: The API version on a class or flow changes its runtime behaviour
+  symptom: >
+    Identical-looking code behaves differently in two orgs, or after a retrieve/redeploy cycle.
+  cause: >
+    Each Apex class, trigger and flow stores the API version it was saved against, and the
+    platform honours that version's semantics. A retrieve preserves it; hand-written metadata
+    often does not.
+  remedy: >
+    Set the API version explicitly in generated metadata and keep it consistent, rather than
+    inheriting whatever the tool defaults to.
+  confidence: documented
+  source: "Apex Developer Guide — Understanding API versions"
+  updated: 2026-08-01
+
+- id: three-releases-a-year
+  domain: api
+  title: Three releases a year means training data goes stale predictably
+  symptom: "Confidently generated metadata that references an attribute the org rejects."
+  cause: >
+    Salesforce ships Spring, Summer and Winter releases. Anything a model learned about a
+    recent API version is likely to be partly wrong, and hallucinated API names are the single
+    most common cause of a failed deploy.
+  remedy: >
+    Describe before you reference. Verify every object, field and picklist value against the
+    target org, not against memory or the repository.
+  confidence: practitioner
+  updated: 2026-08-01
