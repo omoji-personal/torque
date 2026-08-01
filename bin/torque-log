@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""torque log — append a structured session entry with the before/after values needed to reverse
+a change.
+
+    torque-log <org> <action> --before '<json|text>' --after '<json|text>' [--note '<text>']
+    torque-log <org> "set Account.Rating" --before '{"Rating":"Warm"}' --after '{"Rating":"Hot"}'
+
+Why this exists as CODE and not just a rule: "write a session log with before/after values" is
+the kind of discipline that quietly stops happening under time pressure, and a rule file cannot
+notice. This writes a machine-checkable record, and harness check `session_log_integrity`
+asserts the record is well-formed, redacted, and 0600 — so the claim binds.
+
+Entries land in local/sessions/<org>.jsonl (gitignored, mode 0600). Values are redacted through
+the same path the audit log uses: session ids, tokens and org ids never land on disk in the clear.
+"""
+import argparse, json, os, sys, time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+import lib
+
+REQUIRED = ("t", "iso", "org", "action", "before", "after", "reversible")
+
+
+def write_entry(org, action, before, after, note=""):
+    d = lib.LOCAL / "sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    os.chmod(d, 0o700)
+    p = d / f"{org}.jsonl"
+    entry = {
+        "t": int(time.time()),
+        "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+        "org": lib.redact(org),
+        "action": lib.redact(action),
+        "before": lib.redact(str(before)),
+        "after": lib.redact(str(after)),
+        # an entry is only useful for rollback if BOTH sides are present and different
+        "reversible": bool(before) and str(before) != str(after),
+        "note": lib.redact(note),
+    }
+    with open(p, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    os.chmod(p, 0o600)
+    return p, entry
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True, description="append a reversible session entry")
+    ap.add_argument("org")
+    ap.add_argument("action")
+    ap.add_argument("--before", default="")
+    ap.add_argument("--after", default="")
+    ap.add_argument("--note", default="")
+    a = ap.parse_args()
+    p, e = write_entry(a.org, a.action, a.before, a.after, a.note)
+    status = "reversible" if e["reversible"] else "NOT reversible (no distinct before-value)"
+    print(f"logged → {p}  [{status}]")
+    if not e["reversible"]:
+        print("  note: capture the BEFORE value or this entry cannot support a rollback",
+              file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

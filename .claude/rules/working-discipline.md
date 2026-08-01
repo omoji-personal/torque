@@ -11,3 +11,5 @@
 - **Test records:** create flagged, delete by Id only.
 - **Mass updates:** diff-first; the check-then-act window (query modstamp → update) is a
   single-operator assumption — stated, not hidden.
+
+ENFORCEMENT: harness-enforced (session_log_integrity)

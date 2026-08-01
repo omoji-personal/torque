@@ -199,11 +199,13 @@ def _load_check_plugins():
 _load_check_plugins()
 
 # ---- runner ---------------------------------------------------------------
-def run_profile(profile, target):
+def run_profile(profile, target, only=None):
     want = RANK[profile]
     results = []
     for name, lowest, cat, fn in REGISTRY:
-        if RANK[lowest] > want:
+        if only and name != only:
+            continue
+        if not only and RANK[lowest] > want:
             continue
         try:
             res = fn(target) if "target" in fn.__code__.co_varnames else fn()
@@ -226,7 +228,13 @@ def print_report(profile, results):
     return verdict
 
 # ---- self-test: mutators for catastrophe-class checks ---------------------
-def self_test():
+def self_test(target=None):
+    # HARD GUARD: a mutator spawns validate.py as a subprocess; without this the child runs
+    # self_test() too and mutates the same source again — recursively. A killed run then
+    # leaves the tree broken. Observed for real: 16 stacked MUTANT lines in hooks/lib.py.
+    if os.environ.get("TORQUE_IN_SELFTEST") == "1":
+        return True
+    os.environ["TORQUE_IN_SELFTEST"] = "1"
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
     # clean_ip: a tracked file with a denied term must FAIL. Use the synthetic sentinel
@@ -389,6 +397,25 @@ def self_test():
         ok &= passed
     finally:
         spf.write_text(orig4)
+    # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
+    # Editing the FILE does nothing here — lib is already imported, so the check would keep using
+    # the cached function and report a false PASS. Patching the live module object is both the
+    # correct mutation and the safest: no file is touched, so an interrupted run cannot leave a
+    # broken tree (an earlier file-editing version recursively fork-bombed and did exactly that).
+    if target:
+        import importlib
+        _lib_mod = importlib.import_module("lib")
+        _real_redact = _lib_mod.redact
+        try:
+            _lib_mod.redact = lambda t: t                      # neutered
+            fn = dict((n, f) for n, _p, _c, f in REGISTRY).get("session_log_integrity")
+            r = fn(target) if fn else None
+            passed = r is not None and r.outcome == FAIL
+            print(f"  {'✓' if passed else '✗'} redaction mutator: expected session-log FAIL, got "
+                  f"{r.outcome if r else 'no check'}")
+            ok &= passed
+        finally:
+            _lib_mod.redact = _real_redact                     # always restore
     print(f"\n  self-test: {'ALL MUTATORS CAUGHT' if ok else 'FAILURE — a check did not fail when it should'}")
     return ok
 
@@ -397,12 +424,13 @@ def main():
     ap.add_argument("--profile", choices=PROFILES, default="static")
     ap.add_argument("--target-org")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--only", help="run a single named check (fast, targeted)")
     a = ap.parse_args()
     if a.self_test:
-        sys.exit(0 if self_test() else 1)
+        sys.exit(0 if self_test(a.target_org) else 1)
     # self-test runs as part of static and above
-    st_ok = self_test()
-    results = run_profile(a.profile, a.target_org)
+    st_ok = True if a.only else self_test(a.target_org)
+    results = run_profile(a.profile, a.target_org, a.only)
     verdict = print_report(a.profile, results)
     sys.exit(0 if (verdict == PASS and st_ok) else 1)
 
