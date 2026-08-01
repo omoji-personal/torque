@@ -623,3 +623,42 @@ def _component_self_tests():
         return Result("component_self_tests", FAIL, "; ".join(failed))
     return Result("component_self_tests", PASS,
                   f"{len(comps)} component self-test(s) pass: {', '.join(comps)}")
+
+
+@check("readme_transcripts_are_real", "static", catastrophe=True)
+def _readme_transcripts_are_real():
+    """A transcript in the README must be what the tool actually prints.
+
+    Sample output is the most persuasive thing in a README and the easiest to write by hand.
+    This one is reproducible offline — no org, no credentials — so there is no excuse for it
+    to be composed. Every TORQUE GATE / TORQUE PLATFORM NOTE line quoted in the README is
+    required to appear in the real output of the command shown above it.
+    """
+    readme = (ROOT / "README.md").read_text()
+    # The arrow lines carry the actual advice and are the easiest part to improve by hand,
+    # so they are verified too — not just the headers above them.
+    quoted, prev_was_note = [], False
+    for ln in readme.splitlines():
+        if ln.startswith(("TORQUE GATE DENY", "TORQUE PLATFORM NOTE")):
+            quoted.append(ln.strip())
+            prev_was_note = True
+        elif prev_was_note and ln.lstrip().startswith("→"):
+            quoted.append(ln.strip())
+        else:
+            prev_was_note = False
+    if not quoted:
+        return Result("readme_transcripts_are_real", FAIL,
+                      "no gate transcript found in the README to verify")
+    cmd = ("sf data delete bulk --sobject Account --file ids.csv --hard-delete "
+           "--target-org acme-prod")
+    r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "destructive_data_gate.py")],
+                   input=_kb_json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
+                   capture_output=True, text=True, cwd=ROOT, timeout=60)
+    actual = _kb_re.sub(r"\x1b\[[0-9;]*m", "", r.stderr)
+    missing = [q for q in quoted if q not in actual]
+    if missing:
+        return Result("readme_transcripts_are_real", FAIL,
+                      f"{len(missing)} README transcript line(s) are not what the tool prints: "
+                      f"{missing[0][:110]!r}")
+    return Result("readme_transcripts_are_real", PASS,
+                  f"{len(quoted)} transcript line(s) reproduced verbatim from a live gate run")

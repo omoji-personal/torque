@@ -85,6 +85,76 @@ blocks real work gets switched off.**
 
 ---
 
+## What it knows, and what it learns
+
+Enforcement is the part that has to be right. It is not the part that makes Torque worth using
+day to day — this is.
+
+**The platform answers back, at the moment of the operation.** Torque carries a catalogue of
+Salesforce behaviours where every entry declares how it is known: re-checked against a live org,
+cited to Salesforce, or plainly marked as learned the hard way. The gates already read every
+command, so the relevant entry prints as the command goes past — including on a refusal, which is
+exactly when it matters, because that is when you are deciding whether to override.
+
+```
+$ sf data delete bulk --sobject Account --file ids.csv --hard-delete --target-org acme-prod
+
+TORQUE GATE DENY [destructive_data_gate] operation targets protected sObject Account
+TORQUE PLATFORM NOTE [sandbox-contains-real-data] Full and Partial Copy sandboxes contain real production data
+  → Treat "sandbox" as insufficient grounds for a destructive operation. Confirm the sandbox TYPE, and remember that data masking is opt-in and frequently not configured.
+TORQUE PLATFORM NOTE [recycle-bin-retention] A deleted record is recoverable for 15 days, and that window is the whole difference
+  → Prefer a normal delete and let the bin be the undo. Reserve hard delete for cases where storage or a duplicate-key constraint genuinely requires it, and say so out loud before running it.
+```
+
+Ordinary work stays silent. The harness re-runs every `verified-live` claim against a real org
+and fails when one stops holding — Salesforce ships three releases a year, so a platform fact
+recorded once and never re-checked is decaying from the day it is written.
+
+**`torque blast-radius` — what the operation will actually set off.** "Update Type on every
+Prospect account" reads like one operation on N rows. It is N rows, plus every active trigger and
+record-triggered flow, plus every validation rule that must now pass on records saved years ago
+under different rules, plus every roll-up that recalculates, plus — on a delete — the children
+that cascade and the lookup children left pointing at nothing. All of it is queryable. Nothing
+assembles it and puts it in front of you.
+
+```
+BLAST RADIUS — update on Account @ sf-coffee
+  criteria : Type='Customer - Direct'
+  scope    : 24 record(s)
+  triggers : none
+  flows    : 1
+             · Coffee 01 - Account Tier (Before Save) [RecordBeforeSave]
+  rules    : 1  (must pass on records saved under older rules)
+             · Volume_Must_Be_Positive
+```
+
+Any source that cannot answer reports **UNDETERMINED** and the exit code turns 3. A blast radius
+that silently under-reports is worse than none, because somebody would act on it.
+
+**It gets smarter from being used, without being asked.** `torque lesson` turns something learned
+into a catalogue entry the schema enforces or a gate fixture that runs forever — never a free-text
+note, because note-based lesson systems reliably go inert. But the right *format* does not fix
+capture: nobody types six flags at the moment they learn something, because that moment is always
+inside an incident. So Torque watches instead, on one deliberately narrow signal — a Salesforce
+operation that failed with a code from the platform's own error taxonomy — and pairs it with the
+later command of the same shape that worked.
+
+```
+$ torque lesson review
+
+[1] REQUIRED_FIELD_MISSING  (data:create:record|Contact)  2026-08-01
+    failed : sf data create record --target-org sf-coffee --sobject Contact --values "Description=torque-probe"
+    worked : sf data create record --target-org sf-coffee --sobject Contact --values "LastName=ZZTorqueProbe Description=torque-probe"
+    reason : Creating record for Contact... Error Error (1): Required fields are missing: [LastName]
+```
+
+It writes nothing anyone will read as knowledge. Candidates land in `local/`, redacted and 0600,
+and reach the catalogue only through `torque lesson`, where the schema and the live verifier still
+apply. And the queue cannot rot quietly: the harness reports its age, so an unconverted backlog
+becomes a visible warning rather than a file nobody opens.
+
+---
+
 ## Run it against your own org
 
 Prerequisites: [Claude Code](https://claude.com/claude-code) (the hooks are its PreToolUse surface),
