@@ -15,212 +15,205 @@
 @page{ size:Letter; margin:0.70in 0.85in 0.90in 0.85in; }
 *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; box-sizing:border-box; }
 html{ font-size:12pt; }
-body{ margin:0; font:9.5pt/1.46 var(--serif); color:var(--body); hyphens:auto; orphans:3; widows:3; }
+body{ margin:0; font:9.5pt/1.47 var(--serif); color:var(--body); hyphens:auto; orphans:3; widows:3; }
 h1,h2,h3{ font-family:var(--sans); color:var(--ink); break-after:avoid; page-break-after:avoid; margin:0; }
-h2{ font-size:13pt; font-weight:600; letter-spacing:-.01em; margin:24pt 0 7pt;
+h2{ font-size:13pt; font-weight:600; letter-spacing:-.01em; margin:22pt 0 7pt;
     padding-top:7pt; border-top:.75px solid var(--rule); }
-h2:first-of-type{ margin-top:16pt; }
-h3{ font-size:9.5pt; font-weight:650; margin:11pt 0 3pt; }
-p{ margin:0 0 7pt; max-width:5.75in; }   /* ~70ch measure; tables/panels stay full width */
+h2:first-of-type{ margin-top:15pt; }
+h3{ font-size:9.5pt; font-weight:650; margin:10pt 0 3pt; }
+p{ margin:0 0 7pt; max-width:5.75in; }
+ul{ margin:0 0 8pt; padding-left:15px; max-width:5.75in; }
+li{ margin:0 0 4pt; }
 strong{ font-weight:600; color:var(--ink); }
-a{ color:var(--accent); text-decoration:none; border-bottom:.75px solid var(--accent); }
+em{ font-style:italic; }
 code{ font:8.6pt var(--mono); background:var(--panel); padding:0 3px; border:.75px solid var(--panel-line); }
 pre{ font:8pt/1.42 var(--mono); background:var(--panel); padding:10px 12px;
      border:.75px solid var(--panel-line); margin:9pt 0; break-inside:avoid; white-space:pre-wrap; }
 pre code{ background:none; border:none; padding:0; font-size:8pt; }
 .break{ break-before:page; }
-table{ border-collapse:collapse; width:100%; font-size:8.5pt; margin:8pt 0; break-inside:avoid; }
+table{ border-collapse:collapse; width:100%; max-width:5.95in; font-size:8.5pt;
+       margin:8pt 0; break-inside:avoid; }
+table tr:last-child td{ border-bottom:none; }
 th{ font:600 7pt/1.3 var(--sans); text-transform:uppercase; letter-spacing:.08em; color:var(--muted);
     text-align:left; border-bottom:1px solid var(--ink); padding:5pt 10pt 4pt 0; }
 td{ padding:5pt 10pt 5pt 0; border-bottom:.75px solid var(--rule); vertical-align:top; }
 td:last-child,th:last-child{ padding-right:0; }
 
-/* masthead */
 .mast{ border-bottom:2px solid var(--accent); padding-bottom:9pt; margin-bottom:13pt; }
 .mast h1{ font-size:25pt; font-weight:700; letter-spacing:-.018em; line-height:1.08; }
 .mast .sub{ font:10.5pt/1.35 var(--serif); color:var(--body); margin-top:5pt; max-width:5.6in; }
 .mast .meta{ font:7.5pt/1.4 var(--sans); color:var(--muted); margin-top:7pt;
              display:flex; gap:14px; letter-spacing:.02em; }
-
 .lede{ font:11.5pt/1.38 var(--serif); color:var(--ink); margin:0 0 9pt; max-width:5.75in; }
-.kicker{ font:600 7pt/1.3 var(--sans); text-transform:uppercase; letter-spacing:.09em;
-         color:var(--accent); margin:0 0 4pt; }
-.note{ border-left:2px solid var(--rule); padding-left:12px; font-size:8.5pt; color:var(--muted); margin:9pt 0; }
+.note{ border-left:2px solid var(--rule); padding-left:12px; font-size:8.5pt; color:var(--muted);
+       margin:9pt 0; max-width:5.6in; }
 
-/* HERO A — verdict panel */
-.v{ display:grid; grid-template-columns:66px 1fr; gap:3px 11px; font:8pt/1.4 var(--mono);
+/* capability list — what it lets you do */
+.cap{ margin:9pt 0; break-inside:avoid; }
+.cap div{ display:grid; grid-template-columns:1.42in 1fr; column-gap:14px;
+          padding:5.5pt 0; border-bottom:.75px solid var(--rule); max-width:5.95in; }
+.cap div:first-child{ border-top:.75px solid var(--rule); }
+.cap b{ font:600 8.4pt/1.3 var(--sans); color:var(--ink); }
+.cap span{ font:8.6pt/1.36 var(--serif); color:var(--body); }
+
+/* verdict panel */
+.v{ display:grid; grid-template-columns:62px 1fr; gap:3px 11px; font:7.8pt/1.4 var(--mono);
     background:var(--panel); border-left:2.5px solid var(--accent);
     border-top:.75px solid var(--panel-line); border-right:.75px solid var(--panel-line);
-    border-bottom:.75px solid var(--panel-line);
-    padding:11px 13px; margin:10pt 0; break-inside:avoid; }
+    border-bottom:.75px solid var(--panel-line); padding:10px 12px; margin:9pt 0; break-inside:avoid; }
 .v .deny{ color:var(--deny); font-weight:700; letter-spacing:.04em; }
 .v .allow{ color:var(--allow); font-weight:700; }
 .v .cmd{ color:var(--ink); word-break:break-all; }
-.v .why{ grid-column:2; font:italic 7.4pt/1.35 var(--serif); color:var(--muted); margin:-1px 0 3px; }
+.v .why{ grid-column:2; font:italic 7.3pt/1.34 var(--serif); color:var(--muted); margin:-1px 0 3px; }
 
-/* HERO B — numbers strip */
-.stats{ display:grid; grid-template-columns:repeat(4,1fr); margin:12pt 0 4pt; break-inside:avoid; }
-.stats div{ border-left:.75px solid var(--rule); padding:0 10px; }
-.stats div:first-child{ border-left:none; padding-left:0; }
-.stats .n{ font:600 20pt/1 var(--sans); color:var(--accent); font-variant-numeric:tabular-nums;
-           letter-spacing:-.02em; }
-.stats .l{ font:7.4pt/1.32 var(--sans); color:var(--muted); margin-top:4px; }
+/* journey timeline */
+.tl{ margin:10pt 0; max-width:5.95in; }
+.tl div{ display:grid; grid-template-columns:0.92in 1fr; column-gap:15px; padding:6pt 0;
+         border-top:.75px solid var(--rule); break-inside:avoid; }
+.tl b{ font:600 7.2pt/1.35 var(--sans); text-transform:uppercase; letter-spacing:.07em;
+       color:var(--accent); padding-top:1px; }
+.tl span{ font:8.8pt/1.42 var(--serif); }
 </style>
 </head>
 <body>
 
 <div class="mast">
   <h1>Torque</h1>
-  <div class="sub">Letting an AI coding agent operate real Salesforce orgs — and making it
-  structurally unable to write to production on its own.</div>
+  <div class="sub">Put an AI agent to work on real Salesforce orgs — and keep it structurally
+  unable to write to production on its own.</div>
   <div class="meta"><span>Omid Mojtahedi</span><span>github.com/omoji-personal/torque</span><span>MIT</span></div>
 </div>
 
-<p class="lede">Not “asks first” — denied by default, in a deterministic hook that <em>parses</em>
-the command instead of reading it. So <code>x=sf; $x data delete bulk --target-org acme-prod</code>
-never reaches the CLI, even though the gate never sees the letters <code>sf</code>.</p>
+<p class="lede">Hand real Salesforce delivery work to an AI agent — deployments, data fixes,
+org audits, UI verification — and keep production structurally out of its reach.</p>
 
-<p>Run <code>python3 bin/torque-demo</code> and watch two dozen real attacks fail in about
-30 seconds — no org, no credentials, nothing configured. Every one of them defeated an earlier
-version of this code. Actual output:</p>
+<p>Agents are now genuinely good at the mechanical half of Salesforce work. The reason most
+consultants still don’t point one at a client environment is simple: the same session that fixes a
+validation rule holds credentials that can damage a live org, and “I told it to be careful” is not
+a control you can put in front of a client.</p>
+
+<p><strong>Torque is the control.</strong> It sits in front of every command the agent issues,
+authorises against the live org rather than a name, and makes a production write impossible for the
+agent to perform on its own. You get the speed on the work that should be delegated, and a boundary
+you can describe to a client without flinching.</p>
+
+<table>
+  <tr><th>Who it’s for</th><th>What changes</th></tr>
+  <tr><td>Consultants and admins running client orgs</td><td>Delegate the mechanical work without babysitting every command</td></tr>
+  <tr><td>Agencies deploying AI into customer environments</td><td>An answer to “what can it touch, and prove it” that is runnable, not asserted</td></tr>
+  <tr><td>Anyone using Claude Code against Salesforce</td><td>A safety layer that installs in one command and doesn’t block ordinary work</td></tr>
+</table>
+
+<h2>What you can hand over</h2>
+<p>Each of these runs against a live org and is verified end to end — by checking the org afterwards,
+not by trusting a status code:</p>
+
+<div class="cap">
+  <div><b>Deploy and verify</b><span>Push metadata to a sandbox, then confirm by SOQL that the field exists,
+    that field-level security actually applied, and that nothing was left behind afterwards.</span></div>
+  <div><b>Mass-update safely</b><span>Preview the exact record set before touching it, apply the change,
+    verify it persisted — and undo it back to the captured before-values.</span></div>
+  <div><b>Audit an org</b><span>Survey configuration, automations and permissions read-only, with no
+    ability to change what it is inspecting.</span></div>
+  <div><b>Verify in the browser</b><span>Log in through a session handoff and confirm the page actually
+    rendered for a user — because a green deploy is not a working screen.</span></div>
+  <div><b>Keep a record</b><span>Every change logged with before and after values, redacted of secrets,
+    so a rollback is possible tomorrow and a client can be told what happened.</span></div>
+  <div><b>Leave it running</b><span>Work an org without watching every command, because the dangerous
+    ones cannot execute without you personally approving them at your own terminal.</span></div>
+</div>
+
+<h2>Why this is different</h2>
+<p>Most “AI guardrails” are instructions inside a prompt. They work until the model is three steps
+into a task and pattern-matching hard — precisely when you need them. Torque never asks. Two hooks
+sit in front of every tool call and <em>parse</em> the command rather than reading it, so an
+attempt like <code>x=sf; $x data delete bulk --target-org acme-prod</code> is refused even though
+the literal letters <code>sf</code> never appear.</p>
+
+<p>The second difference matters more: <strong>it is built to be checked, not believed.</strong>
+Everything it claims is exercised against a real org by a harness you can run yourself, and the
+harness deliberately breaks its own safety checks to prove they still catch what they promise.
+There is a demo you can run in thirty seconds with no org and no credentials:</p>
 
 <div class="v">
   <span class="deny">DENIED</span><span class="cmd">x=sf; $x data delete bulk --target-org acme-prod</span>
   <span class="why">a shell variable assembles the command at runtime</span>
   <span class="deny">DENIED</span><span class="cmd">cat ~/.torq*/secret</span>
-  <span class="why">a glob that only becomes the signing secret’s path once bash expands it</span>
-  <span class="deny">DENIED</span><span class="cmd">: &gt;hooks/lib.py &gt;/tmp/z</span>
-  <span class="why">two redirects — bash truncates both files; the gate is the first one</span>
+  <span class="why">a glob that only becomes the signing key’s path once bash expands it</span>
   <span class="deny">DENIED</span><span class="cmd">git checkout HEAD~5 -- hooks/</span>
-  <span class="why">restoring an older, weaker version of the gate itself</span>
+  <span class="why">quietly restoring an older, weaker version of the guard itself</span>
   <span class="allow">allowed</span><span class="cmd">sf data query --query "SELECT Id FROM Account" -o any-org</span>
-  <span class="why">reads need no authorization</span>
-  <span class="allow">allowed</span><span class="cmd">grep -rn 'sf data delete --target-org' .</span>
-  <span class="why">sf as a search string, not a command</span>
+  <span class="why">reads need no approval — ordinary work is untouched</span>
 </div>
 
-<p>The last two rows matter as much as the first four. <strong>A guardrail that blocks real work
+<p>That last line is the part most guardrails get wrong. <strong>A guardrail that blocks real work
 gets switched off in week two.</strong></p>
 
-<div class="stats">
-  <div><div class="n">128</div><div class="l">adversarial fixtures, each an attack that once worked</div></div>
-  <div><div class="n">11</div><div class="l">mutation tests that break a guard and require the attack to succeed</div></div>
-  <div><div class="n">59</div><div class="l">live checks run against a real org, verified by SOQL</div></div>
-  <div><div class="n">55</div><div class="l">defects found by adversarial review, every one now a test</div></div>
+<h2 class="break">How it came to be</h2>
+<p>This didn’t start as a product. It started as a problem I kept having.</p>
+
+<div class="tl">
+  <div><b>The setup</b><span>I spend my days delivering Salesforce for client organisations, increasingly
+    with an AI agent doing the mechanical work. The speed is not subtle. Neither is the exposure: the
+    same session that fixes a validation rule has the credentials to damage a live org.</span></div>
+  <div><b>The realisation</b><span>I had written the careful-instruction prompts myself. Watching them
+    hold most of the time — and knowing “most of the time” is not a safety property when the downside is
+    a client’s live data — was the moment it became an engineering problem instead of a policy one.</span></div>
+  <div><b>The rebuild</b><span>The practices that had accumulated across those engagements got rewritten
+    from scratch as something general: no client specifics, no employer specifics, usable by anyone
+    against any org.</span></div>
+  <div><b>The adversaries</b><span>Rather than trust my own testing, I pointed independent adversarial
+    reviewers at it whose only job was to defeat the guards — one of them executing each exploit against
+    a real Salesforce CLI rather than reasoning about the code. They got through. Repeatedly.</span></div>
+  <div><b>What that taught</b><span>They found a shell variable that assembles a command at runtime; a
+    glob that only becomes a secret’s path once the shell expands it; two redirects on one line where the
+    parser saw only the second. Each one is now a permanent test. The uncomfortable one was in my own
+    test suite: a check that verified field-level security, then returned success regardless of the
+    answer. It would have reported green while the thing it was checking was missing entirely.</span></div>
 </div>
 
-<p class="note">What it does <em>not</em> stop, stated here rather than in a footnote: a same-user
-actor running arbitrary code outside the agent’s tool surface. That is a credentials boundary,
-not something a hook can adjudicate. Section 5 gives the specifics.</p>
+<p>That last discovery shaped the whole posture. It is easy to build something that looks safe. The
+only defence against looking safe is to keep trying to break it, and to make every check prove it
+can still fail.</p>
 
-<h2>Why prompt instructions don’t hold</h2>
-<p>Frontier agents can now operate Salesforce orgs directly — query, deploy, run Apex, move data —
-through the CLI and the official MCP server. That is enormously useful and genuinely dangerous:
-the same session that fixes a validation rule can, with one mistaken alias, write to a client’s
-production org. And a client’s production org is somebody’s payroll, case file, or donor history.</p>
-<p>The common answer is a sentence in a prompt: <em>be careful, always confirm before writing to
-production.</em> That works right up until the model is three steps into a task and pattern-matching
-hard — which is exactly when you need it. Torque is the layer that does not need to be obeyed.</p>
-
-<h2>How it holds — five layers</h2>
-
-<h3>1 · Credentials</h3>
-<p>Connect production read-only. Torque stores no secrets; the <code>sf</code> CLI is the only
-credential path. This is the load-bearing layer, and the tool says so.</p>
-
-<h3>2 · Authorization by identity, not inference</h3>
-<p>A non-production write is allowed only when its target is on an explicit allowlist <strong>and</strong>
-classifies non-production from a live <code>Organization</code> query at the moment of the write —
-never from an alias, a URL, or a cached verdict. Unverifiable orgs classify as production.</p>
-
-<h3>3 · Deterministic gates</h3>
-<p>Two PreToolUse hooks share one expansion-aware parser. They authorize by parsing argv and
-default to deny, so indirection, subshell and brace grouping, wrapper runners, interpreters and
-here-strings, <code>xargs</code> stdin, legacy <code>force:data:*</code> verbs, and glob or
-<code>$var</code> path tricks are refused rather than guessed. A gate that crashes or times out
-denies rather than opening.</p>
-
-<h3>4 · Production override — deliberate, not impossible</h3>
-<p>Real client work includes deploying to production. So it is gated on a present operator, not
-walled off: <code>torque approve &lt;org&gt; &lt;op&gt; --prod</code> shows you the org and username,
-requires you to type <code>WRITE PRODUCTION</code> at a real terminal, and mints a single-use,
-HMAC-signed token. <strong>The agent can request one. Through its tool surface it provably cannot
-create one.</strong></p>
-
-<h3>5 · Verified enforcement</h3>
-<p>Every rule is labeled hook-enforced, harness-enforced, or model-honored — and a check fails the
-build if a label names a hook or check that does not exist. Nothing claims more than it proves.</p>
-
-<h2 class="break">How it is verified</h2>
-<p>Every fixture in the suite is an attack that worked once. Four independent adversarial reviews —
-one of which <em>executed</em> each exploit against a live <code>sf</code> CLI rather than reading
-the code — broke earlier versions of these gates 55 times. Each break is now a named, runnable
-regression test that must deny. So 128 is not a bug count; it is the number of things you would
-have to invent something new to get past.</p>
-
-<p>Eleven mutation tests then neuter one guard apiece and <em>require</em> the matching attack to
-succeed, because a check that cannot fail proves nothing. Eight run on any clone; three exercise
-the clean-IP scan and need a pattern list that is deliberately not published, so on your machine
-they report as operator-only instead of pretending to pass.</p>
-
-<p>The capability run happens against a real Developer Edition org, and asserts the org state
-rather than the exit code: deploy a field → verify by SOQL → verify field-level security →
-hard-delete → confirm zero residue; a mass update with a working undo; a live Lightning render.</p>
-
-<table>
-  <tr><th>Claim</th><th>How it is checked</th></tr>
-  <tr><td>Production is denied by default</td><td>Live org query at write time; the matrix asserts a denied write leaves the record present</td></tr>
-  <tr><td>The agent cannot mint approval</td><td><code>torque-approve</code> refused without a login TTY; forged and expired tokens rejected</td></tr>
-  <tr><td>Destructive ops need approval</td><td>Denied without a token; the same op executes with one, and the token is consumed</td></tr>
-  <tr><td>The gates cannot be disabled</td><td>Redirects, glued redirects, <code>cd</code>-desync and <code>git checkout</code> at gate files all denied</td></tr>
-  <tr><td>A broken gate fails closed</td><td>A hung <code>sf</code> denies within the gate’s wall-clock budget instead of timing out open</td></tr>
-</table>
-
-<p>If a check cannot run — no browser installed, for instance — the run reports
-<code>DEGRADED</code>, never <code>PASS</code>. Refusing to call an unrunnable check green is the
-whole posture in one rule.</p>
+<h2>How it holds</h2>
+<p><strong>Connect production read-only.</strong> The strongest protection is not granting the
+capability. Torque stores no credentials of its own.</p>
+<p><strong>Authorise by identity, not inference.</strong> A write is allowed only when its target
+is on an explicit list <em>and</em> a live query at that moment confirms it isn’t production. An
+org that cannot be verified is treated as production.</p>
+<p><strong>Require a human for the dangerous things.</strong> Bulk deletes, unbounded updates and
+anonymous Apex need approval that is minted only at a real terminal, is single-use, and expires.
+The agent can ask for it and provably cannot create it.</p>
+<p><strong>Make production deliberate, not impossible.</strong> Real work includes deploying to a
+client’s production org — so you type <code>WRITE PRODUCTION</code> yourself and get a token for
+one operation, or open a short revocable window. Every production write is recorded.</p>
 
 <h2>Where the boundary honestly sits</h2>
-<p>The gates bind the agent’s <strong>tool surface</strong>: Bash, Edit, Write, Read, MCP. Within
-it they stop accidents with certainty and defeat enumerable circumvention. They do not claim to
-stop a same-user actor who steps outside that surface by executing arbitrary code:</p>
-<ul>
-  <li>reading the signing secret by OS means the agent’s gated tools never touch, or forging a
-  login session with a purpose-built program — the filesystem and credentials trust boundary; and</li>
-  <li>having the agent write a script and run it, so <code>sf</code> executes as a subprocess no
-  hook ever sees.</li>
-</ul>
-<p>For those the load-bearing defense is layer 1 — connect production read-only, and never leave a
-production org authenticated in an autonomous session. Closing the subprocess channel properly
-needs a PATH-level shim that classifies before <code>exec</code>; that is the v2 roadmap and it is
-<strong>not built yet</strong>. Saying so is the point: a safety claim you cannot reproduce is
-marketing, not security.</p>
+<p>The guards cover what the agent does through its tools. They do not claim to stop someone with
+your login who steps outside those tools entirely — reading the signing key by other means, or
+having the agent write a script and run it so the CLI executes where no hook can see. Closing that
+last channel properly requires intercepting the CLI itself, which is the next version and is
+<strong>not built yet</strong>.</p>
+<p>Which is why the first protection is the one that doesn’t depend on any of this: connect
+production read-only, and never leave a production org authenticated in a session running on its
+own. A safety claim you cannot reproduce is marketing, not security — so this document says what
+is not covered, in the same place it says what is.</p>
 
-<h2>Run it against your own org</h2>
-<p>Prerequisites: <code>python3</code> 3.8+, the Salesforce CLI, and any non-production org — a free
-Developer Edition is fine.</p>
-<pre><code>python3 bin/torque-demo                    # 30s, no org, no credentials
+<h2>Try it</h2>
+<pre><code>git clone https://github.com/omoji-personal/torque
+python3 bin/torque-demo                    # 30 seconds, no org, no credentials
 
 sf org login web --alias my-dev-org
 python3 bin/torque-init my-dev-org         # refuses to allowlist a production org
-npm install                                # optional; only the live browser check needs it
 python3 harness/validate.py --profile release --target-org my-dev-org</code></pre>
-<p><code>torque-init</code> creates the trust anchor outside the repo and proves the gates bind
-before it tells you it worked. The allowlist is deliberately not shipped: which org you may write
-to is a decision only the person at the keyboard can make.</p>
 
-<h2>What it isn’t</h2>
-<table>
-  <tr><th>Not this</th><th>That category belongs to</th></tr>
-  <tr><td>A CI/CD pipeline</td><td>Gearset, Copado</td></tr>
-  <tr><td>An in-org codegen IDE</td><td>Agentforce Vibes</td></tr>
-  <tr><td>A command library</td><td>sfdx-hardis — good prior art; Torque could sit on top of it</td></tr>
-</table>
-<p>Torque is the operator-grade safety and validation layer those categories don’t ship.</p>
+<p>A free Developer Edition org is enough. <code>torque-init</code> proves the guards actually
+bind before it tells you it worked, and refuses to configure a production org at all.</p>
 
-<p class="note">Found a way through? That is the point — every fixture exists because a review beat
-an earlier version of this code. <code>SECURITY.md</code> has the disclosure path. The full
-validation log and audit trail are in <code>harness/VALIDATION.md</code>.</p>
+<p class="note">Found a way through? That is the point — every test in the suite exists because a
+review beat an earlier version of this code. <code>SECURITY.md</code> has the disclosure path.
+MIT licensed; use it, fork it, take the parts that help.</p>
 
 </body>
 </html>
