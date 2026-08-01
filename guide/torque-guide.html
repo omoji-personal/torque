@@ -330,9 +330,9 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
     time.
   </p>
 
-  <h3>Four things I could not find anywhere else</h3>
+  <h3>Six things I could not find anywhere else</h3>
 
-  <p><strong>0 — It carries Salesforce knowledge that argues with itself.</strong> A tool surface
+  <p><strong>1 — It carries Salesforce knowledge that argues with itself.</strong> A tool surface
     gives an agent verbs. It does not tell it that a deployed field stays invisible until a
     PermissionSet grants it, that a bulk job can report success with thousands of failed records,
     or that a no-op update rewrites who last touched forty thousand rows. Torque ships that as a
@@ -359,7 +359,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       one story — a knowledge base is only worth carrying if something can prove it wrong.</p>
   </div>
 
-  <p><strong>1 — The platform answers back, at the moment of the operation.</strong> Knowledge you
+  <p><strong>2 — The platform answers back, at the moment of the operation.</strong> Knowledge you
     have to remember to look up is knowledge you will not look up. The gates already parse every
     command, so the relevant entry prints as it goes past — including on a <em>refusal</em>, which
     is exactly when it matters, because that is when someone is deciding whether to override.
@@ -376,7 +376,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
   or a group, not the row you are writing
   → Order the batches so rows sharing a parent land together, or run serially.</pre>
 
-  <p><strong>2 — It can tell you what an operation will set off, before it runs.</strong> "Update
+  <p><strong>3 — It can tell you what an operation will set off, before it runs.</strong> "Update
     Type on every Prospect account" reads like one operation on N rows. It is N rows, plus every
     active trigger and record-triggered flow, plus every validation rule that must now pass on
     records saved years ago under different rules, plus the roll-ups that recalculate, plus —
@@ -400,7 +400,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     come to match seven thousand.</p>
 
 
-  <p><strong>1 — It treats “green but wrong” as the real failure mode.</strong> The expensive
+  <p><strong>4 — It treats “green but wrong” as the real failure mode.</strong> The expensive
     incidents are rarely errors; they are successes that were false. A deploy returns success and
     the field is invisible because formula fields receive no FLS. A flow reads Active in <code>FlowDefinitionView</code> and is
     absent from a metadata retrieve — on subscriber orgs that view can return zero rows for
@@ -408,7 +408,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     Torque operation ends by asking the <em>org</em> what is true, not by reading its own return
     code.</p>
 
-  <p><strong>2 — It never trusts the alias.</strong> Every other column decides what org it is
+  <p><strong>5 — It never trusts the alias.</strong> The CLI and MCP surfaces decide what org they are
     talking to by believing the string you passed. <code>--target-org acme-sandbox</code> can point
     anywhere, and the most likely production incident is a tired operator with the wrong alias in
     scrollback. Torque asks the org to identify itself at the moment of the write, and treats
@@ -416,7 +416,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     and writes in the same breath: <code>sf config set target-org=x &amp;&amp; sf data update …</code>
     can re-point the write between the check and the execution, so the combination is denied.</p>
 
-  <p><strong>3 — It is built to be disbelieved.</strong> Torque ships 196 adversarial fixtures and
+  <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 196 adversarial fixtures and
     11 mutation tests that neuter each guard in turn and require the attack it blocks to start
     working. A guard that cannot be shown to be
     load-bearing is decoration. Every enforcement claim carries a machine-checked label, resolved against the live code, so the
@@ -623,7 +623,7 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
     and an org health scanner — the scanners tell you what they found and cannot tell you how
     they know.</p>
 
-  <pre>CHECKUP — my-org   10 probe(s) from the platform catalogue
+  <pre>CHECKUP — my-org   12 probe(s) from the platform catalogue
 
   LIVE IN THIS ORG — the probe returned rows
     [deleted-field-rename]  3 row(s)
@@ -760,7 +760,7 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
     shows it, establishes the count, and signs that count into the token. At the gate the count
     is re-established and the token refused if the operation grew:</p>
 
-  <pre>TORQUE GATE DENY approved for 2 Lead record(s), the criteria now match 8.
+  <pre>TORQUE GATE DENY [destructive_data_gate] approved for 2 Lead record(s), the criteria now match 8.
 The operation grew after approval; re-approve with the current scope.</pre>
 
   <p>A count that cannot be re-established refuses rather than assuming it is unchanged: an
