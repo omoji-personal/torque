@@ -344,10 +344,14 @@ def _kb_live_claims(target):
     msg = f"{len(passed)}/{len(entries)} live claims re-verified against {target}"
     if untestable:
         msg += f"; {len(untestable)} untestable here ({', '.join(untestable)})"
-    if not passed:
-        # Nothing was proven. That is not a pass — the entire purpose of this check is to
-        # re-confirm the catalogue against a live org, and it confirmed none of it.
-        return Result("kb_live_claims", WARN, msg + " — nothing was re-verified")
+    if untestable:
+        # PASS required only ONE verifier to succeed, so six verified-live entries with five
+        # untestable reported PASS — while the label on those five promises they are re-checked
+        # against a live org. The strongest provenance claim in the catalogue was the weakest
+        # thing the harness actually proved (release panel, codex/gpt-5.6-sol).
+        return Result("kb_live_claims", WARN,
+                      msg + f" — {len(untestable)} entr(ies) carry the `verified-live` label "
+                            f"without being verified in this run")
     return Result("kb_live_claims", PASS, msg)
 
 

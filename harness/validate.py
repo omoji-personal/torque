@@ -302,7 +302,10 @@ def print_report(profile, results, only=None):
         print(f"  {mark} {r.name:22} {outcome:5} {r.detail}{tp}")
         seen.append(outcome)
         if outcome == FAIL: verdict = FAIL
-        elif outcome in (SKIP, LIMITED) and verdict == PASS: verdict = "DEGRADED"
+        elif outcome in (SKIP, LIMITED, WARN) and verdict == PASS: verdict = "DEGRADED"
+        # WARN degrades. It did not, which made every warning decoration — a check could report
+        # that something was wrong and the run would still say PASS, which is the shape of
+        # problem this project exists to refuse (release panel, codex/gpt-5.6-sol).
         # NA never degrades: it is an operator-only check, reported honestly, not a gap.
     if LIMITED in seen:
         print("  ⧗ the org is out of daily API requests — those checks did not run and did not "
