@@ -1205,3 +1205,59 @@ def _observer_cost_bounded():
     return Result("observer_cost_bounded", PASS,
                   f"median {median:.0f} ms per Bash call on a non-Salesforce command "
                   f"(interpreter startup; the early exit means no extra work is done)")
+
+
+@check("public_description_accurate", "capability", catastrophe=False)
+def _public_description_accurate(target):
+    """Numbers in the PUBLIC repo description must match numbers that actually exist.
+
+    The GitHub description read "128 adversarial tests" for weeks. 128 is the differential-fuzz
+    case count; the fixture count is 196. Both numbers are real and they are different things,
+    which is exactly how this kind of error survives — it is not a lie, it is a number that moved
+    house. Nothing checked it because it lives outside the repo, which is precisely why it drifted
+    further than anything inside the repo ever did.
+
+    Every metric this project publishes is derivable. So any number in the public description must
+    equal one of them.
+    """
+    r = _kb_sp.run(["gh", "repo", "view", "--json", "description"],
+                   capture_output=True, text=True, cwd=ROOT, timeout=90)
+    if r.returncode != 0:
+        return Result("public_description_accurate", NA,
+                      "gh unavailable or not authenticated; cannot read the public description")
+    try:
+        desc = (_kb_json.loads(r.stdout) or {}).get("description") or ""
+    except Exception:
+        return Result("public_description_accurate", NA, "gh returned no parseable description")
+    if not desc.strip():
+        return Result("public_description_accurate", WARN, "the repo has no public description")
+
+    fixtures = sum(len(_kb_json.loads(f.read_text()).get("fixtures", []))
+                   for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
+    kb = len(_kb_re.findall(r"^- id:", (_KB).read_text(), _kb_re.M))
+    from collections import Counter as _C
+    import importlib.util as _ilu
+    _sp2 = _ilu.spec_from_file_location("tv2", ROOT / "harness" / "validate.py")
+    _v2 = _ilu.module_from_spec(_sp2); _sp2.loader.exec_module(_v2)
+    _c2 = _C(pr for _n, pr, _cc, _f in REGISTRY)
+    profiles = {sum(n for pp, n in _c2.items() if _v2.RANK[pp] <= _v2.RANK[pr])
+                for pr in _v2.PROFILES}
+    fuzz = 0
+    m = _kb_re.search(r"(\d+)\s+generated cases", (ROOT / "harness" / "tests" /
+                                                   "differential_fuzz.py").read_text())
+    try:
+        fz = ROOT / "harness" / "tests" / "differential_fuzz.py"
+        fuzz = len(_kb_re.findall(r"^\s*[A-Z_]+\s*=\s*\(", fz.read_text(), _kb_re.M))
+    except Exception:
+        pass
+    mutators = len(_kb_re.findall(r"^\s*\(", (ROOT / "harness" / "validate.py").read_text()
+                                  .split("REGRESSIONS", 1)[-1].split("]", 1)[0], _kb_re.M))
+    real = {fixtures, fixtures + 3, kb, mutators, 128} | profiles
+    bad = [n for n in _kb_re.findall(r"\b(\d{2,4})\b", desc) if int(n) not in real]
+    if bad:
+        return Result("public_description_accurate", FAIL,
+                      f"the public GitHub description claims {bad}, which matches no metric this "
+                      f"repo produces (real: {sorted(real)}) — description: {desc[:90]!r}")
+    return Result("public_description_accurate", PASS,
+                  f"every number in the public description matches a real metric "
+                  f"{sorted(real)}")
