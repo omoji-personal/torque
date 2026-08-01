@@ -1316,11 +1316,21 @@ def _runnable_implies_unwritable():
     spec = _il.spec_from_file_location("torque_shellparse", ROOT / "hooks" / "shellparse.py")
     sp = _il.module_from_spec(spec); spec.loader.exec_module(sp)
 
-    for d in ("bin/", "hooks/"):
-        if d not in sp.PROTECTED_DIRS:
+    lspec = _il.spec_from_file_location("torque_lib_rw", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+    # The exemption's soundness rests on lib.protected_write_paths(), which is the ONE list the
+    # gate consults. shellparse.PROTECTED_DIRS survives only for the exemption's own reasoning,
+    # so assert the two agree instead of assuming it — a second list guarding one boundary is
+    # how this comes apart.
+    protected = lib.protected_write_paths()
+    for d in ("bin", "hooks"):
+        if not any(p_.endswith("/" + d) for p_ in protected):
             return Result("runnable_implies_unwritable", FAIL,
-                          f"{d} is executable-by-exemption but not in PROTECTED_DIRS — the agent "
-                          f"could write the file it is then permitted to run")
+                          f"{d}/ is executable-by-exemption but not in protected_write_paths() "
+                          f"— the agent could write the file it is then permitted to run")
+        if d + "/" not in sp.PROTECTED_DIRS:
+            return Result("runnable_implies_unwritable", FAIL,
+                          f"{d}/ dropped out of PROTECTED_DIRS, which the exemption reasons from")
 
     def gate(payload):
         r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],

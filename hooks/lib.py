@@ -771,6 +771,10 @@ def protected_write_paths():
     return [str((hd/"hooks").resolve()), str((hd/"bin").resolve()),
             str((hd/".claude"/"settings.json").resolve()),
             str((hd/"harness"/"checks").resolve()),
+            # The catalogue and the per-org store feed the gate's own note rendering, so the
+            # agent must not author them. Added here rather than beside the newer substring
+            # list, because this one resolves every entry and a symlink cannot dodge it.
+            str((hd/"knowledge").resolve()), str((hd/"local"/"orgs").resolve()),
             str(ALLOWLIST.resolve()), str(PROTECTED.resolve()),
             str((hd/"harness"/"checks"/"cli-write-surface.json").resolve()),
             str((hd/"harness"/"checks"/"clean-ip.rules").resolve()),

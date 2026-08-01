@@ -63,10 +63,16 @@ def handle_mcp(tool, tinput):
 
 
 def _is_gate_file(path):
-    if os.path.basename(path) in shellparse.PROTECTED_BASENAMES:
-        return True
-    norm = os.path.normpath(path).replace(os.sep, "/")
-    return any(f"/{d}" in f"/{norm}" for d in shellparse.PROTECTED_DIRS)
+    """Protected by name, or by living under a protected path.
+
+    The directory half was briefly a substring test living in shellparse, alongside the
+    resolve-based list in lib that already did the same job for hooks/, bin/ and harness/checks.
+    Two lists guarding one boundary is the drift this repo's own checks warn about — and the
+    substring version was the weaker one, since it could match a same-named directory outside
+    the repo and could not see through a symlink. There is one list now.
+    """
+    return (os.path.basename(path) in shellparse.PROTECTED_BASENAMES
+            or lib.is_protected_target(path))
 
 
 def _tool_paths(tinput):
