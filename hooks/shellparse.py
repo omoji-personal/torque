@@ -59,7 +59,69 @@ WRITE_SHAPE_CMDS = {"cp", "mv", "dd", "tee", "ln", "install", "truncate", "rsync
 PERM_CMDS = {"chmod", "chown", "chgrp", "chflags", "rm", "rmdir", "unlink", "shred"}
 # Line editors: their file operand is written, not merely read.
 EDITOR_CMDS = {"ed", "ex", "red", "vi", "vim", "nvim", "emacs"}
+_PY_BINS = {"python", "python2", "python3"}
+_WRITE_VOCAB = WRITE_SHAPE_CMDS | PERM_CMDS | EDITOR_CMDS | {"sed"}
 CD_FLAGS = {"-P", "-L", "-e", "-@", "-"}
+SF_BINS = {"sf", "sfdx"}
+
+_GLOB_META = re.compile(r"[*?\[]")
+
+
+def bash_glob(pat: str) -> str:
+    """Translate a bash glob into the dialect `fnmatch` actually speaks.
+
+    bash accepts BOTH `[!x]` and `[^x]` to negate a bracket expression. fnmatch accepts only
+    `[!x]` and reads `[^x]` as the literal set {^, x}. So `s[^z]` — which bash expands to `sf` —
+    did not match `sf` under fnmatch, and survived the fix that closed the other five glob
+    spellings: 20 of 24 bypass pairs closed and four stayed open, in the round that was meant to
+    close all of them. Caught only because the sweep re-ran against the patched parser instead
+    of trusting the patch.
+
+    Applied on every path where a shell-authored pattern meets fnmatch, so the two dialects
+    cannot disagree again.
+    """
+    return re.sub(r"\[\^", "[!", pat or "")
+
+
+def cmd_base(word, vocab=None):
+    """Basename of a command WORD, resolved through shell globbing.
+
+    The operand side of this parser has expanded globs since the first audit — `_protected_path`
+    matches `settings.jso*` against `settings.json` a few hundred lines below. The command-word
+    side never learned the same lesson, and dispatched on the literal string. So `/bin/r[m]`,
+    `/usr/local/bin/s[f]` and `/bin/d[d]` — which bash resolves to rm, sf and dd — were read as
+    the words `r[m]`, `s[f]`, `d[d]`, matched no vocabulary, and every gate returned ALLOW.
+
+    That was one assumption ("the command word is a literal") held on one side of the parser and
+    not the other, and it cost everything: measured at the gates, `/usr/local/bin/s[f] data delete
+    record --target-org <prod>` reached the org unadjudicated, as did bulk delete, production
+    deploy and anonymous Apex; and `/bin/r[m] -rf hooks` deleted the gates' own source. Six
+    spellings — [...], [^...], [!...], [a-z], ?, * — against every watched binary. Braces were
+    already handled, which is what made the gap hard to see: `s{e,f}` denied and `s[f]` did not.
+
+    Matching is by PATTERN, not by filesystem: a word whose basename could name a watched command
+    is treated as that command whether or not such a file exists on this machine. That fails
+    closed, costs at most a deny the operator can lift, and does not vary by host.
+    """
+    base = os.path.basename(word or "").lower()
+    if not vocab:
+        return base
+    # Braces are expanded a layer above this, in the segment splitter, so `s{e,f}` was already
+    # denied end to end. Handling them here as well costs one loop and makes this function's
+    # answer complete on its own — a helper whose contract is half-delegated is how a caller
+    # that skips the other layer ends up trusting a wrong answer.
+    cands = [base] + ([os.path.basename(a).lower() for a in _brace_expand(base)]
+                      if "{" in base else [])
+    for cand in cands:
+        if cand in vocab:
+            return cand
+        if _GLOB_META.search(cand):
+            for name in sorted(vocab):
+                if fnmatch.fnmatch(name, bash_glob(cand)):
+                    return name
+    return base
+
+
 REDIR_FUSED = re.compile(r"^(?:\{\w+\}|&|\d+)?<?>{1,2}[|!&]?(.*)$")  # > >> 1> 2<> &> >| >& {fd}> >! (+ glued path)
 PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destructive_data_gate.py",
                        "lib_cli.py", "settings.json", "writable-orgs.json", "protected-objects",
@@ -85,7 +147,7 @@ def stages_local(argv) -> bool:
     log. It is gitignored, and `git add -f` overrides that in one flag. "Gitignored, 0600, never
     leaves the machine" is only true while nothing can stage it (release panel, codex/gpt-5.6-sol).
     """
-    if not argv or os.path.basename(argv[0]) != "git":
+    if not argv or cmd_base(argv[0], {"git"}) != "git":
         return False
     verbs = {"add", "stage", "commit", "rm"}
     if not any(a in verbs for a in argv[1:4]):
@@ -108,7 +170,7 @@ def _is_own_harness(argv) -> bool:
     That equivalence is the whole argument; if bin/ ever leaves PROTECTED_DIRS this becomes a
     bypass, which is why bin_is_protected asserts the pair.
     """
-    if len(argv) < 2 or os.path.basename(argv[0]).split(".")[0] not in ("python", "python2", "python3"):
+    if len(argv) < 2 or cmd_base(argv[0], _PY_BINS).split(".")[0] not in _PY_BINS:
         return False
     try:
         home = lib.TORQUE_HOME.resolve()
@@ -170,7 +232,36 @@ def grouping_or_subst(cmd: str) -> bool:
 
 
 _BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+# bash's OTHER brace form: a sequence expression, which has no comma and so matched nothing
+# above. `sf` was reachable as `s{e..f}` and the signing secret as `~/.torq{t..v}e/secret`.
+# On the operand side this was masked by the directory-prefix rule catching the same paths a
+# second way — the same redundancy that hid three case-sensitivity defects, doing it again.
+_BRACE_SEQ = re.compile(r"\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}|\{([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?\d+))?\}")
 _BRACE_CAP = 64          # fail CLOSED above this: a cross-product bomb must not buy an allow
+
+
+def _seq_alts(m):
+    """The alternatives of one bash sequence expression, or None if it is wider than the cap.
+
+    Returning None rather than the list is what keeps `{1..100000000}` from being expanded
+    before the caller's cap can notice — generating the bomb and then measuring it is how a
+    guard that fails closed on paper hangs in practice.
+    """
+    lo, hi, step, alo, ahi, astep = m.groups()
+    if lo is not None:
+        a, b = int(lo), int(hi)
+        st = abs(int(step)) if step else 1
+        width = max(len(lo.lstrip("-")), len(hi.lstrip("-"))) if (
+            lo.lstrip("-").startswith("0") or hi.lstrip("-").startswith("0")) else 0
+        if st == 0 or abs(b - a) // st + 1 > _BRACE_CAP:
+            return None
+        rng = range(a, b + 1, st) if b >= a else range(a, b - 1, -st)
+        return [f"{v:0{width}d}" if width else str(v) for v in rng]
+    a, b = ord(alo), ord(ahi)
+    st = abs(int(astep)) if astep else 1
+    if st == 0 or abs(b - a) // st + 1 > _BRACE_CAP:
+        return None
+    return [chr(v) for v in (range(a, b + 1, st) if b >= a else range(a, b - 1, -st))]
 
 
 def _brace_expand(tok):
@@ -184,15 +275,27 @@ def _brace_expand(tok):
         nxt = []
         for cur in out:
             m = _BRACE.search(cur)
-            if not m:
+            if m:
+                for alt in m.group(1).split(","):
+                    nxt.append(cur[:m.start()] + alt + cur[m.end():])
+                continue
+            s = _BRACE_SEQ.search(cur)
+            if not s:
                 nxt.append(cur); continue
-            for alt in m.group(1).split(","):
-                nxt.append(cur[:m.start()] + alt + cur[m.end():])
+            alts = _seq_alts(s)
+            if alts is None:                            # wider than the cap ⇒ collapse, not expand
+                return [_BRACE_SEQ.sub("*", _BRACE.sub("*", tok))]
+            for alt in alts:
+                nxt.append(cur[:s.start()] + alt + cur[s.end():])
         if nxt == out:
             break
         out = nxt
         if len(out) > _BRACE_CAP:
-            return [_BRACE.sub("*", tok)]               # collapse to a wildcard → still reaches
+            # Collapse BOTH brace forms. Substituting only the comma form left a sequence-only
+            # token (`hooks/lib.p{a..z}{a..z}`) literal, so the over-wide case — the one the cap
+            # exists for — returned something that matches no protected pattern. The cap was
+            # fail-open in exactly the situation it was written to fail closed on.
+            return [_BRACE_SEQ.sub("*", _BRACE.sub("*", tok))]
     return out or [tok]
 
 
@@ -643,7 +746,7 @@ def wrapped_sf(argv):
     invocation (an sf topic, colon-form, or a target flag). Distinguishes `nice sf data delete`
     (deny) from `grep sf file` / `echo 'sf ...'` (sf is a search/quoted arg — allow)."""
     for i, t in enumerate(argv):
-        if os.path.basename(t).lower() in ("sf", "sfdx"):
+        if cmd_base(t, SF_BINS) in SF_BINS:
             rest = argv[i + 1:]
             if not rest:
                 continue
@@ -673,9 +776,9 @@ def strip_runners(argv):
     command that will actually execute. Bounded so a pathological chain cannot spin."""
     argv = list(argv)
     for _ in range(8):
-        if not argv or os.path.basename(argv[0]).lower() not in RUNNERS:
+        if not argv or cmd_base(argv[0], RUNNERS) not in RUNNERS:
             break
-        runner = os.path.basename(argv[0]).lower()
+        runner = cmd_base(argv[0], RUNNERS)
         argv = argv[1:]
         while argv and (argv[0].startswith("-") or re.match(r"^\w+=", argv[0])):
             argv = argv[1:]
@@ -708,7 +811,7 @@ def _sed_write_targets(argv):
 
 def _write_shape_targets(argv):
     argv = strip_runners(argv)
-    base0 = os.path.basename(argv[0]).lower() if argv else ""
+    base0 = cmd_base(argv[0], _WRITE_VOCAB) if argv else ""
     cand = []
     if base0 == "sed":
         cand.extend(_sed_write_targets(argv))
@@ -755,7 +858,7 @@ def _protected_path(pathlike, cwd=None, varmap=None):
     base = os.path.basename(pat.rstrip("/")) or pat
     # literal OR globbed basename of a distinctive gate file (`settings.jso*` → settings.json)
     for b in PROTECTED_BASENAMES:
-        if fnmatch.fnmatch(b, base) or fnmatch.fnmatch(base, b):
+        if fnmatch.fnmatch(b, bash_glob(base)) or fnmatch.fnmatch(base, b):
             return True
     if anchor_ref(pathlike, cwd, varmap) or sf_auth_ref(pathlike, varmap):
         return True                                   # incl. `ln -s ~/.sfdx x` symlink source (TQ-F5)
@@ -786,7 +889,7 @@ def runtime_path_action(argv):
     """A find/xargs shape whose target set is computed at run time and then acted on."""
     if not argv:
         return None
-    base0 = os.path.basename(argv[0]).lower()
+    base0 = cmd_base(argv[0], _RUNTIME_PATH_CMDS | {"xargs", "tar"})
     if base0 in _RUNTIME_PATH_CMDS and any(a in _RUNTIME_ACTION_FLAGS for a in argv):
         return base0
     if base0 == "xargs":
@@ -819,7 +922,7 @@ def check_write_shapes(segs, varmap=None):
         argv = strip_runners(argv)
         if not argv:
             continue
-        base0 = os.path.basename(argv[0]).lower()
+        base0 = cmd_base(argv[0], {"cd", "pushd"})
         if base0 in ("cd", "pushd"):
             rest = [a for a in argv[1:] if a not in CD_FLAGS and not a.startswith("-")]
             if rest:                                    # cd <dir>
@@ -911,11 +1014,11 @@ def runtime_path_risk(segs, varmap):
         # Consumer detection must look at the RAW argv: `xargs` is in RUNNERS (so the write-shape
         # classifier can see through `xargs cp`), and stripping it here hid the consumer entirely,
         # letting `find ~ ... | xargs cat` through.
-        raw_base = os.path.basename(raw[0]).lower()
+        raw_base = cmd_base(raw[0], {"xargs", "tar"})
         a = strip_runners(raw)
         if not a:
             a = raw
-        base = os.path.basename(a[0]).lower()
+        base = cmd_base(a[0], _RUNTIME_PATH_CMDS)
         if raw_base in ("xargs",) or (raw_base == "tar" and
                                       any(f in raw for f in ("-T", "--files-from"))):
             consumer = True
@@ -983,13 +1086,13 @@ def analyze_bash(cmd: str):
                                  "access tokens", "auth-ref")}
         a, assign_vals = _strip_assignments(argv)
         for v in assign_vals:
-            if SF_SUSPICIOUS.search(v) or os.path.basename(v).lower() in ("sf", "sfdx"):
+            if SF_SUSPICIOUS.search(v) or cmd_base(v, SF_BINS) in SF_BINS:
                 return {"deny": ("Salesforce operation hidden in a shell assignment value",
                                  "indirect-sf")}
         if not a:
             continue
-        base0 = os.path.basename(a[0]).lower()
-        if base0 in ("sf", "sfdx"):
+        base0 = cmd_base(a[0], SF_BINS)
+        if base0 in SF_BINS:
             sf_args = a[1:]
             if _is_org_mutation(sf_args):
                 mutations.append(sf_args)             # alias/config/login re-points a target (TQ-002)
@@ -1035,7 +1138,7 @@ def analyze_bash(cmd: str):
             except ValueError:
                 continue
             _a = strip_runners(_a)
-            if _a and os.path.basename(_a[0]).lower() in (WRITE_SHAPE_CMDS | PERM_CMDS):
+            if _a and cmd_base(_a[0], WRITE_SHAPE_CMDS | PERM_CMDS) in (WRITE_SHAPE_CMDS | PERM_CMDS):
                 return {"deny": ("a write whose destination is built by command substitution "
                                  "cannot be checked — use an explicit path", "subst-write")}
     # an org-alias/config/login mutation in the SAME command as a write can re-point the write's

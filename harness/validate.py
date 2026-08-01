@@ -387,7 +387,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 11            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 12            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -558,6 +558,28 @@ def self_test(target=None):
         ok &= passed
     finally:
         spf.write_text(orig4)
+    # command-word mutator: neuter cmd_base's expansion, so the command word is dispatched as the
+    # literal it was written as. `/usr/local/bin/s[f] data delete …` must then NO LONGER be denied
+    # — which is precisely what shipped until this round, across every gate and every operation.
+    orig5 = spf.read_text()
+    try:
+        spf.write_text(orig5.replace(
+            "def cmd_base(word, vocab=None):",
+            "def cmd_base(word, vocab=None):\n"
+            "    return os.path.basename(word or '').lower()  # MUTANT", 1))
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
+            "/usr/local/bin/s[f] data delete record --sobject Account --record-id 001x "
+            "--target-org sf-prod"}})
+        r = subprocess.run([sys.executable, str(ROOT / "hooks" / "destructive_data_gate.py")],
+                           input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
+        r2 = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                            input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
+        passed = 2 not in (r.returncode, r2.returncode)
+        print(f"  {'✓' if passed else '✗'} command-word (cmd_base) mutator: expected NOT-deny from "
+              f"either gate, got exits {r.returncode}/{r2.returncode}")
+        ok &= passed
+    finally:
+        spf.write_text(orig5)
     # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
     # Editing the FILE does nothing here — lib is already imported, so the check would keep using
     # the cached function and report a false PASS. Patching the live module object is both the

@@ -1914,3 +1914,70 @@ def _guards_share_no_blind_assumption():
                   f"{len(same_file)} same-file spellings blocked by the path guard, "
                   f"{len(anchor)} by the anchor guard, {len(auth)} by the auth-store guard; "
                   f"4 ordinary paths unaffected")
+
+
+@check("command_word_spellings", "static", catastrophe=True)
+def _command_word_spellings():
+    """The parser's view of the COMMAND WORD must agree with bash's.
+
+    The sibling check above sweeps the operand side. This one sweeps the other half, because the
+    assumption that broke was held on exactly one of them: operands were glob-expanded from the
+    first audit, command words were dispatched as literals. bash resolves `/usr/local/bin/s[f]`
+    to sf and `/bin/r[m]` to rm; the parser read `s[f]` and `r[m]`, matched no vocabulary, and
+    every gate returned ALLOW — measured across destructive delete, bulk delete, production
+    deploy and anonymous Apex, plus `rm -rf` of the gates' own source. Braces were already
+    handled, which is what hid it: `s{e,f}` denied while `s[f]` did not.
+
+    Ground truth is real bash, not a list of spellings someone thought of. The property is
+    one-directional on purpose: if bash resolves a word to a watched command, the parser MUST
+    see it; the parser may additionally treat an unresolvable pattern as watched, because
+    failing closed on `s*` costs a deny the operator can lift and guessing wrong the other way
+    costs the org.
+    """
+    import importlib.util as _il, subprocess as _sp, tempfile as _tf, os as _os
+    sspec = _il.spec_from_file_location("torque_sp_cw", ROOT / "hooks" / "shellparse.py")
+    sp = _il.module_from_spec(sspec); sspec.loader.exec_module(sp)
+
+    # Hermetic: real files named sf/rm in a scratch dir, so the sweep does not depend on this
+    # machine having the Salesforce CLI installed, or on where it put it.
+    with _tf.TemporaryDirectory() as td:
+        for name in ("sf", "rm"):
+            open(_os.path.join(td, name), "w").close()
+        forms = ["s[f]", "s[^z]", "s[!z]", "s[a-z]", "s?", "s*", "s{e,f}", "s{e..f}", '"s"f',
+                 "s\\f", "sf"]
+        checked = 0
+        for form in forms:
+            word = f"{td}/{form}"
+            got = _sp.run(["bash", "-c", f'printf "%s\\n" {word}'],
+                          capture_output=True, text=True).stdout.split("\n")
+            # only assert on spellings bash actually resolves to the file
+            if f"{td}/sf" not in [g.strip() for g in got]:
+                continue
+            checked += 1
+            seen = sp.cmd_base(word.replace('"', "").replace("\\", ""), sp.SF_BINS)
+            if seen != "sf":
+                return Result("command_word_spellings", FAIL,
+                              f"bash resolves {word!r} to the sf binary; the parser read it as "
+                              f"{seen!r}, so no gate would classify it as a Salesforce command")
+        rm_forms = ["r[m]", "r[^z]", "r[!z]", "r[a-z]", "r?", "r*"]
+        for form in rm_forms:
+            word = f"{td}/{form}"
+            got = [g.strip() for g in _sp.run(["bash", "-c", f'printf "%s\\n" {word}'],
+                                              capture_output=True, text=True).stdout.split("\n")]
+            if f"{td}/rm" not in got:
+                continue
+            checked += 1
+            if sp.cmd_base(word, sp.PERM_CMDS) != "rm":
+                return Result("command_word_spellings", FAIL,
+                              f"bash resolves {word!r} to rm; the parser did not, so a delete of "
+                              f"the gates' own source would not be seen as one")
+
+    # and it must not become a wall: ordinary command words keep their own identity
+    for word, vocab in (("grep", sp.SF_BINS), ("echo", sp.PERM_CMDS), ("python3", sp.SF_BINS),
+                        ("/usr/bin/head", sp.PERM_CMDS)):
+        if sp.cmd_base(word, vocab) in vocab:
+            return Result("command_word_spellings", FAIL,
+                          f"ordinary command {word!r} was misread as a watched command")
+    return Result("command_word_spellings", PASS,
+                  f"{checked} bash-resolvable spellings of a command word are seen by the parser "
+                  f"as the command bash runs; 4 ordinary commands keep their identity")
