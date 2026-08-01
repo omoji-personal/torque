@@ -121,19 +121,34 @@ entries:
 
 - id: full-profile-deploy
   domain: deploy
-  title: Deploying a full profile overwrites permissions it does not mention
-  symptom: "Access disappears for users after an unrelated deploy."
+  title: 'A profile deploy is an overlay, not a wipe — the danger is what the file SAYS, not what it omits'
+  triggers: ["Profile", "profiles?/"]
+  symptom: >
+    Access disappears after a profile deployment, and the usual explanation — "the file did not
+    mention it, so it was removed" — does not survive testing.
   cause: >
-    Profile metadata is declarative and destructive: what is absent from the file is removed.
+    A profile deployment applies what the file specifies and leaves unmentioned permissions
+    alone. This entry previously claimed the opposite, that absence removes, cited to the
+    Metadata API guide. That claim cannot be right: a retrieved profile contains permissions
+    only for components in the package, so under a destructive-by-absence model every ordinary
+    sparse retrieve-and-deploy would strip the target org, which plainly does not happen. The
+    real mechanism is the reverse — a FULL profile export carries explicit readable=false and
+    visible=false entries, and deploying it overwrites exactly what it does mention.
   remedy: >
-    Deploy minimal profile XML containing only what you intend to change, or move the grant to
-    a permission set and leave profiles alone.
-  triggers: ['Profile', 'profiles?/']
-  confidence: documented
-  source: "Salesforce Metadata API Developer Guide — Profile"
+    Deploy the narrowest profile file that expresses your intent, and read it for explicit
+    false values rather than worrying about omissions. Prefer permission sets, which compose.
+    Verify the specific grants you care about after the deploy rather than inferring from the
+    deploy result.
+  detect: 'sf data query --query "SELECT Field, Parent.Profile.Name FROM FieldPermissions WHERE Parent.IsOwnedByProfile = true LIMIT 5"'
+  confidence: verified-live
+  verify: profile_deploy_is_overlay
+  gotcha: >
+    Corrected 2026-08-01 after an experiment on a disposable Developer Edition org: two custom
+    fields were granted profile FLS, a profile mentioning only the second was deployed, and the
+    first field's grant survived. The entry had been `documented` with a citation that did not
+    support it — which is how a plausible piece of folklore reaches a catalogue whose whole
+    claim is that it re-checks itself.
   updated: 2026-08-01
-
-# ── DATA / DML ─────────────────────────────────────────────────────────────────────────────
 - id: no-op-update-is-not-free
   domain: data
   title: A no-op update is a real write
@@ -195,16 +210,6 @@ entries:
   source: "Apex Developer Guide — Execution Governors and Limits"
   updated: 2026-08-01
 
-- id: query-auto-limit
-  domain: limits
-  title: A bare COUNT() can be broken by an auto-appended LIMIT
-  symptom: "A COUNT() returns a suspiciously round number, or an unexpected shape."
-  cause: "Some clients append a LIMIT to queries that do not carry one."
-  remedy: "Scope the count, or use COUNT(Id) with an explicit grouping, and sanity-check totals."
-  confidence: practitioner
-  updated: 2026-08-01
-
-# ── SECURITY / SHARING ─────────────────────────────────────────────────────────────────────
 - id: with-sharing-is-not-fls
   domain: security
   title: "`with sharing` enforces record access, not field or object access"
@@ -510,5 +515,119 @@ entries:
     Drop ALL ROWS from the statement and pass --all-rows. Do not conclude the recycle bin is
     empty because the query errored — it never ran.
   detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: bulk-partial-failure
+  domain: data
+  title: 'A bulk job can complete successfully with thousands of failed records'
+  symptom: >
+    sf data update bulk / delete bulk exits 0, the job state is JobComplete, and the records
+    were not written
+  cause: >
+    Bulk API reports job-level state, not record-level outcome. Rows that violated a validation
+    rule, hit a required field, or lost a lock are recorded as failures INSIDE a completed job.
+    Exit code and job state both say success because the job did run to completion — the
+    question of whether the data changed is a separate query nobody makes.
+  remedy: >
+    Never treat a bulk exit code as evidence the data changed. Read the failed-record results
+    for the job id, and compare a before and after count. This is the single most important
+    habit in any mass update: success means the job finished, not that it worked.
+  triggers: ['data\s+\w+\s+bulk', 'data:\w+:bulk', '--file\b.*\.csv']
+  confidence: documented
+  source: 'Salesforce Bulk API 2.0 Developer Guide — Get Job Failed Record Results'
+  updated: 2026-08-01
+
+- id: sandbox-refresh-changes-orgid
+  domain: orgs
+  title: 'A sandbox refresh mints a NEW org Id, and anything keyed to the old one silently stops applying'
+  symptom: >
+    After a sandbox refresh, an allowlist entry, a saved credential, or a per-org note stops
+    matching, with no error — the thing simply does not apply any more
+  cause: >
+    A refreshed sandbox is a new org that reuses the name. The 18-character Id changes, so every
+    record keyed to the previous Id refers to an org that no longer exists. Nothing announces
+    this, because from the platform's point of view nothing broke.
+  remedy: >
+    Treat the org Id as the identity and the alias as a nickname. Re-authorise and re-verify
+    after any refresh. Where a tool keys authorisation to an org Id — Torque does — a refreshed
+    sandbox correctly falls OUT of scope and must be re-approved, which is the safe direction
+    but will look like a bug the first time.
+  detect: 'sf org display --target-org <alias> --json   # compare the id against what you recorded'
+  triggers: ['org\s+(display|login)', 'sandbox']
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: prod-deploy-runs-tests
+  domain: deploy
+  title: 'Every production deploy runs Apex tests, and org-wide coverage gates it'
+  symptom: >
+    A deploy that validated in a sandbox in seconds takes an hour against production, or fails
+    on coverage in code the change never touched
+  cause: >
+    Production deployments run tests by default and require 75% org-wide Apex coverage — a
+    property of the whole org, not of the change. A deploy touching no Apex at all can still be
+    refused because unrelated code is under-covered, and the test run itself is what makes
+    production deploys slow.
+  remedy: >
+    Validate against production ahead of the window with a validate-only deploy, and use a
+    quick-deploy afterwards so the tests are not paid for twice. Know the org's coverage before
+    promising a deploy time.
+  triggers: ['project\s+deploy', 'deploy:start', '--test-level']
+  confidence: documented
+  source: 'Salesforce Metadata API Developer Guide — Running Tests in a Deployment'
+  updated: 2026-08-01
+
+- id: flow-activation-on-deploy
+  domain: automation
+  title: 'Deploying a Flow marked Active does not reliably leave it active'
+  symptom: >
+    A flow deploys successfully, the file says Active, and the automation does not run
+  cause: >
+    Activation on deploy depends on org settings, the API version, and whether the target
+    already has an active version — so the status in the file is a request rather than a
+    guarantee. Deploy success reports that the metadata landed, which is a different question
+    from which version is running.
+  remedy: >
+    Verify activation after every flow deploy by reading the active version back, not by
+    trusting the deploy result or the file. Retrieve and check status, or read
+    FlowDefinition.ActiveVersionNumber.
+  triggers: ['Flow\b', 'project\s+deploy.*Flow', 'FlowDefinition']
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: unable-to-lock-row
+  domain: data
+  title: 'UNABLE_TO_LOCK_ROW is usually about a parent or a group, not the row you are writing'
+  symptom: >
+    A bulk update fails intermittently with UNABLE_TO_LOCK_ROW on a subset of batches, and
+    re-running succeeds
+  cause: >
+    Writing a child locks its parent, and ownership changes take locks on group membership
+    tables that are shared org-wide. Parallel batches touching children of the same parent
+    therefore contend with each other even though no two batches share a record.
+  remedy: >
+    Order the batches so rows sharing a parent land together, or run serially. Re-running is not
+    a fix — it changes the timing, so the same operation will fail again under load.
+  triggers: ['data\s+\w+\s+bulk', 'OwnerId', 'data\s+update']
+  confidence: documented
+  source: 'Salesforce Help — Record Locking and Locking Errors'
+  updated: 2026-08-01
+
+- id: restricted-picklist-rejects-inactive
+  domain: data
+  title: 'A restricted picklist rejects values that are merely inactive, including ones already in the data'
+  symptom: >
+    A mass update fails on rows whose value looks legitimate — and is already stored on the
+    record
+  cause: >
+    Deactivating a picklist value leaves it on existing records but removes it from what a write
+    may set. A restricted picklist then refuses that value on any update, so rewriting a record
+    with the value it already has can fail.
+  remedy: >
+    Check active values before a mass update, not the values present in the data. If a migration
+    must preserve an inactive value, reactivate it for the load or drop the field from the
+    update.
+  triggers: ['data\s+update', '--values', 'picklist']
   confidence: practitioner
   updated: 2026-08-01

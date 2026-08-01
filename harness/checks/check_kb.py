@@ -196,7 +196,80 @@ def _v_de_org_reports_not_sandbox(target):
     return True, f"Developer Edition org reports IsSandbox={sandbox} — as the entry claims"
 
 
+def _v_profile_deploy_is_overlay(target):
+    """Deploy a profile that mentions one field, and assert an unmentioned grant survives.
+
+    The entry this backs was WRONG until an experiment settled it — it claimed absence from a
+    profile file removes a permission, cited to a guide that says no such thing. Folklore reaches
+    a catalogue easily; the only thing that keeps it out is running the experiment. So this runs
+    it, every release validation, and fails if the platform's behaviour changes.
+    """
+    import shutil as _sh, subprocess as _sp2, tempfile as _tf
+    if _SFQ_STUB is not None:
+        # Mutation-test path: the deploys cannot be stubbed, so only the ASSERTION is exercised.
+        ok, rows = _sfq(target, "SELECT Field FROM FieldPermissions")
+        fields = {r.get("Field") for r in rows or []}
+        return ("A__c" in " ".join(fields)), "stubbed assertion"
+    root = _KbP(_tf.mkdtemp(prefix="torque-prof-"))
+    try:
+        fdir = root / "force-app/main/default/objects/Lead/fields"
+        pdir = root / "force-app/main/default/profiles"
+        fdir.mkdir(parents=True); pdir.mkdir(parents=True)
+        (root / "sfdx-project.json").write_text(_kb_json.dumps(
+            {"packageDirectories": [{"path": "force-app", "default": True}],
+             "namespace": "", "sourceApiVersion": "62.0"}))
+        names = ["TorqueOverlayA", "TorqueOverlayB"]
+        for n in names:
+            (fdir / f"{n}__c.field-meta.xml").write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">'
+                f"<fullName>{n}__c</fullName><label>{n}</label><type>Text</type>"
+                "<length>40</length></CustomField>")
+
+        def deploy(*a):
+            return _kb_sp.run(["sf", "project", "deploy", "start", "--target-org", target,
+                               "--json", *a], capture_output=True, text=True, cwd=root,
+                              timeout=600)
+
+        def perms(f):
+            return ("<fieldPermissions><field>Lead." + f + "__c</field>"
+                    "<editable>true</editable><readable>true</readable></fieldPermissions>")
+
+        if deploy("--source-dir", "force-app").returncode != 0:
+            return None, "could not deploy probe fields"
+        (pdir / "Admin.profile-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<Profile xmlns='
+            '"http://soap.sforce.com/2006/04/metadata">'
+            + perms(names[0]) + perms(names[1]) + "</Profile>")
+        if deploy("--metadata", "Profile:Admin").returncode != 0:
+            return None, "could not grant profile FLS"
+        (pdir / "Admin.profile-meta.xml").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<Profile xmlns='
+            '"http://soap.sforce.com/2006/04/metadata">' + perms(names[1]) + "</Profile>")
+        if deploy("--metadata", "Profile:Admin").returncode != 0:
+            return None, "could not deploy the partial profile"
+        ok, rows = _sfq(target, "SELECT Field FROM FieldPermissions WHERE "
+                                "Parent.Profile.Name='System Administrator' AND Field IN "
+                                f"('Lead.{names[0]}__c','Lead.{names[1]}__c')")
+        if ok is not True:
+            return None, "could not read back FieldPermissions"
+        got = {r.get("Field") for r in rows}
+        survived = f"Lead.{names[0]}__c" in got
+        if not survived:
+            return False, ("an unmentioned profile grant was REMOVED — profile deploys are "
+                           "destructive by absence after all, and this entry is now wrong")
+        return True, (f"a grant absent from the deployed profile survived ({len(got)} of 2 "
+                      f"grants present) — profile deploy is an overlay")
+    finally:
+        _kb_sp.run(["sf", "project", "delete", "source", "--target-org", target, "--no-prompt",
+                    "--json", "--metadata", "CustomField:Lead.TorqueOverlayA__c",
+                    "--metadata", "CustomField:Lead.TorqueOverlayB__c"],
+                   capture_output=True, text=True, cwd=root, timeout=600)
+        _sh.rmtree(root, ignore_errors=True)
+
+
 _VERIFIERS = {
+    "profile_deploy_is_overlay": _v_profile_deploy_is_overlay,
     "fls_absent_without_permset": _v_fls_absent_without_permset,
     "del_tombstones_visible": _v_del_tombstones_visible,
     "flowdefinition_queryable": _v_flowdefinition_queryable,
@@ -851,6 +924,8 @@ def _verifiers_can_fail():
         # FlowDefinitionView failing on the standard API, which the entry says works
         "flowdefinitionview_standard_api": lambda t, q, tl: (False, []),
         # a Developer Edition org reporting IsSandbox=True
+        # an unmentioned grant reported as REMOVED — the entry's claim inverted
+        "profile_deploy_is_overlay": lambda t, q, tl: (True, [{"Field": "Lead.B__c"}]),
         "de_org_reports_not_sandbox":
             lambda t, q, tl: (True, [{"IsSandbox": True, "OrganizationType": "Developer Edition"}]),
     }
