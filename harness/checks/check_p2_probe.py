@@ -59,11 +59,34 @@ def _probe_cycle(target):
         td_ok, td_msg = _teardown(target, obj, field, permset, work)
         if not td_ok:
             return Result("probe_cycle", FAIL, f"teardown failed: {td_msg}")
-        # ---- residue precondition: field is gone ----
-        rq = subprocess.run(["sf","data","query","--target-org",target,"--use-tooling-api","--json",
-             "--query",f"SELECT QualifiedApiName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName='{obj}' AND QualifiedApiName='{field}'"],
-             capture_output=True, text=True)
-        residue = json.loads(rq.stdout)["result"]["totalSize"]
+        # ---- residue precondition: the live field is really gone ----
+        # This assertion USED TO BE UNFAILABLE. On delete Salesforce RENAMES a custom field by
+        # appending `_del` to its developer name, so the old query — which asked FieldDefinition
+        # for the pre-rename QualifiedApiName — returned 0 whether the teardown worked or not. It
+        # printed "residue=0 (asserted 0)" while 72 orphaned probe fields piled up on the
+        # validation org. Found by an adversarial review that counted the ORG rather than reading
+        # the code, which is the whole thesis of this harness turned on itself.
+        #
+        # Two separate facts are now measured, because they are separate facts:
+        #   live      — a field still using the probe's API name. MUST be 0; this is correctness.
+        #   tombstone — the `_del` row Salesforce keeps in the deleted-fields queue for 15 days.
+        #               `--purge-on-delete` makes a component *eligible* for deletion, not erased,
+        #               so a tombstone is expected. It is reported, never silently swallowed.
+        stem = field[:-3] if field.endswith("__c") else field       # Torque_Probe_<epoch>
+        def _count(where):
+            r = subprocess.run(["sf","data","query","--target-org",target,"--use-tooling-api","--json",
+                 "--query",f"SELECT Id FROM CustomField WHERE TableEnumOrId='{obj}' AND {where}"],
+                 capture_output=True, text=True)
+            try:
+                return json.loads(r.stdout)["result"]["totalSize"]
+            except Exception:
+                return None
+        live      = _count(f"DeveloperName='{stem}'")
+        tombstone = _count(f"DeveloperName='{stem}_del'")
+        if live is None or tombstone is None:
+            return Result("probe_cycle", FAIL,
+                          "residue query failed — cannot prove teardown; refusing to report green")
+        residue = live
         # ASSERT, don't just report. Both of these were computed and then thrown away — the check
         # returned PASS unconditionally, so a missing FieldPermissions row or an undeleted field
         # still printed green while the README claimed both were verified. That is precisely the
@@ -74,9 +97,12 @@ def _probe_cycle(target):
                 "fields silently lack FLS; this is the #1 misdiagnosed deploy failure")
         if residue != 0:
             return Result("probe_cycle", FAIL,
-                f"teardown left {residue} residue — the probe field still exists after purge")
+                f"teardown left {residue} live field(s) under the probe's API name — the purge "
+                f"did not take")
         return Result("probe_cycle", PASS,
-            f"deploy→verify(field ok, FLS asserted)→purge→teardown; residue={residue} (asserted 0)")
+            f"deploy→verify(field ok, FLS asserted)→purge→teardown; live residue={live} "
+            f"(asserted 0); {tombstone} `_del` tombstone in the 15-day queue — expected, "
+            f"because purge-on-delete makes a field eligible for deletion, not erased")
     finally:
         _shutil.rmtree(work, ignore_errors=True)
 

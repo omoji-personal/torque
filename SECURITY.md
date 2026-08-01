@@ -32,7 +32,7 @@ The invariants the gates claim to hold, all enforced on the agent's tool surface
 ## What is explicitly NOT in scope
 
 These are documented limits, not undiscovered holes — see the threat model in
-[`guide/TORQUE-GUIDE.md`](guide/TORQUE-GUIDE.md):
+[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) §05:
 
 - **Arbitrary code executed as the same OS user.** Reading `~/.torque/secret` via `/proc`,
   `ptrace`, or a compiled binary; forging a login session with a purpose-built program. A

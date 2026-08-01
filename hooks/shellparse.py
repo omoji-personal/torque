@@ -66,6 +66,24 @@ PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destruc
                        "validate.py"}
 
 
+def _is_own_harness(argv) -> bool:
+    """True only for `python[3] <TORQUE_HOME>/harness/validate.py ...`.
+
+    Deliberately narrow: one script, resolved under TORQUE_HOME, and that script is itself
+    gate-protected from agent writes. Any other interpreter invocation still falls through to
+    the deny above.
+    """
+    if len(argv) < 2 or os.path.basename(argv[0]).split(".")[0] not in ("python", "python2", "python3"):
+        return False
+    try:
+        script = (lib.TORQUE_HOME / "harness" / "validate.py").resolve()
+        cand = Path(argv[1])
+        cand = (cand if cand.is_absolute() else (lib.TORQUE_HOME / cand)).resolve()
+        return cand == script
+    except Exception:
+        return False
+
+
 def strip_continuations(cmd: str) -> str:
     return re.sub(r"\\\n", "", cmd)
 
@@ -581,8 +599,17 @@ def analyze_bash(cmd: str):
                              "authorized — call `sf` literally", "indirect-argv0")}
         if base0 in INTERPRETERS and (SF_WORD.search(seg) or SF_SUSPICIOUS.search(seg)
                                       or "$" in seg or "`" in seg):
-            return {"deny": (f"Salesforce operation via interpreter/here-string ({base0}) — "
-                             "not authorizable", "interp-sf")}
+            # EXCEPT the harness itself. `--target-org` matches SF_SUSPICIOUS, so this rule was
+            # denying `python3 harness/validate.py --target-org <org>` — the exact command the
+            # README and the guide tell every user to run to reproduce the validation. A gate that
+            # blocks the product's own headline instruction is a gate people switch off.
+            #
+            # Safe to exempt because it is not a trust-the-string decision: validate.py is in
+            # PROTECTED_BASENAMES, so the agent's Edit/Write on it is already denied, and the path
+            # must resolve inside TORQUE_HOME. The agent cannot point this at anything it controls.
+            if not _is_own_harness(a):
+                return {"deny": (f"Salesforce operation via interpreter/here-string ({base0}) — "
+                                 "not authorizable", "interp-sf")}
         if wrapped_sf(a):
             return {"deny": ("Salesforce operation under a wrapper/runner — call `sf` directly",
                              "wrapper-sf")}

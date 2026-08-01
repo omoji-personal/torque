@@ -1,11 +1,16 @@
 # Torque
 
-**Let an AI agent operate real Salesforce orgs — without it being able to write to production on its own.**
+**Let an AI agent do real Salesforce work across every org you run — production included — with
+guardrails that actually hold.**
 
-Frontier coding agents can now run Salesforce operations directly: query, deploy, run Apex, move
-data. That is genuinely useful and genuinely dangerous — the same session that fixes a flow can,
-with one mistaken alias, write to a client's production org. Telling the agent to be careful does
-not bind it. Torque is the layer that does.
+Frontier coding agents can already query, deploy, run Apex and move data. What stops most people
+using them on orgs that matter is not capability — it is that the same session which fixes a flow
+can, with one mistaken alias, write to a client's production org, and telling the agent to be
+careful does not bind it.
+
+Torque is the layer that binds it, so you can use the capability. Sandbox and developer orgs move
+freely. Production moves too — on an approval you issue at your own terminal, in one command. A
+torque wrench is not a weaker wrench; it is the one you reach for when the number matters.
 
 ---
 
@@ -163,7 +168,7 @@ Not a CI/CD pipeline (Gearset, Copado). Not an in-org codegen IDE (Agentforce Vi
 library (sfdx-hardis — good prior art; Torque could sit on top of it). It is the operator-grade
 safety and validation layer those categories don't ship.
 
-**Full guide, safety model and threat model:** [`guide/TORQUE-GUIDE.md`](guide/TORQUE-GUIDE.md)
+**Full guide, safety model and threat model:** [`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf)
 **Validation log and audit trail:** [`harness/VALIDATION.md`](harness/VALIDATION.md)
 
 MIT licensed.

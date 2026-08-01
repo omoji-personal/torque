@@ -194,12 +194,21 @@ def _load_check_plugins():
           "PASS": PASS, "FAIL": FAIL, "WARN": WARN, "SKIP": SKIP, "NA": NA,
           "REGISTRY": REGISTRY,          # so a check can validate labels naming other checks
           "subprocess": subprocess, "json": json, "os": os, "re": re, "Path": Path}
+    broken = []
     for p in sorted((ROOT / "harness" / "checks").glob("check_*.py")):
         try:
             exec(compile(p.read_text(), str(p), "exec"), ns)
         except Exception as e:
             print(f"  ! plugin {p.name} failed to load: {e}")
-_load_check_plugins()
+            broken.append(p.name)
+    return broken
+
+# A plugin that fails to import used to print a warning and vanish — its checks simply never
+# registered, and the run then reported PASS. A syntax error in a check file therefore turned
+# that check green, which is the precise failure mode this harness exists to catch. Observed for
+# real: an edit broke check_p2_probe.py and the verdict stayed PASS with probe_cycle absent.
+# Registered here so the runner can refuse to report a verdict it cannot stand behind.
+BROKEN_PLUGINS = _load_check_plugins()
 
 # ---- runner ---------------------------------------------------------------
 def run_profile(profile, target, only=None):
@@ -218,6 +227,11 @@ def run_profile(profile, target, only=None):
     return results
 
 def print_report(profile, results):
+    if BROKEN_PLUGINS:
+        print(f"\n  ! {len(BROKEN_PLUGINS)} check plugin(s) failed to load: "
+              f"{', '.join(BROKEN_PLUGINS)}")
+        print("  → verdict: FAIL (a check that cannot run is never a pass)")
+        return "FAIL"
     print(f"\n=== Torque validation — profile: {profile} ===")
     verdict = PASS
     for r in results:

@@ -35,7 +35,7 @@ await page.pdf({
   displayHeaderFooter: true,
   headerTemplate: '<div></div>',       // empty header; Chromium requires a node
   footerTemplate: `
-    <div style="width:100%; font-family:'Andale Mono',Menlo,monospace; font-size:7pt;
+    <div style="width:100%; font-family:'Andale Mono',Menlo,monospace; font-size:7.6pt;
                 color:#5B6672; letter-spacing:0.06em; padding:0 0.8in;
                 display:flex; justify-content:space-between; align-items:center;">
       <span>TORQUE</span>
