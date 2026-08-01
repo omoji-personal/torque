@@ -1171,3 +1171,37 @@ def _impact_bound_approval(target):
     return Result("impact_bound_approval", PASS,
                   f"approved for {live} {obj} record(s): within scope proceeds and consumes, "
                   f"grown scope refused, unverifiable scope refused")
+
+
+@check("observer_cost_bounded", "static", catastrophe=False)
+def _observer_cost_bounded():
+    """The observer runs after EVERY Bash call, so its cost is paid on every command.
+
+    A hook on the hot path whose cost nobody has measured is a hook that will eventually be
+    blamed for something. It is also the first thing a reviewer asks about, and "I don't know"
+    is the wrong answer. Measured rather than asserted, and bounded so a future edit that starts
+    doing real work per call — reading the catalogue, calling out to an org — fails here rather
+    than being noticed as sluggishness months later.
+    """
+    import time as _t
+    ev = _kb_json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls -la"},
+                         "tool_response": {"stdout": "", "stderr": "", "exit_code": 0}})
+    times = []
+    for _ in range(7):
+        t0 = _t.perf_counter()
+        r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "lesson_observer.py")],
+                       input=ev, capture_output=True, text=True, cwd=ROOT, timeout=60)
+        times.append((_t.perf_counter() - t0) * 1000)
+        if r.returncode != 0:
+            return Result("observer_cost_bounded", FAIL,
+                          f"observer exited {r.returncode} on an ordinary command")
+    times.sort()
+    median = times[len(times) // 2]
+    # Generous: the machine may be loaded, and this is a regression guard, not a benchmark.
+    if median > 250:
+        return Result("observer_cost_bounded", FAIL,
+                      f"observer median {median:.0f} ms on an ordinary shell command — it runs "
+                      f"on every Bash call, so this is paid constantly")
+    return Result("observer_cost_bounded", PASS,
+                  f"median {median:.0f} ms per Bash call on a non-Salesforce command "
+                  f"(interpreter startup; the early exit means no extra work is done)")
