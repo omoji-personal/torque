@@ -3,3 +3,4 @@ __pycache__/    # Python bytecode — harness/hooks are Python
 .sfdx/          # legacy sfdx state, some CLI paths still write it
 node_modules/   # Playwright (P4) vendor tree
 .venv/          # optional Python virtualenv
+knowledge/cache/  # locally-built documentation cache; vendor docs are not redistributable and the DIGESTED catalogue is what ships
