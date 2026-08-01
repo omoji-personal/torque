@@ -1031,6 +1031,17 @@ def _detect_probes_run(target):
     errored = by.get("error") or []
     if errored:
         return Result("detect_probes_run", WARN, f"{len(errored)} probe(s) failed to run: {errored}")
+    # Probes that are NOT queries — `sf org display`, `sf limits` — cannot be executed safely
+    # from a catalogue string and are reported as not-executed with the reason. That is a
+    # documented limit, not a failure, so it does not fail the build. What would slip past is the
+    # number GROWING, so it is pinned: a new non-executable probe must be accepted deliberately
+    # (release panel round 2, codex/gpt-5.6-sol).
+    EXPECTED_NOT_EXECUTABLE = 3
+    ne = len(by.get("not-executed") or [])
+    if ne > EXPECTED_NOT_EXECUTABLE:
+        return Result("detect_probes_run", FAIL,
+                      f"{ne} probes are not executable, expected {EXPECTED_NOT_EXECUTABLE} — one "
+                      f"was added without being accepted: {by.get('not-executed')}")
     ran = sum(len(v) for k, v in by.items() if k != "not-executed")
     return Result("detect_probes_run", PASS,
                   f"{ran}/{len(probes)} probes executed against {target} "

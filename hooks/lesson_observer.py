@@ -171,7 +171,7 @@ def main():
 
     # An error code echoed by a SUCCEEDING command — grep output, a log tail, a doc example —
     # is not a failure. Requiring a non-zero exit removes a whole class of manufactured lesson.
-    if code and failed in (0, None, "0"):
+    if code and failed in (0, "0"):
         code = None
 
     if code:
@@ -179,7 +179,10 @@ def main():
         _append({"kind": "failure", "at": int(time.time()), "shape": shape,
                  "code": code, "command": lib.redact(cmd)[:400],
                  "excerpt": body[max(0, at - 120):at + 240].strip()})
-    elif failed in (0, None, "0"):
+    elif failed in (0, "0"):
+        # `None` meant "no exit_code in the payload" and was read as success, so an observation
+        # could pair against a command whose outcome was never known (release panel round 2,
+        # codex/gpt-5.6-sol). Unknown is not success.
         # A success. If this shape failed earlier and was never resolved, the pair is the lesson.
         for rec in reversed(_pending()):
             if rec.get("kind") == "failure" and rec.get("shape") == shape and not rec.get("paired"):

@@ -59,7 +59,11 @@ def _need_impact_token(orgid, op, target, sobject, where):
     impact = payload.get("impact") or {}
     approved = impact.get("scope")
     if approved is None:
-        return True                     # a plain token that happened to carry this digest
+        # A token bearing this digest but no recorded scope is not an impact-bound approval.
+        # Honouring it here skipped the count entirely — the one thing this path exists to do
+        # (release panel round 2, codex/gpt-5.6-sol). Ordinary tokens live on the empty-digest
+        # path and are unaffected.
+        return False
     live, why = _live_count(target, sobject, where)
     if live is None:
         lib.deny(f"an impact-bound approval was spent but the scope could not be re-established "
@@ -175,6 +179,17 @@ def handle_bash(cmd):
     lib.allow()
 
 
+def _is_mcp_tool(tool: str) -> bool:
+    """Any tool name that names a server, in either host convention.
+
+    The classifier understands `mcp__server__tool` and `server__tool`; the dispatchers routed
+    only the first, so the second was parsed by code nothing could reach. Claude Code emits the
+    three-part form — which is why this never surfaced — but a claim the dispatcher does not
+    honour is a claim (release panel round 2, codex/gpt-5.6-sol).
+    """
+    return "__" in (tool or "") and tool not in ("Bash", "Read", "Edit", "Write", "MultiEdit")
+
+
 def handle_mcp(tool, tinput):
     r = shellparse.mcp_analyze(tool, tinput)
     if r.get("read"):
@@ -203,7 +218,7 @@ def main():
     tinput = ev.get("tool_input", {}) or {}
     if tool == "Bash":
         handle_bash(tinput.get("command", ""))
-    elif tool.startswith("mcp__"):
+    elif _is_mcp_tool(tool):
         handle_mcp(tool, tinput)
     lib.allow()
 

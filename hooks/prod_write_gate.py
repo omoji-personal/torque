@@ -49,6 +49,13 @@ def handle_bash(cmd):
     lib.allow()
 
 
+def _is_mcp_tool(tool: str) -> bool:
+    """Any tool name that names a server, in either host convention — see the twin in
+    destructive_data_gate. The classifier supported two-part names; only this dispatcher's
+    `mcp__` prefix test kept them from ever reaching it."""
+    return "__" in (tool or "") and tool not in ("Bash", "Read", "Edit", "Write", "MultiEdit")
+
+
 def handle_mcp(tool, tinput):
     r = shellparse.mcp_analyze(tool, tinput)
     if r.get("read"):
@@ -95,26 +102,39 @@ def _tool_paths(tinput):
     return out
 
 
+def _protected_reason(path):
+    return (lib.is_protected_target(path) or shellparse.anchor_ref(path) or _is_gate_file(path)
+            or _is_sf_auth(path) or shellparse.sf_auth_ref(path))
+
+
 def handle_edit(tinput):
-    # every path-shaped value, not just the one key — see _tool_paths()
-    path = tinput.get("file_path", "") or next(iter(_tool_paths(tinput)), "")
-    if lib.is_protected_target(path) or shellparse.anchor_ref(path) or _is_gate_file(path) \
-       or _is_sf_auth(path) or shellparse.sf_auth_ref(path):    # auth store too (audit TQ-F4)
-        lib.deny(f"agent modification of protected file {os.path.basename(path)} is denied; "
-                 "operator-present issuance only", "artifact-edit", HOOK)
+    """Refuse if ANY path in the payload is protected.
+
+    _tool_paths() was written to collect every path-shaped value precisely because a guard keyed
+    to one field name is a guard with a spare key. Then the caller took `file_path` if present
+    and otherwise the FIRST of the rest — so a payload naming README.md alongside hooks/lib.py
+    was allowed, and the collection work was thrown away one line after it was done (release
+    panel round 2, codex/gpt-5.6-sol).
+    """
+    paths = {tinput.get("file_path", "")} | set(_tool_paths(tinput))
+    for path in sorted(p for p in paths if p):
+        if _protected_reason(path):
+            lib.deny(f"agent modification of protected file {os.path.basename(path)} is denied; "
+                     "operator-present issuance only", "artifact-edit", HOOK)
     lib.allow()
 
 
 def handle_read(tinput):
     # Audit R-01: the agent's Read tool must not read the signing secret or token store, or the
     # Bash secret-read guard is theater. Reading the approved-apex copy stays allowed.
-    # every path-shaped value, not just the one key — see _tool_paths()
-    path = tinput.get("file_path", "") or next(iter(_tool_paths(tinput)), "")
-    if shellparse.anchor_ref(path):
-        lib.deny("reading the trust anchor (signing secret / tokens) is denied", "anchor-read", HOOK)
-    if _is_sf_auth(path):
-        lib.deny("reading the sf CLI auth store (~/.sfdx, ~/.sf) is denied — it holds live "
-                 "access tokens", "auth-read", HOOK)
+    # Every path-shaped value, not just the first — same defect as handle_edit had.
+    for path in sorted(p for p in ({tinput.get("file_path", "")} | set(_tool_paths(tinput))) if p):
+        if shellparse.anchor_ref(path):
+            lib.deny("reading the trust anchor (signing secret / tokens) is denied",
+                     "anchor-read", HOOK)
+        if _is_sf_auth(path):
+            lib.deny("reading the sf CLI auth store (~/.sfdx, ~/.sf) is denied — it holds live "
+                     "access tokens", "auth-read", HOOK)
     lib.allow()
 
 
@@ -128,7 +148,7 @@ def main():
         handle_edit(tinput)
     elif tool == "Read":
         handle_read(tinput)
-    elif tool.startswith("mcp__"):
+    elif _is_mcp_tool(tool):
         handle_mcp(tool, tinput)
     lib.allow()
 

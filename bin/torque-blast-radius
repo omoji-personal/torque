@@ -111,6 +111,10 @@ def workflow_rules(target, sobject):
     rows = _query(target, "SELECT Id, Name FROM WorkflowRule "
                           f"WHERE TableEnumOrId = '{sobject}'", tooling=True)["records"]
     out = []
+    if len(rows) > 25:
+        # Truncating without saying so contradicts the tool's one promise. Reported rather than
+        # raised, because resolving 200 rules costs 200 callouts on a pre-flight command.
+        out.append(f"({len(rows) - 25} further workflow rule(s) NOT resolved — cap reached)")
     for r in rows[:25]:
         try:
             md = _query(target, "SELECT Metadata FROM WorkflowRule "
@@ -206,6 +210,8 @@ def rollups(target, sobject):
                 if ref not in parents:
                     parents.append(ref)
     out = []
+    if len(parents) > 12:
+        out.append(f"({len(parents) - 12} further parent object(s) NOT inspected — cap reached)")
     for parent in parents[:12]:
         try:
             pd = _describe(target, parent)

@@ -95,7 +95,12 @@ def main():
         "reproduce": f"python3 harness/validate.py --profile {a.profile} "
                      f"--target-org <your-disposable-org>",
     }
-    registered = len(re.findall(r"^\s+[✓✗!−·⧗]\s+\S+\s+\S+", clean, re.M))
+    # A check line is `<mark> <single-token name> <ALL-CAPS OUTCOME> <detail>`. Self-test lines
+    # share the mark but carry prose ("clean_ip fail-closed (denylist absent): expected FAIL"),
+    # so counting by mark alone made this guard fire on its own first run. Matching the SHAPE
+    # rather than the outcome vocabulary means a new outcome name is still counted — which is
+    # the whole point: the guard exists to notice outcomes the parser does not know.
+    registered = len(re.findall(r"^\s+[✓✗!−·⧗]\s+\S+\s+[A-Z][A-Z/]{1,7}\s", clean, re.M))
     if checks and len(checks) != registered:
         print(f"refusing: parsed {len(checks)} check lines but the run printed {registered} — "
               f"an attestation that silently drops outcomes is worse than none", file=sys.stderr)
