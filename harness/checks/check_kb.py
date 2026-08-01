@@ -993,7 +993,7 @@ def _verifiers_can_fail():
 def _detect_probes_run(target):
     """Every detect probe must actually run, and its outcome must match what the entry claims.
 
-    Nine entries declared a `detect:` probe — described in the catalogue's own header as the
+    Twelve entries declare a `detect:` probe (12 today, nine when this was written) — described in the catalogue's own header as the
     query that answers "is this happening to me right now" — and nothing in the repo had ever
     executed one. The only code that touched the field was the code that wrote it. Two of the
     nine had been unrunnable for as long as they existed: one queried a Tooling object without

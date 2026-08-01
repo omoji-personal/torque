@@ -27,6 +27,9 @@ for pattern, replacement in (
      f"<code>capability</code> ({total['capability']} checks,"),
     (r"\d+ checks, live org", f"{total['release']} checks, live org"),
     (r"<td>\d+ checks,", f"<td>{total['release']} checks,"),
+    # The bare parenthesised form drifted to (27) while every other figure stayed current,
+    # because nothing here matched it.
+    (r"<code>release</code> \(\d+\)", f"<code>release</code> ({total['release']})"),
 ):
     text = re.sub(pattern, replacement, text)
 guide.write_text(text)

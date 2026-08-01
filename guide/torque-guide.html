@@ -384,6 +384,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     of it is queryable. Nothing assembles it and puts it in front of you.</p>
 
   <pre>BLAST RADIUS — delete on Account @ acme-sandbox
+  criteria : Type = 'Customer - Direct'
   scope    : 7 record(s)
   cascade  : 36 child record(s) deleted with the parent
              · Opportunity: 23
@@ -445,7 +446,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
 python3 bin/torque-demo
 
 <span class="cmt">Shell indirection — the gate never sees the literal word `sf`.</span>
-  <span class="deny">DENIED</span>  x=sf; $x data delete bulk --sobject Account --target-org acme
+  <span class="deny">DENIED</span>  x=sf; $x data delete bulk --sobject Account --target-org acme-prod
           variable-assembled command → Salesforce operation
           hidden in a shell assignment value
 
@@ -478,7 +479,7 @@ python3 harness/validate.py --profile release --target-org my-dev-org</pre>
   <p>
     Three profiles nest: <code>static</code> (36 checks, <strong>no org needed</strong> — the
     try-before-you-connect path), <code>capability</code> (54 checks, adding the live cycles), and
-    <code>release</code> (27). <code>--only &lt;check&gt;</code> runs one.
+    <code>release</code> (57). <code>--only &lt;check&gt;</code> runs one.
   </p>
 
   <h4>Step 4 — work</h4>
@@ -616,7 +617,7 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
 
   <h3>checkup — which of the platform’s traps are live in this org</h3>
 
-  <p>Ten catalogue entries carry a probe: the query that answers “is this happening to me right
+  <p>twelve catalogue entries carry a probe: the query that answers “is this happening to me right
     now”. <code>checkup</code> runs them and reports what it found, each finding citing the entry
     that predicted it and how that entry is known. That citation is the difference between this
     and an org health scanner — the scanners tell you what they found and cannot tell you how
@@ -667,7 +668,7 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
   </table>
   <h4>The catalogue — and the one that was wrong</h4>
   <p>Thirty-four entries across nine domains: six re-verified against a live org on every release
-    run, seventeen cited to Salesforce, eleven marked plainly as learned the hard way. The label
+    run, sixteen cited to Salesforce, twelve marked plainly as learned the hard way. The label
     is load-bearing rather than decorative — every one of the six live verifiers is fed, by the
     harness, the org response that would make its entry false, and is required to say so. Three
     of them previously could not fail at all: they queried the org, ignored the answer, and
