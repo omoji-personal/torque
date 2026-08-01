@@ -83,8 +83,11 @@ def main():
         "verdict": verdict,
         "exit_code": run.returncode,
         "counts": {"checks": len(checks),
-                   **{k.lower().replace("/", ""): sum(1 for c in checks if c["outcome"] == k)
-                      for k in ("PASS", "FAIL", "WARN", "SKIP", "NA", "LIMITED")}},
+                   # Counted from what was actually parsed, rather than from a hand-written
+                   # list of spellings — which had drifted from the parser's own alternation, so
+                   # every NA and LIMIT total read zero (release panel round 3).
+                   **{o.lower().replace("/", ""): sum(1 for c in checks if c["outcome"] == o)
+                      for o in sorted({c["outcome"] for c in checks})}},
         "self_test": {"mutators_caught": int(self_test.group(1)) if self_test else 0,
                       "all_caught": bool(self_test), "mutators": mutators},
         "checks": checks,
@@ -100,7 +103,9 @@ def main():
     # so counting by mark alone made this guard fire on its own first run. Matching the SHAPE
     # rather than the outcome vocabulary means a new outcome name is still counted — which is
     # the whole point: the guard exists to notice outcomes the parser does not know.
-    registered = len(re.findall(r"^\s+[✓✗!−·⧗]\s+\S+\s+[A-Z][A-Z/]{1,7}\s", clean, re.M))
+    # An eight-character ceiling meant a longer outcome name was invisible to the guard as well
+    # as to the parser, so the two agreed on missing the same line and the guard passed.
+    registered = len(re.findall(r"^\s+[✓✗!−·⧗]\s+\S+\s+[A-Z][A-Z/]+\s", clean, re.M))
     if checks and len(checks) != registered:
         print(f"refusing: parsed {len(checks)} check lines but the run printed {registered} — "
               f"an attestation that silently drops outcomes is worse than none", file=sys.stderr)

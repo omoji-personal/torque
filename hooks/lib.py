@@ -221,7 +221,13 @@ def load_allowlist():
         data = json.loads(ALLOWLIST.read_text())
         out = {}
         for e in data.get("orgs", []):
-            oid = norm_id(e["orgId"])
+            oid = norm_id(e.get("orgId", ""))
+            # The docstring promised "keyed by 18-char orgId"; nothing checked either half, so a
+            # hand-edited file could key the map on `not-an-org`, and a 15-char entry and its
+            # 18-char twin became two entries for one org (release panel round 3).
+            if not valid_org_id(oid) or len(oid) != 18:
+                audit("DENY", f"allowlist entry with an unusable orgId — ignored")
+                continue
             if e.get("verdict") not in ELIGIBLE:      # never allow production/unverifiable
                 continue
             out[oid] = e
@@ -237,7 +243,24 @@ def load_allowlist():
             pass
         return None                                   # malformed ⇒ deny
 
-_ORGID_RE = re.compile(r"^00D[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
+# The 18-char form's final three characters are a checksum over the first 15, drawn from
+# A-Z0-5 — not arbitrary alphanumerics. Accepting anything let a malformed id look valid, and
+# let one org key two files (release panel round 3).
+_ORGID_RE = re.compile(r"^00D[A-Za-z0-9]{12}([A-Z0-5]{3})?$")
+
+
+def _id_checksum(fifteen: str) -> str:
+    """The three-character suffix Salesforce appends to make a 15-char Id case-safe.
+
+    Each output character encodes five bits, one per input character, set when that character is
+    an uppercase letter — so the suffix is derived, not decorative, and can be recomputed.
+    """
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    out = ""
+    for chunk in (fifteen[0:5], fifteen[5:10], fifteen[10:15]):
+        bits = sum(1 << i for i, c in enumerate(chunk) if c.isupper() and c.isalpha())
+        out += alphabet[bits]
+    return out
 
 
 def valid_org_id(oid: str) -> bool:
@@ -248,13 +271,20 @@ def valid_org_id(oid: str) -> bool:
     caller is trustworthy" is a property of today's code, not of the identifier, and the store
     is the most sensitive thing here. Flagged by the release panel (kimi).
     """
-    return bool(oid) and bool(_ORGID_RE.match(str(oid)))
+    oid = str(oid or "")
+    if not _ORGID_RE.match(oid):
+        return False
+    # Shape-matching the suffix let `...ZZZ` pass a function named `valid_org_id`. The suffix is
+    # a checksum over the first fifteen characters, so it can be CHECKED rather than pattern-
+    # matched (release panel round 3).
+    return len(oid) == 15 or oid[15:] == _id_checksum(oid[:15])
 
 
 def org_file(orgid: str):
     """The findings file for an org. Refuses anything that is not an org Id."""
     if not valid_org_id(orgid):
         raise ValueError(f"refusing to use {orgid!r} as an org-store filename")
+    orgid = norm_id(orgid)          # 15- and 18-char forms are ONE org, so one file
     p = (ORGS / f"{orgid}.yml").resolve()
     if p.parent != ORGS.resolve():
         raise ValueError(f"org-store path escaped: {p}")
@@ -325,6 +355,9 @@ def classify_live(target: str):
     rec = json.loads(r.stdout)["result"]["records"][0]
     return _verdict_from_org_record(rec, orgid, username), orgid, username
 
+_VERDICTS = ("production", "sandbox", "developer", "scratch")
+
+
 def classify(target: str):
     """(verdict, orgId, username). verdict ∈ production|sandbox|developer|scratch.
     Unverifiable ⇒ production (fail-safe)."""
@@ -340,7 +373,9 @@ def classify(target: str):
         except Exception: cache = {}
     _remember_alias(target, orgid)
     hit = cache.get(username)
-    if hit and hit.get("orgId") == orgid:
+    if hit and hit.get("orgId") == orgid and hit.get("verdict") in _VERDICTS:
+        # A cache entry was trusted verbatim, so a hand-edited file could return any string at
+        # all from a function documenting four (release panel round 3). Unknown ⇒ re-derive.
         return hit["verdict"], orgid, username
     q = "SELECT IsSandbox, OrganizationType, TrialExpirationDate FROM Organization"
     r = _sf("data", "query", "--target-org", target, "--json", "--query", q)

@@ -73,7 +73,11 @@ def _need_impact_token(orgid, op, target, sobject, where):
         lib.deny(f"approved for {approved} {sobject} record(s), the criteria now match {live}. "
                  f"The operation grew after approval; re-approve with the current scope.",
                  "impact-drift", HOOK)
-    lib.audit("PROD-WRITE" if False else "ALLOW",
+    # This read `"PROD-WRITE" if False else "ALLOW"` — dead scaffolding left in a live audit
+    # call, so the branch it appeared to distinguish could never be taken (release panel round 3).
+    # The distinction was never this function's to make: production is adjudicated by
+    # prod_write_gate, and by the time an impact token is spent that decision is behind us.
+    lib.audit("ALLOW",
               f"impact-bound {op} on {orgid}: approved {approved}, live {live}")
     return True
 

@@ -32,6 +32,7 @@ mode this whole design exists to avoid, and it applies to this half too.
 import json
 import os
 import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -116,8 +117,21 @@ def _shape(cmd):
     if not obj:
         m = re.search(r"\bFROM\s+([A-Za-z0-9_]+)", cmd, re.I)
         obj = m.group(1) if m else ""
-    m = _TARGET.search(cmd)
-    org = (m.group(1) or m.group(2)) if m else ""
+    # Parsed from decoded tokens, not the raw string: `--target-org 'client-a'` kept its quotes
+    # under a regex, so BOTH clients produced an empty org and the shapes matched again — the
+    # cross-client pairing this scoping exists to prevent, defeated by one quote character.
+    org = ""
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        toks = cmd.split()
+    for i, t in enumerate(toks):
+        if t in ("--target-org", "-o", "-u") and i + 1 < len(toks):
+            org = toks[i + 1]
+            break
+        if t.startswith("--target-org="):
+            org = t.split("=", 1)[1]
+            break
     return f"{org}|" + ":".join(verb) + "|" + obj
 
 
@@ -162,7 +176,11 @@ def main():
         body, failed = resp, None
     else:
         body = " ".join(str(resp.get(k, "")) for k in ("stdout", "stderr", "output", "error"))
-        failed = resp.get("exit_code") or resp.get("exitCode")
+        # `a or b` discards integer zero, so a SUCCESSFUL command produced failed=None — read as
+        # "unknown" by the very check added an hour earlier to stop unknowns being treated as
+        # success. Net effect: a command that exited 0 while printing an error word was recorded
+        # as a platform failure. Select by presence, never by truthiness.
+        failed = next((resp[k] for k in ("exit_code", "exitCode") if k in resp), None)
     # Terminal colouring would otherwise travel all the way into a catalogue entry.
     body = _ANSI.sub("", lib.redact(body))[:4000]
 

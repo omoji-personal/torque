@@ -1502,7 +1502,7 @@ def _local_cannot_reach_git():
     lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
 
     _O = "00D"
-    good = _O + "000000000000AAA"          # well-formed, and not a real org
+    good = _fake_org_id()
     for bad in ("../../etc/passwd", _O + "../../evil", "", good + "/x", "x" * 40):
         try:
             lib.org_file(bad)
@@ -1700,6 +1700,19 @@ def _observer_cannot_cross_clients():
                   f"queue is capped at {m._QUEUE_CAP}")
 
 
+def _fake_org_id(n: int = 0) -> str:
+    """A checksum-valid org Id that is plainly not a real org.
+
+    Computed rather than written down: valid_org_id now verifies the suffix, so a hardcoded test
+    Id was both wrong and — being org-Id-shaped — something secret_scan correctly objected to.
+    """
+    import importlib.util as _i
+    sp = _i.spec_from_file_location("torque_lib_ck", ROOT / "hooks" / "lib.py")
+    m = _i.module_from_spec(sp); sp.loader.exec_module(m)
+    base = "00D" + f"{n:012d}"
+    return base + m._id_checksum(base)
+
+
 def _per_org_synthetic(lib):
     """Exercise cross-org isolation against a store built for the purpose.
 
@@ -1711,7 +1724,7 @@ def _per_org_synthetic(lib):
     with _tf.TemporaryDirectory() as td:
         root = _KbP(td)
         orgs = root / "orgs"; orgs.mkdir()
-        a, b = "00D" + "000000000000AAA", "00D" + "000000000000BBB"
+        a, b = _fake_org_id(0), _fake_org_id(1)
         (orgs / f"{a}.yml").write_text(
             "entries:\n- id: probe\n  observed: >\n    a finding for A\n"
             "  remedy: >\n    do the thing\n  triggers: ['data delete']\n"
