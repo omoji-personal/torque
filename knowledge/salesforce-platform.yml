@@ -67,7 +67,7 @@ entries:
     `--purge-on-delete` makes a component ELIGIBLE for deletion; it does not erase it. Expect a
     `_del` tombstone after teardown and write residue checks that look for it, or the check
     passes whether or not the purge worked.
-  detect: "SELECT DeveloperName FROM CustomField WHERE TableEnumOrId='Account' AND DeveloperName LIKE '%_del'"
+  detect: 'sf data query --use-tooling-api --query "SELECT DeveloperName FROM CustomField WHERE TableEnumOrId=''Account'' AND DeveloperName LIKE ''%_del''"'
   triggers: ['project\s+delete\s+source', 'destructiveChanges', 'purge-on-delete']
   confidence: verified-live
   verify: del_tombstones_visible
@@ -159,6 +159,7 @@ entries:
   remedy: "Select the rows you need by parent Id and date, then filter client-side."
   detect: "SELECT NewValue FROM AccountHistory WHERE NewValue = 'x'   -- expect an error"
   triggers: ['History\b', 'NewValue', 'OldValue']
+  detect_expect: error
   confidence: documented
   source: "Salesforce Object Reference — History objects"
   updated: 2026-08-01
@@ -430,7 +431,7 @@ entries:
     Prefer a normal delete and let the bin be the undo. Reserve hard delete for cases where
     storage or a duplicate-key constraint genuinely requires it, and say so out loud before
     running it.
-  detect: "SELECT COUNT() FROM Account WHERE IsDeleted = true ALL ROWS"
+  detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
   triggers: ['data\s+delete', 'data:delete', '--hard-delete']
   confidence: documented
   source: 'Salesforce Help — Recycle Bin'
@@ -472,6 +473,7 @@ entries:
     Fetch the parent Ids first and bind them as an explicit IN list, or walk the hierarchy level
     by level. Do not read the MALFORMED_QUERY as 'no children' — the query never ran.
   detect: 'sf data query --query "SELECT COUNT() FROM Account WHERE ParentId IN (SELECT Id FROM Account)"'
+  detect_expect: error
   confidence: practitioner
   updated: 2026-08-01
 
@@ -491,5 +493,22 @@ entries:
     Classify them as uncountable rather than unknown. Treating them as failures makes every
     hierarchy report look incomplete forever, which trains the reader to ignore the warning that
     actually matters.
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: all-rows-is-a-cli-flag
+  domain: api
+  title: 'ALL ROWS in the SOQL text is rejected by the CLI; the flag is --all-rows'
+  symptom: >
+    MALFORMED_QUERY, unexpected token: 'ALL' — on a query that is valid SOQL and works from Apex
+    or the API
+  cause: >
+    sf data query sends the statement to the query endpoint, and ALL ROWS is only honoured by
+    queryAll. The CLI exposes that endpoint through --all-rows instead, so the SOQL keyword and
+    the CLI are two different ways of asking and only one of them works here.
+  remedy: >
+    Drop ALL ROWS from the statement and pass --all-rows. Do not conclude the recycle bin is
+    empty because the query errored — it never ran.
+  detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
   confidence: practitioner
   updated: 2026-08-01

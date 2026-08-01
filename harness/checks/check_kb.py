@@ -14,6 +14,22 @@ _REQUIRED = ("id", "domain", "title", "symptom", "cause", "remedy", "confidence"
 _CONFIDENCE = {"verified-live", "documented", "practitioner"}
 
 
+def _kb_unquote(v: str) -> str:
+    """Strip exactly ONE matching pair of quotes, then unescape.
+
+    This was `v.strip("'\"")`, which strips EVERY leading and trailing quote character — so a
+    value legitimately ending in a quote lost it. The catalogue's detect probes are the case
+    that exposed it: `"SELECT ... WHERE Field = 'Account.My_Field__c'"` came back missing its
+    final apostrophe and every probe failed with MALFORMED_QUERY. The same three-line reader
+    had been copied into three files, so all three were wrong the same way.
+    """
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        q, v = v[0], v[1:-1]
+        v = v.replace("''", "'") if q == "'" else v.replace('\\"', '"')
+    return v
+
+
 def _kb_load():
     """Parse the catalogue. PyYAML if present, else a small loader for the subset used here."""
     try:
@@ -33,7 +49,7 @@ def _kb_load():
         elif cur is not None and raw.startswith("  ") and ":" in raw and not raw.startswith("    "):
             k, _, v = raw.strip().partition(":")
             v = v.strip()
-            cur[k] = v.strip("'\"") if v and v not in (">", "|") else ""
+            cur[k] = _kb_unquote(v) if v and v not in (">", "|") else ""
             key = k if v in (">", "|") else None
         elif cur is not None and key and raw.startswith("    "):
             cur[key] = (cur.get(key, "") + " " + raw.strip()).strip()
@@ -865,3 +881,53 @@ def _verifiers_can_fail():
                       f"{survived}")
     return Result("verifiers_can_fail", PASS,
                   f"all {len(falsifying)} verifiers return False when their entry is false")
+
+
+@check("detect_probes_run", "capability", catastrophe=True)
+def _detect_probes_run(target):
+    """Every detect probe must actually run, and its outcome must match what the entry claims.
+
+    Nine entries declared a `detect:` probe — described in the catalogue's own header as the
+    query that answers "is this happening to me right now" — and nothing in the repo had ever
+    executed one. The only code that touched the field was the code that wrote it. Two of the
+    nine had been unrunnable for as long as they existed: one queried a Tooling object without
+    the Tooling flag, and one put `ALL ROWS` in the SOQL text where the CLI wants --all-rows.
+    Nobody could know, because nothing asked.
+
+    A broken probe is worse than a missing one: `torque checkup` would report the org clean on a
+    trap it never tested. So a probe that cannot run fails the build, and so does an entry the
+    platform contradicts.
+    """
+    if not target:
+        return Result("detect_probes_run", SKIP, "no --target-org")
+    r = _kb_sp.run([_kb_sys.executable, str(ROOT / "bin" / "torque-checkup"),
+                    "--target-org", target, "--json"],
+                   capture_output=True, text=True, cwd=ROOT, timeout=600)
+    try:
+        rep = _kb_json.loads(r.stdout)
+    except Exception:
+        return Result("detect_probes_run", FAIL, f"checkup emitted no JSON: {r.stdout[:120]}")
+    probes = rep.get("probes") or []
+    if not probes:
+        return Result("detect_probes_run", FAIL, "no detect probes found in the catalogue")
+    by = {}
+    for p_ in probes:
+        by.setdefault(p_["status"], []).append(p_["id"])
+    broken = by.get("broken-probe") or []
+    contradicted = by.get("entry-contradicted") or []
+    if broken:
+        return Result("detect_probes_run", FAIL,
+                      f"{len(broken)} probe(s) cannot run as written, so the entries they back "
+                      f"are unverifiable and checkup would report a clean org: {broken}")
+    if contradicted:
+        return Result("detect_probes_run", FAIL,
+                      f"the platform contradicted {len(contradicted)} entry: {contradicted}")
+    errored = by.get("error") or []
+    if errored:
+        return Result("detect_probes_run", WARN, f"{len(errored)} probe(s) failed to run: {errored}")
+    ran = sum(len(v) for k, v in by.items() if k != "not-executed")
+    return Result("detect_probes_run", PASS,
+                  f"{ran}/{len(probes)} probes executed against {target} "
+                  f"({len(by.get('affected', []))} live, {len(by.get('confirmed', []))} confirmed, "
+                  f"{len(by.get('clear', []))} clear); "
+                  f"{len(by.get('not-executed', []))} are not queries and are reported as such")

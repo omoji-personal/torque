@@ -304,6 +304,22 @@ _KB_PATH = TORQUE_HOME / "knowledge" / "salesforce-platform.yml"
 _KB_CACHE = None
 
 
+def _yaml_unquote(v: str) -> str:
+    """Strip exactly ONE matching pair of quotes, then unescape.
+
+    This was `v.strip("'\"")`, which strips EVERY leading and trailing quote character — so a
+    value legitimately ending in a quote lost it. The catalogue's detect probes are the case
+    that exposed it: `"SELECT ... WHERE Field = 'Account.My_Field__c'"` came back missing its
+    final apostrophe and every probe failed with MALFORMED_QUERY. The same three-line reader
+    had been copied into three files, so all three were wrong the same way.
+    """
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        q, v = v[0], v[1:-1]
+        v = v.replace("''", "'") if q == "'" else v.replace('\\"', '"')
+    return v
+
+
 def _kb_entries():
     """Catalogue entries with triggers. Parsed without PyYAML so a gate never depends on it."""
     global _KB_CACHE
@@ -319,11 +335,11 @@ def _kb_entries():
                 continue
             elif raw.startswith("  triggers:"):
                 body = raw.split("[", 1)[-1].rsplit("]", 1)[0]
-                cur["triggers"] = [t.strip().strip("'\"") for t in body.split(",") if t.strip()]
+                cur["triggers"] = [_yaml_unquote(t) for t in body.split(",") if t.strip()]
             elif not raw.startswith("    ") and ":" in raw:
                 k, _, v = raw.strip().partition(":")
                 v = v.strip()
-                cur[k] = "" if v in (">", "|") else v.strip("'\"")
+                cur[k] = "" if v in (">", "|") else _yaml_unquote(v)
                 key = k if v in (">", "|") else None
             elif key and raw.startswith("    "):
                 cur[key] = (cur.get(key, "") + " " + raw.strip()).strip()

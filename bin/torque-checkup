@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""torque checkup — which of the platform's traps are live in THIS org, right now.
+
+THE CATALOGUE ALREADY KNEW HOW TO ASK
+
+Every entry in `knowledge/salesforce-platform.yml` may carry a `detect:` field, described in the
+file's own header as "a command or query that answers 'is this happening to me right now'". Nine
+entries carry one. Nothing in the repo had ever executed a single one of them — the only code
+that touched `detect` was the code that WROTE it. A documented capability that does not exist is
+the same defect as a manifest claiming metadata was stripped from an image nobody opened, and it
+sat in the component the whole positioning rests on.
+
+So this runs them. Each finding cites the entry that predicted it, and carries that entry's
+remedy and its provenance — whether the claim was re-checked against a live org, cited to
+Salesforce, or marked as learned the hard way. That citation is the difference between this and
+an org health scanner: the scanners tell you what they found, and cannot tell you how they know.
+
+SAFETY: THIS DOES NOT EXECUTE THE CATALOGUE
+
+A `detect` string is text in a file, and shelling it out would make the catalogue a command
+execution surface — one careless entry from running anything. Only SOQL is extracted and run,
+through the CLI's own `--query` argument, read-only. Any probe that is not a query is REPORTED
+AS NOT EXECUTED, with the reason. Refusing loudly is the point: a checkup that silently skipped
+what it could not run would report a clean org it had barely examined.
+
+    torque checkup --target-org <alias>
+    torque checkup --target-org <alias> --json
+"""
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+KB = ROOT / "knowledge" / "salesforce-platform.yml"
+
+# A probe is runnable only if it reduces to a single SELECT. Two shapes appear in the catalogue:
+# a bare SOQL string, and an `sf data query ... --query "..."` invocation whose payload we lift.
+_SF_QUERY = re.compile(r"""--query\s+(?P<q>"[^"]+"|'[^']+')""")
+_SELECT = re.compile(r"^\s*SELECT\s", re.I)
+_TRAILING_COMMENT = re.compile(r"\s+(--|#)\s.*$")
+
+
+def extract_soql(detect: str):
+    """(soql, tooling, refusal). soql is None when the probe is not a query we will run."""
+    if not detect:
+        return None, (False, False), "entry declares no detect probe"
+    tooling = "--use-tooling-api" in detect
+    all_rows = "--all-rows" in detect
+    m = _SF_QUERY.search(detect)
+    if m:
+        soql = m.group("q")[1:-1]
+    elif _SELECT.match(detect):
+        soql = _TRAILING_COMMENT.sub("", detect).strip()
+    else:
+        verb = " ".join(detect.split()[:3])
+        return None, (tooling, all_rows), f"not a query — probe is `{verb}…`, which this will not execute"
+    if not _SELECT.match(soql):
+        return None, (tooling, all_rows), "extracted text is not a SELECT"
+    if "<" in soql and ">" in soql:
+        return None, (tooling, all_rows), "probe contains a placeholder that only the operator can fill"
+    return soql, (tooling, all_rows), None
+
+
+def _yaml_unquote(v: str) -> str:
+    """Strip exactly ONE matching pair of quotes, then unescape.
+
+    This was `v.strip("'\"")`, which strips EVERY leading and trailing quote character — so a
+    value legitimately ending in a quote lost it. The catalogue's detect probes are the case
+    that exposed it: `"SELECT ... WHERE Field = 'Account.My_Field__c'"` came back missing its
+    final apostrophe and every probe failed with MALFORMED_QUERY. The same three-line reader
+    had been copied into three files, so all three were wrong the same way.
+    """
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        q, v = v[0], v[1:-1]
+        v = v.replace("''", "'") if q == "'" else v.replace('\\"', '"')
+    return v
+
+
+def load_entries():
+    """Entries with their detect probes. No PyYAML dependency, same as the gate's reader."""
+    out, cur, key = [], None, None
+    for raw in KB.read_text().split("\n"):
+        if raw.startswith("- id:"):
+            cur = {"id": raw.split(":", 1)[1].strip()}
+            out.append(cur)
+            key = None
+        elif cur is None or not raw.startswith("  "):
+            continue
+        elif raw.startswith("  triggers:"):
+            continue
+        elif not raw.startswith("    ") and ":" in raw:
+            k, _, v = raw.strip().partition(":")
+            v = v.strip()
+            cur[k] = "" if v in (">", "|") else _yaml_unquote(v)
+            key = k if v in (">", "|") else None
+        elif key and raw.startswith("    "):
+            cur[key] = (cur.get(key, "") + " " + raw.strip()).strip()
+    return out
+
+
+def run_probe(target, soql, flags, expect):
+    """(status, detail).
+
+    An error is not automatically a problem. Two entries exist BECAUSE the platform refuses a
+    query, so for them a refusal is the confirmation — and a probe that is simply broken looks
+    identical unless the entry says which it expects. Nothing ran these probes for as long as
+    they existed, so two of the nine had been unrunnable the whole time and no one could tell.
+    """
+    tooling, all_rows = flags
+    cmd = ["sf", "data", "query", "--target-org", target, "--json", "--query", soql]
+    if tooling:
+        cmd.append("--use-tooling-api")
+    if all_rows:
+        cmd.append("--all-rows")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        d = json.loads(r.stdout)
+    except Exception as e:
+        return "error", f"{type(e).__name__}: {str(e)[:90]}"
+    err = f"{d.get('name')}: {' '.join(str(d.get('message', '')).split())[:110]}"
+    if d.get("status") != 0:
+        return ("confirmed" if expect == "error" else "broken-probe"), err
+    n = (d.get("result") or {}).get("totalSize", 0)
+    if expect == "error":
+        return "entry-contradicted", f"the platform ACCEPTED a query the entry says it refuses ({n} row(s))"
+    return ("affected" if n else "clear"), f"{n} row(s)"
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="torque checkup", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--target-org", required=True)
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+
+    entries = [e for e in load_entries() if e.get("detect")]
+    results = []
+    for e in entries:
+        soql, flags, refusal = extract_soql(e["detect"])
+        if refusal:
+            results.append({**{k: e.get(k) for k in ("id", "domain", "title", "remedy",
+                                                     "confidence")},
+                            "status": "not-executed", "detail": refusal})
+            continue
+        status, detail = run_probe(a.target_org, soql, flags,
+                                   e.get("detect_expect", "rows"))
+        results.append({**{k: e.get(k) for k in ("id", "domain", "title", "remedy",
+                                                 "confidence")},
+                        "status": status, "detail": detail, "soql": soql})
+
+    if a.json:
+        print(json.dumps({"org": a.target_org, "probes": results}, indent=2))
+        return 0
+
+    by = {}
+    for r in results:
+        by.setdefault(r["status"], []).append(r)
+    print(f"\nCHECKUP — {a.target_org}   {len(results)} probe(s) from the platform catalogue")
+
+    def show(status, header, with_remedy):
+        rows = by.get(status) or []
+        if not rows:
+            return
+        print(f"\n  {header}")
+        for r in rows:
+            print(f"    [{r['id']}]  {r['detail']}")
+            print(f"      {r['title']}")
+            if with_remedy:
+                rem = " ".join((r.get("remedy") or "").split())
+                print(f"      → {rem[:150]}{'…' if len(rem) > 150 else ''}")
+                print(f"      (how this is known: {r.get('confidence')})")
+
+    show("affected", "LIVE IN THIS ORG — the probe returned rows", True)
+    show("confirmed", "CONFIRMED — the platform refused the query, exactly as the entry says",
+         False)
+    show("entry-contradicted",
+         "ENTRY CONTRADICTED — the platform accepted what this entry says it refuses", True)
+    show("broken-probe", "PROBE IS BROKEN — it cannot run as written, so it proves nothing", False)
+    show("error", "PROBE FAILED TO RUN", False)
+    clear = by.get("clear") or []
+    if clear:
+        print(f"\n  CLEAR — {len(clear)} probe(s) returned no rows: "
+              f"{', '.join(r['id'] for r in clear)}")
+    ne = by.get("not-executed") or []
+    if ne:
+        print(f"\n  NOT EXECUTED — {len(ne)} probe(s) are not queries, so this did not run them:")
+        for r in ne:
+            print(f"    [{r['id']}] {r['detail']}")
+        print("    Run these yourself; they are recorded in the catalogue entry.")
+    print(f"\n  {len(by.get('affected', []))} finding(s) live, "
+          f"{len(by.get('confirmed', []))} entry(ies) confirmed, {len(clear)} clear, "
+          f"{len(ne)} not executed, {len(by.get('broken-probe', []))} broken.")
+    return 3 if (by.get("broken-probe") or by.get("entry-contradicted")) else 0
+
+
+if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        ok = True
+        # a bare SOQL probe is runnable
+        s, (tool, allrows), r = extract_soql("SELECT Id FROM Account")
+        ok &= (s == "SELECT Id FROM Account" and not tool and not allrows and r is None)
+        # an sf-wrapped probe has its payload lifted, and its flags detected
+        s, (tool, allrows), r = extract_soql(
+            'sf data query --use-tooling-api --query "SELECT Id FROM Flow"')
+        ok &= (s == "SELECT Id FROM Flow" and tool and not allrows and r is None)
+        s, (tool, allrows), r = extract_soql(
+            'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"')
+        ok &= (allrows and not tool and r is None)
+        # a trailing comment is stripped
+        s, _f, _r = extract_soql("SELECT Id FROM A WHERE X = 'y'   -- expect an error")
+        ok &= s == "SELECT Id FROM A WHERE X = 'y'"
+        # anything that is not a query is REFUSED, not executed
+        for hostile in ("sf org display --target-org <alias>",
+                        "rm -rf /",
+                        "sf data query --query \"SELECT Id FROM A\"; rm -rf /",
+                        "sf limits api display --target-org <alias>"):
+            s, _f, r = extract_soql(hostile)
+            if hostile.startswith("sf data query"):
+                # the payload lifts cleanly; the trailing shell is never seen by us
+                ok &= s == "SELECT Id FROM A"
+            else:
+                ok &= s is None and bool(r)
+        print("checkup self-test:", "PASS" if ok else "FAIL")
+        sys.exit(0 if ok else 1)
+    sys.exit(main())
