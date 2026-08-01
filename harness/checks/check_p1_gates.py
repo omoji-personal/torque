@@ -156,7 +156,17 @@ def _enforcement_map():
     The README claims these labels are checked rather than decorative; that is only true if
     BOTH kinds are resolved."""
     rules = ROOT / ".claude" / "rules"
-    hooks = {p.stem for p in (ROOT/"hooks").glob("*.py") if p.stem != "lib"}
+    # Only a hook that can BLOCK can enforce anything. lesson_observer runs PostToolUse and
+    # can only ever exit 0, so a rule claiming hook-enforced(lesson_observer) would be false —
+    # and this check, which exists to catch exactly that class of false claim, would have
+    # accepted it purely because the file exists.
+    hooks = set()
+    for p_ in (ROOT / "hooks").glob("*.py"):
+        if p_.stem == "lib":
+            continue
+        body = p_.read_text()
+        if "lib.deny" in body or "exit(2)" in body:
+            hooks.add(p_.stem)
     checks = {name for name, _p, _c, _fn in REGISTRY}
     unresolved = []
     for rf in rules.glob("*.md"):
@@ -170,9 +180,21 @@ def _enforcement_map():
                 if nm and nm not in checks:
                     unresolved.append(f"{rf.name}: check '{nm}'")
     if unresolved:
-        return Result("enforcement_map", FAIL, f"labels naming nothing that exists: {unresolved}")
+        return Result("enforcement_map", FAIL,
+                      f"labels naming nothing that can enforce: {unresolved}")
+    # Count the rules that make no claim at all. "Every label resolves" is true and narrow;
+    # read next to a total, it implies the rules are covered, when a rule carrying no label is
+    # simply invisible to this check. Say which is which.
+    all_rules = list(rules.glob("*.md"))
+    labelled = [rf for rf in all_rules if "ENFORCEMENT:" in rf.read_text()]
+    tail = ""
+    if len(labelled) < len(all_rules):
+        tail = (f"; {len(all_rules) - len(labelled)} rule file(s) make no enforcement claim "
+                f"and are therefore unverified by this check")
     return Result("enforcement_map", PASS,
-                  f"{len(hooks)} hooks + {len(checks)} checks; every ENFORCEMENT label resolves")
+                  f"{len(labelled)}/{len(all_rules)} rule files claim enforcement, and every "
+                  f"label resolves to one of {len(hooks)} blocking hook(s) or "
+                  f"{len(checks)} registered check(s){tail}")
 
 @check("gate_adversarial_fixtures", "capability", catastrophe=True)
 def _gate_adversarial_fixtures(target):

@@ -596,3 +596,30 @@ def _python_floor_is_real():
     return Result("python_floor_is_real", PASS,
                   f"{len(sources)} source files: syntax and stdlib both land exactly on the "
                   f"documented floor {claimed[0]}.{claimed[1]}")
+
+
+@check("component_self_tests", "static", catastrophe=True)
+def _component_self_tests():
+    """Every component that ships a --self-test must pass it, in this run.
+
+    A self-test nobody runs is documentation. Three of these were written and then only ever
+    invoked by hand, which is the state a self-test decays from: it passes on the day it is
+    written and silently stops being true afterwards.
+    """
+    comps = []
+    for rel in ("hooks/lesson_observer.py", "harness/capture.py", "bin/torque-blast-radius"):
+        p = ROOT / rel
+        if p.exists() and "--self-test" in p.read_text():
+            comps.append(rel)
+    if not comps:
+        return Result("component_self_tests", FAIL, "no component exposes --self-test")
+    failed = []
+    for rel in comps:
+        r = _kb_sp.run([_kb_sys.executable, str(ROOT / rel), "--self-test"],
+                       capture_output=True, text=True, cwd=ROOT, timeout=180)
+        if r.returncode != 0:
+            failed.append(f"{rel}: {(r.stdout + r.stderr).strip().splitlines()[-1][:80]}")
+    if failed:
+        return Result("component_self_tests", FAIL, "; ".join(failed))
+    return Result("component_self_tests", PASS,
+                  f"{len(comps)} component self-test(s) pass: {', '.join(comps)}")
