@@ -65,8 +65,29 @@ def _is_gate_file(path):
     return os.path.basename(path) in shellparse.PROTECTED_BASENAMES
 
 
+def _tool_paths(tinput):
+    """Every value in a tool payload that could be a filesystem path.
+
+    The guards read only `file_path`, so the same Read/Edit/Write with the path under `path`,
+    `target_file`, `filepath` or any other key sailed through — the protection depended on a
+    key name rather than on the content. Claude Code's own tools use `file_path`, but MCP
+    tools and future surfaces need not, and a guard should not rely on that (external panel,
+    antigravity/gemini-3.1-pro).
+    """
+    out = []
+    for k, v in (tinput or {}).items():
+        if not isinstance(v, str) or not v:
+            continue
+        if k in ("content", "old_string", "new_string", "command", "prompt", "query"):
+            continue
+        if v.startswith(("/", "~", "./", "../")) or "/" in v:
+            out.append(v)
+    return out
+
+
 def handle_edit(tinput):
-    path = tinput.get("file_path", "")
+    # every path-shaped value, not just the one key — see _tool_paths()
+    path = tinput.get("file_path", "") or next(iter(_tool_paths(tinput)), "")
     if lib.is_protected_target(path) or shellparse.anchor_ref(path) or _is_gate_file(path) \
        or _is_sf_auth(path) or shellparse.sf_auth_ref(path):    # auth store too (audit TQ-F4)
         lib.deny(f"agent modification of protected file {os.path.basename(path)} is denied; "
@@ -77,7 +98,8 @@ def handle_edit(tinput):
 def handle_read(tinput):
     # Audit R-01: the agent's Read tool must not read the signing secret or token store, or the
     # Bash secret-read guard is theater. Reading the approved-apex copy stays allowed.
-    path = tinput.get("file_path", "")
+    # every path-shaped value, not just the one key — see _tool_paths()
+    path = tinput.get("file_path", "") or next(iter(_tool_paths(tinput)), "")
     if shellparse.anchor_ref(path):
         lib.deny("reading the trust anchor (signing secret / tokens) is denied", "anchor-read", HOOK)
     if _is_sf_auth(path):

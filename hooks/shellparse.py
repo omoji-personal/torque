@@ -57,6 +57,8 @@ SF_WORD = re.compile(r"(?:^|[\s'\";|&(`])s\s*f(?:dx)?(?:[\s'\";|&)`]|$)", re.I)
 
 WRITE_SHAPE_CMDS = {"cp", "mv", "dd", "tee", "ln", "install", "truncate", "rsync"}
 PERM_CMDS = {"chmod", "chown", "chgrp", "chflags", "rm", "rmdir", "unlink", "shred"}
+# Line editors: their file operand is written, not merely read.
+EDITOR_CMDS = {"ed", "ex", "red", "vi", "vim", "nvim", "emacs"}
 CD_FLAGS = {"-P", "-L", "-e", "-@", "-"}
 REDIR_FUSED = re.compile(r"^(?:\{\w+\}|&|\d+)?<?>{1,2}[|!&]?(.*)$")  # > >> 1> 2<> &> >| >& {fd}> >! (+ glued path)
 PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destructive_data_gate.py",
@@ -563,10 +565,33 @@ def strip_runners(argv):
     return argv
 
 
+_SED_W = re.compile(r"(?:^|[;\n}])\s*\d*[,~+]?\d*\s*[wW]\s+(\S+)|s/(?:[^/\\\\]|\\\\.)*/(?:[^/\\\\]|\\\\.)*/[a-z]*w\s+(\S+)")
+
+
+def _sed_write_targets(argv):
+    """Filenames sed will WRITE via its `w`/`W` commands, which need no -i flag.
+
+    `sed -n 'w FILE' input` and `sed 's/a/b/w FILE' input` both create/overwrite FILE. Because
+    the filename lives INSIDE the script string rather than in argv, the in-place check never
+    saw it and sed was classified as a pure reader.
+    """
+    out = []
+    for a in argv[1:]:
+        if a.startswith("-"):
+            continue
+        for m in _SED_W.finditer(a):
+            out.append(m.group(1) or m.group(2))
+    return [t for t in out if t]
+
+
 def _write_shape_targets(argv):
     argv = strip_runners(argv)
     base0 = os.path.basename(argv[0]).lower() if argv else ""
     cand = []
+    if base0 == "sed":
+        cand.extend(_sed_write_targets(argv))
+    if base0 in EDITOR_CMDS:
+        cand.extend(a for a in argv[1:] if not a.startswith("-"))
     for i, tok in enumerate(argv):
         # a redirect operator ANYWHERE in the token: leading fused (`2>path`), OR glued to a
         # preceding word (`printf x>hooks/lib.py` — shlex keeps it one token, audit TQ-F2). The
@@ -577,7 +602,8 @@ def _write_shape_targets(argv):
                 cand.append(m.group(1)); found = True
         if not found and re.search(r">{1,2}[|!&]?$", tok) and i + 1 < len(argv):
             cand.append(argv[i + 1])                  # bare trailing `>` → next token
-    if base0 in WRITE_SHAPE_CMDS or (base0 == "sed" and _sed_inplace(argv)) or base0 in PERM_CMDS:
+    if base0 in WRITE_SHAPE_CMDS or base0 in EDITOR_CMDS or base0 in PERM_CMDS \
+           or (base0 == "sed" and (_sed_inplace(argv) or _sed_write_targets(argv))):
         cand += [a for a in argv[1:] if not a.startswith("-")]
         cand += [a.split("=", 1)[1] for a in argv if a.startswith("of=")]
     return base0, cand
@@ -586,6 +612,19 @@ def _write_shape_targets(argv):
 def _protected_path(pathlike, cwd=None, varmap=None):
     if not pathlike:
         return False
+    # A path that CONTAINS the protected directories is as dangerous as one inside them:
+    # `rm -rf .` from the repo root, or `rm -rf <repo>`, destroys every gate file while
+    # matching no protected basename and living under no protected prefix. Checking only
+    # "is it inside" missed the case where it is "outside and above" (external panel,
+    # antigravity/gemini-3.1-pro).
+    try:
+        _cand = _abs_pattern(pathlike, cwd, varmap).rstrip(os.sep)
+        if _cand and _cand != os.sep:
+            for _d in lib.protected_write_paths() + [str(lib.TORQUE_HOME.resolve())]:
+                if _d == _cand or _d.startswith(_cand + os.sep):
+                    return True
+    except Exception:
+        pass
     if "{" in pathlike and "," in pathlike:
         _alts = _brace_expand(pathlike)
         if len(_alts) > 1 or (_alts and _alts[0] != pathlike):
@@ -937,7 +976,12 @@ def mcp_analyze(tool, tinput):
     dest = _mcp_destructive(name, tinput)
     # a Salesforce-namespaced server (or an org param) is what we gate; a non-SF MCP server's
     # write tool with no org param (e.g. GitHub `createIssue`) is out of scope (audit TQ-F3).
-    is_sf = bool(re.match(r"(sf|salesforce|sfdx)\b", server)) or target is not None
+    # `\b` is a WORD boundary and `_` is a word character, so `sfdx\b` never matched
+    # `sfdx_prod` — an underscored Salesforce MCP server was not recognised as Salesforce
+    # at all, and its write tools classified as reads and were allowed. Underscores are
+    # ordinary in MCP server names, so this was reachable with no evasion (found by the
+    # external panel, antigravity/gemini-3.1-pro).
+    is_sf = bool(re.match(r"(sf|salesforce|sfdx)([_\-]|$)", server)) or target is not None
     # ANY write verb anywhere in the name makes it a write (get_or_create_record, audit TQ-008)
     writeish = bool(comps & MCP_WRITE_LEADS) or "apex" in nl or "anonymous" in nl
     readish = bool(comps & MCP_READ_LEADS) or nl.startswith(("soql", "tooling", "schema"))
