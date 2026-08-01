@@ -396,3 +396,20 @@ entries:
     target org, not against memory or the repository.
   confidence: practitioner
   updated: 2026-08-01
+
+- id: recycle-bin-retention
+  domain: data
+  title: 'A deleted record is recoverable for 15 days, and that window is the whole difference'
+  symptom: >
+    Someone asks to 'undo' a delete and the answer depends entirely on which kind of delete ran.
+  cause: >
+    A normal delete moves records to the Recycle Bin, where they are restorable for 15 days and
+    still consume storage. A hard delete skips it entirely and is unrecoverable.
+  remedy: >
+    Prefer a normal delete and let the bin be the undo. Reserve hard delete for cases where
+    storage or a duplicate-key constraint genuinely requires it, and say so out loud before
+    running it.
+  detect: "SELECT COUNT() FROM Account WHERE IsDeleted = true ALL ROWS"
+  confidence: documented
+  source: 'Salesforce Help — Recycle Bin'
+  updated: 2026-08-01

@@ -311,6 +311,8 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <tr><td>Encodes <em>how</em> to do the work</td><td class="no">—</td><td class="no">UI-guided</td><td class="win">for humans</td><td class="us">for agents</td></tr>
       <tr><td>Verifies the outcome in the org</td><td class="no">—</td><td class="no">partial</td><td class="no">partial</td><td class="us">yes</td></tr>
       <tr><td>Distinguishes prod at write time</td><td class="no">trusts alias</td><td class="win">env model</td><td class="no">trusts alias</td><td class="us">live query</td></tr>
+      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">25 entries</td></tr>
+      <tr><td>Gets smarter from being used</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">lessons → checks</td></tr>
       <tr><td>Proves its own checks can fail</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">11 mutators</td></tr>
       <tr><td>Rollback across environments</td><td class="no">—</td><td class="win"><strong>yes</strong></td><td class="no">—</td><td class="us">single-org only</td></tr>
       <tr><td>Works outside Claude Code</td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="us">no</td></tr>
@@ -326,6 +328,17 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
   </p>
 
   <h3>Three things I could not find anywhere else</h3>
+
+  <p><strong>0 — It knows the platform, and the knowledge checks itself.</strong> A tool surface
+    gives an agent verbs; it does not tell it that a deployed field is invisible until a
+    PermissionSet grants it, that a Flow retrieve answers a different question than "is this
+    active", or that a no-op update rewrites who last touched forty thousand records. Torque
+    ships that as a structured catalogue where every entry declares how it is known — re-checked
+    against a live org, cited to Salesforce, or plainly marked as learned the hard way — and the
+    harness re-runs the live ones and fails when a claim stops holding. Salesforce ships three
+    releases a year, so a platform fact written once and never re-checked is decaying from the
+    day it is recorded.</p>
+
 
   <p><strong>1 — It treats “green but wrong” as the real failure mode.</strong> The expensive
     incidents are rarely errors; they are successes that were false. A deploy returns success and

@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""torque lesson — turn something you just learned into something that holds.
+
+WHY THIS SHAPE, AND NOT A NOTEBOOK
+A lesson system that captures free text into a review queue dies. It dies because writing the
+note is the whole cost and reading the queue is nobody's job, so the queue grows and the
+knowledge stays exactly where it was — in the head of the person who already knew it. That is
+not a hypothetical failure mode; it is the observed one.
+
+So this tool refuses to store a note. A lesson lands as one of exactly two things:
+
+  fact   — a platform behaviour, appended to knowledge/salesforce-platform.yml, where
+           kb_integrity enforces its schema and provenance and kb_live_claims can re-verify it
+  gate   — a command shape that should have been refused (or should not have been), appended to
+           a fixture file, where it runs on every validation forever
+
+Both are load-bearing the moment they land: a malformed fact fails the build, and a fixture
+that does not reproduce fails the suite. Neither can rot quietly in a queue.
+
+    torque lesson fact  --id no-op-update-cost --domain data --title "..." \\
+                        --symptom "..." --cause "..." --remedy "..." \\
+                        [--confidence practitioner|documented|verified-live] [--source "..."]
+    torque lesson gate  --id "R17 something" --command "<the command>" --expect deny|allow \\
+                        [--gate prod_write_gate|destructive_data_gate] [--why "..."]
+
+`gate` RUNS the command through the real gate first. If the gate already behaves as you expect,
+it says so and writes nothing — a fixture that was never going to fail teaches nobody.
+"""
+import argparse
+import json
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+KB = ROOT / "knowledge" / "salesforce-platform.yml"
+FIXTURES = ROOT / "harness" / "tests" / "gate_fixtures_lessons.json"
+DOMAINS = ("deploy", "data", "limits", "security", "automation", "packaging", "orgs", "auth", "api")
+
+
+def _yaml_block(text, indent="    "):
+    """Fold a paragraph into a YAML block scalar, wrapped for humans."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > 92:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    return "\n".join(indent + l for l in lines)
+
+
+def add_fact(a):
+    if a.domain not in DOMAINS:
+        sys.exit(f"domain must be one of: {', '.join(DOMAINS)}")
+    if a.confidence == "documented" and not a.source:
+        sys.exit("a `documented` fact needs --source naming where Salesforce says it")
+    if a.confidence == "verified-live":
+        sys.exit("verified-live requires a verifier function in harness/checks/check_kb.py; "
+                 "add the fact as `practitioner` first, then promote it once the check exists")
+    text = KB.read_text()
+    if f"- id: {a.id}\n" in text:
+        sys.exit(f"entry id {a.id!r} already exists — edit it rather than duplicating")
+    block = [f"\n- id: {a.id}", f"  domain: {a.domain}", f"  title: '{a.title}'",
+             "  symptom: >", _yaml_block(a.symptom),
+             "  cause: >", _yaml_block(a.cause),
+             "  remedy: >", _yaml_block(a.remedy)]
+    if a.detect:
+        block.append(f"  detect: \"{a.detect}\"")
+    block.append(f"  confidence: {a.confidence}")
+    if a.source:
+        block.append(f"  source: '{a.source}'")
+    block.append(f"  updated: {date.today().isoformat()}")
+    KB.write_text(text.rstrip() + "\n" + "\n".join(block) + "\n")
+    print(f"  added platform fact {a.id!r} to {KB.relative_to(ROOT)}")
+    print("  run: python3 harness/validate.py --profile static --only kb_integrity")
+
+
+def add_gate(a):
+    ev = json.dumps({"tool_name": "Bash", "tool_input": {"command": a.command}})
+    gates = [a.gate] if a.gate else ["prod_write_gate.py", "destructive_data_gate.py"]
+    denied, reason = False, ""
+    for g in gates:
+        g = g if g.endswith(".py") else g + ".py"
+        r = subprocess.run([sys.executable, str(ROOT / "hooks" / g)],
+                           input=ev, capture_output=True, text=True, cwd=ROOT)
+        if r.returncode == 2:
+            denied, reason = True, (r.stdout + r.stderr).strip()[:100]
+            break
+    actual = "deny" if denied else "allow"
+    if actual == a.expect:
+        print(f"  the gate already answers {actual!r} for this command.")
+        print("  nothing written: a fixture that was never going to fail teaches nobody.")
+        if reason:
+            print(f"  reason: {reason}")
+        return
+    print(f"  MISMATCH — you expected {a.expect!r}, the gate says {actual!r}.")
+    print("  this is worth pinning. writing the fixture.")
+    data = {"_comment": ("Lessons captured with `torque lesson gate`. Each one is a command "
+                         "whose real behaviour surprised someone, recorded at the moment it "
+                         "surprised them."), "fixtures": []}
+    if FIXTURES.exists():
+        data = json.loads(FIXTURES.read_text())
+    data["fixtures"].append({
+        "id": a.id, "gate": (a.gate or "prod_write_gate").replace(".py", ""),
+        "expect": a.expect, "captured": date.today().isoformat(),
+        "why": a.why or "captured from a live surprise",
+        "event": {"tool_name": "Bash", "tool_input": {"command": a.command}}})
+    FIXTURES.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"  wrote {FIXTURES.relative_to(ROOT)} ({len(data['fixtures'])} lesson fixture(s))")
+    print("  it will FAIL until the gate is fixed — which is the point.")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="torque lesson", description=__doc__)
+    sub = ap.add_subparsers(dest="kind", required=True)
+
+    f = sub.add_parser("fact", help="a platform behaviour worth knowing")
+    f.add_argument("--id", required=True)
+    f.add_argument("--domain", required=True, help=f"one of: {', '.join(DOMAINS)}")
+    f.add_argument("--title", required=True)
+    f.add_argument("--symptom", required=True, help="what you SAW, in the words you would search")
+    f.add_argument("--cause", required=True)
+    f.add_argument("--remedy", required=True)
+    f.add_argument("--detect", default="", help="a command or query that answers 'is this me?'")
+    f.add_argument("--confidence", default="practitioner",
+                   choices=["practitioner", "documented", "verified-live"])
+    f.add_argument("--source", default="", help="required when --confidence documented")
+
+    g = sub.add_parser("gate", help="a command shape the gate got wrong")
+    g.add_argument("--id", required=True)
+    g.add_argument("--command", required=True)
+    g.add_argument("--expect", required=True, choices=["deny", "allow"])
+    g.add_argument("--gate", default="", choices=["", "prod_write_gate", "destructive_data_gate"])
+    g.add_argument("--why", default="")
+
+    a = ap.parse_args()
+    (add_fact if a.kind == "fact" else add_gate)(a)
+
+
+if __name__ == "__main__":
+    main()
