@@ -88,7 +88,12 @@ def _need_token(orgid, op, digest=""):
              f"HMAC-signed token. Run: {lib.approve_cmd(orgid or '<org>', op)}", op, HOOK)
 
 
-def _shield_tokens(tokens, orgid):
+def _shield_tokens(tokens, orgid):        # orgid: unused, deliberately — see below
+    # The shield is NOT org-scoped, and that is the stronger position: a protected object is
+    # refused on every org, including a developer one, because "it was only the sandbox" is how
+    # the habit forms. The parameter survives from an org-aware design that was never built; it
+    # is kept so the two shields share a signature, and named here so a reader does not assume
+    # the scoping exists.
     # Salesforce object names are case-insensitive, so `--sobject account` reached the same table
     # as `Account` while slipping past an exact-set membership test. Bulk-delete tokens are not
     # object-scoped, so one legitimately-issued token plus a lowercase name deleted the very
@@ -100,7 +105,8 @@ def _shield_tokens(tokens, orgid):
 
 
 def _shield_text(text, orgid):
-    """The protected-object floor, applied to an Apex body.
+    """The protected-object floor, applied to an Apex body. `orgid` is unused — the floor is not
+    org-scoped; see _shield_tokens.
 
     Apex sObject names are case-insensitive, so `delete [SELECT Id FROM account]` reaches the
     same table as `Account`. _shield_tokens learned this from an earlier red-team finding and
