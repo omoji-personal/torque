@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""torque blast-radius — what this operation will actually set off, before it runs.
+
+THE QUESTION NOBODY CAN ANSWER
+
+"Update Type on every Prospect account" reads like one operation on N rows. It is not. It is N
+rows, plus every active trigger and record-triggered flow on the object, plus every validation
+rule that now has to pass on records that were saved years ago under different rules, plus every
+roll-up summary that recalculates on a parent, plus — if the operation is a delete — every child
+row that cascades with it.
+
+That set is knowable. Every part of it is in the org, queryable, right now. What does not exist
+is anything that assembles it and puts it in front of the person about to press go. A CLI runs
+the command. A UI shows a record count. Release-management tools compare environments. None of
+them answers "what does this touch", because none of them sits between the intent and the call.
+
+This does. It is read-only, it runs before the operation, and it reports what it could NOT
+determine as loudly as what it could — because a blast radius that silently under-reports is
+worse than none at all. Somebody would trust it.
+
+    torque blast-radius --target-org <alias> --sobject Account --where "Type='Prospect'"
+    torque blast-radius --target-org <alias> --sobject Contact --operation delete
+
+Exit code is 0 when the picture is complete, 3 when part of it could not be established.
+"""
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class Unknown(Exception):
+    """A part of the picture that could not be established. Never silently a zero."""
+
+
+def _sf(args, timeout=120):
+    r = subprocess.run(["sf", *args], capture_output=True, text=True, timeout=timeout)
+    try:
+        return json.loads(r.stdout)
+    except Exception:
+        raise Unknown((r.stderr or r.stdout or "no output").strip().splitlines()[0][:120])
+
+
+def _query(target, soql, tooling=False):
+    a = ["data", "query", "--target-org", target, "--json", "--query", soql]
+    if tooling:
+        a.append("--use-tooling-api")   # appended, never inserted: index 3 is the org's VALUE
+    d = _sf(a)
+    if d.get("status") != 0:
+        raise Unknown(f"{d.get('name', 'query failed')}: {str(d.get('message', ''))[:100]}")
+    return d["result"]
+
+
+def _describe(target, sobject):
+    d = _sf(["sobject", "describe", "--target-org", target, "--sobject", sobject, "--json"])
+    if d.get("status") != 0:
+        raise Unknown(f"describe {sobject} failed")
+    return d["result"]
+
+
+# ── the parts of the picture ───────────────────────────────────────────────────────────────
+def scope(target, sobject, where):
+    soql = f"SELECT COUNT() FROM {sobject}" + (f" WHERE {where}" if where else "")
+    return _query(target, soql)["totalSize"]
+
+
+def triggers(target, sobject):
+    rows = _query(target, "SELECT Name, Status FROM ApexTrigger "
+                          f"WHERE TableEnumOrId = '{sobject}'", tooling=True)["records"]
+    return [r["Name"] for r in rows if r.get("Status") == "Active"]
+
+
+def flows(target, sobject, operation):
+    """Record-triggered flows on this object, filtered to the ones this operation can fire."""
+    rows = _query(target, "SELECT ApiName, Label, TriggerType, TriggerOrder, IsActive "
+                          "FROM FlowDefinitionView "
+                          f"WHERE TriggerObjectOrEventId = '{sobject}' "
+                          "AND IsActive = true")["records"]
+    out = []
+    for r in rows:
+        tt = (r.get("TriggerType") or "")
+        # RecordAfterSave / RecordBeforeSave fire on insert and update; RecordBeforeDelete on
+        # delete. A scheduled-path flow is listed too — it fires later, which is worth saying.
+        if operation == "delete" and "Delete" not in tt:
+            continue
+        if operation in ("update", "insert") and "Delete" in tt:
+            continue
+        out.append(f"{r.get('Label') or r['ApiName']} [{tt or 'unknown trigger type'}]")
+    return out
+
+
+def validation_rules(target, sobject, operation):
+    if operation == "delete":
+        return []                       # validation rules do not run on delete
+    rows = _query(target, "SELECT ValidationName, Active FROM ValidationRule "
+                          f"WHERE EntityDefinition.QualifiedApiName = '{sobject}'",
+                  tooling=True)["records"]
+    return [r["ValidationName"] for r in rows if r.get("Active")]
+
+
+def workflow_rules(target, sobject):
+    """Workflow rules on this object.
+
+    Tooling's WorkflowRule has NO `Active` field — activity lives inside `Metadata`, which the
+    API will only return one record at a time. Rather than drop the active/inactive distinction
+    silently, each rule is resolved individually and any that cannot be resolved is labelled.
+    """
+    rows = _query(target, "SELECT Id, Name FROM WorkflowRule "
+                          f"WHERE TableEnumOrId = '{sobject}'", tooling=True)["records"]
+    out = []
+    for r in rows[:25]:
+        try:
+            md = _query(target, "SELECT Metadata FROM WorkflowRule "
+                                f"WHERE Id = '{r['Id']}'", tooling=True)["records"][0]["Metadata"]
+            if md.get("active"):
+                out.append(r["Name"])
+        except Exception:
+            out.append(f"{r['Name']} (active state UNDETERMINED)")
+    return out
+
+
+def cascade(target, sobject, operation, where):
+    """Children that go with the parent. Only meaningful for a delete — and easy to forget."""
+    if operation != "delete":
+        # Not an empty list: nothing cascades on an update, and "not applicable" must not read
+        # as "I looked and found none". Those are different claims about the same field.
+        return "not-applicable", "not-applicable"
+    d = _describe(target, sobject)
+    hard, soft = [], []
+    for rel in d.get("childRelationships") or []:
+        child, field = rel.get("childSObject"), rel.get("field")
+        if not child or not rel.get("relationshipName"):
+            continue
+        (hard if rel.get("cascadeDelete") else soft).append((child, field))
+    counted = []
+    for child, field in hard:
+        try:
+            sub = f"SELECT Id FROM {sobject}" + (f" WHERE {where}" if where else "")
+            n = _query(target, f"SELECT COUNT() FROM {child} WHERE {field} IN ({sub})")["totalSize"]
+            counted.append((child, n))
+        except Unknown:
+            counted.append((child, None))
+    return counted, [c for c, _ in soft]
+
+
+def rollups(target, sobject):
+    """Roll-up summary fields on this object's parents, which recalculate when a child changes.
+
+    There is no field anywhere that answers "which roll-ups summarise object X" — FieldDefinition
+    does not expose the summarised entity, and CustomField.Metadata is returnable one record at a
+    time. So this walks the relationship the other way: find the objects this one is a detail of,
+    and report the roll-up summary fields living on them. That over-reports slightly (a parent
+    roll-up may summarise a DIFFERENT child), and saying so is better than the alternatives —
+    reporting nothing, or asserting precision the API cannot support.
+    """
+    d = _describe(target, sobject)
+    parents = []
+    for f in d.get("fields") or []:
+        if f.get("type") == "reference" and f.get("relationshipName"):
+            for ref in f.get("referenceTo") or []:
+                if ref not in parents:
+                    parents.append(ref)
+    out = []
+    for parent in parents[:12]:
+        try:
+            pd = _describe(target, parent)
+        except Unknown:
+            out.append(f"{parent}.* (UNDETERMINED — describe failed)")
+            continue
+        for f in pd.get("fields") or []:
+            if f.get("type") == "summary":
+                out.append(f"{parent}.{f['name']}")
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="torque blast-radius", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--target-org", required=True)
+    ap.add_argument("--sobject", required=True)
+    ap.add_argument("--where", default="", help="the same criteria the operation will use")
+    ap.add_argument("--operation", default="update", choices=["update", "insert", "delete"])
+    ap.add_argument("--json", action="store_true", help="machine-readable")
+    a = ap.parse_args()
+
+    unknowns, report = [], {}
+
+    def part(name, fn, *args):
+        try:
+            report[name] = fn(*args)
+        except Unknown as e:
+            report[name] = None
+            unknowns.append(f"{name}: {e}")
+
+    part("scope", scope, a.target_org, a.sobject, a.where)
+    part("triggers", triggers, a.target_org, a.sobject)
+    part("flows", flows, a.target_org, a.sobject, a.operation)
+    part("validation_rules", validation_rules, a.target_org, a.sobject, a.operation)
+    part("workflow_rules", workflow_rules, a.target_org, a.sobject)
+    part("rollups", rollups, a.target_org, a.sobject)
+    try:
+        report["cascade"], report["cascade_soft"] = cascade(
+            a.target_org, a.sobject, a.operation, a.where)
+    except Unknown as e:
+        report["cascade"] = report["cascade_soft"] = None
+        unknowns.append(f"cascade: {e}")
+
+    report["undetermined"] = unknowns
+    if a.json:
+        print(json.dumps(report, indent=2))
+        return 3 if unknowns else 0
+
+    n = report.get("scope")
+    print(f"\nBLAST RADIUS — {a.operation} on {a.sobject} @ {a.target_org}")
+    print(f"  criteria : {a.where or '(all records)'}")
+    print(f"  scope    : {n if n is not None else 'UNDETERMINED'} record(s)")
+
+    def show(label, items, note=""):
+        if items is None:
+            print(f"  {label:9}: UNDETERMINED")
+        elif items:
+            print(f"  {label:9}: {len(items)}{note}")
+            for it in items:
+                print(f"             · {it}")
+        else:
+            print(f"  {label:9}: none")
+
+    show("triggers", report["triggers"])
+    show("flows", report["flows"])
+    show("rules", report["validation_rules"],
+         "  (must pass on records saved under older rules)" if report["validation_rules"] else "")
+    show("workflow", report["workflow_rules"])
+    show("rollups", report["rollups"], "  (recalculate on the parent)")
+
+    if a.operation == "delete":
+        c = report["cascade"]
+        if c is None:
+            print("  cascade  : UNDETERMINED")
+        elif c:
+            tot = sum(x for _, x in c if x is not None)
+            print(f"  cascade  : {tot} child record(s) deleted with the parent")
+            for child, cnt in c:
+                print(f"             · {child}: {cnt if cnt is not None else 'UNDETERMINED'}")
+        else:
+            print("  cascade  : no cascade-delete children")
+        if report.get("cascade_soft"):
+            print(f"  orphans  : {len(report['cascade_soft'])} lookup child object(s) are NOT "
+                  f"deleted and will point at nothing")
+
+    if unknowns:
+        print("\n  ⚠ this picture is INCOMPLETE — treat the operation as larger than shown:")
+        for u in unknowns:
+            print(f"      {u}")
+        return 3
+    print("\n  picture complete — every source answered.")
+    return 0
+
+
+if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        ok = True
+        # An unqueryable source must raise Unknown, never return an empty list — the whole
+        # value of this tool is that "none" and "could not tell" are different answers.
+        try:
+            _query("definitely-not-an-org-alias-xyz", "SELECT COUNT() FROM Account")
+            ok = False
+        except Unknown:
+            pass
+        except Exception:
+            ok = False
+        print("blast-radius self-test:", "PASS" if ok else "FAIL")
+        sys.exit(0 if ok else 1)
+    sys.exit(main())

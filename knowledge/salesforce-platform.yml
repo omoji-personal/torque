@@ -435,3 +435,24 @@ entries:
   confidence: documented
   source: 'Salesforce Help — Recycle Bin'
   updated: 2026-08-01
+
+- id: de-daily-api-limit-masquerades
+  domain: limits
+  title: 'A Developer Edition org''s daily API cap fails checks that have nothing to do with each other'
+  symptom: >
+    REQUEST_LIMIT_EXCEEDED: TotalRequests Limit exceeded — and unrelated operations start
+    failing together, intermittently, then pass when re-run in isolation
+  cause: >
+    Developer Edition allows a low daily request total on a rolling 24-hour window, and it is
+    consumed by everything: SOQL, describe, Tooling, metadata deploys, even 'sf limits api
+    display' itself, which means the org will not tell you how much is left once you are out. A
+    harness that makes hundreds of calls per run walks into it, and because exhaustion is
+    gradual the first symptom is two unrelated checks failing in the same run and passing when
+    re-run alone.
+  remedy: >
+    Read the failure as an org-wide budget problem, not a defect in whichever check happened to
+    report it. Space out full validation runs, and treat a limit error as its own outcome —
+    distinct from a real failure — or you will spend the afternoon debugging code that is fine.
+  detect: 'sf limits api display --target-org <alias>   # if this ITSELF errors, you are already out'
+  confidence: practitioner
+  updated: 2026-08-01

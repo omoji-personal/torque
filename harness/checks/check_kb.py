@@ -39,17 +39,28 @@ def _kb_load():
     return data
 
 
+# A query can fail for two completely different reasons, and conflating them made this check
+# assert that Salesforce had changed when in fact the org had simply stopped answering. These
+# are the failures that say nothing about the claim under test.
+_NOT_ABOUT_THE_CLAIM = ("REQUEST_LIMIT_EXCEEDED", "TotalRequests Limit exceeded",
+                        "INVALID_SESSION_ID", "expired", "No authorization information",
+                        "No org configuration found", "ENOTFOUND", "socket hang up")
+
+
 def _sfq(target, soql, tooling=False):
-    """Read-only SOQL. Returns (ok, rows)."""
+    """Read-only SOQL. Returns (ok, rows) where ok is True, False, or None for 'cannot tell'."""
     cmd = ["sf", "data", "query", "--target-org", target, "--json", "--query", soql]
     if tooling:
-        cmd.insert(3, "--use-tooling-api")
+        cmd.append("--use-tooling-api")
     try:
         r = _kb_sp.run(cmd, capture_output=True, text=True, timeout=120)
+        blob = (r.stdout or "") + (r.stderr or "")
+        if any(m in blob for m in _NOT_ABOUT_THE_CLAIM):
+            return None, []
         d = _kb_json.loads(r.stdout)
         return (r.returncode == 0), (d.get("result", {}) or {}).get("records", [])
     except Exception:
-        return False, []
+        return None, []
 
 
 # ── the live verifications named by `verify:` in the catalogue ─────────────────────────────
@@ -57,7 +68,7 @@ def _v_fls_absent_without_permset(target):
     """Custom fields get FLS only from an explicit grant — so any FieldPermissions rows that do
     exist should be permission-set owned, not profile-implicit."""
     ok, rows = _sfq(target, "SELECT Parent.IsOwnedByProfile FROM FieldPermissions LIMIT 200")
-    if not ok:
+    if ok is not True:
         return None, "FieldPermissions not queryable"
     if not rows:
         return True, "no FieldPermissions rows (consistent: nothing granted implicitly)"
@@ -70,7 +81,7 @@ def _v_del_tombstones_visible(target):
     ok, rows = _sfq(target,
                     "SELECT DeveloperName FROM CustomField WHERE DeveloperName LIKE '%\\_del' LIMIT 5",
                     tooling=True)
-    if not ok:
+    if ok is not True:
         return None, "CustomField not queryable via Tooling"
     return True, (f"{len(rows)} `_del` tombstone(s) visible" if rows
                   else "no tombstones present right now (claim untestable on this org)")
@@ -79,6 +90,8 @@ def _v_del_tombstones_visible(target):
 def _v_flowdefinition_queryable(target):
     ok, rows = _sfq(target, "SELECT DeveloperName, ActiveVersionId FROM FlowDefinition LIMIT 5",
                     tooling=True)
+    if ok is None:
+        return None, "org did not answer (limit/auth) — says nothing about the claim"
     return (True, f"FlowDefinition queryable via Tooling ({len(rows)} rows)") if ok \
         else (False, "FlowDefinition NOT queryable via Tooling — remedy in the entry is wrong")
 
@@ -86,6 +99,8 @@ def _v_flowdefinition_queryable(target):
 def _v_flowdefinitionview_standard_api(target):
     ok_std, rows = _sfq(target, "SELECT ApiName, IsActive FROM FlowDefinitionView LIMIT 5")
     ok_tool, _ = _sfq(target, "SELECT ApiName FROM FlowDefinitionView LIMIT 1", tooling=True)
+    if ok_std is None or ok_tool is None:
+        return None, "org did not answer (limit/auth) — says nothing about the claim"
     if not ok_std:
         return False, "FlowDefinitionView failed on the STANDARD api — entry is wrong"
     if ok_tool:
@@ -95,7 +110,7 @@ def _v_flowdefinitionview_standard_api(target):
 
 def _v_de_org_reports_not_sandbox(target):
     ok, rows = _sfq(target, "SELECT IsSandbox, OrganizationType FROM Organization LIMIT 1")
-    if not ok or not rows:
+    if ok is not True or not rows:
         return None, "Organization not queryable"
     r = rows[0]
     return True, f"IsSandbox={r.get('IsSandbox')} OrganizationType={r.get('OrganizationType')!r}"
@@ -176,6 +191,10 @@ def _kb_live_claims(target):
     msg = f"{len(passed)}/{len(entries)} live claims re-verified against {target}"
     if untestable:
         msg += f"; {len(untestable)} untestable here ({', '.join(untestable)})"
+    if not passed:
+        # Nothing was proven. That is not a pass — the entire purpose of this check is to
+        # re-confirm the catalogue against a live org, and it confirmed none of it.
+        return Result("kb_live_claims", WARN, msg + " — nothing was re-verified")
     return Result("kb_live_claims", PASS, msg)
 
 
@@ -300,3 +319,130 @@ def _observer_is_not_a_gate():
     st = (ROOT / "hooks" / "lesson_observer.py")
     return Result("observer_is_not_a_gate", PASS,
                   "observer cannot deny, cannot write knowledge, and exits 0 on a gate-denied shape")
+
+
+@check("blast_radius_honesty", "static", catastrophe=True)
+def _blast_radius_honesty():
+    """Every source that cannot answer must say so — never a silent zero.
+
+    A blast radius that under-reports is worse than none, because somebody would act on it.
+    The whole design rests on one distinction: "there is no trigger on this object" and "I
+    could not find out whether there is a trigger on this object" are different answers. This
+    proves the distinction survives — point it at an org that cannot answer anything, and it
+    must report UNDETERMINED for every part and exit non-zero, not print a reassuring page of
+    zeroes.
+    """
+    br = ROOT / "bin" / "torque-blast-radius"
+    if not br.exists():
+        return Result("blast_radius_honesty", FAIL, "bin/torque-blast-radius is missing")
+    r = _kb_sp.run([_kb_sys.executable, str(br), "--target-org", "torque-no-such-org-xyz",
+                    "--sobject", "Account", "--json"],
+                   capture_output=True, text=True, cwd=ROOT, timeout=180)
+    if r.returncode == 0:
+        return Result("blast_radius_honesty", FAIL,
+                      "exited 0 against an unreachable org — it reported a complete picture "
+                      "it could not possibly have")
+    try:
+        rep = _kb_json.loads(r.stdout)
+    except Exception:
+        return Result("blast_radius_honesty", FAIL, f"--json did not emit JSON: {r.stdout[:100]}")
+    zeroed = [k for k, v in rep.items()
+              if k not in ("undetermined", "cascade_soft") and v == []]
+    if zeroed:
+        return Result("blast_radius_honesty", FAIL,
+                      f"reported empty (not UNDETERMINED) for {zeroed} against an org that "
+                      f"answered nothing — a silent zero is the one failure mode that matters")
+    if not rep.get("undetermined"):
+        return Result("blast_radius_honesty", FAIL, "no source was recorded as undetermined")
+    return Result("blast_radius_honesty", PASS,
+                  f"{len(rep['undetermined'])} unanswerable source(s) reported as UNDETERMINED, "
+                  f"exit {r.returncode}; no source silently returned zero")
+
+
+@check("lesson_writer_roundtrip", "static", catastrophe=True)
+def _lesson_writer_roundtrip():
+    """A fact containing quotes must still produce a file that parses.
+
+    The writer wrapped titles in bare single quotes, so the first fact recorded containing an
+    apostrophe — "a Developer Edition org's daily cap" — wrote a catalogue that would not load.
+    The damage surfaced later, in a different check, with a YAML parser error naming a line
+    number instead of the tool that wrote it. This closes the loop where it opened.
+    """
+    import importlib.machinery as _im, importlib.util as _il, shutil as _sh, tempfile as _tmp, types as _ty
+    # The file has no .py suffix, so spec_from_file_location needs the loader named explicitly.
+    spec = _il.spec_from_file_location(
+        "torque_lesson", ROOT / "bin" / "torque-lesson",
+        loader=_im.SourceFileLoader("torque_lesson",
+                                              str(ROOT / "bin" / "torque-lesson")))
+    mod = _il.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with _tmp.TemporaryDirectory() as td:
+        tmp_kb = _KbP(td) / "kb.yml"
+        _sh.copy(_KB, tmp_kb)
+        mod.KB, mod.ROOT = tmp_kb, _KbP(td)
+        a = _ty.SimpleNamespace(
+            id="roundtrip-probe-quote", domain="data",
+            title="an org's field said \"no\" — and it's O'Brien's fault",
+            symptom="it's: broken", cause="a value with 'quotes' and \"doubles\" and a: colon",
+            remedy="don't: assume", detect="sf data query --query \"SELECT Id FROM X\" # it's fine",
+            confidence="practitioner", source="")
+        try:
+            mod.add_fact(a)
+        except SystemExit as e:
+            return Result("lesson_writer_roundtrip", FAIL, f"writer refused a valid fact: {e}")
+        try:
+            import yaml
+            d = yaml.safe_load(tmp_kb.read_text())
+        except ImportError:
+            return Result("lesson_writer_roundtrip", NA, "PyYAML absent; cannot prove it parses")
+        except Exception as e:
+            return Result("lesson_writer_roundtrip", FAIL,
+                          f"a fact containing quotes produced unparseable YAML: "
+                          f"{type(e).__name__}: {str(e)[:90]}")
+        got = [e for e in d.get("entries") or [] if e.get("id") == "roundtrip-probe-quote"]
+        if not got:
+            return Result("lesson_writer_roundtrip", FAIL, "fact parsed but the entry is absent")
+        if got[0]["title"] != a.title:
+            return Result("lesson_writer_roundtrip", FAIL,
+                          f"title round-tripped as {got[0]['title']!r}, not {a.title!r}")
+    return Result("lesson_writer_roundtrip", PASS,
+                  "a fact with apostrophes, double quotes and a colon round-trips intact")
+
+
+@check("limit_relabel_is_safe", "static", catastrophe=True)
+def _limit_relabel_is_safe():
+    """The rate-limit outcome must never launder a real failure into something shippable.
+
+    Re-labelling FAIL as ⧗ when an org is out of API budget is honest — the check genuinely
+    could not reach a conclusion — but it is exactly the shape of change that quietly turns a
+    red suite green. Two properties keep it safe, and both are asserted here: a run containing
+    any ⧗ can never report PASS, and when the org is NOT out of budget a failure stays a
+    failure. Without the second, the first is decoration.
+    """
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_validate", ROOT / "harness" / "validate.py")
+    v = _il.module_from_spec(spec)
+    spec.loader.exec_module(v)
+
+    import io, contextlib
+    def verdict(results):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return v.print_report("test", results)
+
+    limited = verdict([v.Result("live", v.FAIL, "REQUEST_LIMIT_EXCEEDED: TotalRequests Limit"),
+                       v.Result("ok", v.PASS, "fine")])
+    if limited == v.PASS:
+        return Result("limit_relabel_is_safe", FAIL,
+                      "a run containing a rate-limited check reported PASS")
+    real = verdict([v.Result("bug", v.FAIL, "field Foo__c does not exist")])
+    if real != v.FAIL:
+        return Result("limit_relabel_is_safe", FAIL,
+                      f"an ordinary failure reported {real!r} instead of FAIL")
+    if v.rate_limited("field Foo__c does not exist"):
+        return Result("limit_relabel_is_safe", FAIL,
+                      "an ordinary failure message was classified as rate-limited")
+    if not v.rate_limited("REQUEST_LIMIT_EXCEEDED"):
+        return Result("limit_relabel_is_safe", FAIL, "a real limit error was not recognised")
+    return Result("limit_relabel_is_safe", PASS,
+                  f"rate-limited run degrades to {limited!r}, never PASS; ordinary failures "
+                  f"still FAIL")

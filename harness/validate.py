@@ -27,6 +27,17 @@ RANK = {p: i for i, p in enumerate(PROFILES)}
 # — otherwise every stranger's first run is red for a reason that has nothing to do with them.
 PASS, FAIL, WARN, SKIP, NA = "PASS", "FAIL", "WARN", "SKIP", "N/A"
 
+# An org that has spent its daily API budget refuses everything, including the endpoint that
+# would tell you how much is left. Every live check then fails at once, for a reason that has
+# nothing to do with any of them. Reporting that as FAIL sends the reader to debug working
+# code — so it gets its own outcome, and the run is DEGRADED rather than failed.
+LIMITED = "LIMIT"
+_LIMIT_MARKERS = ("REQUEST_LIMIT_EXCEEDED", "TotalRequests Limit exceeded")
+
+
+def rate_limited(detail: str) -> bool:
+    return any(m in (detail or "") for m in _LIMIT_MARKERS)
+
 def _operator_mode():
     """True on the author's machine — where the private denylist MUST exist and its absence is a
     hard failure. Detected by the planning directory (a third-party clone never has it), or an
@@ -212,9 +223,34 @@ def _load_check_plugins():
 BROKEN_PLUGINS = _load_check_plugins()
 
 # ---- runner ---------------------------------------------------------------
+def org_out_of_budget(target):
+    """One cheap probe: has this org spent its daily API allowance?
+
+    Worth doing once, up front, because exhaustion makes every live check fail at the same
+    moment for a reason that belongs to none of them. Most checks report only their own
+    interpretation of the failure — "known field did not resolve", "dry-run failed" — so
+    without this the run reads as a dozen unrelated defects. `sf limits` is itself refused
+    once the budget is gone, which is a serviceable detector in its own right.
+    """
+    if not target:
+        return False
+    import subprocess as _s
+    try:
+        r = _s.run(["sf", "limits", "api", "display", "--target-org", target, "--json"],
+                   capture_output=True, text=True, timeout=90)
+        return rate_limited((r.stdout or "") + (r.stderr or ""))
+    except Exception:
+        return False
+
+
 def run_profile(profile, target, only=None):
     want = RANK[profile]
     results = []
+    spent = org_out_of_budget(target) if RANK[profile] > RANK["static"] else False
+    if spent:
+        print("  ⧗ this org has spent its daily API request budget. Checks that need the org "
+              "cannot reach a trustworthy conclusion; they are reported ⧗ and this run will "
+              "NOT be a pass.")
     for name, lowest, cat, fn in REGISTRY:
         if only and name != only:
             continue
@@ -224,6 +260,11 @@ def run_profile(profile, target, only=None):
             res = fn(target) if "target" in fn.__code__.co_varnames else fn()
         except Exception as e:
             res = Result(name, FAIL, f"check raised: {e}")
+        # An exhausted org cannot be distinguished from a broken check, so it is reported as
+        # neither. This never turns a failure green — the verdict degrades and cannot pass.
+        if spent and res.outcome == FAIL and RANK[lowest] > RANK["static"]:
+            res = Result(name, FAIL, f"REQUEST_LIMIT_EXCEEDED (org budget spent) — "
+                                     f"original: {res.detail}")
         results.append(res)
     return results
 
@@ -239,13 +280,19 @@ def print_report(profile, results, only=None):
         return "FAIL"
     print(f"\n=== Torque validation — profile: {profile} ===")
     verdict = PASS
+    seen = []
     for r in results:
-        mark = {PASS:"✓", FAIL:"✗", WARN:"!", SKIP:"−", NA:"·"}[r.outcome]
+        outcome = LIMITED if (r.outcome == FAIL and rate_limited(r.detail)) else r.outcome
+        mark = {PASS:"✓", FAIL:"✗", WARN:"!", SKIP:"−", NA:"·", LIMITED:"⧗"}[outcome]
         tp = "" if r.third_party else " [operator-reproducible]"
-        print(f"  {mark} {r.name:22} {r.outcome:5} {r.detail}{tp}")
-        if r.outcome == FAIL: verdict = FAIL
-        elif r.outcome == SKIP and verdict == PASS: verdict = "DEGRADED"
+        print(f"  {mark} {r.name:22} {outcome:5} {r.detail}{tp}")
+        seen.append(outcome)
+        if outcome == FAIL: verdict = FAIL
+        elif outcome in (SKIP, LIMITED) and verdict == PASS: verdict = "DEGRADED"
         # NA never degrades: it is an operator-only check, reported honestly, not a gap.
+    if LIMITED in seen:
+        print("  ⧗ the org is out of daily API requests — those checks did not run and did not "
+              "fail. Re-run after the rolling window clears.")
     print(f"  → verdict: {verdict}")
     return verdict
 

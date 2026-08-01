@@ -53,6 +53,16 @@ def _yaml_block(text, indent="    "):
     return "\n".join(indent + l for l in lines)
 
 
+def _q(v):
+    """A YAML single-quoted scalar. Apostrophes are doubled, which is how YAML escapes them.
+
+    This existed as an f-string with bare quotes around it, so the first fact anyone recorded
+    containing the word "org's" wrote a file that would not parse — and the failure surfaced
+    later, in a check, far from the tool that caused it.
+    """
+    return "'" + str(v).replace("'", "''") + "'"
+
+
 def add_fact(a):
     if a.domain not in DOMAINS:
         sys.exit(f"domain must be one of: {', '.join(DOMAINS)}")
@@ -64,15 +74,15 @@ def add_fact(a):
     text = KB.read_text()
     if f"- id: {a.id}\n" in text:
         sys.exit(f"entry id {a.id!r} already exists — edit it rather than duplicating")
-    block = [f"\n- id: {a.id}", f"  domain: {a.domain}", f"  title: '{a.title}'",
+    block = [f"\n- id: {a.id}", f"  domain: {a.domain}", f"  title: {_q(a.title)}",
              "  symptom: >", _yaml_block(a.symptom),
              "  cause: >", _yaml_block(a.cause),
              "  remedy: >", _yaml_block(a.remedy)]
     if a.detect:
-        block.append(f"  detect: \"{a.detect}\"")
+        block.append(f"  detect: {_q(a.detect)}")
     block.append(f"  confidence: {a.confidence}")
     if a.source:
-        block.append(f"  source: '{a.source}'")
+        block.append(f"  source: {_q(a.source)}")
     block.append(f"  updated: {date.today().isoformat()}")
     KB.write_text(text.rstrip() + "\n" + "\n".join(block) + "\n")
     print(f"  added platform fact {a.id!r} to {KB.relative_to(ROOT)}")
