@@ -52,7 +52,7 @@ entries:
 
 - id: deleted-field-rename
   domain: deploy
-  title: A deleted custom field is renamed with `_del`, and the name is freed exactly once
+  title: 'A deleted custom field is renamed with `_del`, and the API name is freed every time'
   symptom: >
     Re-creating a field with the name you just deleted works the first time and collides the
     second time, with no obvious difference between the two attempts.
@@ -417,16 +417,19 @@ entries:
 
 - id: recycle-bin-retention
   domain: data
-  title: 'A deleted record is recoverable for 15 days, and that window is the whole difference'
+  title: 'A deleted record is recoverable for a bounded window, and which delete ran decides whether there is one'
   symptom: >
     Someone asks to 'undo' a delete and the answer depends entirely on which kind of delete ran.
   cause: >
-    A normal delete moves records to the Recycle Bin, where they are restorable for 15 days and
-    still consume storage. A hard delete skips it entirely and is unrecoverable.
+    A normal delete moves records to the Recycle Bin, where they are restorable for up to 15
+    days — extendable to 30 by Salesforce Support. Records in the bin do NOT count against the
+    org's data storage allocation; what they occupy is the bin's own capacity, which is tied to
+    storage, so the oldest entries are evicted when it overflows and a busy org can lose the
+    undo before the window expires. A hard delete skips the bin entirely and is unrecoverable.
   remedy: >
-    Prefer a normal delete and let the bin be the undo. Reserve hard delete for cases where
-    storage or a duplicate-key constraint genuinely requires it, and say so out loud before
-    running it.
+    Prefer a normal delete and let the bin be the undo. Reserve hard delete for the cases that
+    genuinely need it — a duplicate-key constraint, or bin capacity on a high-churn object — and
+    say so out loud before running it, because there is no recovering from it.
   detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
   triggers: ['data\s+delete', 'data:delete', '--hard-delete']
   confidence: documented

@@ -104,8 +104,8 @@ $ sf data delete bulk --sobject Account --file ids.csv --hard-delete --target-or
 TORQUE GATE DENY [destructive_data_gate] operation targets protected sObject Account
 TORQUE PLATFORM NOTE [sandbox-contains-real-data] Full and Partial Copy sandboxes contain real production data
   → Treat "sandbox" as insufficient grounds for a destructive operation. Confirm the sandbox TYPE, and remember that data masking is opt-in and frequently not configured.
-TORQUE PLATFORM NOTE [recycle-bin-retention] A deleted record is recoverable for 15 days, and that window is the whole difference
-  → Prefer a normal delete and let the bin be the undo. Reserve hard delete for cases where storage or a duplicate-key constraint genuinely requires it, and say so out loud before running it.
+TORQUE PLATFORM NOTE [recycle-bin-retention] A deleted record is recoverable for a bounded window, and which delete ran decides whether there is one
+  → Prefer a normal delete and let the bin be the undo. Reserve hard delete for the cases that genuinely need it — a duplicate-key constraint, or bin capacity on a high-churn object — and say so out loud before…
 ```
 
 Ordinary work stays silent. The harness re-runs every `verified-live` claim against a real org
