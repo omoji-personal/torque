@@ -28,6 +28,7 @@ it says so and writes nothing — a fixture that was never going to fail teaches
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import date
@@ -170,6 +171,56 @@ def review(a):
         print("\ncandidates cleared")
 
 
+def add_org(a):
+    """Record a finding about ONE org, keyed by its 18-char orgId.
+
+    Platform knowledge says what Salesforce does. This says what THIS org does — "their Account
+    trigger row-locks under Bulk API", "Lead assignment fires on every API update" — which is
+    the knowledge a consultant actually accumulates and currently keeps in their head, loses
+    between engagements, and cannot hand to anyone.
+
+    Keyed by orgId rather than alias deliberately. An alias is a local nickname that can be
+    reassigned; the orgId is the org. And a sandbox refresh mints a NEW orgId, so the memory
+    empties exactly when the org it described stopped existing — which is the correct behaviour
+    and the thing a copier would get wrong first.
+
+    It lives under local/: gitignored, 0600, never committed, never sent anywhere.
+    """
+    sys.path.insert(0, str(ROOT / "hooks"))
+    import lib
+    verdict, orgid, _user = lib.classify(a.target_org)
+    if not orgid:
+        sys.exit(f"could not resolve an orgId for {a.target_org!r} — cannot key a finding to it")
+    lib.ORGS.mkdir(parents=True, exist_ok=True)
+    os.chmod(lib.ORGS, 0o700)
+    f = lib.ORGS / f"{orgid}.yml"
+    if not f.exists():
+        f.write_text(f"# Findings observed on org {orgid} ({verdict}).\n"
+                     f"# Keyed by orgId: a sandbox refresh mints a new one, and this memory\n"
+                     f"# correctly does not follow the refreshed org.\n"
+                     f"# Gitignored. Never commit, never send anywhere.\nentries:\n")
+    text = f.read_text()
+    if f"- id: {a.id}\n" in text:
+        sys.exit(f"finding {a.id!r} already recorded for this org — edit it rather than duplicating")
+    trig = ", ".join(_q(t.strip()) for t in (a.trigger or []) if t.strip())
+    block = [f"\n- id: {a.id}",
+             "  observed: >", _yaml_block(a.observed),
+             "  implication: >", _yaml_block(a.implication),
+             "  remedy: >", _yaml_block(a.remedy)]
+    if trig:
+        block.append(f"  triggers: [{trig}]")
+    block += [f"  confidence: org-observed", f"  source: {a.source}",
+              f"  first_seen: {date.today().isoformat()}",
+              f"  last_seen: {date.today().isoformat()}"]
+    f.write_text(text.rstrip() + "\n" + "\n".join(block) + "\n")
+    os.chmod(f, 0o600)
+    print(f"  recorded {a.id!r} against org {orgid} ({verdict})")
+    print(f"  → {f.relative_to(ROOT)}   [gitignored, 0600]")
+    if not trig:
+        print("  note: no --trigger given, so this will not surface at the gate. Add one to make "
+              "it speak when a matching command runs.")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="torque lesson", description=__doc__)
     sub = ap.add_subparsers(dest="kind", required=True)
@@ -193,11 +244,21 @@ def main():
     g.add_argument("--gate", default="", choices=["", "prod_write_gate", "destructive_data_gate"])
     g.add_argument("--why", default="")
 
+    o = sub.add_parser("org", help="a finding about ONE org, keyed by its orgId")
+    o.add_argument("--target-org", required=True)
+    o.add_argument("--id", required=True)
+    o.add_argument("--observed", required=True, help="what you SAW on this org")
+    o.add_argument("--implication", required=True, help="why it matters for work here")
+    o.add_argument("--remedy", required=True)
+    o.add_argument("--trigger", action="append", default=[],
+                   help="regex matched against a command; repeatable. Without one it never speaks.")
+    o.add_argument("--source", default="manual", choices=["manual", "checkup", "observer"])
+
     r = sub.add_parser("review", help="what the observer captured, ready to record")
     r.add_argument("--clear", action="store_true", help="discard candidates after showing them")
 
     a = ap.parse_args()
-    {"fact": add_fact, "gate": add_gate, "review": review}[a.kind](a)
+    {"fact": add_fact, "gate": add_gate, "review": review, "org": add_org}[a.kind](a)
 
 
 if __name__ == "__main__":

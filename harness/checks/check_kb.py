@@ -931,3 +931,80 @@ def _detect_probes_run(target):
                   f"({len(by.get('affected', []))} live, {len(by.get('confirmed', []))} confirmed, "
                   f"{len(by.get('clear', []))} clear); "
                   f"{len(by.get('not-executed', []))} are not queries and are reported as such")
+
+
+@check("per_org_knowledge", "static", catastrophe=True)
+def _per_org_knowledge():
+    """Findings recorded against one org must reach that org and no other, and never leave.
+
+    This is the layer that compounds — engagement five starts where engagement four ended —
+    and it is also the layer holding the most sensitive thing Torque touches: observations
+    about a specific client's org. Three properties make it safe to keep, and all three are
+    asserted here rather than promised.
+
+    Keyed by orgId, not alias. An alias is a local nickname that can be pointed anywhere; the
+    orgId is the org. It also gives the correct behaviour on a sandbox refresh, which mints a
+    NEW orgId — the memory empties exactly when the org it described stopped existing.
+    """
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_lib", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(spec)
+    spec.loader.exec_module(lib)
+
+    # 1. never tracked by git
+    tracked = _kb_sp.run(["git", "ls-files", "local/"], capture_output=True, text=True,
+                         cwd=ROOT).stdout.split()
+    if tracked:
+        return Result("per_org_knowledge", FAIL,
+                      f"per-org findings are tracked by git: {tracked[:3]}")
+
+    if not lib.ORGS.exists():
+        return Result("per_org_knowledge", PASS, "no per-org findings recorded yet")
+
+    # 2. owner-only, always
+    import stat as _st
+    for f in list(lib.ORGS.glob("*.yml")) + [lib.ORGS]:
+        if _st.S_IMODE(f.stat().st_mode) & 0o077:
+            return Result("per_org_knowledge", FAIL,
+                          f"{f.name} is {oct(_st.S_IMODE(f.stat().st_mode))} — org findings "
+                          f"describe a client's org and are owner-only")
+
+    # 3. a finding reaches its own org and no other
+    files = sorted(lib.ORGS.glob("*.yml"))
+    if not files:
+        return Result("per_org_knowledge", PASS, "no per-org findings recorded yet")
+    orgid = files[0].stem
+    entries = lib._parse_org_file(files[0])
+    withtrig = [e for e in entries if e.get("triggers")]
+    if not withtrig:
+        return Result("per_org_knowledge", PASS,
+                      f"{len(entries)} finding(s) for {len(files)} org(s); none carry triggers "
+                      f"so none can surface at the gate")
+    # find an alias that maps to this org, and one that does not
+    try:
+        idx = _kb_json.loads(lib.ALIAS_INDEX.read_text())
+    except Exception:
+        idx = {}
+    mine = next((a for a, o in idx.items() if o == orgid), None)
+    other = next((a for a, o in idx.items() if o != orgid), None)
+    if not mine:
+        return Result("per_org_knowledge", NA,
+                      f"no alias indexed for {orgid}; cannot exercise gate selection here")
+    pat = (withtrig[0].get("triggers") or [""])[0]
+    probe = _kb_re.sub(r"[()|\\\\^$.*+?\[\]]", " ", pat).split()
+    cmd = f"sf {' '.join(probe[:4])} --target-org {mine}"
+    if not lib.org_notes(cmd):
+        return Result("per_org_knowledge", FAIL,
+                      f"a finding recorded for {orgid} did not surface for its own org")
+    if other and lib.org_notes(cmd.replace(mine, other)):
+        return Result("per_org_knowledge", FAIL,
+                      f"a finding recorded for {orgid} leaked to a different org ({other}) — "
+                      f"per-org memory must not cross orgs")
+    # 4. an unknown orgId gets nothing, which is the sandbox-refresh behaviour
+    if lib.org_notes(cmd.replace(mine, "an-alias-that-was-never-indexed")):
+        return Result("per_org_knowledge", FAIL,
+                      "an unindexed alias received org findings — after a sandbox refresh the "
+                      "new org would inherit the old org's memory")
+    return Result("per_org_knowledge", PASS,
+                  f"{len(entries)} finding(s) across {len(files)} org(s), owner-only, untracked; "
+                  f"reaches its own org, not another, and not an unknown one")

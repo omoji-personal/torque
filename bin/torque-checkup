@@ -130,11 +130,73 @@ def run_probe(target, soql, flags, expect):
     return ("affected" if n else "clear"), f"{n} row(s)"
 
 
+def _record(target, results):
+    """Write what the probes measured into this org's findings file.
+
+    Only what was OBSERVED — a row count for a probe that returned rows. No inference, no
+    generated prose about what it might mean: the catalogue entry already carries the meaning,
+    and this records that the entry applies HERE, with a number and a date. An entry seen again
+    updates last_seen rather than duplicating, so the file records how long a condition has
+    persisted, which is the part nobody currently tracks.
+    """
+    sys.path.insert(0, str(ROOT / "hooks"))
+    import lib
+    import os
+    from datetime import date
+    _v, orgid, _u = lib.classify(target)
+    if not orgid:
+        print(f"  --record: could not resolve an orgId for {target!r}; nothing written",
+              file=sys.stderr)
+        return
+    live = [r for r in results if r["status"] == "affected"]
+    if not live:
+        print("  --record: no live findings to record", file=sys.stderr)
+        return
+    lib.ORGS.mkdir(parents=True, exist_ok=True)
+    os.chmod(lib.ORGS, 0o700)
+    f = lib.ORGS / f"{orgid}.yml"
+    text = f.read_text() if f.exists() else (
+        f"# Findings observed on org {orgid}.\n"
+        f"# Keyed by orgId: a sandbox refresh mints a new one, and this memory\n"
+        f"# correctly does not follow the refreshed org.\n"
+        f"# Gitignored. Never commit, never send anywhere.\nentries:\n")
+    today = date.today().isoformat()
+    added = updated = 0
+    for r in live:
+        eid = f"checkup-{r['id']}"
+        if f"- id: {eid}\n" in text:
+            # seen before: move last_seen forward, leave first_seen alone
+            i = text.index(f"- id: {eid}\n")
+            j = text.index("\n- id: ", i + 1) if "\n- id: " in text[i + 1:] else len(text)
+            seg = text[i:j]
+            new = re.sub(r"  last_seen: \S+", f"  last_seen: {today}", seg)
+            new = re.sub(r"  observed: >\n(    .*\n)+",
+                         f"  observed: >\n    {r['detail']} — {r['title']}\n", new)
+            text = text[:i] + new + text[j:]
+            updated += 1
+            continue
+        text = text.rstrip() + "\n" + "\n".join([
+            f"\n- id: {eid}",
+            "  observed: >", f"    {r['detail']} — {r['title']}",
+            "  implication: >", f"    Recorded by torque checkup from the catalogue entry "
+                                f"`{r['id']}`, whose provenance is {r.get('confidence')}.",
+            "  remedy: >", "    " + " ".join((r.get("remedy") or "").split()),
+            f"  confidence: org-observed", "  source: checkup",
+            f"  first_seen: {today}", f"  last_seen: {today}"]) + "\n"
+        added += 1
+    f.write_text(text)
+    os.chmod(f, 0o600)
+    print(f"  --record: {added} new, {updated} updated against org {orgid} "
+          f"→ {f.relative_to(ROOT)} [0600]", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="torque checkup", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--target-org", required=True)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--record", action="store_true",
+                    help="record what was found against this org, keyed by its orgId")
     a = ap.parse_args()
 
     entries = [e for e in load_entries() if e.get("detect")]
@@ -151,6 +213,9 @@ def main():
         results.append({**{k: e.get(k) for k in ("id", "domain", "title", "remedy",
                                                  "confidence")},
                         "status": status, "detail": detail, "soql": soql})
+
+    if a.record:
+        _record(a.target_org, results)
 
     if a.json:
         print(json.dumps({"org": a.target_org, "probes": results}, indent=2))

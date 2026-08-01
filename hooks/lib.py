@@ -24,6 +24,8 @@ APPROVED = ANCHOR / "approved"
 PROD_SESSIONS = ANCHOR / "prod-sessions"           # signed, time-boxed prod-write windows
 ALLOWLIST = LOCAL / "writable-orgs.json"
 CACHE = LOCAL / ".classify-cache.json"
+ORGS = LOCAL / "orgs"                       # per-org knowledge, keyed by 18-char orgId
+ALIAS_INDEX = LOCAL / ".alias-index.json"   # alias → orgId, for NOTES only, never for authz
 TOKENS = ANCHOR / "tokens"
 # Overridable for the same reason TORQUE_HOME and TORQUE_ANCHOR are: a test must be able to
 # assert what lands in the trail without writing to the operator's real one. Anyone able to set
@@ -189,6 +191,7 @@ def classify(target: str):
     if CACHE.exists():
         try: cache = json.loads(CACHE.read_text())
         except Exception: cache = {}
+    _remember_alias(target, orgid)
     hit = cache.get(username)
     if hit and hit.get("orgId") == orgid:
         return hit["verdict"], orgid, username
@@ -304,6 +307,99 @@ _KB_PATH = TORQUE_HOME / "knowledge" / "salesforce-platform.yml"
 _KB_CACHE = None
 
 
+def _remember_alias(alias: str, orgid: str):
+    """Record alias → orgId so a note can be selected without a callout.
+
+    NOTES ONLY. Authorization re-derives the org live on every write, and must keep doing so —
+    cache_poison_resistant exists to prove a poisoned cache cannot flip a verdict. This index is
+    allowed to be stale because the worst a stale entry can do is surface the wrong org's note,
+    which is visible to the reader and changes no decision.
+    """
+    if not alias or not orgid:
+        return
+    try:
+        idx = json.loads(ALIAS_INDEX.read_text()) if ALIAS_INDEX.exists() else {}
+    except Exception:
+        idx = {}
+    if idx.get(alias) == orgid:
+        return
+    idx[alias] = orgid
+    try:
+        LOCAL.mkdir(exist_ok=True)
+        ALIAS_INDEX.write_text(json.dumps(idx))
+        os.chmod(ALIAS_INDEX, 0o600)
+    except OSError:
+        pass
+
+
+_TARGET_ORG = re.compile(r"--target-org[= ]+([A-Za-z0-9._@-]+)|(?:^|\s)-o\s+([A-Za-z0-9._@-]+)")
+
+
+def org_for_command(command: str):
+    """The 18-char orgId this command targets, from the index. None when unknown."""
+    m = _TARGET_ORG.search(command or "")
+    if not m:
+        return None
+    alias = m.group(1) or m.group(2)
+    try:
+        return json.loads(ALIAS_INDEX.read_text()).get(alias)
+    except Exception:
+        return None
+
+
+def org_notes(command: str, limit: int = 2):
+    """Findings recorded against THIS org that match this command.
+
+    Platform knowledge tells you what Salesforce does. This tells you what THIS org does — the
+    thing a consultant actually carries between engagements and currently keeps in their head.
+    It is keyed by orgId rather than alias on purpose: a sandbox refresh mints a new orgId, so
+    the memory correctly empties when the org it described no longer exists.
+    """
+    orgid = org_for_command(command)
+    if not orgid:
+        return []
+    f = ORGS / f"{orgid}.yml"
+    if not f.exists():
+        return []
+    hits = []
+    for e in _parse_org_file(f):
+        matched = 0
+        for pat in e.get("triggers") or []:
+            try:
+                if re.search(pat, command, re.I):
+                    matched += 1
+            except re.error:
+                continue
+        if matched:
+            hits.append((matched, e))
+    hits.sort(key=lambda t: -t[0])
+    return [e for _, e in hits[:limit]]
+
+
+def _parse_org_file(f):
+    out, cur, key = [], None, None
+    try:
+        for raw in f.read_text().split("\n"):
+            if raw.startswith("- id:"):
+                cur = {"id": raw.split(":", 1)[1].strip()}
+                out.append(cur); key = None
+            elif cur is None or not raw.startswith("  "):
+                continue
+            elif raw.startswith("  triggers:"):
+                body = raw.split("[", 1)[-1].rsplit("]", 1)[0]
+                cur["triggers"] = [_yaml_unquote(t) for t in body.split(",") if t.strip()]
+            elif not raw.startswith("    ") and ":" in raw:
+                k, _, v = raw.strip().partition(":")
+                v = v.strip()
+                cur[k] = "" if v in (">", "|") else _yaml_unquote(v)
+                key = k if v in (">", "|") else None
+            elif key and raw.startswith("    "):
+                cur[key] = (cur.get(key, "") + " " + raw.strip()).strip()
+    except Exception:
+        return []
+    return out
+
+
 def _yaml_unquote(v: str) -> str:
     """Strip exactly ONE matching pair of quotes, then unescape.
 
@@ -384,9 +480,24 @@ def _speak(command: str):
     if not command:
         return
     try:
+        emit_org_notes(command)          # what THIS org does outranks what the platform does
         emit_platform_notes(command)
     except Exception:
         pass              # knowledge is a courtesy; a broken catalogue must not change an exit code
+
+
+def emit_org_notes(command: str):
+    """Print findings recorded against this specific org."""
+    if os.environ.get("TORQUE_NO_NOTES") == "1":
+        return
+    for e in org_notes(command):
+        obs = " ".join((e.get("observed") or "").split())
+        rem = " ".join((e.get("remedy") or "").split())
+        if len(rem) > 200:
+            rem = rem[:197].rsplit(" ", 1)[0] + "…"
+        print(f"TORQUE ORG NOTE [{e.get('id')}] {obs}", file=sys.stderr)
+        if rem:
+            print(f"  → {rem}", file=sys.stderr)
 
 
 def emit_platform_notes(command: str):
