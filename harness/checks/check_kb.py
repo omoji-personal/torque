@@ -1735,3 +1735,48 @@ def _per_org_synthetic(lib):
     return Result("per_org_knowledge", PASS,
                   "no findings recorded here, so isolation was exercised against a synthetic "
                   "store: reaches its own org, not another, and not an unindexed alias")
+
+
+@check("no_divergent_twins", "static", catastrophe=True)
+def _no_divergent_twins():
+    """A boundary must have one implementation, not one per file.
+
+    Three separate defects in this repo have had the same shape: logic copied into two places,
+    then fixed in one. `_shield_tokens` learned that Salesforce object names are case-insensitive
+    and `_shield_text` did not, so the floor held on the CLI path and not the Apex path. A second
+    protected-path list was added beside the existing one, and the new one could not see through
+    a symlink. `_is_mcp_tool` was written into both gates within an hour of each other.
+
+    None of those were hard to spot afterwards. This looks for the next one: any function defined
+    in more than one module under hooks/ with a body that is not identical. Per-gate entry points
+    legitimately differ and are named.
+    """
+    import ast as _ast
+    ENTRY_POINTS = {"main", "handle_bash", "handle_mcp", "handle_edit", "handle_read"}
+    seen = {}
+    for f in sorted((ROOT / "hooks").glob("*.py")):
+        try:
+            tree = _ast.parse(f.read_text())
+        except SyntaxError as e:
+            return Result("no_divergent_twins", FAIL, f"{f.name} does not parse: {e}")
+        for n in tree.body:
+            if isinstance(n, _ast.FunctionDef) and n.name not in ENTRY_POINTS:
+                body = [x for x in n.body
+                        if not (isinstance(x, _ast.Expr) and isinstance(x.value, _ast.Constant))]
+                seen.setdefault(n.name, []).append((f.name, _ast.unparse(body)))
+    divergent = {name: [w for w, _ in wheres]
+                 for name, wheres in seen.items()
+                 if len(wheres) > 1 and len({src for _, src in wheres}) > 1}
+    if divergent:
+        return Result("no_divergent_twins", FAIL,
+                      f"the same function is implemented differently in more than one module — "
+                      f"this is how a fix lands in one place and not its twin: {divergent}")
+    duplicated = {name: [w for w, _ in wheres]
+                  for name, wheres in seen.items() if len(wheres) > 1}
+    if duplicated:
+        return Result("no_divergent_twins", WARN,
+                      f"identical copies of {sorted(duplicated)} — they agree today, which is "
+                      f"exactly when duplication looks harmless")
+    return Result("no_divergent_twins", PASS,
+                  f"{len(seen)} function(s) across hooks/, none defined twice outside the "
+                  f"{len(ENTRY_POINTS)} named per-gate entry points")

@@ -49,12 +49,6 @@ def handle_bash(cmd):
     lib.allow()
 
 
-def _is_mcp_tool(tool: str) -> bool:
-    """Any tool name that names a server, in either host convention — see the twin in
-    destructive_data_gate. The classifier supported two-part names; only this dispatcher's
-    `mcp__` prefix test kept them from ever reaching it."""
-    return "__" in (tool or "") and tool not in ("Bash", "Read", "Edit", "Write", "MultiEdit")
-
 
 def handle_mcp(tool, tinput):
     r = shellparse.mcp_analyze(tool, tinput)
@@ -148,7 +142,7 @@ def main():
         handle_edit(tinput)
     elif tool == "Read":
         handle_read(tinput)
-    elif _is_mcp_tool(tool):
+    elif shellparse.is_mcp_tool(tool):
         handle_mcp(tool, tinput)
     lib.allow()
 

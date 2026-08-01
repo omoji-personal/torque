@@ -1077,6 +1077,17 @@ def _mcp_destructive(name, tinput):
     return None
 
 
+def is_mcp_tool(tool: str) -> bool:
+    """Any tool name that names a server, in either host convention.
+
+    Lives here because mcp_analyze() is here, and because the two gates each carried a private
+    copy of it — identical logic, different docstrings, which is how _shield_tokens and
+    _shield_text came to disagree about casing while both looked maintained. One boundary, one
+    implementation.
+    """
+    return "__" in (tool or "") and tool not in ("Bash", "Read", "Edit", "Write", "MultiEdit")
+
+
 def mcp_analyze(tool, tinput):
     """{'read':True} | {'write':target, 'destructive':(op,digest,body)|None}. TRUE default-deny:
     an org-touching tool that is not clearly a read is a write (audit R11-04/R11-05)."""
