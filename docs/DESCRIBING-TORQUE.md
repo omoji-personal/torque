@@ -36,7 +36,7 @@ Lead with what it does that nothing else does. Safety is what makes it usable, n
 
 ```
 An AI-agent operations layer for Salesforce. It knows the platform, shows you what an operation
-will set off before it runs, and verifies every change in the org — on every org you run.
+will set off before it runs, and verifies its changes in the org rather than in a return code.
 ```
 
 ## Two-sentence — LinkedIn post opening, handoff opening, README sub-headline
@@ -45,7 +45,7 @@ will set off before it runs, and verifies every change in the org — on every o
 Torque is an AI-agent operations layer for Salesforce. It carries platform knowledge that
 re-verifies itself against a live org, tells you what a change will actually set off before it
 runs — the triggers, the flows, the cascading deletes, the records left orphaned — and proves
-every change in the org rather than trusting a return code. It works on every org you run,
+its changes in the org rather than trusting a return code. It works across the orgs you run,
 production included, because enforcement binds at the tool call instead of in a prompt.
 ```
 
@@ -70,7 +70,8 @@ State them in this order. The list is the argument.
 1. **It knows the platform** — and the knowledge argues with itself. One entry was found wrong
    and corrected by experiment; that experiment now runs on every release.
 2. **It shows you the blast radius first** — scope, triggers, flows, validation rules, cascading
-   deletes, orphaned children. Nothing else assembles this.
+   deletes, orphaned children — assembled at the command, inside the agent's loop. Release
+   tools do impact analysis too; they do it at design time, in a UI, for a human.
 3. **It verifies in the org** — never in a return code.
 4. **It gets sharper the longer you use it** — per-org knowledge, keyed so a sandbox refresh
    correctly clears it.

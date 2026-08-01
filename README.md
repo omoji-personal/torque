@@ -71,9 +71,11 @@ blocks real work gets switched off.**
    target is on an explicit allowlist **and** classifies non-production from a *live* org query at
    the moment of the write — never from an alias or a URL guess.
 3. **Deterministic gates.** Two PreToolUse hooks share one expansion-aware parser. They authorize
-   by *parsing argv* and default to deny — so indirection, grouping, wrappers, interpreters, glued
-   redirects, legacy `force:data:*` verbs and glob/`$var` path tricks are refused rather than
-   guessed. Destructive operations and anonymous Apex need an operator-present, HMAC-signed,
+   by *parsing argv* and default to deny — so indirection, grouping, wrappers, interpreters
+   carrying a Salesforce target, glued redirects, legacy `force:data:*` verbs and glob/`$var`
+   path tricks are refused rather than guessed. A script that carries no visible target is a
+   different matter, and the guide's threat model says so rather than implying otherwise.
+   Destructive operations and anonymous Apex need an operator-present, HMAC-signed,
    single-use token. **The agent can request approval; through its tool surface it provably cannot
    mint one.** A crashing gate denies rather than opens.
 4. **Production override — deliberate, not impossible.** Real work includes deploying to a client's
