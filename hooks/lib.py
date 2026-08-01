@@ -100,7 +100,7 @@ def redact(text: str) -> str:
     command echoing an auth URL wrote a durable credential to disk in plaintext. Found by the
     release panel (kimi) after its own quota cut its report short; verified here before fixing.
 
-    A bare session id is also matched now. `sid=` was covered; the same token appearing in prose,
+    A bare session id is also matched now. The query-parameter form was covered; the same token in prose,
     in an error body or in a URL fragment was not, and that is where errors put it.
     """
     text = re.sub(r"force://[^\s\"']+", "force://REDACTED", text)

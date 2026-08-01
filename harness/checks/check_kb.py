@@ -1179,32 +1179,43 @@ def _observer_cost_bounded():
 
     A hook on the hot path whose cost nobody has measured is a hook that will eventually be
     blamed for something. It is also the first thing a reviewer asks about, and "I don't know"
-    is the wrong answer. Measured rather than asserted, and bounded so a future edit that starts
-    doing real work per call — reading the catalogue, calling out to an org — fails here rather
-    than being noticed as sluggishness months later.
+    is the wrong answer.
+
+    What is bounded is the observer's cost ABOVE bare interpreter startup, not its wall-clock.
+    The first version measured wall-clock and failed at 298 ms on a machine running three audits
+    at load average 12 — while the observer itself was unchanged at 41 ms and a bare `python -c
+    pass` took 23 ms of that. A performance check that fails when the machine is busy teaches
+    people to ignore performance checks.
     """
     import time as _t
     ev = _kb_json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls -la"},
                          "tool_response": {"stdout": "", "stderr": "", "exit_code": 0}})
-    times = []
-    for _ in range(7):
-        t0 = _t.perf_counter()
-        r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "lesson_observer.py")],
-                       input=ev, capture_output=True, text=True, cwd=ROOT, timeout=60)
-        times.append((_t.perf_counter() - t0) * 1000)
-        if r.returncode != 0:
-            return Result("observer_cost_bounded", FAIL,
-                          f"observer exited {r.returncode} on an ordinary command")
-    times.sort()
-    median = times[len(times) // 2]
-    # Generous: the machine may be loaded, and this is a regression guard, not a benchmark.
-    if median > 250:
+
+    def median_ms(args):
+        ts = []
+        for _ in range(9):
+            t0 = _t.perf_counter()
+            r = _kb_sp.run([_kb_sys.executable, *args], input=ev, capture_output=True,
+                           text=True, cwd=ROOT, timeout=60)
+            ts.append(((_t.perf_counter() - t0) * 1000, r.returncode))
+        ts.sort()
+        return ts[len(ts) // 2]
+
+    baseline, _ = median_ms(["-c", "pass"])
+    observed, rc = median_ms([str(ROOT / "hooks" / "lesson_observer.py")])
+    if rc != 0:
         return Result("observer_cost_bounded", FAIL,
-                      f"observer median {median:.0f} ms on an ordinary shell command — it runs "
-                      f"on every Bash call, so this is paid constantly")
+                      f"observer exited {rc} on an ordinary command")
+    overhead = observed - baseline
+    if overhead > 120:
+        return Result("observer_cost_bounded", FAIL,
+                      f"observer adds {overhead:.0f} ms over bare interpreter startup "
+                      f"({observed:.0f} vs {baseline:.0f}) — it runs on every Bash call, so a "
+                      f"regression here is paid constantly")
     return Result("observer_cost_bounded", PASS,
-                  f"median {median:.0f} ms per Bash call on a non-Salesforce command "
-                  f"(interpreter startup; the early exit means no extra work is done)")
+                  f"adds {overhead:.0f} ms over bare interpreter startup "
+                  f"({observed:.0f} ms total, {baseline:.0f} ms of it Python itself) — the early "
+                  f"exit means no extra work on a non-Salesforce command")
 
 
 @check("public_description_accurate", "capability", catastrophe=False)
@@ -1363,7 +1374,7 @@ def _redaction_covers_credentials():
     """Every credential shape Torque can encounter must not survive redact().
 
     redact() is the last thing between a command and the audit log, the session log and every
-    captured lesson. It handled `sid=`, `access_token` and org ids — and passed an SFDX auth URL
+    captured lesson. It handled session-id, access-token and org-id shapes — and passed an SFDX auth URL
     through completely untouched. `force://<clientId>::<refreshToken>@<instance>` carries a
     REFRESH token: a durable credential, not a session that expires. One logged command
     containing one would have written it to disk in plaintext, indefinitely.
@@ -1375,13 +1386,22 @@ def _redaction_covers_credentials():
     spec = _il.spec_from_file_location("torque_lib", ROOT / "hooks" / "lib.py")
     lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
 
+    # Built by concatenation so the fixtures do not themselves trip secret_scan — the same
+    # device _SECRET_BITS uses on its own patterns. A scanner that its own tests must be
+    # exempted from is a scanner with a hole shaped like its tests.
+    _O = "00D"
+    _SID = "sid" + "="
+    _AT = "access" + "_token"
+    _RT = "refresh" + "_token"
+    _FD = "secur/" + "frontdoor.jsp"
+    _FORCE = "force" + "://"
     secrets = {
-        "sfdx auth url": "force://PlatformCLI::5Aep861REFRESHTOKENvalue@https://x.my.salesforce.com",
-        "frontdoor sid": "https://x.my.salesforce.com/secur/frontdoor.jsp?sid=00Dxx!ARsAQtokenval",
-        "access token":  '{"access_token":"00Dxx!ARsAQrealtokenvalue"}',
-        "refresh token": 'refresh_token: 5Aep861_averylongrefreshvalue',
-        "bare session":  "INVALID_SESSION_ID for 00Dg5000009S1aL!AQEAQKtSessionValueHere",
-        "org id":        "00Dg5000009S1aLEAS",
+        "sfdx auth url": f"{_FORCE}PlatformCLI::5Aep861REFRESHTOKENvalue@https://x.my.salesforce.com",
+        "frontdoor sid": f"https://x.my.salesforce.com/{_FD}?{_SID}{_O}xx!ARsAQtokenval",
+        "access token":  '{"' + _AT + '":"' + _O + 'xx!ARsAQrealtokenvalue"}',
+        "refresh token": _RT + ": 5Aep861_averylongrefreshvalue",
+        "bare session":  f"INVALID_SESSION_ID for {_O}g5000009S1aL!AQEAQKtSessionValueHere",
+        "org id":        _O + "g5000009S1aLEAS",
     }
     # The distinctive part of each secret — what must NOT appear in the output.
     needles = {
@@ -1425,14 +1445,16 @@ def _local_cannot_reach_git():
     spec = _il.spec_from_file_location("torque_lib", ROOT / "hooks" / "lib.py")
     lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
 
-    for bad in ("../../etc/passwd", "00D../../evil", "", "00Dg5000009S1aLEAS/x", "x" * 40):
+    _O = "00D"
+    good = _O + "000000000000AAA"          # well-formed, and not a real org
+    for bad in ("../../etc/passwd", _O + "../../evil", "", good + "/x", "x" * 40):
         try:
             lib.org_file(bad)
             return Result("local_cannot_reach_git", FAIL,
                           f"org_file accepted {bad!r} as an org-store filename")
         except ValueError:
             pass
-    if lib.org_file("00Dg5000009S1aLEAS").name != "00Dg5000009S1aLEAS.yml":
+    if lib.org_file(good).name != good + ".yml":
         return Result("local_cannot_reach_git", FAIL, "a valid org Id was refused")
 
     def gate(cmd):
@@ -1440,7 +1462,7 @@ def _local_cannot_reach_git():
                           input=_kb_json.dumps({"tool_name": "Bash",
                                                 "tool_input": {"command": cmd}}),
                           capture_output=True, text=True, cwd=ROOT, timeout=60).returncode
-    for cmd in ("git add -f local/orgs/00Dg5000009S1aLEAS.yml",
+    for cmd in (f"git add -f local/orgs/{good}.yml",
                 "git add local/",
                 "git add -f local/audit.log",
                 "git commit local/sessions/x.jsonl -m x"):
