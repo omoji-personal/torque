@@ -110,7 +110,7 @@ entries:
   domain: deploy
   title: Deploy order is not cosmetic — dependencies fail in a fixed direction
   symptom: "Deploys fail with missing-component errors that disappear if you re-run them."
-  cause: "Components reference each other, and the Metadata API does not reorder for you."
+  cause: "Components reference each other, and the Metadata API resolves dependencies WITHIN a single payload but does not reorder across separate deploy calls."
   remedy: >
     Objects and fields first, then permission sets (so FLS exists before anything references
     the fields), then Apex, then flows, then layouts and FlexiPages, then profiles last and
@@ -355,24 +355,6 @@ entries:
   updated: 2026-08-01
 
 # ── AUTH / BROWSER ─────────────────────────────────────────────────────────────────────────
-- id: mfa-phishing-resistant
-  domain: auth
-  title: Phishing-resistant MFA removed TOTP as an option for privileged users
-  symptom: "A scripted UI login that worked for years now stops at an authenticator prompt."
-  cause: >
-    Salesforce's phishing-resistant MFA enforcement (production from 20 July 2026, staggered;
-    the widely-quoted 1 July date was withdrawn) restricts privileged users — System
-    Administrator, or Modify All Data / View All Data / Customize Application / Author Apex —
-    to FIDO2/WebAuthn. The change that breaks automation is that TOTP no longer qualifies: a
-    shared secret could be handed to a script, an authenticator cannot.
-  remedy: >
-    Do not log in from automation. Hand off from an already-authenticated CLI session, which
-    MFA does not re-challenge.
-  triggers: ['org\s+open', 'frontdoor', 'login']
-  confidence: documented
-  source: "Salesforce Help — Phishing-resistant MFA enforcement"
-  updated: 2026-08-01
-
 - id: frontdoor-session-handoff
   domain: auth
   title: frontdoor.jsp carries a live session in the URL, and some orgs refuse it
@@ -560,7 +542,7 @@ entries:
 
 - id: prod-deploy-runs-tests
   domain: deploy
-  title: 'Every production deploy runs Apex tests, and org-wide coverage gates it'
+  title: 'A production deploy carrying Apex runs tests, and org-wide coverage gates it'
   symptom: >
     A deploy that validated in a sandbox in seconds takes an hour against production, or fails
     on coverage in code the change never touched
@@ -629,5 +611,22 @@ entries:
     must preserve an inactive value, reactivate it for the load or drop the field from the
     update.
   triggers: ['data\s+update', '--values', 'picklist']
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: purge-flag-belongs-to-deploy
+  domain: deploy
+  title: '--purge-on-delete is a deploy flag, not a delete flag'
+  symptom: >
+    sf project delete source --purge-on-delete fails with 'Nonexistent flag'
+  cause: >
+    Hard deletion is expressed as a destructive-changes deploy, so --purge-on-delete lives on sf
+    project deploy start --metadata-dir, alongside destructiveChangesPost.xml. The delete-source
+    command has no equivalent; it only ever soft-deletes.
+  remedy: >
+    Build a destructive manifest and deploy it with --purge-on-delete. And read the result: a
+    teardown that falls back to delete source after a failed purge leaves a tombstone, which
+    looks exactly like purge behaviour and will teach you the wrong lesson about what purge
+    does.
   confidence: practitioner
   updated: 2026-08-01
