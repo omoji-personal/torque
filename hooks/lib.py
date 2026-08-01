@@ -226,7 +226,15 @@ def load_allowlist():
                 continue
             out[oid] = e
         return out
-    except Exception:
+    except Exception as e:
+        # Fail closed, but say why somewhere. A malformed allowlist made every write report
+        # "not authorized", with nothing anywhere connecting that to a JSON typo — the operator
+        # is left debugging authorization instead of a file. The user-facing message stays
+        # terse; the reason goes to the audit log.
+        try:
+            audit("DENY", f"allowlist unreadable ({type(e).__name__}) — treating as empty")
+        except Exception:
+            pass
         return None                                   # malformed ⇒ deny
 
 _ORGID_RE = re.compile(r"^00D[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
