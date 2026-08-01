@@ -4,6 +4,7 @@
 # Salesforce ships three releases a year, so a fact recorded once decays on a schedule.
 import json as _kb_json
 import subprocess as _kb_sp
+import os as _kb_os
 import re as _kb_re
 import sys as _kb_sys
 from pathlib import Path as _KbP
@@ -446,3 +447,79 @@ def _limit_relabel_is_safe():
     return Result("limit_relabel_is_safe", PASS,
                   f"rate-limited run degrades to {limited!r}, never PASS; ordinary failures "
                   f"still FAIL")
+
+
+@check("session_log_path_containment", "static", catastrophe=True)
+def _session_log_path_containment():
+    """An org alias must never be able to steer a write outside the sessions directory.
+
+    The alias came from the caller and went straight into a path — `d / f"{org}.jsonl"` — so
+    an org named `../../../../tmp/x` wrote a file into the home directory. That was verified
+    by doing it, not by reading the code. The alias is attacker-adjacent in the only way that
+    matters here: it is whatever string reached the tool.
+    """
+    import importlib.machinery as _im, importlib.util as _il
+    src = ROOT / "bin" / "torque-log"
+    spec = _il.spec_from_file_location("torque_log", src,
+                                       loader=_im.SourceFileLoader("torque_log", str(src)))
+    mod = _il.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    base = (mod.lib.LOCAL / "sessions")
+    base.mkdir(parents=True, exist_ok=True)
+    escapes = []
+    for hostile in ("../../../../tmp/evil", "..", "/etc/passwd", "a/../../b", "....//x",
+                    "sf-‮prod", "con", ".", "-rf"):
+        try:
+            p = mod._log_path(base, hostile)
+        except ValueError:
+            continue                       # refused outright, which is also correct
+        if not str(p.resolve()).startswith(str(base.resolve()) + _kb_os.sep):
+            escapes.append(f"{hostile!r} → {p}")
+    if escapes:
+        return Result("session_log_path_containment", FAIL,
+                      f"alias escaped the sessions directory: {escapes}")
+    ok = mod._log_path(base, "sf-coffee")
+    if ok.name != "sf-coffee.jsonl":
+        return Result("session_log_path_containment", FAIL,
+                      f"an ordinary alias was mangled to {ok.name!r} — sanitising must not "
+                      f"break the normal case")
+    return Result("session_log_path_containment", PASS,
+                  "8 hostile aliases contained; an ordinary alias is unchanged")
+
+
+@check("allow_decisions_logged", "static", catastrophe=False)
+def _allow_decisions_logged():
+    """The audit trail must contain the decisions the documentation says it contains.
+
+    DENY and PROD-WRITE were logged; ALLOW was not logged at all, while the guide described
+    the file as a complete decision trail. Either the code or the sentence had to change. The
+    code did, but selectively: an ALLOW is recorded when the command touches Salesforce, and
+    not for the thousands of ordinary shell calls that would otherwise bury it.
+    """
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td:
+        env = dict(_kb_os.environ, TORQUE_HOME=str(ROOT), HOME=td,
+                   TORQUE_ANCHOR=str(_KbP(td) / ".torque"))
+        log = _KbP(td) / "audit.log"
+        env["TORQUE_AUDIT_LOG"] = str(log)
+
+        def fire(cmd):
+            _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                       input=_kb_json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
+                       capture_output=True, text=True, cwd=ROOT, timeout=60, env=env)
+
+        fire("sf data query --target-org zzz --query \"SELECT Id FROM Account\"")
+        fire("ls -la")
+        if not log.exists():
+            return Result("allow_decisions_logged", NA,
+                          "audit log path is not overridable by env; cannot assert in isolation")
+        lines = [_kb_json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+        allows = [x for x in lines if x.get("decision") == "ALLOW"]
+        if not any("sf data query" in str(x.get("detail")) for x in allows):
+            return Result("allow_decisions_logged", FAIL,
+                          "an allowed Salesforce operation produced no ALLOW entry")
+        if any("ls -la" in str(x.get("detail")) for x in lines):
+            return Result("allow_decisions_logged", FAIL,
+                          "an ordinary shell command was logged — the trail will drown")
+    return Result("allow_decisions_logged", PASS,
+                  "an allowed Salesforce operation is recorded; ordinary shell calls are not")

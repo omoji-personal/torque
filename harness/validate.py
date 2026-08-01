@@ -146,16 +146,29 @@ _SECRET_BITS = ["00D" + "[A-Za-z0-9]{12,15}", "secur/" + "frontdoor.jsp",
 def _secret_scan():
     rx = re.compile("|".join(_SECRET_BITS))
     self_path = str(Path(__file__).resolve())
+    scanned, unreadable = 0, []
     for f in sh("git", "ls-files").stdout.splitlines():
         p = ROOT / f
         if str(p.resolve()) == self_path:      # exact-path self-exemption
             continue
         try:
-            if rx.search(p.read_text(errors="ignore")):
-                return Result("secret_scan", FAIL, f"secret-shaped token in {f}")
-        except Exception:
+            body = p.read_text(errors="ignore")
+        except Exception as e:
+            # A file the scanner could not open is a file the scanner cannot clear. Skipping it
+            # silently and then reporting "tracked files clean" states something stronger than
+            # was checked, which is the precise shape of a scanner nobody should trust.
+            unreadable.append(f"{f} ({type(e).__name__})")
             continue
-    return Result("secret_scan", PASS, f"{len(_SECRET_BITS)} patterns, tracked files clean")
+        scanned += 1
+        if rx.search(body):
+            return Result("secret_scan", FAIL, f"secret-shaped token in {f}")
+    if unreadable:
+        return Result("secret_scan", FAIL,
+                      f"{len(unreadable)} tracked file(s) could not be read, so cannot be "
+                      f"declared clean: {unreadable[:3]}")
+    return Result("secret_scan", PASS,
+                  f"{len(_SECRET_BITS)} patterns across {scanned} tracked files, all readable, "
+                  f"all clean")
 
 # ---- CHECK: org classification (three-valued; dev != production) ----------
 @check("org_classify", "capability", catastrophe=True)

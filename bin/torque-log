@@ -13,7 +13,7 @@ asserts the record is well-formed, redacted, and 0600 — so the claim binds.
 Entries land in local/sessions/<org>.jsonl (gitignored, mode 0600). Values are redacted through
 the same path the audit log uses: session ids, tokens and org ids never land on disk in the clear.
 """
-import argparse, json, os, sys, time
+import argparse, json, os, re, sys, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
@@ -22,11 +22,29 @@ import lib
 REQUIRED = ("t", "iso", "org", "action", "before", "after", "reversible")
 
 
+_SAFE_ORG = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _log_path(d, org):
+    """A filename derived from the alias, that cannot leave the sessions directory.
+
+    The alias arrived from the caller and went straight into a path, so an org named
+    `../../../tmp/x` wrote outside `local/sessions` entirely — verified before this fix, which
+    put a file in the home directory. Sanitising is the fix; the containment assertion after it
+    is there because sanitising regexes get relaxed later by someone solving a different problem.
+    """
+    name = _SAFE_ORG.sub("_", org).strip("._-") or "unnamed"
+    p = (d / f"{name}.jsonl").resolve()
+    if not str(p).startswith(str(d.resolve()) + os.sep):
+        raise ValueError(f"refusing to write outside the sessions directory: {org!r}")
+    return p
+
+
 def write_entry(org, action, before, after, note=""):
     d = lib.LOCAL / "sessions"
     d.mkdir(parents=True, exist_ok=True)
     os.chmod(d, 0o700)
-    p = d / f"{org}.jsonl"
+    p = _log_path(d, org)
     entry = {
         "t": int(time.time()),
         "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),

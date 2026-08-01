@@ -441,7 +441,7 @@ python3 harness/validate.py --profile release --target-org my-dev-org</pre>
   <h4>What lands on disk</h4>
   <table class="plain"><tbody>
     <tr><td>~/.torque</td><td>Trust anchor, mode 0700, <strong>outside the repo</strong> — signing secret, approval tokens, session grants, approved Apex bodies</td></tr>
-    <tr><td>local/audit.log</td><td>Every ALLOW / DENY / PROD-WRITE decision, JSON lines, redacted, 0600</td></tr>
+    <tr><td>local/audit.log</td><td>Every DENY and PROD-WRITE, and every ALLOW of a Salesforce operation — JSON lines, redacted, 0600</td></tr>
     <tr><td>local/sessions/</td><td>Session log and undo data, 0600</td></tr>
     <tr><td>local/writable-orgs.json</td><td>The write allowlist — a client can read exactly what the agent may touch</td></tr>
   </tbody></table>

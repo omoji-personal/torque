@@ -25,7 +25,10 @@ PROD_SESSIONS = ANCHOR / "prod-sessions"           # signed, time-boxed prod-wri
 ALLOWLIST = LOCAL / "writable-orgs.json"
 CACHE = LOCAL / ".classify-cache.json"
 TOKENS = ANCHOR / "tokens"
-AUDIT = LOCAL / "audit.log"
+# Overridable for the same reason TORQUE_HOME and TORQUE_ANCHOR are: a test must be able to
+# assert what lands in the trail without writing to the operator's real one. Anyone able to set
+# this variable already controls the process the hook runs in, so it widens nothing.
+AUDIT = Path(os.environ.get("TORQUE_AUDIT_LOG", LOCAL / "audit.log"))
 PROTECTED = TORQUE_HOME / "harness" / "checks" / "protected-objects"
 
 ELIGIBLE = {"sandbox", "developer", "scratch"}   # NOT production, NOT unverifiable
@@ -410,9 +413,21 @@ def read_event():
         raise InvalidEvent("hook payload is not an object")
     return ev
 
+_SF_SHAPED = re.compile(r"(^|[|;&(\s])sf\s")
+
+
 def allow(command: str = ""):
-    """Exit 0 — and, on the way out, say anything the platform catalogue knows about this."""
-    _speak(command or _JUDGED["command"])
+    """Exit 0 — logging the decision, and saying anything the catalogue knows about it.
+
+    Only Salesforce-shaped commands are logged. The alternative readings were both worse: log
+    nothing, which is what happened before and made the documented claim of a complete decision
+    trail false; or log every Bash call, which buries the twenty decisions that matter under
+    ten thousand `ls` and `grep` lines until nobody reads the file.
+    """
+    cmd = command or _JUDGED["command"]
+    if cmd and _SF_SHAPED.search(cmd):
+        audit("ALLOW", redact(cmd)[:300])
+    _speak(cmd)
     sys.exit(0)
 
 def deny(reason: str, fingerprint: str = "", hook_id: str = ""):
