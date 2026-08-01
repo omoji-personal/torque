@@ -1480,3 +1480,63 @@ def _local_cannot_reach_git():
     return Result("local_cannot_reach_git", PASS,
                   "5 malformed org Ids refused as filenames; 4 staging paths blocked; "
                   "4 ordinary git commands unaffected; nothing under local/ is tracked")
+
+
+@check("checkup_cannot_confirm_on_auth_failure", "static", catastrophe=True)
+def _checkup_cannot_confirm_on_auth_failure():
+    """A failure that says nothing about an entry must never read as the entry being confirmed.
+
+    Two entries exist BECAUSE the platform refuses a query, so for them an error IS the
+    confirmation. The code accepted any non-zero response as that confirmation — including
+    INVALID_SESSION_ID. A logged-out CLI could therefore "confirm" the catalogue, and JSON mode
+    returned 0 unconditionally, so a wholly failed checkup was green to anything consuming it.
+    """
+    import importlib.machinery as _im, importlib.util as _il
+    from types import SimpleNamespace as _NS
+    src = ROOT / "bin" / "torque-checkup"
+    spec = _il.spec_from_file_location("torque_checkup", src,
+                                       loader=_im.SourceFileLoader("torque_checkup", str(src)))
+    m = _il.module_from_spec(spec); spec.loader.exec_module(m)
+
+    # m.subprocess IS the shared subprocess module, so assigning to m.subprocess.run patches it
+    # process-wide. The first version did exactly that and broke every check that ran after this
+    # one — installer_roundtrip and differential_fuzz both failed carrying this function's stub
+    # payload in their output. Patch the module reference on the loaded module only, and put it
+    # back.
+    _real_subprocess = m.subprocess
+
+    class _FakeSubprocess:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def run(self, *a, **k):
+            return _NS(returncode=1, stdout=self.payload, stderr="")
+
+    def stub(payload):
+        m.subprocess = _FakeSubprocess(payload)
+
+    cases = [
+        ('{"status":1,"name":"INVALID_SESSION_ID","message":"expired"}', "error", "expired session"),
+        ('{"status":1,"name":"REQUEST_LIMIT_EXCEEDED","message":"TotalRequests Limit exceeded"}',
+         "error", "spent API budget"),
+        ('{"status":1,"name":"INVALID_FIELD","message":"cannot be filtered"}',
+         "confirmed", "a real platform refusal"),
+    ]
+    try:
+        for payload, want, label in cases:
+            stub(payload)
+            got, _ = m.run_probe("x", "SELECT Id FROM X", (False, False), "error")
+            if got != want:
+                return Result("checkup_cannot_confirm_on_auth_failure", FAIL,
+                              f"{label} classified {got!r}, expected {want!r}")
+    finally:
+        m.subprocess = _real_subprocess
+    if m._verdict([{"status": "error"}]) == 0:
+        return Result("checkup_cannot_confirm_on_auth_failure", FAIL,
+                      "a checkup containing an error reported success")
+    if m._verdict([{"status": "affected"}, {"status": "clear"}]) != 0:
+        return Result("checkup_cannot_confirm_on_auth_failure", FAIL,
+                      "a clean checkup reported failure")
+    return Result("checkup_cannot_confirm_on_auth_failure", PASS,
+                  "auth and limit failures are errors, not confirmation; a real refusal still "
+                  "confirms; the verdict is non-zero whenever the picture is untrustworthy")

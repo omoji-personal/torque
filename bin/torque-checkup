@@ -38,6 +38,15 @@ KB = ROOT / "knowledge" / "salesforce-platform.yml"
 
 # A probe is runnable only if it reduces to a single SELECT. Two shapes appear in the catalogue:
 # a bare SOQL string, and an `sf data query ... --query "..."` invocation whose payload we lift.
+# A failure that says nothing about the entry. An expired session, a dead network or a spent
+# API budget is not the platform confirming anything — and for an `expect: error` probe the old
+# code counted ANY non-zero response as confirmation, so a logged-out CLI could "confirm" the
+# whole catalogue (release panel, codex/gpt-5.6-sol).
+_NOT_ABOUT_THE_ENTRY = ("INVALID_SESSION_ID", "expired", "No authorization information",
+                        "No org configuration found", "REQUEST_LIMIT_EXCEEDED",
+                        "TotalRequests Limit exceeded", "ENOTFOUND", "socket hang up",
+                        "ECONNREFUSED", "certificate")
+
 _SF_QUERY = re.compile(r"""--query\s+(?P<q>"[^"]+"|'[^']+')""")
 _SELECT = re.compile(r"^\s*SELECT\s", re.I)
 _TRAILING_COMMENT = re.compile(r"\s+(--|#)\s.*$")
@@ -123,6 +132,10 @@ def run_probe(target, soql, flags, expect):
         return "error", f"{type(e).__name__}: {str(e)[:90]}"
     err = f"{d.get('name')}: {' '.join(str(d.get('message', '')).split())[:110]}"
     if d.get("status") != 0:
+        blob = (r.stdout or "") + (r.stderr or "")
+        if any(m in blob for m in _NOT_ABOUT_THE_ENTRY):
+            # Never confirmation, whatever the entry expects: the org did not answer the question.
+            return "error", err
         return ("confirmed" if expect == "error" else "broken-probe"), err
     n = (d.get("result") or {}).get("totalSize", 0)
     if expect == "error":
@@ -193,6 +206,13 @@ def _record(target, results):
           f"→ {f.relative_to(ROOT)} [0600]", file=sys.stderr)
 
 
+def _verdict(results):
+    """3 when the picture is not trustworthy: a probe that could not run, an entry the platform
+    contradicted, or a probe whose failure says nothing about the entry."""
+    bad = {"broken-probe", "entry-contradicted", "error"}
+    return 3 if any(r["status"] in bad for r in results) else 0
+
+
 def main():
     ap = argparse.ArgumentParser(prog="torque checkup", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -222,7 +242,9 @@ def main():
 
     if a.json:
         print(json.dumps({"org": a.target_org, "probes": results}, indent=2))
-        return 0
+        # JSON mode returned 0 unconditionally, so a completely failed checkup was green to
+        # anything consuming it. Same verdict as the text path.
+        return _verdict(results)
 
     by = {}
     for r in results:
@@ -262,7 +284,7 @@ def main():
     print(f"\n  {len(by.get('affected', []))} finding(s) live, "
           f"{len(by.get('confirmed', []))} entry(ies) confirmed, {len(clear)} clear, "
           f"{len(ne)} not executed, {len(by.get('broken-probe', []))} broken.")
-    return 3 if (by.get("broken-probe") or by.get("entry-contradicted")) else 0
+    return _verdict(results)
 
 
 if __name__ == "__main__":

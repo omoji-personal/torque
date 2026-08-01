@@ -573,7 +573,7 @@ entries:
   remedy: >
     Verify activation after every flow deploy by reading the active version back, not by
     trusting the deploy result or the file. Retrieve and check status, or read
-    FlowDefinition.ActiveVersionNumber.
+    FlowDefinition.ActiveVersionId.
   triggers: ['Flow\b', 'project\s+deploy.*Flow', 'FlowDefinition']
   confidence: practitioner
   updated: 2026-08-01
