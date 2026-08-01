@@ -387,7 +387,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 13            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 14            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -596,6 +596,22 @@ def self_test(target=None):
         ok &= passed
     finally:
         lbf.write_text(orig6)
+    # single-use mutator: replace the atomic rename-claim with the exists-then-read shape a
+    # refactor would naturally reach for. Concurrent claimers must then BOTH be authorized —
+    # proving the check races the claim rather than merely calling it twice in a row.
+    orig7 = lbf.read_text()
+    try:
+        lbf.write_text(orig7.replace(
+            "        os.rename(p, claim)                           # atomic single-use claim",
+            "        import shutil; shutil.copyfile(p, claim)  # MUTANT: read without claiming\n"
+            "        os.unlink(p) if False else None", 1))
+        fn = dict((n, f) for n, _p, _c, f in REGISTRY).get("token_is_single_use")
+        r = fn()
+        passed = r.outcome == FAIL
+        print(f"  {'✓' if passed else '✗'} single-use (rename-claim) mutator: expected FAIL, got {r.outcome}")
+        ok &= passed
+    finally:
+        lbf.write_text(orig7)
     # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
     # Editing the FILE does nothing here — lib is already imported, so the check would keep using
     # the cached function and report a false PASS. Patching the live module object is both the

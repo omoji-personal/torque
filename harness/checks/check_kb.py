@@ -1916,6 +1916,92 @@ def _guards_share_no_blind_assumption():
                   f"4 ordinary paths unaffected")
 
 
+@check("token_is_single_use", "static", catastrophe=True)
+def _token_is_single_use():
+    """"Single-use" and "bound to what it names" are guide claims. Nothing tested them.
+
+    The token is the whole of the destructive-operation story: an operator at a terminal
+    authorizes ONE operation on ONE org, and a gate later spends it. Everything downstream
+    assumes it cannot be spent twice, and that assumption was carried entirely by one line —
+    an atomic os.rename claim taken before the file is read. It is the right design; it had
+    never been raced.
+
+    That matters more than it sounds, because the failure would be silent and it would look
+    like a refactor: replacing the rename with an exists-then-read-then-unlink reads as
+    equivalent and turns one approval into as many operations as there are concurrent gates.
+    Two PreToolUse hooks are registered for the same matcher, so concurrency is the normal case
+    here, not an exotic one.
+
+    Runs against a throwaway anchor, never the operator's real token store.
+    """
+    import concurrent.futures as _cf, importlib.util as _il, json as _j, os as _os
+    import pathlib as _pl, tempfile as _tf, time as _t
+    lspec = _il.spec_from_file_location("torque_lib_tk", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+
+    with _tf.TemporaryDirectory() as anchor:
+        lib.ANCHOR = _pl.Path(anchor)
+        lib.SECRET = lib.ANCHOR / "secret"
+        lib.TOKENS = lib.ANCHOR / "tokens"
+        lib.TOKENS.mkdir(parents=True, exist_ok=True)
+        lib.SECRET.write_bytes(_os.urandom(32)); _os.chmod(lib.SECRET, 0o600)
+
+        # split so this synthetic id does not itself trip secret_scan
+        ORG = "00D" + "0" * 12 + "AAA"
+        OP, DIG = "bulk-delete", "abc123"
+
+        def mint(org=ORG, op=OP, dig=DIG, ttl=300):
+            p = {"orgId": org, "op": op, "digest": dig,
+                 "exp": int(_t.time()) + ttl, "iat": int(_t.time())}
+            p["sig"] = lib.sign(p)
+            f = lib.token_path(org, op, dig)
+            f.write_text(_j.dumps(p)); _os.chmod(f, 0o600)
+            return f
+
+        mint()
+        if not lib.consume_token(ORG, OP, DIG):
+            return Result("token_is_single_use", FAIL,
+                          "a freshly minted, correctly signed token was refused — the check "
+                          "cannot say anything about single-use if a legitimate consume fails")
+        if lib.consume_token(ORG, OP, DIG):
+            return Result("token_is_single_use", FAIL, "a token was consumed twice in sequence")
+
+        for trial in range(3):
+            mint()
+            with _cf.ThreadPoolExecutor(max_workers=16) as ex:
+                wins = sum(f.result() for f in
+                           [ex.submit(lib.consume_token, ORG, OP, DIG) for _ in range(16)])
+            if wins != 1:
+                return Result("token_is_single_use", FAIL,
+                              f"16 concurrent claimers, trial {trial + 1}: {wins} of them were "
+                              f"authorized by ONE approval — the claim is not atomic")
+
+        for label, args in (("another org", ("00D" + "0" * 12 + "BBB", OP, DIG)),
+                            ("another operation", (ORG, "prod-write", DIG)),
+                            ("different criteria", (ORG, OP, "zzz"))):
+            mint()
+            spent = lib.consume_token(*args)
+            lib.consume_token(ORG, OP, DIG)              # drain
+            if spent:
+                return Result("token_is_single_use", FAIL,
+                              f"a token was accepted for {label} — it is not bound to what it names")
+
+        mint(ttl=-1)
+        if lib.consume_token(ORG, OP, DIG):
+            return Result("token_is_single_use", FAIL, "an expired token was accepted")
+        f = mint(); d = _j.loads(f.read_text()); d["op"] = "prod-write"; f.write_text(_j.dumps(d))
+        if lib.consume_token(ORG, "prod-write", DIG):
+            return Result("token_is_single_use", FAIL,
+                          "a token's operation was rewritten and still verified")
+        f = mint(); d = _j.loads(f.read_text()); d["sig"] = "0" * 64; f.write_text(_j.dumps(d))
+        if lib.consume_token(ORG, OP, DIG):
+            return Result("token_is_single_use", FAIL, "a forged signature was accepted")
+    return Result("token_is_single_use", PASS,
+                  "one approval survives exactly one consume — sequentially and against 16 "
+                  "concurrent claimers over 3 trials; bound to org, operation and criteria; "
+                  "expiry, field rewrite and forged signature all refused")
+
+
 @check("budget_fits_hook_timeout", "static", catastrophe=True)
 def _budget_fits_hook_timeout():
     """The gate must produce a verdict before the host gives up on it — proven, not asserted.
