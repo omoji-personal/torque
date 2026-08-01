@@ -68,3 +68,24 @@ def _coverage():
     if unknown:
         return Result("deliverable_coverage", WARN, f"unclassified tracked paths: {unknown[:5]}")
     return Result("deliverable_coverage", PASS, f"{len(tracked)} tracked paths, all classified")
+
+@check("differential_fuzz", "static", catastrophe=True)
+def _differential_fuzz():
+    """Generate command variants and compare the gate against what BASH ACTUALLY DOES.
+
+    Fixtures pin the shapes someone already thought of, which is precisely the coverage that
+    kept turning out to be incomplete — every adversarial round found the same bug wearing a
+    new costume. This asks a different question: for a mechanically generated corpus, does the
+    gate's verdict match reality? Ground truth comes from executing each command in a throwaway
+    sandbox with a recording `sf` stub and a canary secret, so the answer is bash's, not a
+    second copy of our own assumptions.
+    """
+    r = _sp.run(["python3", str(ROOT/"harness"/"tests"/"differential_fuzz.py")],
+                capture_output=True, text=True, timeout=900)
+    out = (r.stdout + r.stderr).strip()
+    last = [l.strip() for l in out.split("\n") if "generated cases" in l]
+    detail = last[-1] if last else out[-120:]
+    if r.returncode != 0:
+        return Result("differential_fuzz", FAIL,
+                      f"gate disagreed with real bash — {detail}")
+    return Result("differential_fuzz", PASS, detail or "gate matched real bash on every case")
