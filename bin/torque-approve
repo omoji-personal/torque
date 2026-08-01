@@ -47,7 +47,7 @@ def _org_details(target):
     # operator has already authorised.
     try:
         wanted = lib.norm_id(target)
-        for e in (lib.load_allowlist() or []):
+        for e in (lib.load_allowlist() or {}).values():   # load_allowlist returns a DICT; iterating it yielded orgId STRINGS, so e.get() raised and the fallback silently resolved nothing — the gate then printed remediation that could not work
             if lib.norm_id(e.get("orgId") or e.get("org_id") or "") == wanted:
                 user = e.get("username") or e.get("alias")
                 if user:

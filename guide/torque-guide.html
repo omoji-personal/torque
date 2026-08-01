@@ -483,7 +483,7 @@ python3 harness/validate.py --profile release --target-org my-dev-org</pre>
 
   <h4>Step 4 — work</h4>
   <p>
-    Open the folder in Claude Code. The hooks fire on every tool call; nothing further is needed.
+    Open the folder in Claude Code. The hooks fire on the tool calls that can reach an org or the gate's own files — Bash, MCP, Edit/Write/MultiEdit and Read. Nothing further is needed.
     Start read-only — <em>“audit this org”</em> — and watch the survey come back. Skills are
     invoked in plain language: <em>“add a Priority Score formula field to Account,”</em>
     <em>“set Industry to Technology for all Partner accounts,”</em> <em>“log what we just did.”</em>

@@ -199,10 +199,10 @@ classification), not one-off patches.
 
 ---
 
-## P5 — release · converged and shipped · 2026-07-31
+## P5 — release · 2026-07-31  *(superseded — see P6)*
 
 **Attestation:** commit `486e638`, tree `0a88062`, sf 2.144.6, node v24.11.1, denylist digest
-`129a9dfe…` (`harness/attest/attest-af928a8.json`) · **profile: release · verdict: PASS**
+`129a9dfe…` (attestation file for this run was never written — the generator of the day recorded no check outcomes; see P6) · **profile: release · verdict: PASS**
 
 `python3 harness/validate.py --profile release --target-org sf-coffee` is green end to end:
 
@@ -218,3 +218,36 @@ classification), not one-off patches.
 - **196 adversarial fixtures** across base + r11 + r12 + r13 + r14 + confirmation.
 
 Reproduce on any free DE org with the command above. **Torque is converged and shippable.**
+
+---
+
+## P6 — release · post-audit · 2026-08-01
+
+**Attestation:** `harness/attest/attest-fb89de8d.json` — commit `fb89de8d`, tree `1ad57067`,
+working tree clean: true · **profile: release · verdict:
+PASS**
+
+Target org `sf-cb-test` (id sha256/16 `262d2e15e8e6f90c`), classified:
+sf-cb-test classified 'developer' (IsSandbox=False, Developer Edition)
+
+- **56/56 checks pass**, 0 fail,
+  0 warn, 0 skip.
+- **11 mutators, all caught** — each neuters one guard and
+  requires the attack it blocks to start working.
+- Toolchain: sf 2.144.6, node v24.11.1,
+  python 3.14.3.
+
+**What this run is evidence of, and what it is not.** It follows a three-model adversarial audit
+that found 2 P0 and 11 P1 findings against the previous state — including a fail-open introduced
+by a feature added the same week, an `init` path that granted itself write authority, a
+credential shape that reached the audit log unredacted, and five checks that could not fail.
+All are closed and each carries a check that fails when it regresses.
+
+It is **one run, on one disposable Developer Edition org, by the author**. It is not
+independent verification, and the attestation now records enough — commit, tree, org digest,
+every check outcome, every mutator — for a reader to reproduce it and disagree.
+
+The previous entry claimed "converged and shipped" and cited an attestation file that was never
+written, because the generator of the day recorded tool versions and hashes while its own
+docstring promised check outcomes and an org verdict. That is corrected above, and the generator
+now refuses to write an attestation containing no outcomes.

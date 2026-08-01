@@ -179,7 +179,7 @@ run is never reported as green.
 and proves the gates bind before telling you it worked. The allowlist is deliberately not shipped:
 which org you may write to is a decision only the person at the keyboard can make.
 
-Then open the folder in Claude Code and work. The hooks fire on every tool call.
+Then open the folder in Claude Code and work. The hooks fire on the tool calls that can reach an org or the gate's own files — Bash, MCP, Edit/Write/MultiEdit and Read.
 
 ---
 
