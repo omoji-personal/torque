@@ -171,7 +171,7 @@ score of the *findings* fell in severity, which is the convergence signal:
 
 Every fixed class carries a named fixture (**117 total** across base + r11 + r12 + r13) and each
 catastrophe-class guard carries a **self-test mutator** that must flip a deny→allow when the
-guard is neutered (**10 mutators**, all caught): clean-IP ×4, anchor-guard, destructive-token,
+guard is neutered (**11 mutators**, all caught): clean-IP ×4, anchor-guard, destructive-token,
 redirect-detection, wrapper (`wrapped_sf`), expansion-awareness, glob-matcher (`_glob_reaches`).
 
 A final scoped confirmation pass then found 5 more refinements of the same fronts — a `$HOME`

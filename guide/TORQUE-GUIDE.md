@@ -122,7 +122,7 @@ convergence by a nine-round multi-model plan audit, then the built gates by four
 adversarial rounds — a shell-semantics reviewer, an execute-the-attack reviewer running each
 exploit against a real `sf` CLI, and an architecture skeptic — plus two scoped confirmation
 gates and a standing self red-team. Every finding was fixed with a general solution and a named
-fixture: **128 adversarial fixtures**, **10 self-test mutators** (each must flip a deny→allow
+fixture: **128 adversarial fixtures**, **11 self-test mutators** (each must flip a deny→allow
 when its guard is neutered), and a full capability run — real field deploy → SOQL + FLS verify →
 hard-delete → residue check, mass-update → undo, live Lightning render — green. Reproduce the
 whole thing on any free DE org with `harness/validate.py --profile release --target-org <org>`;

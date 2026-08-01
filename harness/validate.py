@@ -31,7 +31,10 @@ def _operator_mode():
     hard failure. Detected by the planning directory (a third-party clone never has it), or an
     explicit override. This keeps clean-IP fail-closed for the operator while letting a stranger
     run everything else green."""
-    return os.environ.get("TORQUE_OPERATOR") == "1" or DENYLIST.parent.exists()
+    env = os.environ.get("TORQUE_OPERATOR")
+    if env == "0":                 # explicit third-party simulation (testing the stranger path)
+        return False
+    return env == "1" or DENYLIST.parent.exists()
 
 class Result:
     def __init__(self, name, outcome, detail="", third_party=True):
@@ -237,21 +240,26 @@ def self_test(target=None):
     os.environ["TORQUE_IN_SELFTEST"] = "1"
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
+    op = _operator_mode()          # clean-IP mutators need the private pattern list
+    if not op:
+        print("  · clean_ip mutators (3): operator-only — the private pattern list is not "
+              "published, so they are skipped rather than failed")
     # clean_ip: a tracked file with a denied term must FAIL. Use the synthetic sentinel
     # pattern (in the private denylist) so the harness source never embeds a real
     # prohibited name — otherwise clean_ip would flag its own mutator.
     victim = ROOT / "harness" / "_mutant.txt"
     sentinel = "TORQUE_CLEANIP_SELFTEST_" + "SENTINEL"   # split so THIS line isn't a hit
-    try:
-        victim.write_text(f"this mentions {sentinel} inline\n")
-        sh("git", "add", "-f", str(victim))
-        r = _clean_ip()
-        passed = r.outcome == FAIL
-        print(f"  {'✓' if passed else '✗'} clean_ip mutator: expected FAIL, got {r.outcome}")
-        ok &= passed
-    finally:
-        sh("git", "rm", "-f", "--cached", str(victim))
-        victim.unlink(missing_ok=True)
+    if op:
+        try:
+            victim.write_text(f"this mentions {sentinel} inline\n")
+            sh("git", "add", "-f", str(victim))
+            r = _clean_ip()
+            passed = r.outcome == FAIL
+            print(f"  {'✓' if passed else '✗'} clean_ip mutator: expected FAIL, got {r.outcome}")
+            ok &= passed
+        finally:
+            sh("git", "rm", "-f", "--cached", str(victim))
+            victim.unlink(missing_ok=True)
     # secret_scan: a tracked file with a token shape must FAIL
     victim2 = ROOT / "harness" / "_mutant2.txt"
     try:
@@ -269,6 +277,7 @@ def self_test(target=None):
     # so it cannot disturb uncommitted work (an earlier --hard version did exactly that).
     sentinel = "TORQUE_CLEANIP_SELFTEST_" + "SENTINEL"
     try:
+        if not op: raise RuntimeError("operator-only")
         blob = subprocess.run(["git","hash-object","-w","--stdin"], input=sentinel.encode(),
                               capture_output=True, cwd=ROOT).stdout.decode().strip()
         tree = subprocess.run(["git","mktree"], input=f"100644 blob {blob}\tf.txt\n".encode(),
@@ -282,11 +291,13 @@ def self_test(target=None):
         passed = r.outcome == FAIL and "historical blob" in r.detail
         print(f"  {'✓' if passed else '✗'} clean_ip historical-blob mutator: expected FAIL, got {r.outcome}")
         ok &= passed
+    except RuntimeError:
+        pass
     finally:
         sh("git","update-ref","-d","refs/selftest/hist")
         sh("git","reflog","expire","--expire=now","--all"); sh("git","gc","--prune=now","--quiet")
     # clean_ip fail-closed: absent denylist must FAIL (simulate via rename)
-    if DENYLIST.exists():
+    if op and DENYLIST.exists():
         bak = DENYLIST.with_suffix(".bak")
         try:
             DENYLIST.rename(bak)

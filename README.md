@@ -108,10 +108,10 @@ Torque validates itself the way it validates Salesforce work. `--profile release
 
 - **128 adversarial fixtures** — every attack class found across the audits, each one a named,
   runnable test.
-- **10 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
+- **11 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
   attack to succeed. A check that cannot fail proves nothing; these prove each guard is
-  load-bearing. (Nine run anywhere; the tenth needs the private clean-IP pattern list, so it
-  reports as operator-only on your clone rather than pretending to pass.)
+  load-bearing. (Eight run anywhere; three exercise the clean-IP scan and need the private
+  pattern list, so on your clone they report as operator-only rather than pretending to pass.)
 - **A live capability cycle** against your org — deploy a field, verify it by SOQL, verify
   field-level security, hard-delete it, confirm zero residue; a mass-update with a working undo;
   a real headless Lightning render.
