@@ -4,27 +4,51 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"" },
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/destructive_data_gate.py\"" }
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "timeout": 55
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/destructive_data_gate.py\"",
+            "timeout": 55
+          }
         ]
       },
       {
         "matcher": "mcp__.*",
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"" },
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/destructive_data_gate.py\"" }
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "timeout": 55
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/destructive_data_gate.py\"",
+            "timeout": 55
+          }
         ]
       },
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"" }
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "timeout": 55
+          }
         ]
       },
       {
         "matcher": "Read",
         "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"" }
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "timeout": 55
+          }
         ]
       }
     ]

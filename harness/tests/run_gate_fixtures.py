@@ -18,10 +18,61 @@ import lib
 GREEN, RED, DIM, RST = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 
 
+_ENV = None
+
+def _stub_env(org):
+    """Put a stub `sf` on PATH for the gate subprocesses so the fixture suite is HERMETIC.
+
+    Without this, every fixture triggers real `sf` callouts: ~125 fixtures x 2 gates x 2 calls,
+    which takes seconds on the author's warm machine and MINUTES on anyone else's — so the very
+    command the README tells strangers to run appeared to hang. The gates' own security code is
+    untouched (no test-only env switch inside lib.py, which would itself be a bypass); we only
+    control what `sf` means for the child processes.
+
+    The stub reports the FIRST eligible org from the real allowlist, so authorization still has
+    to match a genuine allowlisted orgId — the fixtures test the gate logic, while live-org
+    behaviour is covered separately by org_classify / probe_cycle / cache_poison_resistant.
+    """
+    global _ENV
+    if _ENV is not None:
+        return _ENV
+    orgid = username = None
+    try:
+        for e in json.loads(lib.ALLOWLIST.read_text()).get("orgs", []):
+            if e.get("verdict") in lib.ELIGIBLE:
+                orgid, username = e["orgId"], e.get("username", "stub@example.com"); break
+    except Exception:
+        pass
+    if not orgid:
+        _ENV = dict(os.environ); return _ENV          # no allowlist: fall back to real sf
+    d = Path(__file__).resolve().parent / ".stub-bin"
+    d.mkdir(exist_ok=True)
+    (d / "sf").write_text(f"""#!/usr/bin/env python3
+import json, sys
+a = sys.argv[1:]
+def out(o): print(json.dumps(o)); sys.exit(0)
+tgt = None
+for i, x in enumerate(a):
+    if x in ("--target-org", "-o", "-u", "--targetusername") and i + 1 < len(a): tgt = a[i+1]
+    elif x.startswith("--target-org="): tgt = x.split("=", 1)[1]
+if a[:2] == ["org", "display"]:
+    if tgt != {org!r}: sys.exit(1)
+    out({{"result": {{"id": {orgid!r}, "username": {username!r}, "instanceUrl": "https://example.my.salesforce.com"}}}})
+if a[:2] == ["data", "query"]:
+    if tgt != {org!r}: sys.exit(1)
+    out({{"result": {{"records": [{{"IsSandbox": False, "OrganizationType": "Developer Edition", "TrialExpirationDate": None}}]}}}})
+if a[:2] == ["org", "list"]: out({{"result": {{"scratchOrgs": []}}}})
+sys.exit(1)
+""")
+    (d / "sf").chmod(0o755)
+    _ENV = {**os.environ, "PATH": f"{d}:{os.environ.get('PATH','')}"}
+    return _ENV
+
+
 def run_gate(gate, event):
     p = subprocess.run([sys.executable, str(HOOKS / f"{gate}.py")],
                        input=json.dumps(event), capture_output=True, text=True,
-                       cwd=str(ROOT), timeout=90)
+                       cwd=str(ROOT), timeout=90, env=_ENV or os.environ.copy())
     return p.returncode, (p.stderr or "").strip()
 
 
@@ -31,6 +82,7 @@ def main():
     # Developer Edition org fills that slot — otherwise the suite only passes on the author's
     # machine. Deny cases need no substitution: any unauthenticated alias classifies production.
     org = os.environ.get("TORQUE_TEST_ORG", "sf-coffee")
+    _stub_env(org)   # hermetic: stub sf on PATH for the gate subprocesses
     fixtures = []
     for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json", "gate_fixtures_conf.json"):
         p = ROOT / "harness/tests" / fn
@@ -75,7 +127,7 @@ def main():
         copy = lib.APPROVED / f"{digest}.apex"; copy.write_bytes(body)
         tok = mint("apex", digest)
         ev = {"tool_name": "Bash", "tool_input": {"command":
-              f"sf apex run --file {copy} --target-org sf-coffee"}}
+              f"sf apex run --file {copy} --target-org {org}"}}
         code, err = run_gate("destructive_data_gate", ev)
         ok = code == 0 and not tok.exists()
         print(f"  [{GREEN+'PASS'+RST if ok else RED+'FAIL'+RST}] destructive_data_gate  "
@@ -87,7 +139,7 @@ def main():
         # (2) bulk-delete on a non-protected object WITH a token
         tok2 = mint("bulk-delete")
         ev2 = {"tool_name": "Bash", "tool_input": {"command":
-               "sf data delete bulk --sobject Log__c --file ids.csv --target-org sf-coffee"}}
+               f"sf data delete bulk --sobject Log__c --file ids.csv --target-org {org}"}}
         code2, err2 = run_gate("destructive_data_gate", ev2)
         ok2 = code2 == 0 and not tok2.exists()
         print(f"  [{GREEN+'PASS'+RST if ok2 else RED+'FAIL'+RST}] destructive_data_gate  "

@@ -30,24 +30,45 @@ PROTECTED = TORQUE_HOME / "harness" / "checks" / "protected-objects"
 
 ELIGIBLE = {"sandbox", "developer", "scratch"}   # NOT production, NOT unverifiable
 
+# WALL-CLOCK BUDGET for the whole gate, not per callout. Bounding each `sf` call individually
+# was not enough: classify_live makes TWO sequential calls, so a per-call 45s cap allowed 90s —
+# past Claude Code's hook timeout, which kills the hook at a non-2 status ⇒ fail-OPEN, exactly
+# the hole T10-07 closed. The budget is set once when the gate starts; every callout is clamped
+# to what remains, and an exhausted budget is a failure (⇒ "production" ⇒ deny), never a pass.
+GATE_BUDGET_S = float(os.environ.get("TORQUE_GATE_BUDGET", "40"))
+_DEADLINE = None
+
+def start_budget(seconds: float = None):
+    global _DEADLINE
+    _DEADLINE = time.time() + (GATE_BUDGET_S if seconds is None else seconds)
+
+def _budget_left():
+    return None if _DEADLINE is None else _DEADLINE - time.time()
+
+class _Failed:
+    returncode = 124
+    stdout = ""
+    stderr = "sf callout timed out, failed, or the gate time budget was exhausted"
+
 def _sf(*args, timeout=45):
-    # A hung `sf` inside a PreToolUse hook would let Claude Code time the hook out with a
-    # non-2 status ⇒ fail-OPEN (audit T10-07). Bound every callout and fail safe on timeout.
+    left = _budget_left()
+    if left is not None:
+        if left <= 0.5:
+            return _Failed()                       # budget gone ⇒ fail safe, do not call out
+        timeout = min(timeout, left)
     try:
         return subprocess.run(["sf", *args], capture_output=True, text=True, timeout=timeout)
     except Exception:
-        class _R:
-            returncode = 124
-            stdout = ""
-            stderr = "sf callout timed out or failed"
-        return _R()
+        return _Failed()
 
 def audit(decision: str, detail: str):
     # Never raises: a gate that can't write its audit line must still be able to DENY.
     # (Audit-write failure was an exploit path — chmod 555 local ⇒ crash ⇒ fail-open. K-HM1.)
     try:
         LOCAL.mkdir(exist_ok=True)
-        line = json.dumps({"t": int(time.time()), "decision": decision, "detail": detail[:400]})
+        # redact() existed but was never called — the audit log recorded raw command detail while
+        # the privacy rule claimed otherwise. Session ids, tokens and org ids are stripped here.
+        line = json.dumps({"t": int(time.time()), "decision": decision, "detail": redact(detail)[:400]})
         with open(AUDIT, "a") as f:
             f.write(line + "\n")
         os.chmod(AUDIT, 0o600)
@@ -274,7 +295,9 @@ def deny(reason: str, fingerprint: str = "", hook_id: str = ""):
 
 def run_gate(main_fn, hook_id: str):
     """Fail-CLOSED wrapper. allow()/deny() raise SystemExit (not Exception) and pass through;
-    any OTHER exception denies rather than letting a crash exit 1 (non-blocking = allow)."""
+    any OTHER exception denies rather than letting a crash exit 1 (non-blocking = allow).
+    Also starts the wall-clock budget so the gate can never outlive the host's hook timeout."""
+    start_budget()
     try:
         main_fn()
     except SystemExit:

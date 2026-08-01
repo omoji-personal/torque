@@ -64,8 +64,19 @@ def _probe_cycle(target):
              "--query",f"SELECT QualifiedApiName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName='{obj}' AND QualifiedApiName='{field}'"],
              capture_output=True, text=True)
         residue = json.loads(rq.stdout)["result"]["totalSize"]
+        # ASSERT, don't just report. Both of these were computed and then thrown away — the check
+        # returned PASS unconditionally, so a missing FieldPermissions row or an undeleted field
+        # still printed green while the README claimed both were verified. That is precisely the
+        # "green but wrong" failure this harness exists to prevent, found in the harness itself.
+        if not fls_ok:
+            return Result("probe_cycle", FAIL,
+                "field deployed but NO FieldPermissions row for the permset — formula/custom "
+                "fields silently lack FLS; this is the #1 misdiagnosed deploy failure")
+        if residue != 0:
+            return Result("probe_cycle", FAIL,
+                f"teardown left {residue} residue — the probe field still exists after purge")
         return Result("probe_cycle", PASS,
-            f"deploy→verify(field+FLS={'ok' if fls_ok else 'partial'})→purge→teardown; residue={residue}")
+            f"deploy→verify(field ok, FLS asserted)→purge→teardown; residue={residue} (asserted 0)")
     finally:
         _shutil.rmtree(work, ignore_errors=True)
 

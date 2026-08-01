@@ -188,7 +188,8 @@ def _describe_first(target):
 # ---- plugin checks: harness/checks/check_*.py register into the shared REGISTRY -------
 def _load_check_plugins():
     ns = {"check": check, "Result": Result, "sh": sh, "ROOT": ROOT, "CHECKS": CHECKS,
-          "PASS": PASS, "FAIL": FAIL, "WARN": WARN, "SKIP": SKIP,
+          "PASS": PASS, "FAIL": FAIL, "WARN": WARN, "SKIP": SKIP, "NA": NA,
+          "REGISTRY": REGISTRY,          # so a check can validate labels naming other checks
           "subprocess": subprocess, "json": json, "os": os, "re": re, "Path": Path}
     for p in sorted((ROOT / "harness" / "checks").glob("check_*.py")):
         try:

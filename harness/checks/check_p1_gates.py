@@ -91,7 +91,11 @@ def _local_hygiene():
         if p.is_file():
             try: txt = p.read_text(errors="ignore")
             except Exception: continue
-            if secret.search(txt):
+            # A redaction marker matches the secret SHAPE by design (a redacted session-id keeps the `key=value` shape), and is
+            # evidence the redactor ran — not a leak. Strip placeholders before scanning so the
+            # check flags real values only.
+            txt_scan = re.sub(r"REDACTED|00D_REDACTED", "", txt)
+            if secret.search(txt_scan):
                 return Result("local_hygiene", FAIL, f"secret-shaped content in {p.name}")
             if p.name in ("writable-orgs.json",) or "token" in p.name:
                 mode = stat.S_IMODE(p.stat().st_mode)
@@ -101,17 +105,29 @@ def _local_hygiene():
 
 @check("enforcement_map", "static")
 def _enforcement_map():
-    # every rule declaring ENFORCEMENT: hook-enforced must resolve to a registered hook.
+    """Every ENFORCEMENT label must name something that actually exists — a hook file OR a
+    registered harness check. The earlier version validated only `hook-enforced(...)`, so a
+    `harness-enforced(<name>)` label naming a check that had never existed passed silently.
+    The README claims these labels are checked rather than decorative; that is only true if
+    BOTH kinds are resolved."""
     rules = ROOT / ".claude" / "rules"
     hooks = {p.stem for p in (ROOT/"hooks").glob("*.py") if p.stem != "lib"}
+    checks = {name for name, _p, _c, _fn in REGISTRY}
     unresolved = []
     for rf in rules.glob("*.md"):
-        for m in re.finditer(r"ENFORCEMENT:\s*hook-enforced\s*\(([^)]+)\)", rf.read_text()):
-            if m.group(1).strip() not in hooks:
-                unresolved.append(f"{rf.name}:{m.group(1)}")
+        text = rf.read_text()
+        for m in re.finditer(r"ENFORCEMENT:\s*hook-enforced\s*\(([^)]+)\)", text):
+            for nm in (x.strip() for x in m.group(1).split(",")):
+                if nm and nm not in hooks:
+                    unresolved.append(f"{rf.name}: hook '{nm}'")
+        for m in re.finditer(r"ENFORCEMENT:\s*harness-enforced\s*\(([^)]+)\)", text):
+            for nm in (x.strip() for x in m.group(1).split(",")):
+                if nm and nm not in checks:
+                    unresolved.append(f"{rf.name}: check '{nm}'")
     if unresolved:
-        return Result("enforcement_map", FAIL, f"unresolved hook-enforced: {unresolved}")
-    return Result("enforcement_map", PASS, f"{len(hooks)} hooks; enforcement labels resolve")
+        return Result("enforcement_map", FAIL, f"labels naming nothing that exists: {unresolved}")
+    return Result("enforcement_map", PASS,
+                  f"{len(hooks)} hooks + {len(checks)} checks; every ENFORCEMENT label resolves")
 
 @check("gate_adversarial_fixtures", "capability", catastrophe=True)
 def _gate_adversarial_fixtures(target):
