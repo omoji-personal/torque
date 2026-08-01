@@ -48,8 +48,13 @@ _NOT_ABOUT_THE_CLAIM = ("REQUEST_LIMIT_EXCEEDED", "TotalRequests Limit exceeded"
                         "No org configuration found", "ENOTFOUND", "socket hang up")
 
 
+_SFQ_STUB = None          # set by the verifier mutation test; None in every real run
+
+
 def _sfq(target, soql, tooling=False):
     """Read-only SOQL. Returns (ok, rows) where ok is True, False, or None for 'cannot tell'."""
+    if _SFQ_STUB is not None:
+        return _SFQ_STUB(target, soql, tooling)
     cmd = ["sf", "data", "query", "--target-org", target, "--json", "--query", soql]
     if tooling:
         cmd.append("--use-tooling-api")
@@ -66,15 +71,33 @@ def _sfq(target, soql, tooling=False):
 
 # ── the live verifications named by `verify:` in the catalogue ─────────────────────────────
 def _v_fls_absent_without_permset(target):
-    """Custom fields get FLS only from an explicit grant — so any FieldPermissions rows that do
-    exist should be permission-set owned, not profile-implicit."""
-    ok, rows = _sfq(target, "SELECT Parent.IsOwnedByProfile FROM FieldPermissions LIMIT 200")
+    """Assert that FLS is carried by PermissionSet-parented rows, and that nothing else grants it.
+
+    The previous version returned True on every path a query could take — zero rows, all
+    profile-owned, all permset-owned. It could not fail, so it proved nothing, while the entry
+    it backed carried the label `verified-live`.
+
+    The entry's real claim — a newly deployed field arrives invisible — needs an EXPERIMENT, and
+    probe_cycle runs exactly that one: deploy, assert invisibility, grant, verify, purge. What is
+    checkable HERE is the mechanism that claim depends on: FLS lives in FieldPermissions rows
+    parented to a PermissionSet, and the platform still models it that way. If Salesforce ever
+    returns a grant with no parent, or stops exposing the parent at all, the entry's remedy
+    ("deploy a PermissionSet alongside") stops being actionable and this returns False.
+    """
+    ok, rows = _sfq(target, "SELECT Parent.IsOwnedByProfile, SobjectType FROM FieldPermissions "
+                            "LIMIT 200")
     if ok is not True:
         return None, "FieldPermissions not queryable"
     if not rows:
-        return True, "no FieldPermissions rows (consistent: nothing granted implicitly)"
+        return None, "no FieldPermissions rows on this org — the mechanism cannot be observed"
+    parentless = [r for r in rows if (r.get("Parent") or {}).get("IsOwnedByProfile") is None]
+    if parentless:
+        return False, (f"{len(parentless)}/{len(rows)} FLS rows expose no owning parent — the "
+                       f"entry's remedy assumes every grant is carried by one")
     prof = sum(1 for r in rows if (r.get("Parent") or {}).get("IsOwnedByProfile"))
-    return True, f"{len(rows)} FLS rows sampled, {prof} profile-owned — grants are explicit"
+    return True, (f"{len(rows)} FLS rows sampled, every one parented ({prof} profile-owned, "
+                  f"{len(rows) - prof} permission-set) — grants are carriable, as the remedy "
+                  f"requires; the deploy-arrives-invisible experiment is probe_cycle's")
 
 
 def _v_del_tombstones_visible(target):
@@ -84,17 +107,49 @@ def _v_del_tombstones_visible(target):
                     tooling=True)
     if ok is not True:
         return None, "CustomField not queryable via Tooling"
-    return True, (f"{len(rows)} `_del` tombstone(s) visible" if rows
-                  else "no tombstones present right now (claim untestable on this org)")
+    if not rows:
+        # This returned True here, which inflated "5/5 re-verified" with a verifier that had
+        # tested nothing — and contradicted kb_live_claims' own promise that an unrunnable
+        # verification reports NA rather than passing quietly.
+        return None, "no tombstones on this org right now — nothing to observe"
+    bad = [r for r in rows if not str(r.get("DeveloperName", "")).endswith("_del")]
+    if bad:
+        return False, (f"a field matched the tombstone query but does not carry the `_del` "
+                       f"suffix ({bad[0].get('DeveloperName')}) — the naming claim is wrong")
+    return True, f"{len(rows)} `_del` tombstone(s) visible and correctly suffixed"
 
 
 def _v_flowdefinition_queryable(target):
-    ok, rows = _sfq(target, "SELECT DeveloperName, ActiveVersionId FROM FlowDefinition LIMIT 5",
+    """The entry's claim is that the LATEST version is not the ACTIVE one, so a retrieve answers
+    a different question than "what is running". This tested only that the remedy's mechanism
+    exists — that FlowDefinition is Tooling-queryable — which is adjacent, not the claim.
+
+    It now reads both numbers and asserts the distinction is real and observable.
+    """
+    ok, rows = _sfq(target, "SELECT DeveloperName, ActiveVersionId FROM FlowDefinition LIMIT 50",
                     tooling=True)
     if ok is None:
         return None, "org did not answer (limit/auth) — says nothing about the claim"
-    return (True, f"FlowDefinition queryable via Tooling ({len(rows)} rows)") if ok \
-        else (False, "FlowDefinition NOT queryable via Tooling — remedy in the entry is wrong")
+    if not ok:
+        return False, "FlowDefinition NOT queryable via Tooling — remedy in the entry is wrong"
+    if not rows:
+        return None, "no flows on this org — the latest-vs-active distinction cannot be observed"
+    ok2, vers = _sfq(target, "SELECT DefinitionId, VersionNumber, Status FROM Flow LIMIT 200",
+                     tooling=True)
+    if ok2 is not True or not vers:
+        return None, f"{len(rows)} flow definition(s) visible, but Flow versions not queryable"
+    latest, active = {}, {}
+    for v in vers:
+        d = v.get("DefinitionId")
+        latest[d] = max(latest.get(d, 0), v.get("VersionNumber") or 0)
+        if v.get("Status") == "Active":
+            active[d] = v.get("VersionNumber") or 0
+    diverged = [d for d in active if latest.get(d, 0) != active[d]]
+    if diverged:
+        return True, (f"{len(diverged)} flow(s) whose latest version is not the active one — "
+                      f"the entry's distinction is live on this org")
+    return True, (f"{len(rows)} definition(s), {len(active)} active; latest == active everywhere "
+                  f"here, and both numbers are readable — which is what the remedy needs")
 
 
 def _v_flowdefinitionview_standard_api(target):
@@ -114,7 +169,15 @@ def _v_de_org_reports_not_sandbox(target):
     if ok is not True or not rows:
         return None, "Organization not queryable"
     r = rows[0]
-    return True, f"IsSandbox={r.get('IsSandbox')} OrganizationType={r.get('OrganizationType')!r}"
+    otype, sandbox = r.get("OrganizationType"), r.get("IsSandbox")
+    if otype != "Developer Edition":
+        # The entry is about DE orgs. Run anywhere else there is nothing to confirm — and the
+        # old version returned True regardless, so pointing it at a sandbox still "passed".
+        return None, f"this org is {otype!r}, not Developer Edition — claim not exercised here"
+    if sandbox:
+        return False, ("a Developer Edition org reported IsSandbox=True — the entry says DE "
+                       "orgs do not, and every classifier depending on that is now wrong")
+    return True, f"Developer Edition org reports IsSandbox={sandbox} — as the entry claims"
 
 
 _VERIFIERS = {
@@ -745,3 +808,60 @@ def _lib_anchor_tokens():
         return m.TOKENS
     except Exception:
         return None
+
+
+@check("verifiers_can_fail", "static", catastrophe=True)
+def _verifiers_can_fail():
+    """Every live-claim verifier must return False when its claim is false.
+
+    This is the check the knowledge layer was missing, and its absence was the layer's most
+    serious defect. `kb_live_claims` reported "5/5 live claims re-verified" while three of the
+    five verifiers had no reachable False path at all: they queried the org, ignored the answer,
+    and returned True. Pointed at an org where the entry was plainly wrong — a sandbox, for the
+    entry asserting Developer Edition orgs report IsSandbox=False — they still passed.
+
+    A check that cannot fail proves nothing. That is this project's own standard, applied to
+    the gates by --self-test mutators since the beginning, and not applied here until now. So
+    each verifier is fed the org response that makes its entry FALSE, and is required to say so.
+    """
+    global _SFQ_STUB
+    falsifying = {
+        # a grant with no owning parent — the remedy assumes every grant is carried by one
+        "fls_absent_without_permset": lambda t, q, tl: (True, [{"Parent": {}, "SobjectType": "A"}]),
+        # a field matched by the tombstone query that does not carry the suffix
+        "del_tombstones_visible": lambda t, q, tl: (True, [{"DeveloperName": "Not_A_Tombstone"}]),
+        # FlowDefinition unreachable via Tooling — the entry's remedy depends on it
+        "flowdefinition_queryable": lambda t, q, tl: (False, []),
+        # FlowDefinitionView failing on the standard API, which the entry says works
+        "flowdefinitionview_standard_api": lambda t, q, tl: (False, []),
+        # a Developer Edition org reporting IsSandbox=True
+        "de_org_reports_not_sandbox":
+            lambda t, q, tl: (True, [{"IsSandbox": True, "OrganizationType": "Developer Edition"}]),
+    }
+    missing = sorted(set(_VERIFIERS) - set(falsifying))
+    if missing:
+        return Result("verifiers_can_fail", FAIL,
+                      f"no falsifying case written for {missing} — a verifier nobody has tried "
+                      f"to break is a verifier nobody has checked")
+    survived = []
+    for name, stub in falsifying.items():
+        fn = _VERIFIERS.get(name)
+        if fn is None:
+            return Result("verifiers_can_fail", FAIL, f"verifier {name!r} no longer exists")
+        _SFQ_STUB = stub
+        try:
+            ok, detail = fn("stub-org")
+        except Exception as e:
+            _SFQ_STUB = None
+            return Result("verifiers_can_fail", FAIL,
+                          f"{name} raised on its falsifying case: {type(e).__name__}: {e}")
+        finally:
+            _SFQ_STUB = None
+        if ok is not False:
+            survived.append(f"{name} returned {ok!r} ({detail[:60]})")
+    if survived:
+        return Result("verifiers_can_fail", FAIL,
+                      f"{len(survived)} verifier(s) did NOT fail on a falsifying org response: "
+                      f"{survived}")
+    return Result("verifiers_can_fail", PASS,
+                  f"all {len(falsifying)} verifiers return False when their entry is false")
