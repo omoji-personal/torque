@@ -266,6 +266,43 @@ def token_path(orgid: str, op_class: str, digest: str = "") -> Path:
     key = hashlib.sha256(f"{orgid}|{op_class}|{digest}".encode()).hexdigest()[:24]
     return TOKENS / f"{key}.token"
 
+def impact_digest(sobject: str, where: str) -> str:
+    """A stable id for "this operation, on this object, with these criteria".
+
+    Approval everywhere else in the industry binds to a command string or a session, so the
+    human vouches for their own reading of a WHERE clause. This binds the token to the SHAPE of
+    the impact, and the signed payload carries the SIZE — so a token approved for seven records
+    cannot be spent on seven thousand.
+    """
+    norm = " ".join((where or "").split()).lower()
+    return hashlib.sha256(f"{(sobject or '').lower()}|{norm}".encode()).hexdigest()[:16]
+
+
+def consume_token_payload(orgid: str, op_class: str, digest: str = ""):
+    """Consume and RETURN the payload, so a caller can check what was actually approved."""
+    p = token_path(orgid, op_class, digest)
+    claim = Path(str(p) + f".claim.{os.getpid()}")
+    try:
+        os.rename(p, claim)
+    except OSError:
+        return None
+    try:
+        payload = json.loads(claim.read_text())
+        claim.unlink()
+        sig = payload.pop("sig", None)
+        if not sig or not _hmac.compare_digest(sig, sign(payload)):
+            audit("DENY", f"token signature invalid for {op_class} on {orgid}")
+            return None
+        if payload.get("orgId") == orgid and payload.get("op") == op_class \
+                and payload.get("digest", "") == digest and payload.get("exp", 0) > time.time():
+            return payload
+        return None
+    except Exception:
+        try: claim.unlink()
+        except OSError: pass
+        return None
+
+
 def consume_token(orgid: str, op_class: str, digest: str = "") -> bool:
     """Verify a single-use, HMAC-SIGNED token. Consumed via an ATOMIC rename-claim BEFORE
     reading (audit R11-09): two concurrent gate processes cannot both read the same token —

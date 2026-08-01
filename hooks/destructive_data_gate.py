@@ -8,7 +8,7 @@ anonymous Apex) each need a single-use HMAC token an agent cannot mint. Protecte
 shielded over the SHLEX-DECODED token stream. Anonymous Apex must run from the operator-
 approved immutable copy at ~/.torque/approved/<digest>.apex (TOCTOU-safe).
 """
-import os, sys, hashlib
+import json, os, sys, hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import lib
@@ -19,6 +19,59 @@ except Exception as _e:
 from pathlib import Path
 
 HOOK = "destructive_data_gate"
+
+
+def _live_count(target, sobject, where):
+    """One COUNT, read-only. (count, reason) — count is None when it cannot be established.
+
+    The first version swallowed the reason, and the first thing it swallowed was a NameError
+    from an unimported `json`. The gate then reported "the scope could not be re-established",
+    which is true, actionable-sounding, and would have sent someone to look at the org.
+    """
+    q = f"SELECT COUNT() FROM {sobject}" + (f" WHERE {where}" if where else "")
+    try:
+        r = lib._sf("data", "query", "--target-org", target, "--json", "--query", q)
+    except Exception as e:
+        return None, f"{type(e).__name__}: {str(e)[:80]}"
+    if r.returncode != 0:
+        return None, (r.stderr or r.stdout or "sf exited non-zero").strip().splitlines()[0][:100]
+    try:
+        return json.loads(r.stdout)["result"]["totalSize"], ""
+    except Exception as e:
+        return None, f"unparseable count response ({type(e).__name__})"
+
+
+def _need_impact_token(orgid, op, target, sobject, where):
+    """Spend a token that was approved for a specific scope, and only within that scope.
+
+    The operator saw a number when they approved. Data moves; criteria that matched seven rows
+    an hour ago can match seven thousand now. So the count is re-established here and the token
+    is refused if the operation grew — a bound the industry's per-command-string approvals
+    cannot express, because a command string says nothing about how much it touches.
+
+    If the count cannot be established, this DENIES. An impact-bound token whose impact is
+    unknown is not a token.
+    """
+    digest = lib.impact_digest(sobject, where)
+    payload = lib.consume_token_payload(orgid, op, digest)
+    if payload is None:
+        return False
+    impact = payload.get("impact") or {}
+    approved = impact.get("scope")
+    if approved is None:
+        return True                     # a plain token that happened to carry this digest
+    live, why = _live_count(target, sobject, where)
+    if live is None:
+        lib.deny(f"an impact-bound approval was spent but the scope could not be re-established "
+                 f"on {target} — refusing rather than assuming it is unchanged [{why}]",
+                 "impact-unverifiable", HOOK)
+    if live > approved:
+        lib.deny(f"approved for {approved} {sobject} record(s), the criteria now match {live}. "
+                 f"The operation grew after approval; re-approve with the current scope.",
+                 "impact-drift", HOOK)
+    lib.audit("PROD-WRITE" if False else "ALLOW",
+              f"impact-bound {op} on {orgid}: approved {approved}, live {live}")
+    return True
 
 
 def _need_token(orgid, op, digest=""):
@@ -92,6 +145,12 @@ def _gate_write(sf_args):
         digest, body = _apex_digest(fpath)
         _shield_text(body, orgid)
         _need_token(orgid, "apex", digest)
+        return
+    # An impact-bound token is tried FIRST, and only when the command carries the two things
+    # the approval was computed from. If none exists, this falls through to the ordinary token
+    # path unchanged — impact binding is an option the operator takes, not a new obstacle.
+    where = shellparse.flag_value(sf_args, "--where", "-w")
+    if sv and tset and _need_impact_token(orgid, op, next(iter(tset)), sv, where):
         return
     _need_token(orgid, op)
 

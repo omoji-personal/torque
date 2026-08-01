@@ -1008,3 +1008,91 @@ def _per_org_knowledge():
     return Result("per_org_knowledge", PASS,
                   f"{len(entries)} finding(s) across {len(files)} org(s), owner-only, untracked; "
                   f"reaches its own org, not another, and not an unknown one")
+
+
+@check("impact_bound_approval", "capability", catastrophe=True)
+def _impact_bound_approval(target):
+    """A token approved for N records must not be spendable on more than N.
+
+    Approval everywhere else is per-command-string or per-session: the operator vouches for
+    their own reading of a WHERE clause and nothing checks it again. But data moves. Criteria
+    that matched seven rows when the operator looked can match seven thousand by the time the
+    command runs, and no command string can express the difference.
+
+    So the approved SIZE is signed into the token and re-established at the gate. This asserts
+    the three outcomes that matter: within scope proceeds, grown scope is refused, and a scope
+    that cannot be re-established is refused rather than assumed unchanged.
+    """
+    if not target:
+        return Result("impact_bound_approval", SKIP, "no --target-org")
+    import importlib.util as _il, shlex as _shlex, time as _t
+    lspec = _il.spec_from_file_location("torque_lib", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+    sspec = _il.spec_from_file_location("torque_shellparse", ROOT / "hooks" / "shellparse.py")
+    sp = _il.module_from_spec(sspec); sspec.loader.exec_module(sp)
+
+    obj, where = "Lead", "Status != null"
+    cmd = (f"sf data update record --sobject {obj} --where \"{where}\" "
+           f"--values \"Description=x\" --target-org {target}")
+    args = _shlex.split(cmd)[1:]
+    op = sp.classify_destructive(args)
+    if op != "where-update":
+        return Result("impact_bound_approval", FAIL, f"probe command classified {op!r}")
+    _v, orgid, _u = lib.classify(target)
+    if not orgid:
+        return Result("impact_bound_approval", SKIP, f"{target} did not resolve an orgId")
+
+    def mint(scope):
+        d = lib.impact_digest(obj, where)
+        p = {"orgId": orgid, "op": op, "digest": d, "exp": int(_t.time()) + 300,
+             "iat": int(_t.time()), "impact": {"sobject": obj, "where_sha": d, "scope": scope}}
+        p["sig"] = lib.sign(p)
+        lib.TOKENS.mkdir(parents=True, exist_ok=True)
+        f = lib.token_path(orgid, op, d)
+        f.write_text(_kb_json.dumps(p)); _kb_os.chmod(f, 0o600)
+        return f
+
+    def fire(c=cmd):
+        r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "destructive_data_gate.py")],
+                       input=_kb_json.dumps({"tool_name": "Bash", "tool_input": {"command": c}}),
+                       capture_output=True, text=True, cwd=ROOT, timeout=180)
+        return r.returncode, r.stderr
+
+    ok, rows = _sfq(target, f"SELECT COUNT() FROM {obj} WHERE {where}")
+    if ok is not True:
+        return Result("impact_bound_approval", SKIP, f"could not count {obj} on {target}")
+    live = None
+    r = _kb_sp.run(["sf", "data", "query", "--target-org", target, "--json", "--query",
+                    f"SELECT COUNT() FROM {obj} WHERE {where}"], capture_output=True, text=True,
+                   timeout=120)
+    try:
+        live = _kb_json.loads(r.stdout)["result"]["totalSize"]
+    except Exception:
+        return Result("impact_bound_approval", SKIP, "could not establish a live scope")
+
+    tok = mint(live)
+    rc, err = fire()
+    if rc != 0:
+        return Result("impact_bound_approval", FAIL,
+                      f"a token approved for the true scope ({live}) was refused: "
+                      f"{err.strip().splitlines()[0][:110] if err.strip() else '(no message)'}")
+    if tok.exists():
+        return Result("impact_bound_approval", FAIL, "an impact token was not consumed")
+
+    mint(max(0, live - 1))
+    rc, err = fire()
+    if rc != 2 or "impact-drift" not in err and "criteria now match" not in err:
+        return Result("impact_bound_approval", FAIL,
+                      f"an operation larger than approved was NOT refused (exit {rc})")
+
+    # a scope that cannot be re-established must refuse, never assume
+    mint(live)
+    rc, err = fire(cmd.replace(f"--target-org {target}", "--target-org sf-nonexistent-zzz"))
+    if rc != 2:
+        return Result("impact_bound_approval", FAIL,
+                      "an unverifiable scope did not refuse")
+    for f in lib.TOKENS.glob("*.token"):
+        f.unlink(missing_ok=True)
+    return Result("impact_bound_approval", PASS,
+                  f"approved for {live} {obj} record(s): within scope proceeds and consumes, "
+                  f"grown scope refused, unverifiable scope refused")

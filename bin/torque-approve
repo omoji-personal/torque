@@ -20,6 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
 import lib
 
+ROOT = Path(__file__).resolve().parent.parent
+
 DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-update",
                    "destructive-metadata"}
 SESSION_MAX_MIN = 120
@@ -156,13 +158,54 @@ def _confirm_prod(target, orgid, username, instance):
         return tty.readline().strip() == "WRITE PRODUCTION"
 
 
-def _mint(op, orgid, digest=""):
+def _mint(op, orgid, digest="", impact=None):
     lib.TOKENS.mkdir(parents=True, exist_ok=True); os.chmod(lib.TOKENS, 0o700)
     payload = {"orgId": orgid, "op": op, "digest": digest,
                "exp": int(time.time()) + 300, "iat": int(time.time())}
+    if impact:
+        # Signed alongside everything else, so the approved SIZE cannot be edited after the fact.
+        payload["impact"] = impact
     payload["sig"] = lib.sign(payload)
     p = lib.token_path(orgid, op, digest)
     p.write_text(json.dumps(payload)); os.chmod(p, 0o600)
+
+
+def _approve_impact(target, orgid, args):
+    """Show what the operation will actually touch, then bind the token to that scope.
+
+    Everywhere else, approval is per-command-string or per-session: the operator vouches for
+    their own reading of a WHERE clause, and nothing checks it again. Here the blast radius is
+    computed first and shown, the count is signed into the token, and the gate refuses later if
+    the criteria now match MORE than was approved. A token for seven records cannot be spent on
+    seven thousand.
+    """
+    def flag(name):
+        return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) \
+            else ""
+    sobject, where = flag("--sobject"), flag("--where")
+    if not sobject:
+        print("--impact requires --sobject (and normally --where)", file=sys.stderr); sys.exit(2)
+    op = args[1]
+    br = ROOT / "bin" / "torque-blast-radius"
+    r = subprocess.run([sys.executable, str(br), "--target-org", target, "--sobject", sobject,
+                        "--operation", "delete" if "delete" in op else "update",
+                        *(["--where", where] if where else [])],
+                       capture_output=True, text=True, timeout=900)
+    sys.stderr.write("\n" + r.stdout)
+    if r.returncode != 0:
+        sys.stderr.write("\n  The picture above is INCOMPLETE. Approving binds only the record "
+                         "count, which is the part that was established.\n")
+    q = f"SELECT COUNT() FROM {sobject}" + (f" WHERE {where}" if where else "")
+    c = subprocess.run(["sf", "data", "query", "--target-org", target, "--json", "--query", q],
+                       capture_output=True, text=True, timeout=300)
+    try:
+        scope = json.loads(c.stdout)["result"]["totalSize"]
+    except Exception:
+        print("could not establish the scope; refusing to mint an impact-bound token",
+              file=sys.stderr)
+        sys.exit(2)
+    return lib.impact_digest(sobject, where), {
+        "sobject": sobject, "where_sha": lib.impact_digest(sobject, where), "scope": scope}
 
 
 def _write_approved_apex(apex_src):
@@ -215,7 +258,10 @@ def main():
     op = args[1]
     is_prod = "--prod" in args
     digest = ""
-    if op == "apex":
+    impact = None
+    if "--impact" in args:
+        digest, impact = _approve_impact(target, orgid, args)
+    elif op == "apex":
         if "--apex-file" not in args:
             print("apex approval requires --apex-file <path>", file=sys.stderr); sys.exit(2)
         digest = _write_approved_apex(args[args.index("--apex-file") + 1])
@@ -227,16 +273,20 @@ def main():
             print("aborted", file=sys.stderr); sys.exit(1)
         _mint("prod-write", orgid, "")                 # authorizes the prod write itself
         if op in DESTRUCTIVE_OPS:
-            _mint(op, orgid, digest)                   # + the destructive-class token
+            _mint(op, orgid, digest, impact)           # + the destructive-class token
         print(f"PRODUCTION override minted for {op} on {target} (single use, 5 min)"
               + (f"; apex copy at {lib.APPROVED / (digest + '.apex')}" if op == "apex" else ""))
         return
 
-    if not _confirm(f"Approve {op} on org {orgid}"
-                    f"{' digest ' + digest if digest else ''}? [type YES]: "):
+    prompt = (f"Approve {op} on org {orgid}"
+              + (f" affecting {impact['scope']} {impact['sobject']} record(s)" if impact
+                 else (f" digest {digest}" if digest else "")) + "? [type YES]: ")
+    if not _confirm(prompt):
         print("aborted", file=sys.stderr); sys.exit(1)
-    _mint(op, orgid, digest)
-    print(f"approved: single-use token for {op} on {orgid} (5 min)")
+    _mint(op, orgid, digest, impact)
+    print(f"approved: single-use token for {op} on {orgid} (5 min)"
+          + (f" — bound to {impact['scope']} {impact['sobject']} record(s); the gate will "
+             f"refuse if the criteria come to match more" if impact else ""))
 
 
 if __name__ == "__main__":

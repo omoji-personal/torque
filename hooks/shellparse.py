@@ -359,6 +359,22 @@ def _api_method(sf_args):
     return "GET"
 
 
+def flag_value(sf_args, *names):
+    """The value of a long flag, in the separated and equals forms oclif accepts.
+
+    Used to recover the criteria an impact-bound approval was computed from, so the gate can
+    re-establish the scope. It reads only; it never decides on its own.
+    """
+    args = _cut_ddash(sf_args)
+    for i, a in enumerate(args):
+        if a in names and i + 1 < len(args):
+            return args[i + 1]
+        for n in names:
+            if a.startswith(n + "="):
+                return a[len(n) + 1:]
+    return ""
+
+
 def sobject_value(sf_args):
     """The sObject an operation targets, in every flag form oclif accepts.
 
