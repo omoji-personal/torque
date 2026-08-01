@@ -250,7 +250,9 @@ def anchor_ref(tok, cwd=None, varmap=None) -> bool:
     `a=.tor;b=que;cat ~/$a$b/secret`, `cat /Users/**/.../.[t]orque/sec[r]et`, and a custom
     TORQUE_ANCHOR all deny (audit T12-01 / round 13)."""
     if "{" in tok and "," in tok:            # brace expansion precedes globbing
-        return any(anchor_ref(_a, cwd, varmap) for _a in _brace_expand(tok))
+        _alts = _brace_expand(tok)
+        if len(_alts) > 1 or (_alts and _alts[0] != tok):   # only if it EXPANDED
+            return any(anchor_ref(_a, cwd, varmap) for _a in _alts)
     pat = _abs_pattern(tok, cwd, varmap)
     approved = str(lib.APPROVED.resolve())
     if pat == approved or pat.startswith(approved + os.sep):
@@ -269,7 +271,9 @@ def sf_auth_ref(tok, varmap=None) -> bool:
     Bash (`cat ~/.sfd*/x.json`) could lift a token and curl the REST API, bypassing sf entirely.
     Expansion-aware, same as anchor_ref (audit T12-01 applied to the auth store)."""
     if "{" in tok and "," in tok:
-        return any(sf_auth_ref(_a, varmap) for _a in _brace_expand(tok))
+        _alts = _brace_expand(tok)
+        if len(_alts) > 1 or (_alts and _alts[0] != tok):
+            return any(sf_auth_ref(_a, varmap) for _a in _alts)
     pat = _abs_pattern(tok, None, varmap)
     for d in ("~/.sfdx", "~/.sf"):
         if _pattern_reaches_dir(pat, os.path.realpath(os.path.expanduser(d))):
@@ -364,6 +368,36 @@ def sobject_value(sf_args):
     return None
 
 
+# Top-level `sf` topics. The verb is found by anchoring on one of these rather than by assuming
+# it comes first, because oclif accepts global and command flags BEFORE the verb.
+SF_TOPICS = {"data", "apex", "org", "project", "api", "package", "sobject", "schema", "alias",
+             "config", "auth", "user", "lightning", "visualforce", "community", "limits",
+             "doctor", "plugins", "autocomplete", "which", "search", "info", "agent"}
+
+
+def _topic_anchored(args):
+    """Positionals from the first recognised sf topic onward, ignoring flags and their values.
+    Returns () when no topic is present."""
+    pos = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("-"):
+            # a flag; if it takes a separate value, that value is not a positional
+            if "=" not in a and i + 1 < len(args) and not args[i + 1].startswith("-"):
+                i += 2
+                continue
+            i += 1
+            continue
+        pos.append(a.lower())
+        i += 1
+    for idx, tok in enumerate(pos):
+        head = tok.split(":", 1)[0]
+        if head in SF_TOPICS or tok.startswith("force:"):
+            return tuple(pos[idx:])
+    return ()
+
+
 def subcommand(sf_args):
     """Leading positional subcommand path, skipping global flags (and their values) that may
     precede the verb (audit R11-10). Stops at the first non-global flag."""
@@ -429,8 +463,15 @@ def classify_destructive(sf_args):
     """Op-class if the parsed sf write is destructive, else None. Covers modern space syntax AND
     legacy colon syntax (audit R11-04/R11-05) and async-resume completion of bulk jobs."""
     sub = subcommand(sf_args)
+    if not sub or sub[0].split(":", 1)[0] not in SF_TOPICS and not sub[0].startswith("force:"):
+        # The verb was not where we looked: a flag before it (`sf -o org data delete bulk`) makes
+        # subcommand() stop early, and a naive re-scan then treats the flag's VALUE as the first
+        # positional. Anchor on the topic instead.
+        anchored = _topic_anchored(_cut_ddash(sf_args))
+        if anchored:
+            sub = anchored
     if not sub:
-        # a leading `--`/unknown flag hid the verb — re-scan ALL positionals, fail CLOSED (T12-04)
+        # nothing recognisable at all — re-scan ALL positionals and fail CLOSED (T12-04)
         sub = tuple(a.lower() for a in sf_args if not a.startswith("-"))
         if not sub:
             return None
@@ -546,7 +587,9 @@ def _protected_path(pathlike, cwd=None, varmap=None):
     if not pathlike:
         return False
     if "{" in pathlike and "," in pathlike:
-        return any(_protected_path(_a, cwd, varmap) for _a in _brace_expand(pathlike))
+        _alts = _brace_expand(pathlike)
+        if len(_alts) > 1 or (_alts and _alts[0] != pathlike):
+            return any(_protected_path(_a, cwd, varmap) for _a in _alts)
     pat = _abs_pattern(pathlike, cwd, varmap)
     base = os.path.basename(pat.rstrip("/")) or pat
     # literal OR globbed basename of a distinctive gate file (`settings.jso*` → settings.json)
