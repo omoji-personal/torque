@@ -1081,7 +1081,11 @@ def mcp_analyze(tool, tinput):
     """{'read':True} | {'write':target, 'destructive':(op,digest,body)|None}. TRUE default-deny:
     an org-touching tool that is not clearly a read is a write (audit R11-04/R11-05)."""
     parts = tool.split("__")
-    server = parts[1].lower() if len(parts) > 2 else ""
+    # `mcp__<server>__<tool>` puts the server second; a host that names tools `<server>__<tool>`
+    # puts it FIRST, and this read "" for that shape — so is_sf went false and a write tool was
+    # classified as a free read. Claude Code uses the three-part form, which is why it never
+    # showed up here (release panel round 2, antigravity/gemini-3.1-pro).
+    server = (parts[1] if len(parts) > 2 else parts[0] if len(parts) == 2 else "").lower()
     name = parts[-1]                                   # RAW (preserve camelCase for _name_comps)
     nl = name.lower()
     target = mcp_target(tinput)

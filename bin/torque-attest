@@ -49,7 +49,11 @@ def main():
 
     checks = [{"check": m.group(1), "outcome": m.group(2), "detail": m.group(3).strip()}
               for m in re.finditer(
-                  r"^\s+[✓✗!−·⧗]\s+(\S+)\s+(PASS|FAIL|WARN|SKIP|N/A|LIMIT)\s+(.*)$", clean, re.M)]
+                  # validate.py prints NA and LIMITED; matching only N/A and LIMIT dropped
+                  # every check with those outcomes from the attestation — silently shortening
+                  # the artifact whose one job is to be complete.
+                  r"^\s+[✓✗!−·⧗]\s+(\S+)\s+(PASS|FAIL|WARN|SKIP|N/A|NA|LIMIT|LIMITED)\s+(.*)$",
+                  clean, re.M)]
     mutators = [m.group(1) for m in re.finditer(r"^\s+✓\s+(.+?) mutator:", clean, re.M)]
     self_test = re.search(r"ALL (\d+) MUTATORS CAUGHT", clean)
     verdict = (re.search(r"→ verdict:\s+(\S+)", clean) or [None, "UNKNOWN"])[1]
@@ -80,7 +84,7 @@ def main():
         "exit_code": run.returncode,
         "counts": {"checks": len(checks),
                    **{k.lower().replace("/", ""): sum(1 for c in checks if c["outcome"] == k)
-                      for k in ("PASS", "FAIL", "WARN", "SKIP", "N/A", "LIMIT")}},
+                      for k in ("PASS", "FAIL", "WARN", "SKIP", "NA", "LIMITED")}},
         "self_test": {"mutators_caught": int(self_test.group(1)) if self_test else 0,
                       "all_caught": bool(self_test), "mutators": mutators},
         "checks": checks,
@@ -91,6 +95,11 @@ def main():
         "reproduce": f"python3 harness/validate.py --profile {a.profile} "
                      f"--target-org <your-disposable-org>",
     }
+    registered = len(re.findall(r"^\s+[✓✗!−·⧗]\s+\S+\s+\S+", clean, re.M))
+    if checks and len(checks) != registered:
+        print(f"refusing: parsed {len(checks)} check lines but the run printed {registered} — "
+              f"an attestation that silently drops outcomes is worse than none", file=sys.stderr)
+        return 2
     if not checks:
         print("refusing to write an attestation with no check outcomes — the validation run "
               "produced nothing parseable", file=sys.stderr)
