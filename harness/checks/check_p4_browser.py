@@ -40,18 +40,24 @@ def _browser_render(target):
         return Result("browser_render", FAIL, "frontdoor URL unavailable")
     url_file = fr.stdout.strip()
     probe = ROOT/"harness"/"checks"/"browser_probe.mjs"
+    # The URL file holds a LIVE session token. It was unlinked only on the exception path, so the
+    # PASS, SKIP and FAIL paths each left one behind — five were found in the temp dir, the oldest
+    # 17 hours old, still carrying a working token, against a README that says Torque stores no
+    # org credentials. A credential's lifetime must not depend on which branch returned.
     try:
-        r = _sp.run(["node", str(probe), url_file], capture_output=True, text=True, timeout=120,
-                    cwd=str(ROOT))
-    except Exception as e:
+        try:
+            r = _sp.run(["node", str(probe), url_file], capture_output=True, text=True, timeout=120,
+                        cwd=str(ROOT))
+        except Exception as e:
+            return Result("browser_render", FAIL, f"probe error: {e}")
+        if r.returncode == 0 and "RENDER_OK" in r.stdout:
+            return Result("browser_render", PASS, f"Lightning shell rendered live ({r.stdout.strip()[:40]})")
+        # node present but playwright module or launch failed → honest BLOCK, not FAIL/fake
+        if "Cannot find package" in r.stderr or "MODULE_NOT_FOUND" in r.stderr:
+            return Result("browser_render", SKIP,
+                "BLOCKED 2026-07-31: playwright node module not installed in this workspace; "
+                "frontdoor handoff verified separately.")
+        return Result("browser_render", FAIL, f"render failed: {(r.stdout + r.stderr).strip()[:90]}")
+    finally:
         try: _P(url_file).unlink()
         except Exception: pass
-        return Result("browser_render", FAIL, f"probe error: {e}")
-    if r.returncode == 0 and "RENDER_OK" in r.stdout:
-        return Result("browser_render", PASS, f"Lightning shell rendered live ({r.stdout.strip()[:40]})")
-    # node present but playwright module or launch failed → honest BLOCK, not FAIL/fake
-    if "Cannot find package" in r.stderr or "MODULE_NOT_FOUND" in r.stderr:
-        return Result("browser_render", SKIP,
-            "BLOCKED 2026-07-31: playwright node module not installed in this workspace; "
-            "frontdoor handoff verified separately.")
-    return Result("browser_render", FAIL, f"render failed: {(r.stdout + r.stderr).strip()[:90]}")

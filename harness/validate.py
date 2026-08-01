@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 import argparse, hashlib, json, os, re, subprocess, sys, tempfile
 from pathlib import Path
+import pathlib
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKS = ROOT / "harness" / "checks"
@@ -226,7 +227,11 @@ def run_profile(profile, target, only=None):
         results.append(res)
     return results
 
-def print_report(profile, results):
+def print_report(profile, results, only=None):
+    if only is not None and not results:
+        print(f"\n  ! no check named {only!r}. A filter that matches nothing is not a pass.")
+        print("  → verdict: FAIL")
+        return "FAIL"
     if BROKEN_PLUGINS:
         print(f"\n  ! {len(BROKEN_PLUGINS)} check plugin(s) failed to load: "
               f"{', '.join(BROKEN_PLUGINS)}")
@@ -245,6 +250,69 @@ def print_report(profile, results):
     return verdict
 
 # ---- self-test: mutators for catastrophe-class checks ---------------------
+_MUTATED_FILES = ("hooks/shellparse.py", "hooks/destructive_data_gate.py", "hooks/lib.py",
+                  "hooks/prod_write_gate.py")
+
+
+def _mutant_residue():
+    """Files still carrying a mutation from a previous run. A leftover MUTANT is not cosmetic:
+    it is a neutered guard in a hook that is REGISTERED and running, so the gate fails open
+    until someone notices. Refuse to start rather than mutate on top of it."""
+    out = []
+    for rel in _MUTATED_FILES:
+        f = ROOT / rel
+        try:
+            if f.exists() and "# MUTANT" in f.read_text():
+                out.append(rel)
+        except Exception:
+            pass
+    return out
+
+
+def _self_test_guard():
+    """Exclusive lock + crash-safe restore for the window in which live hooks are mutated."""
+    import atexit, fcntl, signal, shutil, tempfile
+    residue = _mutant_residue()
+    if residue:
+        print("  ! REFUSING to run: a previous self-test left mutations in "
+              f"{', '.join(residue)}.\n"
+              "    Those are live PreToolUse hooks — restore them before continuing:\n"
+              "      git checkout -- " + " ".join(residue), file=sys.stderr)
+        raise SystemExit(1)
+
+    lockf = open(ROOT / "local" / ".self-test.lock", "w") if (ROOT / "local").exists() \
+        else tempfile.NamedTemporaryFile(prefix="torque-selftest-", delete=False, mode="w")
+    try:
+        fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("  ! another self-test is running (it mutates live hooks); refusing to interleave",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+    backup = tempfile.mkdtemp(prefix="torque-selftest-backup-")
+    for rel in _MUTATED_FILES:
+        f = ROOT / rel
+        if f.exists():
+            shutil.copy2(f, pathlib.Path(backup) / rel.replace("/", "_"))
+
+    def _restore(*_a):
+        for rel in _MUTATED_FILES:
+            b = pathlib.Path(backup) / rel.replace("/", "_")
+            try:
+                if b.exists() and "# MUTANT" in (ROOT / rel).read_text():
+                    shutil.copy2(b, ROOT / rel)
+            except Exception:
+                pass
+    atexit.register(_restore)
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            prev = signal.getsignal(sig)
+            signal.signal(sig, lambda s, fr, _p=prev: (_restore(), sys.exit(130)))
+        except Exception:
+            pass
+    return _restore
+
+
 def self_test(target=None):
     # HARD GUARD: a mutator spawns validate.py as a subprocess; without this the child runs
     # self_test() too and mutates the same source again — recursively. A killed run then
@@ -252,6 +320,7 @@ def self_test(target=None):
     if os.environ.get("TORQUE_IN_SELFTEST") == "1":
         return True
     os.environ["TORQUE_IN_SELFTEST"] = "1"
+    _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
     TOTAL_MUTATORS = 11            # keep in step with the mutators below; asserted by the count check
@@ -473,7 +542,7 @@ def main():
     # self-test runs as part of static and above
     st_ok = True if a.only else self_test(a.target_org)
     results = run_profile(a.profile, a.target_org, a.only)
-    verdict = print_report(a.profile, results)
+    verdict = print_report(a.profile, results, a.only)
     sys.exit(0 if (verdict == PASS and st_ok) else 1)
 
 if __name__ == "__main__":

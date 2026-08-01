@@ -169,7 +169,7 @@ score of the *findings* fell in severity, which is the convergence signal:
 | 12 | New front — the gates judged PRE-EXPANSION text (`cat ~/.torq*/secret` read the secret); + alias TOCTOU, PATH-injected `who`/`ps`, one-token-two-deletes; + 6 usability regressions | expansion-aware path guards |
 | 13 | Completion of the round-12 front — `**` recursive-glob + char-class basenames misaligned the component matcher | a proper DP glob-prefix matcher |
 
-Every fixed class carries a named fixture (**128 total** — 114 across base + r11 + r12 + r13, 11
+Every fixed class carries a named fixture (**172 total** — 114 across base + r11 + r12 + r13, 21 in r14, 23 in r15, 11
 in the confirmation set, and 3 valid-token allow-path cases the runner constructs) and each
 catastrophe-class guard carries a **self-test mutator** that must flip a deny→allow when the
 guard is neutered (**11 mutators**, all caught with `--target-org`): clean-IP ×3 (operator-only — the pattern
@@ -215,6 +215,6 @@ classification), not one-off patches.
 - **4 release-gated checks** — excepted-org hard-fail (no client-prod exception, so the published
   claim stays absolute), a bypass suite over 7 shapes drawn from every audit front, image
   manifest, deliverable coverage (67 tracked paths, all classified).
-- **128 adversarial fixtures** across base + r11 + r12 + r13 + confirmation.
+- **172 adversarial fixtures** across base + r11 + r12 + r13 + r14 + confirmation.
 
 Reproduce on any free DE org with the command above. **Torque is converged and shippable.**

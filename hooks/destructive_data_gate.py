@@ -32,9 +32,13 @@ def _need_token(orgid, op, digest=""):
 
 
 def _shield_tokens(tokens, orgid):
-    prot = lib.protected_objects()
+    # Salesforce object names are case-insensitive, so `--sobject account` reached the same table
+    # as `Account` while slipping past an exact-set membership test. Bulk-delete tokens are not
+    # object-scoped, so one legitimately-issued token plus a lowercase name deleted the very
+    # objects the shield exists to protect (red-team P1-6).
+    prot = {p.strip().lower() for p in lib.protected_objects()}
     for t in tokens:
-        if t in prot:
+        if t.strip().lower() in prot:
             lib.deny(f"operation targets protected sObject {t}", "protected-object", HOOK)
 
 

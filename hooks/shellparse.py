@@ -132,6 +132,33 @@ def grouping_or_subst(cmd: str) -> bool:
             or bool(re.search(r"(?:^|[\s;&|])[({]", cmd)))
 
 
+_BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+_BRACE_CAP = 64          # fail CLOSED above this: a cross-product bomb must not buy an allow
+
+
+def _brace_expand(tok):
+    """Bash brace expansion, which happens BEFORE glob expansion and which the gate must model.
+    `~/.torq{u,x}e/secret` becomes two paths, one of which is the signing secret; without this
+    the token matched no protected pattern and was allowed (audit: red-team P0-2).
+    Returns every alternative, or the sentinel '**' form when the cross-product is too large,
+    so an over-wide brace can never be cheaper than a plain path."""
+    out = [tok]
+    for _ in range(8):                                  # nested braces, bounded
+        nxt = []
+        for cur in out:
+            m = _BRACE.search(cur)
+            if not m:
+                nxt.append(cur); continue
+            for alt in m.group(1).split(","):
+                nxt.append(cur[:m.start()] + alt + cur[m.end():])
+        if nxt == out:
+            break
+        out = nxt
+        if len(out) > _BRACE_CAP:
+            return [_BRACE.sub("*", tok)]               # collapse to a wildcard → still reaches
+    return out or [tok]
+
+
 def _abs_pattern(tok, cwd=None, varmap=None):
     """A token as an ABSOLUTE glob PATTERN, expansion-aware: ~ expanded, $var/${}/backtick → '*'
     (any shell var could construct any path), relative made absolute against cwd. The gate sees
@@ -151,6 +178,12 @@ def _abs_pattern(tok, cwd=None, varmap=None):
     # realpath (not normpath) so a symlinked prefix (macOS /tmp→/private/tmp) matches the
     # anchor's own .resolve(); wildcard components that don't exist are left intact (audit R11-10)
     return os.path.realpath(t)
+
+
+def _abs_patterns(tok, cwd=None, varmap=None):
+    """Every absolute pattern a token could become, once brace expansion is accounted for.
+    Callers that make a trust decision must consider ALL of them; reaching on any one denies."""
+    return [_abs_pattern(alt, cwd, varmap) for alt in _brace_expand(tok)]
 
 
 def _sub_vars(s, varmap):
@@ -187,6 +220,10 @@ def _glob_reaches(pat_parts, tgt_parts):
     of the glob consumes ALL of tgt. `**` matches ZERO OR MORE components; `*`/`?`/`[...]` match
     within one component via fnmatch. A positional compare (the prior version) misaligned on `**`
     and let `/Users/**/.../.[t]orque/sec[r]et` slip (audit round 13). This is a proper glob match."""
+    # case-fold: APFS/HFS+ are case-insensitive by default, so `.SFDX` and `.sfdx` are one
+    # file. Over-matching is fail-closed, hence applied unconditionally.
+    pat_parts = [x.lower() for x in pat_parts]
+    tgt_parts = [x.lower() for x in tgt_parts]
     m, n = len(pat_parts), len(tgt_parts)
     dp = [[False] * (n + 1) for _ in range(m + 1)]
     dp[0][0] = True
@@ -212,6 +249,8 @@ def anchor_ref(tok, cwd=None, varmap=None) -> bool:
     against the ACTUAL anchor paths AND expansion-aware, so `cat ~/.torq*/secret`,
     `a=.tor;b=que;cat ~/$a$b/secret`, `cat /Users/**/.../.[t]orque/sec[r]et`, and a custom
     TORQUE_ANCHOR all deny (audit T12-01 / round 13)."""
+    if "{" in tok and "," in tok:            # brace expansion precedes globbing
+        return any(anchor_ref(_a, cwd, varmap) for _a in _brace_expand(tok))
     pat = _abs_pattern(tok, cwd, varmap)
     approved = str(lib.APPROVED.resolve())
     if pat == approved or pat.startswith(approved + os.sep):
@@ -229,6 +268,8 @@ def sf_auth_ref(tok, varmap=None) -> bool:
     """The sf CLI auth store (~/.sfdx, ~/.sf) holds live access tokens — an agent reading it via
     Bash (`cat ~/.sfd*/x.json`) could lift a token and curl the REST API, bypassing sf entirely.
     Expansion-aware, same as anchor_ref (audit T12-01 applied to the auth store)."""
+    if "{" in tok and "," in tok:
+        return any(sf_auth_ref(_a, varmap) for _a in _brace_expand(tok))
     pat = _abs_pattern(tok, None, varmap)
     for d in ("~/.sfdx", "~/.sf"):
         if _pattern_reaches_dir(pat, os.path.realpath(os.path.expanduser(d))):
@@ -293,6 +334,15 @@ def file_value(sf_args):
     return None
 
 
+def _api_method_glued(argv):
+    """`-XPOST` glued, which curl-style short flags allow and the separate-form
+    parser missed."""
+    for a in argv:
+        if a.startswith("-X") and len(a) > 2:
+            return a[2:].upper()
+    return None
+
+
 def _api_method(sf_args):
     args = _cut_ddash(sf_args)
     for i, a in enumerate(args):
@@ -352,6 +402,29 @@ def is_read(sf_args) -> bool:
     return key1 in SF_READS or (key2 is not None and key2 in SF_READS)
 
 
+def _normalize_subcommand(sub):
+    """Split modern colon-joined command IDs into the space form oclif treats as equivalent.
+
+    `sf data:delete:bulk` == `sf data delete bulk` (verified: `sf data:delete:bulk --help` exits
+    0). Legacy `force:` IDs are matched elsewhere as whole strings and must NOT be split here,
+    or `force:data:bulk:delete` would stop matching its own rule.
+    """
+    out = []
+    for tok in sub:
+        if ":" in tok and not tok.startswith("force:"):
+            out.extend(p for p in tok.split(":") if p)
+        else:
+            out.append(tok)
+    return tuple(out)
+
+
+def _subcommand_is_opaque(sub, sf_args):
+    """True when the verb cannot be read off the command line at all — a shell expansion supplied
+    it (`sf "$@"`, `sf data $V ...`). The gate cannot classify what it cannot see, and an
+    unclassified sf WRITE must never be cheaper than a classified one."""
+    return any("$" in t or "`" in t or "{" in t for t in tuple(sub) + tuple(sf_args))
+
+
 def classify_destructive(sf_args):
     """Op-class if the parsed sf write is destructive, else None. Covers modern space syntax AND
     legacy colon syntax (audit R11-04/R11-05) and async-resume completion of bulk jobs."""
@@ -361,13 +434,20 @@ def classify_destructive(sf_args):
         sub = tuple(a.lower() for a in sf_args if not a.startswith("-"))
         if not sub:
             return None
+    # An expansion-supplied verb is unreadable, so it is treated as the most dangerous thing it
+    # could be rather than as harmless (red-team P0-2: `sf "$@"` and `sf data $V` both ran a bulk
+    # delete with no token because the classifier saw an unmatched token and returned None).
+    if _subcommand_is_opaque(sub, sf_args):
+        return "opaque-write"
+    sub = _normalize_subcommand(sub)
     f = sub[0]
     if sub[:2] == ("apex", "run") or f.startswith("force:apex:execute"):
         return "apex"                                 # NOT force:apex:test:run (that's a test, TQ-011)
     if sub[:2] == ("org", "delete") or f.startswith("force:org:delete"):
         return "org-delete"                           # destroy a sandbox/scratch org (RU-2)
     if (sub[:2] == ("api", "request") or f.startswith("force:api")) \
-       and _api_method(sf_args) in ("POST", "PUT", "PATCH", "DELETE"):
+       and (_api_method_glued(sf_args) or _api_method(sf_args)) in ("POST", "PUT", "PATCH", "DELETE"):   # glued FIRST: _api_method defaults to "GET" when no separate -X is present, so the other
+       # order short-circuits on that default and never sees `-XPOST`.
         return "destructive-metadata"                 # raw REST DML bypasses data-* verbs (TQ-F3)
     if sub[:3] == ("data", "delete", "bulk") or "--hard-delete" in sf_args \
        or f.startswith("force:data:bulk:delete"):
@@ -415,7 +495,35 @@ def _sed_inplace(argv):
     return any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in argv[1:])
 
 
+# Command runners that take a command as their argument. `sf` already handled these via
+# wrapped_sf; the write-shape classifiers dispatched on argv[0] alone, so one word in front
+# ("nice cp ... hooks/lib.py") bypassed every one of them (audit: red-team P0-1).
+RUNNERS = {"env", "nice", "command", "timeout", "nohup", "stdbuf", "ionice", "setsid",
+           "caffeinate", "sudo", "doas", "chroot", "unshare", "script", "time", "builtin",
+           "exec", "busybox", "xargs"}
+
+
+def strip_runners(argv):
+    """Peel runner prefixes (and their flags / VAR=val assignments) so the classifier sees the
+    command that will actually execute. Bounded so a pathological chain cannot spin."""
+    argv = list(argv)
+    for _ in range(8):
+        if not argv or os.path.basename(argv[0]).lower() not in RUNNERS:
+            break
+        runner = os.path.basename(argv[0]).lower()
+        argv = argv[1:]
+        while argv and (argv[0].startswith("-") or re.match(r"^\w+=", argv[0])):
+            argv = argv[1:]
+        # `timeout 5 tee ...`: the duration is a POSITIONAL, so peeling only flags left "5"
+        # as argv[0] and the classifier saw no write shape. A command is never a bare
+        # number, so dropping a duration-shaped token cannot swallow a real command.
+        if runner == "timeout" and argv and re.match(r"^[0-9]+(\.[0-9]+)?[smhd]?$", argv[0]):
+            argv = argv[1:]
+    return argv
+
+
 def _write_shape_targets(argv):
+    argv = strip_runners(argv)
     base0 = os.path.basename(argv[0]).lower() if argv else ""
     cand = []
     for i, tok in enumerate(argv):
@@ -437,6 +545,8 @@ def _write_shape_targets(argv):
 def _protected_path(pathlike, cwd=None, varmap=None):
     if not pathlike:
         return False
+    if "{" in pathlike and "," in pathlike:
+        return any(_protected_path(_a, cwd, varmap) for _a in _brace_expand(pathlike))
     pat = _abs_pattern(pathlike, cwd, varmap)
     base = os.path.basename(pat.rstrip("/")) or pat
     # literal OR globbed basename of a distinctive gate file (`settings.jso*` → settings.json)
@@ -459,6 +569,29 @@ def _under_local(path_str):
     return rp == lp or rp.startswith(lp + os.sep)
 
 
+# Commands that BUILD a path at runtime, so no literal token ever shows `.torque`/`.sfdx`/a gate
+# file and every literal-token guard is blind. `find ~ -name secret -path '*torque*' -exec cat
+# {} +` read the signing secret; the same shape with `cp` overwrote a gate file. The action is
+# what matters, not the path, so any of these carrying a reader/writer action is refused.
+_RUNTIME_PATH_CMDS = {"find", "fd", "locate", "mdfind"}
+_RUNTIME_ACTION_FLAGS = ("-exec", "-execdir", "-ok", "-okdir", "-delete",
+                         "-fprintf", "-fprint", "-fls")
+
+
+def runtime_path_action(argv):
+    """A find/xargs shape whose target set is computed at run time and then acted on."""
+    if not argv:
+        return None
+    base0 = os.path.basename(argv[0]).lower()
+    if base0 in _RUNTIME_PATH_CMDS and any(a in _RUNTIME_ACTION_FLAGS for a in argv):
+        return base0
+    if base0 == "xargs":
+        return "xargs"
+    if base0 == "tar" and any(a in ("-T", "--files-from") for a in argv):
+        return "tar -T"
+    return None
+
+
 def check_write_shapes(segs, varmap=None):
     """Walk segments tracking cwd (cd-desync); deny a write/perm/opaque-writer op that reaches a
     protected path or the gate itself. Returns (reason, fingerprint) or None. Fails closed on
@@ -477,6 +610,9 @@ def check_write_shapes(segs, varmap=None):
             argv = shlex.split(seg)
         except ValueError:
             continue
+        if not argv:
+            continue
+        argv = strip_runners(argv)
         if not argv:
             continue
         base0 = os.path.basename(argv[0]).lower()
@@ -541,6 +677,63 @@ def _is_org_mutation(sf_args):
                        ("config", "unset"), ("org", "login"), ("org", "logout"))
 
 
+def _find_roots(argv):
+    """Positional path arguments of a find-like command (everything before the first flag)."""
+    roots = []
+    for t in argv[1:]:
+        if t.startswith("-"):
+            break
+        roots.append(t)
+    return roots or ["."]
+
+
+def runtime_path_risk(segs, varmap):
+    """(producer, reason) when a runtime-constructed path set could reach something protected AND
+    something acts on it. `find ~ -name secret -path '*torque*' -exec cat {} +` read the signing
+    secret; the same shape piped to `xargs cat` did too, and with `cp` it overwrote a gate file —
+    no literal token ever showed the path, so every literal-token guard was blind (red-team
+    P0-3/P0-4). Evaluated across the WHOLE command because the producer and the consumer are
+    usually in different segments of a pipeline."""
+    producer = None
+    risky_root = False
+    consumer = False
+    for seg in segs:
+        try:
+            raw = shlex.split(seg.strip())
+        except ValueError:
+            continue
+        if not raw:
+            continue
+        # Consumer detection must look at the RAW argv: `xargs` is in RUNNERS (so the write-shape
+        # classifier can see through `xargs cp`), and stripping it here hid the consumer entirely,
+        # letting `find ~ ... | xargs cat` through.
+        raw_base = os.path.basename(raw[0]).lower()
+        a = strip_runners(raw)
+        if not a:
+            a = raw
+        base = os.path.basename(a[0]).lower()
+        if raw_base in ("xargs",) or (raw_base == "tar" and
+                                      any(f in raw for f in ("-T", "--files-from"))):
+            consumer = True
+        if base in _RUNTIME_PATH_CMDS:
+            producer = base
+            for root in _find_roots(a):
+                pat = _abs_pattern(root, None, varmap)
+                home = os.path.realpath(os.path.expanduser("~"))
+                th = str(lib.TORQUE_HOME.resolve())
+                if (root in ("~", "/", "$HOME") or root.startswith(("~/", "$HOME"))
+                        or pat in (home, "/") or th.startswith(pat.rstrip("/") + os.sep)
+                        or anchor_ref(root, None, varmap) or sf_auth_ref(root, varmap)
+                        or _protected_path(root, None, varmap)):
+                    risky_root = True
+            if any(f in a for f in _RUNTIME_ACTION_FLAGS):
+                consumer = True
+    if producer and risky_root and consumer:
+        return producer, ("its search root can reach the trust anchor, the sf auth store or the "
+                          "gate files, and the results are acted on")
+    return None, None
+
+
 def analyze_bash(cmd: str):
     cmd = strip_continuations(cmd)
     segs, ok = split_segments(cmd)
@@ -598,7 +791,7 @@ def analyze_bash(cmd: str):
             return {"deny": ("indirect command invocation ($VAR/$()/backtick) cannot be "
                              "authorized — call `sf` literally", "indirect-argv0")}
         if base0 in INTERPRETERS and (SF_WORD.search(seg) or SF_SUSPICIOUS.search(seg)
-                                      or "$" in seg or "`" in seg):
+                                      or "`" in seg):
             # EXCEPT the harness itself. `--target-org` matches SF_SUSPICIOUS, so this rule was
             # denying `python3 harness/validate.py --target-org <org>` — the exact command the
             # README and the guide tell every user to run to reproduce the validation. A gate that
@@ -614,6 +807,24 @@ def analyze_bash(cmd: str):
             return {"deny": ("Salesforce operation under a wrapper/runner — call `sf` directly",
                              "wrapper-sf")}
         # else: a non-sf command with sf only as data (grep sf, echo 'sf ...') → allowed
+    _rt, _why = runtime_path_risk(segs, varmap)
+    if _rt:
+        return {"deny": (f"`{_rt}` builds its target set at run time and {_why} — "
+                          f"scope the search, or act on an explicit path", "runtime-path")}
+
+    # A write-shape command combined with command substitution: the substitution fragments the
+    # token before check_write_shapes can see it, so the destination is unknowable at parse time.
+    # Unknowable destination + a writer = deny (red-team P0-5, demonstrated overwriting a file).
+    if ("$(" in cmd or "`" in cmd):
+        for _seg in split_segments(strip_continuations(cmd))[0] or []:
+            try:
+                _a = shlex.split(_seg)
+            except ValueError:
+                continue
+            _a = strip_runners(_a)
+            if _a and os.path.basename(_a[0]).lower() in (WRITE_SHAPE_CMDS | PERM_CMDS):
+                return {"deny": ("a write whose destination is built by command substitution "
+                                 "cannot be checked — use an explicit path", "subst-write")}
     # an org-alias/config/login mutation in the SAME command as a write can re-point the write's
     # target between this check and execution (TOCTOU, audit TQ-002) — refuse the combination
     if mutations and writes:
@@ -654,7 +865,7 @@ def _mcp_destructive(name, tinput):
     comps = _name_comps(name)
     nl = name.lower()
     no_id = not (tinput.get("recordId") or tinput.get("id") or tinput.get("record-id"))
-    if "apex" in comps or "anonymous" in comps or "apex" in nl:
+    if "anonymous" in comps or ("apex" in comps and comps & {"run", "execute", "exec"}):
         body = tinput.get("apexCode") or tinput.get("apex") or tinput.get("code") or ""
         return ("apex", hashlib.sha256(body.encode()).hexdigest()[:16], body)
     if comps & {"delete", "purge", "destroy", "remove", "erase", "truncate", "drop"}:

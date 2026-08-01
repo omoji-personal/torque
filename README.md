@@ -115,7 +115,7 @@ Then open the folder in Claude Code and work. The hooks fire on every tool call.
 
 Torque validates itself the way it validates Salesforce work. `--profile release` runs:
 
-- **128 adversarial fixtures** — every attack class found across the audits, each one a named,
+- **172 adversarial fixtures** — every attack class found across the audits, each one a named,
   runnable test.
 - **11 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
   attack to succeed (or, for the static scanners, requires the check to FAIL). A check that

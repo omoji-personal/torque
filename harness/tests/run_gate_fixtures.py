@@ -94,7 +94,7 @@ def main():
     org = os.environ.get("TORQUE_TEST_ORG", "sf-coffee")
     _stub_env(org)   # hermetic: stub sf on PATH for the gate subprocesses
     fixtures = []
-    for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json", "gate_fixtures_conf.json"):
+    for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json", "gate_fixtures_r14.json", "gate_fixtures_r15.json", "gate_fixtures_conf.json"):
         p = ROOT / "harness/tests" / fn
         if p.exists():
             raw = p.read_text().replace("sf-coffee", org)
