@@ -406,15 +406,20 @@ def token_path(orgid: str, op_class: str, digest: str = "") -> Path:
     return TOKENS / f"{key}.token"
 
 def impact_digest(sobject: str, where: str) -> str:
-    """A stable id for "this operation, on this object, with these criteria".
+    """A stable id for "this operation, on this object, with exactly these criteria".
 
-    Approval everywhere else in the industry binds to a command string or a session, so the
-    human vouches for their own reading of a WHERE clause. This binds the token to the SHAPE of
-    the impact, and the signed payload carries the SIZE — so a token approved for seven records
-    cannot be spent on seven thousand.
+    This is a COUNT CEILING, not a scope proof, and the code says so because the guide now does
+    too. What is enforced is that the operation cannot affect MORE rows than were approved. A
+    different set of the same or smaller size satisfies it, and rows can change between the
+    count and the DML — signing record Ids would narrow the first gap and not close the second,
+    since the race is in the platform, not here (release panel, codex/gpt-5.6-sol).
+
+    The criteria are no longer lower-cased or internally re-spaced. That collapsed distinct
+    clauses onto one digest — `Name = 'a  b'` and `Name = 'A B'` are different filters and were
+    the same token.
     """
-    norm = " ".join((where or "").split()).lower()
-    return hashlib.sha256(f"{(sobject or '').lower()}|{norm}".encode()).hexdigest()[:16]
+    norm = (where or "").strip()
+    return hashlib.sha256(f"{(sobject or '').strip()}|{norm}".encode()).hexdigest()[:16]
 
 
 def consume_token_payload(orgid: str, op_class: str, digest: str = ""):

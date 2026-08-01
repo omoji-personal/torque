@@ -96,9 +96,19 @@ def _shield_tokens(tokens, orgid):
 
 
 def _shield_text(text, orgid):
+    """The protected-object floor, applied to an Apex body.
+
+    Apex sObject names are case-insensitive, so `delete [SELECT Id FROM account]` reaches the
+    same table as `Account`. _shield_tokens learned this from an earlier red-team finding and
+    was fixed; this twin was not, so the floor held on the CLI path and not on the Apex path —
+    which is the path that runs arbitrary DML (release panel, codex/gpt-5.6-sol).
+
+    A fix applied to one call site and not its twin is the failure mode this pair now guards
+    against: shield_is_case_insensitive exercises BOTH.
+    """
     import re
     for obj in lib.protected_objects():
-        if re.search(rf"\b{re.escape(obj)}\b", text):
+        if re.search(rf"\b{re.escape(obj)}\b", text, re.IGNORECASE):
             lib.deny(f"operation references protected sObject {obj}", "protected-object", HOOK)
 
 

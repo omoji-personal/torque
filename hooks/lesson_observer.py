@@ -92,11 +92,20 @@ def platform_error(body):
     return None, 0
 
 
-def _shape(cmd):
-    """The operation's shape: verb path plus sObject, if either is discernible.
+_TARGET = re.compile(r"--target-org[= ]+([A-Za-z0-9._@-]+)|(?:^|\s)-o\s+([A-Za-z0-9._@-]+)")
 
-    Two commands share a shape when they are the same operation against the same object — which
-    is what makes a later success the answer to an earlier failure rather than a coincidence.
+
+def _shape(cmd):
+    """The operation's shape: TARGET ORG, verb path, and sObject.
+
+    The org was not part of the shape, so a failure on one client's org could pair with a later
+    success on another's — manufacturing a "fix" that was never applied to the org it would be
+    recorded against. For a feature whose output becomes client-specific knowledge, that is the
+    worst available bug (release panel, codex/gpt-5.6-sol).
+
+    The alias is used rather than an orgId because resolving one costs a callout on a path that
+    runs after every command. Two aliases for the same org simply do not pair, which errs toward
+    recording nothing.
     """
     toks = cmd.split()
     verb = [t for t in toks[1:5] if t and not t.startswith("-")][:3]
@@ -107,7 +116,9 @@ def _shape(cmd):
     if not obj:
         m = re.search(r"\bFROM\s+([A-Za-z0-9_]+)", cmd, re.I)
         obj = m.group(1) if m else ""
-    return ":".join(verb) + "|" + obj
+    m = _TARGET.search(cmd)
+    org = (m.group(1) or m.group(2)) if m else ""
+    return f"{org}|" + ":".join(verb) + "|" + obj
 
 
 def _append(rec):
@@ -118,11 +129,19 @@ def _append(rec):
     os.chmod(CANDIDATES, 0o600)
 
 
+_QUEUE_CAP = 500
+
+
 def _pending():
+    """The most recent observations. Bounded, because this file is read on the hot path.
+
+    It was read in full and rewritten in full on every pairing, so the cost of an ordinary
+    command grew with the backlog — a capture system that gets slower the more it captures.
+    """
     if not CANDIDATES.exists():
         return []
     out = []
-    for line in CANDIDATES.read_text().splitlines():
+    for line in CANDIDATES.read_text().splitlines()[-_QUEUE_CAP:]:
         try:
             out.append(json.loads(line))
         except Exception:
@@ -149,6 +168,11 @@ def main():
 
     code, at = platform_error(body)
     shape = _shape(cmd)
+
+    # An error code echoed by a SUCCEEDING command — grep output, a log tail, a doc example —
+    # is not a failure. Requiring a non-zero exit removes a whole class of manufactured lesson.
+    if code and failed in (0, None, "0"):
+        code = None
 
     if code:
         # The platform refused, and named why. Record the half we have.

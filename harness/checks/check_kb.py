@@ -1544,3 +1544,105 @@ def _checkup_cannot_confirm_on_auth_failure():
     return Result("checkup_cannot_confirm_on_auth_failure", PASS,
                   "auth and limit failures are errors, not confirmation; a real refusal still "
                   "confirms; the verdict is non-zero whenever the picture is untrustworthy")
+
+
+@check("shield_is_case_insensitive", "static", catastrophe=True)
+def _shield_is_case_insensitive():
+    """The protected-object floor must hold on BOTH paths, in any casing.
+
+    Salesforce object names are case-insensitive. `_shield_tokens` learned that from an earlier
+    red-team finding and was fixed; `_shield_text`, which screens Apex bodies, was not — so
+    `delete [SELECT Id FROM account]` walked past a floor that stopped `--sobject account`. The
+    Apex path is the one that runs arbitrary DML, so the half that was missed was the half that
+    mattered more.
+
+    A fix applied to one call site and not its twin is the defect here, not the casing. Both
+    are exercised.
+    """
+    import importlib.machinery as _im, importlib.util as _il
+    src = ROOT / "hooks" / "destructive_data_gate.py"
+    spec = _il.spec_from_file_location("torque_ddg", src,
+                                       loader=_im.SourceFileLoader("torque_ddg", str(src)))
+    m = _il.module_from_spec(spec); spec.loader.exec_module(m)
+    protected = sorted(m.lib.protected_objects())
+    if not protected:
+        return Result("shield_is_case_insensitive", FAIL, "the protected-object list is empty")
+    obj = protected[0]
+    variants = [obj, obj.lower(), obj.upper(),
+                "".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(obj))]
+
+    real_deny = m.lib.deny
+    try:
+        for v in variants:
+            for label, call in (
+                ("apex body", lambda v=v: m._shield_text(f"delete [SELECT Id FROM {v}];", "00D")),
+                ("cli token", lambda v=v: m._shield_tokens([v], "00D")),
+            ):
+                hits = []
+                m.lib.deny = lambda *a, **k: hits.append(a)
+                call()
+                if not hits:
+                    return Result("shield_is_case_insensitive", FAIL,
+                                  f"{label} path allowed protected object as {v!r}")
+        # and a non-protected object must still pass, or the floor is just a wall
+        hits = []
+        m.lib.deny = lambda *a, **k: hits.append(a)
+        m._shield_text("delete [SELECT Id FROM Widget__c];", "00D")
+        if hits:
+            return Result("shield_is_case_insensitive", FAIL,
+                          "an unprotected object was refused — the floor became a wall")
+    finally:
+        m.lib.deny = real_deny
+    return Result("shield_is_case_insensitive", PASS,
+                  f"{len(protected)} protected object(s), {len(variants)} casings, both the "
+                  f"Apex-body and CLI-token paths; unprotected objects unaffected")
+
+
+@check("observer_cannot_cross_clients", "static", catastrophe=True)
+def _observer_cannot_cross_clients():
+    """An observation must never pair across orgs, or fire on a command that succeeded.
+
+    The observer's output becomes client-specific knowledge. Its shape excluded the target org,
+    so a failure on one client's org could pair with a later success on another's — recording a
+    "fix" that had never been applied to the org it was filed against. For this feature that is
+    the worst available bug: it manufactures confident, wrong, client-attributed knowledge.
+
+    It also treated any recognised error code in the output as a failure regardless of exit
+    status, so grepping a log or reading a doc example could file a lesson.
+    """
+    import importlib.machinery as _im, importlib.util as _il
+    src = ROOT / "hooks" / "lesson_observer.py"
+    spec = _il.spec_from_file_location("torque_obs", src,
+                                       loader=_im.SourceFileLoader("torque_obs", str(src)))
+    m = _il.module_from_spec(spec); spec.loader.exec_module(m)
+
+    a = m._shape("sf data create record --sobject Contact --target-org client-a")
+    b = m._shape("sf data create record --sobject Contact --target-org client-b")
+    if a == b:
+        return Result("observer_cannot_cross_clients", FAIL,
+                      f"two orgs share the shape {a!r} — a failure on one can pair with a "
+                      f"success on the other")
+    if m._shape("sf data create record --sobject Contact --target-org client-a") != a:
+        return Result("observer_cannot_cross_clients", FAIL, "shape is not stable")
+
+    # a succeeding command that merely MENTIONS an error code must record nothing
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td:
+        m.CANDIDATES = _KbP(td) / "c.jsonl"
+        ev = {"tool_name": "Bash",
+              "tool_input": {"command": "sf data query --target-org o --query \"SELECT Id\""},
+              "tool_response": {"stdout": "grep: INVALID_FIELD appears in the log", "stderr": "",
+                                "exit_code": 0}}
+        r = _kb_sp.run([_kb_sys.executable, str(src)], input=_kb_json.dumps(ev),
+                       capture_output=True, text=True, cwd=ROOT, timeout=60,
+                       env={**_kb_os.environ, "TORQUE_HOME": td})
+        if r.returncode != 0:
+            return Result("observer_cannot_cross_clients", FAIL,
+                          f"observer exited {r.returncode} on a succeeding command")
+    if not hasattr(m, "_QUEUE_CAP") or m._QUEUE_CAP > 5000:
+        return Result("observer_cannot_cross_clients", FAIL,
+                      "the candidate queue is unbounded — it is read on every Bash call, so "
+                      "capture would get slower the more it captured")
+    return Result("observer_cannot_cross_clients", PASS,
+                  f"observations are org-scoped, a succeeding command records nothing, and the "
+                  f"queue is capped at {m._QUEUE_CAP}")
