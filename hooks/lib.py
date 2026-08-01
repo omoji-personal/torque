@@ -40,12 +40,58 @@ ELIGIBLE = {"sandbox", "developer", "scratch"}   # NOT production, NOT unverifia
 # past Claude Code's hook timeout, which kills the hook at a non-2 status ⇒ fail-OPEN, exactly
 # the hole T10-07 closed. The budget is set once when the gate starts; every callout is clamped
 # to what remains, and an exhausted budget is a failure (⇒ "production" ⇒ deny), never a pass.
+#
+# That much was true and remained insufficient, because it bounds CALLOUTS and the gate is not
+# only callouts. Work done after the budget was spent was unbounded, so the fail-open it was
+# written to close stayed reachable by spending the time in CPU instead — measured at 70.8s
+# against a 55s hook timeout. _arm_deadline below now enforces it for real.
 GATE_BUDGET_S = float(os.environ.get("TORQUE_GATE_BUDGET", "40"))
+# The host's own limit, declared per-hook in .claude/settings.json. Named here so the budget and
+# the timeout it must sit under cannot drift apart silently — budget_fits_hook_timeout asserts
+# both that GATE_BUDGET_S + _GRACE_S < this, and that this is what settings.json really declares.
+HOOK_TIMEOUT_S = 55
+# Overridable for the same reason TORQUE_HOME and TORQUE_AUDIT_LOG are: proving the deadline
+# fires means driving a gate past it, and a 5s floor makes that test cost 5s on every run.
+# Anyone who can set this already controls the process the hook runs in.
+_GRACE_S = float(os.environ.get("TORQUE_GATE_GRACE", "5"))   # room to render a deny
 _DEADLINE = None
 
-def start_budget(seconds: float = None):
+
+def start_budget(seconds: float = None, hook_id: str = ""):
     global _DEADLINE
-    _DEADLINE = time.time() + (GATE_BUDGET_S if seconds is None else seconds)
+    budget = GATE_BUDGET_S if seconds is None else seconds
+    _DEADLINE = time.time() + budget
+    _arm_deadline(budget + _GRACE_S, hook_id)
+
+
+def _arm_deadline(seconds: float, hook_id: str = ""):
+    """Make the budget ENFORCEABLE rather than advisory.
+
+    The budget clamped `sf` callouts and nothing else, so CPU spent after it was exhausted was
+    unbounded. Measured here: a 50KB command word drove one callout to its full 40s and then
+    spent 9.5s more inside redact() alone — 70.8s total, against a hook timeout of 55 declared
+    three lines of config away. The comment above claimed the gate "can never outlive the host's
+    hook timeout". It did. A hook the host kills exits non-2, and non-2 ALLOWS, so the one
+    guarantee this budget exists to provide was asserted rather than built.
+
+    A real deadline closes the class instead of the two slow functions I happened to find: any
+    overrun, from any cause, becomes a deny the host actually sees. Where SIGALRM is unavailable
+    (Windows, or a non-main thread) the clamped callouts remain the only bound — degraded, but
+    never worse than before.
+    """
+    try:
+        import signal, threading
+        if threading.current_thread() is not threading.main_thread():
+            return
+
+        def _fire(_sig, _frm):
+            deny("gate exceeded its time budget — failing closed rather than letting the host "
+                 "kill the hook, because a killed hook exits non-2 and that ALLOWS",
+                 "budget-exhausted", hook_id)
+        signal.signal(signal.SIGALRM, _fire)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+    except (ImportError, AttributeError, ValueError, OSError):
+        pass
 
 def _budget_left():
     return None if _DEADLINE is None else _DEADLINE - time.time()
@@ -119,7 +165,7 @@ def redact(text: str) -> str:
     # than no rule, because both the operator and the reviewer stop looking (release panel,
     # codex/gpt-5.6-sol). These shapes are always sensitive and are never what a rollback needs;
     # ordinary field values are deliberately preserved, because before/after values ARE the undo.
-    text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]{2,}", "EMAIL_REDACTED", text)
+    text = re.sub(r"(?<![\w.+-])[\w.+-]+@[\w-]+\.[\w.]{2,}", "EMAIL_REDACTED", text)
     text = re.sub(r"\b\d{3}-\d{2}-\d{4}\b", "SSN_REDACTED", text)
     text = re.sub(r"\(?\b\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b", "PHONE_REDACTED", text)
     text = re.sub(r"\b(?:\d[ -]?){13,19}\b", "CARD_REDACTED", text)
@@ -799,7 +845,7 @@ def run_gate(main_fn, hook_id: str):
     """Fail-CLOSED wrapper. allow()/deny() raise SystemExit (not Exception) and pass through;
     any OTHER exception denies rather than letting a crash exit 1 (non-blocking = allow).
     Also starts the wall-clock budget so the gate can never outlive the host's hook timeout."""
-    start_budget()
+    start_budget(hook_id=hook_id)
     try:
         main_fn()
     except SystemExit:
@@ -811,10 +857,16 @@ def run_gate(main_fn, hook_id: str):
 
 
 # ---- protected paths: agent Bash must not write these (realpath-resolved) -------------
+_PWP_CACHE = {}
+
+
 def protected_write_paths():
+    key = (str(TORQUE_HOME), str(ALLOWLIST), str(PROTECTED), str(CACHE), str(ANCHOR))
+    if key in _PWP_CACHE:
+        return _PWP_CACHE[key]
     hd = TORQUE_HOME
     # every entry .resolve()'d so a symlink cannot dodge the equality/prefix match (audit R11 RU)
-    return [str((hd/"hooks").resolve()), str((hd/"bin").resolve()),
+    out = [str((hd/"hooks").resolve()), str((hd/"bin").resolve()),
             str((hd/".claude"/"settings.json").resolve()),
             str((hd/"harness"/"checks").resolve()),
             # The catalogue and the per-org store feed the gate's own note rendering, so the
@@ -825,6 +877,8 @@ def protected_write_paths():
             str((hd/"harness"/"checks"/"cli-write-surface.json").resolve()),
             str((hd/"harness"/"checks"/"clean-ip.rules").resolve()),
             str(CACHE.resolve()), str(ANCHOR.resolve())]
+    _PWP_CACHE[key] = out
+    return out
 
 def is_protected_target(path_str: str) -> bool:
     """Is this path inside something the agent must not write?

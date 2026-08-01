@@ -387,7 +387,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 12            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 13            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -580,6 +580,22 @@ def self_test(target=None):
         ok &= passed
     finally:
         spf.write_text(orig5)
+    # deadline mutator: neuter _arm_deadline, so the budget goes back to being advisory. The
+    # budget check must then FAIL — proving it tests the deadline's behaviour and not just the
+    # arithmetic, which was right the whole time the gate was overrunning by 16 seconds.
+    lbf = ROOT / "hooks" / "lib.py"
+    orig6 = lbf.read_text()
+    try:
+        lbf.write_text(orig6.replace(
+            "def _arm_deadline(seconds: float, hook_id: str = \"\"):",
+            "def _arm_deadline(seconds: float, hook_id: str = \"\"):\n    return  # MUTANT", 1))
+        fn = dict((n, f) for n, _p, _c, f in REGISTRY).get("budget_fits_hook_timeout")
+        r = fn()
+        passed = r.outcome == FAIL
+        print(f"  {'✓' if passed else '✗'} deadline (_arm_deadline) mutator: expected FAIL, got {r.outcome}")
+        ok &= passed
+    finally:
+        lbf.write_text(orig6)
     # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
     # Editing the FILE does nothing here — lib is already imported, so the check would keep using
     # the cached function and report a false PASS. Patching the live module object is both the

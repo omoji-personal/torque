@@ -1916,6 +1916,73 @@ def _guards_share_no_blind_assumption():
                   f"4 ordinary paths unaffected")
 
 
+@check("budget_fits_hook_timeout", "static", catastrophe=True)
+def _budget_fits_hook_timeout():
+    """The gate must produce a verdict before the host gives up on it — proven, not asserted.
+
+    A PreToolUse hook that overruns its declared timeout is killed, and a killed hook exits
+    non-2, which ALLOWS. So the gate's own budget is a security boundary, and until this round it
+    was advisory: it clamped `sf` callouts and nothing else, leaving everything after them
+    unbounded. One 50KB command word spent 40s in a callout and 9.5s more inside redact() — 70.8s
+    against a 55s timeout declared three lines away in settings.json.
+
+    Two things have to hold and they fail independently. The arithmetic can be right while the
+    deadline does not fire, and the deadline can fire while someone has since lowered the
+    timeout in settings.json — so this checks the numbers agree AND runs a gate that would
+    otherwise hang, with a stubbed `sf`, and requires exit 2 in time.
+    """
+    import importlib.util as _il, json as _j, os as _os, subprocess as _sp, sys as _sys, \
+        tempfile as _tf, time as _t
+    lspec = _il.spec_from_file_location("torque_lib_bt", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+
+    ceiling = lib.GATE_BUDGET_S + lib._GRACE_S
+    if ceiling >= lib.HOOK_TIMEOUT_S:
+        return Result("budget_fits_hook_timeout", FAIL,
+                      f"budget {lib.GATE_BUDGET_S}s + grace {lib._GRACE_S}s = {ceiling}s does not "
+                      f"fit under the {lib.HOOK_TIMEOUT_S}s hook timeout — an overrun is killed "
+                      f"by the host, and a killed hook exits non-2, which ALLOWS")
+    declared = set()
+    for group in _j.loads((ROOT / ".claude" / "settings.json").read_text()) \
+            .get("hooks", {}).get("PreToolUse", []):
+        for h in group.get("hooks", []):
+            declared.add(h.get("timeout"))
+    if declared != {lib.HOOK_TIMEOUT_S}:
+        return Result("budget_fits_hook_timeout", FAIL,
+                      f"lib.HOOK_TIMEOUT_S is {lib.HOOK_TIMEOUT_S} but settings.json declares "
+                      f"{sorted(declared)} — the budget is sized against a number the host is "
+                      f"not using")
+
+    # and the deadline must actually FIRE. A hanging callout does not prove it: `_sf` clamps
+    # each callout to the remaining budget, so that path denies on time with the deadline
+    # removed — the first version of this check passed against its own mutant. It takes a
+    # CPU-bound overrun, where nothing else is bounding anything, and it has to be judged on
+    # ELAPSED TIME, because the slow path reaches the same verdict, just too late to matter.
+    payload = "echo x " + "> " * 20000 + "hooks/lib.py"        # ~17s unbounded, measured
+    env = dict(_os.environ, TORQUE_GATE_BUDGET="0.5", TORQUE_GATE_GRACE="0.5")
+    ev = _j.dumps({"tool_name": "Bash", "tool_input": {"command": payload}})
+    t0 = _t.time()
+    try:
+        r = _sp.run([_sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")], input=ev,
+                    capture_output=True, text=True, cwd=ROOT, timeout=60, env=env)
+    except _sp.TimeoutExpired:
+        return Result("budget_fits_hook_timeout", FAIL,
+                      "a CPU-bound command never returned — the deadline does not fire, so the "
+                      "host would kill the hook and a killed hook ALLOWS")
+    took = _t.time() - t0
+    if r.returncode != 2:
+        return Result("budget_fits_hook_timeout", FAIL,
+                      f"a write to a protected path produced exit {r.returncode}, not a deny")
+    if took > 5:
+        return Result("budget_fits_hook_timeout", FAIL,
+                      f"denied, but after {took:.1f}s on a 1.0s deadline — CPU is not bounded, "
+                      f"so a larger input walks past the {lib.HOOK_TIMEOUT_S}s hook timeout")
+    return Result("budget_fits_hook_timeout", PASS,
+                  f"budget {lib.GATE_BUDGET_S}s + grace {lib._GRACE_S}s fits under the "
+                  f"{lib.HOOK_TIMEOUT_S}s timeout settings.json really declares; a CPU-bound "
+                  f"overrun denied in {took:.1f}s on a 1.0s deadline, not on its own schedule")
+
+
 @check("command_word_spellings", "static", catastrophe=True)
 def _command_word_spellings():
     """The parser's view of the COMMAND WORD must agree with bash's.
