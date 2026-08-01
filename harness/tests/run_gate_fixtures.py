@@ -20,6 +20,16 @@ GREEN, RED, DIM, RST = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 
 _ENV = None
 
+def _home_rel(h):
+    """The repo path AS WRITTEN AFTER `cd` (i.e. relative to HOME) — the TQ-006 fixture does
+    `cd; printf ... > <path>`. Using the absolute path with the slash stripped resolves to a
+    nonexistent ~/Users/... and the gate correctly allows it, turning a good gate red. Falls
+    back to the absolute path when the repo lives outside HOME."""
+    import os as _o
+    home = str(Path.home())
+    return _o.path.relpath(h, home) if h.startswith(home + _o.sep) else h
+
+
 def _stub_env(org):
     """Put a stub `sf` on PATH for the gate subprocesses so the fixture suite is HERMETIC.
 
@@ -87,7 +97,24 @@ def main():
     for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json", "gate_fixtures_conf.json"):
         p = ROOT / "harness/tests" / fn
         if p.exists():
-            fixtures += json.loads(p.read_text().replace("sf-coffee", org)).get("fixtures", [])
+            raw = p.read_text().replace("sf-coffee", org)
+            # Attack paths are written against the DEFAULT anchor (~/.torque). If the operator
+            # relocated it with TORQUE_ANCHOR, those strings no longer reach the real anchor and
+            # the gate correctly allows them — turning a correct gate into a red suite. Rewrite
+            # them to the configured anchor so the fixtures test the anchor that actually exists.
+            A = str(lib.ANCHOR)
+            H = str(lib.TORQUE_HOME)
+            import os as _o2
+            for frm, to in (("d=.torque", f"d={_o2.path.basename(A)}"),   # var holds the anchor name
+                            ("$HOME/$d/", f"{_o2.path.dirname(A)}/$d/"),  # var-composed, single var
+                            ("$HOME/$d$e", A),        # var-composed
+                            ("~/$a$b",      A),        # var-composed, tilde form
+                            ("~/.torq*",    A[:-3] + "*"),   # glob
+                            ("~/.[t]orque", A),        # character class
+                            ("~/.torque",   A),        # literal
+                            ("Desktop/torque/hooks/", _home_rel(H) + "/hooks/")):
+                raw = raw.replace(frm, to)
+            fixtures += json.loads(raw).get("fixtures", [])
     passed = failed = 0
     fails = []
     for fx in fixtures:

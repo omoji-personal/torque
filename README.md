@@ -86,8 +86,13 @@ and any non-production org — a [free Developer Edition](https://developer.sale
 ```
 sf org login web --alias my-dev-org
 python3 bin/torque-init my-dev-org        # verifies the org is NOT production, then configures
+npm install                               # optional: only the live browser check needs this
 python3 harness/validate.py --profile release --target-org my-dev-org
 ```
+
+Skip `npm install` and everything still runs — the browser check reports `BLOCKED` with a dated
+reason and the verdict is `DEGRADED` rather than `PASS`. That is deliberate: a check that cannot
+run is never reported as green.
 
 `torque-init` refuses to allowlist a production org, creates the trust anchor outside the repo,
 and proves the gates bind before telling you it worked. The allowlist is deliberately not shipped:

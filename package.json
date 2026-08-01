@@ -1,14 +1,12 @@
 {
   "name": "torque",
   "version": "1.0.0",
-  "description": "**An AI operations workspace for any Salesforce org — built on Claude Code, governed by deterministic gates, proven by a live validation harness.**",
-  "main": "index.js",
+  "description": "Deterministic safety gates and a live validation harness for letting an AI agent operate Salesforce orgs.",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "python3 harness/validate.py --profile capability --target-org ${TORQUE_ORG:-my-dev-org}"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Omid Mojtahedi",
+  "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "playwright": "^1.62.1"

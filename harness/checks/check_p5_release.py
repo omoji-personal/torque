@@ -17,7 +17,10 @@ def _bypass(target):
     # agent-side token minting must fail (no TTY), and the write gate must deny a spread of
     # bypass shapes drawn from every audit round — a compact release-gate sanity over the fronts
     # the 128-fixture check covers in full.
-    import subprocess
+    import subprocess, sys as _sy
+    _sy.path.insert(0, str(ROOT/'hooks'))
+    import lib as _lb
+    _A = str(_lb.ANCHOR)          # test the anchor that is configured, not a hardcoded one
     r = subprocess.run(["python3", str(ROOT/"bin"/"torque-approve"), "00DTEST", "bulk-delete"],
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, cwd=ROOT)
     if r.returncode == 0:
@@ -26,8 +29,8 @@ def _bypass(target):
         "sf config set target-org=prod && sf data update --sobject A --values x",  # config TOCTOU
         "bash -c 'sf data delete bulk --sobject A --file f -o prod'",              # interpreter
         "nice sf --json data delete record --sobject A",                          # wrapper + global flag
-        "cat ~/.torq*/secret",                                                     # glob secret read
-        "d=.tor;e=que;p=$HOME/$d$e;cat $p/secret",                                 # inline-var secret read
+        f"cat {_A[:-3]}*/secret",                       # glob reaches the configured anchor
+        f"p={_A};cat $p/secret",                        # var-composed path to the anchor
         "printf x>hooks/lib.py",                                                    # glued redirect to gate
         ": >hooks/lib.py >/tmp/z",                                                  # multi-glued redirect
     ]
