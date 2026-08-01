@@ -115,7 +115,7 @@ recorded once and never re-checked is decaying from the day it is written.
 **`torque blast-radius` — what the operation will actually set off.** "Update Type on every
 Prospect account" reads like one operation on N rows. It is N rows, plus every active trigger and
 record-triggered flow, plus every validation rule that must now pass on records saved years ago
-under different rules, plus every roll-up that recalculates, plus — on a delete — the children
+under different rules, plus the roll-ups that recalculate, plus — on a delete — the children
 that cascade and the lookup children left pointing at nothing. All of it is queryable. Nothing
 assembles it and puts it in front of you.
 

@@ -379,7 +379,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
   <p><strong>2 — It can tell you what an operation will set off, before it runs.</strong> "Update
     Type on every Prospect account" reads like one operation on N rows. It is N rows, plus every
     active trigger and record-triggered flow, plus every validation rule that must now pass on
-    records saved years ago under different rules, plus every roll-up that recalculates, plus —
+    records saved years ago under different rules, plus the roll-ups that recalculate, plus —
     on a delete — the children that cascade and the lookup children left pointing at nothing. All
     of it is queryable. Nothing assembles it and puts it in front of you.</p>
 
