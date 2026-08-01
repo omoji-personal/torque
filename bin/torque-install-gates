@@ -30,6 +30,10 @@ def main():
         {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
     hooks.append({"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": cmd}]})
     hooks.append({"matcher": "Read", "hooks": [{"type": "command", "command": cmd}]})
+    # The observer runs AFTER the tool, because its whole subject is the result.
+    obs = f'python3 "{TORQUE_HOME}/hooks/lesson_observer.py"'
+    cfg["hooks"].setdefault("PostToolUse", []).append(
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": obs, "timeout": 20}]})
     cfg.setdefault("_torque", {})["home"] = str(TORQUE_HOME)
     # Back up before rewriting the operator's whole settings file.
     if HOME_SETTINGS.exists():
@@ -37,7 +41,7 @@ def main():
         if not bak.exists():
             bak.write_text(HOME_SETTINGS.read_text())
     HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
-    print(f"installed: 4 matchers registered at user level, TORQUE_HOME={TORQUE_HOME}")
+    print(f"installed: 4 gate matchers + 1 observer registered at user level, TORQUE_HOME={TORQUE_HOME}")
     print("remove with:  python3 bin/torque install-gates --remove")
 
 
@@ -54,6 +58,12 @@ def remove():
     cfg.pop("_torque", None)
     if not hooks:
         cfg.get("hooks", {}).pop("PreToolUse", None)
+    post = cfg.get("hooks", {}).get("PostToolUse", [])
+    kept = [h for h in post if "lesson_observer" not in json.dumps(h)]
+    if kept:
+        cfg["hooks"]["PostToolUse"] = kept
+    else:
+        cfg.get("hooks", {}).pop("PostToolUse", None)
     HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
     print(f"removed: {before - len(hooks)} torque hook block(s) from {HOME_SETTINGS}")
     print("the project-level gates in this repo are unaffected")

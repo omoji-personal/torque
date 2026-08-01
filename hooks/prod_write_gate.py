@@ -31,6 +31,7 @@ def _is_sf_auth(path):
 
 
 def handle_bash(cmd):
+    lib.remember_command(cmd)
     r = shellparse.analyze_bash(cmd)
     if r["deny"]:
         lib.deny(r["deny"][0], r["deny"][1], HOOK)

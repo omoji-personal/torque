@@ -51,6 +51,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/lesson_observer.py\"",
+            "timeout": 20
+          }
+        ]
+      }
     ]
   }
 }

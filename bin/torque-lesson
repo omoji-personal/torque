@@ -114,6 +114,52 @@ def add_gate(a):
     print("  it will FAIL until the gate is fixed — which is the point.")
 
 
+CANDIDATES = ROOT / "local" / "lessons" / "candidates.jsonl"
+
+
+def _candidates():
+    if not CANDIDATES.exists():
+        return []
+    out = []
+    for line in CANDIDATES.read_text().splitlines():
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            continue
+    return out
+
+
+def review(a):
+    """Show what the observer noticed, already shaped into the arguments `fact` wants.
+
+    The observer's job ends at "here are two commands and the platform's own reason". Turning
+    that into a fact is a judgment — what generalises, what was specific to one org — and this
+    prints the command that records the judgment rather than making it. The distance between
+    a captured pair and a catalogue entry should be one paste, not one form.
+    """
+    recs = _candidates()
+    pairs = [r for r in recs if r.get("kind") == "resolution"]
+    orphans = [r for r in recs if r.get("kind") == "failure" and not r.get("paired")]
+    if not recs:
+        print("no candidates — the observer has not seen a platform error yet")
+        return
+    for i, r in enumerate(pairs, 1):
+        when = date.fromtimestamp(r["at"]).isoformat()
+        print(f"\n[{i}] {r['code']}  ({r['shape']})  {when}")
+        print(f"    failed : {r['failed_command']}")
+        print(f"    worked : {r['working_command']}")
+        print(f"    reason : {' '.join(r['excerpt'].split())[:160]}")
+        print("    record it:")
+        print(f"      torque lesson fact --id {r['code'].lower().replace('_', '-')}-<what> \\")
+        print(f"        --domain data --confidence practitioner \\")
+        print(f"        --title \"...\" --symptom \"{r['code']}\" --cause \"...\" --remedy \"...\"")
+    if orphans:
+        print(f"\n{len(orphans)} failure(s) with no matching fix yet — nothing to record from those.")
+    if a.clear:
+        CANDIDATES.unlink(missing_ok=True)
+        print("\ncandidates cleared")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="torque lesson", description=__doc__)
     sub = ap.add_subparsers(dest="kind", required=True)
@@ -137,8 +183,11 @@ def main():
     g.add_argument("--gate", default="", choices=["", "prod_write_gate", "destructive_data_gate"])
     g.add_argument("--why", default="")
 
+    r = sub.add_parser("review", help="what the observer captured, ready to record")
+    r.add_argument("--clear", action="store_true", help="discard candidates after showing them")
+
     a = ap.parse_args()
-    (add_fact if a.kind == "fact" else add_gate)(a)
+    {"fact": add_fact, "gate": add_gate, "review": review}[a.kind](a)
 
 
 if __name__ == "__main__":

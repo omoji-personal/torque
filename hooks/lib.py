@@ -296,6 +296,100 @@ class InvalidEvent(Exception):
     """Stdin was empty or not JSON. The gate cannot evaluate what it cannot parse."""
 
 
+# ── platform knowledge, injected at the moment of the operation ────────────────────────────
+_KB_PATH = TORQUE_HOME / "knowledge" / "salesforce-platform.yml"
+_KB_CACHE = None
+
+
+def _kb_entries():
+    """Catalogue entries with triggers. Parsed without PyYAML so a gate never depends on it."""
+    global _KB_CACHE
+    if _KB_CACHE is not None:
+        return _KB_CACHE
+    out, cur, key = [], None, None
+    try:
+        for raw in _KB_PATH.read_text().split("\n"):
+            if raw.startswith("- id:"):
+                cur = {"id": raw.split(":", 1)[1].strip()}
+                out.append(cur); key = None
+            elif cur is None or not raw.startswith("  "):
+                continue
+            elif raw.startswith("  triggers:"):
+                body = raw.split("[", 1)[-1].rsplit("]", 1)[0]
+                cur["triggers"] = [t.strip().strip("'\"") for t in body.split(",") if t.strip()]
+            elif not raw.startswith("    ") and ":" in raw:
+                k, _, v = raw.strip().partition(":")
+                v = v.strip()
+                cur[k] = "" if v in (">", "|") else v.strip("'\"")
+                key = k if v in (">", "|") else None
+            elif key and raw.startswith("    "):
+                cur[key] = (cur.get(key, "") + " " + raw.strip()).strip()
+    except Exception:
+        out = []
+    _KB_CACHE = out
+    return out
+
+
+def platform_notes(command: str, limit: int = 2):
+    """Catalogue entries relevant to THIS command.
+
+    The catalogue was a file the agent might consult if a model-honoured rule reminded it to.
+    That is the weakest possible delivery for knowledge whose entire value is being present at
+    one specific moment: the instant before a command runs. The gate is already reading every
+    command, already deciding, and already speaking — so it is the natural place for the
+    platform to answer back.
+    """
+    if not command:
+        return []
+    hits = []
+    for e in _kb_entries():
+        matched = 0
+        for pat in e.get("triggers") or []:
+            try:
+                if re.search(pat, command, re.I):
+                    matched += 1
+            except re.error:
+                continue
+        if matched:
+            hits.append((matched, e))
+    # Rank by how SPECIFICALLY the entry matches this command, then by how well the claim is
+    # evidenced. Confidence-first buried the most useful note: for a bulk update the thing worth
+    # saying is what a no-op write costs, and that entry is honestly marked `practitioner`.
+    order = {"verified-live": 0, "documented": 1, "practitioner": 2}
+    hits.sort(key=lambda t: (-t[0], order.get(t[1].get("confidence", ""), 3)))
+    return [e for _, e in hits[:limit]]
+
+
+def _speak(command: str):
+    """Emit platform notes, never at the cost of the verdict."""
+    if not command:
+        return
+    try:
+        emit_platform_notes(command)
+    except Exception:
+        pass              # knowledge is a courtesy; a broken catalogue must not change an exit code
+
+
+def emit_platform_notes(command: str):
+    """Print relevant platform knowledge to stderr, where the transcript will carry it."""
+    if os.environ.get("TORQUE_NO_NOTES") == "1":
+        return
+    for e in platform_notes(command):
+        title = e.get("title", "").strip()
+        remedy = " ".join((e.get("remedy") or "").split())
+        if len(remedy) > 210:
+            remedy = remedy[:207].rsplit(" ", 1)[0] + "…"
+        print(f"TORQUE PLATFORM NOTE [{e.get('id')}] {title}\n  → {remedy}", file=sys.stderr)
+
+
+_JUDGED = {"command": ""}
+
+
+def remember_command(command: str):
+    """Record what is being judged, so both exits can speak about it."""
+    _JUDGED["command"] = command or ""
+
+
 def read_event():
     """Parse the hook payload, or raise.
 
@@ -316,12 +410,17 @@ def read_event():
         raise InvalidEvent("hook payload is not an object")
     return ev
 
-def allow():
+def allow(command: str = ""):
+    """Exit 0 — and, on the way out, say anything the platform catalogue knows about this."""
+    _speak(command or _JUDGED["command"])
     sys.exit(0)
 
 def deny(reason: str, fingerprint: str = "", hook_id: str = ""):
     audit("DENY", f"[{hook_id}:{fingerprint}] {reason}")
     print(f"TORQUE GATE DENY [{hook_id}] {reason}", file=sys.stderr)
+    # A deny is the moment the note matters MOST: the operator is about to decide whether to
+    # override, and what the operation actually costs is the input to that decision.
+    _speak(_JUDGED["command"])
     sys.exit(2)                                       # exit 2 ⇒ Claude Code blocks the tool
 
 def run_gate(main_fn, hook_id: str):

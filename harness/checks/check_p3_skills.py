@@ -1,3 +1,4 @@
+import pathlib
 # P3: skills + agents + installer. Real mass-update cycle against the disposable org;
 # org-explorer read-only assertion; hostile-qa planted-defect; installer round-trip.
 import sys as _sys, time as _t, json as _j, tempfile as _tmp, shutil as _sh, os as _os
@@ -32,7 +33,7 @@ def _agents_readonly():
 def _mass_update_cycle(target):
     if not target: return Result("mass_update_cycle", SKIP, "no --target-org")
     marker = f"ZZTORQUE-{int(_t.time())}"
-    ids = []
+    ids, why = [], []
     def sf(*a, **k):
         return subprocess.run(["sf", *a], capture_output=True, text=True, **k)
     try:
@@ -41,12 +42,19 @@ def _mass_update_cycle(target):
             r = sf("data","create","record","--target-org",target,"--sobject","Account",
                    "--values",f"Name={marker}-{i} Description=before")
             oid = None
-            try: oid = _j.loads(sf("data","query","--target-org",target,"--json","--query",
-                     f"SELECT Id FROM Account WHERE Name='{marker}-{i}'").stdout)["result"]["records"][0]["Id"]
-            except Exception: pass
+            q = sf("data","query","--target-org",target,"--json","--query",
+                   f"SELECT Id FROM Account WHERE Name='{marker}-{i}'")
+            try: oid = _j.loads(q.stdout)["result"]["records"][0]["Id"]
+            except Exception:
+                # Record why. A harness that fails without saying why costs more than one that
+                # never ran: the next person re-runs it, it passes, and they learn nothing.
+                why.append((r.returncode, (r.stderr or r.stdout or "").strip()[:180],
+                            q.returncode, (q.stderr or "").strip()[:180]))
             if oid: ids.append(oid)
         if len(ids) != 2:
-            return Result("mass_update_cycle", FAIL, f"setup created {len(ids)}/2 records")
+            detail = "; ".join(f"create rc={a} {b!r} / query rc={c} {d!r}" for a, b, c, d in why)
+            return Result("mass_update_cycle", FAIL,
+                          f"setup created {len(ids)}/2 records — {detail or 'no error captured'}")
         # preview: exact ID set
         preview = _j.loads(sf("data","query","--target-org",target,"--json","--query",
             f"SELECT Id, Description FROM Account WHERE Name LIKE '{marker}-%'").stdout)["result"]["records"]
@@ -90,14 +98,44 @@ def _installer_roundtrip():
     # Bash and Edit|Write|MultiEdit, so an operator who ran it — as the guide instructs, to make
     # the gates bind outside this repo — silently lost MCP-write gating and Read gating on the
     # trust anchor everywhere else, while believing they were covered.
-    import json as _json, re as _re
+    # Grepping the installer's SOURCE for matcher names proved too weak twice over: it cannot
+    # tell PreToolUse from PostToolUse (both spell the matcher "Bash"), and it cannot tell which
+    # hook script a matcher actually runs. So run the installer for real against a throwaway
+    # HOME and compare what it PRODUCED against what the project registers.
+    import json as _json, os as _os, re as _re, tempfile as _tf
     proj = _json.loads((ROOT / ".claude" / "settings.json").read_text())
-    want = {b.get("matcher") for b in proj.get("hooks", {}).get("PreToolUse", [])}
-    have = set(_re.findall(r'"matcher":\s*"([^"]+)"', t))
-    missing = want - have
+
+    def _triples(cfg):
+        out = set()
+        for event, blocks in (cfg.get("hooks") or {}).items():
+            for b in blocks or []:
+                for h in b.get("hooks") or []:
+                    m = _re.search(r"([A-Za-z_][A-Za-z0-9_]*)\.py", h.get("command", ""))
+                    out.add((event, b.get("matcher"), m.group(1) if m else "?"))
+        return out
+
+    want = _triples(proj)
+    with _tf.TemporaryDirectory() as td:
+        env = dict(_os.environ, HOME=td)
+        r2 = subprocess.run(["python3", str(ROOT / "bin" / "torque-install-gates")],
+                            capture_output=True, text=True, env=env, timeout=60)
+        produced = pathlib.Path(td) / ".claude" / "settings.json"
+        if r2.returncode != 0 or not produced.exists():
+            return Result("installer_roundtrip", FAIL,
+                          f"installer did not produce settings (rc={r2.returncode}) "
+                          f"{(r2.stderr or '')[:120]}")
+        have_t = _triples(_json.loads(produced.read_text()))
+        # and it must undo itself completely
+        subprocess.run(["python3", str(ROOT / "bin" / "torque-install-gates"), "--remove"],
+                       capture_output=True, text=True, env=env, timeout=60)
+        left = _triples(_json.loads(produced.read_text()))
+    if left:
+        return Result("installer_roundtrip", FAIL, f"--remove left {sorted(left)} behind")
+    missing = want - have_t
+    have = {m for _, m, _ in have_t}
     if missing:
         return Result("installer_roundtrip", FAIL,
-                      f"installer registers {sorted(have)} but the project registers "
+                      f"installer produces {sorted(have_t)} but the project registers "
                       f"{sorted(want)} — missing {sorted(missing)}; operators would get "
                       f"partial protection that looks complete")
     if "--remove" not in t:
@@ -105,5 +143,6 @@ def _installer_roundtrip():
                       "installer has no --remove path; the gate it installs denies edits to "
                       "settings.json, so an operator could not uninstall it")
     return Result("installer_roundtrip", PASS,
-                  f"installer compiles; {len(have)} matchers mirror the project; --remove present; "
+                  f"installer compiles; {len(have_t)} hook registrations mirror the project exactly "
+                  f"(installed and removed against a throwaway HOME); "
                   f"records TORQUE_HOME for CWD-independent resolution")

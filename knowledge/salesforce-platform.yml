@@ -45,6 +45,7 @@ entries:
     and an editable=true entry fails the whole deploy. The boilerplate that works for every
     other field breaks on them.
   detect: "SELECT Field, Parent.Name FROM FieldPermissions WHERE Field = 'Account.My_Field__c'"
+  triggers: ['project\s+deploy', 'deploy:start', 'CustomField']
   confidence: verified-live
   verify: fls_absent_without_permset
   updated: 2026-08-01
@@ -67,6 +68,7 @@ entries:
     `_del` tombstone after teardown and write residue checks that look for it, or the check
     passes whether or not the purge worked.
   detect: "SELECT DeveloperName FROM CustomField WHERE TableEnumOrId='Account' AND DeveloperName LIKE '%_del'"
+  triggers: ['project\s+delete\s+source', 'destructiveChanges', 'purge-on-delete']
   confidence: verified-live
   verify: del_tombstones_visible
   updated: 2026-08-01
@@ -84,6 +86,7 @@ entries:
     Ask a definition-scoped question. Tooling `SELECT DeveloperName, ActiveVersionId FROM
     FlowDefinition`, or standard-API `FlowDefinitionView.IsActive`.
   detect: "sf data query --use-tooling-api --query \"SELECT DeveloperName, ActiveVersionId FROM FlowDefinition\""
+  triggers: ['project\s+retrieve.*Flow', 'Flow:', 'FlowDefinition']
   confidence: verified-live
   verify: flowdefinition_queryable
   updated: 2026-08-01
@@ -98,6 +101,7 @@ entries:
     rather than as a failure.
   remedy: "Query it on the standard API. Do not pass --use-tooling-api."
   detect: "sf data query --query \"SELECT ApiName, IsActive FROM FlowDefinitionView\""
+  triggers: ['FlowDefinitionView']
   confidence: verified-live
   verify: flowdefinitionview_standard_api
   updated: 2026-08-01
@@ -111,6 +115,7 @@ entries:
     Objects and fields first, then permission sets (so FLS exists before anything references
     the fields), then Apex, then flows, then layouts and FlexiPages, then profiles last and
     minimal. Re-running a failed deploy "fixing itself" is a dependency-order smell, not luck.
+  triggers: ['project\s+deploy', 'deploy:start']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -123,6 +128,7 @@ entries:
   remedy: >
     Deploy minimal profile XML containing only what you intend to change, or move the grant to
     a permission set and leave profiles alone.
+  triggers: ['Profile', 'profiles?/']
   confidence: documented
   source: "Salesforce Metadata API Developer Guide — Profile"
   updated: 2026-08-01
@@ -141,6 +147,7 @@ entries:
   remedy: >
     Diff first and write only the records that actually change. Beyond the automation cost,
     rewriting LastModifiedById destroys "who last touched this" for the client's reporting.
+  triggers: ['data\s+update', 'data:update', '--values']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -151,6 +158,7 @@ entries:
   cause: "Those fields are not filterable; the platform stores them polymorphically."
   remedy: "Select the rows you need by parent Id and date, then filter client-side."
   detect: "SELECT NewValue FROM AccountHistory WHERE NewValue = 'x'   -- expect an error"
+  triggers: ['History\b', 'NewValue', 'OldValue']
   confidence: documented
   source: "Salesforce Object Reference — History objects"
   updated: 2026-08-01
@@ -164,6 +172,7 @@ entries:
     Grant it deliberately and narrowly. Note that a normal delete is recoverable from the
     Recycle Bin for 15 days and a hard delete is not — that difference is usually the reason
     someone wanted it, and also the reason to be careful.
+  triggers: ['--hard-delete', 'hardDelete']
   confidence: documented
   source: "Bulk API Developer Guide — hardDelete"
   updated: 2026-08-01
@@ -180,6 +189,7 @@ entries:
   remedy: >
     Bulkify: no SOQL or DML inside a loop, ever. These limits are per transaction, so code that
     passes with one record fails at 200 — which is exactly the batch size the platform uses.
+  triggers: ['apex\s+run', 'apex:run', '--file.*\.apex']
   confidence: documented
   source: "Apex Developer Guide — Execution Governors and Limits"
   updated: 2026-08-01
@@ -205,6 +215,7 @@ entries:
   remedy: >
     Run queries in USER_MODE (or use WITH SECURITY_ENFORCED), and strip inaccessible fields
     with Security.stripInaccessible before returning data.
+  triggers: ['apex\s+run', 'apex:run', 'ApexClass']
   confidence: documented
   source: "Apex Developer Guide — Enforcing Object and Field Permissions"
   updated: 2026-08-01
@@ -218,6 +229,7 @@ entries:
   remedy: >
     Treat formula fields that reference sensitive data as sensitive, and set their FLS
     accordingly. This is a common finding in a client's first security review.
+  triggers: ['PermissionSet', 'fieldPermissions']
   confidence: documented
   source: "Salesforce Help — Field-Level Security considerations"
   updated: 2026-08-01
@@ -247,6 +259,7 @@ entries:
   remedy: >
     Choose the automation type by WHERE in that order it needs to run, not by preference.
     Same-record field updates belong in a before-save flow — no DML, and it runs first.
+  triggers: ['data\s+update', 'data\s+create', 'Flow', 'Trigger']
   confidence: documented
   source: "Salesforce Help — Triggers and Order of Execution"
   updated: 2026-08-01
@@ -261,6 +274,7 @@ entries:
   remedy: >
     Pick the entry condition deliberately. It is also why a no-op mass update fires SOME
     automation and not other automation — the unconditioned kind runs, this kind does not.
+  triggers: ['data\s+update', 'Flow']
   confidence: documented
   source: "Salesforce Help — Flow entry conditions"
   updated: 2026-08-01
@@ -279,6 +293,7 @@ entries:
     Resolve every API name against the org the code will run in, never against the repository.
     Unlocked/2GP packages built without a namespace carry no prefix anywhere, and packaged
     custom fields on STANDARD objects carry the prefix while the object does not.
+  triggers: ['__c\b', 'sobject\s+describe', 'describe']
   confidence: documented
   source: "Salesforce Developer Guide — Namespaces"
   updated: 2026-08-01
@@ -310,6 +325,7 @@ entries:
     Classify with at least three values, reading OrganizationType and TrialExpirationDate as
     well as IsSandbox. Two-valued classification is wrong for a large fraction of real orgs.
   detect: "sf org display --target-org <alias> --json   # inspect isSandbox + organizationType"
+  triggers: ['org\s+display', 'org:display', 'IsSandbox']
   confidence: verified-live
   verify: de_org_reports_not_sandbox
   updated: 2026-08-01
@@ -327,6 +343,7 @@ entries:
   remedy: >
     Treat "sandbox" as insufficient grounds for a destructive operation. Confirm the sandbox
     TYPE, and remember that data masking is opt-in and frequently not configured.
+  triggers: ['data\s+delete', 'delete\s+bulk', '--hard-delete']
   confidence: documented
   source: "Salesforce Help — Sandbox types and templates"
   updated: 2026-08-01
@@ -345,6 +362,7 @@ entries:
   remedy: >
     Do not log in from automation. Hand off from an already-authenticated CLI session, which
     MFA does not re-challenge.
+  triggers: ['org\s+open', 'frontdoor', 'login']
   confidence: documented
   source: "Salesforce Help — Phishing-resistant MFA enforcement"
   updated: 2026-08-01
@@ -362,6 +380,7 @@ entries:
   remedy: >
     Never echo the URL — it contains a live token that lands in shell history, browser history
     and the first-navigation Referer. Write it to a mode-0600 file and pass the path.
+  triggers: ['frontdoor', 'org\s+open']
   confidence: documented
   source: "Salesforce Help — frontdoor.jsp"
   updated: 2026-08-01
@@ -379,6 +398,7 @@ entries:
   remedy: >
     Set the API version explicitly in generated metadata and keep it consistent, rather than
     inheriting whatever the tool defaults to.
+  triggers: ['apiVersion', 'sourceApiVersion']
   confidence: documented
   source: "Apex Developer Guide — Understanding API versions"
   updated: 2026-08-01
@@ -394,6 +414,7 @@ entries:
   remedy: >
     Describe before you reference. Verify every object, field and picklist value against the
     target org, not against memory or the repository.
+  triggers: ['sobject\s+describe', 'CustomField', 'project\s+deploy']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -410,6 +431,7 @@ entries:
     storage or a duplicate-key constraint genuinely requires it, and say so out loud before
     running it.
   detect: "SELECT COUNT() FROM Account WHERE IsDeleted = true ALL ROWS"
+  triggers: ['data\s+delete', 'data:delete', '--hard-delete']
   confidence: documented
   source: 'Salesforce Help — Recycle Bin'
   updated: 2026-08-01

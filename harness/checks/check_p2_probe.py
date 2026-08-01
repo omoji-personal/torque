@@ -73,6 +73,7 @@ def _probe_cycle(target):
         #               `--purge-on-delete` makes a component *eligible* for deletion, not erased,
         #               so a tombstone is expected. It is reported, never silently swallowed.
         stem = field[:-3] if field.endswith("__c") else field       # Torque_Probe_<epoch>
+        _residue_err = []
         def _count(where):
             r = subprocess.run(["sf","data","query","--target-org",target,"--use-tooling-api","--json",
                  "--query",f"SELECT Id FROM CustomField WHERE TableEnumOrId='{obj}' AND {where}"],
@@ -80,12 +81,14 @@ def _probe_cycle(target):
             try:
                 return json.loads(r.stdout)["result"]["totalSize"]
             except Exception:
+                _residue_err.append(f"rc={r.returncode} {(r.stderr or r.stdout or '').strip()[:200]}")
                 return None
         live      = _count(f"DeveloperName='{stem}'")
         tombstone = _count(f"DeveloperName='{stem}_del'")
         if live is None or tombstone is None:
             return Result("probe_cycle", FAIL,
-                          "residue query failed — cannot prove teardown; refusing to report green")
+                          "residue query failed — cannot prove teardown; refusing to report green"
+                          + (f" [{'; '.join(_residue_err)}]" if _residue_err else ""))
         residue = live
         # ASSERT, don't just report. Both of these were computed and then thrown away — the check
         # returned PASS unconditionally, so a missing FieldPermissions row or an undeleted field
