@@ -34,7 +34,9 @@ guarded(){ local c; c=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1]
 cnt(){ sf data query --target-org "$ORG" --json --query \
   "SELECT COUNT() FROM Account WHERE Name LIKE '${RUN}%'" 2>/dev/null | jq_ 'print(d["result"]["totalSize"])'; }
 
-echo "=== TORQUE LIVE CAPABILITY MATRIX — org=$ORG run=$RUN ==="
+A=$(python3 -c "import sys;sys.path.insert(0,'$T/hooks');import lib;print(lib.ANCHOR)")
+AG="${A%???}*"
+echo "=== TORQUE LIVE CAPABILITY MATRIX — org=$ORG run=$RUN (anchor $A) ==="
 
 hdr "A. ORG CLASSIFICATION (live query, never an alias guess)"
 V=$(python3 -c "import sys;sys.path.insert(0,'$T/hooks');import lib;print(lib.classify_live('$ORG')[0])" 2>/dev/null)
@@ -93,7 +95,7 @@ guarded "{\"command\":\"sf data delete bulk --sobject=Contact --file /tmp/x.csv 
 [ $R -eq 99 ] && ok "E2 equals-form --sobject=Contact also shielded" || no "E2 equals-form" "rc=$R"
 
 hdr "F. THE TRUST ANCHOR IS UNREACHABLE FROM THE AGENT'S TOOLS"
-for c in "cat ~/.torque/secret" "cat ~/.torq*/secret" "d=.tor;e=que;p=\$HOME/\$d\$e;cat \$p/secret" "cp /tmp/x ~/.torque/tokens/f.token"; do
+for c in "cat $A/secret" "cat $AG/secret" "p=$A;cat \$p/secret" "cp /tmp/x $A/tokens/f.token"; do
   gate "$(python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$c")"; R=$?
   [ $R -eq 2 ] && ok "F: denied" "$(echo "$c" | cut -c1-44)" || no "F: ALLOWED" "$c"
 done
@@ -188,7 +190,7 @@ dst = lib.APPROVED / f"{sys.argv[3]}.apex"; shutil.copyfile(sys.argv[4], dst); o
 p = {"orgId": sys.argv[2], "op": "apex", "digest": sys.argv[3], "exp": int(time.time())+300, "iat": int(time.time())}
 p["sig"] = lib.sign(p); lib.token_path(sys.argv[2], "apex", sys.argv[3]).write_text(json.dumps(p))
 PY
-APEXCOPY="$HOME/.torque/approved/${DIG}.apex"
+APEXCOPY="$A/approved/${DIG}.apex"
 guarded "{\"command\":\"sf apex run --file $APEXCOPY --target-org $ORG\"}"; R=$?
 [ $R -eq 0 ] && ok "M1 approved Apex (non-protected sObject) gated OK and executed" || no "M1 approved apex" "rc=$R"
 APEXCNT=$(sf data query --target-org "$ORG" --json --query \
@@ -224,7 +226,7 @@ dst = lib.APPROVED / f"{sys.argv[3]}.apex"; shutil.copyfile(sys.argv[4], dst); o
 p = {"orgId": sys.argv[2], "op": "apex", "digest": sys.argv[3], "exp": int(time.time())+300, "iat": int(time.time())}
 p["sig"] = lib.sign(p); lib.token_path(sys.argv[2], "apex", sys.argv[3]).write_text(json.dumps(p))
 PY2
-guarded "{\"command\":\"sf apex run --file $HOME/.torque/approved/${DIG2}.apex --target-org $ORG\"}"; R=$?
+guarded "{\"command\":\"sf apex run --file $A/approved/${DIG2}.apex --target-org $ORG\"}"; R=$?
 [ $R -eq 99 ] && ok "M7 shield reaches INSIDE the Apex body (protected sObject)" || no "M7 apex shield" "rc=$R"
 rm -f $APEX2
 
