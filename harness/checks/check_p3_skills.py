@@ -18,16 +18,51 @@ def _skills_justified():
 
 @check("agents_readonly", "static")
 def _agents_readonly():
-    exp = ROOT/".claude"/"agents"/"org-explorer.md"
-    t = exp.read_text()
-    # org-explorer must not list Edit/Write/deploy tools
+    """org-explorer is read-only because the GATES bind it, not because of its tool list.
+
+    The old check searched the frontmatter for the words Edit, Write and deploy, and called the
+    agent read-only when it found none. It has Bash. Bash can delete a client's data. A word
+    search over a tool list is not a property of the agent, and "read-only" was resting on it
+    (release panel, codex/gpt-5.6-sol).
+
+    What is actually true, and worth proving, is that a subagent's Bash calls pass through the
+    same PreToolUse gates as anything else — so the destructive commands it could type are
+    refused. That is demonstrated here rather than assumed, and the tool list is checked only
+    for surfaces the gates do NOT cover.
+    """
     import re as _re
+    exp = ROOT / ".claude" / "agents" / "org-explorer.md"
+    t = exp.read_text()
     tools = _re.search(r"tools:(.*?)(?:\n---|\nYou )", t, _re.S)
     body = tools.group(1) if tools else ""
-    for forbidden in ("Edit", "Write", "deploy"):
-        if forbidden in body:
-            return Result("agents_readonly", FAIL, f"org-explorer lists {forbidden}")
-    return Result("agents_readonly", PASS, "org-explorer tools are read-only")
+    # Edit/Write reach the filesystem directly; no Salesforce gate adjudicates those.
+    for forbidden in ("Edit", "Write", "MultiEdit"):
+        if _re.search(rf"^\s*-\s*{forbidden}\s*$", body, _re.M):
+            return Result("agents_readonly", FAIL,
+                          f"org-explorer lists {forbidden}, which no Salesforce gate covers")
+    has_bash = bool(_re.search(r"^\s*-\s*Bash\s*$", body, _re.M))
+
+    def gate(cmd):
+        r = subprocess.run(["python3", str(ROOT / "hooks" / "destructive_data_gate.py")],
+                           input=json.dumps({"tool_name": "Bash",
+                                             "tool_input": {"command": cmd}}),
+                           capture_output=True, text=True, cwd=ROOT, timeout=60)
+        return r.returncode
+
+    if has_bash:
+        for cmd in ("sf data delete bulk --sobject Account --file ids.csv --target-org acme",
+                    "sf apex run --file /tmp/x.apex --target-org acme",
+                    "sf data update record --sobject Account --where \"Id!=null\" "
+                    "--values \"X=1\" --target-org acme"):
+            if gate(cmd) != 2:
+                return Result("agents_readonly", FAIL,
+                              f"a destructive command available to org-explorer was NOT "
+                              f"refused: {cmd[:60]}")
+    return Result("agents_readonly", PASS,
+                  ("org-explorer has Bash, and the destructive commands it could issue are "
+                   "refused by the gates (3 shapes verified); it lists no direct filesystem "
+                   "write tool" if has_bash else
+                   "org-explorer lists no write tool and no Bash"))
 
 @check("mass_update_cycle", "capability", catastrophe=True)
 def _mass_update_cycle(target):

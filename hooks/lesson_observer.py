@@ -228,4 +228,16 @@ if __name__ == "__main__":
                 == "REQUIRED_FIELD_MISSING"
         print("lesson_observer self-test:", "PASS" if ok else "FAIL")
         sys.exit(0 if ok else 1)
-    lib.run_gate(main, "lesson_observer")
+    # NOT lib.run_gate. That wrapper is fail-CLOSED — it denies on any unexpected exception,
+    # which is right for a gate and wrong for this. The observer runs PostToolUse and is
+    # documented as unable to block anything, yet malformed stdin made it exit 2 through
+    # run_gate's own denial path — and observer_is_not_a_gate passed anyway, because it searched
+    # the source for `lib.deny` rather than running the thing (release panel, codex/gpt-5.6-sol).
+    #
+    # An observer that cannot observe is not a reason to interfere with the operator's work.
+    try:
+        main()
+    except SystemExit as e:
+        sys.exit(0 if (e.code or 0) == 0 else 0)
+    except BaseException:
+        sys.exit(0)

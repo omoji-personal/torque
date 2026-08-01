@@ -116,7 +116,9 @@ echo "$(ev Bash "{\"command\":\"sf data update record --sobject Account --record
 S1=$(date +%s); rm -rf /tmp/tqslow$$
 [ $R -eq 2 ] && ok "H1 hung sf ⇒ DENY (no fail-open)" "$((S1-S0))s, under the hook timeout" || no "H1 hung sf" "rc=$R"
 echo 'not json at all' | python3 "$T/hooks/prod_write_gate.py" >/dev/null 2>&1; R=$?
-[ $R -eq 0 ] || [ $R -eq 2 ] && ok "H2 malformed hook input handled without crashing open" || no "H2 malformed input" "rc=$R"
+# Accepting 0 OR 2 here made the assertion vacuous: exit 0 IS the fail-open regression this
+# line exists to catch. A gate that cannot parse its input cannot adjudicate, so it must deny.
+[ $R -eq 2 ] && ok "H2 malformed hook input DENIES (cannot adjudicate ⇒ cannot allow)" || no "H2 malformed input did not deny" "rc=$R"
 
 hdr "I. THE SHIPPED COMMANDS (each one a stranger is told to run)"
 python3 "$T/bin/torque-demo" >/tmp/tqdemo$$ 2>&1; R=$?
@@ -166,6 +168,11 @@ PY
 
 hdr "L. LIVE METADATA + DATA CYCLES (real deploy/verify/purge, real update/undo, real render)"
 CAP=/tmp/tqcap$$; python3 "$T/harness/validate.py" --profile capability --target-org "$ORG" >$CAP 2>&1
+CAPRC=$?
+# The named list below is a fixed subset chosen when this matrix was written, so a check added
+# afterwards could fail while every line here reported green. Assert the run's own verdict too.
+[ $CAPRC -eq 0 ] && ok "L: capability profile exit 0" "the whole run, not only the named checks" \
+  || no "L: capability profile FAILED" "rc=$CAPRC — $(grep -cE '^\s+✗' $CAP) check(s) failed, see $CAP"
 for c in probe_cycle mass_update_cycle browser_render frontdoor_noecho org_classify describe_first cache_poison_resistant approval_boundary gate_adversarial_fixtures; do
   L=$(grep -E "^\s+[✓✗!·]\s+$c\b" $CAP | head -1)
   case "$L" in

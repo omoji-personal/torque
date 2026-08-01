@@ -475,10 +475,28 @@ def _observer_is_not_a_gate():
     that could append to the catalogue would let noise become a claim without review.
     """
     src = (ROOT / "hooks" / "lesson_observer.py").read_text()
-    if "lib.deny" in src or "exit(2)" in src:
-        return Result("observer_is_not_a_gate", FAIL, "observer can deny — it must only observe")
     if "salesforce-platform.yml" in src or "gate_fixtures" in src:
         return Result("observer_is_not_a_gate", FAIL, "observer writes knowledge directly")
+    if _kb_re.search(r"^\s*lib\.run_gate\(", src, _kb_re.M):
+        return Result("observer_is_not_a_gate", FAIL,
+                      "observer uses lib.run_gate, which is fail-CLOSED and denies on any "
+                      "unexpected exception — correct for a gate, wrong for an observer")
+    # Searching the source for `lib.deny` was the whole test, and it missed the denial reached
+    # THROUGH run_gate: malformed stdin exited 2 while this check passed. Run it instead.
+    for label, payload in (("garbage stdin", "not json at all"),
+                           ("empty stdin", ""),
+                           ("no tool_input", '{"tool_name":"Bash"}'),
+                           ("null response", '{"tool_name":"Bash","tool_input":'
+                                             '{"command":"sf x"},"tool_response":null}'),
+                           ("huge command", _kb_json.dumps(
+                               {"tool_name": "Bash",
+                                "tool_input": {"command": "sf " + "a" * 200000}}))):
+        r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "lesson_observer.py")],
+                       input=payload, capture_output=True, text=True, cwd=ROOT, timeout=90)
+        if r.returncode != 0:
+            return Result("observer_is_not_a_gate", FAIL,
+                          f"observer exited {r.returncode} on {label} — it runs after every "
+                          f"Bash call and must never interfere with one")
     # and prove it: a payload that would deny at the gate must pass here
     ev = {"tool_name": "Bash",
           "tool_input": {"command": "sf data delete bulk --sobject Account --file x.csv "
@@ -1038,7 +1056,10 @@ def _per_org_knowledge():
                       f"per-org findings are tracked by git: {tracked[:3]}")
 
     if not lib.ORGS.exists():
-        return Result("per_org_knowledge", PASS, "no per-org findings recorded yet")
+        # Returning PASS here meant a fresh clone "proved" cross-org isolation by having no
+        # data. The isolation logic is testable without any: exercise it against a synthetic
+        # store instead of declaring victory on an empty one.
+        return _per_org_synthetic(lib)
 
     # 2. owner-only, always
     import stat as _st
@@ -1051,7 +1072,7 @@ def _per_org_knowledge():
     # 3. a finding reaches its own org and no other
     files = sorted(lib.ORGS.glob("*.yml"))
     if not files:
-        return Result("per_org_knowledge", PASS, "no per-org findings recorded yet")
+        return _per_org_synthetic(lib)
     orgid = files[0].stem
     entries = lib._parse_org_file(files[0])
     withtrig = [e for e in entries if e.get("triggers")]
@@ -1067,8 +1088,9 @@ def _per_org_knowledge():
     mine = next((a for a, o in idx.items() if o == orgid), None)
     other = next((a for a, o in idx.items() if o != orgid), None)
     if not mine:
-        return Result("per_org_knowledge", NA,
-                      f"no alias indexed for {orgid}; cannot exercise gate selection here")
+        # The real store cannot be exercised without an indexed alias for it — so exercise the
+        # logic against a synthetic one rather than reporting NA and proving nothing.
+        return _per_org_synthetic(lib)
     pat = (withtrig[0].get("triggers") or [""])[0]
     probe = _kb_re.sub(r"[()|\\\\^$.*+?\[\]]", " ", pat).split()
     cmd = f"sf {' '.join(probe[:4])} --target-org {mine}"
@@ -1646,3 +1668,40 @@ def _observer_cannot_cross_clients():
     return Result("observer_cannot_cross_clients", PASS,
                   f"observations are org-scoped, a succeeding command records nothing, and the "
                   f"queue is capped at {m._QUEUE_CAP}")
+
+
+def _per_org_synthetic(lib):
+    """Exercise cross-org isolation against a store built for the purpose.
+
+    per_org_knowledge used to return PASS when no findings existed — so on a fresh clone the
+    strongest privacy claim in the repo was proven by the absence of data. The logic does not
+    need real client findings to be tested.
+    """
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td:
+        root = _KbP(td)
+        orgs = root / "orgs"; orgs.mkdir()
+        a, b = "00D" + "000000000000AAA", "00D" + "000000000000BBB"
+        (orgs / f"{a}.yml").write_text(
+            "entries:\n- id: probe\n  observed: >\n    a finding for A\n"
+            "  remedy: >\n    do the thing\n  triggers: ['data delete']\n"
+            "  confidence: org-observed\n")
+        real_orgs, real_index = lib.ORGS, lib.ALIAS_INDEX
+        idx = root / "idx.json"
+        idx.write_text(_kb_json.dumps({"org-a": a, "org-b": b}))
+        try:
+            lib.ORGS, lib.ALIAS_INDEX = orgs, idx
+            own = lib.org_notes("sf data delete record --target-org org-a")
+            other = lib.org_notes("sf data delete record --target-org org-b")
+            unknown = lib.org_notes("sf data delete record --target-org never-indexed")
+        finally:
+            lib.ORGS, lib.ALIAS_INDEX = real_orgs, real_index
+    if not own:
+        return Result("per_org_knowledge", FAIL,
+                      "a finding did not reach its own org in a synthetic store")
+    if other or unknown:
+        return Result("per_org_knowledge", FAIL,
+                      "a finding reached an org it was not recorded against")
+    return Result("per_org_knowledge", PASS,
+                  "no findings recorded here, so isolation was exercised against a synthetic "
+                  "store: reaches its own org, not another, and not an unindexed alias")
