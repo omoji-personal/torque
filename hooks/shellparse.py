@@ -281,11 +281,28 @@ def _pattern_reaches_dir(pat, dirpath):
     return _glob_reaches(pat.split(os.sep), dirpath.split(os.sep))
 
 
+def normalize_separators(tok: str) -> str:
+    """Treat a backslash as a path separator for GUARD purposes.
+
+    Three guards — anchor_ref, sf_auth_ref and lib.is_protected_target — each independently
+    assumed a forward slash. `hooks\\lib.py` is the same file as `hooks/lib.py` on Windows, and
+    on POSIX it is a filename containing a literal backslash, which nobody legitimately has under
+    these directories. Reading it as a separator therefore fails safe on one platform and costs
+    nothing on the other.
+
+    A single shared assumption across three guards that are not copies of each other is the shape
+    that produced the case-sensitivity bypass; found by sweeping for it rather than by waiting
+    for an audit to trip over it.
+    """
+    return (tok or "").replace("\\", "/")
+
+
 def anchor_ref(tok, cwd=None, varmap=None) -> bool:
     """Deny any reference to the trust anchor EXCEPT a read of the approved-apex copy — resolved
     against the ACTUAL anchor paths AND expansion-aware, so `cat ~/.torq*/secret`,
     `a=.tor;b=que;cat ~/$a$b/secret`, `cat /Users/**/.../.[t]orque/sec[r]et`, and a custom
     TORQUE_ANCHOR all deny (audit T12-01 / round 13)."""
+    tok = normalize_separators(tok)
     if "{" in tok and "," in tok:            # brace expansion precedes globbing
         _alts = _brace_expand(tok)
         if len(_alts) > 1 or (_alts and _alts[0] != tok):   # only if it EXPANDED
@@ -307,6 +324,7 @@ def sf_auth_ref(tok, varmap=None) -> bool:
     """The sf CLI auth store (~/.sfdx, ~/.sf) holds live access tokens — an agent reading it via
     Bash (`cat ~/.sfd*/x.json`) could lift a token and curl the REST API, bypassing sf entirely.
     Expansion-aware, same as anchor_ref (audit T12-01 applied to the auth store)."""
+    tok = normalize_separators(tok)
     if "{" in tok and "," in tok:
         _alts = _brace_expand(tok)
         if len(_alts) > 1 or (_alts and _alts[0] != tok):

@@ -1850,3 +1850,67 @@ def _guards_are_case_insensitive():
     return Result("guards_are_case_insensitive", PASS,
                   "5 protected paths in 5 casings each are refused, ordinary files are not, "
                   "and credentials are redacted under both naming conventions")
+
+
+@check("guards_share_no_blind_assumption", "static", catastrophe=True)
+def _guards_share_no_blind_assumption():
+    """Sweep every path guard against the assumptions they might silently share.
+
+    Three serious defects here have had one shape: an assumption held by several guards that are
+    not copies of one another, fixed in one and left in the others. Case-sensitivity accounted
+    for three of them across _shield_tokens, _shield_text and is_protected_target — and the last
+    was found only because a killed audit run happened to have probed it.
+
+    Assumptions, unlike code, can be enumerated. This sweeps each guard against the ways a path
+    can name the same file differently, so the next one is found deliberately rather than by
+    luck. A variant that is NOT the same file — percent-encoding, which no filesystem decodes —
+    is deliberately not required to be blocked; over-blocking a legitimate filename would be its
+    own defect.
+    """
+    import importlib.util as _il, unicodedata as _ud
+    lspec = _il.spec_from_file_location("torque_lib_sw", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+    sspec = _il.spec_from_file_location("torque_sp_sw", ROOT / "hooks" / "shellparse.py")
+    sp = _il.module_from_spec(sspec); sspec.loader.exec_module(sp)
+
+    base = "hooks/lib.py"
+    same_file = {
+        "case":              "HOOKS/LIB.PY",
+        "mixed case":        "Hooks/Lib.py",
+        "trailing space":    base + " ",
+        "trailing dot":      base + ".",
+        "relative traversal": "hooks/../hooks/lib.py",
+        "dot-slash":         "./hooks/lib.py",
+        "double slash":      "hooks//lib.py",
+        "backslash sep":     "hooks\\lib.py",
+        "NFD":               _ud.normalize("NFD", base),
+        "trailing newline":  base + "\n",
+    }
+    for label, v in same_file.items():
+        if not lib.is_protected_target(v):
+            return Result("guards_share_no_blind_assumption", FAIL,
+                          f"is_protected_target missed the {label} form ({v!r}) of a protected "
+                          f"file — same file, different spelling")
+
+    anchor = {"case": "~/.TORQUE/SECRET", "backslash": "~/.torque\\secret",
+              "traversal": "~/.torque/../.torque/secret", "envvar": "$HOME/.torque/secret"}
+    for label, v in anchor.items():
+        if not sp.anchor_ref(v):
+            return Result("guards_share_no_blind_assumption", FAIL,
+                          f"anchor_ref missed the {label} form ({v!r})")
+    auth = {"case": "~/.SFDX/ALIAS.JSON", "backslash": "~/.sfdx\\alias.json",
+            "sf dir": "~/.sf/config.json"}
+    for label, v in auth.items():
+        if not sp.sf_auth_ref(v, {}):
+            return Result("guards_share_no_blind_assumption", FAIL,
+                          f"sf_auth_ref missed the {label} form ({v!r})")
+
+    # and the guards must not become walls: ordinary files stay writable in any spelling
+    for v in ("README.md", "./README.md", "docs/DESCRIBING-TORQUE.md", "harness/tests/x.json"):
+        if lib.is_protected_target(v):
+            return Result("guards_share_no_blind_assumption", FAIL,
+                          f"an ordinary path was treated as protected: {v!r}")
+    return Result("guards_share_no_blind_assumption", PASS,
+                  f"{len(same_file)} same-file spellings blocked by the path guard, "
+                  f"{len(anchor)} by the anchor guard, {len(auth)} by the auth-store guard; "
+                  f"4 ordinary paths unaffected")

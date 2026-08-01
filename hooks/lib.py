@@ -841,6 +841,11 @@ def is_protected_target(path_str: str) -> bool:
     two guards that happen to share an assumption about case.
     """
     try:
+        import shellparse as _sp
+        path_str = _sp.normalize_separators(path_str)
+    except Exception:
+        path_str = (path_str or "").replace("\\", "/")
+    try:
         rp = str(Path(path_str).resolve())
     except Exception:
         rp = path_str
