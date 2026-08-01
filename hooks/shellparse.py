@@ -472,6 +472,42 @@ def _subcommand_is_opaque(sub, sf_args):
     return any("$" in t or "`" in t or "{" in t for t in tuple(sub) + tuple(sf_args))
 
 
+# Words that mean "this removes or overwrites something", tested against the RESOLVED command id
+# only after every precise rule has declined. This is the safety net for verbs that do not exist
+# yet — not a default-deny, which would tax every harmless unknown.
+_DESTRUCTIVE_WORDS = ("delete", "destroy", "purge", "erase", "truncate", "drop", "wipe",
+                      "nuke", "uninstall", "revoke", "reset")
+
+
+# (topic, verb) pairs the precise rules above already reason about. For these the specific
+# logic has ALREADY decided — including deciding that something is fine, like a bounded delete
+# by record id, which is deliberately free. The shape net must not second-guess a rule that
+# looked at the command and said yes.
+_PRECISELY_HANDLED = {
+    ("data", "delete"), ("data", "update"), ("data", "upsert"), ("data", "import"),
+    ("data", "export"), ("data", "query"), ("data", "get"), ("data", "create"),
+    ("apex", "run"), ("apex", "test"), ("apex", "get"),
+    ("org", "delete"), ("org", "create"), ("org", "list"), ("org", "display"),
+    ("api", "request"), ("project", "delete"), ("project", "deploy"), ("project", "retrieve"),
+}
+
+
+def _destructive_shape(sub):
+    """True when a verb the precise rules do NOT cover still reads as destructive.
+
+    This is the safety net for verbs that do not exist yet — a novel spelling of "remove". It
+    is deliberately narrow: it never overrides a precise rule, and it never fires on an unknown
+    verb that merely sounds harmless. Charging every unrecognised command a token would be the
+    safer-looking choice and the wrong one; a gate that taxes ordinary work gets uninstalled.
+    """
+    if not sub:
+        return False
+    if tuple(sub[:2]) in _PRECISELY_HANDLED or sub[0].startswith("force:"):
+        return False
+    joined = ":".join(sub)
+    return any(w in joined for w in _DESTRUCTIVE_WORDS)
+
+
 def classify_destructive(sf_args):
     """Op-class if the parsed sf write is destructive, else None. Covers modern space syntax AND
     legacy colon syntax (audit R11-04/R11-05) and async-resume completion of bulk jobs."""
@@ -524,6 +560,12 @@ def classify_destructive(sf_args):
               or a.startswith(("--pre-destructive-changes=", "--post-destructive-changes="))
               for a in sf_args) or "destructivechanges" in " ".join(sf_args).lower():
         return "destructive-metadata"
+    # Nothing precise matched. If the verb still READS as destructive, charge a token;
+    # otherwise let it through to the ordinary write authorisation (allowlist + live
+    # non-production check). Deliberately NOT a default-deny: taxing every harmless
+    # unknown is how a gate becomes the thing people uninstall.
+    if _destructive_shape(sub):
+        return "unrecognised-destructive"
     return None
 
 
@@ -813,11 +855,15 @@ def runtime_path_risk(segs, varmap):
             for root in _find_roots(a):
                 pat = _abs_pattern(root, None, varmap)
                 home = os.path.realpath(os.path.expanduser("~"))
-                th = str(lib.TORQUE_HOME.resolve())
-                if (root in ("~", "/", "$HOME") or root.startswith(("~/", "$HOME"))
-                        or pat in (home, "/") or th.startswith(pat.rstrip("/") + os.sep)
-                        or anchor_ref(root, None, varmap) or sf_auth_ref(root, varmap)
-                        or _protected_path(root, None, varmap)):
+                anchor = str(lib.ANCHOR.resolve())
+                # UNRECOVERABLE only: the trust anchor and the sf auth store. A root that merely
+                # covers the repo is not risky — the repo is in git. Blocking `find . -delete`
+                # there would trade a recoverable file for a tool that feels hostile to use.
+                reaches_anchor = (anchor.startswith(pat.rstrip("/") + os.sep)
+                                  or anchor_ref(root, None, varmap)
+                                  or sf_auth_ref(root, varmap))
+                if root in ("~", "/", "$HOME") or root.startswith(("~/", "$HOME")) \
+                        or pat in (home, "/") or reaches_anchor:
                     risky_root = True
             if any(f in a for f in _RUNTIME_ACTION_FLAGS):
                 consumer = True

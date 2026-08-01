@@ -292,9 +292,29 @@ def protected_objects() -> set:
             if l.split("#")[0].strip()}
 
 # ---- PreToolUse I/O ------------------------------------------------------
+class InvalidEvent(Exception):
+    """Stdin was empty or not JSON. The gate cannot evaluate what it cannot parse."""
+
+
 def read_event():
-    try: return json.loads(sys.stdin.read() or "{}")
-    except Exception: return {}
+    """Parse the hook payload, or raise.
+
+    This used to swallow BOTH failures and return {} — an empty dict has no tool_name and no
+    command, so every classifier fell through to allow(). Empty stdin and malformed JSON both
+    exited 0. That is a FAIL-OPEN in the one function every gate starts with, in a product
+    whose stated posture is that a gate which cannot decide must deny (external panel,
+    codex gpt-5.6-sol).
+    """
+    raw = sys.stdin.read()
+    if not raw.strip():
+        raise InvalidEvent("empty hook payload")
+    try:
+        ev = json.loads(raw)
+    except Exception as e:
+        raise InvalidEvent(f"unparseable hook payload: {type(e).__name__}")
+    if not isinstance(ev, dict):
+        raise InvalidEvent("hook payload is not an object")
+    return ev
 
 def allow():
     sys.exit(0)
@@ -313,6 +333,8 @@ def run_gate(main_fn, hook_id: str):
         main_fn()
     except SystemExit:
         raise
+    except InvalidEvent as e:
+        deny(f"cannot evaluate this tool call ({e}) — failing closed", "invalid-event", hook_id)
     except Exception as e:                            # noqa: BLE001 — fail closed on anything
         deny(f"gate crashed, failing closed: {type(e).__name__}: {e}", "crash", hook_id)
 
