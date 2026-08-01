@@ -360,13 +360,24 @@ def _api_method(sf_args):
 
 
 def sobject_value(sf_args):
+    """The sObject an operation targets, in every flag form oclif accepts.
+
+    Glued short flags (`-sAccount`) are ordinary oclif syntax and were NOT extracted, so the
+    protected-object shield could not see the object name. That mattered only in the one case
+    where the shield is the last line of defence: an operator has already issued a valid
+    bulk-delete token, which is not object-scoped, and the shield is what still refuses
+    Account. Found by the external panel (antigravity/gemini-3.1-pro) — its own evidence used
+    a flag that does not exist, but the reasoning held for the glued form, which does.
+    """
     args = _cut_ddash(sf_args)
     for i, a in enumerate(args):
         if a in ("--sobject", "-s", "--sobjecttype", "--sobjecttypecategory") and i + 1 < len(args):
             return args[i + 1]
-        for f in ("--sobject=", "-s=", "--sobjecttype="):
+        for f in ("--sobject=", "-s=", "--sobjecttype=", "--sobject-type=", "--sobjectType="):
             if a.startswith(f):
                 return a[len(f):]
+        if len(a) > 2 and a.startswith("-s") and not a.startswith("--"):
+            return a[2:]                       # glued short flag: -sAccount
     return None
 
 

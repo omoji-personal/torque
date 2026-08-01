@@ -1,7 +1,9 @@
 # Deployment
 
 Deploy order: objects/fields → permission sets (FLS) → Apex/triggers → flows (draft) →
-activation → layouts/pages → profiles (minimal). Formula fields get NO automatic FLS —
+activation → layouts/pages → profiles (minimal). NO custom field gets automatic FLS from the Metadata API — for any profile, System
+Administrator included — and a formula field's fieldPermissions entry must be
+`<editable>false</editable>` (it is read-only; editable=true fails the deploy) —
 deploy a PermissionSet with fieldPermissions alongside every field, even for admins.
 
 - Always `--dry-run` first; deploy success is not outcome success — verify with SOQL after.

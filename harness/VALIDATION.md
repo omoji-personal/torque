@@ -215,6 +215,6 @@ classification), not one-off patches.
 - **4 release-gated checks** — excepted-org hard-fail (no client-prod exception, so the published
   claim stays absolute), a bypass suite over 7 shapes drawn from every audit front, image
   manifest, deliverable coverage (67 tracked paths, all classified).
-- **172 adversarial fixtures** across base + r11 + r12 + r13 + r14 + confirmation.
+- **196 adversarial fixtures** across base + r11 + r12 + r13 + r14 + confirmation.
 
 Reproduce on any free DE org with the command above. **Torque is converged and shippable.**
