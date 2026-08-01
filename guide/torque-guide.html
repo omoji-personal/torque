@@ -651,7 +651,7 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
     A short list of sObjects is shielded from bulk-delete shapes on <strong>every</strong> org,
     approved or not — <code>harness/checks/protected-objects</code>, seeded with Account, Contact
     and Opportunity. It is a floor, not an authorization check, and the shield reaches inside an
-    approved Apex body too. Edit it yourself; the agent’s tools cannot.
+    approved Apex body too. Edit it yourself: the agent’s Edit and Write tools are denied on it, as are Bash write shapes.
   </div>
 
   <h4>Threat model — where the boundary honestly sits</h4>

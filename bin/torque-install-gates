@@ -19,12 +19,45 @@ def main():
     hooks[:] = [h for h in hooks if "torque" not in json.dumps(h).lower()]
     cmd = (f'TORQUE_HOME="{TORQUE_HOME}" python3 "{TORQUE_HOME}/hooks/prod_write_gate.py"')
     dcmd = (f'TORQUE_HOME="{TORQUE_HOME}" python3 "{TORQUE_HOME}/hooks/destructive_data_gate.py"')
+    # MUST mirror .claude/settings.json exactly. It used to register only Bash and
+    # Edit|Write|MultiEdit — so an operator who followed the guide ("run install-gates so they
+    # bind everywhere") got NO MCP-write gating and NO Read gating on the trust anchor in every
+    # other workspace, while believing they were covered. Silent partial protection is worse than
+    # none, because it is indistinguishable from the real thing until it matters.
     hooks.append({"matcher": "Bash", "hooks": [
         {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
+    hooks.append({"matcher": "mcp__.*", "hooks": [
+        {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
     hooks.append({"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": cmd}]})
+    hooks.append({"matcher": "Read", "hooks": [{"type": "command", "command": cmd}]})
     cfg.setdefault("_torque", {})["home"] = str(TORQUE_HOME)
+    # Back up before rewriting the operator's whole settings file.
+    if HOME_SETTINGS.exists():
+        bak = HOME_SETTINGS.with_suffix(".json.torque-bak")
+        if not bak.exists():
+            bak.write_text(HOME_SETTINGS.read_text())
     HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
-    print(f"installed: gates registered at user level, TORQUE_HOME={TORQUE_HOME}")
+    print(f"installed: 4 matchers registered at user level, TORQUE_HOME={TORQUE_HOME}")
+    print("remove with:  python3 bin/torque install-gates --remove")
+
+
+def remove():
+    """Uninstall. There was no way back: the installed gate denies edits to any file basenamed
+    settings.json, so the only removal path was a manual terminal edit — a control you cannot
+    turn off is a control people resent rather than adopt."""
+    if not HOME_SETTINGS.exists():
+        print("nothing to remove"); return
+    cfg = json.loads(HOME_SETTINGS.read_text() or "{}")
+    hooks = cfg.get("hooks", {}).get("PreToolUse", [])
+    before = len(hooks)
+    hooks[:] = [h for h in hooks if "torque" not in json.dumps(h).lower()]
+    cfg.pop("_torque", None)
+    if not hooks:
+        cfg.get("hooks", {}).pop("PreToolUse", None)
+    HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
+    print(f"removed: {before - len(hooks)} torque hook block(s) from {HOME_SETTINGS}")
+    print("the project-level gates in this repo are unaffected")
 
 if __name__ == "__main__":
-    main()
+    import sys
+    (remove if "--remove" in sys.argv else main)()

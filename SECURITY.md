@@ -25,7 +25,10 @@ The invariants the gates claim to hold, all enforced on the agent's tool surface
 2. The agent cannot mint an approval token or session grant, and cannot read the signing secret
    or the `sf` CLI auth store.
 3. Destructive operations require an operator-present token, on both the Bash and MCP surfaces.
-4. The gate files and the trust anchor cannot be modified by the agent.
+4. The gate files and the trust anchor cannot be modified through the agent's tool surface
+   (Edit/Write/MultiEdit, and Bash write shapes including redirects, `cp`/`mv`/`tee` and
+   `git checkout`). An interpreter one-liner that opens the file and writes it — the same
+   subprocess channel described below — is NOT covered; that is a known gap, not a claim.
 5. A gate that crashes or times out denies rather than allows.
 6. The production override cannot be forged, replayed, or widened.
 

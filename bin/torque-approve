@@ -117,7 +117,27 @@ def _org_details(target):
         d = json.loads(r.stdout)["result"]
         return lib.norm_id(d.get("id")), d.get("username"), d.get("instanceUrl")
     except Exception:
-        return None, None, None
+        pass
+    # `sf org display` resolves an alias or a username, NOT an org Id — but the gate only knows
+    # the org Id at deny time, so the remediation it prints ("torque approve 00D... bulk-delete")
+    # landed here and died with "cannot resolve org". The command the product tells you to run
+    # has to run. Fall back to the allowlist, which maps Id -> username for every org the
+    # operator has already authorised.
+    try:
+        wanted = lib.norm_id(target)
+        for e in (lib.load_allowlist() or []):
+            if lib.norm_id(e.get("orgId") or e.get("org_id") or "") == wanted:
+                user = e.get("username") or e.get("alias")
+                if user:
+                    r2 = lib._sf("org", "display", "--target-org", user, "--json")
+                    try:
+                        d2 = json.loads(r2.stdout)["result"]
+                        return lib.norm_id(d2.get("id")), d2.get("username"), d2.get("instanceUrl")
+                    except Exception:
+                        return wanted, user, e.get("instanceUrl")
+    except Exception:
+        pass
+    return None, None, None
 
 
 def _confirm(prompt):

@@ -86,4 +86,24 @@ def _installer_roundtrip():
                        capture_output=True, text=True)
     if r.returncode != 0:
         return Result("installer_roundtrip", FAIL, f"installer does not compile: {r.stderr[:80]}")
-    return Result("installer_roundtrip", PASS, "installer compiles; records TORQUE_HOME for CWD-independent resolution")
+    # The installer must register EVERY matcher the project registers. It shipped covering only
+    # Bash and Edit|Write|MultiEdit, so an operator who ran it — as the guide instructs, to make
+    # the gates bind outside this repo — silently lost MCP-write gating and Read gating on the
+    # trust anchor everywhere else, while believing they were covered.
+    import json as _json, re as _re
+    proj = _json.loads((ROOT / ".claude" / "settings.json").read_text())
+    want = {b.get("matcher") for b in proj.get("hooks", {}).get("PreToolUse", [])}
+    have = set(_re.findall(r'"matcher":\s*"([^"]+)"', t))
+    missing = want - have
+    if missing:
+        return Result("installer_roundtrip", FAIL,
+                      f"installer registers {sorted(have)} but the project registers "
+                      f"{sorted(want)} — missing {sorted(missing)}; operators would get "
+                      f"partial protection that looks complete")
+    if "--remove" not in t:
+        return Result("installer_roundtrip", FAIL,
+                      "installer has no --remove path; the gate it installs denies edits to "
+                      "settings.json, so an operator could not uninstall it")
+    return Result("installer_roundtrip", PASS,
+                  f"installer compiles; {len(have)} matchers mirror the project; --remove present; "
+                  f"records TORQUE_HOME for CWD-independent resolution")
