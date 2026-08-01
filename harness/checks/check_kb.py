@@ -523,3 +523,76 @@ def _allow_decisions_logged():
                           "an ordinary shell command was logged — the trail will drown")
     return Result("allow_decisions_logged", PASS,
                   "an allowed Salesforce operation is recorded; ordinary shell calls are not")
+
+
+@check("python_floor_is_real", "static", catastrophe=False)
+def _python_floor_is_real():
+    """The documented Python minimum must match the syntax the code actually uses.
+
+    A prerequisite is a promise in both directions. Claim too low and someone's install fails
+    on syntax; claim too high and people with a working interpreter are turned away for no
+    reason. `ast.parse(feature_version=...)` answers the syntax half exactly, so the floor can
+    be derived from the tree instead of remembered. It bounds syntax only — a stdlib call added
+    in a later release would not show up here — so the check reports what it proved.
+    """
+    import ast as _ast
+    docs = (ROOT / "README.md").read_text()
+    m = _kb_re.search(r"python3.{0,12}?([23])\.(\d+)", docs)
+    if not m:
+        return Result("python_floor_is_real", FAIL, "README states no python3 minimum")
+    claimed = (int(m.group(1)), int(m.group(2)))
+
+    sources = [p for p in ROOT.rglob("*.py")
+               if ".git" not in p.parts and "local" not in p.parts]
+    sources += [ROOT / "bin" / n for n in ("torque", "torque-lesson", "torque-blast-radius",
+                                           "torque-log", "torque-demo", "torque-install-gates")]
+    sources = [p for p in sources if p.exists()]
+
+    def parses_all(ver):
+        for p in sources:
+            try:
+                _ast.parse(p.read_text(), feature_version=ver)
+            except SyntaxError:
+                return False
+            except Exception:
+                continue
+        return True
+
+    if not parses_all(claimed):
+        return Result("python_floor_is_real", FAIL,
+                      f"README claims python3 ≥ {claimed[0]}.{claimed[1]} but the source uses "
+                      f"syntax newer than that — an install following the README would fail")
+    lowest = claimed
+    for minor in range(claimed[1] - 1, 7, -1):
+        if parses_all((claimed[0], minor)):
+            lowest = (claimed[0], minor)
+        else:
+            break
+    # The syntax bound says nothing about stdlib calls that appeared in a later release, so
+    # the ones actually used here are named and versioned. If a future edit reaches for
+    # `tomllib` or `removeprefix`, this raises the floor rather than letting the README drift.
+    _STDLIB_SINCE = ((3, 8), ("missing_ok=True", "walrus")), ((3, 9), ("removeprefix",
+                     "removesuffix", "zoneinfo", "graphlib")), ((3, 11), ("tomllib",
+                     "ExceptionGroup", "TaskGroup"))
+    stdlib_floor = (3, 0)
+    for ver, markers in _STDLIB_SINCE:
+        for p_ in sources:
+            if p_.name == "check_kb.py":
+                continue          # this file NAMES the markers; matching itself proves nothing
+            body = p_.read_text()
+            if any(mk in body for mk in markers):
+                stdlib_floor = max(stdlib_floor, ver)
+                break
+    lowest = max(lowest, stdlib_floor)
+    if lowest > claimed:
+        return Result("python_floor_is_real", FAIL,
+                      f"README claims ≥ {claimed[0]}.{claimed[1]} but the code needs "
+                      f"{lowest[0]}.{lowest[1]}")
+    if lowest != claimed:
+        return Result("python_floor_is_real", WARN,
+                      f"README claims ≥ {claimed[0]}.{claimed[1]}, but every source file parses "
+                      f"under {lowest[0]}.{lowest[1]} and uses no stdlib newer than that — the "
+                      f"stated floor turns away users whose interpreter would work")
+    return Result("python_floor_is_real", PASS,
+                  f"{len(sources)} source files: syntax and stdlib both land exactly on the "
+                  f"documented floor {claimed[0]}.{claimed[1]}")

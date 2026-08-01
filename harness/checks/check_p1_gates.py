@@ -72,15 +72,60 @@ def _approval_boundary(target):
 
 @check("preflight_credentials", "capability", catastrophe=True)
 def _preflight(target):
-    # enumerate authenticated orgs, classify; a mutation-capable production cred with no
-    # exception file WARNs (daily) / FAILs (release). Here: report any production org.
-    r = subprocess.run(["sf","org","list","--json"], capture_output=True, text=True)
-    if r.returncode != 0: return Result("preflight_credentials", SKIP, "org list failed")
+    """What this CLI session can reach, and whether any of it is both production and writable.
+
+    The comment here used to describe a gate — production credential without an exception file
+    WARNs, then FAILs at release — and the body implemented none of it: it counted orgs and
+    returned PASS. A documented gate that does not exist is worse than an absent one, because
+    it is read as coverage.
+
+    What it asserts now is narrower and true. A production credential being present is not a
+    finding: an operator legitimately has them, and Torque's protection is the gate, not the
+    absence of the credential. The finding is production AND on the writable allowlist — the
+    one combination where a mistake is unrecoverable. Classification is done from local auth
+    data so this stays honest when the org is unreachable or out of API budget.
+    """
+    r = subprocess.run(["sf", "org", "list", "--json"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return Result("preflight_credentials", SKIP, "org list failed")
     data = json.loads(r.stdout)["result"]
-    orgs = [o.get("alias") or o.get("username") for grp in data.values() if isinstance(grp, list) for o in grp]
-    # we only assert the check runs and classifies our target correctly
+    orgs = [o for grp in data.values() if isinstance(grp, list) for o in grp]
+
+    # There is no local signal that separates a Developer Edition org from a production one:
+    # both are non-sandbox, non-scratch, and log in at login.salesforce.com. An earlier version
+    # of this check called everything non-sandbox "production" and duly flagged the project's
+    # own DE validation org. Local auth data can say "not a sandbox"; it cannot say "production",
+    # and the check must not claim otherwise.
+    def not_sandbox(o):
+        if o.get("isScratch") or o.get("isSandbox"):
+            return False
+        url = (o.get("loginUrl") or "") + (o.get("instanceUrl") or "")
+        return "test.salesforce.com" not in url
+
+    names = {(o.get("alias") or o.get("username")) for o in orgs}
+    live_ids = {_lib.norm_id(o.get("orgId") or "") for o in orgs}
+    live_ids.discard("")
+    # `sf org list` returns the same org under several groups, so anything counted from the
+    # raw list over-reports — it read "27 orgs authenticated, 42 not sandboxes".
+    non_sandbox = len({_lib.norm_id(o.get("orgId") or "") for o in orgs if not_sandbox(o)} - {""})
+
+    # load_allowlist() already refuses any entry whose recorded verdict is not eligible, so a
+    # production org cannot simply be listed. What local data CAN establish is whether an
+    # allowlisted org is still authenticated at all — an entry naming an org this machine can
+    # no longer see is a verdict nothing can re-confirm, carrying write eligibility forward on
+    # the strength of a check that ran once, some time ago.
+    allowlist = _lib.load_allowlist() or {}
+    dangerous = sorted(oid for oid in allowlist if oid not in live_ids)
     verdict, _, _ = _lib.classify(target) if target else ("?", None, None)
-    return Result("preflight_credentials", PASS, f"{len(orgs)} orgs enumerated; {target}={verdict}")
+    base = (f"{len(names)} orgs authenticated, {non_sandbox} not sandboxes (production or "
+            f"Developer Edition — local data cannot tell them apart); "
+            f"{len(allowlist)} eligible entr(ies) on the writable allowlist; {target}={verdict}")
+    if dangerous:
+        return Result("preflight_credentials", FAIL,
+                      f"{base} — allowlisted org(s) are no longer authenticated here, so their "
+                      f"write eligibility rests on a verdict nothing can re-confirm: {dangerous}")
+    return Result("preflight_credentials", PASS,
+                  base + "; every allowlisted org is still authenticated")
 
 @check("local_hygiene", "capability")
 def _local_hygiene():

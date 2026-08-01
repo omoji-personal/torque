@@ -276,8 +276,9 @@ def run_profile(profile, target, only=None):
         # An exhausted org cannot be distinguished from a broken check, so it is reported as
         # neither. This never turns a failure green — the verdict degrades and cannot pass.
         if spent and res.outcome == FAIL and RANK[lowest] > RANK["static"]:
-            res = Result(name, FAIL, f"REQUEST_LIMIT_EXCEEDED (org budget spent) — "
-                                     f"original: {res.detail}")
+            res = Result(name, FAIL,
+                         f"REQUEST_LIMIT_EXCEEDED — the org is out of budget, and this failure "
+                         f"could not be distinguished from that. Original: {res.detail}")
         results.append(res)
     return results
 

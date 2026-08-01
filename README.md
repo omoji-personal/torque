@@ -88,7 +88,7 @@ blocks real work gets switched off.**
 ## Run it against your own org
 
 Prerequisites: [Claude Code](https://claude.com/claude-code) (the hooks are its PreToolUse surface),
-`git`, `python3` ≥ 3.11, the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) ≥ 2.60,
+`git`, `python3` ≥ 3.8, the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) ≥ 2.60,
 and any non-production org — a [free Developer Edition](https://developer.salesforce.com/signup) is fine.
 (`node` is optional; it only affects the live browser check.)
 
