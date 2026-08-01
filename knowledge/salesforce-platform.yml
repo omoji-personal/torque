@@ -57,16 +57,23 @@ entries:
     Re-creating a field with the name you just deleted works the first time and collides the
     second time, with no obvious difference between the two attempts.
   cause: >
-    On delete Salesforce appends `_del` to the developer name and parks the field in the
+    On delete Salesforce renames the field with a `_del` suffix and parks it in the
     deleted-fields queue for 15 days, where it still counts against the object's field limit.
-    The original name is therefore free. A second delete of the same name cannot append `_del`
-    (that name is taken), so the field keeps its original name and now blocks reuse.
+    The original API name is freed immediately, and it is freed EVERY time: when `_del` is
+    already taken Salesforce appends a number instead — `_del1`, `_del2` — so the same name
+    can be created and deleted repeatedly. What accumulates is tombstones, each holding a
+    slot against the limit until it ages out or is purged.
   remedy: >
-    Use run-scoped field names in anything repeatable, and purge rather than assume deletion.
+    Use run-scoped field names in anything repeatable and purge rather than assume deletion —
+    not because the name is blocked, but because every cycle leaves another tombstone
+    consuming field-limit headroom on an object you did not think you were filling up.
   gotcha: >
-    `--purge-on-delete` makes a component ELIGIBLE for deletion; it does not erase it. Expect a
-    `_del` tombstone after teardown and write residue checks that look for it, or the check
-    passes whether or not the purge worked.
+    Corrected 2026-08-01. This entry previously claimed the name was freed EXACTLY ONCE — that
+    a second delete could not append `_del`, so the field kept its original name and blocked
+    reuse. Tested on a disposable org: deploy, delete, redeploy the same name, delete again.
+    Every step succeeded and the second tombstone came back as `_del1`. The claim was folklore
+    and it survived because the verifier only ever checked that a tombstone ends in `_del`,
+    never the part about reuse.
   detect: 'sf data query --use-tooling-api --query "SELECT DeveloperName FROM CustomField WHERE TableEnumOrId=''Account'' AND DeveloperName LIKE ''%_del''"'
   triggers: ['project\s+delete\s+source', 'destructiveChanges', 'purge-on-delete']
   confidence: verified-live
@@ -112,9 +119,11 @@ entries:
   symptom: "Deploys fail with missing-component errors that disappear if you re-run them."
   cause: "Components reference each other, and the Metadata API resolves dependencies WITHIN a single payload but does not reorder across separate deploy calls."
   remedy: >
-    Objects and fields first, then permission sets (so FLS exists before anything references
-    the fields), then Apex, then flows, then layouts and FlexiPages, then profiles last and
-    minimal. Re-running a failed deploy "fixing itself" is a dependency-order smell, not luck.
+    Objects and fields first, then Apex, then permission sets — permission sets frequently
+    carry classAccesses, so deploying them ahead of the classes they reference fails on a
+    missing component. Then flows, then layouts and FlexiPages, then profiles last and
+    minimal. Within one payload the API resolves this for you; across separate calls it is
+    yours to get right.
   triggers: ['project\s+deploy', 'deploy:start']
   confidence: practitioner
   updated: 2026-08-01
@@ -547,10 +556,11 @@ entries:
     A deploy that validated in a sandbox in seconds takes an hour against production, or fails
     on coverage in code the change never touched
   cause: >
-    Production deployments run tests by default and require 75% org-wide Apex coverage — a
-    property of the whole org, not of the change. A deploy touching no Apex at all can still be
-    refused because unrelated code is under-covered, and the test run itself is what makes
-    production deploys slow.
+    A production deployment that CONTAINS Apex runs tests by default and is gated on 75%
+    org-wide coverage — a property of the whole org, not of the change, so unrelated
+    under-covered code can refuse a deploy that compiles perfectly. A payload carrying NO
+    Apex components defaults to NoTestRun: no tests run and coverage is not evaluated at all.
+    That difference is why one production deploy is instant and the next takes an hour.
   remedy: >
     Validate against production ahead of the window with a validate-only deploy, and use a
     quick-deploy afterwards so the tests are not paid for twice. Know the org's coverage before

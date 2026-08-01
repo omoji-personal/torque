@@ -128,11 +128,20 @@ def _v_del_tombstones_visible(target):
         # tested nothing — and contradicted kb_live_claims' own promise that an unrunnable
         # verification reports NA rather than passing quietly.
         return None, "no tombstones on this org right now — nothing to observe"
-    bad = [r for r in rows if not str(r.get("DeveloperName", "")).endswith("_del")]
+    import re as _r
+    # `_del`, or `_del<N>` when the plain suffix was already taken. Accepting only `_del` was
+    # what let the entry's reuse claim go unverified for as long as it existed: both this check
+    # and the entry assumed a name could be freed once, and the org does it every time.
+    bad = [r for r in rows
+           if not _r.search(r"_del\d*$", str(r.get("DeveloperName", "")))]
     if bad:
-        return False, (f"a field matched the tombstone query but does not carry the `_del` "
-                       f"suffix ({bad[0].get('DeveloperName')}) — the naming claim is wrong")
-    return True, f"{len(rows)} `_del` tombstone(s) visible and correctly suffixed"
+        return False, (f"a field matched the tombstone query but carries no `_del` suffix "
+                       f"({bad[0].get('DeveloperName')}) — the naming claim is wrong")
+    numbered = [r["DeveloperName"] for r in rows
+                if _r.search(r"_del\d+$", str(r.get("DeveloperName", "")))]
+    return True, (f"{len(rows)} tombstone(s), all suffixed"
+                  + (f"; {len(numbered)} numbered ({numbered[0]}), which is the org freeing the "
+                     f"same name more than once" if numbered else ""))
 
 
 def _v_flowdefinition_queryable(target):
