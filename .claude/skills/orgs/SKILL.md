@@ -17,7 +17,10 @@ Reads a live `Organization` query, username-keyed cache. Production and unverifi
 are reported as write-ineligible.
 
 ## Allowlist a writable org (operator-present)
-Adding an org to `local/writable-orgs.json` is an authorization act, so it is gated: the
-agent proposes the entry; the operator confirms via `torque approve <orgId> allowlist`.
-Only sandbox/developer/scratch verdicts are eligible. Every entry records orgId, username,
+Adding an org to `local/writable-orgs.json` is an authorization act, so it is gated — by the
+file itself, not by a token. The agent's Edit/Write on that path is DENIED by
+`prod_write_gate` ("agent modification of protected file … operator-present issuance only").
+The agent proposes the entry; **the operator writes it.** There is deliberately no
+`approve … allowlist` op: a token the agent can ask for is a weaker control than a file it
+cannot touch at all. Only sandbox/developer/scratch verdicts are eligible. Every entry records orgId, username,
 verdict, verification time, and disposable flag.

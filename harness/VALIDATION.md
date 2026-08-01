@@ -206,15 +206,15 @@ classification), not one-off patches.
 
 `python3 harness/validate.py --profile release --target-org sf-coffee` is green end to end:
 
-- **self-test** — 10 catastrophe-class mutators, all caught: each flips a deny→allow (or a
+- **self-test** — 11 catastrophe-class mutators, all caught: each flips a deny→allow (or a
   static check FAIL→PASS) *only* when its guard is neutered, then restores source. Guards proven
   load-bearing: clean-IP ×3, secret-scan, anchor, destructive-token, redirect-detection, wrapper, expansion,
   glob-matcher.
 - **24 capability checks** — incl. the live probe cycle (deploy → SOQL+FLS verify → purge,
   residue 0), mass-update → undo, and a real headless Lightning render.
-- **3 release-only checks** — excepted-org hard-fail (no client-prod exception, so the published
+- **4 release-gated checks** — excepted-org hard-fail (no client-prod exception, so the published
   claim stays absolute), a bypass suite over 7 shapes drawn from every audit front, image
-  manifest, deliverable coverage (52 tracked paths, all classified).
+  manifest, deliverable coverage (67 tracked paths, all classified).
 - **128 adversarial fixtures** across base + r11 + r12 + r13 + confirmation.
 
 Reproduce on any free DE org with the command above. **Torque is converged and shippable.**

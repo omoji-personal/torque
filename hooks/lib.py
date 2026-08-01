@@ -61,6 +61,17 @@ def _sf(*args, timeout=45):
     except Exception:
         return _Failed()
 
+def approve_cmd(*args) -> str:
+    """The remediation command a human can actually paste.
+
+    `torque` is NOT on PATH — nothing installs it there — so printing a bare `torque approve ...`
+    told the operator to run a command that does not resolve. Every gate, and the installer, now
+    emit this one resolved form, so the string we print is the string that runs regardless of the
+    caller's CWD or PATH.
+    """
+    return " ".join(["python3", str(TORQUE_HOME / "bin" / "torque"), "approve", *args])
+
+
 def audit(decision: str, detail: str):
     # Never raises: a gate that can't write its audit line must still be able to DENY.
     # (Audit-write failure was an exploit path — chmod 555 local ⇒ crash ⇒ fail-open. K-HM1.)
@@ -206,8 +217,8 @@ def authorize_write(target: str, op_hint: str = "write"):
             audit("PROD-WRITE", f"token-authorized {op_hint} on {orgid} ({target})")
             return True, f"{target}: PRODUCTION write authorized via single-use operator token"
         return False, (f"{target} is PRODUCTION — denied by default. Operator override: "
-                       f"`torque approve {target} <op> --prod` (one operation) or "
-                       f"`torque approve {target} --session <minutes>` (a window).")
+                       f"`{approve_cmd(target, '<op>', '--prod')}` (one operation) or "
+                       f"`{approve_cmd(target, '--session', '<minutes>')}` (a window).")
     allow = load_allowlist()
     if allow is None:
         return False, "allowlist absent/unreadable/malformed — fail-closed deny"

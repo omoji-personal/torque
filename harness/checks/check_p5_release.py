@@ -64,7 +64,7 @@ def _coverage():
     tracked = _sp.run(["git","ls-files"], capture_output=True, text=True, cwd=ROOT).stdout.split()
     unknown = [t for t in tracked if not any(t.startswith(p) or t in (
         "CLAUDE.md","README.md","TOOLCHAIN.md","LICENSE","SECURITY.md",".gitignore","sfdx-project.json","package.json","package-lock.json")
-        for p in (".claude/",".git","hooks/","bin/","harness/","guide/","force-app/"))]
+        for p in (".claude/",".git","hooks/","bin/","harness/","guide/","brand/","force-app/"))]
     if unknown:
         return Result("deliverable_coverage", WARN, f"unclassified tracked paths: {unknown[:5]}")
     return Result("deliverable_coverage", PASS, f"{len(tracked)} tracked paths, all classified")

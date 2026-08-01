@@ -19,8 +19,9 @@ obfuscated command. Not "asks first" — *structurally gated.*
 
 ## How it holds — five layers
 
-1. **Credentials (the real boundary).** Connect production read-only. Torque stores no
-   secrets; sf CLI auth is the only credential path.
+1. **Credentials (the real boundary).** Connect production read-only. Torque stores no org
+   credentials; sf CLI auth is the only credential path. It does create one local signing
+   secret (`~/.torque/secret`) — that is what makes approval tokens unforgeable.
 2. **Authorization by identity, not inference.** A non-production write is allowed only when
    its target is on an explicit allowlist AND classifies non-production *at the moment of the
    write* — a live `Organization` query (strict boolean, timeout-safe), not an alias or a URL

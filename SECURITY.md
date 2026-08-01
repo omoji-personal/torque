@@ -50,7 +50,7 @@ to reach than the threat model implies, that is a real finding about the documen
 ## Verifying the claims yourself
 
 ```
-python3 bin/torque-demo                     # 30s, no org, no credentials
+python3 bin/torque-demo                     # ~3s, no org, no credentials
 python3 harness/validate.py --self-test     # neuters each guard; the attack must then succeed
 ```
 

@@ -50,5 +50,17 @@ await page.pdf({
 });
 
 await browser.close();
+
+// Chromium stamps /Author=Chromium. Fix the attribution before anyone reads it as authorship.
+// Non-fatal: polish must never be able to break the deliverable.
+try {
+  const { spawnSync } = await import('child_process');
+  const r = spawnSync('python3', [join(here, 'stamp-metadata.py'), out], { encoding: 'utf8' });
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+} catch (e) {
+  console.warn('  · metadata stamp skipped:', e.message);
+}
+
 const kb = (statSync(out).size / 1024).toFixed(0);
 console.log(`built ${out} (${kb} KB)`);

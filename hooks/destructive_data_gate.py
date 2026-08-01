@@ -27,8 +27,8 @@ def _need_token(orgid, op, digest=""):
     if lib.consume_token(orgid, op, digest):
         lib.audit("ALLOW", f"[{HOOK}] token accepted for {op} on {orgid}")
         return
-    lib.deny(f"{op} requires operator-present approval (bin/torque-approve). "
-             "An agent cannot mint an HMAC-signed token.", op, HOOK)
+    lib.deny(f"{op} requires operator-present approval. An agent cannot mint an "
+             f"HMAC-signed token. Run: {lib.approve_cmd(orgid or '<org>', op)}", op, HOOK)
 
 
 def _shield_tokens(tokens, orgid):

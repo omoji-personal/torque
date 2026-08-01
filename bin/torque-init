@@ -111,7 +111,7 @@ def main():
     print(f"        {DIM}# the full proof: 128 attack fixtures, 10 mutation tests, and a live{RST}")
     print(f"        {DIM}# deploy → verify → purge cycle against {alias}. Takes a few minutes.{RST}\n")
     print(f"    {DIM}Then open this folder in Claude Code and operate. Production stays denied unless{RST}")
-    print(f"    {DIM}you personally run `bin/torque-approve` from a real terminal.{RST}\n")
+    print(f"    {DIM}you personally run `bin/torque approve` from a real terminal.{RST}\n")
 
 
 if __name__ == "__main__":

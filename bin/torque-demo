@@ -120,9 +120,9 @@ def main():
     verdict = f"{G}all {total} behaved correctly{RST}" if not wrong else f"{R}{wrong}/{total} WRONG{RST}"
     print(f"\n  {verdict}\n")
     print(f"{DIM}That was the parser layer only — it needs no org because it never got that far.")
-    print(f"The full suite (128 fixtures, 10 mutation tests, a live deploy→verify→purge cycle)")
+    print(f"The full suite (128 fixtures, 11 mutation tests, a live deploy→verify→purge cycle)")
     print(f"runs against your own Developer Edition org:{RST}")
-    print(f"    bin/torque-init <your-org-alias>")
+    print(f"    python3 bin/torque init <your-org-alias>")
     print(f"    python3 harness/validate.py --profile release --target-org <your-org-alias>\n")
     sys.exit(1 if wrong else 0)
 

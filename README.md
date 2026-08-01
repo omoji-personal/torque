@@ -9,7 +9,7 @@ not bind it. Torque is the layer that does.
 
 ---
 
-## See it in 30 seconds — no org, no credentials, no risk
+## See it in 3 seconds — no org, no credentials, no risk
 
 ```
 git clone <this repo> && cd torque
@@ -24,7 +24,8 @@ The gate never sees the literal word `sf` — it is assembled at runtime.
   DENIED  x=sf; $x data delete bulk --sobject Account --target-org acme-prod
           variable-assembled command → Salesforce operation hidden in a shell assignment value
   DENIED  s$'\x66' data delete bulk --sobject Account --target-org acme-prod
-          ANSI-C hex escape spells 'sf' → Salesforce operation hidden in an escape sequence
+          ANSI-C hex escape spells 'sf' → indirect command invocation cannot be
+          authorized — call `sf` literal
 
 Path expansion
 A glob or variable that only becomes the secret's path when bash expands it.
@@ -37,7 +38,7 @@ A glob or variable that only becomes the secret's path when bash expands it.
 Overwriting the gate itself
 Disable the hook and everything downstream is ungated.
   DENIED  : >hooks/lib.py >/tmp/z
-          two redirects; bash truncates BOTH → write to a protected gate file: lib.py
+          two redirects; bash truncates BOTH → write to a protected path: hooks/lib.py
   DENIED  git checkout HEAD~5 -- hooks/
           restore an older, weaker gate from git → git checkout targeting protected paths
 
@@ -58,8 +59,9 @@ blocks real work gets switched off.**
 
 ## How it holds — five layers
 
-1. **Credentials.** Connect production read-only. Torque stores no secrets; the `sf` CLI is the
-   only credential path.
+1. **Credentials.** Connect production read-only. Torque stores no org credentials; the `sf` CLI is
+   the only credential path. (It does create one local signing secret, `~/.torque/secret`,
+   which is what makes approval tokens unforgeable.)
 2. **Authorization by identity, not inference.** A non-production write is allowed only when its
    target is on an explicit allowlist **and** classifies non-production from a *live* org query at
    the moment of the write — never from an alias or a URL guess.
@@ -126,6 +128,14 @@ existed, then the built gates by four independent adversarial rounds — a shell
 a reviewer that *executed* each exploit against a real `sf` CLI, and an architecture skeptic —
 plus two confirmation passes. Roughly 55 real vulnerabilities were found and fixed; each one is a
 fixture. The trail is in [`harness/VALIDATION.md`](harness/VALIDATION.md).
+
+---
+
+## The guide
+
+[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 14 pages: what it does, why it isn't
+the MCP server, setup, the operations worked through, the safety model, troubleshooting,
+and how the harness proves itself.
 
 ---
 
