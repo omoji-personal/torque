@@ -154,7 +154,10 @@ def _record(target, results):
         return
     lib.ORGS.mkdir(parents=True, exist_ok=True)
     os.chmod(lib.ORGS, 0o700)
-    f = lib.ORGS / f"{orgid}.yml"
+    try:
+        f = lib.org_file(orgid)
+    except ValueError as e:
+        sys.exit(str(e))
     text = f.read_text() if f.exists() else (
         f"# Findings observed on org {orgid}.\n"
         f"# Keyed by orgId: a sandbox refresh mints a new one, and this memory\n"

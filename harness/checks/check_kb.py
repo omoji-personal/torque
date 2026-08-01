@@ -1356,3 +1356,105 @@ def _init_requires_operator():
     return Result("init_requires_operator", PASS,
                   "init refuses without a login terminal and wrote nothing; approve and init "
                   "share one presence implementation")
+
+
+@check("redaction_covers_credentials", "static", catastrophe=True)
+def _redaction_covers_credentials():
+    """Every credential shape Torque can encounter must not survive redact().
+
+    redact() is the last thing between a command and the audit log, the session log and every
+    captured lesson. It handled `sid=`, `access_token` and org ids — and passed an SFDX auth URL
+    through completely untouched. `force://<clientId>::<refreshToken>@<instance>` carries a
+    REFRESH token: a durable credential, not a session that expires. One logged command
+    containing one would have written it to disk in plaintext, indefinitely.
+
+    Found by the release panel (kimi) whose own quota ended its run before it could file the
+    report. The lead survived in its narration, which is the only reason this was fixed.
+    """
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_lib", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
+
+    secrets = {
+        "sfdx auth url": "force://PlatformCLI::5Aep861REFRESHTOKENvalue@https://x.my.salesforce.com",
+        "frontdoor sid": "https://x.my.salesforce.com/secur/frontdoor.jsp?sid=00Dxx!ARsAQtokenval",
+        "access token":  '{"access_token":"00Dxx!ARsAQrealtokenvalue"}',
+        "refresh token": 'refresh_token: 5Aep861_averylongrefreshvalue',
+        "bare session":  "INVALID_SESSION_ID for 00Dg5000009S1aL!AQEAQKtSessionValueHere",
+        "org id":        "00Dg5000009S1aLEAS",
+    }
+    # The distinctive part of each secret — what must NOT appear in the output.
+    needles = {
+        "sfdx auth url": "5Aep861REFRESHTOKENvalue",
+        "frontdoor sid": "ARsAQtokenval",
+        "access token":  "ARsAQrealtokenvalue",
+        "refresh token": "averylongrefreshvalue",
+        "bare session":  "AQEAQKtSessionValueHere",
+        "org id":        "g5000009S1aLEAS",
+    }
+    leaked = []
+    for label, raw in secrets.items():
+        out = lib.redact(raw)
+        if needles[label] in out:
+            leaked.append(f"{label} survives redaction")
+    if leaked:
+        return Result("redaction_covers_credentials", FAIL,
+                      f"{len(leaked)} credential shape(s) reach disk unredacted: {leaked}")
+    if lib.redact("sf data query --target-org sf-cb-test") != \
+            "sf data query --target-org sf-cb-test":
+        return Result("redaction_covers_credentials", FAIL,
+                      "an ordinary command was mangled — over-redaction makes the logs useless")
+    return Result("redaction_covers_credentials", PASS,
+                  f"{len(secrets)} credential shapes redacted; ordinary commands untouched")
+
+
+@check("local_cannot_reach_git", "static", catastrophe=True)
+def _local_cannot_reach_git():
+    """`local/` must not be stageable, and org Ids must not be paths.
+
+    "Gitignored, 0600, never leaves the machine" was true of the default and false of the
+    boundary: `git add -f` overrides gitignore in one flag, and local/ holds per-org findings,
+    session logs carrying before/after record values, and the audit log. The 0600 modes defend
+    against another Unix account, not against the agent running as the same user.
+
+    Separately, an org Id became a filename with no validation. It has only ever come from
+    `sf org display` — but "the current caller is trustworthy" is a property of today's code,
+    not of the identifier, and this store is the most sensitive thing in the repo.
+    """
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_lib", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
+
+    for bad in ("../../etc/passwd", "00D../../evil", "", "00Dg5000009S1aLEAS/x", "x" * 40):
+        try:
+            lib.org_file(bad)
+            return Result("local_cannot_reach_git", FAIL,
+                          f"org_file accepted {bad!r} as an org-store filename")
+        except ValueError:
+            pass
+    if lib.org_file("00Dg5000009S1aLEAS").name != "00Dg5000009S1aLEAS.yml":
+        return Result("local_cannot_reach_git", FAIL, "a valid org Id was refused")
+
+    def gate(cmd):
+        return _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                          input=_kb_json.dumps({"tool_name": "Bash",
+                                                "tool_input": {"command": cmd}}),
+                          capture_output=True, text=True, cwd=ROOT, timeout=60).returncode
+    for cmd in ("git add -f local/orgs/00Dg5000009S1aLEAS.yml",
+                "git add local/",
+                "git add -f local/audit.log",
+                "git commit local/sessions/x.jsonl -m x"):
+        if gate(cmd) != 2:
+            return Result("local_cannot_reach_git", FAIL, f"staging allowed: {cmd}")
+    for cmd in ("git add -A", "git add README.md", "git commit -m 'ordinary'", "git status"):
+        if gate(cmd) != 0:
+            return Result("local_cannot_reach_git", FAIL,
+                          f"ordinary git refused: {cmd} — a gate that blocks normal work "
+                          f"gets switched off")
+    tracked = _kb_sp.run(["git", "ls-files", "local/"], capture_output=True, text=True,
+                         cwd=ROOT).stdout.split()
+    if tracked:
+        return Result("local_cannot_reach_git", FAIL, f"local/ paths already tracked: {tracked[:3]}")
+    return Result("local_cannot_reach_git", PASS,
+                  "5 malformed org Ids refused as filenames; 4 staging paths blocked; "
+                  "4 ordinary git commands unaffected; nothing under local/ is tracked")

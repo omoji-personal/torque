@@ -78,6 +78,21 @@ PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destruc
 PROTECTED_DIRS = ("knowledge/", "local/orgs/", "bin/", "hooks/")
 
 
+def stages_local(argv) -> bool:
+    """True for a git command that would put a `local/` path into the index.
+
+    `local/` holds per-org findings, session logs with before/after record values, and the audit
+    log. It is gitignored, and `git add -f` overrides that in one flag. "Gitignored, 0600, never
+    leaves the machine" is only true while nothing can stage it (release panel, codex/gpt-5.6-sol).
+    """
+    if not argv or os.path.basename(argv[0]) != "git":
+        return False
+    verbs = {"add", "stage", "commit", "rm"}
+    if not any(a in verbs for a in argv[1:4]):
+        return False
+    return any("local/" in a or a.rstrip("/").endswith("local") for a in argv[1:])
+
+
 def _is_own_harness(argv) -> bool:
     """True only for Torque's own scripts, resolved under TORQUE_HOME.
 
@@ -936,6 +951,11 @@ def analyze_bash(cmd: str):
             continue
         if not argv:
             continue
+        if stages_local(argv):
+            return {"deny": ("that would put a `local/` path into git — it holds per-org "
+                             "findings, session logs with record values, and the audit log. "
+                             "It is gitignored, and -f overrides that in one flag.",
+                             "stages-local")}
         for tok in argv:
             if anchor_ref(tok, varmap=varmap):
                 return {"deny": ("reference to the trust anchor (~/.torque) — secret and tokens "

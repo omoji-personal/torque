@@ -92,9 +92,34 @@ def audit(decision: str, detail: str):
         pass
 
 def redact(text: str) -> str:
+    """Strip credential shapes before anything is written to disk.
+
+    An SFDX auth URL — `force://<clientId>::<refreshToken>@<instance>` — passed through here
+    completely untouched, and it carries a REFRESH token: a long-lived credential, not a session
+    that expires. redact() feeds the audit log, the session log and every captured lesson, so one
+    command echoing an auth URL wrote a durable credential to disk in plaintext. Found by the
+    release panel (kimi) after its own quota cut its report short; verified here before fixing.
+
+    A bare session id is also matched now. `sid=` was covered; the same token appearing in prose,
+    in an error body or in a URL fragment was not, and that is where errors put it.
+    """
+    text = re.sub(r"force://[^\s\"']+", "force://REDACTED", text)
     text = re.sub(r"(sid" + r"=)[^&\s\"']+", r"\1REDACTED", text)
     text = re.sub("(" + "access"+"_token|"+"refresh"+"_token)" + r"[\"'=: ]+[^&\s\"']+", r"\1=REDACTED", text)
+    # a Salesforce session id is <orgid-ish>!<opaque>; match the `!`-bearing form before the
+    # plain org-id rule below rewrites its prefix and hides the shape.
+    text = re.sub(r"\b00D[A-Za-z0-9]{12,15}![A-Za-z0-9._\-]+", "SESSIONID_REDACTED", text)
     text = re.sub("00D"+r"[A-Za-z0-9]{12,15}", "00D_REDACTED", text)
+    # Personal data. working-discipline.md says "No PII ... Redact via lib.redact", and until now
+    # this function did nothing of the kind — `--values Email=… SSN__c=… Phone=…` was written to
+    # the session log verbatim. A rule that names a function which does not implement it is worse
+    # than no rule, because both the operator and the reviewer stop looking (release panel,
+    # codex/gpt-5.6-sol). These shapes are always sensitive and are never what a rollback needs;
+    # ordinary field values are deliberately preserved, because before/after values ARE the undo.
+    text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]{2,}", "EMAIL_REDACTED", text)
+    text = re.sub(r"\b\d{3}-\d{2}-\d{4}\b", "SSN_REDACTED", text)
+    text = re.sub(r"\(?\b\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b", "PHONE_REDACTED", text)
+    text = re.sub(r"\b(?:\d[ -]?){13,19}\b", "CARD_REDACTED", text)
     return text
 
 
@@ -203,6 +228,30 @@ def load_allowlist():
         return out
     except Exception:
         return None                                   # malformed ⇒ deny
+
+_ORGID_RE = re.compile(r"^00D[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$")
+
+
+def valid_org_id(oid: str) -> bool:
+    """A Salesforce org Id, 15 or 18 characters, and nothing else.
+
+    Org Ids become FILENAMES in the per-org store, so a value that is not one is a path. It has
+    only ever come from `sf org display`, which is why nothing validated it — but "the current
+    caller is trustworthy" is a property of today's code, not of the identifier, and the store
+    is the most sensitive thing here. Flagged by the release panel (kimi).
+    """
+    return bool(oid) and bool(_ORGID_RE.match(str(oid)))
+
+
+def org_file(orgid: str):
+    """The findings file for an org. Refuses anything that is not an org Id."""
+    if not valid_org_id(orgid):
+        raise ValueError(f"refusing to use {orgid!r} as an org-store filename")
+    p = (ORGS / f"{orgid}.yml").resolve()
+    if p.parent != ORGS.resolve():
+        raise ValueError(f"org-store path escaped: {p}")
+    return p
+
 
 def norm_id(oid: str) -> str:
     """Normalize a Salesforce Id to 18 chars (15↔18)."""
@@ -485,7 +534,10 @@ def org_notes(command: str, limit: int = 2):
     orgid = org_for_command(command)
     if not orgid:
         return []
-    f = ORGS / f"{orgid}.yml"
+    try:
+        f = org_file(orgid)
+    except ValueError:
+        return []
     if not f.exists():
         return []
     hits = []
