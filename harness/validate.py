@@ -254,12 +254,13 @@ def self_test(target=None):
     os.environ["TORQUE_IN_SELFTEST"] = "1"
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    skipped = []                   # mutators that could not run — never allowed to read as caught
+    TOTAL_MUTATORS = 11            # keep in step with the mutators below; asserted by the count check
+    skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
         print("  · clean_ip mutators (3): operator-only — the private pattern list is not "
               "published, so they are skipped rather than failed")
-        skipped.append("clean_ip ×3 (operator-only)")
+        skipped.append(("clean_ip ×3 (operator-only)", 3))
     # clean_ip: a tracked file with a denied term must FAIL. Use the synthetic sentinel
     # pattern (in the private denylist) so the harness source never embeds a real
     # prohibited name — otherwise clean_ip would flag its own mutator.
@@ -449,10 +450,12 @@ def self_test(target=None):
         # this harness exists to prevent: a skip must never be able to read as a pass.
         print("  · redaction mutator: needs --target-org (the session-log check queries an org) "
               "— skipped rather than counted")
-        skipped.append("redaction (needs --target-org)")
+        skipped.append(("redaction (needs --target-org)", 1))
     if ok:
-        verdict = ("ALL 11 MUTATORS CAUGHT" if not skipped else
-                   f"all runnable mutators caught — NOT RUN: {'; '.join(skipped)}")
+        ran = TOTAL_MUTATORS - sum(c for _, c in skipped)
+        verdict = (f"ALL {ran} MUTATORS CAUGHT" if not skipped else
+                   f"all runnable mutators caught — NOT RUN: "
+                   f"{'; '.join(l for l, _ in skipped)}")
     else:
         verdict = "FAILURE — a check did not fail when it should"
     print(f"\n  self-test: {verdict}")

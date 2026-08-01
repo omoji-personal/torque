@@ -23,5 +23,8 @@ file itself, not by a token. The agent's Edit/Write on that path is DENIED by
 The agent proposes the entry; **the operator writes it.** There is deliberately no
 `approve … allowlist` op: a token the agent can ask for is a weaker control than a file its
 Edit/Write tools are denied. (That denial covers the tool surface and Bash write shapes; an
-interpreter one-liner that writes the file is the documented subprocess gap — see SECURITY.md.) Only sandbox/developer/scratch verdicts are eligible. Every entry records orgId, username,
+interpreter one-liner that writes the file is the documented subprocess gap — see
+SECURITY.md.)
+
+Only sandbox/developer/scratch verdicts are eligible. Every entry records orgId, username,
 verdict, verification time, and disposable flag.

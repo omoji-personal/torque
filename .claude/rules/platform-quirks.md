@@ -13,6 +13,8 @@
   `purgeOnDelete` makes a component ELIGIBLE for deletion — it does not erase it, so a `_del`
   tombstone is expected after teardown and residue checks must look for it.
 
-ENFORCEMENT: model-honored (observable: each entry names a reproduction; no single
-deterministic check spans the catalog — the probe_cycle check exercises the field-delete
-and purgeOnDelete entries specifically)
+ENFORCEMENT: model-honored (observable: every entry states a symptom and a remedy, and the
+dated entries with reproductions live in reference/platform-quirks-detail.md. NOT every
+entry carries a reproduction — the first three are assertions from practice, and this line
+used to claim otherwise. No single deterministic check spans the catalogue; probe_cycle
+exercises the field-delete and purgeOnDelete entries specifically.)

@@ -174,8 +174,15 @@ for c in probe_cycle mass_update_cycle browser_render frontdoor_noecho org_class
     *)     no "L: $c" "$(echo "$L" | cut -c1-60)";;
   esac
 done
-grep -q "ALL MUTATORS CAUGHT" $CAP && ok "L: self-test — every guard proven load-bearing" \
-  "$(grep -c 'mutator:' $CAP) mutators" || no "L: self-test" "a mutator was not caught"
+# This run supplies an org, so EVERY mutator must run and be caught. A "NOT RUN" here means
+# a guard went unproven, which must fail even though the run is otherwise green.
+if grep -qE "ALL [0-9]+ MUTATORS CAUGHT" $CAP && ! grep -q "NOT RUN" $CAP; then
+  ok "L: self-test — every guard proven load-bearing" "$(grep -c 'mutator:' $CAP) mutators"
+elif grep -q "NOT RUN" $CAP; then
+  no "L: self-test" "a mutator did not run: $(grep -o 'NOT RUN.*' $CAP | head -1)"
+else
+  no "L: self-test" "a mutator was not caught"
+fi
 rm -f $CAP
 
 hdr "M. APPROVED OPERATIONS ACTUALLY EXECUTE (not just 'the gate said yes')"
