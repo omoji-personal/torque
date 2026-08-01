@@ -19,6 +19,7 @@ GREEN, RED, DIM, RST = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 
 
 _ENV = None
+_STUB_ORGID = None
 
 def _home_rel(h):
     """The repo path AS WRITTEN AFTER `cd` (i.e. relative to HOME) — the TQ-006 fixture does
@@ -43,7 +44,7 @@ def _stub_env(org):
     to match a genuine allowlisted orgId — the fixtures test the gate logic, while live-org
     behaviour is covered separately by org_classify / probe_cycle / cache_poison_resistant.
     """
-    global _ENV
+    global _ENV, _STUB_ORGID
     if _ENV is not None:
         return _ENV
     orgid = username = None
@@ -51,6 +52,7 @@ def _stub_env(org):
         for e in json.loads(lib.ALLOWLIST.read_text()).get("orgs", []):
             if e.get("verdict") in lib.ELIGIBLE:
                 orgid, username = e["orgId"], e.get("username", "stub@example.com"); break
+        _STUB_ORGID = orgid
     except Exception:
         pass
     if not orgid:
@@ -136,9 +138,17 @@ def main():
         lib.SECRET.write_bytes(os.urandom(32)); os.chmod(lib.SECRET, 0o600)
     lib.TOKENS.mkdir(parents=True, exist_ok=True)
     lib.APPROVED.mkdir(parents=True, exist_ok=True)
-    verdict, orgid, _ = lib.classify_live(org)
+    # Mint for the identity the STUB reports, not one resolved live.
+    #
+    # This used to call classify_live(org), which returns the real orgId — while the stub `sf`
+    # on PATH answers with the first eligible org in the allowlist. The two agreed only because
+    # the allowlist had exactly one entry; adding a second org meant the token was written at
+    # one path and looked for at another, and both valid-token tests failed with a message
+    # about operator presence that had nothing to do with the cause. It also made a suite
+    # documented as hermetic reach the network.
+    orgid = _STUB_ORGID
     if not orgid:
-        print(f"  {RED}skip valid-token tests — {org} not reachable{RST}")
+        print(f"  {RED}skip valid-token tests — no eligible org in the allowlist{RST}")
     else:
         def mint(op, digest=""):
             payload = {"orgId": orgid, "op": op, "digest": digest,

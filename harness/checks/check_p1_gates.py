@@ -62,7 +62,10 @@ def _approval_boundary(target):
     _payload = {"orgId": orgid, "op": "bulk-delete", "digest": "",
                 "exp": int(time.time())+300, "iat": int(time.time())}
     _payload["sig"] = _lib.sign(_payload)
-    _lib.token_path(orgid, "bulk-delete").write_text(json.dumps(_payload))
+    _tok = _lib.token_path(orgid, "bulk-delete")
+    _tok.write_text(json.dumps(_payload))
+    _os.chmod(_tok, 0o600)     # the fixture suite chmods its tokens; this one did not, and
+                               # left 0644 approval tokens behind under a 0700 directory
     payload = {"tool_name":"Bash","tool_input":{"command":f"sf data delete bulk --target-org {target} --sobject Lead --file ids.csv"}}
     first = _gate("destructive_data_gate.py", payload)
     second = _gate("destructive_data_gate.py", payload)

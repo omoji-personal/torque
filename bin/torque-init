@@ -14,7 +14,8 @@ What it does, in order, refusing rather than guessing:
 The allowlist is deliberately NOT in the repo: an org you can write to is a decision only the
 person at the keyboard can make. This command is how you make it, once, explicitly.
 """
-import json, os, shutil, subprocess, sys, time
+import json
+import re, os, shutil, subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,7 +109,12 @@ def main():
     print(f"\n{G}Ready.{RST} Next:\n")
     print(f"    python3 bin/torque-demo                                   {DIM}# 30s, no org: watch attacks get refused{RST}")
     print(f"    python3 harness/validate.py --profile release --target-org {alias}")
-    print(f"        {DIM}# the full proof: 128 attack fixtures, 10 mutation tests, and a live{RST}")
+    nfix = sum(len(json.loads(f.read_text()).get("fixtures", []))
+               for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
+    nmut = len(re.findall(r"^\s*\(", (ROOT / "harness" / "validate.py").read_text()
+                          .split("REGRESSIONS", 1)[-1].split("]", 1)[0], re.M)) or 11
+    print(f"        {DIM}# the full proof: {nfix} recorded attack fixtures, {nmut} mutation "
+          f"tests, and a live{RST}")
     print(f"        {DIM}# deploy → verify → purge cycle against {alias}. Takes a few minutes.{RST}\n")
     print(f"    {DIM}Then open this folder in Claude Code and operate. Production stays denied unless{RST}")
     print(f"    {DIM}you personally run `bin/torque approve` from a real terminal.{RST}\n")

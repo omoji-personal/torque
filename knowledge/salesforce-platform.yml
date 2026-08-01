@@ -456,3 +456,40 @@ entries:
   detect: 'sf limits api display --target-org <alias>   # if this ITSELF errors, you are already out'
   confidence: practitioner
   updated: 2026-08-01
+
+- id: self-join-forbidden
+  domain: data
+  title: 'A child of the same object cannot be counted with a semi-join'
+  symptom: >
+    MALFORMED_QUERY on a query of the shape SELECT COUNT() FROM Account WHERE ParentId IN
+    (SELECT Id FROM Account WHERE ...)
+  cause: >
+    Salesforce refuses a semi-join whose subquery selects from the same object as the outer
+    query. Self-referencing hierarchies — Account.ParentId, Case.ParentId, any custom
+    self-lookup — therefore cannot be sized this way, which is exactly when you most want to
+    size them: a delete that walks a hierarchy is the one whose scope is least obvious.
+  remedy: >
+    Fetch the parent Ids first and bind them as an explicit IN list, or walk the hierarchy level
+    by level. Do not read the MALFORMED_QUERY as 'no children' — the query never ran.
+  detect: 'sf data query --query "SELECT COUNT() FROM Account WHERE ParentId IN (SELECT Id FROM Account)"'
+  confidence: practitioner
+  updated: 2026-08-01
+
+- id: entity-types-that-refuse-count
+  domain: api
+  title: 'Some standard relationships can never be counted, and that is not a failure'
+  symptom: >
+    INVALID_TYPE_FOR_OPERATION, EXTERNAL_OBJECT_UNSUPPORTED_EXCEPTION, or a COUNT() that simply
+    will not process on ProcessInstanceHistory, RecordActionHistory, PendingOrderSummary,
+    ActivityHistory, OpenActivity, NoteAndAttachment, CombinedAttachment
+  cause: >
+    A describe call lists child relationships that are views over other data, external objects,
+    or entity types the query engine does not serve. They appear identical to real children in
+    childRelationships, so anything walking that list hits them and cannot tell a platform
+    property from an error.
+  remedy: >
+    Classify them as uncountable rather than unknown. Treating them as failures makes every
+    hierarchy report look incomplete forever, which trains the reader to ignore the warning that
+    actually matters.
+  confidence: practitioner
+  updated: 2026-08-01

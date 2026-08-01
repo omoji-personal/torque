@@ -122,6 +122,22 @@ def workflow_rules(target, sobject):
     return out
 
 
+# Standard objects that exist only as a view over other data. They are not separately
+# queryable and are not separately deleted, so counting them is meaningless — and reporting
+# them as UNDETERMINED reads as a gap in the picture when it is a property of the platform.
+# Errors that mean "the platform will not count this", as opposed to "the count failed". An
+# external object that cannot serve COUNT(), or an entity type that does not support query at
+# all, is a permanent property of the object — reporting it as an unknown makes every delete
+# preview look incomplete forever, which trains the reader to ignore the warning that matters.
+_NOT_COUNTABLE = ("INVALID_TYPE_FOR_OPERATION", "EXTERNAL_OBJECT_UNSUPPORTED_EXCEPTION",
+                  "does not support query")
+
+_NON_QUERYABLE_VIEWS = {
+    "ActivityHistory", "OpenActivity", "NoteAndAttachment", "CombinedAttachment",
+    "AttachedContentDocument", "AttachedContentNote", "EmailStatus", "LookedUpFromActivity",
+}
+
+
 def cascade(target, sobject, operation, where):
     """Children that go with the parent. Only meaningful for a delete — and easy to forget."""
     if operation != "delete":
@@ -129,21 +145,47 @@ def cascade(target, sobject, operation, where):
         # as "I looked and found none". Those are different claims about the same field.
         return "not-applicable", "not-applicable"
     d = _describe(target, sobject)
-    hard, soft = [], []
+    hard, soft, views = [], [], []
     for rel in d.get("childRelationships") or []:
         child, field = rel.get("childSObject"), rel.get("field")
         if not child or not rel.get("relationshipName"):
             continue
-        (hard if rel.get("cascadeDelete") else soft).append((child, field))
-    counted = []
+        if child in _NON_QUERYABLE_VIEWS:
+            if child not in views:
+                views.append(child)
+            continue
+        pair = (child, field)
+        bucket = hard if rel.get("cascadeDelete") else soft
+        if pair not in bucket:          # one object can be a child twice, via different fields
+            bucket.append(pair)
+    sub = f"SELECT Id FROM {sobject}" + (f" WHERE {where}" if where else "")
+    counted, unknown = [], []
     for child, field in hard:
         try:
-            sub = f"SELECT Id FROM {sobject}" + (f" WHERE {where}" if where else "")
             n = _query(target, f"SELECT COUNT() FROM {child} WHERE {field} IN ({sub})")["totalSize"]
             counted.append((child, n))
-        except Unknown:
+        except Unknown as e:
             counted.append((child, None))
-    return counted, [c for c, _ in soft]
+            unknown.append(f"cascade:{child} ({e})")
+    orphans, uncountable, self_ref = [], [], []
+    for child, field in soft:
+        if child == sobject:
+            # Salesforce refuses a semi-join against the same object, so a self-referencing
+            # lookup (Account.ParentId) cannot be counted with this shape of query at all.
+            self_ref.append((child, field))
+            continue
+        try:
+            n = _query(target, f"SELECT COUNT() FROM {child} WHERE {field} IN ({sub})")["totalSize"]
+            if n:
+                orphans.append((child, n))
+        except Unknown as e:
+            if any(m in str(e) for m in _NOT_COUNTABLE):
+                uncountable.append(child)
+            else:
+                orphans.append((child, None))
+                unknown.append(f"orphan:{child} ({e})")
+    return {"cascade": counted, "orphans": orphans, "views": views, "unknown": unknown,
+            "uncountable": uncountable, "self_ref": self_ref}
 
 
 def rollups(target, sobject):
@@ -202,8 +244,19 @@ def main():
     part("workflow_rules", workflow_rules, a.target_org, a.sobject)
     part("rollups", rollups, a.target_org, a.sobject)
     try:
-        report["cascade"], report["cascade_soft"] = cascade(
-            a.target_org, a.sobject, a.operation, a.where)
+        c = cascade(a.target_org, a.sobject, a.operation, a.where)
+        if c == ("not-applicable", "not-applicable"):
+            report["cascade"] = report["cascade_soft"] = "not-applicable"
+        else:
+            report["cascade"] = c["cascade"]
+            report["cascade_soft"] = c["orphans"]
+            report["cascade_views"] = c["views"]
+            report["cascade_uncountable"] = c["uncountable"]
+            report["cascade_self_ref"] = [k for k, _ in c["self_ref"]]
+            # A child whose count could not be established is a hole in the picture, and the
+            # completeness verdict has to know about it. It previously printed "picture
+            # complete — every source answered" directly beneath five UNDETERMINED children.
+            unknowns.extend(c["unknown"])
     except Unknown as e:
         report["cascade"] = report["cascade_soft"] = None
         unknowns.append(f"cascade: {e}")
@@ -240,15 +293,40 @@ def main():
         if c is None:
             print("  cascade  : UNDETERMINED")
         elif c:
-            tot = sum(x for _, x in c if x is not None)
+            # Only the children that actually hold records are worth a line. The first version
+            # printed all 45 relationships, so "Contact: 13" and "Opportunity: 23" — the entire
+            # point — sat among forty zeroes and could not be found.
+            live = [(k, v) for k, v in c if v]
+            unk = [k for k, v in c if v is None]
+            empty = len(c) - len(live) - len(unk)
+            tot = sum(v for _, v in live)
             print(f"  cascade  : {tot} child record(s) deleted with the parent")
-            for child, cnt in c:
-                print(f"             · {child}: {cnt if cnt is not None else 'UNDETERMINED'}")
+            for child, cnt in sorted(live, key=lambda x: -x[1]):
+                print(f"             · {child}: {cnt}")
+            if empty:
+                print(f"             ({empty} further cascade relationship(s) hold no records)")
+            for child in unk:
+                print(f"             · {child}: UNDETERMINED")
         else:
             print("  cascade  : no cascade-delete children")
-        if report.get("cascade_soft"):
-            print(f"  orphans  : {len(report['cascade_soft'])} lookup child object(s) are NOT "
-                  f"deleted and will point at nothing")
+        orph = report.get("cascade_soft")
+        if orph:
+            tot = sum(v for _, v in orph if v)
+            print(f"  orphans  : {tot} record(s) across {len(orph)} lookup child object(s) will "
+                  f"survive the delete and point at nothing")
+            for child, cnt in sorted(orph, key=lambda x: -(x[1] or 0)):
+                print(f"             · {child}: {cnt if cnt is not None else 'UNDETERMINED'}")
+        elif orph is not None:
+            print("  orphans  : none — no lookup child holds a record")
+        for child in report.get("cascade_self_ref") or []:
+            print(f"  self-ref : {child}.{'ParentId' if child == a.sobject else '?'} — a record "
+                  f"in this set may parent another; Salesforce forbids a semi-join on the same "
+                  f"object, so count it separately before proceeding")
+        extra = (report.get("cascade_views") or []) + (report.get("cascade_uncountable") or [])
+        if extra:
+            print(f"  (not counted: {len(extra)} relationship(s) the platform will not count — "
+                  f"views over other data, external objects, and entity types that do not "
+                  f"support query)")
 
     if unknowns:
         print("\n  ⚠ this picture is INCOMPLETE — treat the operation as larger than shown:")

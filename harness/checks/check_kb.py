@@ -244,17 +244,35 @@ def _claimed_counts():
     recorded = sum(len(_kb_json.loads(f.read_text()).get("fixtures", []))
                    for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
     bad = []
-    for rel in ("guide/torque-guide.html", "README.md", "bin/torque-demo"):
+    for rel in ("guide/torque-guide.html", "README.md", "bin/torque-demo", "bin/torque-init"):
         f = ROOT / rel
         if not f.exists():
             continue
-        for m in _kb_re.finditer(r"(\d{2,4}) recorded", f.read_text()):
+        body = f.read_text()
+        for m in _kb_re.finditer(r"(\d{2,4}) recorded", body):
             if int(m.group(1)) != recorded:
                 bad.append(f"{rel} says {m.group(1)} recorded, on disk there are {recorded}")
+        # The check count drifted from 24 to 27 to 43 while two sentences in the guide kept
+        # saying 24 and 27. Derive it from the registry rather than trusting either.
+        # Counts are stated per profile as well as in total, and the profiles nest — so a
+        # blanket "N checks" comparison against the registry total is wrong for two of the
+        # three. Any stated count must match SOME profile's cumulative total.
+        from collections import Counter as _C
+        import importlib.util as _ilu
+        _sp = _ilu.spec_from_file_location("tv", ROOT / "harness" / "validate.py")
+        _v = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_v)
+        _c = _C(pr for _n, pr, _cc, _f in REGISTRY)
+        valid = {sum(n for pp, n in _c.items() if _v.RANK[pp] <= _v.RANK[pr])
+                 for pr in _v.PROFILES}
+        for m in _kb_re.finditer(r"(\d{2,4}) checks\b", body):
+            if int(m.group(1)) not in valid:
+                bad.append(f"{rel} says {m.group(1)} checks; no profile has that many "
+                           f"(profiles: {sorted(valid)})")
     if bad:
         return Result("claimed_counts", FAIL, "; ".join(bad))
     return Result("claimed_counts", PASS,
-                  f"{recorded} recorded fixtures on disk; every prose claim of that number agrees")
+                  f"{recorded} recorded fixtures and {len(REGISTRY)} registered checks; every "
+                  f"prose count matches the fixtures on disk or a real profile total")
 
 
 @check("lesson_backlog", "static", catastrophe=False)
@@ -355,9 +373,25 @@ def _blast_radius_honesty():
                       f"answered nothing — a silent zero is the one failure mode that matters")
     if not rep.get("undetermined"):
         return Result("blast_radius_honesty", FAIL, "no source was recorded as undetermined")
+    # The completeness verdict must agree with the body. It once printed "picture complete —
+    # every source answered" directly beneath five children marked UNDETERMINED, because the
+    # cascade section collected its own failures and never told the verdict about them. A
+    # summary that contradicts the detail above it is worse than no summary.
+    txt = _kb_sp.run([_kb_sys.executable, str(br), "--target-org", "torque-no-such-org-xyz",
+                      "--sobject", "Account", "--operation", "delete"],
+                     capture_output=True, text=True, cwd=ROOT, timeout=180)
+    body = txt.stdout
+    if "picture complete" in body and ("UNDETERMINED" in body or txt.returncode != 0):
+        return Result("blast_radius_honesty", FAIL,
+                      "claimed 'picture complete' while the body shows UNDETERMINED — the "
+                      "summary contradicts the detail above it")
+    if "INCOMPLETE" not in body:
+        return Result("blast_radius_honesty", FAIL,
+                      "an unreachable org did not produce an INCOMPLETE verdict")
     return Result("blast_radius_honesty", PASS,
                   f"{len(rep['undetermined'])} unanswerable source(s) reported as UNDETERMINED, "
-                  f"exit {r.returncode}; no source silently returned zero")
+                  f"exit {r.returncode}; no source silently returned zero, and the completeness "
+                  f"verdict agrees with the body")
 
 
 @check("lesson_writer_roundtrip", "static", catastrophe=True)
@@ -662,3 +696,52 @@ def _readme_transcripts_are_real():
                       f"{missing[0][:110]!r}")
     return Result("readme_transcripts_are_real", PASS,
                   f"{len(quoted)} transcript line(s) reproduced verbatim from a live gate run")
+
+
+@check("token_store_hygiene", "static", catastrophe=False)
+def _token_store_hygiene():
+    """Approval tokens must be 0600, and expired ones must not pile up unnoticed.
+
+    Twenty expired tokens had accumulated over two days, several of them 0644 — written by a
+    path that, unlike the fixture suite's, never chmod'd. The 0700 directory above them meant
+    nothing was exposed, but a credential-shaped file whose mode depends on which code path
+    created it is one refactor away from mattering. Expired tokens are harmless individually
+    and a signal collectively: each is an approval that was minted and never used.
+    """
+    import time as _t
+    import stat as _st
+    tokens = _lib_anchor_tokens()
+    if tokens is None or not tokens.exists():
+        return Result("token_store_hygiene", PASS, "no token store yet")
+    loose, expired, live = [], 0, 0
+    for f in tokens.glob("*.token"):
+        if _st.S_IMODE(f.stat().st_mode) & 0o077:
+            loose.append(f"{f.name} {oct(_st.S_IMODE(f.stat().st_mode))}")
+        try:
+            exp = _kb_json.loads(f.read_text()).get("exp", 0)
+        except Exception:
+            exp = 0
+        if exp < _t.time():
+            expired += 1
+        else:
+            live += 1
+    if loose:
+        return Result("token_store_hygiene", FAIL,
+                      f"{len(loose)} approval token(s) readable beyond the owner: {loose[:3]}")
+    if expired > 10:
+        return Result("token_store_hygiene", WARN,
+                      f"{expired} expired token(s) accumulating — each is an approval minted "
+                      f"and never used; nothing reaps them")
+    return Result("token_store_hygiene", PASS,
+                  f"{live} live, {expired} expired, all owner-only")
+
+
+def _lib_anchor_tokens():
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_lib", ROOT / "hooks" / "lib.py")
+    m = _il.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(m)
+        return m.TOKENS
+    except Exception:
+        return None
