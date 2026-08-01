@@ -1,7 +1,10 @@
 # Torque
 
-**Let an AI agent do real Salesforce work across every org you run — production included — with
-guardrails that actually hold.**
+**An AI-agent operations layer for Salesforce.** It carries platform knowledge that re-verifies
+itself against a live org, tells you what a change will actually set off before it runs — the
+triggers, the flows, the cascading deletes, the records left orphaned — and proves its changes in
+the org rather than trusting a return code. You can point it at the orgs you actually run,
+production included, because enforcement binds at the tool call instead of in a prompt.
 
 Frontier coding agents can already query, deploy, run Apex and move data. What stops most people
 using them on orgs that matter is not capability — it is that the same session which fixes a flow
@@ -17,7 +20,7 @@ torque wrench is not a weaker wrench; it is the one you reach for when the numbe
 ## See it in 3 seconds — no org, no credentials, no risk
 
 ```
-git clone <this repo> && cd torque
+git clone https://github.com/omoji-personal/torque.git && cd torque
 python3 bin/torque-demo
 ```
 
@@ -202,9 +205,10 @@ Torque validates itself the way it validates Salesforce work. `--profile release
 - **Release gates** — an agent-side token mint must fail, and seven bypass shapes must deny.
 
 The safety design was driven to convergence by a nine-round multi-model audit *before* the code
-existed, then the built gates by four independent adversarial rounds — a shell-semantics reviewer,
-a reviewer that *executed* each exploit against a real `sf` CLI, and an architecture skeptic —
-plus two confirmation passes. Roughly 55 real vulnerabilities were found and fixed; each one is a
+existed, then the built gates by four adversarial rounds run against independent frontier models — a
+shell-semantics reviewer, a reviewer that *executed* each exploit against a real `sf` CLI, and an
+architecture skeptic — plus two confirmation passes. Every round was author-run; this has had no
+third-party security audit. Roughly 55 real vulnerabilities were found and fixed; each one is a
 fixture. The trail is in [`harness/VALIDATION.md`](harness/VALIDATION.md).
 
 ---
