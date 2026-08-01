@@ -311,8 +311,11 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <tr><td>Encodes <em>how</em> to do the work</td><td class="no">—</td><td class="no">UI-guided</td><td class="win">for humans</td><td class="us">for agents</td></tr>
       <tr><td>Verifies the outcome in the org</td><td class="no">—</td><td class="no">partial</td><td class="no">partial</td><td class="us">yes</td></tr>
       <tr><td>Distinguishes prod at write time</td><td class="no">trusts alias</td><td class="win">env model</td><td class="no">trusts alias</td><td class="us">live query</td></tr>
-      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">25 entries</td></tr>
+      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">34 entries</td></tr>
       <tr><td>Gets smarter from being used</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">lessons → checks</td></tr>
+      <tr><td>Shows what an operation will set off, first</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">blast radius</td></tr>
+      <tr><td>Binds approval to a verified scope</td><td class="no">command string</td><td class="no">env / role</td><td class="no">—</td><td class="us">record count</td></tr>
+      <tr><td>Remembers what THIS org does</td><td class="no">stateless</td><td class="no">deploy history</td><td class="no">—</td><td class="us">per-org, by orgId</td></tr>
       <tr><td>Proves its own checks can fail</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">11 mutators</td></tr>
       <tr><td>Rollback across environments</td><td class="no">—</td><td class="win"><strong>yes</strong></td><td class="no">—</td><td class="us">single-org only</td></tr>
       <tr><td>Works outside Claude Code</td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="us">no</td></tr>
@@ -327,17 +330,73 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
     time.
   </p>
 
-  <h3>Three things I could not find anywhere else</h3>
+  <h3>Four things I could not find anywhere else</h3>
 
-  <p><strong>0 — It knows the platform, and the knowledge checks itself.</strong> A tool surface
-    gives an agent verbs; it does not tell it that a deployed field is invisible until a
-    PermissionSet grants it, that a Flow retrieve answers a different question than "is this
-    active", or that a no-op update rewrites who last touched forty thousand records. Torque
-    ships that as a structured catalogue where every entry declares how it is known — re-checked
-    against a live org, cited to Salesforce, or plainly marked as learned the hard way — and the
-    harness re-runs the live ones and fails when a claim stops holding. Salesforce ships three
-    releases a year, so a platform fact written once and never re-checked is decaying from the
-    day it is recorded.</p>
+  <p><strong>0 — It carries Salesforce knowledge that argues with itself.</strong> A tool surface
+    gives an agent verbs. It does not tell it that a deployed field stays invisible until a
+    PermissionSet grants it, that a bulk job can report success with thousands of failed records,
+    or that a no-op update rewrites who last touched forty thousand rows. Torque ships that as a
+    structured catalogue — 34 entries — where every one declares <em>how it is known</em>:
+    re-checked against a live org, cited to Salesforce, or plainly marked as learned the hard
+    way. The live ones are re-run by the harness, and a claim that stops holding fails the build.</p>
+
+  <div class="plate">
+    <div class="plate-h">The entry that was wrong</div>
+    <p> One of them said that deploying a profile removes
+      any permission the file does not mention — a common belief, and it was cited to Salesforce's
+      own Metadata API guide. An adversarial review challenged it with an argument I could not
+      answer: a retrieved profile contains permissions only for components in the package, so if
+      absence removed things, every ordinary sparse deploy would strip the target org. That plainly
+      does not happen.</p>
+    <p>So I stopped arguing and ran it. Two custom fields on a disposable Developer Edition org,
+      both granted profile-level field access, then a profile deployed that mentioned only the
+      second. <strong>The first field's access survived.</strong> A profile deploy is an overlay;
+      the danger is what the file <em>says</em> — a full export carries explicit
+      <code>readable=false</code> entries and overwrites exactly what it names.</p>
+    <p>The entry now states that, and the experiment <em>is</em> its verification: every release
+      run deploys the fields, grants both, deploys the partial profile, asserts the survivor, and
+      tears down. If Salesforce ever changes this, the build breaks. That is the whole design in
+      one story — a knowledge base is only worth carrying if something can prove it wrong.</p>
+  </div>
+
+  <p><strong>1 — The platform answers back, at the moment of the operation.</strong> Knowledge you
+    have to remember to look up is knowledge you will not look up. The gates already parse every
+    command, so the relevant entry prints as it goes past — including on a <em>refusal</em>, which
+    is exactly when it matters, because that is when someone is deciding whether to override.
+    Findings recorded against <em>this specific org</em> print first, because what is true here
+    outranks what is true generally.</p>
+
+  <pre>$ sf data update bulk --sobject Lead --file rows.csv --target-org acme-sandbox
+
+TORQUE PLATFORM NOTE [bulk-partial-failure] A bulk job can complete successfully with
+  thousands of failed records
+  → Never treat a bulk exit code as evidence the data changed. Read the failed-record
+    results for the job id, and compare a before and after count.
+TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a parent
+  or a group, not the row you are writing
+  → Order the batches so rows sharing a parent land together, or run serially.</pre>
+
+  <p><strong>2 — It can tell you what an operation will set off, before it runs.</strong> "Update
+    Type on every Prospect account" reads like one operation on N rows. It is N rows, plus every
+    active trigger and record-triggered flow, plus every validation rule that must now pass on
+    records saved years ago under different rules, plus every roll-up that recalculates, plus —
+    on a delete — the children that cascade and the lookup children left pointing at nothing. All
+    of it is queryable. Nothing assembles it and puts it in front of you.</p>
+
+  <pre>BLAST RADIUS — delete on Account @ acme-sandbox
+  scope    : 7 record(s)
+  cascade  : 36 child record(s) deleted with the parent
+             · Opportunity: 23
+             · Contact: 13
+  orphans  : 21 record(s) across 2 lookup child object(s) will survive the delete
+             and point at nothing
+             · Case: 21</pre>
+
+  <p>Deleting seven accounts strands twenty-one cases. Any source that cannot answer reports
+    <strong>UNDETERMINED</strong> and the exit code changes, because a blast radius that quietly
+    under-reports is worse than none — somebody would act on it. And an approval can be
+    <em>bound</em> to that scope: a token approved for seven records is refused if the criteria
+    come to match seven thousand.</p>
 
 
   <p><strong>1 — It treats “green but wrong” as the real failure mode.</strong> The expensive
@@ -535,6 +594,54 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
     routed through MCP is refused entirely and redirected to the file path.
   </p>
 
+  <h3>blast-radius — what it will set off, before it runs</h3>
+
+  <p>Read-only, and it runs before the operation rather than after. It reports scope, the active
+    triggers and record-triggered flows the operation can fire, the validation rules that must
+    now pass on records saved years ago under different rules, the roll-ups that recalculate,
+    and — on a delete — the children that cascade and the lookup children left pointing at
+    nothing.</p>
+
+  <pre>python3 bin/torque blast-radius --target-org my-org --sobject Account \
+    --operation delete --where "Type = 'Customer - Direct'"</pre>
+
+  <p>Its one defining property is that <strong>“none” and “could not tell” are different
+    answers</strong>. Any source that fails reports UNDETERMINED and the exit code changes.
+    A blast radius that quietly under-reports is worse than none at all, because somebody would
+    act on it — so the harness points the tool at an unreachable org and requires UNDETERMINED
+    for every part. Three categories are kept apart that would otherwise read alike: platform
+    views and entity types that refuse <code>COUNT()</code> (a property, not a gap),
+    self-referencing lookups where Salesforce forbids a semi-join on the same object, and
+    genuine unknowns.</p>
+
+  <h3>checkup — which of the platform’s traps are live in this org</h3>
+
+  <p>Ten catalogue entries carry a probe: the query that answers “is this happening to me right
+    now”. <code>checkup</code> runs them and reports what it found, each finding citing the entry
+    that predicted it and how that entry is known. That citation is the difference between this
+    and an org health scanner — the scanners tell you what they found and cannot tell you how
+    they know.</p>
+
+  <pre>CHECKUP — my-org   10 probe(s) from the platform catalogue
+
+  LIVE IN THIS ORG — the probe returned rows
+    [deleted-field-rename]  3 row(s)
+      A deleted custom field is renamed with `_del`, and the name is freed exactly once
+    [recycle-bin-retention]  6 row(s)
+      A deleted record is recoverable for up to 15 days
+
+  CONFIRMED — the platform refused the query, exactly as the entry says
+    [self-join-forbidden]  MALFORMED_QUERY: The inner and outer selects should not be on
+      the same table</pre>
+
+  <p>It does not execute the catalogue. Shelling out a probe string would make a text file a
+    command-execution surface, one careless entry away from running anything; only SOQL is
+    extracted and run read-only, and anything else is reported as <strong>not executed</strong>
+    with the reason. Running these for the first time found two entries that had been unrunnable
+    since they were written — nobody could know, because nothing had ever asked. A probe that
+    cannot run now fails the build, because <code>checkup</code> would otherwise report a clean
+    org on a trap it never tested.</p>
+
   <h3>audit-org, session-log, orgs</h3>
   <p>
     <strong>audit-org</strong> runs a fixed read-only battery through the <code>org-explorer</code>
@@ -558,7 +665,13 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
       <tr><td>validation</td><td>Nothing ships without the harness green against a live org</td></tr>
     </tbody>
   </table>
-  <h4>The catalogue, three entries</h4>
+  <h4>The catalogue — and the one that was wrong</h4>
+  <p>Thirty-four entries across nine domains: six re-verified against a live org on every release
+    run, seventeen cited to Salesforce, eleven marked plainly as learned the hard way. The label
+    is load-bearing rather than decorative — every one of the six live verifiers is fed, by the
+    harness, the org response that would make its entry false, and is required to say so. Three
+    of them previously could not fail at all: they queried the org, ignored the answer, and
+    returned true. That is fixed, and the honest number went <em>down</em> as a result.</p>
   <p>
     So the shape is visible rather than asserted:
   </p>
@@ -633,6 +746,26 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
     live hook set and check registry. The first version of that checker validated only the hook
     labels — so a <code>harness-enforced</code> label naming a check that had never existed passed
     silently. It was caught by the discipline it enforces.</div></div>
+
+  <h4>An approval can be bound to a scope, not just a command</h4>
+
+  <p>Approval everywhere else is per-command-string or per-session: the operator vouches for
+    their own reading of a <code>WHERE</code> clause, and nothing checks it again. But data
+    moves. Criteria that matched seven rows when the operator looked can match seven thousand by
+    the time the command runs, and no command string can express the difference — which is why
+    nobody’s approval does.</p>
+
+  <p><code>approve … --impact --sobject Account --where "…"</code> computes the blast radius,
+    shows it, establishes the count, and signs that count into the token. At the gate the count
+    is re-established and the token refused if the operation grew:</p>
+
+  <pre>TORQUE GATE DENY approved for 2 Lead record(s), the criteria now match 8.
+The operation grew after approval; re-approve with the current scope.</pre>
+
+  <p>A scope that cannot be re-established refuses rather than assuming it is unchanged: an
+    impact-bound token whose impact is unknown is not a token. This is opt-in and additive —
+    without <code>--impact</code> the ordinary path is unchanged, because a gate that makes
+    routine work harder is a gate people switch off.</p>
 
   <h4>Failing closed has to survive the host, not just the code</h4>
   <p>
@@ -748,6 +881,19 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
     switched on.
   </p>
 
+  <h4>The knowledge is mutation-tested too</h4>
+
+  <p>Mutation testing is applied to the guards and, since an external review caught it, to the
+    <em>knowledge</em>. Each live-claim verifier is fed the org response that makes its entry
+    false and is required to return false. Three of the original five could not fail at all —
+    they queried the org, ignored the answer, and returned true — while the summary line read
+    “5/5 live claims re-verified”. The label meant nothing until something tried to break it.</p>
+
+  <p>The same review challenged an entry’s <em>content</em>, and it turned out to be wrong. The
+    correction, and the experiment that now re-runs on every release to keep it honest, is the
+    story in section 02. Both are the same discipline: a claim nobody can falsify is not
+    knowledge, it is decoration.</p>
+
   <h4>11 mutation tests — the part that matters</h4>
   <p>
     Each temporarily neuters one guard and requires the corresponding attack to succeed — or, for
@@ -855,7 +1001,10 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
   <table class="plain"><tbody>
     <tr><td>demo</td><td>24 real cases through the real hooks. No org, no credentials, ~3s.</td></tr>
     <tr><td>init &lt;org&gt;</td><td>Clone → configured. Refuses production; creates the trust anchor; verifies the gates bind.</td></tr>
-    <tr><td>approve &lt;org&gt; &lt;op&gt;</td><td>Mint a single-use token (5 min). <code>--prod</code> requires typing <code>WRITE PRODUCTION</code>; <code>--session &lt;minutes&gt;</code> (≤&nbsp;120) opens a window; <code>--end-session</code> revokes; <code>--apex-file</code> for Apex. Operator TTY only.</td></tr>
+    <tr><td>approve &lt;org&gt; &lt;op&gt;</td><td>Mint a single-use token (5 min). <code>--prod</code> requires typing <code>WRITE PRODUCTION</code>; <code>--session &lt;minutes&gt;</code> (≤&nbsp;120) opens a window; <code>--end-session</code> revokes; <code>--apex-file</code> for Apex; <code>--impact --sobject X --where "…"</code> binds the token to a verified record count, and the gate refuses later if the criteria come to match more. Operator TTY only.</td></tr>
+    <tr><td>blast-radius</td><td>What an operation will set off — scope, triggers, flows, validation rules, roll-ups, cascade deletes and the lookup children left orphaned. Read-only. Reports UNDETERMINED rather than a silent zero.</td></tr>
+    <tr><td>checkup &lt;org&gt;</td><td>Runs every catalogue probe against the org — which traps are live here, each citing the entry that predicted it. <code>--record</code> stores the findings against that org.</td></tr>
+    <tr><td>lesson</td><td><code>fact</code> (schema-enforced platform entry) · <code>gate</code> (permanent fixture) · <code>org</code> (a finding about one org) · <code>review</code> (what the observer captured, ready to record).</td></tr>
     <tr><td>install-gates</td><td>Register the hooks at user level so they bind outside this workspace.</td></tr>
     <tr><td>log</td><td>Append a redacted session entry with before → after values.</td></tr>
     <tr><td>attest</td><td>Emit machine-readable attestations of what was verified.</td></tr>
