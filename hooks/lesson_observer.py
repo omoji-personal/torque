@@ -259,6 +259,6 @@ if __name__ == "__main__":
     try:
         main()
     except SystemExit as e:
-        sys.exit(0 if (e.code or 0) == 0 else 0)
+        sys.exit(0)          # both arms were 0; written as if it distinguished them
     except BaseException:
         sys.exit(0)

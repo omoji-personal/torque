@@ -1,0 +1,335 @@
+{
+  "schema": "torque.attestation/2",
+  "generated_at_utc": "2026-08-01T20:34:53Z",
+  "duration_s": 200,
+  "head": "f768875713ed9bb40167e4577cff47a963d6bf2f",
+  "tree": "883239a14e9967cd6196d70ab05c6d26ae7106fd",
+  "working_tree_clean": false,
+  "profile": "release",
+  "org": {
+    "alias": "sf-cb-test",
+    "org_id_sha256_16": "262d2e15e8e6f90c"
+  },
+  "org_classification": "sf-cb-test classified 'developer' (IsSandbox=False, Developer Edition)",
+  "verdict": "PASS",
+  "exit_code": 0,
+  "counts": {
+    "checks": 58,
+    "pass": 58
+  },
+  "self_test": {
+    "mutators_caught": 11,
+    "all_caught": true,
+    "mutators": [
+      "clean_ip",
+      "secret_scan",
+      "clean_ip historical-blob",
+      "anchor-guard",
+      "destructive token",
+      "redirect-detection",
+      "wrapper (wrapped_sf)",
+      "expansion-awareness",
+      "glob-matcher (_glob_reaches)",
+      "redaction"
+    ]
+  },
+  "checks": [
+    {
+      "check": "byte_budget",
+      "outcome": "PASS",
+      "detail": "CLAUDE.md 1564B, rules 13275B"
+    },
+    {
+      "check": "local_ignored",
+      "outcome": "PASS",
+      "detail": "local/ ignored, nothing tracked"
+    },
+    {
+      "check": "tooling_ignore_exact",
+      "outcome": "PASS",
+      "detail": "6 tooling entries, all declared"
+    },
+    {
+      "check": "clean_ip",
+      "outcome": "PASS",
+      "detail": "14 patterns; tree, blobs, paths, metadata, tags clean [operator-reproducible]"
+    },
+    {
+      "check": "secret_scan",
+      "outcome": "PASS",
+      "detail": "6 patterns across 83 tracked files, all readable, all clean"
+    },
+    {
+      "check": "org_classify",
+      "outcome": "PASS",
+      "detail": "sf-cb-test classified 'developer' (IsSandbox=False, Developer Edition)"
+    },
+    {
+      "check": "describe_first",
+      "outcome": "PASS",
+      "detail": "known field resolves, hallucinated field refused"
+    },
+    {
+      "check": "kb_integrity",
+      "outcome": "PASS",
+      "detail": "34 entries across 9 domains; 6 verified-live, 16 documented, 12 practitioner"
+    },
+    {
+      "check": "kb_live_claims",
+      "outcome": "PASS",
+      "detail": "6/6 live claims re-verified against sf-cb-test"
+    },
+    {
+      "check": "kb_injection",
+      "outcome": "PASS",
+      "detail": "3 operations received the right note; ordinary work stayed silent"
+    },
+    {
+      "check": "claimed_counts",
+      "outcome": "PASS",
+      "detail": "193 recorded fixtures and 58 registered checks; every prose count matches the fixtures on disk or a real profile total"
+    },
+    {
+      "check": "lesson_backlog",
+      "outcome": "PASS",
+      "detail": "102 observation(s), no resolved pair yet \u2014 nothing to record"
+    },
+    {
+      "check": "observer_is_not_a_gate",
+      "outcome": "PASS",
+      "detail": "observer cannot deny, cannot write knowledge, and exits 0 on a gate-denied shape"
+    },
+    {
+      "check": "blast_radius_honesty",
+      "outcome": "PASS",
+      "detail": "6 unanswerable source(s) reported as UNDETERMINED, exit 3; no source silently returned zero, and the completeness verdict agrees with the body"
+    },
+    {
+      "check": "lesson_writer_roundtrip",
+      "outcome": "PASS",
+      "detail": "a fact with apostrophes, double quotes and a colon round-trips intact"
+    },
+    {
+      "check": "limit_relabel_is_safe",
+      "outcome": "PASS",
+      "detail": "rate-limited run degrades to 'DEGRADED', never PASS; ordinary failures still FAIL"
+    },
+    {
+      "check": "session_log_path_containment",
+      "outcome": "PASS",
+      "detail": "8 hostile aliases contained; an ordinary alias is unchanged"
+    },
+    {
+      "check": "allow_decisions_logged",
+      "outcome": "PASS",
+      "detail": "an allowed Salesforce operation is recorded; ordinary shell calls are not"
+    },
+    {
+      "check": "python_floor_is_real",
+      "outcome": "PASS",
+      "detail": "25 source files: syntax and stdlib both land exactly on the documented floor 3.8"
+    },
+    {
+      "check": "component_self_tests",
+      "outcome": "PASS",
+      "detail": "3 component self-test(s) pass: hooks/lesson_observer.py, harness/capture.py, bin/torque-blast-radius"
+    },
+    {
+      "check": "readme_transcripts_are_real",
+      "outcome": "PASS",
+      "detail": "5 transcript line(s) reproduced verbatim from a live gate run"
+    },
+    {
+      "check": "token_store_hygiene",
+      "outcome": "PASS",
+      "detail": "0 live, 0 expired, all owner-only"
+    },
+    {
+      "check": "verifiers_can_fail",
+      "outcome": "PASS",
+      "detail": "all 6 verifiers return False when their entry is false"
+    },
+    {
+      "check": "detect_probes_run",
+      "outcome": "PASS",
+      "detail": "9/12 probes executed against sf-cb-test (6 live, 2 confirmed, 1 clear); 3 are not queries and are reported as such"
+    },
+    {
+      "check": "per_org_knowledge",
+      "outcome": "PASS",
+      "detail": "no findings recorded here, so isolation was exercised against a synthetic store: reaches its own org, not another, and not an unindexed alias"
+    },
+    {
+      "check": "impact_bound_approval",
+      "outcome": "PASS",
+      "detail": "approved for 27 Lead record(s): within scope proceeds and consumes, grown scope refused, unverifiable scope refused"
+    },
+    {
+      "check": "observer_cost_bounded",
+      "outcome": "PASS",
+      "detail": "adds 13 ms over bare interpreter startup (36 ms total, 22 ms of it Python itself) \u2014 the early exit means no extra work on a non-Salesforce command"
+    },
+    {
+      "check": "public_description_accurate",
+      "outcome": "PASS",
+      "detail": "every number in the public description matches a real metric [0, 34, 37, 55, 58, 128, 193, 196]"
+    },
+    {
+      "check": "runnable_implies_unwritable",
+      "outcome": "PASS",
+      "detail": "11 first-party command(s) runnable and none writable; foreign interpreters still refused"
+    },
+    {
+      "check": "init_requires_operator",
+      "outcome": "PASS",
+      "detail": "init refuses without a login terminal and wrote nothing; approve and init share one presence implementation"
+    },
+    {
+      "check": "redaction_covers_credentials",
+      "outcome": "PASS",
+      "detail": "6 credential shapes redacted; ordinary commands untouched"
+    },
+    {
+      "check": "local_cannot_reach_git",
+      "outcome": "PASS",
+      "detail": "5 malformed org Ids refused as filenames; 4 staging paths blocked; 4 ordinary git commands unaffected; nothing under local/ is tracked"
+    },
+    {
+      "check": "checkup_cannot_confirm_on_auth_failure",
+      "outcome": "PASS",
+      "detail": "auth and limit failures are errors, not confirmation; a real refusal still confirms; the verdict is non-zero whenever the picture is untrustworthy"
+    },
+    {
+      "check": "shield_is_case_insensitive",
+      "outcome": "PASS",
+      "detail": "3 protected object(s), 4 casings, both the Apex-body and CLI-token paths; unprotected objects unaffected"
+    },
+    {
+      "check": "observer_cannot_cross_clients",
+      "outcome": "PASS",
+      "detail": "observations are org-scoped, a succeeding command records nothing, and the queue is capped at 500"
+    },
+    {
+      "check": "no_divergent_twins",
+      "outcome": "PASS",
+      "detail": "115 function(s) across hooks/, none defined twice outside the 5 named per-gate entry points"
+    },
+    {
+      "check": "guards_are_case_insensitive",
+      "outcome": "PASS",
+      "detail": "5 protected paths in 5 casings each are refused, ordinary files are not, and credentials are redacted under both naming conventions"
+    },
+    {
+      "check": "gate_write_authz",
+      "outcome": "PASS",
+      "detail": "5 write-gate cases correct"
+    },
+    {
+      "check": "gate_destructive",
+      "outcome": "PASS",
+      "detail": "4 destructive-gate cases correct"
+    },
+    {
+      "check": "approval_boundary",
+      "outcome": "PASS",
+      "detail": "agent cannot mint; operator token authorizes exactly once"
+    },
+    {
+      "check": "preflight_credentials",
+      "outcome": "PASS",
+      "detail": "27 orgs authenticated, 21 not sandboxes (production or Developer Edition \u2014 local data cannot tell them apart); 2 eligible entr(ies) on the writable allowlist; sf-cb-test=developer; every allowlisted org is still authenticated"
+    },
+    {
+      "check": "local_hygiene",
+      "outcome": "PASS",
+      "detail": "local/ clean, sensitive files 0600"
+    },
+    {
+      "check": "enforcement_map",
+      "outcome": "PASS",
+      "detail": "7/7 rule files claim enforcement, and every label resolves to one of 4 blocking hook(s) or 58 registered check(s)"
+    },
+    {
+      "check": "gate_adversarial_fixtures",
+      "outcome": "PASS",
+      "detail": "196 adversarial gate fixtures pass"
+    },
+    {
+      "check": "cache_poison_resistant",
+      "outcome": "PASS",
+      "detail": "write decision re-derives live; cache file protected"
+    },
+    {
+      "check": "probe_cycle",
+      "outcome": "PASS",
+      "detail": "deploy\u2192verify(field ok, FLS asserted)\u2192purge\u2192teardown; live residue=0 (asserted 0); 1 `_del` tombstone in the 15-day queue \u2014 expected, because purge-on-delete makes a field eligible for deletion, not erased"
+    },
+    {
+      "check": "skills_justified",
+      "outcome": "PASS",
+      "detail": "5 skills, each justified vs raw CLI"
+    },
+    {
+      "check": "agents_readonly",
+      "outcome": "PASS",
+      "detail": "org-explorer has Bash: destructive shapes and production are refused by the gates (3 verified); ordinary writes to an allowlisted developer org are allowed, so that half is model-honoured \u2014 its prompt, not a gate"
+    },
+    {
+      "check": "mass_update_cycle",
+      "outcome": "PASS",
+      "detail": "created\u2192preview(exact 2)\u2192update\u2192verify\u2192undo(restored); teardown by Id"
+    },
+    {
+      "check": "installer_roundtrip",
+      "outcome": "PASS",
+      "detail": "installer compiles; 7 hook registrations mirror the project exactly (installed and removed against a throwaway HOME); records TORQUE_HOME for CWD-independent resolution"
+    },
+    {
+      "check": "frontdoor_noecho",
+      "outcome": "PASS",
+      "detail": "session URL in 0600 file; token not echoed"
+    },
+    {
+      "check": "browser_render",
+      "outcome": "PASS",
+      "detail": "Lightning shell rendered live (RENDER_OK Lightning Experience | Salesfo)"
+    },
+    {
+      "check": "excepted_org_hardfail",
+      "outcome": "PASS",
+      "detail": "no excepted production orgs; absolute claim holds"
+    },
+    {
+      "check": "bypass_suite",
+      "outcome": "PASS",
+      "detail": "agent minting refused; 7 bypass shapes denied"
+    },
+    {
+      "check": "image_manifest",
+      "outcome": "PASS",
+      "detail": "0 manifest entries; all guide images verified"
+    },
+    {
+      "check": "deliverable_coverage",
+      "outcome": "PASS",
+      "detail": "84 tracked paths, all classified"
+    },
+    {
+      "check": "differential_fuzz",
+      "outcome": "PASS",
+      "detail": "128 generated cases, 0 disagreement(s) with real bash"
+    },
+    {
+      "check": "session_log_integrity",
+      "outcome": "PASS",
+      "detail": "entry written, reversible, redacted (session-id + org id), 0600, parseable"
+    }
+  ],
+  "toolchain": {
+    "sf": "@salesforce/cli/2.144.6 darwin-arm64 node-v22.23.1",
+    "node": "v24.11.1",
+    "python": "3.14.3"
+  },
+  "denylist_digest": "129a9dfe7db454b8",
+  "reproduce": "python3 harness/validate.py --profile release --target-org <your-disposable-org>"
+}

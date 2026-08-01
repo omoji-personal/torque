@@ -105,7 +105,10 @@ def redact(text: str) -> str:
     """
     text = re.sub(r"force://[^\s\"']+", "force://REDACTED", text)
     text = re.sub(r"(sid" + r"=)[^&\s\"']+", r"\1REDACTED", text)
-    text = re.sub("(" + "access"+"_token|"+"refresh"+"_token)" + r"[\"'=: ]+[^&\s\"']+", r"\1=REDACTED", text)
+    # snake_case AND camelCase: `sf org display --json` returns accessToken and refreshToken, so
+    # the camel form is the one that actually reaches a log. Only the snake form was matched.
+    text = re.sub("(" + "access"+"_?[Tt]oken|"+"refresh"+"_?[Tt]oken|"+"session"+"_?[Ii]d)"
+                  + r"[\"'=: ]+[^&\s\"',}]+", r"\1=REDACTED", text)
     # a Salesforce session id is <orgid-ish>!<opaque>; match the `!`-bearing form before the
     # plain org-id rule below rewrites its prefix and hides the shape.
     text = re.sub(r"\b00D[A-Za-z0-9]{12,15}![A-Za-z0-9._\-]+", "SESSIONID_REDACTED", text)
@@ -824,9 +827,26 @@ def protected_write_paths():
             str(CACHE.resolve()), str(ANCHOR.resolve())]
 
 def is_protected_target(path_str: str) -> bool:
-    try: rp = str(Path(path_str).resolve())
-    except Exception: rp = path_str
+    """Is this path inside something the agent must not write?
+
+    Compared case-INSENSITIVELY, because the filesystems this runs on mostly are. On macOS
+    `HOOKS/LIB.PY` and `hooks/lib.py` are the same file, and only the second was refused — so the
+    gate's own source could be overwritten by shifting the case of a directory component, which
+    is the whole enforcement layer disabled in one Write. Found by probes recovered from an
+    audit run that was killed before it could file a report (codex/gpt-5.6-sol, round 4).
+
+    _shield_text had the identical defect and was fixed for it in round 2. This is the twin that
+    was missed — the third time that pattern has appeared, and the reason no_divergent_twins now
+    exists. It does not catch this one, because these two are not copies of each other; they are
+    two guards that happen to share an assumption about case.
+    """
+    try:
+        rp = str(Path(path_str).resolve())
+    except Exception:
+        rp = path_str
+    rp_cf = rp.casefold()
     for prot in protected_write_paths():
-        if rp == prot or rp.startswith(prot + "/"):
+        pf = prot.casefold()
+        if rp_cf == pf or rp_cf.startswith(pf + "/"):
             return True
     return False

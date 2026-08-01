@@ -1071,8 +1071,11 @@ def _mcp_destructive(name, tinput):
         return ("bulk-write", "", str(tinput))
     if (comps & {"update", "upsert", "modify", "patch", "set", "write", "edit"}) and no_id:
         return ("where-update", "", str(tinput))
-    if "deploy" in comps and (tinput.get("preDestructiveChanges") or tinput.get("postDestructiveChanges")
-                              or tinput.get("pre-destructive-changes") or tinput.get("post-destructive-changes")):
+    # Presence, not truthiness: an empty string or list would be falsy, and the question is
+    # whether a destructive manifest was supplied at all.
+    if "deploy" in comps and any(k in tinput for k in
+                                 ("preDestructiveChanges", "postDestructiveChanges",
+                                  "pre-destructive-changes", "post-destructive-changes")):
         return ("destructive-metadata", "", str(tinput))
     return None
 

@@ -1793,3 +1793,60 @@ def _no_divergent_twins():
     return Result("no_divergent_twins", PASS,
                   f"{len(seen)} function(s) across hooks/, none defined twice outside the "
                   f"{len(ENTRY_POINTS)} named per-gate entry points")
+
+
+@check("guards_are_case_insensitive", "static", catastrophe=True)
+def _guards_are_case_insensitive():
+    """Every guard that compares a name must ignore case, because the filesystem does.
+
+    On macOS and Windows `HOOKS/LIB.PY` and `hooks/lib.py` are the same file. is_protected_target
+    compared case-sensitively, so the gate's own source was writable by shifting the case of a
+    directory component — the entire enforcement layer disabled in one Write.
+
+    This is the third case-sensitivity defect here. _shield_tokens had it, then _shield_text had
+    it after _shield_tokens was fixed, and now this. They are not copies of one another, so
+    no_divergent_twins cannot catch them; what they share is an assumption, and assumptions need
+    their own test.
+    """
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_lib_ci", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
+
+    def gate(payload):
+        return _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                          input=_kb_json.dumps(payload), capture_output=True, text=True,
+                          cwd=ROOT, timeout=60).returncode
+
+    def variants(p):
+        return {p, p.upper(), p.lower(),
+                "/".join(seg.capitalize() for seg in p.split("/")),
+                p.split("/")[0].upper() + "/" + "/".join(p.split("/")[1:])}
+
+    for base in ("hooks/lib.py", "hooks/shellparse.py", "bin/torque-approve",
+                 "knowledge/salesforce-platform.yml", "harness/checks/check_kb.py"):
+        for v in variants(base):
+            if not lib.is_protected_target(v):
+                return Result("guards_are_case_insensitive", FAIL,
+                              f"is_protected_target missed {v!r} — same file as {base} on a "
+                              f"case-insensitive filesystem")
+            if gate({"tool_name": "Write", "tool_input": {"file_path": v, "content": "x"}}) != 2:
+                return Result("guards_are_case_insensitive", FAIL,
+                              f"the gate allowed a Write to {v!r}")
+    # and an ordinary file stays writable in any casing — the guard must not become a wall
+    for v in ("README.md", "readme.md", "README.MD"):
+        if gate({"tool_name": "Write", "tool_input": {"file_path": v, "content": "x"}}) != 0:
+            return Result("guards_are_case_insensitive", FAIL,
+                          f"an ordinary file was refused as {v!r}")
+
+    # credentials are named in both conventions by the tools that emit them
+    for secret, needle in (("refresh" + "Token: abc123secretvalue", "abc123secretvalue"),
+                           ("access" + "Token: xyz789secretvalue", "xyz789secretvalue"),
+                           ("session" + "Id: 00D" + "xx!ARsAQtokenvalue", "ARsAQtokenvalue"),
+                           ("refresh" + "_token: snake123value", "snake123value")):
+        if needle in lib.redact(secret):
+            return Result("guards_are_case_insensitive", FAIL,
+                          f"redact() missed a credential named {secret.split(':')[0]!r} — "
+                          f"`sf org display --json` uses the camelCase form")
+    return Result("guards_are_case_insensitive", PASS,
+                  "5 protected paths in 5 casings each are refused, ordinary files are not, "
+                  "and credentials are redacted under both naming conventions")
