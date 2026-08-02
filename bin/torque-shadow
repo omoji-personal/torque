@@ -96,7 +96,7 @@ def main() -> int:
         print(f"REFUSED: references a protected object ({', '.join(shielded)}).", file=sys.stderr)
         return 2
 
-    verdict, orgid, _user = lib.classify_live(a.target_org)
+    verdict, orgid, username = lib.classify_live(a.target_org)
     if verdict not in lib.ELIGIBLE:
         print(f"REFUSED: {a.target_org} classified {verdict!r}. Shadow execution runs the real "
               f"operation — triggers fire, flows run, async work enqueues and governor budget is "
@@ -110,8 +110,24 @@ def main() -> int:
     tmp.parent.mkdir(exist_ok=True)
     tmp.write_text(src)
     try:
+        # P0-003: the alias was CLASSIFIED and then the ALIAS was executed. An alias is
+        # mutable, so anything re-pointing it between the two runs the operation against an org
+        # that was never checked. Execute the resolved username instead, and revalidate that it
+        # still carries the org Id the verdict was made about.
+        #
+        # This is not atomicity and is not claimed as such — the audit's own remedy overstates
+        # that, and the external verification said so. Checking and executing remain two
+        # operations; real atomicity needs a broker that binds credential selection to
+        # execution. What this removes is the mutable indirection, which is the exploitable part.
+        target = username or a.target_org
+        _v2, orgid2, _u2 = lib.classify_live(target)
+        if orgid2 != orgid or _v2 not in lib.ELIGIBLE:
+            print(f"REFUSED: {a.target_org} resolved to {target}, which no longer presents the "
+                  f"org that was verified ({orgid} -> {orgid2}, {verdict} -> {_v2}).",
+                  file=sys.stderr)
+            return 2
         r = subprocess.run(["sf", "apex", "run", "--file", str(tmp),
-                            "--target-org", a.target_org],
+                            "--target-org", target],
                            capture_output=True, text=True, timeout=300)
     finally:
         tmp.unlink(missing_ok=True)
