@@ -155,8 +155,15 @@ def stages_local(argv) -> bool:
     return any("local/" in a or a.rstrip("/").endswith("local") for a in argv[1:])
 
 
+# Trust is a property of what a tool DOES, not of where it lives. Naming each read-only tool
+# is more maintenance than a path rule and that is the point: a new tool under bin/ gets no
+# trust until someone decides it deserves some.
+READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log"}
+READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log"}
+
+
 def _is_own_harness(argv) -> bool:
-    """True only for Torque's own scripts, resolved under TORQUE_HOME.
+    """True only for first-party tools explicitly declared READ-ONLY, under TORQUE_HOME.
 
     The interpreter rule refuses `python3 …` when a Salesforce target is present, because an
     interpreter can do anything opaquely. That correctly refused `python3 bin/torque checkup
@@ -164,11 +171,20 @@ def _is_own_harness(argv) -> bool:
     operators to run. A gate that refuses the tool's own documented commands is a gate people
     route around, which costs more safety than it buys.
 
-    The exemption stays narrow in the way that matters: the script must resolve inside
-    TORQUE_HOME, to harness/validate.py or something under bin/, and BOTH directories are now
-    in PROTECTED_DIRS — so the agent cannot write the file it would then be allowed to run.
-    That equivalence is the whole argument; if bin/ ever leaves PROTECTED_DIRS this becomes a
-    bypass, which is why bin_is_protected asserts the pair.
+    It used to trust anything under bin/ whose name began with "torque", plus validate.py. That
+    is LOCATION-based trust, and P0-001 was its first bill: torque-shadow was written, landed in
+    bin/, inherited the exemption, and handed the agent arbitrary Apex around the anonymous-Apex
+    control. The path rule granted trust to a tool nobody had decided to trust (P1-002, external
+    audit).
+
+    So trust is now CAPABILITY-based: a named set of tools that only read. validate.py loses the
+    exemption deliberately — probe_cycle deploys and deletes metadata, so it was never read-only
+    and never should have carried a read-only exemption. The consequence is real and accepted:
+    an operator runs the harness themselves rather than an agent running it through this gate.
+
+    The file must still resolve inside TORQUE_HOME, and bin/ is in PROTECTED_DIRS so the agent
+    cannot write the file it would then be allowed to run. That equivalence still matters and
+    bin_is_protected still asserts the pair — it is just no longer the whole argument.
     """
     if len(argv) < 2 or cmd_base(argv[0], _PY_BINS).split(".")[0] not in _PY_BINS:
         return False
@@ -176,9 +192,11 @@ def _is_own_harness(argv) -> bool:
         home = lib.TORQUE_HOME.resolve()
         cand = Path(argv[1])
         cand = (cand if cand.is_absolute() else (lib.TORQUE_HOME / cand)).resolve()
-        if cand == (home / "harness" / "validate.py"):
-            return True
-        return cand.parent == (home / "bin") and cand.name.startswith("torque")
+        if cand.parent != (home / "bin"):
+            return False
+        if cand.name == "torque":                       # the dispatcher: only its read-only verbs
+            return len(argv) > 2 and argv[2] in READ_ONLY_DISPATCH
+        return cand.name in READ_ONLY_FIRST_PARTY
     except Exception:
         return False
 

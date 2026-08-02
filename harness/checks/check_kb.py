@@ -83,6 +83,19 @@ def _sfq(target, soql, tooling=False):
         blob = (r.stdout or "") + (r.stderr or "")
         if any(m in blob for m in _NOT_ABOUT_THE_CLAIM):
             return None, []
+        # ONLY a schema error can prove a catalogue claim wrong. Everything else — a timeout, a
+        # server-side hiccup, a momentarily unavailable Tooling API — is the org failing to
+        # answer, and an unanswered question is not a contradicted claim.
+        #
+        # This mattered: a transient Tooling failure made kb_live_claims report "FlowDefinition
+        # NOT queryable via Tooling — the entry is wrong" about TWO entries that are correct.
+        # Both queries succeeded when run by hand a minute later. A harness that tells you a
+        # right entry is wrong is worse than one that stays quiet, because the remedy it invites
+        # is to go and break the entry.
+        if r.returncode != 0 and not any(
+                m in blob for m in ("INVALID_TYPE", "INVALID_FIELD", "is not supported",
+                                    "No such column", "sObject type")):
+            return None, []
         d = _kb_json.loads(r.stdout)
         return (r.returncode == 0), (d.get("result", {}) or {}).get("records", [])
     except Exception:
@@ -590,6 +603,42 @@ def _failure_keeps_its_reason():
     return Result("failure_keeps_its_reason", PASS,
                   "5 empty-stderr shapes yield a default rather than an exception; "
                   "blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED")
+
+
+@check("first_party_trust_is_capability_based", "static", catastrophe=True)
+def _first_party_trust():
+    """Living in bin/ must grant a tool nothing. P0-001 was the bill for the opposite.
+
+    The interpreter rule refuses `python3 …` when a Salesforce target is present, with a narrow
+    exemption for first-party tools. That exemption used to be LOCATION-based — anything under
+    bin/ named torque* — so torque-shadow was written, landed in bin/, inherited trust nobody had
+    granted it, and handed the agent arbitrary Apex around the anonymous-Apex control.
+
+    Trust is now a named set of tools that only read. This asserts both halves: the read-only
+    tools keep working, because a gate that refuses the tool's own documented commands gets routed
+    around; and a NEW tool in the same directory gets nothing (P1-002, external audit).
+    """
+    import importlib.util as _il
+    spec = _il.spec_from_file_location("torque_sp_fp", ROOT / "hooks" / "shellparse.py")
+    sp = _il.module_from_spec(spec); spec.loader.exec_module(sp)
+    for cmd in ("python3 bin/torque-checkup --target-org acme",
+                "python3 bin/torque-blast-radius --target-org acme --sobject Account",
+                "python3 bin/torque checkup --target-org acme"):
+        if not sp._is_own_harness(cmd.split()):
+            return Result("first_party_trust_is_capability_based", FAIL,
+                          f"a documented read-only command is refused: {cmd!r} — a gate that "
+                          f"refuses its own tool's commands is one people route around")
+    for cmd, why in (("python3 bin/torque-shadow --target-org acme --apex x", "executes Apex"),
+                     ("python3 bin/torque-a-tool-invented-tomorrow --target-org acme", "unknown"),
+                     ("python3 harness/validate.py --target-org acme", "deploys and deletes"),
+                     ("python3 bin/torque approve acme apex", "mints authorization"),
+                     ("python3 /tmp/not-torque.py --target-org acme", "not first-party")):
+        if sp._is_own_harness(cmd.split()):
+            return Result("first_party_trust_is_capability_based", FAIL,
+                          f"trusted a tool that {why}: {cmd!r} — location is not capability")
+    return Result("first_party_trust_is_capability_based", PASS,
+                  "3 declared read-only commands exempt; 5 that execute, deploy, authorize or "
+                  "are simply unknown get nothing from living in the same directory")
 
 
 @check("production_allow_requires_a_record", "static", catastrophe=True)
