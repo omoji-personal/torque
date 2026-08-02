@@ -406,6 +406,8 @@ def _claimed_counts():
     who checks finds the document overstating itself. So the documents state the recorded
     fixture count, and this re-derives it.
     """
+    _TOTAL_MUTATORS = int(_kb_re.search(r"TOTAL_MUTATORS = (\d+)",
+                          (ROOT / "harness" / "validate.py").read_text()).group(1))
     recorded = sum(len(_kb_json.loads(f.read_text()).get("fixtures", []))
                    for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
     bad = []
@@ -417,6 +419,13 @@ def _claimed_counts():
         for m in _kb_re.finditer(r"(\d{2,4}) recorded", body):
             if int(m.group(1)) != recorded:
                 bad.append(f"{rel} says {m.group(1)} recorded, on disk there are {recorded}")
+        # Mutators were outside this check, so while every CHECK count stayed correct the
+        # mutator count sat at 11 across four surfaces after it had become 15. A count this
+        # check does not know about is a count that drifts, and the whole point of the check
+        # is that a reader who verifies a number finds it true.
+        for m in _kb_re.finditer(r"(\d{1,3}) mutat(?:ors|ion tests)", body):
+            if int(m.group(1)) != _TOTAL_MUTATORS:
+                bad.append(f"{rel} says {m.group(1)} mutators, validate.py declares {_TOTAL_MUTATORS}")
         # The check count drifted from 24 to 27 to 43 while two sentences in the guide kept
         # saying 24 and 27. Derive it from the registry rather than trusting either.
         # Counts are stated per profile as well as in total, and the profiles nest — so a

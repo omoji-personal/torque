@@ -19,6 +19,19 @@ import validate as v  # noqa: E402
 counts = Counter(profile for _name, profile, _cat, _fn in v.REGISTRY)
 total = {pr: sum(n for p, n in counts.items() if v.RANK[p] <= v.RANK[pr]) for pr in v.PROFILES}
 
+# The mutator count lives in validate.py and was stated in four documents; nothing re-derived
+# it, so it stayed at 11 through two additions. Same treatment as the check counts.
+mutators = int(re.search(r"TOTAL_MUTATORS = (\d+)",
+                         (ROOT / "harness" / "validate.py").read_text()).group(1))
+# exactly the files claimed_counts scans, or the syncer fixes four of five and the
+# check fails on the fifth — which is how it found bin/torque-demo.
+for rel in ("README.md", "guide/torque-guide.html", "bin/torque-demo", "bin/torque-init"):
+    f = ROOT / rel
+    if not f.exists():
+        continue
+    f.write_text(re.sub(r"\d{1,3} (mutators|mutation tests)", lambda m: f"{mutators} {m.group(1)}",
+                        f.read_text()))
+
 guide = ROOT / "guide" / "torque-guide.html"
 text = guide.read_text()
 for pattern, replacement in (
@@ -35,4 +48,4 @@ for pattern, replacement in (
 guide.write_text(text)
 
 print(f"synced: static={total['static']} capability={total['capability']} "
-      f"release={total['release']}")
+      f"release={total['release']} mutators={mutators}")

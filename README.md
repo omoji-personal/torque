@@ -193,7 +193,7 @@ Torque validates itself the way it validates Salesforce work. `--profile release
 - **196 gate fixtures** (193 recorded on disk, 3 HMAC tokens minted during the run) — every
   attack class found across the audits, each one a named,
   runnable test.
-- **11 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
+- **15 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
   attack to succeed (or, for the static scanners, requires the check to FAIL). A check that
   cannot fail proves nothing; these prove each guard is load-bearing. Seven run on any clone;
   three exercise the clean-IP scan and need the private pattern list, so they report as
@@ -205,7 +205,7 @@ Torque validates itself the way it validates Salesforce work. `--profile release
 - **Release gates** — an agent-side token mint must fail, and seven bypass shapes must deny.
 
 The safety design was driven to convergence by a nine-round multi-model audit *before* the code
-existed, then the built gates by four adversarial rounds run against independent frontier models — a
+existed, then the built gates by five adversarial rounds run against independent frontier models — a
 shell-semantics reviewer, a reviewer that *executed* each exploit against a real `sf` CLI, and an
 architecture skeptic — plus two confirmation passes. Every round was author-run; this has had no
 third-party security audit. Roughly 55 real vulnerabilities were found and fixed; each one is a
