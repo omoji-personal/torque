@@ -36,14 +36,8 @@ def handle_bash(cmd):
     if r["deny"]:
         lib.deny(r["deny"][0], r["deny"][1], HOOK)
     for sf_args in r.get("writes", []):
-        tset = set(shellparse.targets(sf_args))
-        if len(tset) == 0:
-            lib.deny("Salesforce write without an explicit --target-org/-o/-u "
-                     "(default-org and env-target writes are refused)", "no-target", HOOK)
-        if len(tset) > 1:
-            lib.deny(f"ambiguous write targets {sorted(tset)} in one command",
-                     "ambiguous-target", HOOK)
-        ok, reason = lib.authorize_write(next(iter(tset)))
+        ok, reason = lib.authorize_write(
+            lib.sole_target(shellparse.targets(sf_args), HOOK))
         if not ok:
             lib.deny(reason, "not-authorized", HOOK)
     lib.allow()

@@ -1867,7 +1867,7 @@ def _guards_share_no_blind_assumption():
     is deliberately not required to be blocked; over-blocking a legitimate filename would be its
     own defect.
     """
-    import importlib.util as _il, unicodedata as _ud
+    import importlib.util as _il, pathlib as _pl, unicodedata as _ud
     lspec = _il.spec_from_file_location("torque_lib_sw", ROOT / "hooks" / "lib.py")
     lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
     sspec = _il.spec_from_file_location("torque_sp_sw", ROOT / "hooks" / "shellparse.py")
@@ -1885,6 +1885,10 @@ def _guards_share_no_blind_assumption():
         "backslash sep":     "hooks\\lib.py",
         "NFD":               _ud.normalize("NFD", base),
         "trailing newline":  base + "\n",
+        # the eleventh spelling. This sweep existed to enumerate them and did not have it;
+        # an external reviewer did. Path.resolve() does not expand `~`, so every protected
+        # DIRECTORY was writable under a home-relative name (round 5, codex/gpt-5.6-sol).
+        "tilde home":        "~/" + str(ROOT).replace(str(_pl.Path.home()) + "/", "") + "/hooks/lib.py",
     }
     for label, v in same_file.items():
         if not lib.is_protected_target(v):
@@ -1905,6 +1909,17 @@ def _guards_share_no_blind_assumption():
             return Result("guards_share_no_blind_assumption", FAIL,
                           f"sf_auth_ref missed the {label} form ({v!r})")
 
+    # A path is protected by its BASENAME or by its DIRECTORY, and only the second half was
+    # swept — so a spelling that defeated the directory rule looked fine as long as the file
+    # happened to be named lib.py. These are new filenames under each protected directory.
+    home_rel = "~/" + str(ROOT).replace(str(_pl.Path.home()) + "/", "")
+    for d in ("hooks", "bin", "knowledge", "local/orgs", "harness/checks", ".claude"):
+        v = f"{home_rel}/{d}/torque-sweep-newfile.tmp"
+        if not lib.is_protected_target(v):
+            return Result("guards_share_no_blind_assumption", FAIL,
+                          f"a NEW file under the protected directory {d}/ was writable as "
+                          f"{v!r} — the directory rule is defeated by that spelling")
+
     # and the guards must not become walls: ordinary files stay writable in any spelling
     for v in ("README.md", "./README.md", "docs/DESCRIBING-TORQUE.md", "harness/tests/x.json"):
         if lib.is_protected_target(v):
@@ -1914,6 +1929,68 @@ def _guards_share_no_blind_assumption():
                   f"{len(same_file)} same-file spellings blocked by the path guard, "
                   f"{len(anchor)} by the anchor guard, {len(auth)} by the auth-store guard; "
                   f"4 ordinary paths unaffected")
+
+
+@check("classification_is_identity_bound", "static", catastrophe=True)
+def _classification_is_identity_bound():
+    """A verdict must describe the org whose identity it is returned with.
+
+    classify_live takes the identity from `sf org display` and the verdict from a second query
+    against the same alias, and did not check that the two described the same org. An alias is
+    mutable, so anything that re-points it between the callouts yields org A's identity carrying
+    org B's verdict — and authorize_write trusts that tuple whole (codex/gpt-5.6-sol, round 5).
+
+    Both callers also documented "unverifiable ⇒ production" while testing only the process exit
+    code, so output that succeeded and was malformed, truncated or schema-changed raised out of a
+    security decision instead of failing safe.
+
+    Stubs the callout rather than touching an org, so it runs in the static profile.
+    """
+    import importlib.util as _il, json as _j
+    from types import SimpleNamespace as _NS
+    spec = _il.spec_from_file_location("torque_lib_cb", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
+    A, B = lib.norm_id("00D" + "0" * 11 + "1"), lib.norm_id("00D" + "0" * 11 + "2")
+
+    def stub(rec_id=None, body=None, rc=0):
+        def f(*a, **k):
+            if body is not None:
+                return _NS(returncode=rc, stdout=body)
+            if a[:2] == ("org", "display"):
+                return _NS(returncode=rc, stdout=_j.dumps(
+                    {"result": {"id": A, "username": "u@example.com"}}))
+            return _NS(returncode=rc, stdout=_j.dumps({"result": {"records": [
+                {"Id": rec_id, "IsSandbox": True, "OrganizationType": "Enterprise Edition",
+                 "TrialExpirationDate": None}]}}))
+        return f
+
+    cases = [("the Organization row belongs to a DIFFERENT org", stub(rec_id=B), "production"),
+             ("output succeeded but is malformed", stub(body='{"result": trunc'), "production"),
+             ("output succeeded but has no rows", stub(body='{"result":{"records":[]}}'), "production"),
+             ("output is missing every field", stub(body='{"result":{"records":[{}]}}'), "production"),
+             ("the callout failed", stub(body="", rc=1), "production")]
+    for label, fn, want in cases:
+        lib._sf = fn
+        try:
+            got = lib.classify_live("mutable-alias")[0]
+        except Exception as e:
+            return Result("classification_is_identity_bound", FAIL,
+                          f"{label}: raised {type(e).__name__} out of a security decision "
+                          f"instead of failing safe")
+        if got != want:
+            return Result("classification_is_identity_bound", FAIL,
+                          f"{label}: classified {got!r}, expected {want!r} — an identity and a "
+                          f"verdict describing different orgs were returned as one answer")
+    # and the legitimate case must still classify, or this proves only that it denies everything
+    lib._sf = stub(rec_id=A)
+    v, oid, _u = lib.classify_live("mutable-alias")
+    if v != "sandbox" or oid != A:
+        return Result("classification_is_identity_bound", FAIL,
+                      f"a matching org classified {v!r}/{oid!r}, not sandbox — the binding is "
+                      f"refusing the org it exists to accept")
+    return Result("classification_is_identity_bound", PASS,
+                  f"{len(cases)} ways a verdict can fail to describe its identity all return "
+                  f"production; a matching org still classifies")
 
 
 @check("token_is_single_use", "static", catastrophe=True)

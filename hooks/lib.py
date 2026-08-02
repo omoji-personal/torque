@@ -392,29 +392,74 @@ def _verdict_from_org_record(rec, orgid, username):
 def classify_live(target: str):
     """Security-critical classification: ALWAYS a fresh live query, never the cache.
     The cache is agent-writable and must not be trusted for an authorization decision."""
-    disp = _sf("org", "display", "--target-org", target, "--json")
-    if disp.returncode != 0:
+    username, orgid = _org_display(target)
+    if username is None and orgid is None:
         return "production", None, None
-    d = json.loads(disp.stdout)["result"]
-    username, orgid = d.get("username"), norm_id(d.get("id"))
-    q = "SELECT IsSandbox, OrganizationType, TrialExpirationDate FROM Organization"
+    rec = _org_record(target, orgid)
+    if rec is None:
+        return "production", orgid, username           # unverifiable, or a different org ⇒ fail safe
+    return _verdict_from_org_record(rec, orgid, username), orgid, username
+
+def _org_record(target: str, orgid: str):
+    """The Organization row for `target`, or None if it cannot be established that the row
+    BELONGS to `orgid`.
+
+    classify_live took the identity from `org display` and the verdict from a second query
+    against the same alias, and never asked whether the two described the same org. An alias is
+    mutable: anything that re-points it between the two callouts yields org A's identity carrying
+    org B's verdict, and authorize_write trusts that tuple. Selecting Id and comparing closes it
+    (codex/gpt-5.6-sol, round 5).
+
+    It also decodes defensively. Both callers documented "unverifiable ⇒ production" while
+    checking only the process exit code, so output that succeeded and was malformed, truncated or
+    schema-changed raised KeyError/IndexError out of a security decision instead of failing safe.
+
+    One helper because classify and classify_live had this logic twice and drifted; the review
+    that found the drift recommended sharing rather than fixing both.
+    """
+    q = "SELECT Id, IsSandbox, OrganizationType, TrialExpirationDate FROM Organization"
     r = _sf("data", "query", "--target-org", target, "--json", "--query", q)
     if r.returncode != 0:
-        return "production", orgid, username
-    rec = json.loads(r.stdout)["result"]["records"][0]
-    return _verdict_from_org_record(rec, orgid, username), orgid, username
+        return None
+    try:
+        rec = json.loads(r.stdout)["result"]["records"][0]
+    except Exception:
+        return None
+    if orgid and norm_id(rec.get("Id")) != orgid:
+        return None                                   # identity and verdict describe different orgs
+    return rec
+
+
+def _org_display(target: str):
+    """(username, orgId) from `sf org display`, or (None, None) when it cannot be established."""
+    disp = _sf("org", "display", "--target-org", target, "--json")
+    if disp.returncode != 0:
+        return None, None
+    try:
+        d = json.loads(disp.stdout)["result"]
+    except Exception:
+        return None, None
+    return d.get("username"), norm_id(d.get("id"))
+
 
 _VERDICTS = ("production", "sandbox", "developer", "scratch")
 
 
 def classify(target: str):
     """(verdict, orgId, username). verdict ∈ production|sandbox|developer|scratch.
-    Unverifiable ⇒ production (fail-safe)."""
-    disp = _sf("org", "display", "--target-org", target, "--json")
-    if disp.returncode != 0:
+    Unverifiable ⇒ production (fail-safe).
+
+    CACHE-BACKED, AND THEREFORE NOT AN AUTHORIZATION ANSWER. A cache hit is returned on
+    matching username and orgId, and nothing establishes that the cached verdict was ever
+    observed — the file is agent-writable, so this can confidently disagree with classify_live
+    about the same identity. classify_live is the authorization path and never reads the cache.
+    That warning used to live only on classify_live, which is the function that does not need
+    it (codex/gpt-5.6-sol, round 5). Every current caller here either discards the verdict and
+    keeps the orgId, or uses it to label output for a human.
+    """
+    username, orgid = _org_display(target)
+    if username is None and orgid is None:
         return "production", None, None               # unverifiable ⇒ production
-    d = json.loads(disp.stdout)["result"]
-    username, orgid = d.get("username"), norm_id(d.get("id"))
     # cache check keyed by username, invalidated on orgId drift
     cache = {}
     if CACHE.exists():
@@ -426,11 +471,9 @@ def classify(target: str):
         # A cache entry was trusted verbatim, so a hand-edited file could return any string at
         # all from a function documenting four (release panel round 3). Unknown ⇒ re-derive.
         return hit["verdict"], orgid, username
-    q = "SELECT IsSandbox, OrganizationType, TrialExpirationDate FROM Organization"
-    r = _sf("data", "query", "--target-org", target, "--json", "--query", q)
-    if r.returncode != 0:
+    rec = _org_record(target, orgid)
+    if rec is None:
         return "production", orgid, username
-    rec = json.loads(r.stdout)["result"]["records"][0]
     verdict = _verdict_from_org_record(rec, orgid, username)
     cache[username] = {"orgId": orgid, "verdict": verdict, "t": int(time.time())}
     try:
@@ -438,6 +481,28 @@ def classify(target: str):
     except OSError:
         pass                                          # cache is a convenience; never fatal
     return verdict, orgid, username
+
+def sole_target(tset, hook_id: str):
+    """The one org a write names, or a deny. Shared so the two gates cannot disagree.
+
+    prod_write_gate refused zero targets (a default-org or env-target write) and refused more
+    than one; its destructive twin did neither. With no target it looked up a token for the
+    invented identity "?", and with several it picked an arbitrary set member and could spend
+    that org's token against another. Both shapes were stopped anyway — by the OTHER gate — so
+    the divergence cost nothing yet and was one edit away from costing everything
+    (codex/gpt-5.6-sol, round 5).
+
+    no_divergent_twins does not see this: these functions were never copies of each other, only
+    two places that had to agree. Sharing the rule is the only fix that stays fixed.
+    """
+    tset = set(tset)
+    if len(tset) == 0:
+        deny("Salesforce write without an explicit --target-org/-o/-u "
+             "(default-org and env-target writes are refused)", "no-target", hook_id)
+    if len(tset) > 1:
+        deny(f"ambiguous write targets {sorted(tset)} in one command", "ambiguous-target", hook_id)
+    return next(iter(tset))
+
 
 # ---- write authorization (identity, verified at write time) --------------
 def authorize_write(target: str, op_hint: str = "write"):
@@ -755,11 +820,15 @@ def _speak(command: str):
     """Emit platform notes, never at the cost of the verdict."""
     if not command:
         return
-    try:
-        emit_org_notes(command)          # what THIS org does outranks what the platform does
-        emit_platform_notes(command)
-    except Exception:
-        pass              # knowledge is a courtesy; a broken catalogue must not change an exit code
+    # One try around both meant a broken per-org store silently suppressed the PLATFORM notes
+    # too — the half most likely to be present and least likely to be at fault. Separate, so one
+    # failing source costs only itself (codex/gpt-5.6-sol, round 5).
+    for emit in (emit_org_notes,          # what THIS org does outranks what the platform does
+                 emit_platform_notes):
+        try:
+            emit(command)
+        except Exception:
+            pass          # knowledge is a courtesy; a broken catalogue must not change an exit code
 
 
 def emit_org_notes(command: str):
@@ -867,6 +936,13 @@ def protected_write_paths():
     hd = TORQUE_HOME
     # every entry .resolve()'d so a symlink cannot dodge the equality/prefix match (audit R11 RU)
     out = [str((hd/"hooks").resolve()), str((hd/"bin").resolve()),
+            # The whole of .claude, not just settings.json. shellparse's _protected_path has
+            # always covered the directory, so `echo x > .claude/agents/org-explorer.md` was
+            # denied through Bash and ALLOWED through Write — two doors, different answers,
+            # on the file that defines the read-only agent. agents_readonly calls that posture
+            # "model-honoured — its prompt, not a gate"; a prompt the agent can rewrite is not
+            # even that. Found while closing the tilde spelling from round 5.
+            str((hd/".claude").resolve()),
             str((hd/".claude"/"settings.json").resolve()),
             str((hd/"harness"/"checks").resolve()),
             # The catalogue and the per-org store feed the gate's own note rendering, so the
@@ -900,7 +976,16 @@ def is_protected_target(path_str: str) -> bool:
     except Exception:
         path_str = (path_str or "").replace("\\", "/")
     try:
-        rp = str(Path(path_str).resolve())
+        # `~` FIRST: Path.resolve() does not expand it, so `~/…/torque/hooks/new_gate.py`
+        # resolved under a literal `~` directory, matched no protected prefix, and was allowed.
+        # Every protected directory was writable that way — hooks, bin, knowledge, local/orgs,
+        # harness/checks, .claude — for any filename not independently covered by
+        # PROTECTED_BASENAMES, which is what made it look narrow: lib.py denied, a NEW file
+        # beside it did not. The Bash door was shut only because _abs_pattern expands `~` before
+        # asking; the Write/Edit door asks directly. Found by the external panel
+        # (codex/gpt-5.6-sol, round 5) — the eleventh path spelling, in the sweep built to
+        # enumerate the other ten.
+        rp = str(Path(os.path.expanduser(path_str)).resolve())
     except Exception:
         rp = path_str
     rp_cf = rp.casefold()

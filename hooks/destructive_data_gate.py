@@ -34,7 +34,12 @@ def _live_count(target, sobject, where):
     except Exception as e:
         return None, f"{type(e).__name__}: {str(e)[:80]}"
     if r.returncode != 0:
-        return None, (r.stderr or r.stdout or "sf exited non-zero").strip().splitlines()[0][:100]
+        # `or` picks the first TRUTHY value, and whitespace-only stderr is truthy — then
+        # .strip().splitlines() is empty and [0] raises IndexError. The gate reported "crashed"
+        # instead of "could not count", i.e. it lost the reason while constructing the reason
+        # (codex/gpt-5.6-sol, round 5). Strip first, then choose.
+        _why = ((r.stderr or "").strip() or (r.stdout or "").strip() or "sf exited non-zero")
+        return None, _why.splitlines()[0][:100]
     try:
         return json.loads(r.stdout)["result"]["totalSize"], ""
     except Exception as e:
@@ -149,11 +154,12 @@ def _gate_write(sf_args):
     op = shellparse.classify_destructive(sf_args)
     if not op:
         return
-    orgid = "?"
-    tset = set(shellparse.targets(sf_args))
-    if tset:
-        _, oid, _ = lib.classify(next(iter(tset)))
-        orgid = oid or "?"
+    # Exactly one target, or deny — the rule its twin already had. Without it a destructive
+    # command with no target looked up a token for the identity "?", and one with several
+    # picked an arbitrary member of a set.
+    target = lib.sole_target(shellparse.targets(sf_args), HOOK)
+    _, oid, _ = lib.classify(target)
+    orgid = oid or "?"
     # protected-object shield over the SHLEX-DECODED positional token stream (audit R10-R3),
     # PLUS the parsed --sobject/-s value incl. the equals form --sobject=X (audit R11-07)
     shield_toks = [a for a in sf_args if not a.startswith("-")]
@@ -174,7 +180,7 @@ def _gate_write(sf_args):
     # the approval was computed from. If none exists, this falls through to the ordinary token
     # path unchanged — impact binding is an option the operator takes, not a new obstacle.
     where = shellparse.flag_value(sf_args, "--where", "-w")
-    if sv and tset and _need_impact_token(orgid, op, next(iter(tset)), sv, where):
+    if sv and _need_impact_token(orgid, op, target, sv, where):
         return
     _need_token(orgid, op)
 

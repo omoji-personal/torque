@@ -72,7 +72,10 @@ if a[:2] == ["org", "display"]:
     out({{"result": {{"id": {orgid!r}, "username": {username!r}, "instanceUrl": "https://example.my.salesforce.com"}}}})
 if a[:2] == ["data", "query"]:
     if tgt != {org!r}: sys.exit(1)
-    out({{"result": {{"records": [{{"IsSandbox": False, "OrganizationType": "Developer Edition", "TrialExpirationDate": None}}]}}}})
+    # Id included because classify now requires the Organization row to prove it belongs to
+    # the org `org display` identified — an alias is mutable between the two callouts. A
+    # double that omits it is not a faithful double: the real CLI returns what you SELECT.
+    out({{"result": {{"records": [{{"Id": {orgid!r}, "IsSandbox": False, "OrganizationType": "Developer Edition", "TrialExpirationDate": None}}]}}}})
 if a[:2] == ["org", "list"]: out({{"result": {{"scratchOrgs": []}}}})
 sys.exit(1)
 """)

@@ -387,7 +387,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 14            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 15            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -612,6 +612,21 @@ def self_test(target=None):
         ok &= passed
     finally:
         lbf.write_text(orig7)
+    # identity-binding mutator: stop requiring the Organization row to belong to the org that
+    # `org display` identified. The check must then FAIL — proving it tests the binding and not
+    # merely that classification returns something.
+    orig8 = lbf.read_text()
+    try:
+        lbf.write_text(orig8.replace(
+            "    if orgid and norm_id(rec.get(\"Id\")) != orgid:",
+            "    if False:  # MUTANT", 1))
+        fn = dict((n, f) for n, _p, _c, f in REGISTRY).get("classification_is_identity_bound")
+        r = fn()
+        passed = r.outcome == FAIL
+        print(f"  {'✓' if passed else '✗'} identity-binding mutator: expected FAIL, got {r.outcome}")
+        ok &= passed
+    finally:
+        lbf.write_text(orig8)
     # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
     # Editing the FILE does nothing here — lib is already imported, so the check would keep using
     # the cached function and report a false PASS. Patching the live module object is both the

@@ -1163,8 +1163,31 @@ MCP_READ_LEADS = {"query", "get", "list", "describe", "retrieve", "read", "searc
                   "inspect", "view", "check", "lookup", "soql", "tooling", "schema"}
 
 
+def _norm_key(k):
+    return re.sub(r"[_\-]", "", str(k)).lower()
+
+
+_MCP_ORG_KEYS_NORM = None
+
+
 def mcp_target(tinput):
-    return next((tinput.get(k) for k in MCP_ORG_KEYS if tinput.get(k)), None)
+    """The org named in an MCP tool's arguments, whatever case or separator names it.
+
+    MCP_ORG_KEYS listed camelCase, kebab-case and lowercase spellings and no snake_case ones —
+    no `target_org`, no `org_id`, no `instance_url`. Python MCP servers use snake_case as a
+    matter of course, so this was not an exotic spelling; it was the majority convention for
+    half the ecosystem. Normalising the key closes camel, kebab, snake and upper together
+    instead of adding three entries and waiting for the fourth.
+    """
+    global _MCP_ORG_KEYS_NORM
+    if _MCP_ORG_KEYS_NORM is None:
+        _MCP_ORG_KEYS_NORM = {_norm_key(k) for k in MCP_ORG_KEYS}
+    if not isinstance(tinput, dict):
+        return None
+    for k, v in tinput.items():
+        if v and _norm_key(k) in _MCP_ORG_KEYS_NORM:
+            return v
+    return None
 
 
 def _name_comps(name):
@@ -1233,11 +1256,24 @@ def mcp_analyze(tool, tinput):
     # at all, and its write tools classified as reads and were allowed. Underscores are
     # ordinary in MCP server names, so this was reachable with no evasion (found by the
     # external panel, antigravity/gemini-3.1-pro).
-    is_sf = bool(re.match(r"(sf|salesforce|sfdx)([_\-]|$)", server)) or target is not None
+    # `sfdc` is the commonest abbreviation for Salesforce and was absent, and the match was
+    # anchored at the start, so `sfdc-tools`, `simple-salesforce` and `steampipe-sfdc` were read
+    # as non-Salesforce servers and their write tools classified as free reads. Server names are
+    # operator-chosen, so one containing salesforce/sfdc/sfdx is that and nothing else; only the
+    # two-letter `sf` stays anchored, being too short to match safely anywhere in a name.
+    is_sf = (bool(re.search(r"(salesforce|sfdc|sfdx)", server))
+             or bool(re.match(r"sf([_\-]|$)", server)) or target is not None)
     # ANY write verb anywhere in the name makes it a write (get_or_create_record, audit TQ-008)
     writeish = bool(comps & MCP_WRITE_LEADS) or "apex" in nl or "anonymous" in nl
     readish = bool(comps & MCP_READ_LEADS) or nl.startswith(("soql", "tooling", "schema"))
-    if dest:
+    # The scope rule below — non-Salesforce server AND no org parameter ⇒ out of scope — already
+    # existed for ordinary writes, and this branch returned before reaching it. So Torque, a
+    # Salesforce tool, demanded a Salesforce approval token to update a Notion page, delete a
+    # Slack message or remove a calendar event. That is not a security posture, it is the reason
+    # people switch hooks off in week two, and the guide says as much in its own words. Anything
+    # carrying an org parameter is is_sf regardless of server, so nothing Salesforce-shaped is
+    # released here.
+    if dest and is_sf:
         return {"write": target, "destructive": dest}  # destructive shape ⇒ token (org checked by prod gate)
     if writeish:
         return {"write": target, "destructive": None} if is_sf else {"read": True}
