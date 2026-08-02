@@ -30,6 +30,7 @@ async work enqueues, limits burn. Refused here, and refused again by the gates.
 from __future__ import annotations
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,35 @@ def main() -> int:
     if not (a.file or a.apex):
         ap.error("give --file or --apex")
 
+    body_src = Path(a.file).read_text() if a.file else (a.apex or "")
+
+    # P0-001, found by external audit against code shipped hours earlier, and confirmed here:
+    # `sf apex run` is blocked by the gates and requires an operator-approved, hash-pinned copy.
+    # This tool invokes it as a subprocess, so the hook never sees the inner call — it saw only
+    # `python3 bin/torque-shadow ...` and allowed it. That handed the agent an arbitrary-Apex
+    # path AROUND the anonymous-Apex control.
+    #
+    # The docstring above already listed what does not roll back. Listing a risk is not gating
+    # it. So the gate is on the RISK rather than on "it is Apex": refuse anything whose effect
+    # can leave the transaction, and refuse protected objects. What remains — triggers and flows
+    # firing on a verified developer org, then rolled back — is what the tool is for.
+    ESCAPES = {
+        "callout": r"\bHttp\s*\(|HttpRequest|@future\s*\(\s*callout\s*=\s*true|WebServiceCallout",
+        "async work": r"@future|System\.enqueueJob|Database\.executeBatch|System\.schedule",
+        "event that cannot be rolled back": r"publishImmediate|EventBus\.publish",
+        "email": r"Messaging\.send",
+    }
+    escaped = [name for name, pat in ESCAPES.items() if re.search(pat, body_src, re.I)]
+    if escaped:
+        print(f"REFUSED: this Apex can leave the transaction ({', '.join(escaped)}). A savepoint "
+              f"cannot roll back a consequence that has already left it, so shadowing it would "
+              f"promise a safety it does not have.", file=sys.stderr)
+        return 2
+    shielded = lib.protected_object_hits(body_src) if hasattr(lib, "protected_object_hits") else []
+    if shielded:
+        print(f"REFUSED: references a protected object ({', '.join(shielded)}).", file=sys.stderr)
+        return 2
+
     verdict, orgid, _user = lib.classify_live(a.target_org)
     if verdict not in lib.ELIGIBLE:
         print(f"REFUSED: {a.target_org} classified {verdict!r}. Shadow execution runs the real "
@@ -73,7 +103,7 @@ def main() -> int:
               f"spent. The savepoint bounds the DATA, not the risk.", file=sys.stderr)
         return 2
 
-    body = Path(a.file).read_text() if a.file else a.apex
+    body = body_src
     body = "\n".join("    " + ln for ln in body.strip().splitlines())
     src = TEMPLATE % {"body": body}
     tmp = ROOT / "local" / ".shadow.apex"

@@ -592,6 +592,37 @@ def _failure_keeps_its_reason():
                   "blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED")
 
 
+@check("shadow_cannot_escape_the_transaction", "static", catastrophe=True)
+def _shadow_cannot_escape():
+    """Shadow's safety claim is the rollback. Anything that outlives it must be refused.
+
+    P0-001, from an external audit, against code shipped hours earlier and confirmed here before
+    acting: `sf apex run` is blocked by the gates and needs an operator-approved, hash-pinned
+    copy, but torque-shadow invokes it as a subprocess — so the hook saw only the outer command
+    and allowed arbitrary Apex straight past the anonymous-Apex control.
+
+    The tool's own docstring already listed what does not roll back. LISTING A RISK IS NOT GATING
+    IT, and that gap is the whole finding.
+    """
+    import subprocess as _sp, sys as _sy
+    must_refuse = [("async work", "System.enqueueJob(new Q());"),
+                   ("batch", "Database.executeBatch(new B());"),
+                   ("future", "@future public static void f() {}"),
+                   ("event", "EventBus.publish(new My__e());"),
+                   ("callout", "Http h = new Http();"),
+                   ("email", "Messaging.sendEmail(new List<Messaging.Email>());")]
+    for label, apex in must_refuse:
+        r = _sp.run([_sy.executable, str(ROOT / "bin" / "torque-shadow"),
+                     "--target-org", "torque-not-an-org", "--apex", apex],
+                    capture_output=True, text=True, cwd=ROOT, timeout=120)
+        if r.returncode == 0 or "REFUSED" not in (r.stdout + r.stderr):
+            return Result("shadow_cannot_escape_the_transaction", FAIL,
+                          f"Apex containing {label} was not refused — its effect outlives the "
+                          f"savepoint, so rolling back promises a safety it does not have")
+    return Result("shadow_cannot_escape_the_transaction", PASS,
+                  f"{len(must_refuse)} escape shape(s) refused before any org is contacted")
+
+
 @check("shadow_refuses_unverified", "static", catastrophe=True)
 def _shadow_refuses_unverified():
     """Shadow execution runs the REAL operation. A savepoint bounds the data, not the risk.
