@@ -143,7 +143,7 @@ def approve_cmd(*args) -> str:
     return " ".join(["python3", str(TORQUE_HOME / "bin" / "torque"), "approve", *args])
 
 
-def audit(decision: str, detail: str):
+def audit(decision: str, detail: str, durable: bool = False) -> bool:
     # Never raises: a gate that can't write its audit line must still be able to DENY.
     # (Audit-write failure was an exploit path — chmod 555 local ⇒ crash ⇒ fail-open. K-HM1.)
     try:
@@ -154,8 +154,13 @@ def audit(decision: str, detail: str):
         with open(AUDIT, "a") as f:
             f.write(line + "\n")
         os.chmod(AUDIT, 0o600)
+        return True
     except Exception:
-        pass
+        # Never raises — a gate that cannot write its audit line must still be able to DENY.
+        # But swallowing the failure silently let a production ALLOW proceed unrecorded, while
+        # the product says every write is audited. Callers that need the record to exist pass
+        # durable=True and check the return (P1-003, external audit).
+        return False
 
 def redact(text: str) -> str:
     """Strip credential shapes before anything is written to disk.
@@ -533,10 +538,18 @@ def authorize_write(target: str, op_hint: str = "write"):
     verdict, orgid, username = classify_live(target)   # security path: never trust the cache
     if verdict == "production":
         if _prod_session_valid(orgid):
-            audit("PROD-WRITE", f"session-authorized {op_hint} on {orgid} ({target})")
+            if not audit("PROD-WRITE", f"session-authorized {op_hint} on {orgid} ({target})",
+                         durable=True):
+                return False, ("production write denied: the audit record could not be written, "
+                               "and an unrecorded production write is not one this tool will "
+                               "authorize")
             return True, f"{target}: PRODUCTION write authorized via active operator session"
         if consume_token(orgid, "prod-write"):
-            audit("PROD-WRITE", f"token-authorized {op_hint} on {orgid} ({target})")
+            if not audit("PROD-WRITE", f"token-authorized {op_hint} on {orgid} ({target})",
+                         durable=True):
+                return False, ("production write denied: the audit record could not be written, "
+                               "and an unrecorded production write is not one this tool will "
+                               "authorize")
             return True, f"{target}: PRODUCTION write authorized via single-use operator token"
         return False, (f"{target} is PRODUCTION — denied by default. Operator override: "
                        f"`{approve_cmd(target, '<op>', '--prod')}` (one operation) or "

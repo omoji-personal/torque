@@ -592,6 +592,50 @@ def _failure_keeps_its_reason():
                   "blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED")
 
 
+@check("production_allow_requires_a_record", "static", catastrophe=True)
+def _prod_allow_requires_record():
+    """A production write that cannot be recorded is not one this tool will authorize.
+
+    audit() deliberately never raises — a gate that cannot write its log must still be able to
+    DENY, and that is right. But swallowing the failure let a production ALLOW proceed with no
+    record at all, while the product says every write is audited (P1-003, external audit,
+    confirmed with a runnable reproduction before being fixed).
+
+    Denials and non-production events stay best-effort on purpose: failing those closed would
+    turn a full disk into an outage. Only the production ALLOW is gated on the record existing.
+    """
+    import importlib.util as _il, pathlib as _pl
+    spec = _il.spec_from_file_location("torque_lib_pa", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
+    if lib.audit("SELFTEST", "probe", durable=True) is not True:
+        return None, "audit sink unavailable here; cannot observe the mechanism"
+    saved = lib.AUDIT
+    try:
+        lib.AUDIT = _pl.Path("/nonexistent-torque-audit-dir/audit.log")
+        if lib.audit("SELFTEST", "probe", durable=True) is not False:
+            return Result("production_allow_requires_a_record", FAIL,
+                          "audit() reported success against an unwritable sink — a caller that "
+                          "checks the return would be told the record exists when it does not")
+        # Best-effort callers ignore the return; what must hold is that it does not RAISE,
+        # because a gate that cannot log must still be able to deny. Asserting on its return
+        # value was this check's own bad assertion, caught on its first run.
+        try:
+            lib.audit("SELFTEST", "probe")
+        except Exception as e:
+            return Result("production_allow_requires_a_record", FAIL,
+                          f"best-effort audit raised {type(e).__name__} against an unwritable "
+                          f"sink — a gate that cannot log must still be able to deny")
+    finally:
+        lib.AUDIT = saved
+    src = (ROOT / "hooks" / "lib.py").read_text()
+    if src.count("durable=True") < 2:
+        return Result("production_allow_requires_a_record", FAIL,
+                      "fewer than two production ALLOW paths check for a durable record")
+    return Result("production_allow_requires_a_record", PASS,
+                  "an unwritable sink makes audit() report failure, both production allow paths "
+                  "check it, and best-effort logging still degrades quietly")
+
+
 @check("shadow_cannot_escape_the_transaction", "static", catastrophe=True)
 def _shadow_cannot_escape():
     """Shadow's safety claim is the rollback. Anything that outlives it must be refused.
