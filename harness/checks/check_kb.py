@@ -592,6 +592,36 @@ def _failure_keeps_its_reason():
                   "blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED")
 
 
+@check("shadow_refuses_unverified", "static", catastrophe=True)
+def _shadow_refuses_unverified():
+    """Shadow execution runs the REAL operation. A savepoint bounds the data, not the risk.
+
+    Triggers fire, flows run, async work enqueues and governor budget is spent — measured, DML
+    statements went 2 -> 3 across a rollback, because the rollback is itself a DML statement and
+    the counters do not reset. So an org that cannot be verified non-production must be refused,
+    and that refusal is the whole safety story for this capability.
+    """
+    import subprocess as _sp, sys as _sy
+    r = _sp.run([_sy.executable, str(ROOT / "bin" / "torque-shadow"),
+                 "--target-org", "torque-definitely-not-an-org",
+                 "--apex", "delete [SELECT Id FROM Account];"],
+                capture_output=True, text=True, cwd=ROOT, timeout=180)
+    if r.returncode == 0:
+        return Result("shadow_refuses_unverified", FAIL,
+                      "an unverifiable org was NOT refused — unverifiable must mean production")
+    if "REFUSED" not in (r.stdout + r.stderr):
+        return Result("shadow_refuses_unverified", FAIL,
+                      f"refused with exit {r.returncode} but said nothing an operator can act on")
+    src = (ROOT / "bin" / "torque-shadow").read_text()
+    for must in ("Database.rollback", "setSavepoint", "lib.ELIGIBLE"):
+        if must not in src:
+            return Result("shadow_refuses_unverified", FAIL,
+                          f"{must} absent — the mechanism or its gate is not what is documented")
+    return Result("shadow_refuses_unverified", PASS,
+                  "an unverifiable org is refused with a reason; savepoint, rollback and the "
+                  "eligibility gate are all present")
+
+
 @check("closure_is_delivered", "static")
 def _closure_is_delivered():
     """An operation that needs more than it names must SAY so, at the moment it is run.

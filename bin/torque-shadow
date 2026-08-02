@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Run an operation for its ERRORS, not its effects — inside a transaction that never commits.
+
+WHY
+An agent that knows Salesforce still guesses, fails, adjusts and retries against a live org, and
+every retry is a real mutation. That is not a knowledge gap; documentation does not close it. The
+gap is feedback: the agent cannot find out what the org will say without telling the org to do it.
+
+So it does it, and then does not. A Savepoint, the real DML, the real runtime errors — validation
+rules, required fields, flow exceptions, trigger failures, all raised by the platform rather than
+predicted from metadata — and then Database.rollback. The agent learns from the org's own error
+message instead of from its priors.
+
+Proven against a live Developer Edition org: an insert observed with the owner the platform
+assigned, a genuine REQUIRED_FIELD_MISSING captured, residue zero.
+
+WHAT DOES NOT ROLL BACK — measured on a live org, not assumed
+  GOVERNOR LIMITS ARE SPENT. Measured: DML statements went 2 -> 3 ACROSS the rollback, because
+  the rollback itself is a DML statement and the counters do not reset. A shadow run costs the
+  transaction budget it would have cost for real, plus one. Shadowing an operation already near a
+  limit will hit that limit.
+  Not covered by a savepoint at all, and so out of scope here: callouts (already sent), @future
+  and Queueable (already enqueued), Platform Events published with publishImmediate, and Change
+  Data Capture. An operation whose consequence leaves the transaction cannot be un-done by
+  rolling the transaction back, and this tool does not pretend otherwise.
+
+NEVER AGAINST PRODUCTION. A savepoint bounds the DATA, not the risk: triggers fire, flows run,
+async work enqueues, limits burn. Refused here, and refused again by the gates.
+"""
+from __future__ import annotations
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "hooks"))
+import lib  # noqa: E402
+
+TEMPLATE = """Savepoint tqSp = Database.setSavepoint();
+List<String> tqObs = new List<String>();
+Integer tqDml0 = Limits.getDmlStatements();
+Integer tqSoql0 = Limits.getQueries();
+try {
+%(body)s
+    tqObs.add('OUTCOME~@~succeeded');
+} catch (Exception tqE) {
+    tqObs.add('OUTCOME~@~failed~@~' + tqE.getTypeName() + '~@~' + tqE.getMessage());
+} finally {
+    Database.rollback(tqSp);
+}
+tqObs.add('COST~@~dml=' + (Limits.getDmlStatements() - tqDml0)
+          + '~@~soql=' + (Limits.getQueries() - tqSoql0)
+          + '~@~cpu=' + Limits.getCpuTime());
+for (String tqO : tqObs) System.debug('TORQUE_SHADOW>>> ' + tqO);
+"""
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="run Apex for its errors, then roll it back")
+    ap.add_argument("--target-org", required=True)
+    ap.add_argument("--file", help="Apex to run inside the savepoint")
+    ap.add_argument("--apex", help="Apex source inline")
+    a = ap.parse_args()
+    if not (a.file or a.apex):
+        ap.error("give --file or --apex")
+
+    verdict, orgid, _user = lib.classify_live(a.target_org)
+    if verdict not in lib.ELIGIBLE:
+        print(f"REFUSED: {a.target_org} classified {verdict!r}. Shadow execution runs the real "
+              f"operation — triggers fire, flows run, async work enqueues and governor budget is "
+              f"spent. The savepoint bounds the DATA, not the risk.", file=sys.stderr)
+        return 2
+
+    body = Path(a.file).read_text() if a.file else a.apex
+    body = "\n".join("    " + ln for ln in body.strip().splitlines())
+    src = TEMPLATE % {"body": body}
+    tmp = ROOT / "local" / ".shadow.apex"
+    tmp.parent.mkdir(exist_ok=True)
+    tmp.write_text(src)
+    try:
+        r = subprocess.run(["sf", "apex", "run", "--file", str(tmp),
+                            "--target-org", a.target_org],
+                           capture_output=True, text=True, timeout=300)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    out = [ln.split("TORQUE_SHADOW>>> ", 1)[1].strip()
+           for ln in (r.stdout + r.stderr).splitlines() if "TORQUE_SHADOW>>> " in ln]
+    obs = [o for o in out if "~@~" in o]        # the CLI echoes the source line too
+    if not obs:
+        print("no observation returned — the shadow transaction did not report.\n"
+              + lib.first_line(r.stderr, r.stdout)[:200], file=sys.stderr)
+        return 3
+
+    print(f"\nSHADOW RUN — {a.target_org} ({verdict}, {orgid})")
+    rc = 0
+    for o in obs:
+        parts = o.split("~@~")
+        if parts[0] == "OUTCOME" and parts[1] == "failed":
+            print(f"  FAILED   {parts[2]}")
+            print(f"           {'~@~'.join(parts[3:])[:300]}")
+            rc = 1
+        elif parts[0] == "OUTCOME":
+            print("  SUCCEEDED — it would have worked")
+        elif parts[0] == "COST":
+            print(f"  cost     {'  '.join(parts[1:])}   (SPENT — a rollback does not refund "
+                  f"governor limits; the rollback itself is one DML statement)")
+        else:
+            print(f"  {o}")
+    print("  residue  none — the transaction was rolled back")
+    print("  NOT covered: callouts, @future/Queueable, publishImmediate events, CDC — a "
+          "consequence that left the transaction cannot be rolled back with it\n")
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
