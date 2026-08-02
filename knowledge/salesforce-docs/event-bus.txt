@@ -1,0 +1,63 @@
+# Event Bus
+
+This file contains links to LLM-friendly markdown documentation pages.
+
+This file contains links to documentation sections following the llmstxt.org standard.
+
+## Overview
+
+Developer documentation for Salesforce event-driven integration, covering the Pub/Sub API (gRPC/HTTP2, Apache Avro) for publishing and subscribing to platform events and change data capture events, and Event Relay for streaming Salesforce events natively to Amazon Web Services.
+
+## Pub/Sub API
+
+Publish and subscribe to platform events, including real-time event monitoring events and change data capture events. Based on gRPC and HTTP/2, Pub/Sub API efficiently publishes and delivers binary event messages in the Apache Avro format.
+
+- [Allocations](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/allocations.md)
+- [Bidirectional Streaming](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/bidi-streaming.md)
+- [Generate a Client Trace ID to Troubleshoot Non-Pub/Sub API Errors](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/client-trace-id.md)
+- [General Considerations](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/considerations.md)
+- [Event Data Serialization with Apache Avro](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/event-avro-serialization.md)
+- [Event Deserialization Considerations](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/event-deserialization-considerations.md)
+- [Event Message Durability](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/event-message-durability.md)
+- [Pub/Sub API and the Expanded Event Bus](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/expanded-event-bus.md)
+- [Pull Subscription and Flow Control](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/flow-control.md)
+- [Generate Code from the Proto File](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/generate-code-proto-file.md)
+- [Pub/Sub API as a gRPC API](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/grpc-api.md)
+- [Handle Errors](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/handling-errors.md)
+- [Get Started](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/intro.md)
+- [Managed Event Subscriptions (Beta)](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/managed-sub.md)
+- [Code Examples](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/other-code-examples.md)
+- [API End-of-Life Policy](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/pub-sub-api-eol.md)
+- [Pub/Sub API Endpoints](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/pub-sub-endpoints.md)
+- [Pub/Sub API Features](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/pub-sub-features.md)
+- [Step 2: Build the Python Client](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-build-python-client.md)
+- [Step 1: Generate the Stub Files](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-generate-stub.md)
+- [Step 2: Build the Client](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-build-client.md)
+- [Step 5: Subscribe to Change Events](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-change-events.md)
+- [Java Quick Start for Managed Event Subscriptions (Beta)](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-managed-quick-start.md)
+- [Step 1: Create ManagedEventSubscription with Tooling API](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-managed-sub-create.md)
+- [Step 3: Publish Events and Verify the Managed Subscription](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-managed-sub-publish-verify.md)
+- [Step 2: Start the Managed Subscription](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-managed-sub-start.md)
+- [Step 3: Configure Client Parameters](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-parameters.md)
+- [Step 1: Define a Platform Event](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-prereqs.md)
+- [Step 4: Publish and Subscribe to Platform Events](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-publish-subscribe.md)
+- [Java Quick Start](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-quick-start-parent.md)
+- [Java Quick Start for Publishing and Subscribing to Events](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-java-quick-start.md)
+- [Step 5: Write Code That Publishes a Platform Event Message](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-publish.md)
+- [Python Quick Start](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-python-quick-start.md)
+- [Step 3: Set Up Events](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-set-up-events.md)
+- [Step 4: Write Code That Subscribes to an Event Channel](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/qs-subscribe.md)
+- [Quick Start](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/quick-start.md)
+- [Retry Long-Lived RPC Calls After an Error Occurs](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/retry-rpc-calls.md)
+- [Provide the RPC ID When Troubleshooting with Support](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/rpc-id-field.md)
+- [Include Authorization Headers in RPC Method Calls](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/rpc-method-headers.md)
+- [Set a Deadline on the GetSchema, GetTopic, and Publish Unary RPC Methods](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/set-a-deadline.md)
+- [Authentication](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/supported-auth.md)
+- [Event Types](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/supported-event-types.md)
+- [Use Pub/Sub API](https://developer.salesforce.com/docs/platform/pub-sub-api/guide/use-pub-sub-api.md)
+- [GetSchema RPC Method](https://developer.salesforce.com/docs/platform/pub-sub-api/references/methods/getschema-rpc.md)
+- [GetTopic RPC Method](https://developer.salesforce.com/docs/platform/pub-sub-api/references/methods/gettopic-rpc.md)
+- [ManagedSubscribe RPC Method](https://developer.salesforce.com/docs/platform/pub-sub-api/references/methods/managedsubscribe-rpc.md)
+- [Publish RPC Method](https://developer.salesforce.com/docs/platform/pub-sub-api/references/methods/publish-rpc.md)
+- [PublishStream RPC Method](https://developer.salesforce.com/docs/platform/pub-sub-api/references/methods/publishstream-rpc.md)
+- [Subscribe RPC Method](https://developer.salesforce.com/docs/platform/pub-sub-api/references/methods/subscribe-rpc.md)

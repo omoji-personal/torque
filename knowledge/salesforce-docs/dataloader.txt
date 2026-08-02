@@ -1,0 +1,34 @@
+# Dataloader
+
+This file contains links to LLM-friendly markdown documentation pages.
+
+This file contains links to documentation sections following the llmstxt.org standard.
+
+## Dataloader from MuleSoft
+
+Import, export, and delete Salesforce data using Dataloader from MuleSoft, a browser-based app with step-by-step workflows, scheduled tasks, and cloud storage integrations.
+
+- [Advanced Features](https://developer.salesforce.com/docs/platform/dataloader/guide/advanced-features.md)
+- [Working with Attachments](https://developer.salesforce.com/docs/platform/dataloader/guide/attachments.md)
+- [Connecting to Box](https://developer.salesforce.com/docs/platform/dataloader/guide/connect-box.md)
+- [Connecting to Dropbox](https://developer.salesforce.com/docs/platform/dataloader/guide/connect-dropbox.md)
+- [Connecting to FTP](https://developer.salesforce.com/docs/platform/dataloader/guide/connect-ftp.md)
+- [Connecting to SFTP](https://developer.salesforce.com/docs/platform/dataloader/guide/connect-sftp.md)
+- [Best Practices for Data Import](https://developer.salesforce.com/docs/platform/dataloader/guide/data-import-best-practices.md)
+- [Dataloader from MuleSoft and Salesforce Data Loader](https://developer.salesforce.com/docs/platform/dataloader/guide/dataloader-vs-salesforce-data-loader.md)
+- [Delete Data in Salesforce](https://developer.salesforce.com/docs/platform/dataloader/guide/delete-data.md)
+- [Configure Email Notifications](https://developer.salesforce.com/docs/platform/dataloader/guide/email-notifications.md)
+- [Export Data from Salesforce](https://developer.salesforce.com/docs/platform/dataloader/guide/export-data.md)
+- [Getting Started](https://developer.salesforce.com/docs/platform/dataloader/guide/get-started.md)
+- [Importing Data into Salesforce](https://developer.salesforce.com/docs/platform/dataloader/guide/import-data.md)
+- [Use Import Lookups](https://developer.salesforce.com/docs/platform/dataloader/guide/import-lookups.md)
+- [Install Canvas App for Dataloader from MuleSoft](https://developer.salesforce.com/docs/platform/dataloader/guide/install-canvas-app.md)
+- [Managing Cloud Storage Connections](https://developer.salesforce.com/docs/platform/dataloader/guide/manage-connections.md)
+- [Managing Salesforce Connections](https://developer.salesforce.com/docs/platform/dataloader/guide/manage-salesforce-connections.md)
+- [Managing Tasks](https://developer.salesforce.com/docs/platform/dataloader/guide/manage-tasks.md)
+- [Manage User Access to Dataloader from MuleSoft](https://developer.salesforce.com/docs/platform/dataloader/guide/manage-user-access.md)
+- [Dataloader from MuleSoft FAQ](https://developer.salesforce.com/docs/platform/dataloader/guide/product-faqs.md)
+- [Import Notes into Salesforce](https://developer.salesforce.com/docs/platform/dataloader/guide/salesforce-lightning-experience.md)
+- [Schedule Tasks](https://developer.salesforce.com/docs/platform/dataloader/guide/schedule-tasks.md)
+- [Use Supported Date Formats](https://developer.salesforce.com/docs/platform/dataloader/guide/supported-date-formats.md)
+- [User Menu and Settings](https://developer.salesforce.com/docs/platform/dataloader/guide/user-menu-settings.md)

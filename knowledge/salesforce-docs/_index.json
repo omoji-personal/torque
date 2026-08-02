@@ -1,0 +1,65 @@
+{
+  "code-analyzer": {
+    "bytes": 10178,
+    "fetched": "2026-08-01",
+    "sha256": "cfb05d558315369f22752d52c6a7c5fcb03a3413dd628ba49a2991e093d89029",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-code-analyzer.txt"
+  },
+  "connect-rest": {
+    "bytes": 6892,
+    "fetched": "2026-08-01",
+    "sha256": "f332e27d44891deb6b29314eb2b902d5fc4744b396f2a03f378a54be2f5fc0f4",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-connect-rest.txt"
+  },
+  "dataloader": {
+    "bytes": 3189,
+    "fetched": "2026-08-01",
+    "sha256": "994fbca7af0e3ccb8c4f23afda5ed7746f1a859cf0e1c004d4fc713a89d55fa9",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-dataloader.txt"
+  },
+  "event-bus": {
+    "bytes": 6883,
+    "fetched": "2026-08-01",
+    "sha256": "ae349a3dfeba7e50d9e3940f83254b9433ff78290563fa10bafd267cc2649c61",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-event-bus.txt"
+  },
+  "graphql-api": {
+    "bytes": 8661,
+    "fetched": "2026-08-01",
+    "sha256": "c3b24a8e385e713485c55c9c459bae30a8755b3e398d9c883fc1edbf178b1999",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-graphql-api.txt"
+  },
+  "metadata-coverage": {
+    "bytes": 6640,
+    "fetched": "2026-08-01",
+    "sha256": "acb81c8590663302955dc88ee2232d185cd4deefe9bca707705a09bff571531b",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-metadata-coverage.txt"
+  },
+  "platform": {
+    "bytes": 3656,
+    "fetched": "2026-08-01",
+    "sha256": "bda06925278be06cb8b010dad3edd6e9f613d10e6a74adabb3f2aa5ceba5a19c",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-platform.txt"
+  },
+  "salesforcedx": {
+    "bytes": 75567,
+    "fetched": "2026-08-01",
+    "sha256": "b0b4360e283b97da51bd8c1e95bf5d31ff088773c01d807647ed1fef5c143603",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-salesforcedx.txt"
+  },
+  "security": {
+    "bytes": 4194,
+    "fetched": "2026-08-01",
+    "sha256": "a5e3e7589d5b1b806293a7d6089f7b9c4673b80f23a4b76eab95fcb1a82bd908",
+    "source_kind": "official",
+    "url": "https://developer.salesforce.com/docs/llms-security.txt"
+  }
+}

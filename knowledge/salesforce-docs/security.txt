@@ -1,0 +1,44 @@
+# Security
+
+This file contains links to LLM-friendly markdown documentation pages.
+
+This file contains links to documentation sections following the llmstxt.org standard.
+
+## Overview
+
+Developer documentation for Salesforce security and external data integration, covering Named Credentials for secure callout configuration and authentication, and the Salesforce Connect adapter for GraphQL to access and integrate Amazon RDS data sources as external objects in Salesforce.
+
+## Access Amazon RDS Data Sources Using Salesforce Connect
+
+Use the Salesforce Connect adapter for GraphQL to access and integrate data from Amazon RDS.
+
+- [Attach Database Tables](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/guide/attach-tables.md)
+- [Setup Configuration](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/guide/configure-AWS.md)
+- [Get Started](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/guide/get-started.md)
+- [Monitor GraphQL API](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/guide/monitor-API.md)
+- [Set Up Amazon RDS](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/guide/setup-AWS.md)
+- [Set Up Salesforce Connect](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/guide/setup-SF.md)
+- [Surface Amazon RDS data in the Salesforce UI](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/guide/surface-data.md)
+- [Attach Applied Discount Table](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/references/sf-connect-amazon-rds-reference/attach-discount.md)
+- [GraphQL Schema](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/references/sf-connect-amazon-rds-reference/graphQL-schema.md)
+- [Manage Qualifiers](https://developer.salesforce.com/docs/platform/sf-connect-amazon-rds/references/sf-connect-amazon-rds-reference/manage-qualifiers.md)
+
+## Named Credentials
+
+Use named credentials to specify the URL of a callout endpoint and its required authentication parameters in one definition.
+
+- [Get Started](https://developer.salesforce.com/docs/platform/named-credentials/guide/get-started.md)
+- [Create an OAuth Named Credential](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-create-oauth-cred.md)
+- [Manage an OAuth Named Credential](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-manage-oauth-cred.md)
+- [Named Credentials Developer Guide for OAuth](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-oauth-dev-guide.md)
+- [Package Named Credentials](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-package-credentials.md)
+- [Named Credentials Packaging Guide](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-packaging-dev-guide.md)
+- [Populate External Credential Principals](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-populate-external-credentials.md)
+- [Test Credentials in the Target Org](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-test-credentials.md)
+- [Update or Delete an OAuth Named Credential](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-update-delete-oauth-cred.md)
+- [Upgrade a Named Credentials Managed Package](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-upgrade-package.md)
+- [Use the Named Credential in a Callout](https://developer.salesforce.com/docs/platform/named-credentials/guide/nc-use-oauth-cred-in-callout.md)
+- [JWT Bearer Flow Claims](https://developer.salesforce.com/docs/platform/named-credentials/references/named-credentials-reference/jwt-claims.md)
+- [Named Credential API Links](https://developer.salesforce.com/docs/platform/named-credentials/references/named-credentials-reference/nc-api-links.md)
+- [Named Credential Formula Functions](https://developer.salesforce.com/docs/platform/named-credentials/references/named-credentials-reference/nc-formula-functions.md)
+- [Named Credentials Glossary](https://developer.salesforce.com/docs/platform/named-credentials/references/named-credentials-reference/nc-glossary.md)

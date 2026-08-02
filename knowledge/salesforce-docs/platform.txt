@@ -1,0 +1,35 @@
+# Platform
+
+This file contains links to LLM-friendly markdown documentation pages.
+
+This file contains links to documentation sections following the llmstxt.org standard.
+
+## Publisher and Quick Action Developer Guide
+
+Learn how you can use Lightning components, Visualforce, and Apex to customize your app’s experience, including the case feed.
+
+- [Article Tool](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-articles-tool.md)
+- [Replicate a Case Page](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-case-feed-component.md)
+- [Publisher API](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-component-interactions.md)
+- [Create Custom Actions](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-custom-publishers.md)
+- [Email Action](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-email-publisher.md)
+- [Layout and Appearance](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-general-customizations.md)
+- [Get Started](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-intro.md)
+- [Other Resources](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-learning-more.md)
+- [Log a Call Action](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-log-call-publisher.md)
+- [Previous PDF Versions](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-pdf-archive.md)
+- [Portal Action](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-portal-publisher.md)
+- [Customize with Visualforce](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/case-feed-dev-guide-visualforce.md)
+- [Work with the APIs](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/publisher-quickaction-api.md)
+- [API Parity](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/publisher-quickaction-method-parity.md)
+- [How are the APIs Different?](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/publisher-quickaction-why-ui-matters.md)
+- [Considerations](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-considerations.md)
+- [getAvailableActionFields](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-getavailableactionfields.md)
+- [getAvailableActions](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-getavailableactions.md)
+- [getCustomAction](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-getcustomaction.md)
+- [getSelectedActions](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-getselectedactions.md)
+- [invokeAction](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-invokeaction.md)
+- [refresh](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-refresh.md)
+- [selectAction](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-selectaction.md)
+- [setActionFieldValues](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api-setactionfieldvalues.md)
+- [Quick Action API](https://developer.salesforce.com/docs/platform/case-feed-dev-guide/guide/quickaction-api.md)

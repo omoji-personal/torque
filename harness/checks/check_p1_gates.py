@@ -135,7 +135,17 @@ def _local_hygiene():
     # scan local/ for secret shapes and assert 0600 on sensitive files
     import stat
     secret = re.compile("|".join(["access"+"_token","refresh"+"_token","BEGIN [A-Z ]*PRIVATE KEY","sid"+"=[A-Za-z0-9]"]))
+    # The cached third-party documentation corpus is excluded, and narrowly: it is PUBLIC
+    # Salesforce documentation, and documentation shows example credentials — the Metadata API
+    # guide contains sample session ids, so the scanner fires on every run and is right to.
+    # What this check exists to stop is the OPERATOR's secrets leaking out of local/, which a
+    # read-only cache of someone else's published docs is not. It is gitignored, so it cannot be
+    # committed either way. Excluding one named directory beats the alternatives: a permanently
+    # red build, or loosening the pattern set for everything.
+    MIRROR = (ROOT / "local" / "salesforce-docs-mirror").resolve()
     for p in (ROOT/"local").rglob("*"):
+        if MIRROR in p.resolve().parents:
+            continue
         if p.is_file():
             try: txt = p.read_text(errors="ignore")
             except Exception: continue
