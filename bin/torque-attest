@@ -29,7 +29,11 @@ DENY = Path.home() / "Desktop" / "torque-planning" / "denylist.txt"
 
 
 def sh(*a):
-    return subprocess.run(a, capture_output=True, text=True, cwd=ROOT).stdout.strip()
+    r = subprocess.run(a, capture_output=True, text=True, cwd=ROOT)
+    if r.returncode != 0:
+        raise RuntimeError(f"{' '.join(a)} failed with exit {r.returncode}: "
+                           f"{(r.stderr or r.stdout).strip()[:100]}")
+    return r.stdout.strip()
 
 
 def main():
@@ -61,13 +65,19 @@ def main():
     # The org's identity is attested without being published: a reader can confirm two runs hit
     # the same org, and cannot learn which org that is.
     try:
-        d = json.loads(subprocess.run(
+        org_run = subprocess.run(
             ["sf", "org", "display", "--target-org", a.target_org, "--json"],
-            capture_output=True, text=True).stdout)["result"]
+            capture_output=True, text=True)
+        d = json.loads(org_run.stdout)["result"]
+        org_id = d.get("id")
+        if org_run.returncode != 0 or not re.fullmatch(
+                r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", org_id or ""):
+            raise ValueError("org display returned no valid org id")
         org = {"alias": a.target_org,
-               "org_id_sha256_16": hashlib.sha256((d.get("id") or "").encode()).hexdigest()[:16]}
+               "org_id_sha256_16": hashlib.sha256(org_id.encode()).hexdigest()[:16]}
     except Exception:
         org = {"alias": a.target_org, "org_id_sha256_16": None, "note": "org did not answer"}
+        verdict = "UNKNOWN"
 
     att = {
         "schema": "torque.attestation/2",
@@ -105,7 +115,8 @@ def main():
     # the whole point: the guard exists to notice outcomes the parser does not know.
     # An eight-character ceiling meant a longer outcome name was invisible to the guard as well
     # as to the parser, so the two agreed on missing the same line and the guard passed.
-    registered = len(re.findall(r"^\s+[✓✗!−·⧗]\s+\S+\s+[A-Z][A-Z/]+\s", clean, re.M))
+    registered = len(re.findall(
+        r"^\s+[✓✗!−·⧗]\s+\S+\s+[A-Z][A-Z0-9_/-]*\s", clean, re.M))
     if checks and len(checks) != registered:
         print(f"refusing: parsed {len(checks)} check lines but the run printed {registered} — "
               f"an attestation that silently drops outcomes is worse than none", file=sys.stderr)
@@ -114,11 +125,15 @@ def main():
         print("refusing to write an attestation with no check outcomes — the validation run "
               "produced nothing parseable", file=sys.stderr)
         return 2
+    if (verdict == "PASS") != (run.returncode == 0):
+        print(f"refusing: validator verdict {verdict} disagrees with exit "
+              f"{run.returncode}", file=sys.stderr)
+        return 2
     OUT.mkdir(parents=True, exist_ok=True)
     f = OUT / f"attest-{att['head'][:8]}.json"
     f.write_text(json.dumps(att, indent=2) + "\n")
     print(f"{f.relative_to(ROOT)}  verdict={verdict}  "
-          f"{att['counts']['pass']}/{len(checks)} passed  "
+          f"{att['counts'].get('pass', 0)}/{len(checks)} passed  "
           f"{att['self_test']['mutators_caught']} mutators caught")
     return 0 if verdict == "PASS" else 1
 

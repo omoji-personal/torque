@@ -73,8 +73,12 @@ State them in this order. The list is the argument.
    deletes, orphaned children — assembled at the command, inside the agent's loop. Release
    tools do impact analysis too; they do it at design time, in a UI, for a human.
 3. **It verifies in the org** — never in a return code.
-4. **It gets sharper the longer you use it** — per-org knowledge, keyed so a sandbox refresh
-   correctly clears it.
+4. **It records what it learns about an org** — keyed by org Id, so a sandbox refresh correctly
+   clears it. Say it that way and no further. The earlier wording here — "it gets sharper the
+   longer you use it" — was identified in adversarial review as the least defensible sentence in
+   the repo, and the reason is a contradiction rather than a matter of taste: knowledge cannot
+   compound durably AND be designed to reset when the org's lifecycle advances. Both were being
+   claimed as virtues. See ROADMAP.md, where that thesis is dropped.
 5. **It works on production** — deliberately. Approval can be bound to a verified record count,
    so a token for seven records cannot be spent on seven thousand.
 

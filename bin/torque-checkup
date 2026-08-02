@@ -49,7 +49,30 @@ _NOT_ABOUT_THE_ENTRY = ("INVALID_SESSION_ID", "expired", "No authorization infor
 
 _SF_QUERY = re.compile(r"""--query\s+(?P<q>"[^"]+"|'[^']+')""")
 _SELECT = re.compile(r"^\s*SELECT\s", re.I)
-_TRAILING_COMMENT = re.compile(r"\s+(--|#)\s.*$")
+_PLACEHOLDER = re.compile(r"<[A-Za-z_][A-Za-z0-9_-]*>")
+
+
+def _strip_trailing_comment(text):
+    quote = None
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                if i + 1 < len(text) and text[i + 1] == quote:
+                    i += 2
+                    continue
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ((ch == "#") or text.startswith("--", i)) and (
+                i == 0 or text[i - 1].isspace()):
+            return text[:i].rstrip()
+        i += 1
+    return text.strip()
 
 
 def extract_soql(detect: str):
@@ -62,13 +85,13 @@ def extract_soql(detect: str):
     if m:
         soql = m.group("q")[1:-1]
     elif _SELECT.match(detect):
-        soql = _TRAILING_COMMENT.sub("", detect).strip()
+        soql = _strip_trailing_comment(detect)
     else:
         verb = " ".join(detect.split()[:3])
         return None, (tooling, all_rows), f"not a query — probe is `{verb}…`, which this will not execute"
     if not _SELECT.match(soql):
         return None, (tooling, all_rows), "extracted text is not a SELECT"
-    if "<" in soql and ">" in soql:
+    if _PLACEHOLDER.search(soql):
         return None, (tooling, all_rows), "probe contains a placeholder that only the operator can fill"
     return soql, (tooling, all_rows), None
 
@@ -137,7 +160,12 @@ def run_probe(target, soql, flags, expect):
             # Never confirmation, whatever the entry expects: the org did not answer the question.
             return "error", err
         return ("confirmed" if expect == "error" else "broken-probe"), err
-    n = (d.get("result") or {}).get("totalSize", 0)
+    result = d.get("result")
+    if not isinstance(result, dict):
+        return "error", "successful response has no result object"
+    n = result.get("totalSize")
+    if (not isinstance(n, int) or isinstance(n, bool) or n < 0):
+        return "error", "successful response has no valid totalSize"
     if expect == "error":
         return "entry-contradicted", f"the platform ACCEPTED a query the entry says it refuses ({n} row(s))"
     return ("affected" if n else "clear"), f"{n} row(s)"
@@ -283,7 +311,9 @@ def main():
         print("    Run these yourself; they are recorded in the catalogue entry.")
     print(f"\n  {len(by.get('affected', []))} finding(s) live, "
           f"{len(by.get('confirmed', []))} entry(ies) confirmed, {len(clear)} clear, "
-          f"{len(ne)} not executed, {len(by.get('broken-probe', []))} broken.")
+          f"{len(ne)} not executed, {len(by.get('broken-probe', []))} broken, "
+          f"{len(by.get('entry-contradicted', []))} contradicted, "
+          f"{len(by.get('error', []))} failed.")
     return _verdict(results)
 
 

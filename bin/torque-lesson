@@ -7,7 +7,7 @@ note is the whole cost and reading the queue is nobody's job, so the queue grows
 knowledge stays exactly where it was — in the head of the person who already knew it. That is
 not a hypothetical failure mode; it is the observed one.
 
-So this tool refuses to store a note. A lesson lands as one of exactly two things:
+So this tool refuses to store a note. A durable lesson lands as one of exactly two things:
 
   fact   — a platform behaviour, appended to knowledge/salesforce-platform.yml, where
            kb_integrity enforces its schema and provenance and kb_live_claims can re-verify it
@@ -16,6 +16,9 @@ So this tool refuses to store a note. A lesson lands as one of exactly two thing
 
 Both are load-bearing the moment they land: a malformed fact fails the build, and a fixture
 that does not reproduce fails the suite. Neither can rot quietly in a queue.
+The supporting `org` workflow records an org-specific finding rather than a durable platform
+lesson, and `review` displays observer candidates so a person can decide whether either durable
+lesson shape applies.
 
     torque lesson fact  --id no-op-update-cost --domain data --title "..." \\
                         --symptom "..." --cause "..." --remedy "..." \\
@@ -93,13 +96,16 @@ def add_fact(a):
 def add_gate(a):
     ev = json.dumps({"tool_name": "Bash", "tool_input": {"command": a.command}})
     gates = [a.gate] if a.gate else ["prod_write_gate.py", "destructive_data_gate.py"]
-    denied, reason = False, ""
+    denied, denied_gate, reason = False, "", ""
     for g in gates:
         g = g if g.endswith(".py") else g + ".py"
         r = subprocess.run([sys.executable, str(ROOT / "hooks" / g)],
                            input=ev, capture_output=True, text=True, cwd=ROOT)
+        if r.returncode not in (0, 2):
+            sys.exit(f"gate {g} failed with exit {r.returncode}: "
+                     f"{(r.stderr or r.stdout).strip()[:100]}")
         if r.returncode == 2:
-            denied, reason = True, (r.stdout + r.stderr).strip()[:100]
+            denied, denied_gate, reason = True, g, (r.stdout + r.stderr).strip()[:100]
             break
     actual = "deny" if denied else "allow"
     if actual == a.expect:
@@ -116,7 +122,7 @@ def add_gate(a):
     if FIXTURES.exists():
         data = json.loads(FIXTURES.read_text())
     data["fixtures"].append({
-        "id": a.id, "gate": (a.gate or "prod_write_gate").replace(".py", ""),
+        "id": a.id, "gate": (a.gate or denied_gate or "prod_write_gate").replace(".py", ""),
         "expect": a.expect, "captured": date.today().isoformat(),
         "why": a.why or "captured from a live surprise",
         "event": {"tool_name": "Bash", "tool_input": {"command": a.command}}})
@@ -132,11 +138,11 @@ def _candidates():
     if not CANDIDATES.exists():
         return []
     out = []
-    for line in CANDIDATES.read_text().splitlines():
+    for line_no, line in enumerate(CANDIDATES.read_text().splitlines(), 1):
         try:
             out.append(json.loads(line))
-        except Exception:
-            continue
+        except Exception as e:
+            sys.exit(f"{CANDIDATES}: malformed JSON on line {line_no}: {e}")
     return out
 
 

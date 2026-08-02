@@ -41,11 +41,19 @@ class Unknown(Exception):
 
 
 def _sf(args, timeout=120):
-    r = subprocess.run(["sf", *args], capture_output=True, text=True, timeout=timeout)
     try:
-        return json.loads(r.stdout)
+        r = subprocess.run(["sf", *args], capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise Unknown(f"{type(e).__name__}: {str(e)[:100]}")
+    try:
+        d = json.loads(r.stdout)
     except Exception:
         raise Unknown(lib.first_line(r.stderr, r.stdout)[:120])
+    if not isinstance(d, dict):
+        raise Unknown("Salesforce returned a non-object JSON envelope")
+    if d.get("status") == 0 and "result" not in d:
+        raise Unknown("Salesforce returned success without a result")
+    return d
 
 
 def _query(target, soql, tooling=False):
@@ -66,20 +74,30 @@ def _describe(target, sobject):
 
 
 # ── the parts of the picture ───────────────────────────────────────────────────────────────
-def scope(target, sobject, where):
+def scope(target, sobject, where, operation):
+    if operation == "insert":
+        raise Unknown("insert scope requires an input row source; none was provided")
     soql = f"SELECT COUNT() FROM {sobject}" + (f" WHERE {where}" if where else "")
     return _query(target, soql)["totalSize"]
 
 
-def triggers(target, sobject):
-    rows = _query(target, "SELECT Name, Status FROM ApexTrigger "
+def triggers(target, sobject, operation):
+    usage = {
+        "insert": ("UsageBeforeInsert", "UsageAfterInsert"),
+        "update": ("UsageBeforeUpdate", "UsageAfterUpdate"),
+        "delete": ("UsageBeforeDelete", "UsageAfterDelete"),
+    }[operation]
+    rows = _query(target, "SELECT Name, Status, UsageBeforeInsert, UsageAfterInsert, "
+                          "UsageBeforeUpdate, UsageAfterUpdate, UsageBeforeDelete, UsageAfterDelete "
+                          "FROM ApexTrigger "
                           f"WHERE TableEnumOrId = '{sobject}'", tooling=True)["records"]
-    return [r["Name"] for r in rows if r.get("Status") == "Active"]
+    return [r["Name"] for r in rows
+            if r.get("Status") == "Active" and any(r.get(f) for f in usage)]
 
 
 def flows(target, sobject, operation):
     """Record-triggered flows on this object, filtered to the ones this operation can fire."""
-    rows = _query(target, "SELECT ApiName, Label, TriggerType, TriggerOrder, IsActive "
+    rows = _query(target, "SELECT ApiName, Label, TriggerType, RecordTriggerType, TriggerOrder, IsActive "
                           "FROM FlowDefinitionView "
                           f"WHERE TriggerObjectOrEventId = '{sobject}' "
                           "AND IsActive = true")["records"]
@@ -91,6 +109,11 @@ def flows(target, sobject, operation):
         if operation == "delete" and "Delete" not in tt:
             continue
         if operation in ("update", "insert") and "Delete" in tt:
+            continue
+        rt = r.get("RecordTriggerType") or ""
+        if operation == "insert" and rt not in ("Create", "CreateAndUpdate"):
+            continue
+        if operation == "update" and rt not in ("Update", "CreateAndUpdate"):
             continue
         out.append(f"{r.get('Label') or r['ApiName']} [{tt or 'unknown trigger type'}]")
     return out
@@ -105,13 +128,15 @@ def validation_rules(target, sobject, operation):
     return [r["ValidationName"] for r in rows if r.get("Active")]
 
 
-def workflow_rules(target, sobject):
+def workflow_rules(target, sobject, operation):
     """Workflow rules on this object.
 
     Tooling's WorkflowRule has NO `Active` field — activity lives inside `Metadata`, which the
     API will only return one record at a time. Rather than drop the active/inactive distinction
     silently, each rule is resolved individually and any that cannot be resolved is labelled.
     """
+    if operation == "delete":
+        return []                       # workflow rules do not run on delete
     rows = _query(target, "SELECT Id, Name FROM WorkflowRule "
                           f"WHERE TableEnumOrId = '{sobject}'", tooling=True)["records"]
     out = []
@@ -153,17 +178,22 @@ def cascade(target, sobject, operation, where):
         # as "I looked and found none". Those are different claims about the same field.
         return "not-applicable", "not-applicable"
     d = _describe(target, sobject)
-    hard, soft, views = [], [], []
+    hard, soft, restricted, views = [], [], [], []
     for rel in d.get("childRelationships") or []:
         child, field = rel.get("childSObject"), rel.get("field")
-        if not child or not rel.get("relationshipName"):
+        if not child or not field:
             continue
         if child in _NON_QUERYABLE_VIEWS:
             if child not in views:
                 views.append(child)
             continue
         pair = (child, field)
-        bucket = hard if rel.get("cascadeDelete") else soft
+        if rel.get("cascadeDelete"):
+            bucket = hard
+        elif rel.get("restrictedDelete"):
+            bucket = restricted
+        else:
+            bucket = soft
         if pair not in bucket:          # one object can be a child twice, via different fields
             bucket.append(pair)
     sub = f"SELECT Id FROM {sobject}" + (f" WHERE {where}" if where else "")
@@ -181,19 +211,31 @@ def cascade(target, sobject, operation, where):
             # Salesforce refuses a semi-join against the same object, so a self-referencing
             # lookup (Account.ParentId) cannot be counted with this shape of query at all.
             self_ref.append((child, field))
+            unknown.append(f"orphan:{child}.{field} "
+                           "(self-reference requires a separate count)")
             continue
         try:
             n = _query(target, f"SELECT COUNT() FROM {child} WHERE {field} IN ({sub})")["totalSize"]
             if n:
-                orphans.append((child, n))
+                orphans.append((child, field, n))
         except Unknown as e:
             if any(m in str(e) for m in _NOT_COUNTABLE):
                 uncountable.append(child)
+                unknown.append(f"orphan:{child}.{field} ({e})")
             else:
-                orphans.append((child, None))
+                orphans.append((child, field, None))
                 unknown.append(f"orphan:{child} ({e})")
+    blockers = []
+    for child, field in restricted:
+        try:
+            n = _query(target, f"SELECT COUNT() FROM {child} WHERE {field} IN ({sub})")["totalSize"]
+            if n:
+                blockers.append((child, n))
+        except Unknown as e:
+            blockers.append((child, None))
+            unknown.append(f"delete-blocker:{child} ({e})")
     return {"cascade": counted, "orphans": orphans, "views": views, "unknown": unknown,
-            "uncountable": uncountable, "self_ref": self_ref}
+            "uncountable": uncountable, "self_ref": self_ref, "blockers": blockers}
 
 
 def rollups(target, sobject):
@@ -224,7 +266,8 @@ def rollups(target, sobject):
             continue
         for f in pd.get("fields") or []:
             if f.get("type") == "summary":
-                out.append(f"{parent}.{f['name']}")
+                out.append(f"{parent}.{f['name']} "
+                           "(candidate; summarized relationship UNDETERMINED)")
     return out
 
 
@@ -247,12 +290,15 @@ def main():
             report[name] = None
             unknowns.append(f"{name}: {e}")
 
-    part("scope", scope, a.target_org, a.sobject, a.where)
-    part("triggers", triggers, a.target_org, a.sobject)
+    part("scope", scope, a.target_org, a.sobject, a.where, a.operation)
+    part("triggers", triggers, a.target_org, a.sobject, a.operation)
     part("flows", flows, a.target_org, a.sobject, a.operation)
     part("validation_rules", validation_rules, a.target_org, a.sobject, a.operation)
-    part("workflow_rules", workflow_rules, a.target_org, a.sobject)
+    part("workflow_rules", workflow_rules, a.target_org, a.sobject, a.operation)
     part("rollups", rollups, a.target_org, a.sobject)
+    if report["rollups"] and any("summarized relationship UNDETERMINED" in item
+                                 for item in report["rollups"]):
+        unknowns.append("rollups: one or more summarized relationships were not established")
     try:
         c = cascade(a.target_org, a.sobject, a.operation, a.where)
         if c == ("not-applicable", "not-applicable"):
@@ -262,7 +308,10 @@ def main():
             report["cascade_soft"] = c["orphans"]
             report["cascade_views"] = c["views"]
             report["cascade_uncountable"] = c["uncountable"]
-            report["cascade_self_ref"] = [k for k, _ in c["self_ref"]]
+            report["cascade_self_ref"] = c["self_ref"]
+            report["cascade_blockers"] = c["blockers"]
+            unknowns.extend(f"self-ref:{child}.{field} requires a separate count"
+                            for child, field in c["self_ref"])
             # A child whose count could not be established is a hole in the picture, and the
             # completeness verdict has to know about it. It previously printed "picture
             # complete — every source answered" directly beneath five UNDETERMINED children.
@@ -346,7 +395,11 @@ def _render(a, report, unknowns):
             unk = [k for k, v in c if v is None]
             empty = len(c) - len(live) - len(unk)
             tot = sum(v for _, v in live)
-            print(f"  cascade  : {tot} child record(s) deleted with the parent")
+            if unk:
+                print(f"  cascade  : at least {tot} known child record(s); "
+                      f"total UNDETERMINED")
+            else:
+                print(f"  cascade  : {tot} child record(s) deleted with the parent")
             for child, cnt in sorted(live, key=lambda x: -x[1]):
                 print(f"             · {child}: {cnt}")
             if empty:
@@ -357,15 +410,32 @@ def _render(a, report, unknowns):
             print("  cascade  : no cascade-delete children")
         orph = report.get("cascade_soft")
         if orph:
-            tot = sum(v for _, v in orph if v)
-            print(f"  orphans  : {tot} record(s) across {len(orph)} lookup child object(s) will "
-                  f"survive the delete and point at nothing")
-            for child, cnt in sorted(orph, key=lambda x: -(x[1] or 0)):
-                print(f"             · {child}: {cnt if cnt is not None else 'UNDETERMINED'}")
+            tot = sum(v for _, _, v in orph if v)
+            objects = len({child for child, _, _ in orph})
+            unk_orph = any(v is None for _, _, v in orph)
+            if unk_orph:
+                print(f"  orphans  : at least {tot} known lookup relationship match(es); "
+                      f"total UNDETERMINED across {objects} child object(s)")
+            else:
+                print(f"  orphans  : {tot} lookup relationship match(es) across "
+                      f"{objects} child object(s)")
+            for child, field, cnt in sorted(orph, key=lambda x: -(x[2] or 0)):
+                print(f"             · {child}.{field}: "
+                      f"{cnt if cnt is not None else 'UNDETERMINED'}")
         elif orph is not None:
             print("  orphans  : none — no lookup child holds a record")
-        for child in report.get("cascade_self_ref") or []:
-            print(f"  self-ref : {child}.{'ParentId' if child == a.sobject else '?'} — a record "
+        blockers = report.get("cascade_blockers") or []
+        if blockers:
+            known = sum(n for _, n in blockers if n is not None)
+            unknown = any(n is None for _, n in blockers)
+            total = (f"at least {known} known record(s); total UNDETERMINED"
+                     if unknown else f"{known} record(s)")
+            print(f"  blocked  : delete is blocked by {total}")
+            for child, cnt in blockers:
+                print(f"             · {child}: "
+                      f"{cnt if cnt is not None else 'UNDETERMINED'}")
+        for child, field in report.get("cascade_self_ref") or []:
+            print(f"  self-ref : {child}.{field} — a record "
                   f"in this set may parent another; Salesforce forbids a semi-join on the same "
                   f"object, so count it separately before proceeding")
         extra = (report.get("cascade_views") or []) + (report.get("cascade_uncountable") or [])
