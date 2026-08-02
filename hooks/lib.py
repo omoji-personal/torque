@@ -836,6 +836,36 @@ def platform_notes(command: str, limit: int = 2):
     return [e for _, e in hits[:limit]]
 
 
+def closure_for(command: str, limit: int = 2):
+    """What an operation actually NEEDS to work — not what might go wrong with it.
+
+    The catalogue was written as hazards: "deploy a field and it arrives invisible". That is the
+    same knowledge as "a field needs FLS and a layout", pointed the other way, and the second
+    form is the one that answers the question an agent actually has. An agent that knows the
+    hazard still has to infer the requirement; an agent given the requirement does not.
+
+    This is the cheapest capability in the roadmap because nothing had to be learned — the
+    entries already said it in their remedies. Only the shape changed, from prose a human
+    re-reads to a set a tool can return.
+    """
+    if not command:
+        return []
+    out = []
+    for e in platform_notes(command, limit=limit):
+        req = (e.get("requires") or "").strip()
+        if req:
+            out.append((e["id"], " ".join(req.split())))
+    return out
+
+
+def emit_closure(command: str):
+    """Print the requirement set for this operation, if the catalogue knows one."""
+    if os.environ.get("TORQUE_NO_NOTES") == "1":
+        return
+    for eid, req in closure_for(command):
+        print(f"TORQUE NEEDS [{eid}] {req}", file=sys.stderr)
+
+
 def _speak(command: str):
     """Emit platform notes, never at the cost of the verdict."""
     if not command:
@@ -844,7 +874,8 @@ def _speak(command: str):
     # too — the half most likely to be present and least likely to be at fault. Separate, so one
     # failing source costs only itself (codex/gpt-5.6-sol, round 5).
     for emit in (emit_org_notes,          # what THIS org does outranks what the platform does
-                 emit_platform_notes):
+                 emit_platform_notes,
+                 emit_closure):           # and what the operation NEEDS, not only what may break
         try:
             emit(command)
         except Exception:

@@ -52,6 +52,11 @@ entries:
     other field breaks on them.
   detect: "SELECT Field, Parent.Name FROM FieldPermissions WHERE Field = 'Account.My_Field__c'"
   triggers: ['project\s+deploy.*(CustomField|fields/)', 'deploy:start.*CustomField', 'metadata\s+CustomField', 'FieldPermissions', 'project\s+deploy.*manifest', 'deploy.*package\.xml']
+  requires: >
+    A CustomField alone is not a feature. To be usable it needs, in the same deploy: field-level
+    security carried by a PermissionSet (or Profile) — nothing grants it implicitly — and, to be
+    seen rather than merely queryable, a place on the page layout. Formula fields additionally
+    need editable=false in the fieldPermissions or the whole deploy fails.
   confidence: verified-live
   verify: fls_absent_without_permset
   updated: 2026-08-01
@@ -131,6 +136,11 @@ entries:
     minimal. Within one payload the API resolves this for you; across separate calls it is
     yours to get right.
   triggers: ['project\s+deploy', 'deploy:start']
+  requires: >
+    Metadata deployed out of order fails on dependencies that exist but are not yet visible.
+    Objects and fields first; then permission sets, so FLS exists before anything references it;
+    then Apex; then flows as Draft; then activation; then layouts and pages; profiles last and
+    minimal.
   confidence: practitioner
   updated: 2026-08-01
 
@@ -694,6 +704,10 @@ entries:
     work; a successful insert is not.
   detect: "SELECT QualifiedApiName, IsCreatable FROM EntityParticle WHERE EntityDefinition.QualifiedApiName = 'Account' AND QualifiedApiName IN ('CreatedDate', 'CreatedById')"
   triggers: ['CreatedDate', 'CreatedById', 'LastModifiedDate', 'LastModifiedById', 'data\s+import.*tree', 'bulk\s+upsert']
+  requires: >
+    A load carrying original timestamps needs the org setting "Set Audit Fields upon Record
+    Creation" enabled AND the matching user permission granted, both established from the
+    describe before the load rather than inferred from the result afterwards.
   confidence: verified-live
   verify: audit_fields_not_createable
   updated: 2026-08-02
@@ -714,6 +728,9 @@ entries:
     carries every one of them.
   detect: "SELECT QualifiedApiName, IsNillable FROM EntityParticle WHERE EntityDefinition.QualifiedApiName = 'Account' AND IsNillable = false AND IsCreatable = true"
   triggers: ['data\s+import', 'data\s+create', 'required', 'nillable']
+  requires: >
+    A payload needs every non-nillable createable field on the target object. Layout-required is
+    not the list; describe is.
   confidence: verified-live
   verify: nillable_is_the_api_contract
   updated: 2026-08-02
@@ -761,6 +778,10 @@ entries:
     rule has to be deactivated deliberately — not worked around by retrying.
   detect: "SELECT DeveloperName, IsActive, SobjectType FROM DuplicateRule WHERE IsActive = true"
   triggers: ['data\s+import', 'data\s+create', 'bulk\s+upsert', 'DUPLICATES_DETECTED']
+  requires: >
+    A data load that must not be blocked needs the active duplicate rules on that object
+    established BEFORE the load, not after a partial failure — and a deliberate decision to
+    deactivate them, not a retry loop.
   confidence: verified-live
   verify: duplicate_rules_are_visible
   updated: 2026-08-02

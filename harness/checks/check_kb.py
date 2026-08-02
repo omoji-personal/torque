@@ -592,6 +592,57 @@ def _failure_keeps_its_reason():
                   "blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED")
 
 
+@check("closure_is_delivered", "static")
+def _closure_is_delivered():
+    """An operation that needs more than it names must SAY so, at the moment it is run.
+
+    The catalogue was written as hazards — "deploy a field and it arrives invisible" — which is
+    the same knowledge as "a field needs FLS and a layout" pointed the other way. Only the second
+    form answers the question an agent actually has. This checks the requirement sets exist, are
+    structured rather than prose, reach the command that needs them, and stay silent on reads.
+    """
+    import importlib.util as _il, json as _j, os as _os, subprocess as _sp, sys as _sy
+    lspec = _il.spec_from_file_location("torque_lib_cl", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+
+    with_req = [e for e in lib._kb_entries() if (e.get("requires") or "").strip()]
+    if len(with_req) < 3:
+        return Result("closure_is_delivered", FAIL,
+                      f"only {len(with_req)} entr(ies) carry a requirement set — closure is a "
+                      f"claim the catalogue cannot currently support")
+
+    # it must reach the operation that needs it...
+    want = [("sf project deploy start --metadata CustomField:Account.X__c --target-org dev",
+             "fls-not-automatic"),
+            ("sf data create record --sobject Lead --values \"Company=Acme\" -o dev",
+             "layout-required-is-not-api-required")]
+    for cmd, eid in want:
+        got = [i for i, _r in lib.closure_for(cmd)]
+        if eid not in got:
+            return Result("closure_is_delivered", FAIL,
+                          f"{cmd[:44]!r} needs {eid} and got {got or 'nothing'}")
+    # ...and stay quiet where nothing is required
+    for cmd in ("sf data query --query \"SELECT Id FROM Account\" -o dev",
+                "sf org display --target-org dev"):
+        if lib.closure_for(cmd):
+            return Result("closure_is_delivered", FAIL,
+                          f"a read produced a requirement set: {cmd[:50]!r}")
+
+    # and it must actually PRINT — a capability that never reaches the operator is not one
+    ev = _j.dumps({"tool_name": "Bash", "tool_input": {"command":
+                   "sf project deploy start --metadata CustomField:Account.X__c --target-org dev"}})
+    r = _sp.run([_sy.executable, str(ROOT / "hooks" / "prod_write_gate.py")], input=ev,
+                capture_output=True, text=True, cwd=ROOT, timeout=90,
+                env=dict(_os.environ, TORQUE_NO_NOTES="0"))
+    if "TORQUE NEEDS" not in (r.stdout + r.stderr):
+        return Result("closure_is_delivered", FAIL,
+                      "the requirement set never printed from a real gate run — it exists in the "
+                      "catalogue and does not reach the decision")
+    return Result("closure_is_delivered", PASS,
+                  f"{len(with_req)} requirement set(s); 2 operations received theirs, 2 reads "
+                  f"stayed silent, and it prints from a real gate run")
+
+
 @check("retrieval_quality", "static", catastrophe=True)
 def _retrieval_quality():
     """Does the RIGHT entry actually fire — and does the wrong one stay quiet?
