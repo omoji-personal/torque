@@ -1,4 +1,4 @@
-# Torque — AI operations workspace for Salesforce orgs
+# Torque — an AI-agent operations layer for Salesforce
 
 You are operating Torque: a safety-and-validation layer for doing REAL Salesforce work —
 reads, deploys, data operations, browser verification — against any org, safely.

@@ -24,10 +24,14 @@ worse than none at all. Somebody would trust it.
 Exit code is 0 when the picture is complete, 3 when part of it could not be established.
 """
 import argparse
+import io
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+import lib  # noqa: E402  — for first_line, so the reason-building shape exists once
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -41,7 +45,7 @@ def _sf(args, timeout=120):
     try:
         return json.loads(r.stdout)
     except Exception:
-        raise Unknown((r.stderr or r.stdout or "no output").strip().splitlines()[0][:120])
+        raise Unknown(lib.first_line(r.stderr, r.stdout)[:120])
 
 
 def _query(target, soql, tooling=False):
@@ -272,6 +276,42 @@ def main():
         print(json.dumps(report, indent=2))
         return 3 if unknowns else 0
 
+    # The verdict used to be computed from `unknowns` alone — a list every producer had to
+    # remember to append to. Two of them did not: flows() writes "(active state UNDETERMINED)"
+    # into the flow list, and the describe-failure path writes "UNDETERMINED — describe failed",
+    # and neither reached `unknowns`. So the tool printed an item whose state it could not
+    # establish and, underneath it, "picture complete — every source answered", exit 0. That is
+    # the one claim this tool makes.
+    #
+    # The comment forty lines above records the same bug being fixed for cascade children. Fixing
+    # the third instance the same way would just be waiting for the fourth, so completeness is
+    # now derived from what was actually PRINTED: any UNDETERMINED in the rendered body makes the
+    # picture incomplete, whether or not its producer remembered to say so.
+    # (codex/gpt-5.6-sol, round 6)
+    _buf = io.StringIO()
+    _real_stdout = sys.stdout
+    sys.stdout = _buf
+    try:
+        _render(a, report, unknowns)
+    finally:
+        sys.stdout = _real_stdout
+    body = _buf.getvalue()
+    print(body, end="")
+    stray = sorted({ln.strip() for ln in body.splitlines() if "UNDETERMINED" in ln})
+    if unknowns or stray:
+        print("\n  ⚠ this picture is INCOMPLETE — treat the operation as larger than shown:")
+        for u in unknowns:
+            print(f"      {u}")
+        for ln in stray:
+            if not any(u in ln for u in unknowns):
+                print(f"      {ln}")
+        return 3
+    print("\n  picture complete — every source answered.")
+    return 0
+
+
+def _render(a, report, unknowns):
+    """Print the report body. Separated so completeness can be judged on what was rendered."""
     n = report.get("scope")
     print(f"\nBLAST RADIUS — {a.operation} on {a.sobject} @ {a.target_org}")
     print(f"  criteria : {a.where or '(all records)'}")
@@ -334,13 +374,7 @@ def main():
                   f"views over other data, external objects, and entity types that do not "
                   f"support query)")
 
-    if unknowns:
-        print("\n  ⚠ this picture is INCOMPLETE — treat the operation as larger than shown:")
-        for u in unknowns:
-            print(f"      {u}")
-        return 3
-    print("\n  picture complete — every source answered.")
-    return 0
+    return None
 
 
 if __name__ == "__main__":

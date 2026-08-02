@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Torque — an AI operations workspace for Salesforce</title>
+<title>Torque — an AI-agent operations layer for Salesforce</title>
 <style>
 /* TORQUE — identity derived from the instrument the product is named after.
    A torque wrench applies force through leverage and mechanically refuses to exceed its
@@ -203,7 +203,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <div><b>Org path</b><span>sf CLI + official MCP</span></div>
       <div><b>Skills · subagents</b><span>5 · 2</span></div>
       <div><b>Enforcement</b><span>2 hooks, 4 tool surfaces</span></div>
-      <div><b>Validation</b><span>63 checks, live org</span></div>
+      <div><b>Validation</b><span>65 checks, live org</span></div>
       <div><b>Adversarial fixtures</b><span>196</span></div>
       <div><b>Self-proof</b><span>15 mutators</span></div>
       <div><b>Try it with no org</b><span>3 seconds</span></div>
@@ -477,9 +477,9 @@ python3 bin/torque init my-dev-org</pre>
 <pre>npm install          <span class="cmt"># optional — only the live browser check needs this</span>
 python3 harness/validate.py --profile release --target-org my-dev-org</pre>
   <p>
-    Three profiles nest: <code>static</code> (42 checks, <strong>no org needed</strong> — the
-    try-before-you-connect path), <code>capability</code> (60 checks, adding the live cycles), and
-    <code>release</code> (63). <code>--only &lt;check&gt;</code> runs one.
+    Three profiles nest: <code>static</code> (44 checks, <strong>no org needed</strong> — the
+    try-before-you-connect path), <code>capability</code> (62 checks, adding the live cycles), and
+    <code>release</code> (65). <code>--only &lt;check&gt;</code> runs one.
   </p>
 
   <h4>Step 4 — work</h4>
@@ -824,9 +824,11 @@ The operation grew after approval; re-approve with the current scope.</pre>
     never sees; forging a login session to fake operator presence; or reading the anchor by OS means
     the gated tools never touch. Those sit at the filesystem and credential boundary, not somewhere a
     hook adjudicates. For them the load-bearing defence is L1 — connect production read-only, and
-    never leave a production org authenticated in an autonomous session. <strong>Even a write that
-    fully bypasses the gate then meets an org that fails the live non-production check with no
-    operator override present.</strong> A PATH shim that closes the subprocess channel is roadmap,
+    never leave a production org authenticated in an autonomous session. <strong>A write that fully bypasses the gate meets nothing
+    else: the live non-production check runs inside the gate, so there is no second layer behind
+    it.</strong> That is precisely why L1 is load-bearing here rather than belt-and-braces — this
+    sentence used to claim the opposite, and an outside review was right that it could not be
+    true of a check the bypassed component performs. A PATH shim that closes the subprocess channel is roadmap,
     not shipped; v1 raises the direct-tool-surface bar as high as a parsing gate honestly can and
     states the rest plainly.
   </p>
@@ -904,9 +906,9 @@ The operation grew after approval; re-approve with the current scope.</pre>
   <h4>15 mutation tests — the part that matters</h4>
   <p>
     Each temporarily neuters one guard and requires the corresponding attack to succeed — or, for
-    the static scanners, requires the check to fail. Ten run without an org; the eleventh needs one,
-    because the check it neuters queries the org. Three exercise the clean_ip scan against a private
-    pattern list and report as operator-only on your clone rather than pretending to pass.
+    the static scanners, requires the check to fail. One needs an org, because the check it neuters
+    queries one. Three exercise the clean_ip scan against a private pattern list and report as
+    operator-only on your clone rather than pretending to pass. The rest run anywhere.
   </p>
 
 <pre>python3 harness/validate.py --self-test
@@ -920,6 +922,10 @@ The operation grew after approval; re-approve with the current scope.</pre>
   ✓ wrapper (wrapped_sf) mutator: expected NOT-deny, got exit 0
   ✓ expansion-awareness mutator: expected NOT-deny, got exit 0
   ✓ glob-matcher (_glob_reaches) mutator: expected NOT-deny, got exit 0
+  ✓ command-word (cmd_base) mutator: expected NOT-deny from either gate, got exits 0/0
+  ✓ deadline (_arm_deadline) mutator: expected FAIL, got FAIL
+  ✓ single-use (rename-claim) mutator: expected FAIL, got FAIL
+  ✓ identity-binding mutator: expected FAIL, got FAIL
   · redaction mutator: needs --target-org (the session-log check queries an
     org) — skipped rather than counted
 
@@ -1025,7 +1031,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     <tr><td>.claude/rules/</td><td>The seven rule files, byte-capped, each labelled with what backs it</td></tr>
     <tr><td>.claude/agents/</td><td>org-explorer (read-only) · hostile-qa (adversarial reviewer)</td></tr>
     <tr><td>hooks/</td><td>The shared expansion-aware parser and the two gates</td></tr>
-    <tr><td>harness/</td><td>63 checks, 196 gate fixtures (193 recorded + 3 minted live), 15 mutators, live_matrix.sh, the run log</td></tr>
+    <tr><td>harness/</td><td>65 checks, 196 gate fixtures (193 recorded + 3 minted live), 15 mutators, live_matrix.sh, the run log</td></tr>
     <tr><td>SECURITY.md</td><td>Disclosure policy — 72-hour confirmation, 90-day ceiling, fixtures credited</td></tr>
   </tbody></table>
 

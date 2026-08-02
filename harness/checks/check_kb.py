@@ -397,6 +397,117 @@ def _kb_injection():
                   f"{len(cases)} operations received the right note; ordinary work stayed silent")
 
 
+@check("failure_keeps_its_reason", "static", catastrophe=True)
+def _failure_keeps_its_reason():
+    """A failure must survive the construction of its own explanation.
+
+    `(stderr or stdout or "no output").strip().splitlines()[0]` reads as safe and is not: `or`
+    picks the first TRUTHY value, whitespace-only stderr is truthy, the strip leaves nothing, and
+    the [0] raises. Both places that built a reason this way lost the reason while building it.
+
+    In torque-blast-radius that was worse than cosmetic: the IndexError was not the `Unknown`
+    its callers catch, so a source that could not be established stopped becoming UNDETERMINED
+    and started aborting the analysis — the single thing that tool promises never to do. The
+    external panel found the gate's copy (round 5); this one was still open a round later, which
+    is why the shape is now one shared function and this check exists to keep it that way.
+    """
+    import importlib.util as _il
+    from importlib.machinery import SourceFileLoader as _SFL
+    from unittest.mock import patch as _patch
+
+    lspec = _il.spec_from_file_location("torque_lib_fr", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+
+    # the helper itself: every shape of nothing yields the default, never an exception
+    for args in ((None, None), ("", ""), ("   \n \n", ""), ("\n\n", "   "), (None, "\t")):
+        try:
+            got = lib.first_line(*args, default="D")
+        except Exception as e:
+            return Result("failure_keeps_its_reason", FAIL,
+                          f"first_line{args!r} raised {type(e).__name__} instead of returning "
+                          f"a default — the reason-builder is the thing that fails")
+        if got != "D":
+            return Result("failure_keeps_its_reason", FAIL,
+                          f"first_line{args!r} returned {got!r}, not the default")
+    if lib.first_line("\n\n  the real reason", "") != "the real reason":
+        return Result("failure_keeps_its_reason", FAIL,
+                      "first_line returned a leading blank line instead of the reason under it")
+    if lib.first_line("", "stdout said this") != "stdout said this":
+        return Result("failure_keeps_its_reason", FAIL, "first_line ignored a usable stdout")
+
+    # and the caller that matters: blast-radius must raise Unknown, which is what its callers
+    # catch and turn into UNDETERMINED. Any other exception type escapes them.
+    loader = _SFL("br_fr", str(ROOT / "bin" / "torque-blast-radius"))
+    br = _il.module_from_spec(_il.spec_from_loader("br_fr", loader))
+    import sys as _s
+    _argv = _s.argv[:]
+    _s.argv = ["torque-blast-radius"]
+    try:
+        loader.exec_module(br)
+    except SystemExit:
+        pass
+    finally:
+        _s.argv = _argv
+
+    class _R:
+        def __init__(self, o, e):
+            self.stdout, self.stderr, self.returncode = o, e, 1
+    for label, out, err in (("whitespace-only stderr", "", "   \n \n"),
+                            ("both empty", "", ""),
+                            ("a real message", "", "ERROR: no such org")):
+        with _patch("subprocess.run", return_value=_R(out, err)):
+            try:
+                br._sf(["data", "query"])
+            except br.Unknown:
+                continue
+            except Exception as e:
+                return Result("failure_keeps_its_reason", FAIL,
+                              f"blast-radius raised {type(e).__name__} on {label} — its callers "
+                              f"catch Unknown, so this source never becomes UNDETERMINED and the "
+                              f"analysis aborts instead")
+            return Result("failure_keeps_its_reason", FAIL,
+                          f"blast-radius returned normally on {label}; an unqueryable source must "
+                          f"raise, never look like an answer")
+    return Result("failure_keeps_its_reason", PASS,
+                  "5 empty-stderr shapes yield a default rather than an exception; "
+                  "blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED")
+
+
+@check("named_mutators_exist", "static")
+def _named_mutators_exist():
+    """A mutator named in a document must be one validate.py actually runs.
+
+    claimed_counts re-derives the mutator TOTAL; it cannot see a transcript listing the right
+    NUMBER of the wrong ones. The guide shipped a self-test transcript naming eight mutators from
+    an older tree — real output, quoted long after it stopped being what the command prints
+    (antigravity/gemini-3.1-pro, round 6). Sample output is the most persuasive thing in a
+    document and the easiest to leave behind.
+
+    Compares names, not a live run: names are what drift, and running the self-test from inside
+    the static profile would add half a minute to every invocation.
+    """
+    vsrc = (ROOT / "harness" / "validate.py").read_text()
+    real = set(n.strip() for n in _kb_re.findall(r"\} ([A-Za-z0-9_()\.\- ]+?) mutator", vsrc))
+    real |= set(n.strip() for n in _kb_re.findall(r"· ([a-z0-9_]+) mutators?", vsrc))
+    if len(real) < 5:
+        return Result("named_mutators_exist", FAIL,
+                      f"could not read mutator names out of validate.py (found {len(real)}) — "
+                      f"this check must not pass by finding nothing to compare against")
+    bad = []
+    for rel in ("guide/torque-guide.html", "README.md"):
+        f = ROOT / rel
+        if not f.exists():
+            continue
+        for m in _kb_re.finditer(r"([A-Za-z][A-Za-z0-9_()\.\- ]*?) mutator:", f.read_text()):
+            name = m.group(1).strip()
+            if name and name not in real:
+                bad.append(f"{rel} names a {name!r} mutator; validate.py runs no such mutator")
+    if bad:
+        return Result("named_mutators_exist", FAIL, "; ".join(sorted(set(bad))[:4]))
+    return Result("named_mutators_exist", PASS,
+                  f"every mutator named in the documents is one of the {len(real)} validate.py runs")
+
+
 @check("claimed_counts", "static", catastrophe=False)
 def _claimed_counts():
     """Every count stated in prose must match what is on disk.
@@ -580,10 +691,39 @@ def _blast_radius_honesty():
     if "INCOMPLETE" not in body:
         return Result("blast_radius_honesty", FAIL,
                       "an unreachable org did not produce an INCOMPLETE verdict")
+    # ITEM-level, not just SOURCE-level. This check tested whole sources failing, and passed
+    # for months while a source that ANSWERED — but could not establish one item's state — printed
+    # "· <flow> (active state UNDETERMINED)" and, underneath it, "picture complete — every source
+    # answered", exit 0. The verdict was computed from a list each producer had to remember to
+    # append to, and two never did (codex/gpt-5.6-sol, round 6). It is derived from the rendered
+    # body now, so this drives a producer that emits UNDETERMINED without registering it.
+    import runpy as _rp, io as _io, contextlib as _cl, sys as _s
+    mod = _rp.run_path(str(ROOT / "bin" / "torque-blast-radius"))
+    g = mod["main"].__globals__
+    g.update(scope=lambda *a: 1, triggers=lambda *a: [], validation_rules=lambda *a: [],
+             rollups=lambda *a: [], workflow_rules=lambda *a: [],
+             cascade=lambda *a: ("not-applicable", "not-applicable"),
+             # answers, but cannot establish the item's state — the shape that slipped through
+             flows=lambda *a: ["SomeFlow (active state UNDETERMINED)"])
+    _argv = _s.argv[:]
+    _s.argv = ["torque-blast-radius", "--target-org", "stub", "--sobject", "Account"]
+    buf = _io.StringIO()
+    try:
+        with _cl.redirect_stdout(buf):
+            rc2 = mod["main"]()
+    finally:
+        _s.argv = _argv
+    body2 = buf.getvalue()
+    if rc2 == 0 or "picture complete" in body2:
+        return Result("blast_radius_honesty", FAIL,
+                      f"an item whose state could not be established printed UNDETERMINED and the "
+                      f"verdict still said the picture was complete (exit {rc2}) — the completeness "
+                      f"claim is not derived from what was actually rendered")
+
     return Result("blast_radius_honesty", PASS,
                   f"{len(rep['undetermined'])} unanswerable source(s) reported as UNDETERMINED, "
-                  f"exit {r.returncode}; no source silently returned zero, and the completeness "
-                  f"verdict agrees with the body")
+                  f"exit {r.returncode}; an UNDETERMINED item inside a source that answered also "
+                  f"forces INCOMPLETE (exit {rc2}); no source silently returned zero")
 
 
 @check("lesson_writer_roundtrip", "static", catastrophe=True)

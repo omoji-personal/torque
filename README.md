@@ -195,9 +195,9 @@ Torque validates itself the way it validates Salesforce work. `--profile release
   runnable test.
 - **15 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
   attack to succeed (or, for the static scanners, requires the check to FAIL). A check that
-  cannot fail proves nothing; these prove each guard is load-bearing. Seven run on any clone;
-  three exercise the clean-IP scan and need the private pattern list, so they report as
-  operator-only rather than pretending to pass; the eleventh needs `--target-org`, because the
+  cannot fail proves nothing; these prove each guard is load-bearing. Three exercise the clean-IP
+  scan and need the private pattern list, so they report as operator-only rather than pretending
+  to pass, and one needs `--target-org`, because the
   check it neuters queries an org. A skipped mutator is never reported as caught.
 - **A live capability cycle** against your org — deploy a field, verify it by SOQL, verify
   field-level security, hard-delete it, confirm zero residue; a mass-update with a working undo;
@@ -223,8 +223,8 @@ and how the harness proves itself.
 
 ## What Torque does *not* claim
 
-The gates bind the agent's **tool surface** (Bash / Edit / Write / Read / MCP). They stop accidents
-with certainty and defeat enumerable circumvention. They do **not** claim to stop a same-user actor
+The gates bind the agent's **tool surface** (Bash / Edit / Write / Read / MCP). Within that surface they
+stop accidents deterministically and defeat enumerable circumvention. They do **not** claim to stop a same-user actor
 who steps outside that surface by executing arbitrary code — forging a login session with a bespoke
 program, reading the signing secret through the OS, or having the agent write a script and run it
 so `sf` executes as a subprocess no hook ever sees.

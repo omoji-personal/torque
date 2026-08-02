@@ -1182,12 +1182,32 @@ def mcp_target(tinput):
     global _MCP_ORG_KEYS_NORM
     if _MCP_ORG_KEYS_NORM is None:
         _MCP_ORG_KEYS_NORM = {_norm_key(k) for k in MCP_ORG_KEYS}
-    if not isinstance(tinput, dict):
+
+    # Searched only the TOP level, and an MCP tool's arguments are whatever shape its schema
+    # says. A server nesting them under `args` or `params` — ordinary in the ecosystem — had
+    # every write denied for "no target" with nothing the operator could do about it, since the
+    # shape is the server's to choose, not theirs. Searching the structure identifies the org
+    # instead, which is better on both counts: the write gets classified rather than refused,
+    # and an org that was previously invisible to the gate is now named. Depth-bounded, because
+    # this runs on the blocking path and the input is caller-controlled.
+    def walk(node, depth=0):
+        if depth > 6:
+            return None
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if v and not isinstance(v, (dict, list)) and _norm_key(k) in _MCP_ORG_KEYS_NORM:
+                    return v
+            for v in node.values():
+                found = walk(v, depth + 1)
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for v in node[:32]:
+                found = walk(v, depth + 1)
+                if found:
+                    return found
         return None
-    for k, v in tinput.items():
-        if v and _norm_key(k) in _MCP_ORG_KEYS_NORM:
-            return v
-    return None
+    return walk(tinput)
 
 
 def _name_comps(name):
@@ -1238,6 +1258,13 @@ def is_mcp_tool(tool: str) -> bool:
 def mcp_analyze(tool, tinput):
     """{'read':True} | {'write':target, 'destructive':(op,digest,body)|None}. TRUE default-deny:
     an org-touching tool that is not clearly a read is a write (audit R11-04/R11-05)."""
+    # A non-dict tool_input (null, a list, a bare string) reached `.get` and raised, so the gate
+    # answered "gate crashed, failing closed: AttributeError" — a correct outcome delivered as an
+    # alarming non-answer. Same shape as the count path that lost its reason while building it.
+    # Classification then proceeds on the tool NAME alone, which still yields write-with-no-target
+    # and denies, with a message that says what happened.
+    if not isinstance(tinput, dict):
+        tinput = {}
     parts = tool.split("__")
     # `mcp__<server>__<tool>` puts the server second; a host that names tools `<server>__<tool>`
     # puts it FIRST, and this read "" for that shape — so is_sf went false and a write tool was

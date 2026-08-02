@@ -38,8 +38,7 @@ def _live_count(target, sobject, where):
         # .strip().splitlines() is empty and [0] raises IndexError. The gate reported "crashed"
         # instead of "could not count", i.e. it lost the reason while constructing the reason
         # (codex/gpt-5.6-sol, round 5). Strip first, then choose.
-        _why = ((r.stderr or "").strip() or (r.stdout or "").strip() or "sf exited non-zero")
-        return None, _why.splitlines()[0][:100]
+        return None, lib.first_line(r.stderr, r.stdout, default="sf exited non-zero")[:100]
     try:
         return json.loads(r.stdout)["result"]["totalSize"], ""
     except Exception as e:

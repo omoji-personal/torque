@@ -112,6 +112,26 @@ def _sf(*args, timeout=45):
     except Exception:
         return _Failed()
 
+def first_line(*candidates, default="no output"):
+    """The first non-empty line of the first candidate that has one. Never raises.
+
+    `(stderr or stdout or "no output").strip().splitlines()[0]` looks safe and is not: `or`
+    picks the first TRUTHY value, and whitespace-only stderr is truthy, so the strip leaves
+    nothing and the [0] raises. Both places that built a failure reason this way lost the reason
+    while building it — and in torque-blast-radius the raised IndexError was not the Unknown its
+    callers catch, so a source that could not be established stopped becoming UNDETERMINED and
+    started aborting the analysis. That is the one thing that tool promises not to do.
+
+    Found in the gate by the external panel (round 5) and fixed there; this is the twin that was
+    still open, which is why it is now one function and not two identical lines.
+    """
+    for c in candidates:
+        lines = (c or "").strip().splitlines()
+        if lines:
+            return lines[0]
+    return default
+
+
 def approve_cmd(*args) -> str:
     """The remediation command a human can actually paste.
 
