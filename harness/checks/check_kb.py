@@ -671,7 +671,14 @@ def _retrieval_quality():
                       f"the evaluation set expects entries that do not exist: {sorted(unknown_ids)[:5]}")
     extra = ""
     if miss_surface:
-        extra = f"; {len(miss_surface)} matched but crowded out — a ranking gap, not a trigger gap"
+        # Read one of these before calling it a ranking bug. Inspected, all six were cases where
+        # the entries that DID print were also correct — `sf data create record` legitimately
+        # implicates layout-required, restricted-picklist, duplicate-rules and order-of-execution,
+        # and platform_notes shows two. That is a CAPACITY limit, not a mis-ranking, and the fix
+        # is not a cleverer sort: weighting rank by pattern specificity was tried and moved the
+        # number not at all, because ranking was never what was wrong.
+        extra = (f"; {len(miss_surface)} case(s) have more relevant entries than the 2 slots "
+                 f"platform_notes shows — a capacity limit, not a mis-ranking")
     return Result("retrieval_quality", PASS, detail + extra)
 
 
