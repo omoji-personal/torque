@@ -65,6 +65,10 @@ _NOT_ABOUT_THE_CLAIM = ("REQUEST_LIMIT_EXCEEDED", "TotalRequests Limit exceeded"
 
 
 _SFQ_STUB = None          # set by the verifier mutation test; None in every real run
+# Three verifiers read the org's DESCRIBE rather than running SOQL, so _SFQ_STUB could not
+# reach them and verifiers_can_fail had nothing to inject. A verifier nobody can falsify is
+# the exact thing that check exists to forbid, so describe gets the same seam.
+_DESCRIBE_STUB = None
 
 
 def _sfq(target, soql, tooling=False):
@@ -86,6 +90,117 @@ def _sfq(target, soql, tooling=False):
 
 
 # ── the live verifications named by `verify:` in the catalogue ─────────────────────────────
+
+
+def _describe(target, sobject="Account"):
+    """The org's own description of an object, or None when it cannot be obtained."""
+    if _DESCRIBE_STUB is not None:
+        return _DESCRIBE_STUB(target, sobject)
+    try:
+        r = _kb_sp.run(["sf", "sobject", "describe", "--sobject", sobject,
+                        "--target-org", target, "--json"],
+                       capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            return None
+        return (_kb_json.loads(r.stdout).get("result") or {})
+    except Exception:
+        return None
+
+
+def _v_audit_fields_not_createable(target):
+    """The entry tells an operator to read `createable` from describe BEFORE a historical load.
+
+    That advice is only actionable while describe actually reports createability for the audit
+    fields. What is asserted here is the mechanism, not one org's setting: an org that has
+    switched on "Set Audit Fields upon Record Creation" will legitimately report createable=true,
+    and that is the entry working, not failing. It returns False if the fields vanish from
+    describe or stop carrying the flag — at which point the remedy names something that cannot
+    be checked.
+    """
+    d = _describe(target)
+    if d is None:
+        return None, "Account describe unavailable"
+    fields = {f["name"]: f for f in d.get("fields", [])}
+    audit = ["CreatedDate", "CreatedById", "LastModifiedDate", "LastModifiedById"]
+    missing = [n for n in audit if n not in fields]
+    if missing:
+        return False, f"describe does not expose {missing} — the entry's detect step cannot run"
+    noflag = [n for n in audit if "createable" not in fields[n]]
+    if noflag:
+        return False, (f"describe exposes no createable flag for {noflag} — the remedy tells the\n"
+                       f"                       operator to read one")
+    locked = [n for n in audit if fields[n].get("createable") is False]
+    return True, (f"{len(locked)}/4 audit fields report createable=false on this org "
+                  f"({', '.join(locked) or 'none — audit-field setting is enabled here'}); "
+                  f"describe answers the question the entry says to ask it")
+
+
+def _v_nillable_is_the_api_contract(target):
+    """The entry says nillable is the only field-level requirement the API enforces.
+
+    Checkable: describe exposes nillable, and it distinguishes — an object where every field
+    reports the same value would make the advice useless even if technically present.
+    """
+    d = _describe(target)
+    if d is None:
+        return None, "Account describe unavailable"
+    fields = [f for f in d.get("fields", []) if f.get("createable")]
+    if not fields:
+        return None, "no createable fields returned"
+    if any("nillable" not in f for f in fields):
+        return False, "describe does not report nillable for every createable field"
+    required = [f["name"] for f in fields if not f.get("nillable")]
+    if not required:
+        return False, ("no createable field on Account reports nillable=false — if the API "
+                       "enforced nothing, the entry's advice to read it would be empty")
+    return True, (f"{len(required)} of {len(fields)} createable Account fields are non-nillable "
+                  f"({', '.join(required[:3])}) — the contract the entry points at is present "
+                  f"and discriminating")
+
+
+def _v_picklist_restriction_is_visible(target):
+    """The entry's claim is that restriction is PER FIELD and readable before a load.
+
+    False if describe stops reporting restrictedPicklist, or if the flag is uniform across every
+    picklist on the object — a flag with one value cannot tell an operator which fields will
+    reject their data.
+    """
+    d = _describe(target)
+    if d is None:
+        return None, "Account describe unavailable"
+    picks = [f for f in d.get("fields", []) if f.get("type") == "picklist"]
+    if not picks:
+        return None, "no picklist fields on Account to observe"
+    if any("restrictedPicklist" not in f for f in picks):
+        return False, "describe does not report restrictedPicklist for every picklist field"
+    restricted = [f["name"] for f in picks if f.get("restrictedPicklist")]
+    if not restricted or len(restricted) == len(picks):
+        return False, (f"restrictedPicklist is uniform across all {len(picks)} picklists "
+                       f"({len(restricted)} restricted) — it cannot distinguish which field "
+                       f"will reject a value, which is the entry's whole point")
+    return True, (f"{len(restricted)}/{len(picks)} Account picklists are restricted — the flag "
+                  f"is per-field and readable, as the remedy requires")
+
+
+def _v_duplicate_rules_are_visible(target):
+    """The entry tells an operator to expect standard duplicate rules on an org nobody configured.
+
+    False if DuplicateRule is queryable and the standard rules are absent — the advice to expect
+    them would then be wrong, which matters because their absence is what makes a blocked load
+    surprising.
+    """
+    ok, rows = _sfq(target, "SELECT DeveloperName, IsActive, SobjectType FROM DuplicateRule")
+    if ok is not True:
+        return None, "DuplicateRule not queryable on this org"
+    names = [r.get("DeveloperName", "") for r in rows]
+    standard = [n for n in names if n.startswith("Standard_")]
+    if not standard:
+        return False, (f"{len(rows)} duplicate rule(s) and none of them standard — the entry "
+                       f"tells operators to expect the shipped Account/Contact/Lead rules")
+    active = sum(1 for r in rows if r.get("IsActive"))
+    return True, (f"{len(standard)} standard duplicate rule(s) present, {active}/{len(rows)} "
+                  f"active — a load can be blocked at step 6 on an org nobody configured")
+
 def _v_fls_absent_without_permset(target):
     """Assert that FLS is carried by PermissionSet-parented rows, and that nothing else grants it.
 
@@ -280,6 +395,10 @@ def _v_profile_deploy_is_overlay(target):
 _VERIFIERS = {
     "profile_deploy_is_overlay": _v_profile_deploy_is_overlay,
     "fls_absent_without_permset": _v_fls_absent_without_permset,
+    "audit_fields_not_createable": _v_audit_fields_not_createable,
+    "nillable_is_the_api_contract": _v_nillable_is_the_api_contract,
+    "picklist_restriction_is_visible": _v_picklist_restriction_is_visible,
+    "duplicate_rules_are_visible": _v_duplicate_rules_are_visible,
     "del_tombstones_visible": _v_del_tombstones_visible,
     "flowdefinition_queryable": _v_flowdefinition_queryable,
     "flowdefinitionview_standard_api": _v_flowdefinitionview_standard_api,
@@ -1097,6 +1216,9 @@ def _verifiers_can_fail():
     falsifying = {
         # a grant with no owning parent — the remedy assumes every grant is carried by one
         "fls_absent_without_permset": lambda t, q, tl: (True, [{"Parent": {}, "SobjectType": "A"}]),
+        # duplicate rules present but none of them the standard ones the entry says to expect
+        "duplicate_rules_are_visible":
+            lambda t, q, tl: (True, [{"DeveloperName": "Homegrown_Rule", "IsActive": True}]),
         # a field matched by the tombstone query that does not carry the suffix
         "del_tombstones_visible": lambda t, q, tl: (True, [{"DeveloperName": "Not_A_Tombstone"}]),
         # FlowDefinition unreachable via Tooling — the entry's remedy depends on it
@@ -1109,7 +1231,13 @@ def _verifiers_can_fail():
         "de_org_reports_not_sandbox":
             lambda t, q, tl: (True, [{"IsSandbox": True, "OrganizationType": "Developer Edition"}]),
     }
-    missing = sorted(set(_VERIFIERS) - set(falsifying))
+    # Falsification happens through two seams — SOQL and describe — and this set was computed
+    # from the first alone, so three verifiers with real describe-backed cases were reported as
+    # having none. A completeness claim measured against the wrong denominator, which is the
+    # defect this file keeps finding elsewhere.
+    _describe_backed = {"audit_fields_not_createable", "nillable_is_the_api_contract",
+                        "picklist_restriction_is_visible"}
+    missing = sorted(set(_VERIFIERS) - set(falsifying) - _describe_backed)
     if missing:
         return Result("verifiers_can_fail", FAIL,
                       f"no falsifying case written for {missing} — a verifier nobody has tried "
@@ -1130,12 +1258,41 @@ def _verifiers_can_fail():
             _SFQ_STUB = None
         if ok is not False:
             survived.append(f"{name} returned {ok!r} ({detail[:60]})")
+    # the describe-backed verifiers, through their own seam
+    global _DESCRIBE_STUB
+    describe_falsifying = {
+        # audit fields gone from describe — the entry tells the operator to read them there
+        "audit_fields_not_createable": lambda t, so: {"fields": [{"name": "Name"}]},
+        # nothing on the object is required, so "read nillable" advises reading a constant
+        "nillable_is_the_api_contract":
+            lambda t, so: {"fields": [{"name": "A", "createable": True, "nillable": True}]},
+        # every picklist restricted alike — a flag that cannot distinguish is not a flag
+        "picklist_restriction_is_visible":
+            lambda t, so: {"fields": [{"name": "P", "type": "picklist", "restrictedPicklist": True},
+                                      {"name": "Q", "type": "picklist", "restrictedPicklist": True}]},
+    }
+    for name, stub in describe_falsifying.items():
+        fn = _VERIFIERS.get(name)
+        if fn is None:
+            survived.append(f"{name} is not registered")
+            continue
+        _DESCRIBE_STUB = stub
+        try:
+            ok, detail = fn("stub-org")
+        except Exception as e:
+            return Result("verifiers_can_fail", FAIL,
+                          f"{name} raised on its falsifying case: {type(e).__name__}: {e}")
+        finally:
+            _DESCRIBE_STUB = None
+        if ok is not False:
+            survived.append(f"{name} returned {ok!r} ({str(detail)[:60]})")
     if survived:
         return Result("verifiers_can_fail", FAIL,
                       f"{len(survived)} verifier(s) did NOT fail on a falsifying org response: "
                       f"{survived}")
     return Result("verifiers_can_fail", PASS,
-                  f"all {len(falsifying)} verifiers return False when their entry is false")
+                  f"all {len(falsifying) + len(describe_falsifying)} verifiers return False when "
+                  f"their entry is false ({len(describe_falsifying)} falsified through describe)")
 
 
 @check("detect_probes_run", "capability", catastrophe=True)
@@ -1185,7 +1342,12 @@ def _detect_probes_run(target):
     # documented limit, not a failure, so it does not fail the build. What would slip past is the
     # number GROWING, so it is pinned: a new non-executable probe must be accepted deliberately
     # (release panel round 2, codex/gpt-5.6-sol).
-    EXPECTED_NOT_EXECUTABLE = 3
+    # 4 since 2026-08-02. restricted-picklist-rejects-new-values reads describe because the flag
+    # is describe-only: EntityParticle and FieldDefinition both reject IsRestrictedPicklist as no
+    # such column, checked against a live org. Accepted deliberately, which is what this pin is
+    # for — and worth recording that the first version of that probe LOOKED like it worked,
+    # because the script testing it read a failed query's empty result as "no matches".
+    EXPECTED_NOT_EXECUTABLE = 4
     ne = len(by.get("not-executed") or [])
     if ne > EXPECTED_NOT_EXECUTABLE:
         return Result("detect_probes_run", FAIL,

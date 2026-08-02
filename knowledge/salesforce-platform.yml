@@ -35,6 +35,12 @@ entries:
     The deploy reports success, the field exists, and it is invisible in layouts, list views,
     reports and SOQL — for every profile, System Administrator included. It is usually
     misdiagnosed as a failed deploy or a caching problem.
+  exception: >
+    A UNIVERSALLY REQUIRED field is the exception, and the unqualified version of this entry was
+    wrong about it. Field-level security is not modelled for required fields at all — measured on
+    a live org, Account.Name and Account.OwnerId carry ZERO FieldPermissions rows while
+    Account.Phone carries 169. They are always visible, so a required custom field does not arrive
+    invisible, does not need a grant, and cannot be given one.
   cause: >
     Field-level security is not part of the CustomField metadata. Nothing grants it implicitly.
   remedy: >
@@ -267,16 +273,31 @@ entries:
     A flow reads a field as empty that a trigger "already set", or a validation rule fires
     against a value that later automation would have corrected.
   cause: >
-    The order is fixed: before-save flows, before triggers, system validation, custom
-    validation rules, after triggers, assignment rules, auto-response, workflow rules,
-    processes and after-save flows, escalation rules, roll-up summaries and parent recalculation,
-    criteria-based sharing, then commit.
+    Most of the order is fixed, and two places in it are not. Fixed: load and system validation,
+    before-save flows, before triggers, custom validation rules, DUPLICATE RULES, save to the
+    database (uncommitted), after triggers, assignment rules, auto-response rules, workflow rules
+    — where a workflow field update re-runs before/after update triggers once more — escalation
+    rules, after-save flows, ENTITLEMENT rules, roll-up summary to the parent, which itself runs
+    the whole save procedure, then the grandparent, criteria-based sharing, COMMIT, and only then
+    email, asynchronous Apex and asynchronous flow paths.
+  not-guaranteed: >
+    Two orderings are explicitly NOT guaranteed, and both are where people assume one. Multiple
+    Apex triggers on the same object for the same event fire in no defined order, and Process
+    Builder processes and workflow-triggered flows run in no defined order relative to each other.
+    Anything depending on either is depending on a coincidence. An earlier version of this entry
+    said "the order is fixed" without qualification, and omitted duplicate rules, entitlement
+    rules, the grandparent roll-up and everything after COMMIT.
   remedy: >
     Choose the automation type by WHERE in that order it needs to run, not by preference.
-    Same-record field updates belong in a before-save flow — no DML, and it runs first.
+    Same-record field updates belong in a before-save flow — no DML, and it runs before both
+    validation and the save. Two consequences people are surprised by: a duplicate rule can block
+    a save AFTER a before-save flow has computed everything, and nothing after COMMIT can be seen
+    by a synchronous check that returns when the DML does.
   triggers: ['data\s+update', 'data\s+create', 'Flow', 'Trigger']
   confidence: documented
-  source: "Salesforce Help — Triggers and Order of Execution"
+  source: >
+    Apex Developer Guide — Triggers and Order of Execution;
+    developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_order_of_execution.htm
   updated: 2026-08-01
 
 - id: entry-condition-requirements
@@ -644,3 +665,115 @@ entries:
   confidence: practitioner
   updated: 2026-08-01
 
+
+# ── ADDED 2026-08-02 — derived from Salesforce's own documentation and confirmed against a
+#    live org. Every claim below was established before it was written down, not after.
+
+- id: audit-fields-not-writable
+  domain: data
+  title: CreatedDate and CreatedById cannot be set on insert unless the org has been opened for it
+  symptom: >
+    A migration that carries original timestamps loads without error and every record shows
+    today's date and the integration user as creator. Nothing failed; the fields were dropped.
+  cause: >
+    CreatedDate, CreatedById, LastModifiedDate and LastModifiedById are not createable by
+    default. The API does not reject a payload containing them — it ignores them, so the load
+    reports success and the history is gone. Measured on a live org: describe returns
+    createable=false and updateable=false for all four.
+  remedy: >
+    Enable "Set Audit Fields upon Record Creation" in User Interface settings and grant the
+    corresponding user permission, then re-check the describe BEFORE the load rather than
+    inspecting rows afterwards. The describe is the org's own answer to whether the load can
+    work; a successful insert is not.
+  detect: "SELECT QualifiedApiName, IsCreatable FROM EntityParticle WHERE EntityDefinition.QualifiedApiName = 'Account' AND QualifiedApiName IN ('CreatedDate', 'CreatedById')"
+  triggers: ['data\s+import', 'data\s+create', 'CreatedDate', 'CreatedById', 'bulk\s+upsert']
+  confidence: verified-live
+  verify: audit_fields_not_createable
+  updated: 2026-08-02
+
+- id: layout-required-is-not-api-required
+  domain: data
+  title: A field required on the page layout is not required to the API, and vice versa
+  symptom: >
+    Records created through the API skip a field the business believes is mandatory, or a load
+    fails on a field no layout marks as required.
+  cause: >
+    There are two different mechanisms. Layout-level required binds the UI only. Universally
+    required (required at the field definition) binds every write path including the API, and is
+    what describe reports as nillable=false. Validation rules are a third, independent path.
+  remedy: >
+    Trust describe, not the layout: nillable=false is the only field-level requirement the API
+    enforces. Before a load, list the non-nillable createable fields and make sure the payload
+    carries every one of them.
+  detect: "SELECT QualifiedApiName, IsNillable FROM EntityParticle WHERE EntityDefinition.QualifiedApiName = 'Account' AND IsNillable = false AND IsCreatable = true"
+  triggers: ['data\s+import', 'data\s+create', 'required', 'nillable']
+  confidence: verified-live
+  verify: nillable_is_the_api_contract
+  updated: 2026-08-02
+
+- id: restricted-picklist-rejects-new-values
+  domain: data
+  title: A restricted picklist refuses unknown values; an unrestricted one quietly accepts them
+  symptom: >
+    The same load succeeds on one picklist field and fails on another with INVALID_OR_NULL_FOR_
+    RESTRICTED_PICKLIST, or succeeds everywhere and leaves values no report can group by.
+  cause: >
+    Restriction is per field, not per org. A restricted picklist rejects any value outside its
+    value set. An unrestricted one accepts arbitrary text, which is worse than a failure because
+    nothing surfaces it until someone builds a report. Describe exposes restrictedPicklist per
+    field, and standard geo/state-country fields are typically restricted while ordinary custom
+    ones are not.
+  remedy: >
+    Read restrictedPicklist and the active value set from describe before mapping data into a
+    picklist, and treat an unrestricted picklist as a free-text field for validation purposes.
+  detect: "sf sobject describe --sobject Account --json"
+  detect-note: >
+    Describe, not SOQL, and deliberately: neither EntityParticle nor FieldDefinition
+    exposes a restricted-picklist column — both reject it as no such field. So this probe
+    cannot be executed from a catalogue string, and is one of the accepted non-executable
+    ones rather than a broken query.
+  triggers: ['data\s+import', 'data\s+create', 'picklist', 'INVALID_OR_NULL_FOR_RESTRICTED']
+  confidence: verified-live
+  verify: picklist_restriction_is_visible
+  updated: 2026-08-02
+
+- id: duplicate-rules-block-the-save
+  domain: automation
+  title: A duplicate rule can block a save after every flow and trigger has already run
+  symptom: >
+    An insert fails with DUPLICATES_DETECTED, or a bulk load reports partial success with rows
+    nothing in the payload explains. Re-running produces the same result on the same rows.
+  cause: >
+    Duplicate rules run at step 6 of the order of execution — after before-save flows, before
+    triggers and custom validation, and before the record reaches the database. A blocking rule
+    stops the save at that point, so work already done by earlier automation is discarded. Rules
+    exist on a fresh org by default: standard Account, Contact and Lead rules ship active.
+  remedy: >
+    Query DuplicateRule for what is active on the object before a load, and expect the standard
+    rules to be there even on an org nobody has configured. If a load must not be blocked, the
+    rule has to be deactivated deliberately — not worked around by retrying.
+  detect: "SELECT DeveloperName, IsActive, SobjectType FROM DuplicateRule WHERE IsActive = true"
+  triggers: ['data\s+import', 'data\s+create', 'bulk\s+upsert', 'DUPLICATES_DETECTED']
+  confidence: verified-live
+  verify: duplicate_rules_are_visible
+  updated: 2026-08-02
+
+- id: post-commit-work-is-invisible-to-the-caller
+  domain: automation
+  title: Email, asynchronous Apex and asynchronous flow paths run after the call has already returned
+  symptom: >
+    A verification query immediately after a write shows none of the downstream effects, and the
+    same query minutes later shows all of them. The write looks like it did nothing.
+  cause: >
+    Those steps sit after COMMIT in the documented order of execution. The synchronous call
+    returns when the DML commits, which is strictly before that work runs.
+  remedy: >
+    Do not treat an immediate read-back as proof that downstream automation did or did not fire.
+    Verify synchronous effects synchronously, and verify asynchronous ones by polling the object
+    they land on, or AsyncApexJob, rather than by reading the parent record once.
+  triggers: ['data\s+create', 'data\s+update', 'apex\s+run', 'Flow']
+  confidence: documented
+  source: >
+    Apex Developer Guide — Triggers and Order of Execution, final step;
+    developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_order_of_execution.htm
+  updated: 2026-08-02
