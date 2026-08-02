@@ -1,0 +1,573 @@
+# Evaluation set for retrieval_quality — does the right entry actually fire?
+#
+# Held apart from knowledge/salesforce-platform.yml on purpose: the thing being measured must not
+# write its own exam. Authored by an external reviewer (antigravity/gemini-3.1-pro) reading the
+# entries, not the triggers' author.
+#
+# positives: a realistic `sf` command, and the entry that SHOULD fire for it.
+# negatives: a realistic command where a named entry MUST NOT fire. This half matters more than
+#            it looks — an entry that fires on everything teaches an operator to skim past every
+#            note, which is worse than silence.
+#
+# Its first run found 7 entries that could never fire at all: no `triggers:` key, so no command
+# could reach them. 18% of the catalogue, invisible, and no other check could see it.
+positives:
+- command: sf project deploy start --metadata CustomField:Account.X__c --target-org prod
+  expect:
+  - fls-not-automatic
+  - deploy-order
+  - three-releases-a-year
+  why: deploying a field is exactly when its FLS gap matters
+- command: sf project deploy start --source-dir force-app/main/default/objects/Account/fields/Bonus__c.field-meta.xml
+    -o dev
+  expect:
+  - fls-not-automatic
+  - deploy-order
+  why: deploying custom field metadata via source directory does not auto-grant FLS
+- command: sfdx force:source:deploy -m CustomField:Opportunity.Discount__c -u sandbox
+  expect:
+  - fls-not-automatic
+  why: legacy force:source:deploy command deploying a CustomField carries FLS risk
+- command: sf project delete source --metadata CustomField:Account.Old_Field__c --target-org dev
+  expect:
+  - deleted-field-rename
+  why: deleting a source field renames it with _del and parks it in the deleted-fields queue
+- command: sf project deploy start --metadata-dir manifests/destructiveChanges --target-org prod
+  expect:
+  - deleted-field-rename
+  - deploy-order
+  why: deploying destructiveChanges leaves tombstones behind
+- command: sf project deploy start --manifest manifest/package.xml --purge-on-delete -o dev
+  expect:
+  - deleted-field-rename
+  - purge-flag-belongs-to-deploy
+  why: --purge-on-delete during project deploy hard-deletes components instead of soft-deleting
+- command: sf project retrieve start --metadata Flow:Customer_Onboarding --target-org dev
+  expect:
+  - flow-retrieve-latest-only
+  - flow-activation-on-deploy
+  why: retrieving a Flow returns only the latest version, which may be a draft
+- command: sf project retrieve start -m Flow:Order_Process -o staging --json
+  expect:
+  - flow-retrieve-latest-only
+  why: retrieving flow metadata by short flag -m returns latest version rather than active version
+- command: sf data query --query "SELECT DeveloperName, ActiveVersionId FROM FlowDefinition" --use-tooling-api
+    -o dev
+  expect:
+  - flow-retrieve-latest-only
+  why: querying FlowDefinition directly checks active flow versions
+- command: sf data query --query "SELECT ApiName, IsActive FROM FlowDefinitionView" --target-org dev
+  expect:
+  - flowdefinitionview-is-standard-api
+  why: FlowDefinitionView must be queried via standard API, not Tooling API
+- command: sf data query -q "SELECT Label, Description FROM FlowDefinitionView" -o prod --json
+  expect:
+  - flowdefinitionview-is-standard-api
+  why: querying FlowDefinitionView via standard query command
+- command: sf project deploy start --source-dir force-app -o prod
+  expect:
+  - deploy-order
+  - prod-deploy-runs-tests
+  why: deploying full source directory to production resolves internal dependencies and runs test suites
+- command: sf project deploy start --manifest manifest/package.xml --target-org dev
+  expect:
+  - deploy-order
+  why: deploying via manifest payload requires correct dependency resolution order
+- command: sf project deploy start --metadata Profile:Admin --target-org prod
+  expect:
+  - full-profile-deploy
+  - deploy-order
+  why: profile deployments apply overlay settings for explicitly specified components
+- command: sf project deploy start --source-dir force-app/main/default/profiles/Sales.profile-meta.xml
+    -o dev
+  expect:
+  - full-profile-deploy
+  why: deploying a profile XML file directly overwrites declared permissions
+- command: sf data update record --sobject Account --record-id 001xx000003DGb2 --values "Rating=Hot" -o
+    dev
+  expect:
+  - no-op-update-is-not-free
+  - order-of-execution
+  - post-commit-work-is-invisible-to-the-caller
+  why: updating a record even with unchanged values stamps LastModifiedDate and triggers automation
+- command: sfdx force:data:record:update --sobject Contact --sobjectid 003xx000003DGb2 --values "FirstName=John"
+    -u dev
+  expect:
+  - no-op-update-is-not-free
+  - order-of-execution
+  why: legacy data record update invocation triggers execution pipeline
+- command: sf data query --query "SELECT Field, OldValue, NewValue FROM AccountHistory" --target-org dev
+  expect:
+  - history-fields-unfilterable
+  why: queries on History objects containing OldValue/NewValue cannot filter on those polymorphic fields
+- command: sf data query -q "SELECT Id, NewValue FROM CaseHistory WHERE Field = 'Status'" -o prod
+  expect:
+  - history-fields-unfilterable
+  why: selecting NewValue from CaseHistory requires client-side filtering
+- command: sf data delete bulk --sobject Lead --file lead_deletes.csv --hard-delete --target-org prod
+  expect:
+  - hard-delete-permission
+  - sandbox-contains-real-data
+  - recycle-bin-retention
+  - bulk-partial-failure
+  why: bulk hard delete bypasses Recycle Bin and requires explicit user permission
+- command: sf data delete bulk -s Contact -f purge_contacts.csv --hard-delete -o dev
+  expect:
+  - hard-delete-permission
+  - recycle-bin-retention
+  why: hard delete removes records permanently without recycle bin recovery options
+- command: sf apex run --file scripts/apex/batch_update.apex --target-org dev
+  expect:
+  - governor-limits-core
+  - with-sharing-is-not-fls
+  - post-commit-work-is-invisible-to-the-caller
+  why: executing Apex scripts subjects logic to synchronous governor limits and sharing models
+- command: sfdx force:apex:execute --apexcodefile scripts/cleanup.apex -u sandbox
+  expect:
+  - governor-limits-core
+  - with-sharing-is-not-fls
+  why: legacy apex execution runs inside transaction governor bounds
+- command: sf project retrieve start --metadata ApexClass:AccountController --target-org dev
+  expect:
+  - with-sharing-is-not-fls
+  why: retrieving Apex classes requires checking whether security/FLS enforcement is handled in code
+- command: sfdx force:apex:execute -f scripts/test_sharing.apex -u dev
+  expect:
+  - with-sharing-is-not-fls
+  - governor-limits-core
+  why: executing Apex requiring sharing verification
+- command: sf project deploy start --metadata PermissionSet:SalesOps --target-org prod
+  expect:
+  - formula-fields-bypass-fls
+  - deploy-order
+  why: deploying permission sets requires reviewing field permissions and formula access
+- command: sf data query --query "SELECT Field, PermissionsEdit, PermissionsRead FROM FieldPermissions"
+    --use-tooling-api -o dev
+  expect:
+  - formula-fields-bypass-fls
+  why: querying FieldPermissions to audit FLS access controls
+- command: sf project deploy start --metadata PermissionSet:SuperUserAccess -o prod
+  expect:
+  - view-all-data-vs-fls
+  - formula-fields-bypass-fls
+  why: deploying admin permissions where View All Data does not grant field-level security
+- command: sf project retrieve start --metadata PermissionSet:AdminAssistant -o dev
+  expect:
+  - view-all-data-vs-fls
+  why: retrieving permission set definitions to check object permissions vs FLS
+- command: sf data update record --sobject Opportunity --record-id 006xx000003DGb2 --values "StageName=Closed
+    Won" --target-org dev
+  expect:
+  - order-of-execution
+  - no-op-update-is-not-free
+  - post-commit-work-is-invisible-to-the-caller
+  why: updating record fields invokes validation rules, triggers, flows, and post-commit work
+- command: sf project deploy start --metadata ApexTrigger:AccountTrigger -o dev
+  expect:
+  - order-of-execution
+  - deploy-order
+  why: deploying triggers introduces automation into the order of execution
+- command: sf data update record --sobject Case --record-id 500xx000003DGb2 --values "Status=Working"
+    -o dev
+  expect:
+  - entry-condition-requirements
+  - no-op-update-is-not-free
+  why: flow entry conditions evaluated on record status changes
+- command: sf project retrieve start --metadata Flow:Case_Escalation -o dev
+  expect:
+  - entry-condition-requirements
+  - flow-retrieve-latest-only
+  why: retrieving flows to inspect transition entry conditions
+- command: sf data query --query "SELECT Id, Custom_Field__c FROM MyObject__c" --target-org dev
+  expect:
+  - namespace-in-packaging-org
+  why: querying custom objects/fields where namespace prefixes apply in packaging orgs
+- command: sf sobject describe --sobject Account --target-org dev
+  expect:
+  - namespace-in-packaging-org
+  - three-releases-a-year
+  why: describing sObjects to verify actual API names and release metadata
+- command: sf project deploy start --source-dir force-app/main/default/fieldSets/Package__FieldSet.fieldSet-meta.xml
+    -o prod
+  expect:
+  - managed-fields-immutable
+  - deploy-order
+  why: deploying managed package components where subscriber modifications are locked
+- command: sf project deploy start --metadata CustomField:ManagedPkg__CustomObj__c.Field__c -o dev
+  expect:
+  - managed-fields-immutable
+  - fls-not-automatic
+  why: deploying fields associated with managed objects
+- command: sf org display --target-org my-de-org --json
+  expect:
+  - developer-edition-is-not-sandbox
+  why: displaying org info where Developer Edition reports IsSandbox=false
+- command: sfdx force:org:display -u dev-edition-alias
+  expect:
+  - developer-edition-is-not-sandbox
+  why: legacy org display command on Developer Edition org
+- command: sf data delete bulk --sobject Account --file wipe_accounts.csv --target-org full-sandbox
+  expect:
+  - sandbox-contains-real-data
+  - bulk-partial-failure
+  - recycle-bin-retention
+  why: bulk deleting records in a Full/Partial Copy sandbox containing production data
+- command: sf data delete record --sobject Contact --record-id 003xx000003DGb2 -o partial-sandbox
+  expect:
+  - sandbox-contains-real-data
+  - recycle-bin-retention
+  why: deleting records in Partial Copy sandbox
+- command: sf org open --path frontdoor.jsp --target-org dev
+  expect:
+  - frontdoor-session-handoff
+  why: opening org via frontdoor.jsp carries session tokens subject to IP binding restrictions
+- command: sf org open --target-org prod --url-only
+  expect:
+  - frontdoor-session-handoff
+  why: generating frontdoor URL token for web handoff
+- command: sf project deploy start --api-version 57.0 --target-org prod
+  expect:
+  - api-version-is-behaviour
+  - deploy-order
+  why: setting explicit API version dictates runtime framework behavior
+- command: sf project retrieve start --metadata ApexClass:LegacyHandler --api-version 45.0 -o dev
+  expect:
+  - api-version-is-behaviour
+  why: retrieving source with explicit legacy API version
+- command: sf sobject describe --sobject Opportunity -o dev
+  expect:
+  - three-releases-a-year
+  - namespace-in-packaging-org
+  why: describing sObject schema before referencing new platform release capabilities
+- command: sf project deploy start --metadata CustomField:Account.NewFeature__c -o prod
+  expect:
+  - three-releases-a-year
+  - fls-not-automatic
+  why: deploying custom fields sensitive to platform release versions
+- command: sf data delete record --sobject Account --record-id 001xx000003DGb2 --target-org dev
+  expect:
+  - recycle-bin-retention
+  why: deleting a record moves it to Recycle Bin for standard retention window
+- command: sf data delete bulk --sobject Contact --file remove.csv -o dev
+  expect:
+  - recycle-bin-retention
+  - bulk-partial-failure
+  why: bulk soft deletion puts records in Recycle Bin
+- command: sf limits api display --target-org dev-org
+  expect:
+  - de-daily-api-limit-masquerades
+  why: checking org limits on Developer Edition org where daily API limits affect checks
+- command: sf limits api display -o de-scratch-org --json
+  expect:
+  - de-daily-api-limit-masquerades
+  why: querying daily API usage allocation
+- command: sf data query --query "SELECT COUNT() FROM Account WHERE ParentId IN (SELECT Id FROM Account)"
+    --target-org dev
+  expect:
+  - self-join-forbidden
+  why: SOQL queries attempting self-join semi-filtering on the same object are forbidden
+- command: sf data query -q "SELECT Id FROM Case WHERE ParentId IN (SELECT Id FROM Case)" -o prod
+  expect:
+  - self-join-forbidden
+  why: hierarchical parent-child self-join query fails
+- command: sf data query --query "SELECT COUNT() FROM ProcessInstanceHistory" --target-org dev
+  expect:
+  - entity-types-that-refuse-count
+  why: COUNT() queries on un-countable entities like ProcessInstanceHistory fail
+- command: sf data query -q "SELECT COUNT() FROM NoteAndAttachment" -o dev
+  expect:
+  - entity-types-that-refuse-count
+  why: querying COUNT() on NoteAndAttachment fails
+- command: sf data query --query "SELECT Id, Name FROM Account WHERE IsDeleted = true ALL ROWS" --target-org
+    dev
+  expect:
+  - all-rows-is-a-cli-flag
+  why: placing ALL ROWS in query string fails; CLI expects --all-rows flag
+- command: sf data query -q "SELECT COUNT() FROM Contact ALL ROWS" -o prod
+  expect:
+  - all-rows-is-a-cli-flag
+  why: ALL ROWS in SOQL query string rejected by sf CLI endpoint
+- command: sf data update bulk --sobject Contact --file updates.csv --target-org prod
+  expect:
+  - bulk-partial-failure
+  - unable-to-lock-row
+  why: bulk updates can complete job execution while containing individual row failures
+- command: sf data import tree --files data/leads.json -o dev
+  expect:
+  - bulk-partial-failure
+  - audit-fields-not-writable
+  - layout-required-is-not-api-required
+  why: data import tree processes batch data subject to record-level validations
+- command: sf org display --target-org refreshed-sandbox
+  expect:
+  - sandbox-refresh-changes-orgid
+  - developer-edition-is-not-sandbox
+  why: displaying org metadata after sandbox refresh changes org ID
+- command: sf org create sandbox --name devsbx --target-org prod
+  expect:
+  - sandbox-refresh-changes-orgid
+  why: creating or refreshing sandboxes mints new org IDs
+- command: sf project deploy start --target-org production --test-level RunLocalTests
+  expect:
+  - prod-deploy-runs-tests
+  - deploy-order
+  why: production deployments with Apex run tests and enforce 75% code coverage
+- command: sf project deploy validate --manifest manifest/package.xml -o prod
+  expect:
+  - prod-deploy-runs-tests
+  - deploy-order
+  why: validating deployment package against production runs tests
+- command: sf project deploy start --metadata Flow:New_Order_Flow --target-org prod
+  expect:
+  - flow-activation-on-deploy
+  - deploy-order
+  why: deploying flows marked active does not guarantee activation in target org
+- command: sf data query -q "SELECT DeveloperName, ActiveVersionId FROM FlowDefinition" -t -o dev
+  expect:
+  - flow-activation-on-deploy
+  - flow-retrieve-latest-only
+  why: querying active flow version after flow deployment
+- command: sf data update bulk --sobject Account --file account_reassign.csv --target-org prod
+  expect:
+  - unable-to-lock-row
+  - bulk-partial-failure
+  why: bulk updating parent/owner fields causes row locking contention
+- command: sf data update record --sobject Opportunity --record-id 006xx000003DGb2 --values "OwnerId=005xx000001SVv3"
+    -o dev
+  expect:
+  - unable-to-lock-row
+  - no-op-update-is-not-free
+  why: updating OwnerId acquires group membership locks
+- command: sf data update record --sobject Lead --record-id 00Qxx000003DGb2 --values "Status=Closed -
+    Disqualified" -o dev
+  expect:
+  - restricted-picklist-rejects-inactive
+  - no-op-update-is-not-free
+  why: updating restricted picklist fields rejects inactive values
+- command: sf data update bulk --sobject Account --file account_status.csv -o dev
+  expect:
+  - restricted-picklist-rejects-inactive
+  - bulk-partial-failure
+  why: bulk updates fail on inactive restricted picklist entries
+- command: sf project delete source --metadata CustomField:Account.OldField__c --purge-on-delete -o dev
+  expect:
+  - purge-flag-belongs-to-deploy
+  - deleted-field-rename
+  why: --purge-on-delete is invalid on delete source command
+- command: sf project deploy start --manifest manifest/package.xml --purge-on-delete -o prod
+  expect:
+  - purge-flag-belongs-to-deploy
+  why: --purge-on-delete is a valid flag for deploy start with destructive changes
+- command: sf data create record --sobject Account --values "Name=Historical Inc CreatedDate=2020-01-01T00:00:00Z"
+    --target-org dev
+  expect:
+  - audit-fields-not-writable
+  - order-of-execution
+  - post-commit-work-is-invisible-to-the-caller
+  why: setting CreatedDate on record creation silently ignored unless audit fields are enabled
+- command: sf data import tree --files data/historical_cases.json -o dev
+  expect:
+  - audit-fields-not-writable
+  - layout-required-is-not-api-required
+  why: importing historical data drops audit timestamps by default
+- command: sf data create record --sobject Contact --values "LastName=Smith" --target-org dev
+  expect:
+  - layout-required-is-not-api-required
+  - order-of-execution
+  why: page layout required fields are not enforced by API record creation
+- command: sf data import tree --files data/contacts.json -o dev
+  expect:
+  - layout-required-is-not-api-required
+  - audit-fields-not-writable
+  why: API data load enforces nillable=false, not layout requirement
+- command: sf data create record --sobject Account --values "Type=UnknownType" --target-org dev
+  expect:
+  - restricted-picklist-rejects-new-values
+  - order-of-execution
+  why: restricted picklists fail on unknown values while unrestricted picklists accept them
+- command: sf data import tree --files data/accounts_with_picklists.json -o dev
+  expect:
+  - restricted-picklist-rejects-new-values
+  - bulk-partial-failure
+  why: data load into picklists subject to restriction settings
+- command: sf data create record --sobject Lead --values "FirstName=Jane LastName=Doe Company=Acme" --target-org
+    dev
+  expect:
+  - duplicate-rules-block-the-save
+  - order-of-execution
+  why: active duplicate rules block save after before-triggers and flows run
+- command: sf data upsert bulk --sobject Contact --file contacts.csv --external-id Email -o dev
+  expect:
+  - duplicate-rules-block-the-save
+  - bulk-partial-failure
+  why: bulk upsert blocked by duplicate rule evaluation
+- command: sf data create record --sobject Task --values "Subject=Followup" --target-org dev
+  expect:
+  - post-commit-work-is-invisible-to-the-caller
+  - order-of-execution
+  why: post-commit asynchronous flow/email paths run after DML return
+- command: sf data update record --sobject Case --record-id 500xx000003DGb2 --values "Status=Closed" -o
+    dev
+  expect:
+  - post-commit-work-is-invisible-to-the-caller
+  - no-op-update-is-not-free
+  why: downstream automation runs post-commit and is not readable immediately
+negatives:
+- command: sf data query --query 'SELECT Id FROM Account' --target-org dev
+  must_not:
+  - prod-deploy-runs-tests
+  - fls-not-automatic
+  - deploy-order
+  why: a read query does not deploy metadata or execute tests
+- command: sf data query --query "SELECT Id, Name FROM FlowDefinitionView" --target-org dev
+  must_not:
+  - flow-retrieve-latest-only
+  - flow-activation-on-deploy
+  why: querying FlowDefinitionView on standard API is a read operation, not a flow retrieval or deployment
+- command: sf project retrieve start --metadata ApexClass:AccountController --target-org dev
+  must_not:
+  - prod-deploy-runs-tests
+  - governor-limits-core
+  why: retrieving source code from an org is a read-only metadata pull; no Apex is executed and no deployment
+    tests run
+- command: sf org display --target-org my-sandbox
+  must_not:
+  - sandbox-refresh-changes-orgid
+  why: simply displaying org details does not trigger a sandbox refresh or indicate org ID invalidation
+- command: sf data delete record --sobject Account --record-id 001xx000003DGb2 --target-org dev
+  must_not:
+  - hard-delete-permission
+  why: a standard single record deletion sends the record to the Recycle Bin and does not require or perform
+    a hard delete
+- command: sf apex run --file scripts/apex/test.apex --target-org dev
+  must_not:
+  - prod-deploy-runs-tests
+  why: executing an anonymous Apex script in a dev org is not a metadata deployment and does not trigger
+    deployment test coverage gates
+- command: sf project deploy start --metadata CustomField:Account.Rating__c --target-org dev
+  must_not:
+  - prod-deploy-runs-tests
+  why: deploying metadata to a sandbox/dev org does not enforce production test coverage requirements
+- command: sf data update record --sobject Account --record-id 001xx000003DGb2 --values "Name=Acme Corp"
+    --target-org dev
+  must_not:
+  - bulk-partial-failure
+  - unable-to-lock-row
+  why: updating a single record via REST API returns immediate success or failure for that single record,
+    avoiding bulk job partial status or batch parent locking issues
+- command: sf sobject describe --sobject Account --target-org dev
+  must_not:
+  - namespace-in-packaging-org
+  why: describing a standard object like Account in a non-packaged org does not encounter packaging namespace
+    prefixes
+- command: sf project retrieve start --metadata Flow:MyFlow --target-org dev
+  must_not:
+  - flow-activation-on-deploy
+  why: retrieving a flow definition does not deploy or activate it
+- command: sf data query --query "SELECT Id, NewValue FROM AccountHistory" --target-org dev
+  must_not:
+  - self-join-forbidden
+  why: querying a history object does not use a self-referential semi-join
+- command: sf data create record --sobject Lead --values "LastName=Smith Company=Acme" --target-org dev
+  must_not:
+  - audit-fields-not-writable
+  why: creating a record without explicitly specifying system audit fields (CreatedDate/CreatedById) will
+    not attempt or fail audit field writes
+- command: sf data delete bulk --sobject Lead --file lead_ids.csv --target-org dev
+  must_not:
+  - hard-delete-permission
+  why: bulk delete without the --hard-delete flag performs a soft delete to the Recycle Bin and does not
+    require Bulk API Hard Delete permissions
+- command: sf project deploy start --source-dir force-app/main/default/classes -o prod
+  must_not:
+  - fls-not-automatic
+  why: deploying Apex classes does not deploy custom fields, so field-level security gaps on CustomField
+    metadata do not apply
+- command: sf project delete source --metadata CustomField:Account.OldField__c -o dev
+  must_not:
+  - purge-flag-belongs-to-deploy
+  why: running standard delete source without --purge-on-delete soft deletes the field without triggering
+    flag errors
+- command: sf org open --target-org dev
+  must_not:
+  - frontdoor-session-handoff
+  why: opening an org using default CLI browser auth flow without --path frontdoor.jsp or raw frontdoor
+    tokens does not expose session handoff IP restrictions
+- command: sf data update bulk --sobject Contact --file contacts.csv -o dev
+  must_not:
+  - hard-delete-permission
+  why: a bulk update operation writes data updates and does not perform hard deletions
+- command: sf project retrieve start --metadata Profile:Admin -o dev
+  must_not:
+  - full-profile-deploy
+  why: retrieving a profile downloads metadata from the org and does not overwrite target org profile
+    permissions
+- command: sf data query --query "SELECT Id FROM Account WHERE IsDeleted = true" --all-rows -o dev
+  must_not:
+  - all-rows-is-a-cli-flag
+  why: passing --all-rows as a CLI flag correctly routes through queryAll without putting invalid SOQL
+    syntax in the query string
+- command: sf apex run --file scripts/apex/clean.apex -o dev
+  must_not:
+  - fls-not-automatic
+  why: Apex execution bypasses FLS deployment mechanics and runs with system or user apex privileges
+- command: sf data import tree --files data/accounts.json -o dev
+  must_not:
+  - restricted-picklist-rejects-inactive
+  why: data import tree creating new records tests new value restrictions, not updating existing records
+    with inactive picklist values
+- command: sf data query --query "SELECT DeveloperName FROM CustomField WHERE TableEnumOrId='Account'"
+    --use-tooling-api -o dev
+  must_not:
+  - flowdefinitionview-is-standard-api
+  why: querying CustomField via Tooling API is valid and does not query FlowDefinitionView
+- command: sf project deploy start --metadata PermissionSet:Sales -o dev
+  must_not:
+  - full-profile-deploy
+  why: deploying a permission set is additive and does not exhibit full profile overlay/wiping behaviors
+- command: sf project deploy start --api-version 58.0 -o prod
+  must_not:
+  - three-releases-a-year
+  why: specifying an explicit valid API version in deployment does not describe non-existent schema attributes
+- command: sf data update record --sobject CustomObj__c --record-id a00xx000003DGb2 --values "Field__c=Val"
+    -o dev
+  must_not:
+  - managed-fields-immutable
+  why: updating data values on a custom object record does not modify managed package metadata definitions
+- command: sf data query --query "SELECT Id, Name FROM Account" --use-tooling-api -o dev
+  must_not:
+  - history-fields-unfilterable
+  why: querying Account does not touch history objects
+- command: sf limits api display --target-org prod
+  must_not:
+  - developer-edition-is-not-sandbox
+  why: checking API limits on a production org is not affected by Developer Edition org classification
+    nuances
+- command: sf data create record --sobject Task --values "Subject=Call" -o dev
+  must_not:
+  - no-op-update-is-not-free
+  why: creating a new record is an insert operation, not an update operation
+- command: sf project retrieve start --metadata CustomField:Account.Status__c -o dev
+  must_not:
+  - fls-not-automatic
+  why: retrieving a field metadata file from an org does not omit FLS in the target org
+- command: sf data query --query "SELECT ApiName, IsActive FROM FlowDefinitionView" -o dev
+  must_not:
+  - flow-retrieve-latest-only
+  why: querying FlowDefinitionView is an API SOQL query, not a metadata retrieve operation
+- command: sf data upsert bulk --sobject Account --file accounts.csv --external-id ExtId__c -o dev
+  must_not:
+  - hard-delete-permission
+  why: bulk upsert creates or updates records; it does not delete or hard-delete data
+- command: sf project deploy start --source-dir force-app/main/default/flows -o dev
+  must_not:
+  - deleted-field-rename
+  why: deploying flows does not delete custom fields
+- command: sf org display -o dev-scratch
+  must_not:
+  - sandbox-contains-real-data
+  why: scratch orgs and Developer Edition orgs do not contain production copy data
+- command: sf data delete record --sobject Contact --record-id 003xx000003DGb2 -o dev
+  must_not:
+  - unable-to-lock-row
+  why: single record delete via REST API does not involve parallel bulk batch parent row locking

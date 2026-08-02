@@ -51,7 +51,7 @@ entries:
     and an editable=true entry fails the whole deploy. The boilerplate that works for every
     other field breaks on them.
   detect: "SELECT Field, Parent.Name FROM FieldPermissions WHERE Field = 'Account.My_Field__c'"
-  triggers: ['project\s+deploy', 'deploy:start', 'CustomField']
+  triggers: ['project\s+deploy.*(CustomField|fields/)', 'deploy:start.*CustomField', 'metadata\s+CustomField', 'FieldPermissions', 'project\s+deploy.*manifest', 'deploy.*package\.xml']
   confidence: verified-live
   verify: fls_absent_without_permset
   updated: 2026-08-01
@@ -99,7 +99,7 @@ entries:
     Ask a definition-scoped question. Tooling `SELECT DeveloperName, ActiveVersionId FROM
     FlowDefinition`, or standard-API `FlowDefinitionView.IsActive`.
   detect: "sf data query --use-tooling-api --query \"SELECT DeveloperName, ActiveVersionId FROM FlowDefinition\""
-  triggers: ['project\s+retrieve.*Flow', 'Flow:', 'FlowDefinition']
+  triggers: ['project\s+retrieve.*Flow', 'force:source:retrieve.*Flow', 'metadata\s+.?Flow:', 'retrieve.*Flow:']
   confidence: verified-live
   verify: flowdefinition_queryable
   updated: 2026-08-01
@@ -137,7 +137,7 @@ entries:
 - id: full-profile-deploy
   domain: deploy
   title: 'A profile deploy is an overlay, not a wipe — the danger is what the file SAYS, not what it omits'
-  triggers: ["Profile", "profiles?/"]
+  triggers: ['project\s+deploy.*Profile', 'deploy.*Profile:', 'metadata\s+Profile:']
   symptom: >
     Access disappears after a profile deployment, and the usual explanation — "the file did not
     mention it, so it was removed" — does not survive testing.
@@ -220,7 +220,7 @@ entries:
   remedy: >
     Bulkify: no SOQL or DML inside a loop, ever. These limits are per transaction, so code that
     passes with one record fails at 200 — which is exactly the batch size the platform uses.
-  triggers: ['apex\s+run', 'apex:run', '--file.*\.apex']
+  triggers: ['apex\s+run', 'apex:run', 'force:apex:execute', 'apex:execute', '--apexcodefile', '--file.*\\.apex']
   confidence: documented
   source: "Apex Developer Guide — Execution Governors and Limits"
   updated: 2026-08-01
@@ -261,6 +261,7 @@ entries:
   symptom: "An admin-adjacent profile can see every record but still not every field."
   cause: "The two controls are independent; VAD is a sharing-layer grant."
   remedy: "Do not use VAD to diagnose a missing field — check FieldPermissions."
+  triggers: ['PermissionSet', 'PermissionSetAssignment', 'ViewAllData', 'FieldPermissions', 'Profile:']
   confidence: documented
   source: "Salesforce Help — User Permissions"
   updated: 2026-08-01
@@ -329,7 +330,7 @@ entries:
     Resolve every API name against the org the code will run in, never against the repository.
     Unlocked/2GP packages built without a namespace carry no prefix anywhere, and packaged
     custom fields on STANDARD objects carry the prefix while the object does not.
-  triggers: ['__c\b', 'sobject\s+describe', 'describe']
+  triggers: ['[A-Za-z][A-Za-z0-9]*__[A-Za-z0-9_]+__c', 'namespace', 'package\s+(create|version)']
   confidence: documented
   source: "Salesforce Developer Guide — Namespaces"
   updated: 2026-08-01
@@ -344,6 +345,7 @@ entries:
   remedy: >
     Deploy managed field sets with their ORIGINAL description and label, and extend behaviour
     from subscriber-side components instead of editing packaged ones.
+  triggers: ['[A-Za-z][A-Za-z0-9]*__[A-Za-z0-9_]+__c', 'managed', 'fieldSet', 'FieldSet']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -398,7 +400,7 @@ entries:
   remedy: >
     Never echo the URL — it contains a live token that lands in shell history, browser history
     and the first-navigation Referer. Write it to a mode-0600 file and pass the path.
-  triggers: ['frontdoor', 'org\s+open']
+  triggers: ['frontdoor', 'secur/frontdoor', 'org\s+display.*--verbose', 's[i]d=']
   confidence: documented
   source: "Salesforce Help — frontdoor.jsp"
   updated: 2026-08-01
@@ -416,7 +418,7 @@ entries:
   remedy: >
     Set the API version explicitly in generated metadata and keep it consistent, rather than
     inheriting whatever the tool defaults to.
-  triggers: ['apiVersion', 'sourceApiVersion']
+  triggers: ['apiVersion', 'sourceApiVersion', '--api-version', 'project\s+(deploy|retrieve)']
   confidence: documented
   source: "Apex Developer Guide — Understanding API versions"
   updated: 2026-08-01
@@ -475,6 +477,7 @@ entries:
     report it. Space out full validation runs, and treat a limit error as its own outcome —
     distinct from a real failure — or you will spend the afternoon debugging code that is fine.
   detect: 'sf limits api display --target-org <alias>   # if this ITSELF errors, you are already out'
+  triggers: ['limits', 'REQUEST_LIMIT_EXCEEDED', 'TotalRequests']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -494,6 +497,7 @@ entries:
     by level. Do not read the MALFORMED_QUERY as 'no children' — the query never ran.
   detect: 'sf data query --query "SELECT COUNT() FROM Account WHERE ParentId IN (SELECT Id FROM Account)"'
   detect_expect: error
+  triggers: ['IN\s*\(\s*SELECT', 'NOT\s+IN\s*\(\s*SELECT']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -513,6 +517,7 @@ entries:
     Classify them as uncountable rather than unknown. Treating them as failures makes every
     hierarchy report look incomplete forever, which trains the reader to ignore the warning that
     actually matters.
+  triggers: ['SELECT\s+COUNT\(\s*\)']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -530,6 +535,7 @@ entries:
     Drop ALL ROWS from the statement and pass --all-rows. Do not conclude the recycle bin is
     empty because the query errored — it never ran.
   detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
+  triggers: ['ALL\s+ROWS', 'IsDeleted\s*=\s*true']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -569,7 +575,7 @@ entries:
     sandbox correctly falls OUT of scope and must be re-approved, which is the safe direction
     but will look like a bug the first time.
   detect: 'sf org display --target-org <alias> --json   # compare the id against what you recorded'
-  triggers: ['org\s+(display|login)', 'sandbox']
+  triggers: ['refresh', 'org\s+create\s+sandbox', 'sandbox.*(create|clone|delete)']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -608,7 +614,7 @@ entries:
     Verify activation after every flow deploy by reading the active version back, not by
     trusting the deploy result or the file. Retrieve and check status, or read
     FlowDefinition.ActiveVersionId.
-  triggers: ['Flow\b', 'project\s+deploy.*Flow', 'FlowDefinition']
+  triggers: ['(project|force:source|force:mdapi)\s*[: ]\s*(deploy|retrieve).*[Ff]low', 'metadata\s+Flow', 'Flow:[A-Za-z_]']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -662,6 +668,7 @@ entries:
     teardown that falls back to delete source after a failed purge leaves a tombstone, which
     looks exactly like purge behaviour and will teach you the wrong lesson about what purge
     does.
+  triggers: ['purge-on-delete', 'destructiveChanges', 'delete\s+source', 'project\s+delete']
   confidence: practitioner
   updated: 2026-08-01
 
@@ -686,7 +693,7 @@ entries:
     inspecting rows afterwards. The describe is the org's own answer to whether the load can
     work; a successful insert is not.
   detect: "SELECT QualifiedApiName, IsCreatable FROM EntityParticle WHERE EntityDefinition.QualifiedApiName = 'Account' AND QualifiedApiName IN ('CreatedDate', 'CreatedById')"
-  triggers: ['data\s+import', 'data\s+create', 'CreatedDate', 'CreatedById', 'bulk\s+upsert']
+  triggers: ['CreatedDate', 'CreatedById', 'LastModifiedDate', 'LastModifiedById', 'data\s+import.*tree', 'bulk\s+upsert']
   confidence: verified-live
   verify: audit_fields_not_createable
   updated: 2026-08-02

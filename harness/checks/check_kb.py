@@ -592,6 +592,89 @@ def _failure_keeps_its_reason():
                   "blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED")
 
 
+@check("retrieval_quality", "static", catastrophe=True)
+def _retrieval_quality():
+    """Does the RIGHT entry actually fire — and does the wrong one stay quiet?
+
+    Everything else about this catalogue is upstream of one question nobody had measured. An
+    entry that never reaches the decision is worth nothing, and an entry that fires on everything
+    is worth less than nothing, because it teaches an operator to skim past every note. kb_injection
+    checked three hand-picked operations, which is a demonstration, not a measurement.
+
+    Two recall numbers, because the gap between them says something different:
+      MATCHED  — the entry's triggers matched the command at all.
+      SURFACED — it survived platform_notes' limit and actually printed.
+    An entry that matches but is crowded out is a ranking problem; one that never matches is a
+    trigger problem. Reporting a single number would hide which.
+
+    The evaluation set is held separately from the entries so the thing being measured did not
+    write its own exam.
+    """
+    import importlib.util as _il
+    ev = ROOT / "harness" / "checks" / "retrieval-evalset.yml"
+    if not ev.exists():
+        return Result("retrieval_quality", FAIL,
+                      "no evaluation set — retrieval is unmeasured, which is the state this "
+                      "check exists to end")
+    try:
+        import yaml as _y
+        data = _y.safe_load(ev.read_text())
+    except Exception as e:
+        return Result("retrieval_quality", FAIL, f"evaluation set unreadable: {e}")
+    pos = data.get("positives") or []
+    neg = data.get("negatives") or []
+    if len(pos) < 30:
+        return Result("retrieval_quality", FAIL,
+                      f"{len(pos)} positive case(s) — too few to be a measurement")
+
+    lspec = _il.spec_from_file_location("torque_lib_rq", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+    known = {e["id"] for e in lib._kb_entries()}
+
+    matched = surfaced = 0
+    miss_match, miss_surface, unknown_ids = [], [], set()
+    for c in pos:
+        cmd, want = c.get("command", ""), set(c.get("expect") or [])
+        unknown_ids |= (want - known)
+        want &= known
+        if not want:
+            continue
+        all_hits = {e["id"] for e in lib.platform_notes(cmd, limit=99)}
+        top_hits = {e["id"] for e in lib.platform_notes(cmd)}
+        if want & all_hits:
+            matched += 1
+            if want & top_hits:
+                surfaced += 1
+            else:
+                miss_surface.append(f"{sorted(want)[0]} matched but was crowded out of {cmd[:52]}")
+        else:
+            miss_match.append(f"{sorted(want)[0]} did not match {cmd[:52]}")
+
+    false_pos = []
+    for c in neg:
+        cmd, forbid = c.get("command", ""), set(c.get("must_not") or []) & known
+        if forbid & {e["id"] for e in lib.platform_notes(cmd)}:
+            false_pos.append(f"{sorted(forbid)[0]} fired on {cmd[:52]}")
+
+    n = len(pos)
+    r_match, r_surface = matched / n, surfaced / n
+    precision = 1 - (len(false_pos) / len(neg)) if neg else 1.0
+    detail = (f"recall {r_match:.0%} matched / {r_surface:.0%} surfaced over {n} case(s); "
+              f"precision {precision:.0%} over {len(neg)} negative(s)")
+    # Floors, not targets. Below these the catalogue is not reaching the decision often enough
+    # for its content to be the thing that matters.
+    if r_match < 0.75 or precision < 0.85:
+        return Result("retrieval_quality", FAIL,
+                      f"{detail}. never matched: {miss_match[:4]}; fired wrongly: {false_pos[:3]}")
+    if unknown_ids:
+        return Result("retrieval_quality", FAIL,
+                      f"the evaluation set expects entries that do not exist: {sorted(unknown_ids)[:5]}")
+    extra = ""
+    if miss_surface:
+        extra = f"; {len(miss_surface)} matched but crowded out — a ranking gap, not a trigger gap"
+    return Result("retrieval_quality", PASS, detail + extra)
+
+
 @check("named_mutators_exist", "static")
 def _named_mutators_exist():
     """A mutator named in a document must be one validate.py actually runs.
