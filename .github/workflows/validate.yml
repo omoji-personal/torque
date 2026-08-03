@@ -52,6 +52,17 @@ jobs:
           bash --version | head -1
           git --version
 
+      # PyYAML is the harness's one third-party import, and it is worth being precise about
+      # where it sits: the SECURITY path (hooks, gates, shellparse) is stdlib-only and stays
+      # that way. This is needed by retrieval_quality, which reads the retrieval evaluation set
+      # from YAML. The first CI run failed on exactly this and nothing else — "evaluation set
+      # unreadable: No module named 'yaml'" — which is the check reporting FAIL for an
+      # environment reason where the house taxonomy wants SKIP/BLOCKED with a stated cause.
+      # Installing the parser is the honest fix: the eval set really is YAML, and a retrieval
+      # measurement that silently did not run is the failure mode this repo exists to refuse.
+      - name: Install the harness's one non-stdlib dependency
+        run: python3 -m pip install --disable-pip-version-check --quiet pyyaml
+
       # The honest part. Three checks cannot reach their real conclusion in CI, and each must
       # read as non-green-but-explained rather than as a pass:
       #   clean_ip (×3 mutators)      — the denylist is private and absent here, so the check
