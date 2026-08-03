@@ -1,0 +1,99 @@
+# Static profile on every push and PR.
+#
+# Why this exists: ROADMAP.md carried "66 checks" for eight commits while the harness ran 71,
+# and nothing caught it because nothing ran on push. A repo whose thesis is that a green signal
+# can still be a wrong outcome had no signal at all between an author's local runs.
+#
+# What this job is, and what it is NOT. It runs the STATIC profile only: no org, no secrets, no
+# credentials. It therefore proves the refusal machinery, the fixtures, the fuzzer and the
+# document-consistency checks — and proves NOTHING about org-touching behaviour. Deploys, the
+# probe cycle, mass-update and browser render live in the capability and release profiles and
+# still require an operator running against a disposable org. Per .claude/rules/validation.md a
+# STATIC change needs the static profile only, so this gates exactly what it is entitled to gate
+# and a green tick here must never be read as "release green".
+
+name: validate
+
+on:
+  push:
+  pull_request:
+
+# A second push should cancel the first — the answer only matters for the tip.
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: clean_ip's historical-blob path scans git objects, not just the
+          # worktree, because a secret removed from HEAD is still a secret in the pack. That
+          # path is operator-only here (see below), but a shallow clone would make a future
+          # history-scanning check quietly vacuous rather than loudly skipped.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          # Not a matrix, and deliberately not the floor. python_floor_is_real proves the 3.8
+          # floor with ast.parse(feature_version=...), which needs no 3.8 interpreter installed,
+          # so pinning old runtimes here would buy nothing the check does not already establish.
+          python-version: '3.12'
+
+      - name: Toolchain, recorded rather than assumed
+        run: |
+          python3 --version
+          bash --version | head -1
+          git --version
+
+      # PyYAML is the harness's one third-party import, and it is worth being precise about
+      # where it sits: the SECURITY path (hooks, gates, shellparse) is stdlib-only and stays
+      # that way. This is needed by retrieval_quality, which reads the retrieval evaluation set
+      # from YAML. The first CI run failed on exactly this and nothing else — "evaluation set
+      # unreadable: No module named 'yaml'" — which is the check reporting FAIL for an
+      # environment reason where the house taxonomy wants SKIP/BLOCKED with a stated cause.
+      # Installing the parser is the honest fix: the eval set really is YAML, and a retrieval
+      # measurement that silently did not run is the failure mode this repo exists to refuse.
+      - name: Install the harness's one non-stdlib dependency
+        run: python3 -m pip install --disable-pip-version-check --quiet pyyaml
+
+      # The honest part. Three checks cannot reach their real conclusion in CI, and each must
+      # read as non-green-but-explained rather than as a pass:
+      #   clean_ip (×3 mutators)      — the denylist is private and absent here, so the check
+      #                                 reports operator-only. It must not fail the job, and it
+      #                                 must not be mistaken for having run.
+      #   public_description_accurate — needs `gh` with auth; expected N/A.
+      #   guards_share_no_blind_assumption — passes here for a reason worth writing down: an
+      #                                 Actions checkout lives under $HOME, and this check
+      #                                 assumes exactly that (docs/HANDOFF-DEFECTS-2026-08.md
+      #                                 C9). It goes red only where the repo sits outside HOME.
+      #                                 CI green is therefore NOT evidence that C9 is fixed.
+      # sf CLI is deliberately NOT installed. Static fixtures are expected to deny before any
+      # classification callout, because CI has no allowlist and an unauthenticated alias
+      # classifies production — the fail-closed direction. If the first run shows a check that
+      # needs sf reaching a wrong conclusion rather than an honest refusal, install it here
+      # rather than skipping the check.
+      - name: Static profile
+        run: python3 harness/validate.py --profile static
+
+      # The static profile includes --self-test, which MUTATES HOOK SOURCES IN PLACE and
+      # restores them in a finally. If a restore is ever missed, the mutation is a source edit
+      # that would ride along in the next commit — a neutered guard, merged silently, which is
+      # the worst outcome this repo has. The runner is ephemeral, so this assertion is the only
+      # thing standing between that and a green tick.
+      - name: Working tree must be clean after self-test
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::self-test left residue in the working tree — a mutated guard may be uncommitted"
+            git status --porcelain
+            git --no-pager diff
+            exit 1
+          fi
+          echo "clean — every mutator restored what it neutered"

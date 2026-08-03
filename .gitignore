@@ -8,7 +8,14 @@ __pycache__/
 node_modules/
 .venv/
 
-# Retrieved documentation cache — built locally by scripts/kb-fetch.py, never committed.
-# Raw vendor docs are not redistributable and are not usable at this granularity anyway;
-# what ships is the DIGESTED catalogue in knowledge/salesforce-platform.yml.
+# Retrieved documentation. The pipeline is scripts/salesforce-docs/{ingest,extract}.py.
+# The mirror it fetches declares NO LICENCE, so the raw bodies are written to
+# local/salesforce-docs-mirror/ and are never committed — already covered by `local/` above,
+# which is where the privacy and redistribution rationale actually lives.
+# What IS committed is knowledge/salesforce-docs/ (llms.txt-style index and section files) and
+# the digested catalogue in knowledge/salesforce-platform.yml. Those are the shipped artifacts.
+#
+# knowledge/cache/ is vestigial: it was kb-fetch.py's destination, that script no longer exists,
+# and nothing writes the path today. Kept as a no-op guard, and labelled so the next reader does
+# not infer from it that an uncommitted cache still lives under knowledge/.
 knowledge/cache/

@@ -87,8 +87,8 @@ integration, and it is what turns the pieces into one claim.
 **The adversarial assurance corpus is the asset.** The observation that changed my mind, from the
 mechanism review: the catalogue's facts are copyable; the evidence that the gates, the retrieval
 and the verifiers fail correctly under hostile variation is not. 196 bypass fixtures, 34 negative
-retrieval cases, 15 mutators, the live experiments and the verifier-falsification seams are a
-year of adversarial rounds.
+retrieval cases, 15 mutators, the live experiments and the verifier-falsification seams are what
+the adversarial rounds left behind.
 
 So new capability ships with its bypass fixtures and its mutator, or it does not ship.
 
@@ -103,6 +103,14 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 66 checks, 15 mutators, 196 adversarial fixtures,
-retrieval measured at 94% recall / 85% precision against an evaluation set written by someone
-other than the author of the thing being measured.
+The current state, measured rather than claimed: 71 checks (50 static, 68 capability, 71 release),
+15 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
+someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
+recall, 85% precision over 34 negatives.
+
+Both recall numbers, because they answer different questions and quoting only the first flatters
+the tool: MATCHED is whether the entry's triggers fired at all; SURFACED is whether it survived the
+two-slot display limit and actually reached the operator. The 8-point gap is a capacity limit
+rather than a mis-ranking, and only matched recall currently has a FAIL floor. Precision sits at
+85% against a floor of 85% — one more false positive turns the build red, which is the intended
+tension and worth stating rather than discovering.
