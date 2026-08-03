@@ -293,3 +293,54 @@ Two earlier entries are worth reading as a pair with this one: P5 claimed "conve
 while citing an attestation file that had never been written, because the generator of the day
 recorded tool versions while its own docstring promised check outcomes. P6 corrected that. This
 entry exists because a fourth round found a P0 after P6 was written.
+
+---
+
+## P8 — release · the run this log failed to record · 2026-08-02
+
+**Attestation:** `harness/attest/attest-3c662cf5.json` — commit `3c662cf5`, tree
+`a9640819`, **working tree NOT clean** · **profile: release · verdict: PASS** · 210s
+
+Target `sf-coffee` (id sha256/16 `43030f28daf29ee3`): sf-coffee classified 'developer'
+(IsSandbox=False, Developer Edition)
+
+**71/71 checks pass. 15 mutators, all caught.** 196 adversarial fixtures (193 recorded on disk,
+3 minted at run time), 128 differential-fuzz cases. Toolchain: sf 2.144.6, node v24.11.1,
+python 3.14.3.
+
+### Why this entry is dated later than the run it describes
+
+The run happened on 2026-08-02 and was never written down. Until then the newest entry here was
+P7 — "59/59 checks pass. 11 mutators" — while the attestation directory already held a 71/71
+release pass with 15 mutators. For eight commits this log understated the thing it exists to
+record, which is a gentler failure than overstating it and the same underlying defect: a number
+written once and not re-derived. It was found by an external evaluation reading the artifacts
+against the prose, not by any check, because no check compares this log's newest entry to the
+newest attestation. That check does not exist yet and should.
+
+### What this run does NOT cover
+
+Three commits have landed since the attested tree, and the honest reading of this entry has to
+name them:
+
+| Commit | Change |
+|---|---|
+| `c73b53c` | P1-002 — first-party trust stopped being path-based; `validate.py` deliberately lost its interpreter exemption |
+| `04d142a` | `/status` command |
+| `a40b58f` | the product/roadmap evaluation and its defect punch list |
+
+P1-002 is the one that matters: it changed which tools the gates trust, and it landed **after**
+this run. So by the definition in `.claude/rules/validation.md` — current means the newest
+all-PASS release entry whose TESTED tree equals the PARENT tree of the docs-only attestation
+commit at the tip — **this entry is not current, and nothing here should be read as covering the
+tree as it stands.** It records a real run at a named commit. That is all it records.
+
+### One defect visible inside the attestation itself
+
+`self_test.mutators_caught` is 15; `self_test.mutators` names 14. Both numbers are produced by
+the same run, and they disagree because `torque-attest:61` harvests names by matching the literal
+token `" mutator:"` in the self-test output, and the clean_ip fail-closed mutator's line does not
+carry it. So the artifact counts a mutator it cannot name — a count and a list, derived from one
+source, disagreeing in the file the repo offers a reader as evidence. Filed as D7 in
+`docs/HANDOFF-DEFECTS-2026-08.md`; the fix is one word on one line in `validate.py`, and it is
+blocked pending operator-present issuance because `validate.py` is a protected basename.
