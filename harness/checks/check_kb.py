@@ -2784,16 +2784,35 @@ def _budget_fits_hook_timeout():
                       f"budget {lib.GATE_BUDGET_S}s + grace {lib._GRACE_S}s = {ceiling}s does not "
                       f"fit under the {lib.HOOK_TIMEOUT_S}s hook timeout — an overrun is killed "
                       f"by the host, and a killed hook exits non-2, which ALLOWS")
-    declared = set()
+    # GATE_BUDGET_S governs the two gates — the hooks that make org callouts and can genuinely
+    # approach the ceiling. This used to require EVERY PreToolUse timeout to equal
+    # HOOK_TIMEOUT_S, which quietly assumed every PreToolUse hook is a budget-governed gate.
+    # syntax_guard broke that assumption by being true and cheap: it parses a string, declares
+    # 20s, and is not sized against GATE_BUDGET_S at all. Requiring it to claim 55s would have
+    # made the number meaningless in order to keep the check quiet.
+    gate_t, other_t = set(), {}
     for group in _j.loads((ROOT / ".claude" / "settings.json").read_text()) \
             .get("hooks", {}).get("PreToolUse", []):
         for h in group.get("hooks", []):
-            declared.add(h.get("timeout"))
-    if declared != {lib.HOOK_TIMEOUT_S}:
+            cmd = h.get("command", "")
+            if "prod_write_gate.py" in cmd or "destructive_data_gate.py" in cmd:
+                gate_t.add(h.get("timeout"))
+            else:
+                other_t[cmd.rsplit("/", 1)[-1].rstrip('"')] = h.get("timeout")
+    if gate_t != {lib.HOOK_TIMEOUT_S}:
         return Result("budget_fits_hook_timeout", FAIL,
                       f"lib.HOOK_TIMEOUT_S is {lib.HOOK_TIMEOUT_S} but settings.json declares "
-                      f"{sorted(declared)} — the budget is sized against a number the host is "
-                      f"not using")
+                      f"{sorted(gate_t)} for the gates — the budget is sized against a number "
+                      f"the host is not using")
+    # A non-gate PreToolUse hook still must not outlive the host's patience: killed means non-2,
+    # and non-2 ALLOWS. It need not equal the gate ceiling, but it must sit under it and be
+    # declared rather than left to a default nobody chose.
+    bad = {n: t for n, t in other_t.items()
+           if not isinstance(t, (int, float)) or t > lib.HOOK_TIMEOUT_S}
+    if bad:
+        return Result("budget_fits_hook_timeout", FAIL,
+                      f"non-gate PreToolUse hook(s) {bad} declare no timeout or one above the "
+                      f"{lib.HOOK_TIMEOUT_S}s ceiling — a killed hook exits non-2, which ALLOWS")
 
     # and the deadline must actually FIRE. A hanging callout does not prove it: `_sf` clamps
     # each callout to the remaining budget, so that path denies on time with the deadline
