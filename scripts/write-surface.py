@@ -70,15 +70,50 @@ def tracked_files() -> list[str]:
     return [l for l in r.stdout.split("\n") if l.strip()]
 
 
+def maintainer_window_open() -> bool:
+    """Is a source-edit window live right now?
+
+    This tool's whole job is to answer "can I write this" BEFORE the work is planned — CLAUDE.md
+    says to ask rather than discover by being refused. It was answering without consulting the
+    one mechanism that changes the answer, so during a maintainer window it reported protected
+    source as BLOCKED while that source was in fact editable. An agent reading that plans around
+    a restriction that is not in force, or hands the operator a list of items it could have done
+    itself. Observed: a session was told `hooks/shellparse.py` was blocked, worked around it, and
+    then edited the file successfully minutes later.
+
+    Never raises. A tool that cannot determine the window must report the STRICTER answer, which
+    is what returning False does — the same direction the gates fail.
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "hooks"))
+        import lib
+        return bool(lib.maintainer_grant_valid())
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
 def report(paths, label) -> int:
+    window = maintainer_window_open()
     width = min(max((len(p) for p in paths), default=10), 58)
-    blocked = []
+    blocked, unlocked = [], []
     for p in paths:
         why = blocked_reason(str(ROOT / p) if not os.path.isabs(p) else p)
-        if why:
+        if why and window:
+            unlocked.append(p)
+            state, why = "window", f"{why} — editable now: maintainer window open"
+        elif why:
             blocked.append(p)
-        print(f"  {'BLOCKED' if why else 'writable':9} {p:<{width}}  {why}")
-    print(f"\n{label}: {len(paths) - len(blocked)} writable, {len(blocked)} blocked")
+            state = "BLOCKED"
+        else:
+            state = "writable"
+        print(f"  {state:9} {p:<{width}}  {why}")
+    print(f"\n{label}: {len(paths) - len(blocked) - len(unlocked)} writable, "
+          f"{len(unlocked)} unlocked by the open window, {len(blocked)} blocked")
+    if unlocked:
+        print("\nA maintainer window is OPEN, so protected source is editable for its duration.\n"
+              "It does not unlock the trust anchor, the sf auth store, or any org write. Check\n"
+              "the time remaining before planning around it; `torque approve --end-maintainer`\n"
+              "revokes it early.")
     if blocked:
         print("\nBlocked paths need operator-present issuance — the operator applies the change\n"
               "outside the agent's tool surface. There is no token that unlocks an artifact edit;\n"
