@@ -266,9 +266,20 @@ program, reading the signing secret through the OS, or having the agent write a 
 so `sf` executes as a subprocess no hook ever sees.
 
 For those, the load-bearing defense is layer 1: connect production read-only and never leave a
-production org authenticated in an autonomous session. Closing the subprocess channel properly
-needs a PATH-level shim that classifies before `exec` — that is the v2 roadmap, and it is not
-built yet. Saying so is the point: a safety claim you cannot reproduce is marketing, not security.
+production org authenticated in an autonomous session.
+
+Closing the subprocess channel needs a PATH-level shim that classifies before `exec`, and that
+one **is** built now — `torque install-gates --shim`, checked by four `shim_*` checks in the
+static profile. It is opt-in and off until installed, so the paragraph above still describes the
+default posture exactly. What changes with it installed is that anything resolving `sf` through
+PATH is gated on the argv the kernel is about to run, and — because bash has finished expanding
+by then — commands this layer cannot statically read are deferred to it rather than refused. On
+six months of real client commands that was the difference between 706 denials and 22.
+
+What no PATH entry can reach, and this still does not claim to: a same-uid actor invoking the
+real binary by absolute path, editing their own PATH, or running a bespoke program. That is
+layer-0 territory. Saying so is the point: a safety claim you cannot reproduce is marketing, not
+security.
 
 **Found a way through?** That's the whole point — every fixture in the suite exists because a
 review beat an earlier version of this code. See [`SECURITY.md`](SECURITY.md) for where to send it.
