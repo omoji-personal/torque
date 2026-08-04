@@ -1959,6 +1959,40 @@ def _public_description_accurate(target):
                   f"{sorted(real)}")
 
 
+def _window_blocks_boundary_checks(name):
+    """A SKIP Result if a maintainer window is open, else None.
+
+    Checks that assert "the agent cannot write protected paths" have exactly one question to ask,
+    and an open maintainer window makes the honest answer "not right now, deliberately". The
+    gate is allowing those writes because an operator opened a bounded window and every one is
+    audited — which is indistinguishable, from inside the check, from the guard being broken.
+
+    Reporting PASS would be a lie and reporting FAIL would cry wolf at the operator's own
+    decision, so this reports what is true: the boundary is not in force, so it was not measured.
+    SKIP makes the run DEGRADED, which is the point rather than a side effect — **no all-PASS run
+    is possible while a window is open**, and that is the correct rule. Validating the write
+    boundary while it is deliberately lifted would certify something that was not tested.
+
+    Discovered the first time a window was ever opened: two catastrophe-class checks went red at
+    once, and the reflex reading was that the new mechanism had broken the gate. It had not. The
+    checks simply had no way to say "not assessable", which is the same missing vocabulary that
+    let init_requires_operator prove only the refusing direction of operator_present().
+    """
+    try:
+        import importlib.util as _il
+        _s = _il.spec_from_file_location("torque_lib_win", ROOT / "hooks" / "lib.py")
+        _lib = _il.module_from_spec(_s); _s.loader.exec_module(_lib)
+        if _lib.maintainer_grant_valid() is None:
+            return None
+    except Exception:
+        return None          # cannot tell ⇒ run the real check; never skip on a guess
+    return Result(name, SKIP,
+                  "a maintainer window is open, so protected paths are intentionally writable "
+                  "and this boundary was NOT measured. Close it "
+                  "(`torque approve --end-maintainer`) and re-run; validation has to happen with "
+                  "the boundary in force.")
+
+
 @check("runnable_implies_unwritable", "static", catastrophe=True)
 def _runnable_implies_unwritable():
     """Anything the gate lets the agent RUN, the agent must not be able to WRITE.
@@ -1971,6 +2005,9 @@ def _runnable_implies_unwritable():
     That is a coupling between two lists in different files, which is the kind of thing that
     silently comes apart. Asserted here in both directions.
     """
+    blocked = _window_blocks_boundary_checks("runnable_implies_unwritable")
+    if blocked:
+        return blocked
     import importlib.util as _il
     spec = _il.spec_from_file_location("torque_shellparse", ROOT / "hooks" / "shellparse.py")
     sp = _il.module_from_spec(spec); spec.loader.exec_module(sp)
@@ -2447,6 +2484,9 @@ def _guards_are_case_insensitive():
     no_divergent_twins cannot catch them; what they share is an assumption, and assumptions need
     their own test.
     """
+    blocked = _window_blocks_boundary_checks("guards_are_case_insensitive")
+    if blocked:
+        return blocked
     import importlib.util as _il
     spec = _il.spec_from_file_location("torque_lib_ci", ROOT / "hooks" / "lib.py")
     lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)
@@ -2744,16 +2784,35 @@ def _budget_fits_hook_timeout():
                       f"budget {lib.GATE_BUDGET_S}s + grace {lib._GRACE_S}s = {ceiling}s does not "
                       f"fit under the {lib.HOOK_TIMEOUT_S}s hook timeout — an overrun is killed "
                       f"by the host, and a killed hook exits non-2, which ALLOWS")
-    declared = set()
+    # GATE_BUDGET_S governs the two gates — the hooks that make org callouts and can genuinely
+    # approach the ceiling. This used to require EVERY PreToolUse timeout to equal
+    # HOOK_TIMEOUT_S, which quietly assumed every PreToolUse hook is a budget-governed gate.
+    # syntax_guard broke that assumption by being true and cheap: it parses a string, declares
+    # 20s, and is not sized against GATE_BUDGET_S at all. Requiring it to claim 55s would have
+    # made the number meaningless in order to keep the check quiet.
+    gate_t, other_t = set(), {}
     for group in _j.loads((ROOT / ".claude" / "settings.json").read_text()) \
             .get("hooks", {}).get("PreToolUse", []):
         for h in group.get("hooks", []):
-            declared.add(h.get("timeout"))
-    if declared != {lib.HOOK_TIMEOUT_S}:
+            cmd = h.get("command", "")
+            if "prod_write_gate.py" in cmd or "destructive_data_gate.py" in cmd:
+                gate_t.add(h.get("timeout"))
+            else:
+                other_t[cmd.rsplit("/", 1)[-1].rstrip('"')] = h.get("timeout")
+    if gate_t != {lib.HOOK_TIMEOUT_S}:
         return Result("budget_fits_hook_timeout", FAIL,
                       f"lib.HOOK_TIMEOUT_S is {lib.HOOK_TIMEOUT_S} but settings.json declares "
-                      f"{sorted(declared)} — the budget is sized against a number the host is "
-                      f"not using")
+                      f"{sorted(gate_t)} for the gates — the budget is sized against a number "
+                      f"the host is not using")
+    # A non-gate PreToolUse hook still must not outlive the host's patience: killed means non-2,
+    # and non-2 ALLOWS. It need not equal the gate ceiling, but it must sit under it and be
+    # declared rather than left to a default nobody chose.
+    bad = {n: t for n, t in other_t.items()
+           if not isinstance(t, (int, float)) or t > lib.HOOK_TIMEOUT_S}
+    if bad:
+        return Result("budget_fits_hook_timeout", FAIL,
+                      f"non-gate PreToolUse hook(s) {bad} declare no timeout or one above the "
+                      f"{lib.HOOK_TIMEOUT_S}s ceiling — a killed hook exits non-2, which ALLOWS")
 
     # and the deadline must actually FIRE. A hanging callout does not prove it: `_sf` clamps
     # each callout to the remaining budget, so that path denies on time with the deadline

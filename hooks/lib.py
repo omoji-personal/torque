@@ -22,6 +22,7 @@ ANCHOR = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
 SECRET = ANCHOR / "secret"
 APPROVED = ANCHOR / "approved"
 PROD_SESSIONS = ANCHOR / "prod-sessions"           # signed, time-boxed prod-write windows
+MAINTAINER_GRANT = ANCHOR / "maintainer.grant"     # signed, time-boxed SOURCE-edit window
 ALLOWLIST = LOCAL / "writable-orgs.json"
 CACHE = LOCAL / ".classify-cache.json"
 ORGS = LOCAL / "orgs"                       # per-org knowledge, keyed by 18-char orgId
@@ -227,15 +228,59 @@ def _has_tty():
         return False
 
 
+def _ctty_name(pid=None):
+    """This process's CONTROLLING TERMINAL, named the way `who` prints it, or "" if it has none.
+
+    Deliberately not `os.ttyname(os.open("/dev/tty"))`, which is what this used to do. On macOS
+    that returns "/dev/tty" itself — the controlling-terminal ALIAS. The alias is its own device
+    node (st_rdev 33554432 on the machine this was found on) and carries nothing identifying the
+    terminal it aliases, so basename() gave "tty", which matches no `who` row, ever.
+
+    The consequence was not a cosmetic one. _tty_is_login() returned False for a genuine
+    Terminal.app login session, so operator_present() could never be true on macOS, so
+    `torque approve` — the ONLY path to a production write, a destructive-op token, or a
+    maintainer window — refused the operator on the platform this is developed on. Layer 3 was
+    documented, implemented, and unreachable.
+
+    It survived because the tests only ever asserted the refusing direction:
+    init_requires_operator proves approve REFUSES without a login terminal, and nothing proved it
+    ACCEPTS with one. "Correctly refuses an agent" and "refuses absolutely everyone" are the same
+    observation until something exercises the positive case.
+
+    Also deliberately not `os.ttyname(0)`. Descriptor 0 is inherited and can be pointed at any tty
+    the uid can open — including the operator's real login session — so that spelling would swap
+    a fail-closed bug for a genuine bypass.
+
+    ps reports the kernel's own record of the controlling terminal, which is a SESSION property.
+    A process cannot take over another session's controlling terminal by moving descriptors
+    around; the most it can do is setsid() and TIOCSCTTY a pty it opened itself — and that pty is
+    absent from utmp, because utmp is written by login/getty. So the trust still rests exactly
+    where audit R10-07 put it, and only the naming changed.
+
+    `pid` defaults to this process and exists so a CHECK can ask the question about some OTHER
+    process — specifically one the harness can see is sitting in a real login session. Without
+    that, the positive direction is untestable from an agent context (which by design has no
+    controlling terminal), and untestable is exactly how the macOS bug survived. It widens
+    nothing: the answer is read from ps, never supplied by the caller.
+    """
+    try:
+        out = subprocess.run([_PS, "-o", "tty=", "-p", str(pid if pid is not None else os.getpid())],
+                             capture_output=True, text=True, timeout=10,
+                             env=_TRUSTED_ENV).stdout
+    except Exception:
+        return ""
+    name = out.strip()
+    if not name or name == "??":          # no controlling terminal at all
+        return ""
+    return name if name.startswith("tty") else "tty" + name
+
+
 def _tty_is_login():
     """The controlling tty must be an active login session in utmp (`who`). A pty the agent
     forges via openpty is NOT a login session, so it fails here (audit R10-07)."""
-    try:
-        fd = os.open("/dev/tty", os.O_RDWR)
-        name = os.ttyname(fd); os.close(fd)
-    except OSError:
+    short = _ctty_name()
+    if not short:
         return False
-    short = os.path.basename(name)
     try:
         who = subprocess.run([_WHO], capture_output=True, text=True, timeout=10,
                              env=_TRUSTED_ENV).stdout
@@ -577,6 +622,38 @@ def _prod_session_valid(orgid: str) -> bool:
     if not sig or not _hmac.compare_digest(sig, sign(g)):
         return False
     return g.get("orgId") == orgid and g.get("exp", 0) > time.time()
+
+
+def maintainer_grant_valid(tree: str = ""):
+    """A signed, unexpired, tree-bound window in which the agent may edit Torque's OWN source.
+
+    Mirrors _prod_session_valid above: a window rather than a single-use token, revoked by
+    deleting the file, forgeable only with the anchor secret — the same operator-only boundary
+    every other approval here rests on.
+
+    IT AUTHORIZES ARTIFACT EDITS AND NOTHING ELSE. No caller in the org-authorization path
+    consults this, and none should: under an active window a production write is still denied, a
+    destructive operation still needs its own impact-bound token, and classification still runs
+    live at write time. That split is the entire design, and it costs nothing, because editing
+    this file has never required writing to a client's org.
+
+    It lives in the anchor because the agent composes its own Bash and therefore its own
+    environment: any switch the agent can set is a switch the agent can set. Tree-bound, so a
+    window opened to develop Torque here cannot authorize edits in a different workspace that
+    happens to be open in another session.
+    """
+    try:
+        g = json.loads(MAINTAINER_GRANT.read_text())
+    except Exception:
+        return None
+    sig = g.pop("sig", None)
+    if not sig or not _hmac.compare_digest(sig, sign(g)):
+        return None
+    if g.get("exp", 0) <= time.time():
+        return None
+    if g.get("tree") != (tree or str(TORQUE_HOME.resolve())):
+        return None
+    return g
 
 # ---- approval tokens (consulted here; MINTED only by bin/torque-approve) --
 import hmac as _hmac
