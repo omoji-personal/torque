@@ -123,11 +123,14 @@ def _shield_text(text, orgid):
 
     A fix applied to one call site and not its twin is the failure mode this pair now guards
     against: shield_is_case_insensitive exercises BOTH.
+
+    The MATCHING now lives in lib.protected_object_hits, because a third caller turned up —
+    bin/torque-shadow, whose own protected-object refusal was dead code for want of exactly this
+    function. The policy stays here; the question moved to one place, which is what
+    no_divergent_twins has been asking for since the second time this was fixed.
     """
-    import re
-    for obj in lib.protected_objects():
-        if re.search(rf"\b{re.escape(obj)}\b", text, re.IGNORECASE):
-            lib.deny(f"operation references protected sObject {obj}", "protected-object", HOOK)
+    for obj in lib.protected_object_hits(text):
+        lib.deny(f"operation references protected sObject {obj}", "protected-object", HOOK)
 
 
 def _apex_digest(path_str):

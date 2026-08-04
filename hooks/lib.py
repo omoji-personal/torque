@@ -668,6 +668,27 @@ def protected_objects() -> set:
     return {l.split("#")[0].strip() for l in PROTECTED.read_text().splitlines()
             if l.split("#")[0].strip()}
 
+def protected_object_hits(text: str) -> list:
+    """Protected sObjects referenced by an Apex body, sorted — the MATCHER only.
+
+    Policy lives at the call site: the destructive gate DENIES on a hit, because a hook must
+    exit non-zero to stop a tool call; torque-shadow prints its own refusal, because it is a CLI
+    with a return code to give. Both ask the same question, and that is the point of the split.
+
+    bin/torque-shadow already NAMED this function and guarded the call with
+    `hasattr(lib, "protected_object_hits")` — permanently False, because it existed nowhere. The
+    refusal promised ten lines above that call could never fire, so a shadow run of
+    `delete [SELECT Id FROM Account];` went straight through to `sf apex run`. Listing a risk is
+    not gating it; naming a guard is not writing one.
+
+    Case-INSENSITIVE and word-bounded, matching _shield_text, from which this was lifted rather
+    than copied: Apex sObject names are case-insensitive, so `account` reaches the same table as
+    `Account`. That single equivalence has now been fixed in three near-identical guards, which
+    is why this one is shared instead of written a fourth time.
+    """
+    return [obj for obj in sorted(protected_objects())
+            if re.search(rf"\b{re.escape(obj)}\b", text or "", re.IGNORECASE)]
+
 # ---- PreToolUse I/O ------------------------------------------------------
 class InvalidEvent(Exception):
     """Stdin was empty or not JSON. The gate cannot evaluate what it cannot parse."""
