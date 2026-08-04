@@ -4,9 +4,11 @@
 THE CATALOGUE ALREADY KNEW HOW TO ASK
 
 Every entry in `knowledge/salesforce-platform.yml` may carry a `detect:` field, described in the
-file's own header as "a command or query that answers 'is this happening to me right now'". Nine
-entries carry one. Nothing in the repo had ever executed a single one of them — the only code
-that touched `detect` was the code that WROTE it. A documented capability that does not exist is
+file's own header as "a command or query that answers 'is this happening to me right now'". A
+subset of entries carry one — the count is deliberately not written here, because it was written
+here once as "nine" and the catalogue has since grown past it, and a number in a docstring has
+nothing that re-derives it. Nothing in the repo had ever executed a single one of them — the only
+code that touched `detect` was the code that WROTE it. A documented capability that does not exist is
 the same defect as a manifest claiming metadata was stripped from an image nobody opened, and it
 sat in the component the whole positioning rests on.
 
@@ -140,7 +142,7 @@ def run_probe(target, soql, flags, expect):
     An error is not automatically a problem. Two entries exist BECAUSE the platform refuses a
     query, so for them a refusal is the confirmation — and a probe that is simply broken looks
     identical unless the entry says which it expects. Nothing ran these probes for as long as
-    they existed, so two of the nine had been unrunnable the whole time and no one could tell.
+    they existed, so some had been unrunnable the whole time and no one could tell.
     """
     tooling, all_rows = flags
     cmd = ["sf", "data", "query", "--target-org", target, "--json", "--query", soql]
