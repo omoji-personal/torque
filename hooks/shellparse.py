@@ -8,7 +8,7 @@ that could reach `sf` but cannot be statically resolved. Every bypass found rout
 sf-base0 classifier (relocation under a runner, glued redirect, legacy colon syntax, MCP
 naming), so the fixes harden those seams while keeping direct-`sf` authorization intact.
 """
-import os, re, shlex, hashlib, fnmatch, json
+import os, re, shlex, hashlib, fnmatch, json, shutil
 from pathlib import Path
 import lib
 
@@ -1236,20 +1236,100 @@ def runtime_path_risk(segs, varmap):
     return None, None
 
 
+# ---- deferral to the exec-time shim -------------------------------------------------------
+#
+# THE PROBLEM THIS SOLVES, measured rather than asserted. Replaying six months of real client
+# commands through this classifier left 706 denials. Split by cause, 686 of them — 97.2% — are
+# some form of "I cannot read this string": substitution, indirect argv0, an interpreter, an
+# unbalanced quote. Exactly 20 hit an actual policy boundary.
+#
+# So analyze_bash answers two different questions and reports both the same way: is this
+# operation AUTHORIZED, and can I statically RESOLVE this text. Failing closed on the second is
+# correct for a PreToolUse hook, which sees a command string before bash has touched it and
+# genuinely cannot know what `$(cat org.txt)` will become. What is not correct is that the user
+# cannot tell the two apart — it reads as "Torque says no", and it lands hardest on whoever
+# composes shell most fluently, which is the person this tool is for.
+#
+# The exec-time shim answers the second question exactly. It runs on the argv the kernel is
+# about to execute, and bash has finished every expansion by then: `--target-org $(cat org.txt)`
+# arrives as `--target-org acme-prod`. There is no text left to reason about. So when the shim
+# is verifiably in front of `sf`, this layer does not have to guess — it defers, and the same
+# authorization runs downstream on resolved argv instead of a reconstruction.
+#
+# That is strictly MORE accurate than denying, because the shim sees truth and this sees a guess.
+#
+# WHAT IS NOT DEFERRABLE, and why each one stays a hard deny:
+#   wrapper-sf   `sudo` resets PATH via secure_path, so the shim may not be in front of sf at all.
+#   flags-dir    --flags-dir is read by sf ITSELF, not expanded by bash, so the shim cannot see
+#                the injected target either. Deferring would hand it to a layer just as blind.
+#   runtime-path, stages-local, anchor-ref, auth-ref, protected-write, opaque-writer
+#                these are about FILES, not about invoking sf. The shim never sees them.
+# The deferrable set is only the cases where the eventual `sf` resolves through PATH in a child
+# of this shell, which is precisely where the shim is standing.
+DEFERRABLE_TO_SHIM = frozenset({"substitution", "indirect-argv0", "interp-sf",
+                                "indirect-sf", "unparseable"})
+
+_SHIM_STATE = {}
+
+
+def shim_enforcing() -> bool:
+    """Is the exec-time shim actually in front of `sf` for commands this session runs?
+
+    Installed is not enough — a shim sitting in the anchor with nothing pointing at it enforces
+    nothing. Both halves are required: the operator-controlled copy exists and is executable in
+    the anchor, AND resolving `sf` on PATH lands on it.
+
+    Deliberately NOT an environment variable or a config flag. The agent composes its own Bash
+    and therefore its own environment; any switch it can set to make this layer quieter is a
+    switch it can set to make this layer quieter. What it cannot do is write an executable into
+    a 0700 directory outside the workspace that its Bash, Edit, Write and Read cannot reach.
+    """
+    path = os.environ.get("PATH", "")
+    anchor = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
+    key = (path, str(anchor))
+    if key in _SHIM_STATE:
+        return _SHIM_STATE[key]
+    ok = False
+    try:
+        shim = (anchor / "shim" / "sf").resolve()
+        resolved = shutil.which("sf")
+        ok = (shim.is_file() and os.access(shim, os.X_OK)
+              and resolved is not None and Path(resolved).resolve() == shim)
+    except Exception:                                  # noqa: BLE001 — fail CLOSED (no deferral)
+        ok = False
+    _SHIM_STATE[key] = ok
+    return ok
+
+
+def _deny_or_defer(reason: str, code: str):
+    """A static-shape refusal — handed to the shim when the shim is verifiably there.
+
+    Fails closed in both directions that matter: an unknown code is never deferrable, and if
+    shim_enforcing() cannot decide it says no. The caller still gets a `deny` key, so any code
+    path that has not learned about deferral keeps denying exactly as it did.
+    """
+    if code in DEFERRABLE_TO_SHIM and shim_enforcing():
+        return {"deny": None, "writes": [], "mutations": [],
+                "defer": (f"{reason} — deferred to the exec-time shim, which will authorize it "
+                          f"on resolved argv", code)}
+    return {"deny": (reason, code)}
+
+
 def analyze_bash(cmd: str):
     cmd = strip_continuations(cmd)
     segs, ok = split_segments(cmd)
     if not ok:
-        return {"deny": ("unparseable command (unbalanced quotes)", "unparseable")}
+        return _deny_or_defer("unparseable command (unbalanced quotes)", "unparseable")
     if grouping_or_subst(cmd) and (SF_SUSPICIOUS.search(cmd) or SF_WORD.search(cmd)):
-        return {"deny": ("command grouping/substitution around a Salesforce operation — "
-                         "not statically authorizable", "substitution")}
+        return _deny_or_defer("command grouping/substitution around a Salesforce operation — "
+                              "not statically authorizable", "substitution")
     varmap = _command_vars(cmd)                       # resolve inline `VAR=...` for path guards (TQ-F1)
     ws = check_write_shapes(segs, varmap)
     if ws:
         return {"deny": ws}
     if re.search(r"(?:^|[\s;&|])(xargs|parallel)\b", cmd) and (SF_WORD.search(cmd) or SF_SUSPICIOUS.search(cmd)):
-        return {"deny": ("sf routed through xargs/parallel — target not authorizable", "indirect-sf")}
+        return _deny_or_defer("sf routed through xargs/parallel — target not authorizable",
+                              "indirect-sf")
     writes, mutations = [], []
     for seg in segs:
         seg = seg.strip()
@@ -1259,7 +1339,8 @@ def analyze_bash(cmd: str):
             argv = shlex.split(seg)
         except ValueError:
             if SF_SUSPICIOUS.search(seg) or SF_WORD.search(seg):
-                return {"deny": ("unparseable segment carrying a Salesforce operation", "unparseable")}
+                return _deny_or_defer("unparseable segment carrying a Salesforce operation",
+                                      "unparseable")
             continue
         if not argv:
             continue
@@ -1278,8 +1359,8 @@ def analyze_bash(cmd: str):
         a, assign_vals = _strip_assignments(argv)
         for v in assign_vals:
             if SF_SUSPICIOUS.search(v) or cmd_base(v, SF_BINS) in SF_BINS:
-                return {"deny": ("Salesforce operation hidden in a shell assignment value",
-                                 "indirect-sf")}
+                return _deny_or_defer("Salesforce operation hidden in a shell assignment value",
+                                      "indirect-sf")
         if not a:
             continue
         base0 = cmd_base(a[0], SF_BINS)
@@ -1295,8 +1376,8 @@ def analyze_bash(cmd: str):
             writes.append(sf_args)
             continue
         if indirect(a[0]):
-            return {"deny": ("indirect command invocation ($VAR/$()/backtick) cannot be "
-                             "authorized — call `sf` literally", "indirect-argv0")}
+            return _deny_or_defer("indirect command invocation ($VAR/$()/backtick) cannot be "
+                                  "authorized — call `sf` literally", "indirect-argv0")
         if base0 in INTERPRETERS and (SF_WORD.search(seg) or SF_SUSPICIOUS.search(seg)
                                       or "`" in seg):
             # EXCEPT the harness itself. `--target-org` matches SF_SUSPICIOUS, so this rule was
@@ -1308,8 +1389,8 @@ def analyze_bash(cmd: str):
             # PROTECTED_BASENAMES, so the agent's Edit/Write on it is already denied, and the path
             # must resolve inside TORQUE_HOME. The agent cannot point this at anything it controls.
             if not _is_own_harness(a):
-                return {"deny": (f"Salesforce operation via interpreter/here-string ({base0}) — "
-                                 "not authorizable", "interp-sf")}
+                return _deny_or_defer(f"Salesforce operation via interpreter/here-string "
+                                      f"({base0}) — not authorizable", "interp-sf")
         if wrapped_sf(a):
             return {"deny": ("Salesforce operation under a wrapper/runner — call `sf` directly",
                              "wrapper-sf")}

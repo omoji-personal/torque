@@ -35,6 +35,13 @@ def handle_bash(cmd):
     r = shellparse.analyze_bash(cmd)
     if r["deny"]:
         lib.deny(r["deny"][0], r["deny"][1], HOOK)
+    # Deferred, not allowed. This layer could not resolve the string, the exec-time shim can and
+    # is verifiably in front of `sf`, so the SAME authorization runs downstream on real argv.
+    # Recorded distinctly because "nobody objected" and "the decision moved" are different facts,
+    # and a trail that renders them identically cannot answer the only question that matters
+    # afterwards: was this operation ever actually authorized, and by which layer.
+    if r.get("defer"):
+        lib.audit("DEFER", f"[{HOOK}:{r['defer'][1]}] {r['defer'][0]}")
     for sf_args in r.get("writes", []):
         ok, reason = lib.authorize_write(
             lib.sole_target(shellparse.targets(sf_args), HOOK))

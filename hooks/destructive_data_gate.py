@@ -206,6 +206,11 @@ def handle_bash(cmd):
     r = shellparse.analyze_bash(cmd)
     if r["deny"]:
         lib.deny(r["deny"][0], r["deny"][1], HOOK)
+    # See prod_write_gate.handle_bash: the destructive decision moves to the shim with the rest
+    # of it, and lands on `_gate_write` there via handle_argv — the same function, on argv the
+    # kernel resolved rather than a string this layer had to reconstruct.
+    if r.get("defer"):
+        lib.audit("DEFER", f"[{HOOK}:{r['defer'][1]}] {r['defer'][0]}")
     for sf_args in r.get("writes", []):
         _gate_write(sf_args)
     lib.allow()
