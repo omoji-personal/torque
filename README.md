@@ -221,6 +221,29 @@ architecture skeptic — plus two confirmation passes. Every round was author-ru
 third-party security audit. Roughly 55 real vulnerabilities were found and fixed; each one is a
 fixture. The trail is in [`harness/VALIDATION.md`](harness/VALIDATION.md).
 
+### How this was built
+
+Torque was written with AI agents, in the open, and the commit history says so: 119 of 166 commits
+carry a `Co-Authored-By: Claude` trailer. That is not a disclaimer buried at the bottom. It is the
+point of the artifact.
+
+The problem this tool exists to solve is that an agent operating on a Salesforce org will report
+success it has not earned. The way to demonstrate a solution to that is not to write the code by
+hand and claim discipline — it is to direct agents at a real org, build the harness that catches
+what they get wrong, and keep the receipts when it catches them. The commit messages are those
+receipts, including the unflattering ones: a guard named in code and never written, a
+catastrophe-class check that could not fail, a production override unreachable on macOS for the
+project's whole life.
+
+What is author-owned is the judgment: which failure classes matter, what counts as evidence, and
+the standing rule that every fix ships with a check that can fail on purpose. What is
+agent-produced is most of the typing. The adversarial rounds were run against independent models
+precisely because an agent reviewing its own work is worth very little, which is the same reason
+`--self-test` exists.
+
+Read the history as the argument. If a defect here was found by a check rather than a human, that
+is the system working, and the log will say which.
+
 ---
 
 ## The guide
