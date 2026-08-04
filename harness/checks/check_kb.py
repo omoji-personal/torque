@@ -2647,11 +2647,27 @@ def _guards_share_no_blind_assumption():
         "backslash sep":     "hooks\\lib.py",
         "NFD":               _ud.normalize("NFD", base),
         "trailing newline":  base + "\n",
+    }
+    # C9. The tilde spelling only EXISTS when the repo is under $HOME, and this used to build it
+    # unconditionally with str.replace. On a repo at /opt/torque the replace matched nothing and
+    # produced "~//opt/torque/hooks/lib.py" — a string that tilde-expands to a DIFFERENT file.
+    # is_protected_target correctly declined to match it, and this check reported that
+    # correctness as "missed the tilde home form", turning the entire static verdict red for
+    # anyone who cloned outside their home directory.
+    #
+    # A sweep built to enumerate the assumptions in other guards was carrying one of its own,
+    # which is the joke the round-4 lesson set up: code cannot be enumerated, assumptions can —
+    # including the enumerator's. It survived because the author's repo lives under ~ and a
+    # GitHub Actions checkout does too, so neither the machine that wrote it nor the CI that
+    # runs it can see it. It took a review container with the repo at /home/user/torque.
+    _home = str(_pl.Path.home())
+    _under_home = str(ROOT) == _home or str(ROOT).startswith(_home + "/")
+    home_rel = ("~/" + str(ROOT)[len(_home) + 1:]) if _under_home else None
+    if home_rel:
         # the eleventh spelling. This sweep existed to enumerate them and did not have it;
         # an external reviewer did. Path.resolve() does not expand `~`, so every protected
         # DIRECTORY was writable under a home-relative name (round 5, codex/gpt-5.6-sol).
-        "tilde home":        "~/" + str(ROOT).replace(str(_pl.Path.home()) + "/", "") + "/hooks/lib.py",
-    }
+        same_file["tilde home"] = home_rel + "/hooks/lib.py"
     for label, v in same_file.items():
         if not lib.is_protected_target(v):
             return Result("guards_share_no_blind_assumption", FAIL,
@@ -2674,23 +2690,34 @@ def _guards_share_no_blind_assumption():
     # A path is protected by its BASENAME or by its DIRECTORY, and only the second half was
     # swept — so a spelling that defeated the directory rule looked fine as long as the file
     # happened to be named lib.py. These are new filenames under each protected directory.
-    home_rel = "~/" + str(ROOT).replace(str(_pl.Path.home()) + "/", "")
+    # Same C9 reasoning: only sweep the home-relative directory forms where such a form exists.
+    # The absolute spelling below is swept on every layout, so the directory rule is never left
+    # untested — what varies is whether the tilde variant of it is reachable at all.
     for d in ("hooks", "bin", "knowledge", "local/orgs", "harness/checks", ".claude"):
-        v = f"{home_rel}/{d}/torque-sweep-newfile.tmp"
-        if not lib.is_protected_target(v):
-            return Result("guards_share_no_blind_assumption", FAIL,
-                          f"a NEW file under the protected directory {d}/ was writable as "
-                          f"{v!r} — the directory rule is defeated by that spelling")
+        spellings = [str(ROOT / d) + "/torque-sweep-newfile.tmp"]
+        if home_rel:
+            spellings.append(f"{home_rel}/{d}/torque-sweep-newfile.tmp")
+        for v in spellings:
+            if not lib.is_protected_target(v):
+                return Result("guards_share_no_blind_assumption", FAIL,
+                              f"a NEW file under the protected directory {d}/ was writable as "
+                              f"{v!r} — the directory rule is defeated by that spelling")
 
     # and the guards must not become walls: ordinary files stay writable in any spelling
     for v in ("README.md", "./README.md", "docs/DESCRIBING-TORQUE.md", "harness/tests/x.json"):
         if lib.is_protected_target(v):
             return Result("guards_share_no_blind_assumption", FAIL,
                           f"an ordinary path was treated as protected: {v!r}")
+    # The skipped spelling is NAMED, not silently dropped. A sweep that quietly covers less on
+    # some layouts is exactly the kind of check this repo keeps finding — it would read as ten
+    # spellings tested when only nine were.
     return Result("guards_share_no_blind_assumption", PASS,
                   f"{len(same_file)} same-file spellings blocked by the path guard, "
                   f"{len(anchor)} by the anchor guard, {len(auth)} by the auth-store guard; "
-                  f"4 ordinary paths unaffected")
+                  f"4 ordinary paths unaffected"
+                  + ("" if home_rel else
+                     " — tilde-home spellings NOT swept: this repo is not under $HOME, so no "
+                     "such spelling names it (the absolute directory forms were swept instead)"))
 
 
 @check("classification_is_identity_bound", "static", catastrophe=True)
