@@ -193,7 +193,10 @@ def _org_classify(target):
     else:
         verdict = "production"
     if verdict != "developer":
-        return Result("org_classify", FAIL, f"sf-coffee expected 'developer', got '{verdict}'")
+        # C4: this named sf-coffee regardless of --target-org, so a third party running against
+        # their own org read a failure about an org they have never heard of. The author's org
+        # alias is not a fact about anyone else's run.
+        return Result("org_classify", FAIL, f"{target} expected 'developer', got '{verdict}'")
     return Result("org_classify", PASS, f"{target} classified '{verdict}' (IsSandbox={is_sandbox}, {otype})")
 
 # ---- CHECK: live verification helper — real vs hallucinated field ---------
@@ -495,12 +498,34 @@ def self_test(target=None):
         dg.write_text(orig_d.replace(
             'def _need_token(orgid, op, digest=""):',
             'def _need_token(orgid, op, digest=""):\n    lib.allow()  # MUTANT', 1))
+        # C4: the org was hardcoded to the author's alias, so on anyone else's machine this
+        # mutator exercised an org that does not exist. Use the org under test when there is one.
+        _org = target or "sf-coffee"
         ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
-            "sf data delete bulk --sobject Log__c --file ids.csv --target-org sf-coffee"}})
+            f"sf data delete bulk --sobject Log__c --file ids.csv --target-org {_org}"}})
+        # ASSERT BEFORE MUTATING. A mutator only means something if the UN-mutated gate denies
+        # the same input: if it denies for an unrelated reason — an org that will not classify,
+        # a target nobody authenticated — then removing the guard changes nothing and the
+        # mutator "passes" while proving nothing. That is precisely how a catastrophe-class
+        # check in this repo stayed green for thirteen commits while asserting nothing at all.
+        # The mutation was applied at the top of this try, so restore first to get the baseline,
+        # then re-apply it. Both runs use the same event, which is what makes them comparable.
+        dg.write_text(orig_d)                          # un-mutated, for the baseline assertion
+        base = subprocess.run([sys.executable, str(dg)], input=ev, capture_output=True,
+                              text=True, cwd=ROOT, timeout=90)
+        dg.write_text(orig_d.replace(
+            'def _need_token(orgid, op, digest=""):',
+            'def _need_token(orgid, op, digest=""):\n    lib.allow()  # MUTANT', 1))
         r = subprocess.run([sys.executable, str(dg)], input=ev, capture_output=True,
                            text=True, cwd=ROOT, timeout=90)
-        passed = r.returncode == 0                      # token requirement removed ⇒ allowed
-        print(f"  {'✓' if passed else '✗'} destructive token mutator: expected ALLOW, got exit {r.returncode}")
+        if base.returncode != 2:
+            passed = False
+            print(f"  ✗ destructive token mutator: VACUOUS — the un-mutated gate did not deny "
+                  f"{_org} (exit {base.returncode}), so removing the token requirement proves "
+                  f"nothing. Point --target-org at an allowlisted non-production org.")
+        else:
+            passed = r.returncode == 0                  # token requirement removed ⇒ allowed
+            print(f"  {'✓' if passed else '✗'} destructive token mutator: expected ALLOW, got exit {r.returncode}")
         ok &= passed
     finally:
         dg.write_text(orig_d)
