@@ -25,7 +25,9 @@ git clone https://github.com/omoji-personal/torque.git && cd torque
 python3 bin/torque-demo
 ```
 
-Real attacks, run through the real hooks:
+Real attacks, run through the real hooks. Abridged, and with one substitution: the paths below
+read `/Users/you/` because the real run prints whoever is running it, resolved against the
+trust anchor on that machine. Nothing else here is edited.
 
 ```
 Shell indirection
