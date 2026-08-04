@@ -1081,10 +1081,60 @@ def allow(command: str = ""):
     ten thousand `ls` and `grep` lines until nobody reads the file.
     """
     cmd = command or _JUDGED["command"]
-    if cmd and _SF_SHAPED.search(cmd):
+    if cmd and _is_salesforce_decision(cmd):
         audit("ALLOW", redact(cmd)[:300])
     _speak(cmd)
     sys.exit(0)
+
+
+def _is_salesforce_decision(cmd: str) -> bool:
+    """Was this command adjudicated as a Salesforce operation? Ask the CLASSIFIER, not a regex.
+
+    P1-006. Logging used to run its own detector, `_SF_SHAPED = r"(^|[|;&(\\s])sf\\s"`, entirely
+    separate from the classifier that decides authorization. The two disagreed, and every
+    disagreement was an operation the gate ADJUDICATED as a Salesforce write and then left out of
+    the decision trail. Reproduced: `/usr/local/bin/sf data update record …` and
+    `sfdx force:data:record:update …` are both classified as writes and both missed the regex,
+    because it requires the character before `sf` to be start-of-string or one of `|;&(` or
+    whitespace, and requires whitespace immediately after.
+
+    No authorization was ever bypassed — the gate decided correctly. What was false is the
+    README's claim of a complete decision trail, which is worse in a specific way: an audit log
+    with a silent omission class reads exactly like a complete one.
+
+    This is the same defect as P1-009 (two documents stating one floor, only one of them read)
+    and the same shape `runnable_implies_unwritable` guards against in its own docstring: "a
+    second list guarding one boundary is how this comes apart." Three instances, three severity
+    tiers, one pattern.
+
+    So there is one detector now. The classifier is the authority on what is a Salesforce
+    operation, because it is already the authority on what may run. Falls back to the old regex
+    only if the classifier cannot parse — a command too malformed to classify is one the gate
+    denied anyway, and refusing to log it would be the same silence in a new place.
+    """
+    try:
+        import shellparse as _sp
+        verdict = _sp.analyze_bash(cmd)
+        if verdict.get("writes") or verdict.get("deny"):
+            return True
+        # A Salesforce READ is a decision too — the claim is a complete decision trail, not a
+        # complete write trail. wrapped_sf is the parser's own answer to "is this an sf
+        # invocation", so it already understands absolute paths (via cmd_base), sfdx and
+        # wrappers: exactly the vocabulary the old regex lacked. Segments are split the same way
+        # analyze_bash splits them, so logging sees what authorization saw.
+        import shlex as _shlex
+        segs, seg_ok = _sp.split_segments(_sp.strip_continuations(cmd))
+        if seg_ok:
+            for seg in segs:
+                try:
+                    argv = _shlex.split(seg)
+                except ValueError:
+                    continue
+                if argv and _sp.wrapped_sf(argv):
+                    return True
+    except Exception:
+        pass
+    return bool(_SF_SHAPED.search(cmd))
 
 def deny(reason: str, fingerprint: str = "", hook_id: str = ""):
     audit("DENY", f"[{hook_id}:{fingerprint}] {reason}")
