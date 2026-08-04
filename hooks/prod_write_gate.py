@@ -154,6 +154,14 @@ def handle_edit(tinput):
         if shellparse.anchor_ref(path) or _is_sf_auth(path) or shellparse.sf_auth_ref(path):
             lib.deny("the trust anchor and the sf CLI auth store are never agent-writable — "
                      "no maintainer window grants them", "artifact-edit", HOOK)
+        # Nor is anything the gate READS to decide. A window unlocks this tool's source; the
+        # allowlist and the classification cache are not source, they are the answer to "may
+        # this org be written to", and editing them is the agent authorizing itself.
+        if lib.is_authorization_input(path):
+            lib.deny(f"{os.path.basename(path)} is an input the gate reads to decide "
+                     f"authorization, not source — no maintainer window grants it. A window "
+                     f"unlocks what this tool IS, never what it is allowed to write to.",
+                     "artifact-edit", HOOK)
         if lib.maintainer_grant_valid():
             # Durable for the reason P1-003 gave about production writes: an edit to the
             # enforcement layer that cannot be recorded is not one this tool authorizes.

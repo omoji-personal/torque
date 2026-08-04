@@ -624,6 +624,49 @@ def _prod_session_valid(orgid: str) -> bool:
     return g.get("orgId") == orgid and g.get("exp", 0) > time.time()
 
 
+# Files the gate READS in order to decide. A maintainer window unlocks the SOURCE of this tool;
+# it must never unlock the DATA that source consults to authorize something.
+#
+# Found by a live capability run, 2026-08-04, three checks red at once: gate_write_authz,
+# cache_poison_resistant and gate_adversarial_fixtures. handle_edit carved out only the trust
+# anchor and the sf auth store, so with a window open the agent could edit
+# `local/writable-orgs.json` — the Layer 1 allowlist — and `local/.classify-cache.json`, which
+# caches the verdict that decides whether an org is production. Adding an org to the allowlist is
+# not an artifact edit. It is the agent granting itself write authorization to that org, and
+# MAINTAINER-MODE.md said in as many words that the window "unlocks artifact edits only, never
+# org authorization". The sentence was true about intent and false about the code.
+#
+# The catalogue is deliberately NOT here. It feeds note rendering and requirement sets, not
+# authorization, its injection surface is covered by kb_injection, and it is exactly the kind of
+# content a maintainer window exists to let someone edit.
+def is_authorization_input(path) -> bool:
+    """True for anything the gate consults when deciding. Never grantable, by any window."""
+    try:
+        p = Path(os.path.expanduser(str(path)))
+        rp = p.resolve() if p.exists() else (Path.cwd() / p).resolve()
+    except Exception:
+        return True                       # unresolvable ⇒ treat as authorization data, fail closed
+    for target in (ALLOWLIST, CACHE, PROTECTED, ALIAS_INDEX, AUDIT,
+                   TORQUE_HOME / "harness" / "checks" / "cli-write-surface.json",
+                   LOCAL / "clean-ip.rules"):
+        try:
+            if rp == target.resolve() if target.exists() else rp == target:
+                return True
+        except Exception:
+            continue
+    # the per-org store, keyed by orgId, is read on the decision path too
+    try:
+        if ORGS.exists() and str(rp).startswith(str(ORGS.resolve()) + os.sep):
+            return True
+    except Exception:
+        pass
+    # Basename backstop, for the same reason PROTECTED_BASENAMES exists: a path that resolves
+    # somewhere unexpected still must not be one of these by name.
+    return os.path.basename(str(path)) in {
+        "writable-orgs.json", ".classify-cache.json", "protected-objects",
+        ".alias-index.json", "audit.log", "cli-write-surface.json", "clean-ip.rules"}
+
+
 def maintainer_grant_valid(tree: str = ""):
     """A signed, unexpired, tree-bound window in which the agent may edit Torque's OWN source.
 
