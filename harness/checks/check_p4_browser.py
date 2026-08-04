@@ -1,6 +1,6 @@
 # P4: frontdoor no-echo handoff (always testable) + browser render E2E (BLOCKED w/ dated
 # reason when no browser binary — honest non-green, never faked).
-import subprocess as _sp, os as _os, shutil as _sh
+import subprocess as _sp, os as _os, shutil as _sh, datetime as _dt
 from pathlib import Path as _P
 
 @check("frontdoor_noecho", "capability", catastrophe=True)
@@ -28,12 +28,33 @@ def _frontdoor_noecho(target):
 def _browser_render(target):
     if not target: return Result("browser_render", SKIP, "no --target-org")
     # need node + a real chromium binary; else HONEST BLOCK (never fake a render)
-    cache = _P.home()/"Library"/"Caches"/"ms-playwright"
-    have_browser = cache.exists() and any(cache.glob("chromium*"))
+    #
+    # C1: this looked only at ~/Library/Caches/ms-playwright, which exists on macOS and nowhere
+    # else. On Linux or Windows the check SKIPped even with Playwright correctly installed, so
+    # the release profile could never be all-PASS off macOS — a DEGRADED verdict forever, for a
+    # browser that was sitting right there. Ask Playwright's documented locations, in its own
+    # order of precedence, rather than the one that happened to be the author's.
+    _cands = []
+    if _os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        _cands.append(_P(_os.environ["PLAYWRIGHT_BROWSERS_PATH"]))
+    _cands += [_P.home()/"Library"/"Caches"/"ms-playwright",          # macOS
+               _P.home()/".cache"/"ms-playwright"]                    # Linux
+    if _os.environ.get("LOCALAPPDATA"):                               # Windows
+        # Guarded: Path("") / "ms-playwright" is the RELATIVE path "ms-playwright", which would
+        # match a stray directory in the working directory and report a browser that is not there.
+        _cands.append(_P(_os.environ["LOCALAPPDATA"]) / "ms-playwright")
+    cache = next((c for c in _cands if c and c.exists() and any(c.glob("chromium*"))), None)
+    have_browser = cache is not None
     if not (_sh.which("node") and have_browser):
+        # D-class: the date was hardcoded, so a block recorded in August still claimed to have
+        # been established in July. Derive it, or the reason ages into a false one.
+        _today = _dt.date.today().isoformat()
+        _why = ("no `node` on PATH" if not _sh.which("node")
+                else "no Playwright chromium binary in any known location "
+                     f"({', '.join(str(c) for c in _cands if c)})")
         return Result("browser_render", SKIP,
-            "BLOCKED 2026-07-31: no Playwright chromium binary; frontdoor handoff verified "
-            "separately. `npx playwright install chromium` to enable the render check.")
+            f"BLOCKED {_today}: {_why}; frontdoor handoff verified separately. "
+            f"`npx playwright install chromium` to enable the render check.")
     # obtain a no-echo frontdoor URL file, then ACTUALLY launch and assert the Lightning shell
     fr = _sp.run(["python3", str(ROOT/"bin"/"torque-frontdoor"), target], capture_output=True, text=True)
     if fr.returncode != 0:
@@ -55,7 +76,8 @@ def _browser_render(target):
         # node present but playwright module or launch failed → honest BLOCK, not FAIL/fake
         if "Cannot find package" in r.stderr or "MODULE_NOT_FOUND" in r.stderr:
             return Result("browser_render", SKIP,
-                "BLOCKED 2026-07-31: playwright node module not installed in this workspace; "
+                f"BLOCKED {_dt.date.today().isoformat()}: playwright node module not installed "
+                "in this workspace; "
                 "frontdoor handoff verified separately.")
         return Result("browser_render", FAIL, f"render failed: {(r.stdout + r.stderr).strip()[:90]}")
     finally:
