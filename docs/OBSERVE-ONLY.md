@@ -5,6 +5,17 @@ torque approve --observe 90      # operator, from a REAL terminal. ≤120 min.
 torque approve --end-observe     # revoke early
 ```
 
+**`torque` has to be on PATH first**, or that reads `command not found` — which is how it first
+reached a real operator. `bin/torque` exists precisely because every deny message says "run
+`torque approve …`", and nothing was putting it where a shell would find it:
+
+```
+export PATH="$HOME/.torque/shim:<repo>/bin:$PATH"     # in your shell profile
+```
+
+`torque install-gates --shim` prints the line with both paths filled in. Everything below can
+also be run as `python3 bin/torque approve …` from the repo root.
+
 For the duration, a gate that would have denied an operation **records it and lets it through**.
 Denials become `OBSERVE` entries in the audit trail carrying the reason they would have given.
 

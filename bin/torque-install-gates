@@ -41,9 +41,17 @@ def install_shim():
     # plain terminal, which is a lockout wearing a security badge.
     (SHIM_DIR / "home").write_text(str(TORQUE_HOME) + "\n")
     print(f"shim installed: {SHIM_DIR}/sf and /sfdx")
-    print("add it to PATH, ahead of the real CLI, in your shell profile:")
-    print(f'  export PATH="{SHIM_DIR}:$PATH"')
-    print("it gates only when it cannot see an operator at a login terminal, so your own")
+    # BOTH directories, in one line, at the one moment the operator is already editing their
+    # profile. bin/torque exists because — in its own docstring — "every deny message tells the
+    # operator to run `torque approve ...`. Before this shim there was no such command." The
+    # dispatcher was written to close that gap and nothing ever put it on PATH, so the gap stayed
+    # open: an operator hits a production deny, reads "run torque approve", gets `command not
+    # found`, and reasonably concludes the approval mechanism is broken. That is the
+    # security-critical path failing at the exact moment it is needed, and it is a PATH entry.
+    print("add BOTH to PATH in your shell profile — the shim ahead of the real CLI, and the")
+    print("dispatcher so that `torque approve ...` resolves when a deny message tells you to:")
+    print(f'  export PATH="{SHIM_DIR}:{TORQUE_HOME / "bin"}:$PATH"')
+    print("the shim gates only when it cannot see an operator at a login terminal, so your own")
     print("`sf` is unaffected. Remove with: python3 bin/torque install-gates --remove-shim")
     return True
 
