@@ -8,11 +8,24 @@ check written PRECISELY because a stale mutator transcript once shipped in the g
 scans the HTML only. So the checked surface was not the published surface, and the artifact a
 reader downloads was the one artifact with no guard on it.
 
-WHY IT COMPARES COMMITS RATHER THAN CONTENT. Reading numbers out of a PDF needs a text
-extractor, which is a dependency CI would have to carry and which fails differently on every
-platform. The question that actually matters is simpler and answerable from git alone: was the
-PDF rebuilt after the last change to its source? If the HTML moved and the PDF did not, the PDF
-is stale, whatever it happens to say.
+HOW IT ANSWERS THE QUESTION. The build stamps a SHA-256 of the HTML into the PDF's own metadata,
+so the artifact records which source produced it. This compares that to the HTML on disk. No text
+extractor, no parsing of page content, no assumption about commit order.
+
+The first version compared COMMIT ORDER — was the PDF committed no earlier than its source. That
+catches the ordinary mistake (edit the HTML, forget to rebuild) and nothing else: ANY change to
+the PDF satisfies it, so a touched-but-not-rebuilt file passes. A recorded source hash is not
+satisfiable by accident.
+
+Commit order was briefly kept as a fallback for PDFs built before the stamp existed. That is
+gone. It ran in CI on its first push — pypdf was not installed there — and reported STALE from
+commit archaeology that was wrong about a repository where the strong check would have said
+fresh. A guard that silently degrades to a weaker test is the defect class this repo keeps
+finding, and a weaker test that is also wrong is worse than no test.
+
+So: if the stamp cannot be read, this reports that it could not run, exit 2, and says why. A
+check that cannot reach its subject is BLOCKED with a reason, never a verdict from something
+else it happened to be able to measure.
 
 This is a freshness guard, not a correctness guard. It cannot tell you the PDF's numbers are
 right; it can tell you they were generated from the current source. The correctness half belongs
@@ -21,7 +34,6 @@ recorded here as owed rather than done.
 
 Exit 0 fresh, 1 stale, 2 cannot tell.
 """
-import subprocess
 import sys
 from pathlib import Path
 
@@ -30,14 +42,17 @@ SRC = "guide/torque-guide.html"
 PDF = "guide/Torque-Guide.pdf"
 
 
-def last_commit(path):
-    r = subprocess.run(["git", "log", "-1", "--format=%H %ct %s", "--", path],
-                       capture_output=True, text=True, cwd=ROOT)
-    line = r.stdout.strip()
-    if not line:
+def stamped_source_sha():
+    """The source hash the PDF records, or None if it carries none / cannot be read."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
         return None
-    sha, ts, subject = line.split(" ", 2)
-    return sha, int(ts), subject
+    try:
+        meta = PdfReader(str(ROOT / PDF)).metadata or {}
+        return meta.get("/TorqueSourceSHA256")
+    except Exception:
+        return None
 
 
 def main():
@@ -46,25 +61,27 @@ def main():
             print(f"cannot tell: {rel} is missing")
             return 2
 
-    src, pdf = last_commit(SRC), last_commit(PDF)
-    if not src or not pdf:
-        print("cannot tell: no commit history for one of the files")
+    # Preferred test: does the PDF record the hash of the HTML that is on disk right now?
+    import hashlib
+    actual = hashlib.sha256((ROOT / SRC).read_bytes()).hexdigest()
+    stamped = stamped_source_sha()
+    if not stamped:
+        print("BLOCKED: the PDF carries no readable source stamp.")
+        print("  Either pypdf is not installed here, or the PDF predates the stamp.")
+        print("  Not falling back to comparing commit order: that test is weaker, it is")
+        print("  satisfied by any change to the PDF, and it reported a wrong answer the one")
+        print("  time it ran. A check that cannot run says so.")
+        print("  Fix:  pip install pypdf  &&  node guide/build-pdf.mjs")
         return 2
 
-    print(f"  source  {SRC}\n            {src[0][:9]}  {src[2][:64]}")
-    print(f"  built   {PDF}\n            {pdf[0][:9]}  {pdf[2][:64]}")
-
-    if pdf[1] >= src[1]:
-        print("\nfresh: the PDF was committed no earlier than its source")
+    print(f"  source sha  {actual[:16]}…")
+    print(f"  PDF records {stamped[:16]}…")
+    if stamped == actual:
+        print("\nfresh: the PDF records the hash of the current source")
         return 0
-
-    behind = subprocess.run(
-        ["git", "rev-list", "--count", f"{pdf[0]}..HEAD", "--", SRC],
-        capture_output=True, text=True, cwd=ROOT).stdout.strip() or "?"
-    print(f"\nSTALE: {SRC} has changed in {behind} commit(s) since the PDF was last built.")
-    print("The PDF is what a reader downloads. Rebuild it:  node guide/build-pdf.mjs")
+    print(f"\nSTALE: the PDF was built from a different {SRC}.")
+    print("Rebuild it:  node guide/build-pdf.mjs")
     return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

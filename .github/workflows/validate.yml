@@ -60,8 +60,13 @@ jobs:
       # environment reason where the house taxonomy wants SKIP/BLOCKED with a stated cause.
       # Installing the parser is the honest fix: the eval set really is YAML, and a retrieval
       # measurement that silently did not run is the failure mode this repo exists to refuse.
-      - name: Install the harness's one non-stdlib dependency
-        run: python3 -m pip install --disable-pip-version-check --quiet pyyaml
+      - name: Install the harness's non-stdlib dependencies
+        # pyyaml: retrieval_quality reads the evaluation set from YAML.
+        # pypdf:  check-guide-fresh.py reads the source hash the build stamps into the PDF.
+        #         Without it that check silently falls back to comparing commit order, which is
+        #         the weaker test it was written to replace — so the dependency is what keeps CI
+        #         running the check it claims to run.
+        run: python3 -m pip install --disable-pip-version-check --quiet pyyaml pypdf
 
       # The honest part. Three checks cannot reach their real conclusion in CI, and each must
       # read as non-green-but-explained rather than as a pass:
