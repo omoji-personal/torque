@@ -22,15 +22,30 @@ from pathlib import Path as _OP
 
 _OGATE = "hooks/prod_write_gate.py"
 
-# A production-classified write: denied by default, and exactly the sort of refusal an operator
-# opens an observe-only window in order to count.
+# AN OBSERVABLE REFUSAL: a destructive operation with no approval token, refused for want of the
+# token rather than for the org's classification. Exactly the friction an operator opens a window
+# to count.
 _ORG_EVENT = {
+    "tool_name": "Bash",
+    "tool_input": {"command": "sf data delete bulk --sobject Widget__c --file ids.csv "
+                              "--target-org sf-observe-probe"},
+}
+_ORG_GATE = "hooks/destructive_data_gate.py"
+# A trust-boundary refusal: must stay a refusal no matter what window is open.
+_ANCHOR_EVENT = {"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/secret"}}
+# A PRODUCTION refusal. An unauthenticated alias classifies production, which is the fail-safe
+# direction, so this reaches the production denial without needing a live org.
+#
+# This file previously used a production write as its OBSERVABLE case and passed — which was the
+# defect, not the test: it asserted that a production denial becomes advisory under a window. It
+# must not. An observe grant is bound to the TREE, and the shim runs the gates with TORQUE_HOME
+# set to the recorded repo from any directory, so a window opened to measure sandbox friction
+# would otherwise make every production write on the machine advisory for its duration.
+_PROD_EVENT = {
     "tool_name": "Bash",
     "tool_input": {"command": "sf data update record --sobject Account --record-id 001abc "
                               "--values X=1 --target-org acme-prod"},
 }
-# A trust-boundary refusal: must stay a refusal no matter what window is open.
-_ANCHOR_EVENT = {"tool_name": "Bash", "tool_input": {"command": "cat ~/.torque/secret"}}
 
 
 class _ObserveAnchor:
@@ -89,7 +104,7 @@ def _observe_grant_is_operator_only():
     cases = []
     a = _ObserveAnchor(mint=False)
     try:
-        code, out = a.run(_ORG_EVENT)
+        code, out = a.run(_ORG_EVENT, _ORG_GATE)
         cases.append(("no window still denies", code == 2 and "DENY" in out, code))
     finally:
         a.close()
@@ -99,14 +114,14 @@ def _observe_grant_is_operator_only():
                       ("window for another tree", {"tree": "/somewhere/else"})):
         b = _ObserveAnchor(**kw)
         try:
-            code, out = b.run(_ORG_EVENT)
+            code, out = b.run(_ORG_EVENT, _ORG_GATE)
             cases.append((label, code == 2 and "OBSERVE-ONLY" not in out, code))
         finally:
             b.close()
 
     c = _ObserveAnchor()
     try:
-        code, out = c.run(_ORG_EVENT)
+        code, out = c.run(_ORG_EVENT, _ORG_GATE)
         cases.append(("valid window records and allows",
                       code == 0 and "OBSERVE-ONLY" in out and "would have denied" in out, code))
     finally:
@@ -136,7 +151,15 @@ def _observe_never_opens_the_trust_boundary():
         code, out = a.run(_ANCHOR_EVENT)
         anchor_held = code == 2 and "DENY" in out and "OBSERVE-ONLY" not in out
 
-        code2, _ = a.run(_ORG_EVENT)
+        # PRODUCTION is the second thing a window must never make advisory, and for a reason the
+        # anchor case does not cover: the grant is tree-bound, not org-bound, and the shim runs
+        # the gates with TORQUE_HOME set to the recorded repo from ANY directory. So without this
+        # exclusion, a window opened to measure sandbox friction makes every production write on
+        # the machine advisory for its duration.
+        pcode, pout = a.run(_PROD_EVENT)
+        prod_held = pcode == 2 and "DENY" in pout and "OBSERVE-ONLY" not in pout
+
+        code2, _ = a.run(_ORG_EVENT, _ORG_GATE)
         trail = a.trail()
         recorded = '"OBSERVE"' in trail and "WOULD DENY" in trail
 
@@ -147,13 +170,19 @@ def _observe_never_opens_the_trust_boundary():
                           f"an open observe-only window allowed a trust-anchor read "
                           f"(exit {code}) — the window would grant access to the secret that "
                           f"mints windows")
+        if not prod_held:
+            return Result("observe_never_opens_the_trust_boundary", FAIL,
+                          f"an open observe-only window made a PRODUCTION write advisory "
+                          f"(exit {pcode}) — the grant is tree-bound and the shim carries it to "
+                          f"every directory, so this is machine-wide, not workspace-scoped")
         if not recorded:
             return Result("observe_never_opens_the_trust_boundary", FAIL,
                           f"observed operation exited {code2} but the audit trail carries no "
                           f"OBSERVE record ({len(trail)} bytes) — an unrecorded observation is "
                           f"the gate switched off")
         return Result("observe_never_opens_the_trust_boundary", PASS,
-                      "anchor stays denied under an open window; every observation is written "
-                      "to the durable trail before the operation proceeds")
+                      "under an open window the trust anchor and PRODUCTION both stay denied, "
+                      "and every observation is written to the durable trail before the "
+                      "operation proceeds")
     finally:
         a.close()

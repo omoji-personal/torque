@@ -148,12 +148,51 @@ def remove():
     print("the project-level gates in this repo are unaffected")
     remove_shim()
 
+def _require_operator(what):
+    """Uninstalling enforcement is an operator act, not an agent one.
+
+    THE HOLE THIS CLOSES, found by chasing an audit finding about a hypothetical kill switch and
+    discovering the real one already shipped: the gates deny `rm ~/.torque/shim/sf` as a
+    protected write, and allowed `torque install-gates --remove-shim`, which does the same thing
+    more thoroughly. Two doors on turning the enforcement off, different answers — the exact
+    shape this repo keeps finding, this time on the door marked "disable".
+
+    An agent that can uninstall its own guardrails has guardrails only while it agrees with them.
+    That makes every other control here conditional on the agent's cooperation, which is the one
+    assumption the whole design refuses to make.
+
+    Same presence test as `torque approve`: a real login TTY whose ancestry is clear of the agent
+    process. Deliberately NOT a token — a token would have to be minted by an operator anyway,
+    and this way an operator at their own terminal is never blocked from uninstalling software
+    they installed.
+    """
+    sys.path.insert(0, str(TORQUE_HOME / "hooks"))
+    import lib
+    if lib.operator_present():
+        return
+    print(f"refusing: {what} disables Torque's own enforcement, so it requires an operator at a "
+          f"real terminal — the same presence check `torque approve` uses.\n"
+          f"  Run it yourself from a login shell, clear of the agent:\n"
+          f"    cd {TORQUE_HOME} && python3 bin/torque install-gates {what}\n"
+          f"  If you are already at such a terminal and seeing this, the ancestry check found an "
+          f"agent process above this one.", file=sys.stderr)
+    try:
+        lib.audit("UNINSTALL-REFUSED", f"{what} attempted without operator presence", durable=True)
+    except Exception:                                  # noqa: BLE001 — refusal must not depend on it
+        pass
+    sys.exit(2)
+
+
 if __name__ == "__main__":
     import sys
     if "--remove-shim" in sys.argv:
+        _require_operator("--remove-shim")
         remove_shim()
     elif "--shim" in sys.argv and "--remove" not in sys.argv and len(sys.argv) == 2:
         # `--shim` alone adds the shim without rewriting the operator's settings.json.
         install_shim()
+    elif "--remove" in sys.argv:
+        _require_operator("--remove")
+        remove()
     else:
-        (remove if "--remove" in sys.argv else main)()
+        main()
