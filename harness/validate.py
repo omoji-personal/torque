@@ -411,7 +411,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 15            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 16            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -677,6 +677,27 @@ def self_test(target=None):
         ok &= passed
     finally:
         lbf.write_text(orig6)
+    # maintainer-expiry mutator: neuter the exp comparison in maintainer_grant_valid, so an
+    # EXPIRED window is accepted as live. maintainer_grant_is_operator_only must then FAIL —
+    # proving the window is genuinely time-boxed rather than merely documented as time-boxed.
+    #
+    # This is the mutator the maintainer-mode design specified and shipped without, which is the
+    # wrong order and was recorded as owed rather than skipped. Without it, "time-boxed" is a
+    # property nothing tests: a grant with no expiry check behaves identically to one with a
+    # working expiry check until the day someone's stale grant is still authorizing edits.
+    orig6b = lbf.read_text()
+    try:
+        lbf.write_text(orig6b.replace(
+            "    if g.get(\"exp\", 0) <= time.time():\n        return None",
+            "    if False:  # MUTANT: expiry no longer bounds the window\n        return None", 1))
+        fn = dict((n, f) for n, _p, _c, f in REGISTRY).get("maintainer_grant_is_operator_only")
+        r = fn()
+        passed = r.outcome == FAIL and "expired" in r.detail
+        print(f"  {'✓' if passed else '✗'} maintainer-expiry mutator: expected FAIL naming the "
+              f"expired grant, got {r.outcome}")
+        ok &= passed
+    finally:
+        lbf.write_text(orig6b)
     # single-use mutator: replace the atomic rename-claim with the exists-then-read shape a
     # refactor would naturally reach for. Concurrent claimers must then BOTH be authorized —
     # proving the check races the claim rather than merely calling it twice in a row.

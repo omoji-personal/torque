@@ -30,9 +30,9 @@ two valid), and the gate itself over 7 more:
 The two bold rows are the design. A window that could rewrite the signing secret could extend
 itself, so the anchor is checked before the grant and always wins.
 
-**Still owed:** the four checks below, including the mutator. The runs above prove the behaviour
-today; a check is what keeps it true, and they live in `harness/checks/` — so they can be written
-from inside the first window this opens.
+**Shipped 2026-08-04**, in `harness/checks/check_maintainer.py` plus a mutator in the self-test.
+The mechanism ran for a day before them, which was the wrong order and was recorded as owed
+rather than pretended.
 
 ## What is actually blocked
 
@@ -197,9 +197,12 @@ def handle_edit(tinput):
 
 `--end-maintainer` unlinks the grant and audits the revocation.
 
-## The checks it must ship with
+## The checks (shipped)
 
-Per the house rule, and each has to be able to fail:
+Per the house rule, and each has to be able to fail. All three live in
+`harness/checks/check_maintainer.py`; each builds a throwaway anchor and points the gate at it
+with `TORQUE_ANCHOR` and `TORQUE_AUDIT_LOG`, so none of them reads or depends on the operator's
+real anchor or their real grant. That matters because the suite is frequently run inside a window.
 
 1. **`maintainer_grant_is_operator_only`** — with no grant, a protected edit denies; with a grant
    whose signature is forged, whose `exp` has passed, or whose `tree` names a different
@@ -212,6 +215,9 @@ Per the house rule, and each has to be able to fail:
    `~/.torque/secret`, the token store and the sf auth store are all still denied.
 4. **A mutator** — neuter the `exp` comparison so an expired grant is accepted, and require the
    suite to go red. If that cannot be made to fail on purpose, the window is not really bounded.
+   Shipped as the maintainer-expiry mutator; `TOTAL_MUTATORS` 15 → 16. Verified by running the
+   self-test against a copy of the tree rather than the live hooks, since `--self-test` mutates
+   hook sources in place and other agent sessions may be holding them.
 
 Note the trap that A1 fell into: `shadow_cannot_escape_the_transaction` passed for thirteen commits
 because its target org refused everything for an unrelated reason, so the assertion never

@@ -39,8 +39,19 @@ for rel in ("README.md", "guide/torque-guide.html", "bin/torque-demo", "bin/torq
     f = ROOT / rel
     if not f.exists():
         continue
-    f.write_text(re.sub(r"\d{1,3} (mutators|mutation tests)", lambda m: f"{mutators} {m.group(1)}",
-                        f.read_text()))
+    body = re.sub(r"\d{1,3} (mutators|mutation tests)", lambda m: f"{mutators} {m.group(1)}",
+                  f.read_text())
+    # The per-profile breakdown, in the prose form the documents actually use:
+    #   "72 checks (52 static, 69 capability, 72 release)"
+    # claimed_counts verifies each of those names against its own cumulative total, and used to
+    # catch drift here that this syncer could not repair — so every check added meant a manual
+    # edit the checker would find and nobody would automate. Rewriting them closes that loop:
+    # the checker and the rewriter now cover the same claim.
+    body = re.sub(r"(\d{1,3})\s+(static|capability|release)\b",
+                  lambda m: f"{total[m.group(2)]} {m.group(2)}", body)
+    # and the headline total, which is the release-profile count
+    body = re.sub(r"(\d{2,4}) checks \(", f"{total['release']} checks (", body)
+    f.write_text(body)
 
 guide = ROOT / "guide" / "torque-guide.html"
 text = guide.read_text()
