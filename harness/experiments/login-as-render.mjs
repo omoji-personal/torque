@@ -78,6 +78,22 @@
 //     hypothesised before anything was OBSERVED. One dump would have ended it at the first
 //     failure. `TORQUE_DUMP_LABELS=1` runs it.
 //
+//   · AND THEN READ THE DIALOG BODY. "Sorry to interrupt" is only the header. The body says
+//     "CSS Error" — a static-resource failure in the record-page bundle under headless
+//     Chromium. Not access: org-wide default is Edit on Account, the profile has Read, the
+//     granting permission set is assigned, and the label was confirmed against FieldDefinition.
+//     A realistic viewport does not fix it. Lightning HOME and SETUP render fine in the same
+//     session, so this is specific to record pages.
+//
+//     So the field-visibility differential is not achievable headless here, and no selector was
+//     ever going to make it work. Four designs were tuned against a page that had already
+//     failed for a reason printed on it in two words.
+//
+// IMPERSONATION IS CONFIRMED THREE WAYS, which is the one thing that did land: the servlet
+// redirects to its retURL target, the "Logged in as" banner appears, and the in-app guidance
+// prompt addresses the impersonated user BY NAME. The third is free, appears in the dialog
+// dump, and is the least flaky of them.
+//
 // Everything here reports ABSENT or UNSETTLED rather than picking a side, which is why this is
 // an experiment and not a check.
 import { chromium } from 'playwright';
@@ -197,7 +213,13 @@ const shell = async (page) => {
 
 const browser = await chromium.launch({ headless: true });
 try {
-  const page = await browser.newPage();
+  // A realistic viewport, because Lightning record pages failed with "Sorry to interrupt / CSS
+  // Error" at the headless default — an asset/layout failure, not a permission one. Read out of
+  // the dialog body rather than inferred: the header alone says nothing about the cause.
+  const page = await browser.newPage({
+    viewport: { width: 1680, height: 1050 },
+    deviceScaleFactor: 1,
+  });
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
   const adminOk = await shell(page);
@@ -287,7 +309,17 @@ try {
     try {
       await page.goto(`${instanceUrl}/lightning/r/Account/${RECORD_ID}/view`,
                       { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(8000);
+      // 8s was not a settle, it was a guess — and shells alone have taken 5–7s on this org, so
+      // the first dump may have photographed a page mid-load and reported "no record" about a
+      // record that had not arrived. Poll for record content instead of sleeping on a number.
+      for (let i = 0; i < 12; i++) {
+        const n = await page.locator('records-lwc-highlights-panel, force-highlights2, '
+                                     + 'records-record-layout-item, .slds-page-header__title')
+                            .count();
+        if (n > 0) break;
+        await page.waitForTimeout(2500);
+      }
+      await page.waitForTimeout(3000);
       // page.accessibility was removed from Playwright; locators are the piercing API that
       // remains. A locator matching elements INSIDE open shadow roots returns their text, which
       // is the whole reason this works where page.content() did not.
@@ -296,6 +328,15 @@ try {
       ).allTextContents();
       const labelish = [...new Set(names.map(s => s.trim()))].filter(s =>
         s.length > 2 && s.length < 34 && !/\d/.test(s) && /^[A-Z]/.test(s));
+      // "Sorry to interrupt" is only the HEADER of Salesforce's error dialog; the body says
+      // why, and inferring the why from the header is the same guessing this dump replaced.
+      try {
+        const dlg = await page.locator(
+          '[role="dialog"], .slds-modal__container, .errorMessage, .genericError'
+        ).allTextContents();
+        const body = dlg.map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' | ');
+        mark('errorDialogText', body.slice(0, 400) || 'no dialog element matched');
+      } catch (e) { mark('errorDialogText', 'unavailable'); }
       mark('labelCount', labelish.length);
       mark('hasFieldLabel', labelish.some(s => s.includes(FIELD_LABEL)));
       mark('labelSample', labelish.slice(0, 40).join(' / ').slice(0, 700));

@@ -562,6 +562,34 @@ entries:
   confidence: practitioner
   updated: 2026-08-01
 
+- id: lightning-record-pages-css-error-headless
+  domain: auth
+  title: A Lightning record page can fail with "CSS Error" in headless Chromium while every other page renders
+  symptom: >
+    Automation opens /lightning/r/<Object>/<id>/view and gets navigation chrome, no record
+    content, and a dialog headed "Sorry to interrupt". Home and Setup pages in the SAME session
+    render perfectly, so the session, the auth and the permissions all look fine.
+  cause: >
+    The dialog body reads "CSS Error" — a static-resource/layout failure specific to the record
+    page bundle. It is not access. Verified on a Developer Edition org 2026-08-04 with
+    org-wide default Edit on Account, PermissionsRead true for the profile, the granting
+    permission set assigned, and the field label confirmed against FieldDefinition.
+  remedy: >
+    Do not conclude anything about field-level security from a record page that did not render.
+    Assert the record actually arrived — its own name or a highlights panel — before treating a
+    missing field label as a permissions finding. A realistic viewport does NOT fix it; this
+    needs a headed browser or a different rendering path.
+  gotcha: >
+    The header alone says nothing. Four detector designs were refined against this page before
+    anyone read the dialog BODY, which names the cause in two words. When a page fails, read the
+    error text before improving the selector.
+  triggers: ['lightning/r/', 'Sorry to interrupt', 'CSS Error', 'record page']
+  requires: >
+    Verifying field visibility in a browser needs proof the record page rendered at all, not
+    just that the Lightning shell did — the shell renders even when the record does not.
+  confidence: practitioner
+  updated: 2026-08-04
+
 - id: login-as-servlet-beats-the-setup-link
   domain: auth
   title: Login As from the Setup UI link is unreliable; the su servlet is the path that works
