@@ -114,7 +114,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 88 checks (68 static, 85 capability, 88 release),
+The current state, measured rather than claimed: 90 checks (70 static, 87 capability, 90 release),
 17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.
