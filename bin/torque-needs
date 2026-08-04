@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""torque needs — what an operation requires, asked BEFORE you have a command.
+
+`closure_for` answers from a command string, which means the requirement set arrives at the
+moment the gate reads the command — useful, and too late to plan with. You have to already know
+what you are going to type to find out what it needs.
+
+This is the front door. Name the operation, get the set.
+
+    torque needs deploy-field
+    torque needs hard-delete
+    torque needs --list
+
+WHY A VOCABULARY AND NOT FREE TEXT
+
+The obvious interface is `torque needs "add a currency field to Opportunity"`. It cannot work
+honestly. Catalogue triggers are regexes written against CLI text — `project\\s+deploy.*Custom
+Field` — so a sentence matches nothing and the tool returns an empty set. That empty set is
+indistinguishable from "this operation requires nothing", and manufacturing that particular
+confusion in the very tool built to remove it would be a joke at the reader's expense.
+
+So each named operation carries an EXEMPLAR: the canonical command for that operation, matched
+by the triggers that already exist. No second matcher, no second list of what an operation is.
+`needs_vocabulary_reaches_the_catalogue` asserts every exemplar still reaches at least one entry,
+so an operation cannot sit here promising an answer the catalogue stopped being able to give.
+
+An unknown operation is refused with the list, never answered with silence.
+
+EXIT CODES
+    0   requirements returned, or none recorded and said so
+    2   the operation is not one this knows
+"""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "hooks"))
+
+# operation -> (exemplar command, one-line description)
+#
+# The exemplar is the canonical CLI form. It exists to be matched by triggers written against
+# real commands, so it must stay a real command — the moment one of these is a phrase nobody
+# would type, it has stopped reusing the catalogue and started being a second vocabulary.
+OPERATIONS = {
+    "deploy-field": (
+        "sf project deploy start --manifest package.xml --metadata CustomField FieldPermissions "
+        "--target-org ORG",
+        "deploy a custom field so somebody can actually see it"),
+    "deploy": (
+        "sf project deploy start --manifest package.xml --target-org ORG",
+        "deploy metadata of any kind"),
+    "delete-metadata": (
+        "sf project delete source --metadata CustomField --target-org ORG",
+        "remove metadata from an org"),
+    "bulk-update": (
+        "sf data update bulk --sobject Account --file rows.csv --target-org ORG",
+        "update many records at once"),
+    "bulk-delete": (
+        "sf data delete bulk --sobject Log__c --file ids.csv --target-org ORG",
+        "delete many records at once"),
+    "hard-delete": (
+        "sf data delete bulk --sobject Log__c --file ids.csv --hard-delete --target-org ORG",
+        "delete many records past the Recycle Bin"),
+    "data-load": (
+        "sf data import bulk --sobject Contact --file rows.csv --target-org ORG",
+        "load records into an org"),
+    "anonymous-apex": (
+        "sf apex run --file script.apex --target-org ORG",
+        "run Apex outside a class"),
+    "retrieve-flow": (
+        "sf project retrieve start --metadata Flow:MyFlow --target-org ORG",
+        "pull a flow out of an org"),
+}
+
+
+def render(op, rep, as_json):
+    if as_json:
+        print(json.dumps({
+            "operation": op,
+            "requirements": [{"entry": i, "requires": r} for i, r in rep["requirements"]],
+            "matched_without_requirement": rep["unrecorded"],
+            "matched": rep["matched"]}, indent=2))
+        return 0
+    _cmd, desc = OPERATIONS[op] if op in OPERATIONS else ("", "")
+    print(f"\nNEEDS — {op}" + (f": {desc}" if desc else ""))
+    if rep["requirements"]:
+        print()
+        for eid, req in rep["requirements"]:
+            print(f"  [{eid}]")
+            for line in _wrap(req, 86):
+                print(f"      {line}")
+        print(f"\n  {len(rep['requirements'])} requirement(s) the catalogue records for this "
+              f"operation.")
+    elif rep["matched"]:
+        print(f"\n  Nothing recorded. {len(rep['matched'])} catalogue entr"
+              f"{'y' if len(rep['matched']) == 1 else 'ies'} match this operation and none "
+              f"states what it requires:")
+        for e in rep["matched"]:
+            print(f"      {e}")
+        print("\n  That is a gap in the catalogue, not a finding that nothing is required.")
+    else:
+        print("\n  No catalogue entry matches this operation at all, so nothing is known about "
+              "what it needs.\n  Which is not the same as it needing nothing.")
+    if rep["requirements"] and rep["unrecorded"]:
+        print(f"\n  Also matched, recording no requirement: {', '.join(rep['unrecorded'])}")
+    return 0
+
+
+def _wrap(text, width):
+    words, line, out = text.split(), "", []
+    for w in words:
+        if len(line) + len(w) + 1 > width:
+            out.append(line)
+            line = w
+        else:
+            line = f"{line} {w}".strip()
+    if line:
+        out.append(line)
+    return out
+
+
+def main():
+    p = argparse.ArgumentParser(prog="torque needs", add_help=True,
+                                description=__doc__.split("\n")[0])
+    p.add_argument("operation", nargs="?", help="one of the known operations; --list to see them")
+    p.add_argument("--list", action="store_true", help="list the operations this knows")
+    p.add_argument("--command", help="ask about a literal command instead of a named operation")
+    p.add_argument("--json", action="store_true")
+    a = p.parse_args()
+
+    import lib
+    if a.list or (not a.operation and not a.command):
+        print("operations:")
+        w = max(len(k) for k in OPERATIONS)
+        for k, (_c, desc) in sorted(OPERATIONS.items()):
+            print(f"  {k.ljust(w)}   {desc}")
+        print("\nOr ask about a command you already have:  torque needs --command \"sf ...\"")
+        return 0 if (a.list or not a.command) else 2
+
+    if a.command:
+        return render(a.command[:60], lib.closure_report(a.command), a.json)
+
+    if a.operation not in OPERATIONS:
+        print(f"torque needs: {a.operation!r} is not an operation this knows.\n"
+              f"Known: {', '.join(sorted(OPERATIONS))}\n"
+              f"Refusing rather than returning an empty set, because an empty set here reads as "
+              f"'requires nothing'.", file=sys.stderr)
+        return 2
+    return render(a.operation, lib.closure_report(OPERATIONS[a.operation][0]), a.json)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -44,6 +44,29 @@ def handle_bash(cmd):
 
 
 
+def handle_argv(sf_args):
+    """The same decision, on argv the shim already has, with no text in between.
+
+    `handle_bash` spends `analyze_bash` recovering argv from a command string. The exec-time
+    shim starts with argv — bash finished every expansion before the kernel handed it over — so
+    reconstructing a string to parse back into argv is not merely redundant, it is the only
+    place error can enter. Measured: a `--values` payload containing a literal backtick is
+    reproduced by shlex.join as a quoted backtick, which analyze_bash refuses as command
+    substitution. Correct for text a human typed; wrong for a byte the kernel already delivered.
+    The command would have been refused for the punctuation in somebody's Description field.
+
+    So the shim calls this instead, and it is the SAME authorization call handle_bash makes.
+    Nothing about who may write is decided twice.
+    """
+    lib.remember_command("[shim] sf " + " ".join(sf_args))
+    if shellparse.is_read(sf_args):
+        lib.allow()
+    ok, reason = lib.authorize_write(lib.sole_target(shellparse.targets(sf_args), HOOK))
+    if not ok:
+        lib.deny(reason, "not-authorized", HOOK)
+    lib.allow()
+
+
 def handle_mcp(tool, tinput):
     # P1-006, second surface. allow() falls back to _JUDGED["command"], which is populated only
     # by lib.remember_command — and that was called in handle_bash only. So EVERY authorized MCP
@@ -131,6 +154,14 @@ def handle_edit(tinput):
         if shellparse.anchor_ref(path) or _is_sf_auth(path) or shellparse.sf_auth_ref(path):
             lib.deny("the trust anchor and the sf CLI auth store are never agent-writable — "
                      "no maintainer window grants them", "artifact-edit", HOOK)
+        # Nor is anything the gate READS to decide. A window unlocks this tool's source; the
+        # allowlist and the classification cache are not source, they are the answer to "may
+        # this org be written to", and editing them is the agent authorizing itself.
+        if lib.is_authorization_input(path):
+            lib.deny(f"{os.path.basename(path)} is an input the gate reads to decide "
+                     f"authorization, not source — no maintainer window grants it. A window "
+                     f"unlocks what this tool IS, never what it is allowed to write to.",
+                     "artifact-edit", HOOK)
         if lib.maintainer_grant_valid():
             # Durable for the reason P1-003 gave about production writes: an edit to the
             # enforcement layer that cannot be recorded is not one this tool authorizes.
@@ -168,6 +199,8 @@ def main():
     tinput = ev.get("tool_input", {}) or {}
     if tool == "Bash":
         handle_bash(tinput.get("command", ""))
+    elif tool == "SfArgv":
+        handle_argv(list(tinput.get("argv", [])))
     elif tool in ("Edit", "Write", "MultiEdit"):
         handle_edit(tinput)
     elif tool == "Read":

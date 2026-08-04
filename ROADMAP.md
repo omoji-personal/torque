@@ -49,11 +49,48 @@ Not that models lack Salesforce knowledge — they have it. Three failures survi
 
 ## Next, in order
 
-### 1. Completeness closure
+### 1. Completeness closure — shipped 2026-08-04
 The catalogue already encodes "X alone does not work" — `fls-not-automatic` is a closure rule
 filed as a hazard. Turning that into *"you asked for X; here is the set X actually requires"* is a
-different query over data that already exists. First because it is nearly free and it de-risks
-what follows.
+different query over data that already exists.
+
+It was already half-built and quietly broken in three ways, each found by testing rather than
+reading:
+
+- **An empty requirement set meant two different things.** A bulk update matched seven catalogue
+  entries, none in requirement form, and the gate printed nothing — so an agent that saw no
+  `TORQUE NEEDS` line concluded there was none. `closure_report` now separates "nothing matched"
+  from "matched, and nobody has recorded what it requires", and the gate says which.
+- **A delete was told it needed field-level security.** `fls-not-automatic` carried a trigger
+  matching the metadata *type* regardless of the verb. A requirement set carrying things the
+  operation does not require misleads as much as one that omits things, and errs toward doing
+  more work, so it is less likely to be questioned.
+- **Every legacy `force:` spelling reached nothing.** The gate authorizes both spellings — the
+  destructive classifier pairs each modern shape with its `force:` twin — but the catalogue's
+  triggers were written against modern wording only. Five operation pairs tested, legacy reached
+  zero entries five times out of five: correctly gated, and told nothing. `LEGACY_TO_MODERN` in
+  `shellparse` now normalises for matching, with a check that fails when the map falls behind the
+  classifier.
+
+Requirement coverage went from 5 entries to 8 by re-pointing knowledge the entries already
+carried — `hard-delete-permission` is about a permission a hard delete needs and was filed as a
+hazard, therefore invisible to closure. No new platform claims were made. Retrieval precision
+rose from 85% to 88% as a side effect of removing the over-match; it had been sitting exactly on
+its FAIL floor.
+
+**Ask-by-intent shipped the same day.** `torque needs <operation>` is the front door, because
+`closure_for` answers from a command and you had to already know what you were going to type.
+
+Free text was rejected as an interface, not as a nicety. Catalogue triggers are regexes written
+against CLI text, so a sentence matches nothing and returns an empty set — and that empty set
+reads as "requires nothing". Manufacturing exactly that confusion inside the tool built to remove
+it would be a joke at the reader's expense. So each of the nine named operations carries a
+canonical command as its exemplar, matched by the triggers that already exist rather than by a
+second matcher, and `needs_vocabulary_reaches_the_catalogue` fails if one stops reaching an
+entry. An unknown operation is refused with the list, never answered with silence.
+
+**Still open here:** `audit-fields-not-writable` carries a requirement no ordinary command
+reaches.
 
 ### 2. Shadow execution
 `Savepoint` → the real DML → the real runtime errors → `Database.rollback`. The trial-and-error
@@ -65,20 +102,91 @@ What remains is not the mechanism but the honesty around it: establish by test �
 how governor limits accumulate inside the shadow transaction, and a hard refusal against
 production.
 
-### 3. The completion gate
+**The production refusal is done** and covered by `shadow_refuses_unverified`: `torque-shadow`
+classifies live and re-checks the identity before running, so only sandbox, developer and scratch
+are eligible.
+
+**Run four times, 2026-08-04. Two of five established, and the other three are bounded rather
+than pending.**
+
+- **DML rolls back.** The probe record is gone, confirmed by the experiment and independently.
+- **Governor limits do NOT rewind, and the rollback bills for the undo.** 0 → 2 → 3 statements,
+  0 → 1 → 1 rows. `setSavepoint` spends one, the insert spends one, `Database.rollback` spends a
+  third. `torque-shadow`'s docstring already asserted the 2 → 3 half; this reproduced it with a
+  re-runnable script and the full triple, and it is now a catalogue entry
+  (`savepoint-rollback-does-not-refund-limits`) so it reaches an operator who never opens that
+  file. The tool knew and the catalogue did not, which is the same two-lists shape found four
+  times this week.
+- **The Queueable question is CLOSED AS UNMEASURABLE from here**, not left open. Four designs:
+  `AsyncApexJob` by id, then with a control arm, then with the wait removed, then observing a
+  side effect instead of a job row. The org holds zero `AsyncApexJob` rows ever, and a Queueable
+  declared as an inner class inside anonymous Apex left no side effect even when enqueued and
+  committed — so the control never showed up and every treatment result was uninterpretable.
+  Establishing it needs a deployed `ApexClass`, which is a metadata change an experiment must
+  not push into somebody's org. Platform events and callouts are bounded the same way, by a
+  subscriber object and a Remote Site Setting respectively.
+
+The guard regexes in `torque-shadow` refuse all three shapes regardless, which is the safe
+direction and does not turn a documented claim into a measured one. The docstring now says which
+of its claims are which.
+
+**The experiment.** `harness/experiments/shadow-rollback-boundary.py`
+sets a savepoint, inserts a marked record, enqueues a Queueable, rolls back, and then measures
+three things: whether the DML is really gone, whether the governor counters rewound with the
+data, and whether the job survived. It names platform events and callouts as NOT ESTABLISHED
+with reasons — observing an event needs a subscriber object that may not exist here, and a
+callout needs a Remote Site Setting this must not create in somebody's org — rather than
+inferring them from the documentation and leaving a findings list that reads complete.
+
+It is an **experiment, not a check**, deliberately. It runs anonymous Apex, so the agent cannot
+run it, and wiring an unverified org-touching probe into the capability profile is how a build
+goes red for the author's bug rather than a finding. `experiments_are_not_checks` asserts nothing
+under `harness/experiments/` can register into a profile. Once an operator runs it and the
+findings hold, each becomes a catalogue entry with a runnable verifier — and only then a check.
+
+### 3. The completion gate — ledger shipped, browser half still gated
 A verified / not-verified ledger, ending in the browser under a **non-admin** profile — admin sees
 everything and proves nothing. The same discipline the harness already applies, where a skip is
 never allowed to read as a pass, applied to the word *done*.
 
-Gated on three questions being answered first, because they decide whether it survives use: can it
-render as a non-admin profile, what is the real wall-clock cost, and how flaky is it. A completion
-gate that costs two minutes gets routed around, which is worse than not having one.
+**`torque done` ships the ledger** (2026-08-04). Six layers: the field exists in the org, FLS is
+granted, somebody actually holds the permission set, it renders for a non-admin, the automation
+fired, a human agreed. An unobserved layer is NOT VERIFIED, and the denominator does not move when
+evidence arrives — layers get answered, never removed, because subtraction is how a partial check
+comes to read as a complete one.
 
-### 4. Proof-carrying operations
+**The browser half is not built, on purpose.** It is still gated on the same three questions: can
+it render as a non-admin profile at all, what is the real wall-clock cost, and how flaky is it. A
+completion gate that costs two minutes gets routed around, which is worse than not having one, and
+none of the three has been answered against a real org. So that layer reports BLOCKED with a dated
+reason, `--na` is refused on it — a blocker is a fact about the tool, not a judgement about the
+change — and a human who did the render by hand records it with `--render-evidence`. Without that
+seam the verdict would be NOT DONE for every input ever, which is a ledger with one row and no
+information in it.
+
+### 4. Proof-carrying operations — shipped 2026-08-04
 The unifying frame: every meaningful operation carries preconditions, predicted impact,
-authorization bound to that impact, postconditions, unknowns, and an evidence receipt. Four of the
-six exist already — impact-bound approval tokens and attestations are built. This step is mostly
-integration, and it is what turns the pieces into one claim.
+authorization bound to that impact, postconditions, unknowns, and an evidence receipt.
+
+All six existed and none of them met. The catalogue knew what an operation requires,
+blast-radius knew what it would set off, approval tokens bound a count ceiling, the completion
+ledger knew whether it landed, UNDETERMINED existed in three tools, and attestations recorded
+runs — six answers, six commands, and nowhere a person could look and say the operation is
+accounted for.
+
+`torque receipt` assembles them. It runs the existing tools rather than reimplementing any,
+because a second blast radius would diverge from the first and nothing would compare them;
+`receipt_composes_rather_than_reimplements` asserts it stays that way. Verified live: 4/6
+INCOMPLETE with no field named, 6/6 PROOF-CARRYING with the field, permission set and the three
+kinds of human evidence supplied.
+
+The one rule it is strict about: **a receipt showing five of six must not read as complete.**
+The evidence element is the self-referential one — the receipt vouching for itself — and it
+withholds itself while any other element is outstanding, naming what is missing rather than just
+refusing. Authorization is deliberately reported as verified-elsewhere: an approval token lives
+in the trust anchor, which this tool cannot read by design, so it records the ceiling the
+approval must name and says the gate checks the binding at write time. Claiming otherwise would
+be this tool vouching for a control it has no access to.
 
 ---
 
@@ -87,7 +195,7 @@ integration, and it is what turns the pieces into one claim.
 **The adversarial assurance corpus is the asset.** The observation that changed my mind, from the
 mechanism review: the catalogue's facts are copyable; the evidence that the gates, the retrieval
 and the verifiers fail correctly under hostile variation is not. 196 bypass fixtures, 34 negative
-retrieval cases, 16 mutators, the live experiments and the verifier-falsification seams are what
+retrieval cases, 17 mutators, the live experiments and the verifier-falsification seams are what
 the adversarial rounds left behind.
 
 So new capability ships with its bypass fixtures and its mutator, or it does not ship.
@@ -103,8 +211,8 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 75 checks (55 static, 72 capability, 75 release),
-16 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
+The current state, measured rather than claimed: 98 checks (78 static, 95 capability, 98 release),
+17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.
 

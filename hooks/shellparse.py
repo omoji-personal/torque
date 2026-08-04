@@ -8,7 +8,7 @@ that could reach `sf` but cannot be statically resolved. Every bypass found rout
 sf-base0 classifier (relocation under a runner, glued redirect, legacy colon syntax, MCP
 naming), so the fixes harden those seams while keeping direct-`sf` authorization intact.
 """
-import os, re, shlex, hashlib, fnmatch
+import os, re, shlex, hashlib, fnmatch, json
 from pathlib import Path
 import lib
 
@@ -126,6 +126,8 @@ REDIR_FUSED = re.compile(r"^(?:\{\w+\}|&|\d+)?<?>{1,2}[|!&]?(.*)$")  # > >> 1> 2
 PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destructive_data_gate.py",
                        "lib_cli.py", "settings.json", "writable-orgs.json", "protected-objects",
                        "cli-write-surface.json", "clean-ip.rules", ".classify-cache.json",
+                       # decides which checks the agent may run against a live org
+                       "read-only-checks.json",
                        "audit.log", "torque-approve", "torque-frontdoor", "torque-install-gates",
                        "validate.py",
                        # The catalogue and the alias index feed regular expressions into the
@@ -158,8 +160,71 @@ def stages_local(argv) -> bool:
 # Trust is a property of what a tool DOES, not of where it lives. Naming each read-only tool
 # is more maintenance than a path rule and that is the point: a new tool under bin/ gets no
 # trust until someone decides it deserves some.
-READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log"}
-READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log"}
+READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log", "torque-done",
+                         "torque-receipt", "torque-needs"}
+READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done", "receipt", "needs"}
+
+# Legacy sfdx command IDs and the modern `sf` words that mean the same operation.
+#
+# The gate has always authorized both spellings — classify_destructive pairs each modern shape
+# with its `force:` twin, one `or` at a time. The CATALOGUE never learned the legacy half, and
+# its triggers are written against modern text, so `sf force:data:bulk:delete -s Log__c -f
+# ids.csv` reached ZERO catalogue entries while `sf data delete bulk --sobject Log__c --file
+# ids.csv` reached four. Measured across five operation pairs: legacy reached nothing, five
+# times out of five. An operator on the older syntax was correctly gated and told nothing about
+# what they were doing.
+#
+# The table lives here rather than in lib because this module owns the CLI vocabulary, and a
+# second copy of it next to the notes engine is the defect it exists to fix.
+# `legacy_map_covers_the_classifier` fails the build when a `force:` prefix the classifier knows
+# about is missing here, so the two cannot drift apart quietly.
+LEGACY_TO_MODERN = {
+    "force:data:bulk:delete": "data delete bulk",
+    "force:data:bulk:upsert": "data upsert bulk",
+    "force:data:bulk:update": "data update bulk",
+    "force:data:bulk:status": "data bulk results",
+    "force:data:record:create": "data create record",
+    "force:data:record:update": "data update record",
+    "force:data:record:delete": "data delete record",
+    "force:data:record:get": "data get record",
+    "force:data:soql:query": "data query",
+    "force:data:tree:import": "data import tree",
+    "force:data:tree:export": "data export tree",
+    "force:source:deploy": "project deploy start",
+    "force:source:retrieve": "project retrieve start",
+    "force:source:delete": "project delete source",
+    "force:mdapi:deploy": "project deploy start",
+    "force:mdapi:retrieve": "project retrieve start",
+    "force:apex:execute": "apex run",
+    "force:apex:test:run": "apex run test",
+    "force:apex:log:get": "apex get log",
+    "force:apex:class:list": "apex list class",
+    "force:org:display": "org display",
+    "force:org:list": "org list",
+    "force:org:open": "org open",
+    "force:org:create": "org create scratch",
+    "force:org:delete": "org delete scratch",
+    "force:schema:sobject:describe": "sobject describe",
+    "force:schema:sobject:list": "sobject list",
+    "force:package:installed:list": "package installed list",
+    "force:api:request:rest": "api request rest",
+}
+
+
+def modernize(command: str) -> str:
+    """The command with every legacy ID replaced by its modern words.
+
+    For MATCHING ONLY — notes, requirements, retrieval. Nothing authorizes from this. The
+    authorization path reads argv and knows both spellings already; this exists so knowledge
+    written against one spelling reaches an operator using the other.
+    """
+    if not command or "force:" not in command:
+        return command
+    out = command
+    # longest first, so force:apex:test:run is not eaten by a shorter prefix
+    for legacy in sorted(LEGACY_TO_MODERN, key=len, reverse=True):
+        out = out.replace(legacy, LEGACY_TO_MODERN[legacy])
+    return out
 
 
 def _is_own_harness(argv) -> bool:
@@ -192,6 +257,11 @@ def _is_own_harness(argv) -> bool:
         home = lib.TORQUE_HOME.resolve()
         cand = Path(argv[1])
         cand = (cand if cand.is_absolute() else (lib.TORQUE_HOME / cand)).resolve()
+        # The harness sits in harness/, not bin/, and is trusted only one check at a time. Its
+        # file is in PROTECTED_BASENAMES, so the same equivalence bin/ relies on holds: the agent
+        # cannot write the file it would then be allowed to run.
+        if cand.parent == (home / "harness") and cand.name == "validate.py":
+            return _harness_check_is_read_only(argv[2:], home)
         if cand.parent != (home / "bin"):
             return False
         if cand.name == "torque":                       # the dispatcher: only its read-only verbs
@@ -199,6 +269,50 @@ def _is_own_harness(argv) -> bool:
         return cand.name in READ_ONLY_FIRST_PARTY
     except Exception:
         return False
+
+
+def _harness_check_is_read_only(rest, home) -> bool:
+    """`validate.py --only <check>` where THAT CHECK is declared to make no org mutation.
+
+    The harness as a whole is not read-only and must never be trusted as if it were — probe_cycle
+    deploys and hard-deletes metadata, which is why P1-002 took its exemption away. Most of its
+    checks are another matter: describe_first only queries. Refusing the whole tool meant every
+    live diagnosis needed the operator to run a full profile and paste it back, which is friction
+    against a correctness control and therefore something that eventually gets removed.
+
+    Parsed, not pattern-matched. `--only describe_first --profile release` must NOT walk through
+    on the strength of containing a permitted name, and neither must a second `--only`, an
+    `--only` whose value is absent, or `--self-test` riding alongside. Anything this cannot
+    resolve exactly is refused, which is the same posture the rest of this module takes toward
+    argv it cannot statically settle.
+    """
+    try:
+        names = set(json.loads((home / "harness" / "checks" /
+                                "read-only-checks.json").read_text())["checks"])
+    except Exception:
+        return False                                    # no manifest, no exemption
+    only, seen = None, 0
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--self-test" or tok.startswith("--self-test="):
+            return False                                # runs mutators, and one needs an org
+        if tok == "--allow-skip" or tok.startswith("--allow-skip="):
+            return False                                # degrading a run is the operator's call
+        if tok == "--only":
+            seen += 1
+            if i + 1 >= len(rest):
+                return False                            # a flag with no value settles nothing
+            only = rest[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--only="):
+            seen += 1
+            only = tok.split("=", 1)[1]
+        i += 1
+    if seen != 1 or not only:
+        return False                                    # exactly one check, named exactly once
+    return only in names
 
 
 def strip_continuations(cmd: str) -> str:

@@ -19,10 +19,25 @@ WHAT DOES NOT ROLL BACK — measured on a live org, not assumed
   the rollback itself is a DML statement and the counters do not reset. A shadow run costs the
   transaction budget it would have cost for real, plus one. Shadowing an operation already near a
   limit will hit that limit.
+  Independently reproduced 2026-08-04 by harness/experiments/shadow-rollback-boundary.py, four
+  runs against a Developer Edition org: 0 → 2 → 3 statements and 0 → 1 → 1 rows across
+  setSavepoint, one insert, and Database.rollback. Now also a catalogue entry
+  (savepoint-rollback-does-not-refund-limits) so the requirement reaches an operator who never
+  opens this file.
+
   Not covered by a savepoint at all, and so out of scope here: callouts (already sent), @future
   and Queueable (already enqueued), Platform Events published with publishImmediate, and Change
   Data Capture. An operation whose consequence leaves the transaction cannot be un-done by
   rolling the transaction back, and this tool does not pretend otherwise.
+
+  THAT LIST IS DOCUMENTED, NOT MEASURED, and the distinction is worth keeping. The limits claim
+  above has been reproduced; the async and event claims have not. Four experiment designs tried
+  and failed to establish the Queueable half against a live org — AsyncApexJob held zero rows
+  ever, and a Queueable declared as an inner class inside anonymous Apex left no side effect
+  even when enqueued and committed, so the control arm never showed up and every treatment
+  result was uninterpretable. Establishing it needs a deployed ApexClass, which an experiment
+  must not push into somebody's org. The guard regexes below refuse these shapes regardless,
+  which is the safe direction and does not turn the claim into a measurement.
 
 NEVER AGAINST PRODUCTION. A savepoint bounds the DATA, not the risk: triggers fire, flows run,
 async work enqueues, limits burn. Refused here, and refused again by the gates.

@@ -212,6 +212,22 @@ def handle_bash(cmd):
 
 
 
+def handle_argv(sf_args):
+    """Exec-time twin of handle_bash: same _gate_write, argv straight from the kernel.
+
+    See prod_write_gate.handle_argv for why the shim does not hand over a reconstructed command
+    string. The destructive half matters more for that reason, not less: this gate reads the
+    positional token stream to shield protected sObjects and digests an Apex file, and both of
+    those are exactly the arguments most likely to carry punctuation a shell parser has an
+    opinion about.
+    """
+    lib.remember_command("[shim] sf " + " ".join(sf_args))
+    if shellparse.is_read(sf_args):
+        lib.allow()
+    _gate_write(sf_args)
+    lib.allow()
+
+
 def handle_mcp(tool, tinput):
     r = shellparse.mcp_analyze(tool, tinput)
     if r.get("read"):
@@ -240,6 +256,8 @@ def main():
     tinput = ev.get("tool_input", {}) or {}
     if tool == "Bash":
         handle_bash(tinput.get("command", ""))
+    elif tool == "SfArgv":
+        handle_argv(list(tinput.get("argv", [])))
     elif shellparse.is_mcp_tool(tool):
         handle_mcp(tool, tinput)
     lib.allow()

@@ -3,8 +3,16 @@
 
 Profiles compose: release ⊇ capability ⊇ static. A check declares its lowest profile;
 it runs in that profile and every higher one. SKIP/BLOCKED is never green. --self-test
-mutates a fixture, asserts the relevant check FAILs, and restores — proving each
-catastrophe-class check can actually fail.
+mutates a guard, asserts the covering check FAILs, and restores — proving that check can
+actually fail.
+
+Coverage is partial, and this paragraph said otherwise for a long time. TOTAL_MUTATORS
+mutators run here; far more checks are flagged catastrophe-class than that. The remainder
+carry their falsification inline — a sibling check that neuters the thing under test and
+requires the outcome to invert, which has the advantage of running in every profile rather
+than only under --self-test — or, honestly, carry none yet.
+`mutation_coverage_is_stated_honestly` compares the two numbers so the stronger claim
+cannot come back.
 
 Usage:
   validate.py --profile {static|capability|release} [--target-org ALIAS]
@@ -67,9 +75,27 @@ class Result:
 
 # ---- registry: (name, lowest_profile, catastrophe_class, fn) --------------
 REGISTRY = []
-def check(name, profile="static", catastrophe=False):
+# name -> True for checks DECLARED to make no org mutation. Recorded from the same decorator
+# call as the registry entry, so there is one declaration site and nothing maintained beside it.
+#
+# WHY THIS EXISTS. validate.py lost its read-only exemption when P1-002 closed, correctly:
+# probe_cycle deploys and hard-deletes metadata, so the harness is an org-mutating tool and the
+# gate refuses `python3 harness/validate.py --target-org X`. That is true of the harness and
+# false of most of its checks — describe_first only queries — and the consequence was that
+# diagnosing any live failure required the operator to run the whole profile and paste it back.
+#
+# The exemption is now per check, on the principle P1-002 itself established: trust by
+# capability, not by location. And a declaration alone is a label, so `readonly_manifest_is_
+# derived` re-derives from source and FAILS if anything declared here shows an org write. Both
+# are required — the label must be made deliberately AND survive the analysis. Neither is
+# sufficient: a declaration alone is trusting a name, and the derivation alone is trusting an
+# incomplete static analysis to prove a negative.
+READS_ONLY = {}
+def check(name, profile="static", catastrophe=False, reads_only=False):
     def deco(fn):
-        REGISTRY.append((name, profile, catastrophe, fn)); return fn
+        REGISTRY.append((name, profile, catastrophe, fn))
+        READS_ONLY[name] = reads_only
+        return fn
     return deco
 
 def sh(*args, **kw):
@@ -198,7 +224,7 @@ def _secret_scan():
                   f"all clean")
 
 # ---- CHECK: org classification (three-valued; dev != production) ----------
-@check("org_classify", "capability", catastrophe=True)
+@check("org_classify", "capability", catastrophe=True, reads_only=True)
 def _org_classify(target):
     if not target:
         return Result("org_classify", SKIP, "no --target-org")
@@ -227,7 +253,7 @@ def _org_classify(target):
     return Result("org_classify", PASS, f"{target} classified '{verdict}' (IsSandbox={is_sandbox}, {otype})")
 
 # ---- CHECK: live verification helper — real vs hallucinated field ---------
-@check("describe_first", "capability", catastrophe=True)
+@check("describe_first", "capability", catastrophe=True, reads_only=True)
 def _describe_first(target):
     if not target:
         return Result("describe_first", SKIP, "no --target-org")
@@ -482,7 +508,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 16            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 17            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -800,6 +826,41 @@ def self_test(target=None):
         ok &= passed
     finally:
         lbf.write_text(orig8)
+    # protected-path mutator: neuter lib.is_protected_target, leaving ONLY the basename list.
+    # wired_hooks_are_unwritable must then FAIL — because PROTECTED_BASENAMES names four files
+    # in hooks/ and settings.json wires four, and the two sets are not the same four. The two
+    # most recently added hooks are the ones the basename list has never heard of, which is the
+    # whole shape of the defect: narrow the resolve-based half and the newest gates go writable
+    # while every older one stays protected and every existing gate check stays green.
+    # Monkeypatched on the live module, not the file — the check holds an imported reference, so
+    # editing hooks/lib.py on disk would change nothing and the mutator would report a false
+    # catch. Same reasoning as the redaction mutator below.
+    import importlib as _il_p
+    _lib_p = _il_p.import_module("lib")
+    _real_ipt = _lib_p.is_protected_target
+    _fn_p = dict((n, f) for n, _p, _c, f in REGISTRY).get("every_wired_hook_classifies_protected")
+    if _fn_p is None:
+        print("  ✗ protected-path mutator: every_wired_hook_classifies_protected is not registered")
+        ok = False
+    else:
+        try:
+            # ASSERT BEFORE MUTATING. If the un-mutated check does not PASS, its FAIL under
+            # mutation says nothing about the predicate.
+            base_r = _fn_p()
+            _lib_p.is_protected_target = lambda p: False       # MUTANT: basename list only
+            r = _fn_p()
+            if base_r.outcome != PASS:
+                passed = False
+                print(f"  ✗ protected-path mutator: VACUOUS — the un-mutated check was "
+                      f"{base_r.outcome}, not PASS ({base_r.detail[:70]}), so neutering "
+                      f"is_protected_target proves nothing about it")
+            else:
+                passed = r.outcome == FAIL
+                print(f"  {'✓' if passed else '✗'} protected-path (is_protected_target) mutator: "
+                      f"expected FAIL, got {r.outcome}")
+            ok &= passed
+        finally:
+            _lib_p.is_protected_target = _real_ipt             # always restore
     # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
     # Editing the FILE does nothing here — lib is already imported, so the check would keep using
     # the cached function and report a false PASS. Patching the live module object is both the

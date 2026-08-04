@@ -1,19 +1,20 @@
 # Torque
 
-**An AI-agent operations layer for Salesforce.** It carries platform knowledge that re-verifies
-itself against a live org, tells you what a change will actually set off before it runs — the
-triggers, the flows, the cascading deletes, the records left orphaned — and proves its changes in
-the org rather than trusting a return code. You can point it at the orgs you actually run,
-production included, because enforcement binds at the tool call instead of in a prompt.
+**An AI-agent operations layer for Salesforce.** It carries platform knowledge that re-checks
+itself against a live org. It tells you what a change will set off before it runs: the triggers,
+the flows, the cascading deletes, the records left orphaned. And it confirms its changes in the
+org instead of trusting a return code.
 
-Frontier coding agents can already query, deploy, run Apex and move data. What stops most people
-using them on orgs that matter is not capability — it is that the same session which fixes a flow
-can, with one mistaken alias, write to a client's production org, and telling the agent to be
-careful does not bind it.
+You can point it at the orgs you actually run, production included, because the enforcement sits
+at the tool call and not in a prompt.
 
-Torque is the layer that binds it, so you can use the capability. Sandbox and developer orgs move
-freely. Production moves too — on an approval you issue at your own terminal, in one command. A
-torque wrench is not a weaker wrench; it is the one you reach for when the number matters.
+Coding agents can already query, deploy, run Apex and move data. Capability was never the problem.
+The problem is that the same session which fixes a flow can write to a client's production org on
+one mistaken alias, and telling the agent to be careful does not stop it.
+
+Torque stops it, so you can use the capability. Sandbox and developer orgs move freely.
+Production moves too, on an approval you issue at your own terminal, in one command. The name
+comes from the wrench you reach for when the number matters.
 
 ---
 
@@ -24,7 +25,9 @@ git clone https://github.com/omoji-personal/torque.git && cd torque
 python3 bin/torque-demo
 ```
 
-Real attacks, run through the real hooks:
+Real attacks, run through the real hooks. Abridged, and with one substitution: the paths below
+read `/Users/you/` because the real run prints whoever is running it, resolved against the
+trust anchor on that machine. Nothing else here is edited.
 
 ```
 Shell indirection
@@ -203,7 +206,7 @@ Torque validates itself the way it validates Salesforce work. `--profile release
 - **196 gate fixtures** (193 recorded on disk, 3 HMAC tokens minted during the run) — every
   attack class found across the audits, each one a named,
   runnable test.
-- **16 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
+- **17 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
   attack to succeed (or, for the static scanners, requires the check to FAIL). A check that
   cannot fail proves nothing; these prove each guard is load-bearing. Three exercise the clean-IP
   scan and need the private pattern list, so they report as operator-only rather than pretending
@@ -248,7 +251,7 @@ is the system working, and the log will say which.
 
 ## The guide
 
-[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 14 pages: what it does, why it isn't
+[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 20 pages: what it does, why it isn't
 the MCP server, setup, the operations worked through, the safety model, troubleshooting,
 and how the harness proves itself.
 

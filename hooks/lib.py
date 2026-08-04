@@ -624,6 +624,53 @@ def _prod_session_valid(orgid: str) -> bool:
     return g.get("orgId") == orgid and g.get("exp", 0) > time.time()
 
 
+# Files the gate READS in order to decide. A maintainer window unlocks the SOURCE of this tool;
+# it must never unlock the DATA that source consults to authorize something.
+#
+# Found by a live capability run, 2026-08-04, three checks red at once: gate_write_authz,
+# cache_poison_resistant and gate_adversarial_fixtures. handle_edit carved out only the trust
+# anchor and the sf auth store, so with a window open the agent could edit
+# `local/writable-orgs.json` — the Layer 1 allowlist — and `local/.classify-cache.json`, which
+# caches the verdict that decides whether an org is production. Adding an org to the allowlist is
+# not an artifact edit. It is the agent granting itself write authorization to that org, and
+# MAINTAINER-MODE.md said in as many words that the window "unlocks artifact edits only, never
+# org authorization". The sentence was true about intent and false about the code.
+#
+# The catalogue is deliberately NOT here. It feeds note rendering and requirement sets, not
+# authorization, its injection surface is covered by kb_injection, and it is exactly the kind of
+# content a maintainer window exists to let someone edit.
+def is_authorization_input(path) -> bool:
+    """True for anything the gate consults when deciding. Never grantable, by any window."""
+    try:
+        p = Path(os.path.expanduser(str(path)))
+        rp = p.resolve() if p.exists() else (Path.cwd() / p).resolve()
+    except Exception:
+        return True                       # unresolvable ⇒ treat as authorization data, fail closed
+    for target in (ALLOWLIST, CACHE, PROTECTED, ALIAS_INDEX, AUDIT,
+                   TORQUE_HOME / "harness" / "checks" / "cli-write-surface.json",
+                   # names the checks the agent may run against a live org; editing it widens
+                   # the agent's own reach, which is authorization by any other name
+                   TORQUE_HOME / "harness" / "checks" / "read-only-checks.json",
+                   LOCAL / "clean-ip.rules"):
+        try:
+            if rp == target.resolve() if target.exists() else rp == target:
+                return True
+        except Exception:
+            continue
+    # the per-org store, keyed by orgId, is read on the decision path too
+    try:
+        if ORGS.exists() and str(rp).startswith(str(ORGS.resolve()) + os.sep):
+            return True
+    except Exception:
+        pass
+    # Basename backstop, for the same reason PROTECTED_BASENAMES exists: a path that resolves
+    # somewhere unexpected still must not be one of these by name.
+    return os.path.basename(str(path)) in {
+        "writable-orgs.json", ".classify-cache.json", "protected-objects",
+        ".alias-index.json", "audit.log", "cli-write-surface.json", "clean-ip.rules",
+        "read-only-checks.json"}
+
+
 def maintainer_grant_valid(tree: str = ""):
     """A signed, unexpired, tree-bound window in which the agent may edit Torque's OWN source.
 
@@ -928,12 +975,22 @@ def platform_notes(command: str, limit: int = 2):
     """
     if not command:
         return []
+    # Triggers are written against modern `sf` wording. Match the legacy spelling too, by
+    # normalising a copy — the operator on `force:data:bulk:delete` is doing the same thing as
+    # the one on `data delete bulk`, and used to be told nothing at all. Both forms are searched
+    # rather than only the normalised one, so a trigger deliberately written against legacy text
+    # keeps working.
+    try:
+        import shellparse as _sp_notes
+        forms = (command, _sp_notes.modernize(command))
+    except Exception:
+        forms = (command,)
     hits = []
     for e in _kb_entries():
         matched = 0
         for pat in e.get("triggers") or []:
             try:
-                if re.search(pat, command, re.I):
+                if any(re.search(pat, f, re.I) for f in forms):
                     matched += 1
             except re.error:
                 continue
@@ -979,24 +1036,68 @@ def closure_for(command: str, limit: int = None):
     entries that matched, and says so. Nothing here walks a dependency graph or proves the set
     closed, and the audit's proposal to build that is a different piece of work.
     """
+    return closure_report(command, limit)["requirements"]
+
+
+def closure_report(command: str, limit: int = None):
+    """The whole picture, including the part that used to be silence.
+
+    `closure_for` returns a list, and an empty list meant two completely different things: no
+    catalogue entry matched this operation at all, and several matched but none of them records
+    what the operation requires. The gate printed nothing in both cases, so an agent that saw no
+    TORQUE NEEDS line concluded there was no requirement.
+
+    Measured, before this existed: a bulk update matches SEVEN entries and none carries a
+    requirement. A hard delete matches five, one of which is `hard-delete-permission` — an entry
+    whose entire subject is a permission the operation needs, filed as a hazard and therefore
+    invisible to closure. The knowledge was there. The shape was wrong, and the wrong shape read
+    as an answer.
+
+    Empty is not an answer. It has now appeared in the parser, in blast-radius, in a probe
+    script, in the catalogue verifier and here, which is five, and this one had the distinction
+    of being in the capability the roadmap calls completeness closure.
+    """
     if not command:
-        return []
-    out = []
+        return {"requirements": [], "matched": [], "unrecorded": []}
     if limit is None:
         limit = len(_kb_entries())
+    reqs, unrecorded, matched = [], [], []
     for e in platform_notes(command, limit=limit):
+        matched.append(e["id"])
         req = (e.get("requires") or "").strip()
         if req:
-            out.append((e["id"], " ".join(req.split())))
-    return out
+            reqs.append((e["id"], " ".join(req.split())))
+        else:
+            unrecorded.append(e["id"])
+    return {"requirements": reqs, "matched": matched, "unrecorded": unrecorded}
+
+
+def _is_write_command(command: str) -> bool:
+    """Best effort, used only to decide whether to SPEAK. Never to authorize."""
+    try:
+        import shellparse as _sp
+        v = _sp.analyze_bash(command)
+        return bool(v.get("writes") or v.get("deny"))
+    except Exception:
+        return False
 
 
 def emit_closure(command: str):
-    """Print the requirement set for this operation, if the catalogue knows one."""
+    """Print the requirement set — and, when there isn't one, say which kind of nothing it is."""
     if os.environ.get("TORQUE_NO_NOTES") == "1":
         return
-    for eid, req in closure_for(command):
+    rep = closure_report(command)
+    for eid, req in rep["requirements"]:
         print(f"TORQUE NEEDS [{eid}] {req}", file=sys.stderr)
+    # Only on writes, and only when the catalogue clearly knows this territory. A read needs
+    # nothing and saying so on every query would train the reader to skip the line — which
+    # would cost more than the silence it replaced.
+    if not rep["requirements"] and rep["unrecorded"] and _is_write_command(command):
+        n = len(rep["unrecorded"])
+        print(f"TORQUE NEEDS [none recorded] {n} catalogue entr"
+              f"{'y' if n == 1 else 'ies'} match this operation and none states what it "
+              f"requires. Treat that as a gap in the catalogue, not as nothing being required; "
+              f"the notes above are what is known.", file=sys.stderr)
 
 
 def _speak(command: str):

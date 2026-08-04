@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""torque done — the ledger that decides whether the word is available.
+
+The third failure in the roadmap's problem statement is declaring done on the wrong signal:
+deploy status green, tests green, feature absent for every real user. Every part of that chain
+reported success. The chain was never the question.
+
+So this does not ask "did anything fail". It asks, layer by layer, "what was OBSERVED", and it
+treats the absence of an observation as the absence of an observation. A layer nobody checked is
+NOT VERIFIED. It is not passed, not assumed, not omitted from the count, and it is not silently
+dropped from the denominator — which is the specific move that lets a partial check read as a
+complete one.
+
+    torque done --target-org <alias> --field Account.Tier__c --permset Tier_Access
+    torque done --target-org <alias> --field Account.Tier__c --json
+
+EXIT CODES
+    0   DONE — every applicable layer verified
+    3   NOT DONE — at least one applicable layer unverified or blocked
+    2   REFUSED — the ledger could not be built, so no verdict exists
+
+Exit 3 rather than 1 for NOT DONE, matching `torque blast-radius`: an incomplete picture and a
+broken tool are different things and a caller has to be able to tell them apart.
+
+WHAT THIS DOES NOT DO YET, and why not
+
+The roadmap's completion gate ends in the browser, rendering as a NON-ADMIN profile, because an
+admin sees everything and therefore proves nothing. That half is deliberately absent. The
+roadmap gates it on three questions — can it render as a non-admin profile at all, what is the
+real wall-clock cost, and how flaky is it — and none of the three has been answered against a
+real org. A completion gate that costs two minutes gets routed around, which is worse than not
+having one, and building it before measuring that would be guessing in the one place this tool
+exists to stop people guessing.
+
+So the profile-visibility layer reports BLOCKED with that reason, dated, and BLOCKED is not
+green. The ledger is honest about its own incompleteness in exactly the way it demands of the
+work it grades.
+"""
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+VERIFIED = "VERIFIED"
+UNVERIFIED = "NOT VERIFIED"
+BLOCKED = "BLOCKED"
+NA = "N/A"
+GREEN = (VERIFIED, NA)          # the only two outcomes that do not withhold the word
+
+# Dated so a blocker cannot age into background noise: a reader can see how long it has been
+# true and decide whether it is still a reason or has become an excuse.
+BROWSER_BLOCKED_SINCE = "2026-08-04"
+
+
+class Layer:
+    def __init__(self, key, title, outcome, detail):
+        self.key, self.title, self.outcome, self.detail = key, title, outcome, detail
+
+    def as_dict(self):
+        return {"layer": self.key, "title": self.title,
+                "outcome": self.outcome, "detail": self.detail}
+
+
+def sh(*args, timeout=120):
+    return subprocess.run(["sf", *args], capture_output=True, text=True, timeout=timeout)
+
+
+_NOISE = re.compile(r"^\s*(›\s*)?(warning|info|note|»)\b", re.I)
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _why_it_failed(r):
+    """The reason the call failed, not the first thing it printed.
+
+    Taking stderr's first line looked right and was wrong the first time it ran: the Salesforce
+    CLI leads with an update-available warning, so every failure in this ledger was reported as
+    "@salesforce/cli update available", and an operator reading that would go and upgrade the
+    CLI. A reason that sends someone to fix the wrong thing is worse than no reason, because
+    they act on it. Prefer a line that names an error, drop the CLI's own chatter, and keep the
+    escape codes out of it.
+    """
+    # Every call here passes --json, so a failure normally arrives as a JSON object carrying the
+    # reason in a field. Read that first: it is the CLI stating its own error, rather than this
+    # tool guessing which printed line was the important one.
+    try:
+        obj = json.loads(r.stdout or "")
+        msg = (obj.get("message") or "").strip()
+        code = (obj.get("code") or obj.get("name") or "").strip()
+        if msg or code:
+            # The CLI's message is multi-line and the FIRST line is the least useful one:
+            # "Parsing --target-org", with "No authorization information found for <org>" on the
+            # second. Taking line one produced a reason that named the flag and not the problem.
+            # Collapse the whole thing instead, so nothing that explains the failure is dropped.
+            flat = " ".join(_ANSI.sub("", msg).split())
+            return (f"{code}: {flat}" if code and flat else (flat or code))[:220]
+    except Exception:                                      # noqa: BLE001
+        pass
+    text = _ANSI.sub("", (r.stderr or "") + "\n" + (r.stdout or ""))
+    lines = [l.strip(" ›\t") for l in text.splitlines() if l.strip() and l.strip() not in "{}"]
+    real = [l for l in lines if not _NOISE.match(l)]
+    named = [l for l in real if re.search(r"\berror\b|no org config|not found|expired|invalid",
+                                          l, re.I)]
+    pick = (named or real or lines)
+    return (pick[0][:160] if pick else f"sf exited {r.returncode} and said nothing")
+
+
+def soql(target, query, tooling=False):
+    """Returns (rows, error). An error is NEVER an empty result.
+
+    This confusion has now appeared in the parser, in blast-radius, in a probe script and in the
+    catalogue verifier, so it is written out longhand here: a failed query, an unparseable
+    response and a query that genuinely matched nothing are three different facts, and only one
+    of them is "no". Callers get the error and must decide; nothing here turns it into zero.
+    """
+    # Which API serves which object is not a detail. FieldDefinition and EntityDefinition are
+    # Tooling-only; FieldPermissions, PermissionSet and PermissionSetAssignment are ordinary
+    # objects and the Tooling endpoint refuses them outright with "sObject type
+    # 'FieldPermissions' is not supported". This helper hardcoded --use-tooling-api, so the two
+    # layers that read permissions could never have returned a row — in any invocation, ever.
+    # Every offline test passed, because against an unreachable org everything errors anyway and
+    # the layer was going to be NOT VERIFIED regardless. It took one run against a real org.
+    args = ["data", "query", "--target-org", target, "--json", "--query", query]
+    if tooling:
+        args.insert(4, "--use-tooling-api")
+    try:
+        r = sh(*args)
+    except Exception as e:                                 # noqa: BLE001
+        return None, f"{type(e).__name__} running the query"
+    if r.returncode != 0:
+        return None, _why_it_failed(r)
+    try:
+        return json.loads(r.stdout)["result"]["records"], None
+    except Exception:                                      # noqa: BLE001
+        return None, "the CLI returned something this could not parse as a query result"
+
+
+def layer_field_exists(target, obj, field):
+    rows, err = soql(target, "SELECT QualifiedApiName FROM FieldDefinition WHERE "
+                             f"EntityDefinition.QualifiedApiName='{obj}' AND "
+                             f"QualifiedApiName='{field}'", tooling=True)
+    if err:
+        return Layer("field_exists", f"{obj}.{field} exists in the org", UNVERIFIED,
+                     f"the org could not answer: {err}")
+    if not rows:
+        return Layer("field_exists", f"{obj}.{field} exists in the org", UNVERIFIED,
+                     "the org answered, and the field is not there. A deploy that reported "
+                     "success did not put it there either.")
+    return Layer("field_exists", f"{obj}.{field} exists in the org", VERIFIED,
+                 "confirmed by FieldDefinition, in the org, not in a deploy response")
+
+
+def _is_custom(field):
+    """`Widget__c` and `ns__Widget__c` are custom; `Name` and `CreatedDate` are not."""
+    return field.endswith("__c") or field.endswith("__C")
+
+
+def layer_fls(target, obj, field, permset):
+    if not permset:
+        # "Nothing was checked" was true and lazy. Without a named permission set this cannot
+        # confirm the RIGHT grant exists, but it can still ask whether ANY does, and for a custom
+        # field zero grants is the answer to the question people actually have. Reporting a
+        # blank where a cheap query was available is the same withholding this tool exists to
+        # stop, one level up.
+        rows, err = soql(target, "SELECT Id FROM FieldPermissions WHERE "
+                                 f"Field='{obj}.{field}'")
+        if not _is_custom(field):
+            # The custom-field rule is the usual cause here and it does not apply to a standard
+            # field. Quoting it anyway would be a true sentence used as a false explanation.
+            n = "an unknown number of" if err else str(len(rows))
+            return Layer("fls", "field-level security granted", UNVERIFIED,
+                         f"no --permset given, so no specific grant was confirmed. {field} is a "
+                         f"STANDARD field, so the usual cause of this layer failing — no custom "
+                         f"field gets FLS automatically from the Metadata API — does not apply "
+                         f"to it. {n} permission row(s) mention it. Name a permission set to "
+                         f"check the grant this change depends on.")
+        if err:
+            return Layer("fls", "field-level security granted", UNVERIFIED,
+                         f"no --permset given, and the org could not be asked whether anything "
+                         f"grants {field} at all: {err}")
+        if not rows:
+            return Layer("fls", "field-level security granted", UNVERIFIED,
+                         f"no --permset given, and NOTHING grants {obj}.{field} to anyone. No "
+                         f"custom field gets field-level security automatically from the "
+                         f"Metadata API, for any profile, System Administrator included. The "
+                         f"field is deployed and invisible.")
+        return Layer("fls", "field-level security granted", UNVERIFIED,
+                     f"no --permset given, so the specific grant this change depends on was not "
+                     f"confirmed. {len(rows)} permission row(s) do grant {obj}.{field} to "
+                     f"something, so it is not invisible to everyone. Name the permission set to "
+                     f"turn this green.")
+    rows, err = soql(target,
+                     "SELECT Id, PermissionsRead, PermissionsEdit FROM FieldPermissions WHERE "
+                     f"Field='{obj}.{field}' AND Parent.Name='{permset}'")
+    if err:
+        return Layer("fls", f"field-level security granted via {permset}", UNVERIFIED,
+                     f"the org could not answer: {err}")
+    if not rows:
+        return Layer("fls", f"field-level security granted via {permset}", UNVERIFIED,
+                     f"no FieldPermissions row ties {obj}.{field} to {permset}. The field is "
+                     f"deployed and nobody can see it.")
+    readable = [r for r in rows if r.get("PermissionsRead")]
+    if not readable:
+        return Layer("fls", f"field-level security granted via {permset}", UNVERIFIED,
+                     f"a FieldPermissions row exists on {permset} but grants no read")
+    return Layer("fls", f"field-level security granted via {permset}", VERIFIED,
+                 f"{len(readable)} permission row(s) grant read")
+
+
+def layer_assigned(target, permset):
+    if not permset:
+        return Layer("assignment", "somebody actually holds the permission set", NA,
+                     "no --permset given, so there is no assignment to check")
+    rows, err = soql(target, "SELECT COUNT(Id) c FROM PermissionSetAssignment WHERE "
+                             f"PermissionSet.Name='{permset}'")
+    if err:
+        return Layer("assignment", f"somebody actually holds {permset}", UNVERIFIED,
+                     f"the org could not answer: {err}")
+    n = (rows[0].get("c") if rows else 0) or 0
+    if not n:
+        return Layer("assignment", f"somebody actually holds {permset}", UNVERIFIED,
+                     f"{permset} exists, grants the field, and is assigned to nobody. Every "
+                     f"query about the permission set says yes and no user can see the field.")
+    return Layer("assignment", f"somebody actually holds {permset}", VERIFIED,
+                 f"{n} assignment(s)")
+
+
+def layer_profile_render(profile, evidence):
+    """The layer the whole gate is for, and the one this tool cannot do yet.
+
+    An admin sees everything and proves nothing, so the only render that settles it is one under
+    a non-admin profile. Automating that is gated on three questions the roadmap asks and nobody
+    has answered against a real org, so the automated answer is BLOCKED — never green, and
+    `--na` will not clear it.
+
+    A human who did the render can say so with --render-evidence, which is the difference
+    between "this tool cannot check it" and "nobody checked it". Without that seam the verdict
+    would be NOT DONE for every input ever, which is a ledger with one row and no information.
+    """
+    if evidence:
+        return Layer("profile_render", f"visible in the UI as {profile or 'a non-admin profile'}",
+                     VERIFIED, f"observed by a person: {evidence}")
+    return Layer("profile_render",
+                 f"visible in the UI as {profile or 'a non-admin profile'}", BLOCKED,
+                 f"not automated, since {BROWSER_BLOCKED_SINCE}. The roadmap gates the browser "
+                 f"half on three unanswered questions: whether it can render as a non-admin "
+                 f"profile at all, the real wall-clock cost, and the flake rate. A query can "
+                 f"tell you a permission row exists; only a render tells you a human sees the "
+                 f"field. Do it by hand and record it with --render-evidence.")
+
+
+def layer_automation(evidence):
+    if not evidence:
+        return Layer("automation", "the automation that should fire, fired", UNVERIFIED,
+                     "no evidence supplied (--automation-evidence). Whether a flow saw the new "
+                     "value depends on where it sits in order of execution, and a before-save "
+                     "update behaves differently from an after-save one. Neither is in the "
+                     "deploy response.")
+    return Layer("automation", "the automation that should fire, fired", VERIFIED, evidence)
+
+
+def layer_uat(evidence):
+    if not evidence:
+        return Layer("human_uat", "a human used it and agreed it works", UNVERIFIED,
+                     "no evidence supplied (--uat-evidence). This layer is never machine "
+                     "verifiable; it is listed so its absence is counted rather than forgotten.")
+    return Layer("human_uat", "a human used it and agreed it works", VERIFIED, evidence)
+
+
+def build(a):
+    obj, _, field = (a.field or "").partition(".")
+    if not obj or not field:
+        print("--field must be Object.Field__c", file=sys.stderr)
+        sys.exit(2)
+    layers = [layer_field_exists(a.target_org, obj, field),
+              layer_fls(a.target_org, obj, field, a.permset),
+              layer_assigned(a.target_org, a.permset),
+              layer_profile_render(a.profile, a.render_evidence),
+              layer_automation(a.automation_evidence),
+              layer_uat(a.uat_evidence)]
+    for spec in a.na or []:
+        key, _, reason = spec.partition(":")
+        if not reason.strip():
+            print(f"--na needs <layer>:<reason>, got {spec!r}. A layer declared inapplicable "
+                  f"without a stated reason is a layer quietly deleted from the denominator.",
+                  file=sys.stderr)
+            sys.exit(2)
+        hit = [l for l in layers if l.key == key.strip()]
+        if not hit:
+            print(f"--na names no layer called {key.strip()!r}. Layers: "
+                  f"{', '.join(l.key for l in layers)}", file=sys.stderr)
+            sys.exit(2)
+        # Only an UNVERIFIED layer may be declared inapplicable. A BLOCKED one may not: that
+        # would let the browser blocker be waved away by the person it is there to stop.
+        if hit[0].outcome == BLOCKED:
+            print(f"--na cannot clear {key.strip()!r}: it is BLOCKED, not merely unchecked. "
+                  f"A blocker is a fact about the tool, not a judgement about this change.",
+                  file=sys.stderr)
+            sys.exit(2)
+        hit[0].outcome, hit[0].detail = NA, f"declared inapplicable: {reason.strip()}"
+    return layers
+
+
+def render(layers, a):
+    verified = [l for l in layers if l.outcome in GREEN]
+    done = len(verified) == len(layers)
+    if a.json:
+        print(json.dumps({"target_org": a.target_org, "field": a.field,
+                          "verdict": "DONE" if done else "NOT DONE",
+                          "verified": len(verified), "layers": len(layers),
+                          "ledger": [l.as_dict() for l in layers]}, indent=2))
+    else:
+        print(f"COMPLETION LEDGER — {a.field} @ {a.target_org}")
+        width = max(len(l.title) for l in layers)
+        for l in layers:
+            print(f"  {l.title.ljust(width)}  {l.outcome}")
+            print(f"  {' ' * width}  {l.detail}")
+        print()
+        if done:
+            print(f"  DONE. {len(verified)}/{len(layers)} layers verified or declared "
+                  f"inapplicable with a reason.")
+        else:
+            short = [l.key for l in layers if l.outcome not in GREEN]
+            print(f"  NOT DONE. {len(verified)}/{len(layers)} layers verified. Outstanding: "
+                  f"{', '.join(short)}.")
+            print(f"  The word is not available yet. That is the whole point of asking.")
+    return 0 if done else 3
+
+
+def main():
+    p = argparse.ArgumentParser(prog="torque done", description=__doc__.split("\n")[0])
+    p.add_argument("--target-org", required=True)
+    p.add_argument("--field", required=True, metavar="Object.Field__c")
+    p.add_argument("--permset")
+    p.add_argument("--profile", help="the NON-ADMIN profile the change is for")
+    p.add_argument("--render-evidence",
+                   help="what a person saw, under which profile, when. This is the\n                         only way the UI layer turns green, because the tool cannot\n                         do the render itself yet.")
+    p.add_argument("--automation-evidence", help="what was observed, not what was expected")
+    p.add_argument("--uat-evidence", help="who used it, when, and what they saw")
+    p.add_argument("--na", action="append", metavar="LAYER:REASON",
+                   help="declare a layer inapplicable, with a reason (repeatable). Refused for "
+                        "BLOCKED layers.")
+    p.add_argument("--json", action="store_true")
+    a = p.parse_args()
+    sys.exit(render(build(a), a))
+
+
+if __name__ == "__main__":
+    main()
