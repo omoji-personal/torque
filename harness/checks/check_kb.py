@@ -2668,7 +2668,14 @@ def _no_divergent_twins():
     legitimately differ and are named.
     """
     import ast as _ast
-    ENTRY_POINTS = {"main", "handle_bash", "handle_mcp", "handle_edit", "handle_read"}
+    # One name per SURFACE the gates are dispatched from, and each gate answers for itself.
+    # handle_argv is the exec-time shim's surface: prod_write_gate authorizes the target,
+    # destructive_data_gate applies the shield and the token requirement, exactly as the two
+    # already differ on handle_bash. This list earns its place only while every entry is a
+    # dispatch target — the moment something is added here because it merely happens to be
+    # duplicated, the check has been talked out of its own finding.
+    ENTRY_POINTS = {"main", "handle_bash", "handle_mcp", "handle_edit", "handle_read",
+                    "handle_argv"}
     seen = {}
     for f in sorted((ROOT / "hooks").glob("*.py")):
         try:

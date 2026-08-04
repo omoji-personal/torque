@@ -223,6 +223,47 @@ def _two_list_checks_can_fail():
                   "that agree (4 cases)")
 
 
+@check("mutation_coverage_is_stated_honestly", "static")
+def _mutation_coverage_is_stated_honestly():
+    """`catastrophe=True` is a claim, and TOTAL_MUTATORS is the other half of it.
+
+    The decorator flag and the mutator list are two representations of "this check has been
+    shown to fail". They were never compared, and the harness's own module docstring said
+    --self-test proved *each* catastrophe-class check can fail. Counted: 17 mutators against
+    sixty-odd catastrophe-class checks. The claim was off by a factor of three and sat in the
+    first paragraph of the file the whole design rests on.
+
+    This does not demand a mutator per check — several checks carry their falsification inline
+    instead, which runs in every profile rather than only under --self-test, and is the better
+    arrangement. What it demands is that the prose never asserts universal coverage while the
+    numbers say partial.
+    """
+    name = "mutation_coverage_is_stated_honestly"
+    src = (ROOT / "harness" / "validate.py").read_text()
+    m = re.search(r"TOTAL_MUTATORS\s*=\s*(\d+)", src)
+    if not m:
+        return Result(name, FAIL, "validate.py no longer declares TOTAL_MUTATORS")
+    mutators = int(m.group(1))
+    catastrophic = [n for n, _p, cat, _f in REGISTRY if cat]
+    doc = (src.split('"""')[1] if '"""' in src else "")
+    # The affirmative shape only: "proving each catastrophe-class check can fail". Matching a
+    # bare "every ... catastrophe-class" also fires on the sentence that says coverage is NOT
+    # universal, which is how this check first failed — against the correction that fixed the
+    # very claim it was written to catch.
+    universal = re.search(r"prov\w*[^.]{0,50}\b(each|every|all)\b[^.]{0,50}catastrophe-class",
+                          doc, re.I | re.S)
+    if universal and mutators < len(catastrophic):
+        return Result(name, FAIL,
+                      f"the harness docstring claims {' '.join(universal.group(0).split())!r} "
+                      f"while TOTAL_MUTATORS is {mutators} and {len(catastrophic)} checks are "
+                      f"catastrophe-class — the claim is true only at "
+                      f"{mutators}/{len(catastrophic)}")
+    return Result(name, PASS,
+                  f"{mutators} mutators against {len(catastrophic)} catastrophe-class checks, "
+                  f"and the harness docstring claims no universal coverage (searched for a "
+                  f"'proving each/every/all catastrophe-class' assertion)")
+
+
 def _2l_fake_tree(root, wire=("gate",)):
     """A minimal repo shaped like the parts enforcement_map reads."""
     (root / "hooks").mkdir(parents=True)
