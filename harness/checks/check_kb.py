@@ -2363,6 +2363,22 @@ def _operator_presence_can_succeed():
                       "no login session in `who` — nothing to identify. Expected in CI and in "
                       "containers; it means this check did NOT run, not that presence works.")
 
+    # Listing the pids and then asking about one of them is two observations of a moving system.
+    # The first version failed on the FIRST unnameable pid, which made it a race: a capability
+    # run spawns dozens of short-lived processes on the operator's own tty, so a pid present at
+    # `ps -t` had often exited before `ps -p` asked about it. It passed every quick static run
+    # and failed a real capability run with "pid 1914 sits in login session ttys008, and lib
+    # could not name its controlling terminal at all" — pid 1914 was simply gone.
+    #
+    # A catastrophe-class check that fails for a reason unrelated to what it tests is not a
+    # lesser problem than one that passes for the wrong reason. It is worse in one way: it
+    # teaches the operator that this check is flaky, and the next time it fires for real they
+    # will re-run it instead of reading it.
+    #
+    # So: an unnameable pid is a pid that went away, and the next one is tried. Only a pid that
+    # CAN be named and names the WRONG terminal is a defect — that is the macOS bug's actual
+    # shape. Nothing nameable anywhere is the other failure, and it is reported separately.
+    tried, vanished = 0, 0
     for tty in sessions:
         try:
             out = _kb_sp.run(["ps", "-t", tty, "-o", "pid="], capture_output=True, text=True,
@@ -2370,12 +2386,11 @@ def _operator_presence_can_succeed():
         except Exception:
             continue
         for pid in (x.strip() for x in out.splitlines() if x.strip()):
+            tried += 1
             named = lib._ctty_name(int(pid))
             if not named:
-                return Result("operator_presence_can_succeed", FAIL,
-                              f"pid {pid} sits in login session {tty}, and lib could not name its "
-                              f"controlling terminal at all — operator_present() cannot be true "
-                              f"for any real operator on this machine")
+                vanished += 1
+                continue
             if named != tty:
                 return Result("operator_presence_can_succeed", FAIL,
                               f"pid {pid} sits in {tty} but lib names its controlling terminal "
@@ -2387,6 +2402,12 @@ def _operator_presence_can_succeed():
                           f"present; the refusing direction stays covered by "
                           f"init_requires_operator")
 
+    if tried and vanished == tried:
+        return Result("operator_presence_can_succeed", FAIL,
+                      f"none of {tried} process(es) across login session(s) {sessions} could be "
+                      f"named at all. One vanishing is a race; all of them is the macOS "
+                      f"controlling-terminal defect returning, and operator_present() cannot be "
+                      f"true for any real operator on this machine")
     return Result("operator_presence_can_succeed", SKIP,
                   f"login session(s) {sessions} visible but no process could be read from them")
 
