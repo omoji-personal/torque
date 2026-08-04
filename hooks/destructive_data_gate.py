@@ -61,6 +61,20 @@ def _need_impact_token(orgid, op, target, sobject, where):
     if payload is None:
         return False
     impact = payload.get("impact") or {}
+    # P1-004: the mode must be one this gate knows how to enforce. Tokens minted before the mode
+    # existed carry none, and are still honoured as ceilings because that is exactly what they
+    # were — but an UNRECOGNISED mode is refused rather than treated as a ceiling.
+    #
+    # That is the whole point of naming it. If an exact-scope mode is ever built, it will bind
+    # WHICH rows and not merely how many. A gate that ignored the field would accept such a token
+    # and enforce the weaker guarantee, silently, while the operator believed they had approved
+    # the stronger one. Refusing what it does not understand is the only safe reading of a
+    # payload whose promise it cannot honour.
+    mode = impact.get("mode", "impact_ceiling")
+    if mode != "impact_ceiling":
+        lib.deny(f"this approval declares mode {mode!r}, which this gate does not enforce. "
+                 f"Refusing rather than downgrading it to a count ceiling — the token promises "
+                 f"something stronger than this gate can deliver.", "impact-mode", HOOK)
     approved = impact.get("scope")
     if approved is None:
         # A token bearing this digest but no recorded scope is not an impact-bound approval.
