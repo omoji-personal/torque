@@ -39,6 +39,33 @@ try { unlinkSync(urlFile); } catch {}
 
 const t0 = Date.now();
 const mark = (k, v) => console.log(`TORQUE~${k}=${v}`);
+// ONE matcher for "is this session impersonating", used at both measurement points.
+//
+// It was written twice, inline, and the two copies drifted by one alternative: the first
+// looked for "logged in as" OR "log out as", the second only for "log out as". Salesforce
+// renders "Logged in as <name>", so the same live session measured true at the first point and
+// false at the second, and the run read as a failed hop that had actually succeeded. Two
+// matchers for one question is the defect this repository spent the week removing from
+// everything except, it turns out, a probe written the same day.
+// POLLED, not sampled once. Measured across six runs: the impersonation banner renders LATER
+// than `one-app-nav-bar`, so checking at the moment the shell appears returns false about half
+// the time on a session that is genuinely impersonating. That is the entire flake, and it was
+// mine — the same mistake as waiting for a marker that has not arrived, made in the opposite
+// direction from the shadow experiment's wait, which measured after its evidence expired.
+//
+// The signal is the "Logged in as" text. `servlet.sulogout` is NOT in the Lightning DOM at all
+// (checked: sulogoutInHtml=false while loggedInAsInHtml=true), so the href selector alone would
+// never have worked here despite being the obvious one.
+const impersonationMarker = async (page, tries = 10) => {
+  for (let i = 0; i < tries; i++) {
+    try {
+      if (await page.locator("a[href*='servlet.sulogout']").count() > 0) return true;
+      if (await page.getByText(/logged in as|log ?out as/i).count() > 0) return true;
+    } catch (e) { /* keep polling */ }
+    await page.waitForTimeout(1500);
+  }
+  return false;
+};
 const shell = async (page) => {
   // Never networkidle on Lightning — it polls forever. Poll for a concrete marker instead.
   for (let i = 0; i < 30; i++) {
@@ -82,11 +109,7 @@ try {
   // impersonate, or it did and the marker is not findable in Lightning. Only the path is
   // recorded, never the query string — the frontdoor URL carries a session token.
   const suPath = new URL(page.url()).pathname;
-  let classicMarker = false;
-  try {
-    classicMarker = (await page.locator("a[href*='servlet.sulogout']").count()) > 0
-                 || (await page.getByText(/logged in as|log ?out as/i).count()) > 0;
-  } catch (e) { classicMarker = false; }
+  const classicMarker = await impersonationMarker(page);
   mark('suLandedPath', suPath);
   mark('classicImpersonationMarker', classicMarker);
 
@@ -110,12 +133,17 @@ try {
   // non-JSON, because /services/data wants a Bearer token and a browser session carries a
   // cookie. A signal that needs different credentials than the thing being measured is the
   // wrong signal.
-  let impersonating = false;
-  try {
-    impersonating = (await page.locator("a[href*='servlet.sulogout']").count()) > 0
-                 || (await page.getByText(/log ?out as/i).count()) > 0;
-  } catch (e) { impersonating = false; }
+  const impersonating = await impersonationMarker(page);
   mark('impersonating', impersonating);
+  // Decisive diagnostic when the locator and the earlier measurement disagree: is the logout
+  // hook in the raw HTML at all? Present-but-not-located is a selector problem; absent is a
+  // session that stopped impersonating. Two very different bugs that look identical from a
+  // boolean.
+  try {
+    const html = await page.content();
+    mark('sulogoutInHtml', html.includes('sulogout'));
+    mark('loggedInAsInHtml', /logged in as/i.test(html));
+  } catch (e) { mark('sulogoutInHtml', 'unavailable'); }
   mark('wantIdentity', uid15);
   mark('totalMs', Date.now() - t0);
   mark('done', 1);

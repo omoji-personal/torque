@@ -579,12 +579,22 @@ entries:
     Classic page is not what an end user sees. The user Id must be truncated to FIFTEEN
     characters.
   gotcha: >
-    The servlet still needs the org preference. Measured on a Developer Edition org 2026-08-04:
-    with the preference unset the browser simply STAYS on /servlet/servlet.su, no redirect and no
-    error page, and a subsequent Lightning navigation renders perfectly as the ORIGINAL user. So
-    "the Lightning shell rendered" is not evidence that impersonation happened, and a check that
-    asserts only the render will report a non-admin verification that never left the admin
-    session.
+    The servlet still needs the org preference, and the failure is SILENT. Measured on a
+    Developer Edition org 2026-08-04: with `enableAdminLoginAsAnyUser` false the browser simply
+    STAYS on /servlet/servlet.su — no redirect, no error page — and a subsequent Lightning
+    navigation renders perfectly as the ORIGINAL user. So "the Lightning shell rendered" is not
+    evidence that impersonation happened, and a check asserting only the render reports a
+    non-admin verification that never left the admin session. With the preference enabled the
+    servlet redirects straight to the Lightning URL in retURL.
+    The proof of impersonation is the "Logged in as" text. `servlet.sulogout` is NOT in the
+    Lightning DOM at all, so the obvious href selector never matches there. And the banner
+    renders LATER than `one-app-nav-bar`: sampled once at shell-ready it reports false on a
+    session that is genuinely impersonating. Even polled for 15s it failed once in three runs, so
+    treat this assertion as flaky and give it a generous settle window.
+  detect_note: >
+    enableAdminLoginAsAnyUser is readable and settable via the Metadata API as
+    Settings:Security — retrieve it, flip the one element, deploy the whole file so every other
+    preference deploys as a no-op.
   detect: "SELECT Id, Profile.Name FROM User WHERE IsActive = true"
   triggers: ['servlet\.su', 'suorgadminid', 'Login\s+As', 'sulogout', 'impersonat']
   requires: >
