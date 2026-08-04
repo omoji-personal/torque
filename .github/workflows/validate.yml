@@ -68,6 +68,22 @@ jobs:
       #   clean_ip (×3 mutators)      — the denylist is private and absent here, so the check
       #                                 reports operator-only. It must not fail the job, and it
       #                                 must not be mistaken for having run.
+      #
+      #                                 THIS IS A REAL HOLE, not a formality, and it has already
+      #                                 been through: on 2026-08-04 a commit carrying client org
+      #                                 aliases reached main behind a green tick from this very
+      #                                 workflow, and was caught minutes later by an operator-mode
+      #                                 capability run. CI IS STRUCTURALLY BLIND TO IP LEAKS —
+      #                                 the denylist cannot be committed, because publishing the
+      #                                 list of client names would itself be the leak.
+      #                                 So: green here is NOT clearance to publish. A run on the
+      #                                 operator's machine is the only thing that checks it.
+      #                                 The fix is to put the denylist in an Actions secret and
+      #                                 point TORQUE_DENYLIST at it (clean_ip names the FILE, not
+      #                                 the matched term, so it does not leak into logs) — which
+      #                                 needs C2 first, since that path is currently hardcoded to
+      #                                 the author's Desktop. Until then this gap is open and
+      #                                 stated rather than papered over.
       #   public_description_accurate — needs `gh` with auth; expected N/A.
       #   guards_share_no_blind_assumption — passes here for a reason worth writing down: an
       #                                 Actions checkout lives under $HOME, and this check
