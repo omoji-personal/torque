@@ -562,6 +562,32 @@ entries:
   confidence: practitioner
   updated: 2026-08-01
 
+- id: tooling-api-refuses-permission-objects
+  domain: api
+  title: The Tooling API does not serve the permission objects, and says so only at run time
+  symptom: >
+    "sObject type 'FieldPermissions' is not supported" from a query that is valid SOQL and works
+    without --use-tooling-api. Same for PermissionSetAssignment.
+  cause: >
+    FieldDefinition and EntityDefinition exist ONLY in the Tooling API; FieldPermissions,
+    PermissionSet and PermissionSetAssignment are ordinary objects the Tooling endpoint does not
+    serve. A verification routine that checks a field exists and then checks who can see it
+    needs BOTH endpoints, and code that reaches for one helper reaches for one endpoint.
+  remedy: >
+    Pass --use-tooling-api per query, not per tool. Query FieldDefinition with it and
+    FieldPermissions without it.
+  gotcha: >
+    This cannot be caught by testing against an org that does not resolve. Every query fails
+    there for its own reason, so a layer that was never going to return a row looks identical to
+    one that legitimately found nothing. It took one run against a real org, and the code had
+    passed every offline check.
+  triggers: ['use-tooling-api', 'FieldPermissions', 'PermissionSetAssignment', 'FieldDefinition']
+  requires: >
+    A check that a field is deployed AND visible needs two endpoints: FieldDefinition through
+    the Tooling API, FieldPermissions and PermissionSetAssignment through the ordinary one.
+  confidence: practitioner
+  updated: 2026-08-04
+
 - id: bulk-partial-failure
   domain: data
   title: 'A bulk job can complete successfully with thousands of failed records'
