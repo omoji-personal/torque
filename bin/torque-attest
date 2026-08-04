@@ -50,6 +50,23 @@ def main():
     a = ap.parse_args()
 
     dirty = sh("git", "status", "--porcelain")
+
+    # P1-008. A release attestation must map to one immutable commit and tree another person can
+    # fetch exactly. From a dirty tree it does not: `git write-tree` records the INDEX, so the
+    # recorded tree can name an object no commit reaches, and the checks ran against source the
+    # reader cannot obtain. 15 of the 21 schema-2 attestations in this repo are PASS-from-dirty,
+    # including the four most recent — the norm, not the exception.
+    #
+    # Checked BEFORE the run, not after. A release profile takes minutes against a live org, and
+    # refusing at the end would spend all of it to tell the operator something knowable at the
+    # start. Fail before the cost, not after it.
+    if dirty and a.profile == "release":
+        print("refusing: --profile release on a dirty working tree. A release attestation claims "
+              "that a named commit and tree produce this result, and a reader can fetch neither. "
+              "Commit or stash, then re-run.\n"
+              f"uncommitted:\n{dirty[:400]}", file=sys.stderr)
+        return 2
+
     started = int(time.time())
     run = subprocess.run([sys.executable, str(ROOT / "harness" / "validate.py"),
                           "--profile", a.profile, "--target-org", a.target_org],
@@ -84,8 +101,13 @@ def main():
         org = {"alias": a.target_org, "org_id_sha256_16": None, "note": "org did not answer"}
         verdict = "UNKNOWN"
 
+    # A dirty non-release run is still worth recording; it is just not a release claim. The
+    # schema says which it is, in the field a reader looks at first. "2-draft" cannot be mistaken
+    # for "2" by anything reading the file — the property the boolean never had, since
+    # working_tree_clean:false sat in every one of those 15 and stopped nobody, being a detail
+    # inside a document whose headline said PASS.
     att = {
-        "schema": "torque.attestation/2",
+        "schema": "torque.attestation/2" if not dirty else "torque.attestation/2-draft",
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
         "duration_s": int(time.time()) - started,
         "head": sh("git", "rev-parse", "HEAD"),
