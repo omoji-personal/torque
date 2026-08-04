@@ -213,7 +213,7 @@ Per the house rule, and each has to be able to fail:
 4. **A mutator** — neuter the `exp` comparison so an expired grant is accepted, and require the
    suite to go red. If that cannot be made to fail on purpose, the window is not really bounded.
 
-Note the trap that A1 fell into: `shadow_cannot_escape_the_transaction` passed for eight commits
+Note the trap that A1 fell into: `shadow_cannot_escape_the_transaction` passed for thirteen commits
 because its target org refused everything for an unrelated reason, so the assertion never
 exercised the guard. Check 1 must assert the *reason* — that an edit was allowed and audited —
 not merely that some call returned zero.
