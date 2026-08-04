@@ -41,6 +41,28 @@ def sh(*a):
     return r.stdout.strip()
 
 
+def tool_version(*a):
+    """A toolchain version, or a stated absence. Never an exception.
+
+    `sh()` raises on a missing binary, and the toolchain block calls it for `sf` and `node` —
+    so the static attestation step this repo just added to CI died on its first run with
+    FileNotFoundError, because a runner that needs no org has no Salesforce CLI on it. The
+    attestation was recording the toolchain as a fact it assumed present rather than one it
+    checked.
+    An absent tool is a real, recordable fact about the environment a run happened in. It is
+    NOT a reason to have no attestation at all — which is what raising produced.
+    """
+    try:
+        r = subprocess.run(a, capture_output=True, text=True, cwd=ROOT)
+    except FileNotFoundError:
+        return f"absent ({a[0]} not on PATH)"
+    except Exception as e:                                 # noqa: BLE001
+        return f"unavailable ({type(e).__name__})"
+    if r.returncode != 0:
+        return f"present but did not report a version (exit {r.returncode})"
+    return (r.stdout or "").strip()[:60]
+
+
 def main():
     ap = argparse.ArgumentParser(prog="torque attest", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -163,7 +185,8 @@ def main():
                                                          else "unstated"),
                       "mutators": mutators},
         "checks": checks,
-        "toolchain": {"sf": sh("sf", "--version")[:60], "node": sh("node", "--version"),
+        "toolchain": {"sf": tool_version("sf", "--version"),
+                      "node": tool_version("node", "--version"),
                       "python": sys.version.split()[0]},
         "denylist_digest": (hashlib.sha256(DENY.read_bytes()).hexdigest()[:16]
                             if DENY.exists() else "ABSENT"),
