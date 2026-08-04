@@ -17,6 +17,7 @@ attestation says so — an attestation that could only ever describe success is 
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -25,7 +26,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "harness" / "attest"
-DENY = Path.home() / "Desktop" / "torque-planning" / "denylist.txt"
+# C2: same override as harness/validate.py, and resolved the same way on purpose. Two files
+# naming one boundary is the drift this repo keeps finding; when the path moves, it has to move
+# in both or the attestation records ABSENT for a denylist the run actually used.
+DENY = Path(os.environ.get(
+    "TORQUE_DENYLIST", Path.home() / "Desktop" / "torque-planning" / "denylist.txt"))
 
 
 def sh(*a):

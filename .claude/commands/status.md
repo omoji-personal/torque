@@ -6,10 +6,26 @@ Orient yourself before doing anything. Read, then report; do not start work in t
 
 ## 1. Read these, in this order
 
-- `local/HANDOFF-AUDIT.md` — current state, what is closed, what is open, lens availability
+**Tracked, present on every clone. Always read these:**
+
 - `ROADMAP.md` — the four steps and, more usefully, what was dropped and why
+- `harness/VALIDATION.md` — read the LAST entry. It states the profile, verdict, org
+  classification and what the run does and does not establish
+- the newest `harness/attest/*.json` — commit, tree, working-tree cleanliness, every check
+  outcome, every mutator. This is the evidence; VALIDATION.md is the narration of it
+- `docs/HANDOFF-DEFECTS-2026-08.md` — the open punch list, if it is still there
+
+**Operator-local, gitignored, present on ONE machine. Read if they exist, and say so if not:**
+
+- `local/HANDOFF-AUDIT.md` — current state, what is closed, what is open, lens availability
 - `local/audit-round9/sol-verify.md` — findings adjudicated with runnable evidence and patches
   (skim the verdicts; do not read every diff yet)
+
+C7: this command used to instruct a read of the two `local/` files unconditionally. They are
+gitignored, so on any clone but one the session opened by failing to read files it had just been
+told were the source of truth, and had no fallback. Orientation has to work from tracked state
+first, with the private context as an enrichment. **If the local files are absent, do not
+improvise a substitute — say which context is missing and what that means you cannot know.**
 
 ## 2. Establish the tree state yourself
 
@@ -18,15 +34,28 @@ git log --oneline -5
 git status --porcelain
 ```
 
-Do NOT run the harness. `validate.py` deliberately lost its interpreter exemption when P1-002
-closed — `probe_cycle` deploys and deletes metadata, so it was never read-only. The gates in this
-repo are LIVE and will refuse it. If you need a harness run, ask the operator to run it with the
-`!` prefix so the output lands in the conversation:
+**Targeted checks DO run from inside a session** and are the fastest way to establish a fact
+rather than assume it:
 
 ```
-! python3 harness/validate.py --profile release --target-org sf-coffee
-! python3 harness/validate.py --self-test
+python3 harness/validate.py --only <check-name>
 ```
+
+**Profile runs do NOT.** `validate.py` lost its interpreter exemption when P1-002 closed, and any
+invocation carrying `--target-org` is refused as a Salesforce operation via an interpreter —
+correctly, because `probe_cycle` deploys and deletes metadata and was never read-only. Ask the
+operator to run those with the `!` prefix so the output lands in the conversation, substituting
+their own disposable org:
+
+```
+! python3 harness/validate.py --profile release --target-org <disposable-org>
+```
+
+**Do not run `--self-test` while other agent sessions are live.** It mutates hook sources in
+place and restores them in a `finally`; a concurrent session hitting a gate mid-mutation sees
+transient refusals, or worse, a briefly neutered guard. That is P1-007. To exercise it safely,
+copy the tree somewhere disposable and run it there — `.git` included, or three mutators that
+plant a tracked file will report false failures.
 
 `checkup`, `blast-radius` and `log` are the declared read-only tools and work from inside a
 session.
