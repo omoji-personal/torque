@@ -102,6 +102,24 @@ What remains is not the mechanism but the honesty around it: establish by test �
 how governor limits accumulate inside the shadow transaction, and a hard refusal against
 production.
 
+**The production refusal is done** and covered by `shadow_refuses_unverified`: `torque-shadow`
+classifies live and re-checks the identity before running, so only sandbox, developer and scratch
+are eligible.
+
+**The measurement is built and not yet run.** `harness/experiments/shadow-rollback-boundary.py`
+sets a savepoint, inserts a marked record, enqueues a Queueable, rolls back, and then measures
+three things: whether the DML is really gone, whether the governor counters rewound with the
+data, and whether the job survived. It names platform events and callouts as NOT ESTABLISHED
+with reasons — observing an event needs a subscriber object that may not exist here, and a
+callout needs a Remote Site Setting this must not create in somebody's org — rather than
+inferring them from the documentation and leaving a findings list that reads complete.
+
+It is an **experiment, not a check**, deliberately. It runs anonymous Apex, so the agent cannot
+run it, and wiring an unverified org-touching probe into the capability profile is how a build
+goes red for the author's bug rather than a finding. `experiments_are_not_checks` asserts nothing
+under `harness/experiments/` can register into a profile. Once an operator runs it and the
+findings hold, each becomes a catalogue entry with a runnable verifier — and only then a check.
+
 ### 3. The completion gate — ledger shipped, browser half still gated
 A verified / not-verified ledger, ending in the browser under a **non-admin** profile — admin sees
 everything and proves nothing. The same discipline the harness already applies, where a skip is
@@ -169,7 +187,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 97 checks (77 static, 94 capability, 97 release),
+The current state, measured rather than claimed: 98 checks (78 static, 95 capability, 98 release),
 17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.
