@@ -234,7 +234,7 @@ def _enforcement_map():
                   f"label resolves to one of {len(hooks)} wired blocking hook(s) or "
                   f"{len(checks)} registered check(s){tail}")
 
-@check("gate_adversarial_fixtures", "capability", catastrophe=True)
+@check("gate_adversarial_fixtures", "capability", catastrophe=True, reads_only=True)
 def _gate_adversarial_fixtures(target):
     # Runs harness/tests/run_gate_fixtures.py over the recorded fixture corpus plus dynamic
     # valid-token allow-path tests, exercising both gates against every audited attack class
@@ -260,13 +260,42 @@ def _gate_adversarial_fixtures(target):
                        capture_output=True, text=True, cwd=ROOT, timeout=300,
                        env={**_os.environ, "TORQUE_TEST_ORG": target})   # portable to any org
     if r.returncode != 0:
-        tail = (r.stdout.strip().splitlines() or [""])[-1]
-        return Result("gate_adversarial_fixtures", FAIL, f"gate fixtures failed — {tail}")
+        # The reason used to be `stdout.splitlines()[-1]`, which is whatever the runner printed
+        # last — here a line of ANSI colour reset, so the verdict read "gate fixtures failed —"
+        # and stopped. A catastrophe-class check that fails without saying why sends the reader
+        # to run the corpus by hand to find out what the check already knew.
+        named = re.findall(r"^\s*-\s*(.+?):\s*(.+)$", r.stdout, re.M)
+        summary = re.search(r"(\d+) passed, (\d+) failed", r.stdout)
+        detail = ("; ".join(f"{n} ({w.strip()})" for n, w in named[:4])
+                  or (r.stdout.strip().splitlines() or ["no output"])[-1])
+
+        # A protected-path fixture cannot be measured while a maintainer window is deliberately
+        # holding that boundary open, and the corpus has no idea windows exist — so it reads an
+        # authorised, audited allow as a broken gate. Same reasoning as
+        # `runnable_implies_unwritable`: report that the boundary was not in force rather than
+        # crying wolf at the operator's own decision. The other fixtures still ran and are still
+        # counted, so this names what was NOT measured instead of discarding what was.
+        try:
+            import sys as _sysw
+            _sysw.path.insert(0, str(ROOT / "hooks"))
+            import lib as _libw
+            window = bool(_libw.maintainer_grant_valid())
+        except Exception:                                  # noqa: BLE001
+            window = False
+        protected_only = named and all(
+            re.search(r"protected|hook|settings\.json|allowlist", n, re.I) for n, _w in named)
+        if window and protected_only:
+            return Result("gate_adversarial_fixtures", SKIP,
+                          f"{summary.group(1) if summary else '?'} fixtures passed; "
+                          f"{len(named)} protected-path fixture(s) were NOT measured because a "
+                          f"maintainer window is open and that boundary is deliberately lifted: "
+                          f"{detail}. Close it (`torque approve --end-maintainer`) and re-run.")
+        return Result("gate_adversarial_fixtures", FAIL, f"gate fixtures failed — {detail}")
     m = re.search(r"(\d+) passed, (\d+) failed", r.stdout)
     return Result("gate_adversarial_fixtures", PASS,
                   f"{m.group(1) if m else '?'} adversarial gate fixtures pass")
 
-@check("cache_poison_resistant", "capability", catastrophe=True)
+@check("cache_poison_resistant", "capability", catastrophe=True, reads_only=True)
 def _cache_poison(target):
     if not target: return Result("cache_poison_resistant", SKIP, "no --target-org")
     import time, json as _j, importlib

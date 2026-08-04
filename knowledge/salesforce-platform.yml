@@ -562,6 +562,129 @@ entries:
   confidence: practitioner
   updated: 2026-08-01
 
+- id: lightning-field-labels-live-in-shadow-dom
+  domain: auth
+  title: Lightning field labels are unreachable by text selectors; only an explicit shadow-root walk finds them
+  symptom: >
+    Browser automation opens a record page, the record's NAME is found, the Details tab clicks,
+    and every field label comes back absent. getByText, allTextContents and page.content() all
+    return nothing for labels that a human can plainly see on screen.
+  cause: >
+    The record page nests ~564 open shadow roots. `page.content()` serialises the light DOM only.
+    `textContent` and `allTextContents()` do not cross shadow boundaries either — the elements
+    are found (28 `.test-id__field-label` nodes matched) and their text reads as empty string.
+  remedy: >
+    Walk the shadow roots explicitly inside page.evaluate, recursing into every element's
+    shadowRoot, and collect .test-id__field-label text. Measured working 2026-08-04: an admin
+    session returned 29 labels and an impersonated Standard User returned 28, differing by
+    exactly the one field gated behind a permission set the second user lacks. That difference
+    IS field-level security observed in the UI rather than inferred from a permission row.
+  gotcha: >
+    "Sorry to interrupt / CSS Error" appears on EVERY Lightning page in this configuration,
+    including the home page that renders correctly, so it is a persistent global overlay and NOT
+    evidence that a page failed. Four hours went into treating it as the cause. The page under
+    it renders fine — the record name, the Related/Details/Activity/Chatter tabs and 32 layout
+    items are all present. Check for content before believing an error banner.
+  triggers: ['test-id__field-label', 'shadowRoot', 'lightning/r/', 'field label', 'Sorry to interrupt']
+  requires: >
+    Verifying in the UI that a profile can see a field needs an explicit shadow-root walk, the
+    Details tab clicked, and a poll until labels appear — plus an admin baseline on the same
+    record, since a differential against nothing proves nothing.
+  confidence: practitioner
+  updated: 2026-08-04
+
+- id: lightning-record-pages-css-error-headless
+  domain: auth
+  title: SUPERSEDED — "CSS Error" is a global overlay, not a record-page failure
+  symptom: >
+    SUPERSEDED 2026-08-04 by lightning-field-labels-live-in-shadow-dom. Kept because the wrong
+    conclusion is instructive. The dialog appears on every Lightning page including ones that
+    demonstrably render, so it was never the cause; the real problem was that field labels sit
+    in shadow DOM and no text selector reaches them.
+  cause: >
+    The dialog body reads "CSS Error" — a static-resource/layout failure specific to the record
+    page bundle. It is not access. Verified on a Developer Edition org 2026-08-04 with
+    org-wide default Edit on Account, PermissionsRead true for the profile, the granting
+    permission set assigned, and the field label confirmed against FieldDefinition.
+  remedy: >
+    Do not conclude anything about field-level security from a record page that did not render.
+    Assert the record actually arrived — its own name or a highlights panel — before treating a
+    missing field label as a permissions finding.
+  ruled_out: >
+    None of these fixed it, each tested once against the same org and record: a realistic
+    viewport; the full bundled Chromium instead of the headless shell (channel chromium); the
+    system Chrome (channel chrome); navigating on lightning.force.com instead of
+    my.salesforce.com, confirmed by reading the settled URL host and path; and reloading, which
+    is the remedy the error dialog itself offers. It fails identically for the ADMIN and for an
+    impersonated user, so it is not about Login As. The org side is clear: org-wide default
+    Edit, profile Read on the object, the granting permission set assigned, the field label
+    confirmed against FieldDefinition, and the field temporarily placed on the layout.
+    Also ruled out: HEADED mode, in a real browser window on a real display, which is the
+    standard remediation for Lightning automation failures and shows the identical error. That
+    was effectively the human check.
+    The single variable left is the FRONTDOOR-TOKEN session versus an ordinary username and
+    password login; everything else has been held constant and eliminated.
+  cross_check: >
+    A mature Lightning browser-test suite running against several orgs for months has never
+    recorded this error — not in code, docs or audit history. It launches plainly
+    (chromium.launch(headless=...), no channel, no viewport, no args) and navigates on
+    my.salesforce.com. So this is not a general browser-automation problem, and the remedies
+    that would normally apply have all been tried.
+  gotcha: >
+    The header alone says nothing. Four detector designs were refined against this page before
+    anyone read the dialog BODY, which names the cause in two words. When a page fails, read the
+    error text before improving the selector.
+  triggers: ['lightning/r/', 'Sorry to interrupt', 'CSS Error', 'record page']
+  requires: >
+    Verifying field visibility in a browser needs proof the record page rendered at all, not
+    just that the Lightning shell did — the shell renders even when the record does not.
+  confidence: practitioner
+  updated: 2026-08-04
+
+- id: login-as-servlet-beats-the-setup-link
+  domain: auth
+  title: Login As from the Setup UI link is unreliable; the su servlet is the path that works
+  symptom: >
+    Automation cannot find the "Login" link on a user detail page, or finds it and the click does
+    nothing. Role and text locators report no such element even when an admin can see it.
+  cause: >
+    The Setup UI link is gated by the "Administrators Can Log In as Any User" org preference, it
+    renders inside a Classic iframe, and in Lightning it sits behind shadow DOM — so a locator
+    can miss it for three unrelated reasons at once, and the failure looks the same each time.
+  remedy: >
+    Drive the servlet directly:
+    /servlet/servlet.su?oid=<org_id_18>&suorgadminid=<user_id_15>&retURL=%2F&targetURL=%2F —
+    then navigate to a Lightning URL, because the servlet lands in Classic and an impersonated
+    Classic page is not what an end user sees. The user Id must be truncated to FIFTEEN
+    characters.
+  gotcha: >
+    The servlet still needs the org preference, and the failure is SILENT. Measured on a
+    Developer Edition org 2026-08-04: with `enableAdminLoginAsAnyUser` false the browser simply
+    STAYS on /servlet/servlet.su — no redirect, no error page — and a subsequent Lightning
+    navigation renders perfectly as the ORIGINAL user. So "the Lightning shell rendered" is not
+    evidence that impersonation happened, and a check asserting only the render reports a
+    non-admin verification that never left the admin session. With the preference enabled the
+    servlet redirects straight to the Lightning URL in retURL.
+    The proof of impersonation is the "Logged in as" text. `servlet.sulogout` is NOT in the
+    Lightning DOM at all, so the obvious href selector never matches there. And the banner
+    renders LATER than `one-app-nav-bar`: sampled once at shell-ready it reports false on a
+    session that is genuinely impersonating. Even polled for 15s it failed once in three runs, so
+    treat this assertion as flaky and give it a generous settle window.
+  detect_note: >
+    enableAdminLoginAsAnyUser is readable and settable via the Metadata API as
+    Settings:Security — retrieve it, flip the one element, deploy the whole file so every other
+    preference deploys as a no-op.
+  detect: "SELECT Id, Profile.Name FROM User WHERE IsActive = true"
+  triggers: ['servlet\.su', 'suorgadminid', 'Login\s+As', 'sulogout', 'impersonat']
+  requires: >
+    Rendering as another user needs three things established first: the "Administrators Can Log
+    In as Any User" preference enabled, a target user who is NOT the session's own user, and an
+    assertion that the session is actually impersonating — the "Log out as" link, which
+    Salesforce renders only while impersonating. Without the third, a failed hop is
+    indistinguishable from a successful one.
+  confidence: practitioner
+  updated: 2026-08-04
+
 - id: savepoint-rollback-does-not-refund-limits
   domain: limits
   title: A rollback restores the data and not the governor budget, and spends a statement of its own
