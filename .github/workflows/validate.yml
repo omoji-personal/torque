@@ -108,6 +108,17 @@ jobs:
           python3 harness/validate.py --profile static \
             --allow-skip="operator_presence_can_succeed:no login session on a CI runner; this check runs only on an operator machine"
 
+      # The guide PDF is the artifact a reader downloads and the only one with no check on it:
+      # claimed_counts and named_mutators_exist both scan guide/torque-guide.html and neither
+      # scans the PDF. It shipped 45 commits behind its source, publicly claiming 59 checks and
+      # 11 mutators against a real 72 and 15. This asks the cheap question — was it rebuilt after
+      # its source last moved — which needs no PDF text extractor and no extra dependency.
+      #
+      # Freshness, not correctness. It cannot say the numbers are right, only that they came from
+      # the current source. Correctness means adding the PDF to claimed_counts, which is owed.
+      - name: Guide PDF is not stale relative to its source
+        run: python3 scripts/check-guide-fresh.py
+
       # The static profile includes --self-test, which MUTATES HOOK SOURCES IN PLACE and
       # restores them in a finally. If a restore is ever missed, the mutation is a source edit
       # that would ride along in the next commit — a neutered guard, merged silently, which is

@@ -16,13 +16,27 @@ from pathlib import Path
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "Torque-Guide.pdf"
 
+# These strings are governed by docs/DESCRIBING-TORQUE.md, and both of the first two used to
+# violate it — in the metadata, which is the first thing a reader sees in their PDF viewer's
+# title bar, before a single page renders.
+#
+# /Title said "an AI operations WORKSPACE for Salesforce". The canonical noun phrase is "an
+# AI-agent operations LAYER for Salesforce", and the reasoning is written down: it is not a
+# place, it sits between the agent and the org. Workspace was one of four competing noun phrases
+# the describing document was written to end.
+#
+# /Subject led with the constraint: "...and structurally cannot write to production on its own."
+# The framing rule says copy that leads with what the agent cannot do sells the constraint
+# instead of the product, and reads as a smaller thing than it is. Safety is the enabler, stated
+# second. So the subject now says what it makes possible.
 META = {
-    "/Title": "Torque — an AI operations workspace for Salesforce",
+    "/Title": "Torque — an AI-agent operations layer for Salesforce",
     "/Author": "Omid Mojtahedi",
-    "/Subject": ("An AI agent that does real Salesforce work — and structurally cannot write "
-                 "to production on its own."),
-    "/Keywords": ("Salesforce, AI agents, Claude Code, agent safety, metadata deployment, "
-                  "validation harness, adversarial testing"),
+    "/Subject": ("Let an AI agent do real Salesforce work on the orgs that matter. It knows the "
+                 "platform, shows what an operation will set off before it runs, and verifies "
+                 "its changes in the org rather than in a return code."),
+    "/Keywords": ("Salesforce, AI agents, Agentforce, Claude Code, agent safety, MCP, "
+                  "metadata deployment, validation harness, adversarial testing"),
     "/Creator": "Torque — github.com/omoji-personal/torque",
 }
 
