@@ -62,6 +62,22 @@
 //     Three org states were verified against the org before the detector was suspected, which
 //     is the wrong order and cost a layout change to learn. Suspect the measurement first.
 //
+//   · THEN STOPPED GUESSING AND LOOKED. Dumped every rendered label through locators, which
+//     pierce shadow DOM, and the answer was not any of the four hypotheses: the page renders
+//     ONLY navigation chrome — Sfdclogo, Search Salesforce, Sales, Home, Opportunities, Leads,
+//     Accounts, Contacts, Reports, Chatter, 57 strings, every one of them app furniture — plus
+//     "Sorry to interrupt", which is Salesforce's Lightning error dialog.
+//
+//     There is no record on the record page. There never was a field label to find, in any
+//     session, by any selector, and four detectors were refined against a page that had already
+//     failed. The next question is why the record does not open — sharing or OWD for the
+//     impersonated user is the obvious candidate and is NOT established — and that is a
+//     different question from the one this file was written to answer.
+//
+//     The general lesson, which cost more than the specific one: FOUR selector designs were
+//     hypothesised before anything was OBSERVED. One dump would have ended it at the first
+//     failure. `TORQUE_DUMP_LABELS=1` runs it.
+//
 // Everything here reports ABSENT or UNSETTLED rather than picking a side, which is why this is
 // an experiment and not a check.
 import { chromium } from 'playwright';
@@ -259,6 +275,32 @@ try {
     mark('asUserSetupHeadings',
          heads.map(h => h.trim()).filter(Boolean).slice(0, 4).join(' | ').slice(0, 120));
   } catch (e) { mark('asUserSetupTitle', 'unavailable'); }
+
+  // ── OBSERVE, rather than hypothesise a fifth selector ──────────────────────────────────
+  //
+  // Four detector designs have failed and every one was a guess about where the text lives.
+  // This reads the accessibility tree, which pierces shadow DOM and returns what is actually
+  // rendered, and prints only FIELD-LABEL-SHAPED strings: short, title-case, no digits. A record
+  // page is full of customer data, so dumping it to debug a selector would trade a detection
+  // problem for a disclosure one.
+  if (process.env.TORQUE_DUMP_LABELS === '1') {
+    try {
+      await page.goto(`${instanceUrl}/lightning/r/Account/${RECORD_ID}/view`,
+                      { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(8000);
+      // page.accessibility was removed from Playwright; locators are the piercing API that
+      // remains. A locator matching elements INSIDE open shadow roots returns their text, which
+      // is the whole reason this works where page.content() did not.
+      const names = await page.locator(
+        'span, dt, label, h1, h2, lightning-formatted-text, .test-id__field-label'
+      ).allTextContents();
+      const labelish = [...new Set(names.map(s => s.trim()))].filter(s =>
+        s.length > 2 && s.length < 34 && !/\d/.test(s) && /^[A-Z]/.test(s));
+      mark('labelCount', labelish.length);
+      mark('hasFieldLabel', labelish.some(s => s.includes(FIELD_LABEL)));
+      mark('labelSample', labelish.slice(0, 40).join(' / ').slice(0, 700));
+    } catch (e) { mark('labelSample', 'unavailable: ' + String(e).slice(0, 80)); }
+  }
   mark('fieldVisibilityDifferential',
        adminSees === true && userSees === false ? 'PROVEN'
        : (adminSees === null || userSees === null) ? 'UNSETTLED' : 'ABSENT');
