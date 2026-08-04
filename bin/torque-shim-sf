@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""The `sf` shim: enforcement at exec time, for the channel the hooks cannot see.
+
+`.claude/rules/org-safety.md` has disclosed this hole since the gates were written: the hooks
+bind the agent's TOOL SURFACE, so they see `sf ...` typed into Bash and they see an MCP call,
+and they do not see `sf` spawned as a subprocess of a script the agent wrote and then ran. The
+Bash gate refuses an interpreter whose COMMAND TEXT carries a Salesforce word, which catches the
+obvious spelling and nothing else: a Python file that builds the argv at runtime says nothing
+about Salesforce on the command line that invoked it.
+
+This closes that channel by moving the decision to the last possible moment. At exec time there
+is no expansion problem left to solve — bash has already done every substitution, glob, quote
+removal and here-string, and what arrives is the literal argv the operating system is about to
+run. Everything `shellparse` reconstructs by reasoning about text, this receives as fact.
+
+WHAT IT DOES NOT DO, stated plainly, because a security claim that overstates is worse than none:
+
+  · It is bypassed by anyone who calls the real binary by absolute path, or who edits their own
+    PATH. This is not a sandbox and cannot be one at the same uid. It closes the ACCIDENTAL and
+    the ENUMERABLE cases — the agent writing an ordinary script that runs `sf` — and it does not
+    close a determined same-uid actor. That is Layer-0 territory, unchanged.
+  · It gates only when it cannot see an operator. An operator at a real login terminal passes
+    straight through, ungated, because the operator is not who this is for. That check runs
+    FIRST, before any classification, so a bug in the classifier can never take an operator's
+    `sf` away from them.
+  · It is not installed by default. `torque install-gates --shim` puts it on PATH.
+
+DEPTH. A write reaches the real gates, and a gate classifies its target by asking the org —
+which runs `sf org display`. That call comes back through this shim, which sees a READ and
+executes it directly without consulting anything. So the recursion is bounded at one level by
+construction rather than by a counter. TORQUE_SHIM_DEPTH is a belt on top of that, and it fails
+CLOSED: a caller who sets it can only cause a refusal, never an authorization, which is why it
+does not need to be unforgeable.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+HOOK = "sf_shim"
+DENY = 2
+# The two gates, in the order the tool surface runs them. Both must allow.
+GATES = ("prod_write_gate.py", "destructive_data_gate.py")
+
+
+def refuse(msg: str, code: str) -> "None":
+    sys.stderr.write(f"TORQUE SHIM DENY [{HOOK}] {msg}\n")
+    sys.exit(DENY)
+
+
+def torque_home() -> Path:
+    """Where the gates live. Recorded at install time; env wins for tests.
+
+    Fails closed. A shim that cannot find the gates must refuse, not shrug and exec — the whole
+    point of it is to be the thing standing in the way, and "I could not load my own rules" is
+    the worst possible reason to get out of it.
+    """
+    env = os.environ.get("TORQUE_HOME")
+    if env and (Path(env) / "hooks" / "lib.py").exists():
+        return Path(env)
+    recorded = Path(__file__).resolve().parent / "home"
+    if recorded.exists():
+        p = Path(recorded.read_text().strip())
+        if (p / "hooks" / "lib.py").exists():
+            return p
+    refuse("cannot locate TORQUE_HOME, so no rules could be loaded. Reinstall with "
+           "`torque install-gates --shim`, or run the real binary by absolute path if you "
+           "meant to work outside Torque.", "no-home")
+
+
+def real_binary(name: str) -> str:
+    """The `sf` that is NOT this file.
+
+    Resolved by walking PATH and comparing resolved paths against this script, so a shim
+    directory placed anywhere — and a shim reached through a symlink — is skipped without
+    hardcoding where it was installed. Deliberately not `shutil.which` on a trimmed PATH: PATH
+    can contain the shim dir spelled several ways (relative, symlinked, doubled), and comparing
+    the answer is more reliable than trying to subtract the question.
+    """
+    me = Path(__file__).resolve()
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d:
+            continue
+        cand = Path(d) / name
+        try:
+            if not (cand.is_file() and os.access(str(cand), os.X_OK)):
+                continue
+            if cand.resolve() == me:
+                continue
+        except OSError:
+            continue
+        return str(cand)
+    refuse(f"no real `{name}` found on PATH behind this shim. Torque did not refuse this "
+           f"command; it could not find the Salesforce CLI to run it.", "no-real-sf")
+
+
+def main() -> "None":
+    name = Path(sys.argv[0]).name or "sf"
+    if name not in ("sf", "sfdx"):
+        name = "sf"
+    real = real_binary(name)
+
+    if os.environ.get("TORQUE_SHIM_DEPTH"):
+        # Reached only if the bounded-by-construction argument above is wrong. Refusing is the
+        # safe direction: the alternative is an unbounded fork chain that ends in the OS killing
+        # something, and a gate that dies is a gate that decided nothing.
+        refuse("re-entered the shim. A Salesforce operation was reached from inside a gate "
+               "decision, which should be impossible; refusing rather than recursing.",
+               "shim-reentry")
+
+    home = torque_home()
+    sys.path.insert(0, str(home / "hooks"))
+    try:
+        import lib
+        import shellparse
+    except Exception as e:                              # noqa: BLE001 — any import failure denies
+        refuse(f"could not load the gate library ({type(e).__name__}), so nothing classified "
+               f"this command. Refusing rather than running it unexamined.", "no-lib")
+
+    # The operator, first and cheaply. Anything that throws here is treated as "not an operator"
+    # — the direction that gates rather than the direction that opens.
+    try:
+        present = lib.operator_present()
+    except Exception:                                   # noqa: BLE001
+        present = False
+    if present:
+        os.execv(real, [name, *sys.argv[1:]])
+
+    sf_args = sys.argv[1:]
+    try:
+        reads_only = shellparse.is_read(sf_args)
+    except Exception as e:                              # noqa: BLE001
+        refuse(f"could not classify these arguments ({type(e).__name__}). An unclassifiable "
+               f"Salesforce command is refused, not assumed harmless.", "unclassifiable")
+    if reads_only:
+        os.execv(real, [name, *sys.argv[1:]])
+
+    # A write. Hand it to the SAME gates the tool surface uses, and hand over ARGV — not a
+    # command string rebuilt from it. Every rule those gates learn, this learns with them; a
+    # second classifier living in the shim would be one more list nobody compares.
+    #
+    # The first version of this line did `shlex.join(argv)` and posted a Bash payload, which
+    # reads naturally and is wrong: a `--values` payload containing a literal backtick came back
+    # as a quoted backtick, and the parser refused it as command substitution. Bash had already
+    # finished expanding — there was no substitution, only somebody's Description field. Text
+    # was the only place an error could enter, so the text is gone.
+    payload = json.dumps({"tool_name": "SfArgv", "tool_input": {"argv": sf_args}})
+    env = dict(os.environ, TORQUE_SHIM_DEPTH="1", TORQUE_HOME=str(home))
+    for gate in GATES:
+        try:
+            r = subprocess.run([sys.executable, str(home / "hooks" / gate)],
+                               input=payload, capture_output=True, text=True,
+                               cwd=str(home), env=env, timeout=lib.HOOK_TIMEOUT_S)
+        except Exception as e:                          # noqa: BLE001
+            refuse(f"{gate} did not complete ({type(e).__name__}), so this command was never "
+                   f"authorized. Refusing.", "gate-crashed")
+        if r.returncode == DENY:
+            sys.stderr.write(r.stderr or f"TORQUE SHIM DENY [{HOOK}] refused by {gate}\n")
+            sys.exit(DENY)
+        if r.returncode != 0:
+            refuse(f"{gate} exited {r.returncode}, which is neither allow nor deny. A gate that "
+                   f"cannot state a verdict does not get read as consent.", "gate-indeterminate")
+
+    os.execv(real, [name, *sys.argv[1:]])
+
+
+if __name__ == "__main__":
+    main()

@@ -55,15 +55,29 @@ Precedence when the target classifies production: valid session grant → valid 
 token → **deny** (the deny message names both commands). Every production write is audited as a
 first-class `PROD-WRITE` event. A dry-run / validate-only deploy is a read and needs no override.
 
+## Layer 2b — the exec-time shim (optional, closes the subprocess channel)
+`torque install-gates --shim` puts an `sf` shim on PATH, installed into the trust anchor where
+the agent cannot read or rewrite it. It decides at exec time, on the argv the kernel is about to
+run — bash has finished every expansion by then, so there is no text left to reason about. It
+routes writes to the SAME two gates, over an argv payload rather than a reconstructed command
+string, and passes reads straight through (which is also what bounds the recursion: a gate
+classifying an org runs `sf org display`, and that comes back as a read).
+
+An operator at a real login terminal passes through ungated, checked before any classification,
+so a classifier bug can never take an operator's `sf` away from them.
+
 ## Boundaries (stated honestly)
 The gates bind the agent's **tool surface** (Bash / Edit / Write / Read / MCP) and defeat both
 accidents and enumerable circumvention (40+ adversarial fixtures, three independent audit
-lenses). They do **not** claim to stop a same-uid actor who steps *outside* that surface:
-executing a bespoke program that forges a login session, or spawning `sf` as a subprocess of a
-script the agent writes and runs. Those are Layer-0 (OS / arbitrary-code) territory; the
+lenses). Without the shim they do **not** see `sf` spawned as a subprocess of a script the agent
+writes and runs; with it installed, that channel is closed for anything that resolves `sf`
+through PATH.
+
+What remains open, at any layer: a same-uid actor who invokes the real binary by absolute path,
+edits their own PATH, or executes a bespoke program that forges a login session. That is Layer-0
+(OS / arbitrary-code) territory and no PreToolUse hook or PATH entry can reach it. The
 load-bearing defense there is Layer 1 — connect production read-only and never leave a
-production org authenticated in an autonomous session. The v2 roadmap closes the subprocess
-channel with a PATH-shim.
+production org authenticated in an autonomous session.
 
 ## Workspace scope
 Hooks load from the active workspace. A session started elsewhere loads no gates — an optional

@@ -3,8 +3,16 @@
 
 Profiles compose: release ⊇ capability ⊇ static. A check declares its lowest profile;
 it runs in that profile and every higher one. SKIP/BLOCKED is never green. --self-test
-mutates a fixture, asserts the relevant check FAILs, and restores — proving each
-catastrophe-class check can actually fail.
+mutates a guard, asserts the covering check FAILs, and restores — proving that check can
+actually fail.
+
+Coverage is partial, and this paragraph said otherwise for a long time. TOTAL_MUTATORS
+mutators run here; far more checks are flagged catastrophe-class than that. The remainder
+carry their falsification inline — a sibling check that neuters the thing under test and
+requires the outcome to invert, which has the advantage of running in every profile rather
+than only under --self-test — or, honestly, carry none yet.
+`mutation_coverage_is_stated_honestly` compares the two numbers so the stronger claim
+cannot come back.
 
 Usage:
   validate.py --profile {static|capability|release} [--target-org ALIAS]

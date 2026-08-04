@@ -2,11 +2,64 @@
 """Optional: register Torque's gates at USER level (~/.claude/settings.json) so they bind
 in any workspace. Records TORQUE_HOME so gate inputs resolve from it, never CWD. Gates
 no-op-with-notice when TORQUE_HOME is unset. Idempotent."""
-import json, os, sys
+import json, os, shutil, sys
 from pathlib import Path
 
 HOME_SETTINGS = Path.home() / ".claude" / "settings.json"
 TORQUE_HOME = Path(__file__).resolve().parent.parent
+ANCHOR = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
+SHIM_DIR = ANCHOR / "shim"
+SHIM_SRC = TORQUE_HOME / "bin" / "torque-shim-sf"
+
+
+def install_shim():
+    """Put the exec-time shim on PATH, under the trust anchor.
+
+    Installed INTO the anchor rather than run from bin/ on purpose. bin/ is agent-writable-ish
+    in the sense that matters here — it is inside the repository, so an agent with a maintainer
+    window, or any future path that widens repo writes, would be editing the thing standing in
+    its way. The anchor is 0700, outside the workspace, and unreachable through the agent's
+    Bash, Edit, Write and Read surfaces. A gate you can rewrite is a gate you have already
+    passed.
+
+    Both names are installed. `sfdx` is the legacy binary and shellparse has always treated the
+    two as one; shimming only `sf` would leave the older spelling of every command ungated,
+    which is precisely the kind of half-covered boundary the installer was fixed for once
+    already.
+    """
+    if not SHIM_SRC.exists():
+        print(f"cannot install shim: {SHIM_SRC} is missing", file=sys.stderr)
+        return False
+    SHIM_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(ANCHOR), 0o700)
+    for name in ("sf", "sfdx"):
+        dst = SHIM_DIR / name
+        shutil.copyfile(str(SHIM_SRC), str(dst))
+        os.chmod(str(dst), 0o755)
+    # Recorded, not guessed: the shim resolves the gates from this file, so a shell with no
+    # TORQUE_HOME exported still finds them. Without it the shim would refuse every write in a
+    # plain terminal, which is a lockout wearing a security badge.
+    (SHIM_DIR / "home").write_text(str(TORQUE_HOME) + "\n")
+    print(f"shim installed: {SHIM_DIR}/sf and /sfdx")
+    print("add it to PATH, ahead of the real CLI, in your shell profile:")
+    print(f'  export PATH="{SHIM_DIR}:$PATH"')
+    print("it gates only when it cannot see an operator at a login terminal, so your own")
+    print("`sf` is unaffected. Remove with: python3 bin/torque install-gates --remove-shim")
+    return True
+
+
+def remove_shim():
+    if not SHIM_DIR.exists():
+        print("no shim installed"); return
+    for name in ("sf", "sfdx", "home"):
+        (SHIM_DIR / name).unlink(missing_ok=True)
+    try:
+        SHIM_DIR.rmdir()
+    except OSError:
+        pass
+    print(f"shim removed from {SHIM_DIR}")
+    print("take it out of PATH in your shell profile too, or the directory reappears empty "
+          "and `sf` resolves past it harmlessly")
 
 def main():
     HOME_SETTINGS.parent.mkdir(exist_ok=True)
@@ -55,6 +108,11 @@ def main():
             bak.write_text(HOME_SETTINGS.read_text())
     HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
     print(f"installed: 4 gate matchers + 1 observer registered at user level, TORQUE_HOME={TORQUE_HOME}")
+    if "--shim" in sys.argv:
+        install_shim()
+    else:
+        print("the exec-time shim is NOT installed. These hooks bind the agent's tool surface; "
+              "they do not see `sf` spawned by a script the agent wrote. `--shim` closes that.")
     print("remove with:  python3 bin/torque install-gates --remove")
 
 
@@ -80,7 +138,14 @@ def remove():
     HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
     print(f"removed: {before - len(hooks)} torque hook block(s) from {HOME_SETTINGS}")
     print("the project-level gates in this repo are unaffected")
+    remove_shim()
 
 if __name__ == "__main__":
     import sys
-    (remove if "--remove" in sys.argv else main)()
+    if "--remove-shim" in sys.argv:
+        remove_shim()
+    elif "--shim" in sys.argv and "--remove" not in sys.argv and len(sys.argv) == 2:
+        # `--shim` alone adds the shim without rewriting the operator's settings.json.
+        install_shim()
+    else:
+        (remove if "--remove" in sys.argv else main)()
