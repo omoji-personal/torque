@@ -91,7 +91,7 @@ def main() -> int:
               f"cannot roll back a consequence that has already left it, so shadowing it would "
               f"promise a safety it does not have.", file=sys.stderr)
         return 2
-    shielded = lib.protected_object_hits(body_src) if hasattr(lib, "protected_object_hits") else []
+    shielded = lib.protected_object_hits(body_src)
     if shielded:
         print(f"REFUSED: references a protected object ({', '.join(shielded)}).", file=sys.stderr)
         return 2

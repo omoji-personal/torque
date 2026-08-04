@@ -696,24 +696,57 @@ def _shadow_cannot_escape():
 
     The tool's own docstring already listed what does not roll back. LISTING A RISK IS NOT GATING
     IT, and that gap is the whole finding.
+
+    THIS CHECK COULD NOT FAIL UNTIL 2026-08-03, and that is why A1 survived it.
+
+    It ran torque-shadow against `--target-org torque-not-an-org` and asserted the word REFUSED
+    appeared somewhere in the output. But an unresolvable org classifies production
+    (classify_live: _org_display returns (None, None) -> "production"), which refuses EVERY body
+    on its own, before either guard is consulted. Emptying the ESCAPES dict entirely left all six
+    cases still returning 2 with REFUSED, and this check still reporting PASS. It was asserting
+    that a nonexistent org name gets rejected — a fact about classification, not about the guard
+    it is named after. Meanwhile the protected-object refusal ten lines below the escape guard
+    was dead code (`hasattr` against a function that existed nowhere) for the whole of that time.
+
+    So the assertion is on the REASON now, not on the word. Neuter either guard and the message
+    becomes "classified 'production'" instead of the named cause, and this goes red.
     """
     import subprocess as _sp, sys as _sy
-    must_refuse = [("async work", "System.enqueueJob(new Q());"),
-                   ("batch", "Database.executeBatch(new B());"),
-                   ("future", "@future public static void f() {}"),
-                   ("event", "EventBus.publish(new My__e());"),
-                   ("callout", "Http h = new Http();"),
-                   ("email", "Messaging.sendEmail(new List<Messaging.Email>());")]
-    for label, apex in must_refuse:
+    ESCAPE, PROTECTED_OBJ = "can leave the transaction", "protected object"
+    must_refuse = [("async work", "System.enqueueJob(new Q());", ESCAPE),
+                   ("batch", "Database.executeBatch(new B());", ESCAPE),
+                   ("future", "@future public static void f() {}", ESCAPE),
+                   ("event", "EventBus.publish(new My__e());", ESCAPE),
+                   ("callout", "Http h = new Http();", ESCAPE),
+                   ("email", "Messaging.sendEmail(new List<Messaging.Email>());", ESCAPE),
+                   ("a protected sObject", "delete [SELECT Id FROM Account];", PROTECTED_OBJ),
+                   ("a protected sObject, lowercased", "delete [select id from account];",
+                    PROTECTED_OBJ)]
+    for label, apex, reason in must_refuse:
         r = _sp.run([_sy.executable, str(ROOT / "bin" / "torque-shadow"),
                      "--target-org", "torque-not-an-org", "--apex", apex],
                     capture_output=True, text=True, cwd=ROOT, timeout=120)
-        if r.returncode == 0 or "REFUSED" not in (r.stdout + r.stderr):
+        out = r.stdout + r.stderr
+        if r.returncode == 0 or reason not in out:
             return Result("shadow_cannot_escape_the_transaction", FAIL,
-                          f"Apex containing {label} was not refused — its effect outlives the "
-                          f"savepoint, so rolling back promises a safety it does not have")
+                          f"Apex containing {label} was not refused FOR THAT REASON (wanted "
+                          f"{reason!r}, got {out.strip()[:110]!r}). If that mentions "
+                          f"'classified', the guard did not fire and the org refusal masked it.")
+    # The control that makes every assertion above mean something. A body with no disqualifying
+    # shape must reach classification and be refused THERE. If it is also refused as an escape or
+    # a protected object, the guards match indiscriminately and the positive cases prove nothing.
+    r = _sp.run([_sy.executable, str(ROOT / "bin" / "torque-shadow"),
+                 "--target-org", "torque-not-an-org", "--apex", 'insert new Lead(LastName="x");'],
+                capture_output=True, text=True, cwd=ROOT, timeout=120)
+    clean = r.stdout + r.stderr
+    if ESCAPE in clean or PROTECTED_OBJ in clean:
+        return Result("shadow_cannot_escape_the_transaction", FAIL,
+                      "a body with no escape shape and no protected object was refused as though "
+                      "it had one — the guards match indiscriminately, so the cases above "
+                      "establish nothing")
     return Result("shadow_cannot_escape_the_transaction", PASS,
-                  f"{len(must_refuse)} escape shape(s) refused before any org is contacted")
+                  f"{len(must_refuse)} disqualifying shape(s) refused by NAMED reason before any "
+                  f"org is contacted; a clean body is not")
 
 
 @check("shadow_refuses_unverified", "static", catastrophe=True)
