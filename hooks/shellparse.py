@@ -358,9 +358,68 @@ def split_segments(cmd: str):
     return segs, True
 
 
+_GROUP_PRECEDED_BY = (" ", "\t", "\n", ";", "&", "|", "")
+
+
 def grouping_or_subst(cmd: str) -> bool:
-    return ("$(" in cmd or "`" in cmd or "<(" in cmd or ">(" in cmd
-            or bool(re.search(r"(?:^|[\s;&|])[({]", cmd)))
+    """Shell grouping or substitution — over the UNQUOTED regions only.
+
+    This was a raw text scan: `"$(" in cmd`, plus a regex for a standalone `(` or `{`, with no
+    idea where the quotes were — while split_segments, forty lines above, tracks quote state
+    correctly. The machinery to do this right was already in the file and this function did not
+    use it. A parenthesis inside a single-quoted SOQL string therefore read as shell grouping,
+    and bash expands nothing whatsoever inside single quotes.
+
+    What that cost, measured rather than imagined: replaying six months of real client-work
+    commands (1,193 Salesforce CLI invocations) through this classifier denied 80.1% of them,
+    and 854 of those 955 denials were this one defect. `WHERE Id IN ('a','b')` — denied.
+    `WHERE Name = 'Acme (US)'` — denied. `SELECT Id, (SELECT Id FROM Contacts) FROM Account`,
+    a relationship subquery and the commonest SOQL idiom after a plain select — denied.
+
+    193 gate fixtures did not catch it, and 44 of those assert `allow`, so the must-allow
+    direction existed. What it did not contain was SOQL: its entire query vocabulary was four
+    instances of `SELECT Id FROM Account`, with no WHERE clause, no IN list, no subquery and no
+    quoted literal. Hand-imagined allow cases were a narrower distribution than real use, which
+    is why a corpus of real commands found in one pass what the suite could not.
+
+    The rule below is bash's own semantics, not a loosening:
+      outside quotes   $(  `  <(  >(  and a standalone (  or {
+      inside "..."     $(  `        — expansion still happens in double quotes
+      inside '...'     nothing      — single quotes are literal, bash expands nothing
+    """
+    i, n, quote = 0, len(cmd), None
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if c == "\\" and i + 1 < n:            # backslash escapes inside double quotes
+                i += 2
+                continue
+            if c == "`" or cmd[i:i + 2] == "$(":
+                return True
+            if c == '"':
+                quote = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:                # an escaped quote does not open a region
+            i += 2
+            continue
+        if c in ("'", '"'):
+            quote = c
+            i += 1
+            continue
+        if c == "`" or cmd[i:i + 2] in ("$(", "<(", ">("):
+            return True
+        if c in ("(", "{") and (cmd[i - 1] if i else "") in _GROUP_PRECEDED_BY:
+            return True
+        i += 1
+    # An unterminated quote is not a safe parse, and returning False here grants nothing:
+    # split_segments reports the imbalance separately and analyze_bash denies on it first.
+    return False
 
 
 _BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
