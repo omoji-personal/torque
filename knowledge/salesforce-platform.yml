@@ -577,8 +577,20 @@ entries:
   remedy: >
     Do not conclude anything about field-level security from a record page that did not render.
     Assert the record actually arrived — its own name or a highlights panel — before treating a
-    missing field label as a permissions finding. A realistic viewport does NOT fix it; this
-    needs a headed browser or a different rendering path.
+    missing field label as a permissions finding.
+  ruled_out: >
+    None of these fixed it, each tested once against the same org and record: a realistic
+    viewport; the full bundled Chromium instead of the headless shell (channel chromium); the
+    system Chrome (channel chrome); navigating on lightning.force.com instead of
+    my.salesforce.com, confirmed by reading the settled URL host and path; and reloading, which
+    is the remedy the error dialog itself offers. It fails identically for the ADMIN and for an
+    impersonated user, so it is not about Login As. The org side is clear: org-wide default
+    Edit, profile Read on the object, the granting permission set assigned, the field label
+    confirmed against FieldDefinition, and the field temporarily placed on the layout.
+    Unresolved from automation. The bisecting question is whether the same URL renders in the
+    operator's own everyday browser: if it fails there too this is the org or the page layout,
+    and if it renders there it is something about the frontdoor-token session or the automation
+    context. That is a thirty-second human check and no amount of selector work substitutes.
   gotcha: >
     The header alone says nothing. Four detector designs were refined against this page before
     anyone read the dialog BODY, which names the cause in two words. When a page fails, read the
