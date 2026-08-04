@@ -203,7 +203,7 @@ Then open the folder in Claude Code and work. The hooks fire on the tool calls t
 
 Torque validates itself the way it validates Salesforce work. `--profile release` runs:
 
-- **196 gate fixtures** (193 recorded on disk, 3 HMAC tokens minted during the run) — every
+- **216 gate fixtures** (213 recorded on disk, 3 HMAC tokens minted during the run) — every
   attack class found across the audits, each one a named,
   runnable test.
 - **17 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
