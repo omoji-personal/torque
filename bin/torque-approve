@@ -184,6 +184,21 @@ def _approve_impact(target, orgid, args):
               file=sys.stderr)
         sys.exit(2)
     return lib.impact_digest(sobject, where), {
+        # P1-004. The mode is now NAMED in the signed payload rather than left implicit.
+        #
+        # What this token binds is a CEILING: the gate refuses if the criteria come to match MORE
+        # rows than were approved. It does not bind WHICH rows. A different set of the same size
+        # passes, and that is a real property of the design, not an oversight — the count is
+        # established by one query and the operation runs as a separate command, so any
+        # row-identity claim would still race between the two.
+        #
+        # Naming the mode does three things. It makes the guarantee legible in the artifact
+        # itself, so a reader of a token or an audit line can see which promise was made. It lets
+        # the gate REFUSE a payload whose mode it does not recognise, which means a future
+        # exact-scope mode cannot be silently accepted by an old gate that would enforce only a
+        # ceiling. And it stops "impact-bound" being read as "scope-proof", which is the
+        # inference the audit made and the reason this finding exists.
+        "mode": "impact_ceiling",
         "sobject": sobject, "where_sha": lib.impact_digest(sobject, where), "scope": scope}
 
 
@@ -272,9 +287,14 @@ def main():
     if not _confirm(prompt):
         print("aborted", file=sys.stderr); sys.exit(1)
     _mint(op, orgid, digest, impact)
+    # "bound to N record(s)" reads as a promise about WHICH records. It is a promise about HOW
+    # MANY. Saying "at most" and naming the mode is the difference between an operator who knows
+    # a same-sized different set would pass, and one who finds out afterwards.
     print(f"approved: single-use token for {op} on {orgid} (5 min)"
-          + (f" — bound to {impact['scope']} {impact['sobject']} record(s); the gate will "
-             f"refuse if the criteria come to match more" if impact else ""))
+          + (f" — mode=impact_ceiling: bound to AT MOST {impact['scope']} "
+             f"{impact['sobject']} record(s). The gate refuses if the criteria come to match "
+             f"more. It does NOT bind which records: a different set of the same size passes."
+             if impact else ""))
 
 
 if __name__ == "__main__":
