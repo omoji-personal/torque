@@ -8,11 +8,16 @@ check written PRECISELY because a stale mutator transcript once shipped in the g
 scans the HTML only. So the checked surface was not the published surface, and the artifact a
 reader downloads was the one artifact with no guard on it.
 
-WHY IT COMPARES COMMITS RATHER THAN CONTENT. Reading numbers out of a PDF needs a text
-extractor, which is a dependency CI would have to carry and which fails differently on every
-platform. The question that actually matters is simpler and answerable from git alone: was the
-PDF rebuilt after the last change to its source? If the HTML moved and the PDF did not, the PDF
-is stale, whatever it happens to say.
+HOW IT ANSWERS THE QUESTION. The build stamps a SHA-256 of the HTML into the PDF's own metadata,
+so the artifact records which source produced it. This compares that to the HTML on disk. No text
+extractor, no parsing of page content, no assumption about commit order.
+
+The first version compared COMMIT ORDER — was the PDF committed no earlier than its source. That
+catches the ordinary mistake (edit the HTML, forget to rebuild) and nothing else: ANY change to
+the PDF satisfies it, so a touched-but-not-rebuilt file passes. A recorded source hash is not
+satisfiable by accident. Commit order is kept as the fallback for PDFs built before the stamp
+existed, and the output says which test it actually ran, because a guard that silently degrades
+to the weaker check is the class of defect this repo keeps finding.
 
 This is a freshness guard, not a correctness guard. It cannot tell you the PDF's numbers are
 right; it can tell you they were generated from the current source. The correctness half belongs
@@ -40,11 +45,40 @@ def last_commit(path):
     return sha, int(ts), subject
 
 
+def stamped_source_sha():
+    """The source hash the PDF records, or None if it carries none / cannot be read."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return None
+    try:
+        meta = PdfReader(str(ROOT / PDF)).metadata or {}
+        return meta.get("/TorqueSourceSHA256")
+    except Exception:
+        return None
+
+
 def main():
     for rel in (SRC, PDF):
         if not (ROOT / rel).exists():
             print(f"cannot tell: {rel} is missing")
             return 2
+
+    # Preferred test: does the PDF record the hash of the HTML that is on disk right now?
+    import hashlib
+    actual = hashlib.sha256((ROOT / SRC).read_bytes()).hexdigest()
+    stamped = stamped_source_sha()
+    if stamped:
+        print(f"  source sha  {actual[:16]}…")
+        print(f"  PDF records {stamped[:16]}…")
+        if stamped == actual:
+            print("\nfresh: the PDF records the hash of the current source")
+            return 0
+        print(f"\nSTALE: the PDF was built from a different {SRC}.")
+        print("Rebuild it:  node guide/build-pdf.mjs")
+        return 1
+    print("  (PDF carries no source stamp — falling back to commit order, which is weaker: "
+          "any change to the PDF satisfies it)")
 
     src, pdf = last_commit(SRC), last_commit(PDF)
     if not src or not pdf:

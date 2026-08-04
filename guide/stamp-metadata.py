@@ -41,6 +41,25 @@ META = {
 }
 
 
+def source_sha():
+    """SHA-256 of the HTML this PDF is rendered from, stamped into the PDF itself.
+
+    The freshness guard first compared COMMIT ORDER — was the PDF committed no earlier than its
+    source. That catches the ordinary mistake (edit the HTML, forget to rebuild) and nothing
+    else: any change to the PDF satisfies it, so a touched-but-not-rebuilt PDF passes.
+
+    A hash of the source, carried inside the artifact, is not satisfiable by accident. Either the
+    PDF records the HTML it was built from or it does not, and scripts/check-guide-fresh.py can
+    compare that to the HTML on disk without a text extractor, a PDF parser in CI, or any
+    assumption about commits.
+    """
+    import hashlib
+    src = OUT.parent / "torque-guide.html"
+    if not src.exists():
+        return None
+    return hashlib.sha256(src.read_bytes()).hexdigest()
+
+
 def main():
     if not OUT.exists():
         print(f"  ! no PDF at {OUT}", file=sys.stderr)
@@ -55,7 +74,11 @@ def main():
     reader = PdfReader(str(OUT))
     writer = PdfWriter()
     writer.append_pages_from_reader(reader)
-    writer.add_metadata({**(reader.metadata or {}), **META})
+    meta = {**(reader.metadata or {}), **META}
+    sha = source_sha()
+    if sha:
+        meta["/TorqueSourceSHA256"] = sha           # custom key; ignored by every viewer
+    writer.add_metadata(meta)
 
     tmp = OUT.with_suffix(".pdf.tmp")               # write-then-rename: never leave a torn PDF
     with open(tmp, "wb") as fh:
