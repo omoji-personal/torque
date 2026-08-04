@@ -597,7 +597,7 @@ def authorize_write(target: str, op_hint: str = "write"):
                                "and an unrecorded production write is not one this tool will "
                                "authorize")
             return True, f"{target}: PRODUCTION write authorized via single-use operator token"
-        return False, (f"{target} is PRODUCTION — denied by default. Operator override: "
+        return False, (f"{target}{PROD_DENY_MARKER} Operator override: "
                        f"`{approve_cmd(target, '<op>', '--prod')}` (one operation) or "
                        f"`{approve_cmd(target, '--session', '<minutes>')}` (a window).")
     allow = load_allowlist()
@@ -741,6 +741,29 @@ OBSERVE_NEVER = frozenset({
     "anchor-ref", "auth-ref", "artifact-edit", "protected-write", "stages-local",
     "invalid-event", "crash",
 })
+
+# Composed into the production denial and matched when deciding whether a refusal may be
+# observed. ONE constant, two uses, so the two cannot drift — the alternative was matching
+# generated prose in a second place and discovering the mismatch the day the wording changed.
+PROD_DENY_MARKER = " is PRODUCTION — denied by default."
+
+
+def is_production_denial(reason: str) -> bool:
+    """A production refusal is never advisory, whatever window is open.
+
+    An observe-only grant is bound to the TREE, and the shim invokes the gates with TORQUE_HOME
+    set to the recorded repo regardless of the working directory. So a window opened to measure
+    friction on a sandbox made every `sf` write on the machine advisory for its duration, from
+    any directory, PRODUCTION INCLUDED. The plan that proposed observing called "non-production
+    only" a hard constraint; it was prose the tool could not enforce, which is the failure this
+    repo's own rules name — listing a risk is not gating it.
+
+    Scoping the grant to an org was the alternative and is worse: observe-only applies to
+    refusals in general, most of which have no org, so an org-scoped grant would silently not
+    apply to the majority of them. Excluding the one class that must never be advisory is
+    narrower, and it is the class the operator was warned about at mint time.
+    """
+    return PROD_DENY_MARKER in (reason or "")
 
 
 def observe_grant_valid(tree: str = ""):
@@ -1309,7 +1332,8 @@ def deny(reason: str, fingerprint: str = "", hook_id: str = ""):
     # OBSERVE-ONLY. Checked here rather than at each call site so no future deny path can be
     # added that forgets to be observable — and checked AFTER the trust-boundary exclusion, so
     # the window can never be the thing that lets the agent reach the anchor holding the window.
-    if fingerprint not in OBSERVE_NEVER and observe_grant_valid():
+    if (fingerprint not in OBSERVE_NEVER and not is_production_denial(reason)
+            and observe_grant_valid()):
         # Durable, and fatal if it fails. An observation that cannot be recorded is not an
         # observation; it is the gate switched off with nobody able to find out afterwards.
         recorded = audit("OBSERVE", f"[{hook_id}:{fingerprint}] WOULD DENY: {reason}",

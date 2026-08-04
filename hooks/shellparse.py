@@ -871,6 +871,61 @@ def _destructive_shape(sub):
     return any(w in joined for w in _DESTRUCTIVE_WORDS)
 
 
+_DEPLOY_DIR_FLAGS = ("--metadata-dir", "--source-dir", "-d", "--sourcepath", "--deploydir")
+_DESTRUCTIVE_MANIFESTS = ("destructivechanges.xml", "destructivechangespre.xml",
+                          "destructivechangespost.xml")
+
+
+def _deploy_dir_carries_destructive(sub, sf_args) -> bool:
+    """Does a deploy DIRECTORY contain a destructiveChanges manifest?
+
+    The Metadata API honours a `destructiveChanges.xml` in the package root with NO flag — that
+    is how destructive deploys worked before DX and it still works through `--metadata-dir`. The
+    classifier reasoned only about argv, so:
+
+        sf project deploy start --metadata-dir ./mdapi_out --target-org <allowlisted-sandbox>
+
+    with `./mdapi_out/destructiveChanges.xml` on disk classified NOT DESTRUCTIVE and proceeded
+    with no destructive-class token, against a documented contract that says one is required. On
+    production the write is still refused by prod_write_gate, so this was never a production
+    hole; on an allowlisted sandbox it deleted metadata untokened, and `purgeOnDelete` in that
+    manifest hard-deletes. Found by an external audit lens, reproduced before being believed.
+
+    This is the ONLY place the classifier reads the filesystem, and it does so because the
+    operation's destructiveness genuinely is not in its argv.
+
+    KNOWN LIMIT, stated rather than hidden: a relative directory is resolved against this
+    process's cwd, which is the session's for a Bash hook and TORQUE_HOME for the shim. If it
+    does not resolve, this returns False rather than claiming destructiveness it cannot see —
+    the deploy still faces ordinary write authorization (allowlist + live non-production check),
+    but it will not be charged a destructive token. Failing closed here would demand a token for
+    every deploy whose directory this process cannot locate, which is how a gate becomes the
+    thing people uninstall.
+    """
+    if not (sub[:3] == ("project", "deploy", "start")
+            or sub[0].startswith(("force:mdapi:deploy", "force:source:deploy"))):
+        return False
+    dirs = []
+    for i, a in enumerate(sf_args):
+        if a in _DEPLOY_DIR_FLAGS and i + 1 < len(sf_args):
+            dirs.append(sf_args[i + 1])
+        elif a.startswith(tuple(f + "=" for f in _DEPLOY_DIR_FLAGS)):
+            dirs.append(a.split("=", 1)[1])
+    for d in dirs:
+        try:
+            p = Path(d).expanduser()
+            if not p.is_dir():
+                continue
+            for entry in p.iterdir():
+                if entry.name.lower() in _DESTRUCTIVE_MANIFESTS:
+                    return True
+        except OSError:
+            # The directory exists and cannot be read. That is the one case where failing closed
+            # costs nothing an operator would miss: an unreadable deploy source is broken anyway.
+            return True
+    return False
+
+
 def classify_destructive(sf_args):
     """Op-class if the parsed sf write is destructive, else None. Covers modern space syntax AND
     legacy colon syntax (audit R11-04/R11-05) and async-resume completion of bulk jobs."""
@@ -921,7 +976,8 @@ def classify_destructive(sf_args):
     if sub[:3] == ("project", "delete", "source") or f.startswith("force:source:delete") \
        or any(a in ("--pre-destructive-changes", "--post-destructive-changes")
               or a.startswith(("--pre-destructive-changes=", "--post-destructive-changes="))
-              for a in sf_args) or "destructivechanges" in " ".join(sf_args).lower():
+              for a in sf_args) or "destructivechanges" in " ".join(sf_args).lower() \
+       or _deploy_dir_carries_destructive(sub, sf_args):
         return "destructive-metadata"
     # Nothing precise matched. If the verb still READS as destructive, charge a token;
     # otherwise let it through to the ordinary write authorisation (allowlist + live
