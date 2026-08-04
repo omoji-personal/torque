@@ -1307,11 +1307,28 @@ def _deny_or_defer(reason: str, code: str):
     Fails closed in both directions that matter: an unknown code is never deferrable, and if
     shim_enforcing() cannot decide it says no. The caller still gets a `deny` key, so any code
     path that has not learned about deferral keeps denying exactly as it did.
+
+    WHEN IT DENIES, IT NAMES THE FIX. This is the difference between a gate and an obstacle. A
+    refusal reading "not statically authorizable" tells the user what the parser could not do and
+    nothing about what they can do, and on the real corpus that message was 686 of 706 denials —
+    every one of which would have gone through with the shim installed. A user who has hit it
+    twice concludes the tool is broken, and they are not wrong to, because nothing in the message
+    distinguishes "this operation is unsafe" from "this layer cannot read shell".
     """
-    if code in DEFERRABLE_TO_SHIM and shim_enforcing():
-        return {"deny": None, "writes": [], "mutations": [],
-                "defer": (f"{reason} — deferred to the exec-time shim, which will authorize it "
-                          f"on resolved argv", code)}
+    if code in DEFERRABLE_TO_SHIM:
+        if shim_enforcing():
+            return {"deny": None, "writes": [], "mutations": [],
+                    "defer": (f"{reason} — deferred to the exec-time shim, which will authorize "
+                              f"it on resolved argv", code)}
+        return {"deny": (
+            f"{reason}\n"
+            f"  This is a PARSING limit, not a policy one: the operation was never judged "
+            f"unsafe, it could not be read. The exec-time shim resolves it exactly — it sees "
+            f"argv after bash has finished every expansion — and with it installed this would "
+            f"be authorized normally rather than refused.\n"
+            f"    python3 bin/torque install-gates --shim\n"
+            f"  Then put it on PATH ahead of the real CLI. It gates only when it cannot see an "
+            f"operator at a login terminal, so your own `sf` is unaffected.", code)}
     return {"deny": (reason, code)}
 
 
