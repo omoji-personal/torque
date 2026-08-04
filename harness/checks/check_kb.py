@@ -1011,6 +1011,21 @@ def _claimed_counts():
             if int(m.group(1)) not in valid:
                 bad.append(f"{rel} says {m.group(1)} checks; no profile has that many "
                            f"(profiles: {sorted(valid)})")
+        # The per-profile breakdown was NOT checked, and it is the form the prose actually uses:
+        # "72 checks (51 static, 69 capability, 72 release)". Only the leading "72 checks"
+        # matched above, so moving one check between profiles left three numbers in that sentence
+        # and only one of them under test. Caught by moving local_hygiene from capability to
+        # static and watching claimed_counts stay green while the sentence went stale.
+        #
+        # Each name now has to equal ITS OWN cumulative total, not merely be one of the three,
+        # which is a stronger claim than the line above makes.
+        _exact = {pr: sum(n for pp, n in _c.items() if _v.RANK[pp] <= _v.RANK[pr])
+                  for pr in _v.PROFILES}
+        for m in _kb_re.finditer(r"(\d{1,3})\s+(static|capability|release)\b", body):
+            stated, prof = int(m.group(1)), m.group(2)
+            if stated != _exact[prof]:
+                bad.append(f"{rel} says {stated} {prof}; the {prof} profile runs "
+                           f"{_exact[prof]}")
     if bad:
         return Result("claimed_counts", FAIL, "; ".join(bad))
     return Result("claimed_counts", PASS,
