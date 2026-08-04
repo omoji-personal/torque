@@ -74,6 +74,43 @@ def _ro_evidence_of_writing(fnnode, sp):
     return sorted(set(found))
 
 
+@check("experiments_are_not_checks", "static")
+def _experiments_are_not_checks():
+    """Nothing under harness/experiments/ may register a check or run in a profile.
+
+    An experiment establishes a claim nobody has measured yet; a check asserts one that is
+    settled. Letting the first quietly become the second is how an unverified org-touching probe
+    ends up deciding a build — and `torque done` shipped with two dead layers precisely because
+    nothing had run it against an org. The loader globs `harness/checks/check_*.py`, so this
+    separation holds by construction today; the point of asserting it is that a future
+    convenience — a symlink, a wider glob, an experiment renamed into checks/ — would erase it
+    without anyone noticing.
+    """
+    name = "experiments_are_not_checks"
+    d = ROOT / "harness" / "experiments"
+    if not d.is_dir():
+        return Result(name, NA, "no experiments directory")
+    files = [p for p in sorted(d.rglob("*.py"))]
+    if not files:
+        return Result(name, NA, "no experiments present")
+    bad = []
+    registered = {n for n, _p, _c, _f in REGISTRY}
+    for f in files:
+        src = f.read_text()
+        if "@check(" in src:
+            bad.append(f"{f.name} registers a check")
+        for m in re.finditer(r"@check\(\s*[\"']([^\"']+)", src):
+            if m.group(1) in registered:
+                bad.append(f"{f.name} registered {m.group(1)!r} into the live registry")
+        # the loader's own glob is what keeps them out; say so if the name would match it
+        if f.parent == d and f.name.startswith("check_"):
+            bad.append(f"{f.name} is named so a wider glob would pick it up")
+    if bad:
+        return Result(name, FAIL, "; ".join(bad))
+    return Result(name, PASS,
+                  f"{len(files)} experiment(s) register no checks and cannot be loaded as one")
+
+
 @check("readonly_declaration_survives_source", "static", catastrophe=True)
 def _readonly_declaration_survives_source():
     """Every check declared read-only must show no org mutation when re-derived from its source.
