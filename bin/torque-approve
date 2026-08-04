@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-update",
                    "destructive-metadata"}
 SESSION_MAX_MIN = 120
+MAINTAINER_MAX_MIN = 120
 
 
 def _ensure_secret():
@@ -60,6 +61,49 @@ def _org_details(target):
     except Exception:
         pass
     return None, None, None
+
+
+def _maintainer(args):
+    """Open or revoke a window in which the agent may edit Torque's OWN source.
+
+    Deliberately org-free: it takes no target, resolves no org, and mints nothing an org
+    operation could spend. A maintainer window is about the repository, and conflating it with
+    org authority is exactly the mistake that would make it dangerous.
+    """
+    if args[0] == "--end-maintainer":
+        lib.MAINTAINER_GRANT.unlink(missing_ok=True)
+        lib.audit("MAINTAINER-REVOKE", "maintainer window revoked", durable=True)
+        print("maintainer window revoked")
+        return
+    try:
+        mins = int(args[1])
+    except (IndexError, ValueError):
+        print("usage: torque approve --maintainer <minutes>", file=sys.stderr); sys.exit(2)
+    if mins <= 0:
+        print("minutes must be positive", file=sys.stderr); sys.exit(2)
+    mins = min(mins, MAINTAINER_MAX_MIN)
+    tree = str(lib.TORQUE_HOME.resolve())
+    with open("/dev/tty") as tty:
+        sys.stderr.write(
+            f"\n*** MAINTAINER WINDOW ***\n"
+            f"  tree:     {tree}\n"
+            f"  duration: {mins} min\n"
+            f"The agent may edit Torque's own source under that tree — hooks, gates, checks,\n"
+            f"commands, skills. Every edit is audited as MAINTAINER-EDIT.\n"
+            f"It does NOT authorize any org write: production stays denied, destructive\n"
+            f"operations still need their own token, and the trust anchor stays unreachable.\n"
+            f"Type exactly  MAINTAIN  to authorize: ")
+        sys.stderr.flush()
+        if tty.readline().strip() != "MAINTAIN":
+            print("refused", file=sys.stderr); sys.exit(3)
+    _ensure_secret()
+    g = {"tree": tree, "exp": int(time.time()) + mins * 60, "iat": int(time.time())}
+    g["sig"] = lib.sign(g)
+    lib.ANCHOR.mkdir(parents=True, exist_ok=True); os.chmod(lib.ANCHOR, 0o700)
+    lib.MAINTAINER_GRANT.write_text(json.dumps(g)); os.chmod(lib.MAINTAINER_GRANT, 0o600)
+    lib.audit("MAINTAINER-GRANT", f"{mins}m source-edit window for {tree}", durable=True)
+    print(f"maintainer window open for {mins} min ({tree})")
+    print("revoke: torque approve --end-maintainer")
 
 
 def _confirm(prompt):
@@ -151,6 +195,11 @@ def main():
               "clear of the agent process)", file=sys.stderr)
         sys.exit(3)
     args = sys.argv[1:]
+
+    # Source-edit window: no org, so it is dispatched before any org resolution below.
+    if args and args[0] in ("--maintainer", "--end-maintainer"):
+        return _maintainer(args)
+
     if len(args) < 2:
         print(__doc__, file=sys.stderr); sys.exit(2)
     target = args[0]

@@ -106,9 +106,24 @@ def handle_edit(tinput):
     """
     paths = {tinput.get("file_path", "")} | set(_tool_paths(tinput))
     for path in sorted(p for p in paths if p):
-        if _protected_reason(path):
-            lib.deny(f"agent modification of protected file {os.path.basename(path)} is denied; "
-                     "operator-present issuance only", "artifact-edit", HOOK)
+        if not _protected_reason(path):
+            continue
+        # The anchor and the auth store are checked FIRST and are never grantable. A window that
+        # could rewrite the signing secret could extend itself, and the presence proof behind it
+        # would become decorative.
+        if shellparse.anchor_ref(path) or _is_sf_auth(path) or shellparse.sf_auth_ref(path):
+            lib.deny("the trust anchor and the sf CLI auth store are never agent-writable — "
+                     "no maintainer window grants them", "artifact-edit", HOOK)
+        if lib.maintainer_grant_valid():
+            # Durable for the reason P1-003 gave about production writes: an edit to the
+            # enforcement layer that cannot be recorded is not one this tool authorizes.
+            if not lib.audit("MAINTAINER-EDIT", os.path.basename(path), durable=True):
+                lib.deny("maintainer edit could not be recorded; refusing rather than editing "
+                         "the enforcement layer with no audit trail", "artifact-edit", HOOK)
+            continue
+        lib.deny(f"agent modification of protected file {os.path.basename(path)} is denied; "
+                 "operator-present issuance only — open a window with "
+                 "`torque approve --maintainer <minutes>`", "artifact-edit", HOOK)
     lib.allow()
 
 

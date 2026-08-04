@@ -22,6 +22,7 @@ ANCHOR = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
 SECRET = ANCHOR / "secret"
 APPROVED = ANCHOR / "approved"
 PROD_SESSIONS = ANCHOR / "prod-sessions"           # signed, time-boxed prod-write windows
+MAINTAINER_GRANT = ANCHOR / "maintainer.grant"     # signed, time-boxed SOURCE-edit window
 ALLOWLIST = LOCAL / "writable-orgs.json"
 CACHE = LOCAL / ".classify-cache.json"
 ORGS = LOCAL / "orgs"                       # per-org knowledge, keyed by 18-char orgId
@@ -577,6 +578,38 @@ def _prod_session_valid(orgid: str) -> bool:
     if not sig or not _hmac.compare_digest(sig, sign(g)):
         return False
     return g.get("orgId") == orgid and g.get("exp", 0) > time.time()
+
+
+def maintainer_grant_valid(tree: str = ""):
+    """A signed, unexpired, tree-bound window in which the agent may edit Torque's OWN source.
+
+    Mirrors _prod_session_valid above: a window rather than a single-use token, revoked by
+    deleting the file, forgeable only with the anchor secret — the same operator-only boundary
+    every other approval here rests on.
+
+    IT AUTHORIZES ARTIFACT EDITS AND NOTHING ELSE. No caller in the org-authorization path
+    consults this, and none should: under an active window a production write is still denied, a
+    destructive operation still needs its own impact-bound token, and classification still runs
+    live at write time. That split is the entire design, and it costs nothing, because editing
+    this file has never required writing to a client's org.
+
+    It lives in the anchor because the agent composes its own Bash and therefore its own
+    environment: any switch the agent can set is a switch the agent can set. Tree-bound, so a
+    window opened to develop Torque here cannot authorize edits in a different workspace that
+    happens to be open in another session.
+    """
+    try:
+        g = json.loads(MAINTAINER_GRANT.read_text())
+    except Exception:
+        return None
+    sig = g.pop("sig", None)
+    if not sig or not _hmac.compare_digest(sig, sign(g)):
+        return None
+    if g.get("exp", 0) <= time.time():
+        return None
+    if g.get("tree") != (tree or str(TORQUE_HOME.resolve())):
+        return None
+    return g
 
 # ---- approval tokens (consulted here; MINTED only by bin/torque-approve) --
 import hmac as _hmac
