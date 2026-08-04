@@ -601,12 +601,41 @@ def self_test(target=None):
         spf.write_text(orig4.replace(
             "def _glob_reaches(pat_parts, tgt_parts):",
             "def _glob_reaches(pat_parts, tgt_parts):\n    return False  # MUTANT", 1))
-        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command":
-            "cat /Users/**/omidmojtahedi/.[t]orque/sec[r]et"}})
+        # C3: the attack was written as a literal, "cat /Users/**/omidmojtahedi/.[t]orque/sec[r]et".
+        # /Users exists on macOS and not on Linux, and the username is one person's. Off macOS the
+        # path named nothing, so the UN-mutated gate allowed it too — and the mutator "caught"
+        # something that was never being denied. A mutator that passes because its attack was
+        # already harmless is worse than an absent one: it reports the guard is load-bearing
+        # while never having leaned on it.
+        #
+        # Build the attack from the anchor that actually exists, the way run_gate_fixtures.py
+        # already rewrites fixture paths, so the glob has something real to reach.
+        import lib as _lib_g                       # hooks/ is on sys.path for the harness
+        _anchor = _lib_g.ANCHOR                     # e.g. ~/.torque, or TORQUE_ANCHOR
+        _parent, _name, _secret = _anchor.parent, _anchor.name, "secret"
+        # character classes on both the anchor name and the filename, plus a recursive glob, so
+        # only the DP matcher can resolve it — which is the thing under test.
+        _attack = (f"cat {_parent}/**/{_name[0]}[{_name[1]}]{_name[2:]}/"
+                   f"{_secret[0]}[{_secret[1]}]{_secret[2:]}")
+        ev = json.dumps({"tool_name": "Bash", "tool_input": {"command": _attack}})
+        # ASSERT BEFORE MUTATING: the un-mutated gate must DENY this, or the run below proves
+        # nothing. Restore, probe, re-apply — same discipline as the destructive-token mutator.
+        spf.write_text(orig4)
+        base = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
+                              input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
+        spf.write_text(orig4.replace(
+            "def _glob_reaches(pat_parts, tgt_parts):",
+            "def _glob_reaches(pat_parts, tgt_parts):\n    return False  # MUTANT", 1))
         r = subprocess.run([sys.executable, str(ROOT / "hooks" / "prod_write_gate.py")],
                            input=ev, capture_output=True, text=True, cwd=ROOT, timeout=30)
-        passed = r.returncode != 2
-        print(f"  {'✓' if passed else '✗'} glob-matcher (_glob_reaches) mutator: expected NOT-deny, got exit {r.returncode}")
+        if base.returncode != 2:
+            passed = False
+            print(f"  ✗ glob-matcher (_glob_reaches) mutator: VACUOUS — the un-mutated gate did "
+                  f"not deny {_attack!r} (exit {base.returncode}), so neutering the matcher "
+                  f"proves nothing about it")
+        else:
+            passed = r.returncode != 2
+            print(f"  {'✓' if passed else '✗'} glob-matcher (_glob_reaches) mutator: expected NOT-deny, got exit {r.returncode}")
         ok &= passed
     finally:
         spf.write_text(orig4)
