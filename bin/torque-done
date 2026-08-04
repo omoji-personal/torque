@@ -246,18 +246,16 @@ def layer_profile_render(profile, evidence):
                      VERIFIED, f"observed by a person: {evidence}")
     return Layer("profile_render",
                  f"visible in the UI as {profile or 'a non-admin profile'}", BLOCKED,
-                 f"not automated, since {BROWSER_BLOCKED_SINCE}. Two of the three gating "
-                 f"questions now have answers, measured 2026-08-04 by "
-                 f"harness/experiments/login-as-render.mjs: the cost is about 10 seconds "
-                 f"(admin shell 3-6s, the Login-As hop 5-6s) and the render was stable across "
-                 f"four runs. What is NOT established is the hop itself — the su servlet needs "
-                 f"the 'Administrators Can Log In as Any User' org preference, and without it "
-                 f"the browser stays on the servlet URL while a following Lightning navigation "
-                 f"renders perfectly AS THE ADMIN. So a check that asserted only the render "
-                 f"would report this layer verified having never left the admin session, which "
-                 f"is the exact failure the layer exists to catch. Blocked on an org preference "
-                 f"and a non-admin user, not on feasibility. Do it by hand and record it with "
-                 f"--render-evidence.")
+                 f"not automated, since {BROWSER_BLOCKED_SINCE}. All three gating questions now "
+                 f"have measured answers (harness/experiments/login-as-render.mjs, 2026-08-04): "
+                 f"it CAN render as another user via the su servlet; it costs about 10 seconds; "
+                 f"and the impersonation assertion FLAKES — false once in three runs even polled "
+                 f"for 15 seconds, because the 'Logged in as' banner renders later than the "
+                 f"Lightning shell and is the only usable signal (servlet.sulogout is absent "
+                 f"from the Lightning DOM entirely). Not automated on that third answer: a "
+                 f"layer that reports a non-admin render as verified one time in three when it "
+                 f"is not would be worse than this BLOCKED, which at least never lies. Do the "
+                 f"render by hand and record it with --render-evidence.")
 
 
 def layer_automation(evidence):
