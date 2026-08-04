@@ -35,6 +35,7 @@
 # The one thing that check lacked has been added to it in place: a hook can exist, can block,
 # and still be wired to nothing.
 
+import importlib.util as _2l_il
 import sys as _2l_sys
 import tempfile as _2l_tf
 
@@ -250,6 +251,48 @@ def _two_list_checks_can_fail():
     return Result("two_list_checks_can_fail", PASS,
                   "all three comparisons report the divergence they are for and stay quiet on "
                   "lists that agree (7 cases)")
+
+
+@check("needs_vocabulary_reaches_the_catalogue", "static")
+def _needs_vocabulary_reaches_the_catalogue():
+    """Every operation `torque needs` offers must still reach the catalogue.
+
+    Third instance of the same pair in this file: a list of things the tool claims to know
+    about, and the data it would have to consult to know them, with nothing comparing the two.
+    An operation sitting in the menu whose exemplar has stopped matching any entry is a front
+    door that opens onto nothing, and it reports that as "no catalogue entry matches this
+    operation at all" — honest, and indistinguishable from a genuinely unmapped operation.
+
+    The exemplars are CANONICAL COMMANDS on purpose, so they are matched by the triggers that
+    already exist rather than by a second matcher. That is what this protects: the moment an
+    exemplar stops being a real command, it has stopped reusing the catalogue.
+    """
+    name = "needs_vocabulary_reaches_the_catalogue"
+    tool = ROOT / "bin" / "torque-needs"
+    if not tool.exists():
+        return Result(name, NA, "bin/torque-needs is not present")
+    import importlib.machinery as _2l_mach
+    loader = _2l_mach.SourceFileLoader("torque_needs_mod", str(tool))
+    spec = _2l_il.spec_from_loader("torque_needs_mod", loader)
+    mod = _2l_il.module_from_spec(spec)
+    loader.exec_module(mod)
+
+    silent, thin = [], []
+    for op, (exemplar, _desc) in sorted(mod.OPERATIONS.items()):
+        rep = _2l_lib.closure_report(exemplar)
+        if not rep["matched"]:
+            silent.append(f"{op} ({exemplar.split(' --')[0]})")
+        elif not rep["requirements"]:
+            thin.append(op)
+    if silent:
+        return Result(name, FAIL,
+                      f"{len(silent)} operation(s) in the menu reach no catalogue entry at all, "
+                      f"so asking about them returns nothing: {silent}")
+    tail = (f"; {len(thin)} reach entries that record no requirement ({', '.join(thin)}), which "
+            f"the tool reports as a catalogue gap rather than as nothing being required"
+            if thin else "; every one returns at least one requirement")
+    return Result(name, PASS,
+                  f"all {len(mod.OPERATIONS)} offered operation(s) reach the catalogue{tail}")
 
 
 @check("legacy_spelling_reaches_the_catalogue", "static")
