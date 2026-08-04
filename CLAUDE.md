@@ -25,9 +25,17 @@ reads, deploys, data operations, browser verification — against any org, safel
 
 Most of this repo is not agent-writable: `hooks/`, `bin/`, `.claude/`, `harness/checks/`,
 `knowledge/`, `local/orgs/`, and protected basenames (`validate.py`, `lib.py`, …) wherever they
-live. There is no token for it — `torque approve` mints ORG tokens only, and an artifact edit has
-no agent path by construction. Org-touching harness runs (`--profile capability|release`) are
-refused too; `--only <check>` works.
+live. There is no token for it — `torque approve` mints ORG tokens only. An operator-present
+**maintainer window** (`torque approve --maintainer <minutes>`) unlocks source edits, and never
+the files the gate reads to decide: the allowlist, the classification cache, the shield, the
+read-only manifest.
+
+Harness runs: any `--only <check>` works offline. **With `--target-org`, only the checks declared
+`reads_only=True`** — listed in `harness/checks/read-only-checks.json`, currently
+`describe_first`, `org_classify`, `kb_live_claims`, `preflight_credentials`,
+`detect_probes_run`. Use them to diagnose a live failure yourself. Everything else org-touching,
+including `--profile capability|release`, is refused: `probe_cycle` deploys and hard-deletes, so
+the harness as a whole is not read-only and never gets treated as if it were.
 
 Ask, do not discover by being refused:
 

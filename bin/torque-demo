@@ -81,6 +81,25 @@ CATEGORIES = [
 ]
 
 
+def _reason_only(reason):
+    """The reason a command was refused, without the operator-override boilerplate.
+
+    A production denial ends with two absolute paths — the `torque approve` invocations an
+    operator would use — which is exactly right at a real terminal and wrong here. In the demo
+    they consumed the whole line, so the sentence a reader has three seconds to absorb arrived
+    as "acme-prod is PRODUCTION — denied by default. Operator override: `python3 /Users/omidmojt"
+    and stopped. The most important output in the repository's first-touch artifact was being
+    truncated by somebody's home directory.
+
+    The override is still printed by the gate, where it belongs. It is dropped from this one
+    rendering, and the demo says so at the end rather than pretending refusals are final.
+    """
+    for cut in (" Operator override:", " Operator:", " Approve with"):
+        if cut in reason:
+            return reason.split(cut, 1)[0].strip()
+    return reason
+
+
 def run(cmd):
     ev = {"tool_name": "Bash", "tool_input": {"command": cmd}}
     out = []
@@ -89,7 +108,7 @@ def run(cmd):
                            capture_output=True, text=True, cwd=ROOT, timeout=60)
         if p.returncode == 2:
             reason = (p.stderr or "").split("] ", 1)[-1].strip().split("\n")[0]
-            return True, reason
+            return True, _reason_only(reason)
         out.append(p.returncode)
     return False, ""
 
@@ -122,7 +141,7 @@ def main():
     print(f"{DIM}That was the parser layer only — it needs no org because it never got that far.")
     nfix = sum(len(json.loads(f.read_text()).get("fixtures", []))
                for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
-    print(f"The full suite ({nfix} recorded fixtures, 16 mutation tests, a live deploy→verify→purge cycle)")
+    print(f"The full suite ({nfix} recorded fixtures, 17 mutation tests, a live deploy→verify→purge cycle)")
     print(f"runs against your own Developer Edition org:{RST}")
     print(f"    python3 bin/torque init <your-org-alias>")
     print(f"    python3 harness/validate.py --profile release --target-org <your-org-alias>\n")

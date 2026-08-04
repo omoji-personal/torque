@@ -454,7 +454,7 @@ def _kb_integrity():
                   f"{live} verified-live, {doc} documented, {prac} practitioner")
 
 
-@check("kb_live_claims", "capability", catastrophe=True)
+@check("kb_live_claims", "capability", catastrophe=True, reads_only=True)
 def _kb_live_claims(target):
     """Re-verify every `verified-live` claim against a real org.
 
@@ -614,16 +614,73 @@ def _first_party_trust():
     bin/ named torque* — so torque-shadow was written, landed in bin/, inherited trust nobody had
     granted it, and handed the agent arbitrary Apex around the anonymous-Apex control.
 
-    Trust is now a named set of tools that only read. This asserts both halves: the read-only
-    tools keep working, because a gate that refuses the tool's own documented commands gets routed
-    around; and a NEW tool in the same directory gets nothing (P1-002, external audit).
+    Trust is now a named set of tools that only read. This asserts three halves, the third added
+    2026-08-04: the read-only tools keep working, because a gate that refuses the tool's own
+    documented commands gets routed around; a NEW tool in the same directory gets nothing
+    (P1-002, external audit); and every tool ON the list is READ-ONLY IN ITS SOURCE.
+
+    That third one closes the gap the other two leave. Membership was a name in a set, and
+    nothing ever opened the file to see whether the name was still telling the truth. A tool
+    joins the list on the day it only reads and keeps its exemption forever after — which is
+    location-based trust again, wearing a list instead of a directory. Every leading run of
+    string literals that starts with an `sf` verb is now pulled out of the AST and put through
+    `is_read`, so a trusted tool that grows an `sf data delete` loses the exemption in the same
+    commit that adds it.
     """
+    import ast as _fp_ast
     import importlib.util as _il
     spec = _il.spec_from_file_location("torque_sp_fp", ROOT / "hooks" / "shellparse.py")
     sp = _il.module_from_spec(spec); spec.loader.exec_module(sp)
+
+    # every top-level `sf` verb the CLI has, so a run of literals can be recognised as one
+    _VERBS = {"data", "org", "project", "apex", "sobject", "schema", "package", "limits",
+              "alias", "config", "force", "sf", "lightning", "visualforce", "static-resource"}
+    writes = []
+    for tool in sorted(sp.READ_ONLY_FIRST_PARTY):
+        f = ROOT / "bin" / tool
+        if not f.exists():
+            return Result("first_party_trust_is_capability_based", FAIL,
+                          f"{tool} is trusted as read-only and does not exist")
+        try:
+            tree = _fp_ast.parse(f.read_text())
+        except SyntaxError as e:
+            return Result("first_party_trust_is_capability_based", FAIL,
+                          f"{tool} does not parse ({e}), so its behaviour cannot be established "
+                          f"— and an unestablished tool does not keep an exemption")
+        for node in _fp_ast.walk(tree):
+            if isinstance(node, (_fp_ast.List, _fp_ast.Tuple)):
+                items = node.elts
+            elif isinstance(node, _fp_ast.Call):
+                items = node.args
+            else:
+                continue
+            run = []
+            for el in items:
+                if isinstance(el, _fp_ast.Constant) and isinstance(el.value, str):
+                    run.append(el.value)
+                else:
+                    break
+            if not run:
+                continue
+            if run[0] == "sf":
+                run = run[1:]
+            # A real sf invocation carries a verb AND a subcommand. Requiring both is not
+            # cosmetic: the one-element form matched `ap.add_argument("org")` in torque-log and
+            # reported the argument parser as a write. A check whose first finding is noise gets
+            # the finding waved through, and then the next one does too.
+            if len(run) < 2 or run[0] not in _VERBS:
+                continue
+            if not sp.is_read(run):
+                writes.append(f"{tool} line {node.lineno}: sf {' '.join(run)}")
+    if writes:
+        return Result("first_party_trust_is_capability_based", FAIL,
+                      f"a tool trusted as read-only invokes a write: {writes}")
+
     for cmd in ("python3 bin/torque-checkup --target-org acme",
                 "python3 bin/torque-blast-radius --target-org acme --sobject Account",
-                "python3 bin/torque checkup --target-org acme"):
+                "python3 bin/torque-done --target-org acme --field Account.X__c",
+                "python3 bin/torque checkup --target-org acme",
+                "python3 bin/torque done --target-org acme --field Account.X__c"):
         if not sp._is_own_harness(cmd.split()):
             return Result("first_party_trust_is_capability_based", FAIL,
                           f"a documented read-only command is refused: {cmd!r} — a gate that "
@@ -637,8 +694,10 @@ def _first_party_trust():
             return Result("first_party_trust_is_capability_based", FAIL,
                           f"trusted a tool that {why}: {cmd!r} — location is not capability")
     return Result("first_party_trust_is_capability_based", PASS,
-                  "3 declared read-only commands exempt; 5 that execute, deploy, authorize or "
-                  "are simply unknown get nothing from living in the same directory")
+                  f"{len(sp.READ_ONLY_FIRST_PARTY)} trusted tools verified read-only in their "
+                  f"own source; 5 declared read-only commands exempt; 5 that execute, deploy, "
+                  f"authorize or are simply unknown get nothing from living in the same "
+                  f"directory")
 
 
 @check("production_allow_requires_a_record", "static", catastrophe=True)
@@ -815,19 +874,66 @@ def _closure_is_delivered():
             return Result("closure_is_delivered", FAIL,
                           f"a read produced a requirement set: {cmd[:50]!r}")
 
+    # ...and NOT claim a requirement the operation does not have. `fls-not-automatic` carried a
+    # trigger matching the metadata TYPE regardless of the verb, so deleting a field was told it
+    # needed a permission set. A requirement set carrying things the operation does not require
+    # misleads exactly as much as one that leaves things out, and is harder to notice because it
+    # errs toward doing more work.
+    del_cmd = "sf project delete source --metadata CustomField --target-org dev"
+    false_reqs = [i for i, _r in lib.closure_for(del_cmd)]
+    if "fls-not-automatic" in false_reqs:
+        return Result("closure_is_delivered", FAIL,
+                      "deleting a field is told it needs field-level security; a delete grants "
+                      "nothing and needs no permission set")
+
+    # ...and above all, an empty requirement set must not be able to mean two things. A bulk
+    # update matched SEVEN entries and produced no requirement, and the gate printed nothing, so
+    # an agent that saw no TORQUE NEEDS line concluded there was none. Both halves are asserted:
+    # the report must distinguish the two kinds of nothing, and the gate must say which it is.
+    rep = lib.closure_report("sf data delete bulk --sobject Log__c --file i.csv --target-org dev")
+    if not rep["matched"]:
+        return Result("closure_is_delivered", FAIL,
+                      "a bulk delete matched no catalogue entry at all — the report cannot "
+                      "distinguish kinds of nothing if it never sees anything")
+    silent = "sf project retrieve start --metadata Flow:X --target-org dev"
+    srep = lib.closure_report(silent)
+    if srep["requirements"] or not srep["unrecorded"]:
+        # If this shape ever grows a requirement, pick another; what must not happen is the
+        # check quietly passing because it stopped exercising the case it names.
+        return Result("closure_is_delivered", FAIL,
+                      f"the unrecorded-requirement case is no longer exercised by {silent[:44]!r}"
+                      f" ({len(srep['requirements'])} reqs, {len(srep['unrecorded'])} unrecorded)"
+                      f" — repoint it at a shape that still has matched-but-unrecorded entries")
+
     # and it must actually PRINT — a capability that never reaches the operator is not one
     ev = _j.dumps({"tool_name": "Bash", "tool_input": {"command":
                    "sf project deploy start --metadata CustomField:Account.X__c --target-org dev"}})
     r = _sp.run([_sy.executable, str(ROOT / "hooks" / "prod_write_gate.py")], input=ev,
                 capture_output=True, text=True, cwd=ROOT, timeout=90,
                 env=dict(_os.environ, TORQUE_NO_NOTES="0"))
+    # and the OTHER kind of nothing must print too, from a real gate, or the distinction lives
+    # only in a return value nobody reads.
+    ev2 = _j.dumps({"tool_name": "Bash", "tool_input": {"command":
+                    "sf data update record --sobject Account --record-id 001x --values Name=y "
+                    "--target-org dev"}})
+    r2 = _sp.run([_sy.executable, str(ROOT / "hooks" / "prod_write_gate.py")], input=ev2,
+                 capture_output=True, text=True, cwd=ROOT, timeout=90,
+                 env=dict(_os.environ, TORQUE_NO_NOTES="0"))
+    if "none recorded" not in (r2.stdout + r2.stderr):
+        return Result("closure_is_delivered", FAIL,
+                      "a write whose matched entries record no requirement printed no "
+                      "'none recorded' line — silence is indistinguishable from 'nothing is "
+                      "required', which is what this was written to end")
+
     if "TORQUE NEEDS" not in (r.stdout + r.stderr):
         return Result("closure_is_delivered", FAIL,
                       "the requirement set never printed from a real gate run — it exists in the "
                       "catalogue and does not reach the decision")
     return Result("closure_is_delivered", PASS,
                   f"{len(with_req)} requirement set(s); 2 operations received theirs, 2 reads "
-                  f"stayed silent, and it prints from a real gate run")
+                  f"stayed silent, a delete is not told it needs field-level security, and both "
+                  f"kinds of nothing print from a real gate — the requirement set and the "
+                  f"'none recorded' line that used to be silence")
 
 
 @check("retrieval_quality", "static", catastrophe=True)
@@ -979,12 +1085,43 @@ def _claimed_counts():
     # them would force a choice between rewriting history and failing the build forever. The
     # distinction worth holding is "living surfaces are scanned; dated documents name their
     # commit and are exempt".
+    # The shipped PDF's own length. Two documents said "14 pages" about a 20-page file, and had
+    # for as long as anyone had counted: the guide grew, the sentence introducing it did not, and
+    # no count in this check covered it because every other number here derives from source under
+    # git and this one derives from a build artifact. A page count is the first number a reader
+    # can check without cloning anything, which makes it the worst one to have wrong.
+    _pdf = ROOT / "guide" / "Torque-Guide.pdf"
+    _pages, _pages_why = None, ""
+    if _pdf.exists():
+        try:
+            import pypdf as _pp
+            _pages = len(_pp.PdfReader(str(_pdf)).pages)
+        except ImportError:
+            _pages_why = "pypdf is not installed"
+        except Exception as _e:
+            _pages_why = f"{type(_e).__name__} reading the PDF"
+    else:
+        _pages_why = "guide/Torque-Guide.pdf is not present"
+    unverified = []
+
     for rel in ("guide/torque-guide.html", "README.md", "bin/torque-demo", "bin/torque-init",
-                "ROADMAP.md"):
+                "ROADMAP.md", "guide/TORQUE-GUIDE.md"):
         f = ROOT / rel
         if not f.exists():
             continue
         body = f.read_text()
+        # Page claims about the shipped guide. Scoped to sentences that name the PDF, so an
+        # unrelated "12 pages" elsewhere is not dragged in.
+        for m in _kb_re.finditer(r"(?i)torque-guide\.pdf[^\n]{0,80}?(\d{1,3})\s+pages?"
+                                 r"|(\d{1,3})[- ]pages?[^\n]{0,80}?torque-guide\.pdf", body):
+            stated = int(m.group(1) or m.group(2))
+            if _pages is None:
+                # An unverifiable claim must not read as a verified one. This is the failure the
+                # repo keeps re-learning: a check that cannot reach its evidence reports nothing
+                # and the absence gets read as agreement.
+                unverified.append(f"{rel} claims {stated} pages, unchecked — {_pages_why}")
+            elif stated != _pages:
+                bad.append(f"{rel} says the guide is {stated} pages; the built PDF is {_pages}")
         for m in _kb_re.finditer(r"(\d{2,4}) recorded", body):
             if int(m.group(1)) != recorded:
                 bad.append(f"{rel} says {m.group(1)} recorded, on disk there are {recorded}")
@@ -1028,9 +1165,13 @@ def _claimed_counts():
                            f"{_exact[prof]}")
     if bad:
         return Result("claimed_counts", FAIL, "; ".join(bad))
+    if unverified:
+        return Result("claimed_counts", WARN,
+                      f"{recorded} recorded fixtures and {len(REGISTRY)} registered checks match; "
+                      f"page claims NOT verified: {'; '.join(unverified)}")
     return Result("claimed_counts", PASS,
-                  f"{recorded} recorded fixtures and {len(REGISTRY)} registered checks; every "
-                  f"prose count matches the fixtures on disk or a real profile total")
+                  f"{recorded} recorded fixtures, {len(REGISTRY)} registered checks and a "
+                  f"{_pages}-page guide; every prose count matches the artifact it describes")
 
 
 @check("lesson_backlog", "static", catastrophe=False)
@@ -1694,7 +1835,7 @@ def _verifiers_can_fail():
                   f"their entry is false ({len(describe_falsifying)} falsified through describe)")
 
 
-@check("detect_probes_run", "capability", catastrophe=True)
+@check("detect_probes_run", "capability", catastrophe=True, reads_only=True)
 def _detect_probes_run(target):
     """Every detect probe must actually run, and its outcome must match what the entry claims.
 
@@ -2222,6 +2363,22 @@ def _operator_presence_can_succeed():
                       "no login session in `who` — nothing to identify. Expected in CI and in "
                       "containers; it means this check did NOT run, not that presence works.")
 
+    # Listing the pids and then asking about one of them is two observations of a moving system.
+    # The first version failed on the FIRST unnameable pid, which made it a race: a capability
+    # run spawns dozens of short-lived processes on the operator's own tty, so a pid present at
+    # `ps -t` had often exited before `ps -p` asked about it. It passed every quick static run
+    # and failed a real capability run with "pid 1914 sits in login session ttys008, and lib
+    # could not name its controlling terminal at all" — pid 1914 was simply gone.
+    #
+    # A catastrophe-class check that fails for a reason unrelated to what it tests is not a
+    # lesser problem than one that passes for the wrong reason. It is worse in one way: it
+    # teaches the operator that this check is flaky, and the next time it fires for real they
+    # will re-run it instead of reading it.
+    #
+    # So: an unnameable pid is a pid that went away, and the next one is tried. Only a pid that
+    # CAN be named and names the WRONG terminal is a defect — that is the macOS bug's actual
+    # shape. Nothing nameable anywhere is the other failure, and it is reported separately.
+    tried, vanished = 0, 0
     for tty in sessions:
         try:
             out = _kb_sp.run(["ps", "-t", tty, "-o", "pid="], capture_output=True, text=True,
@@ -2229,12 +2386,11 @@ def _operator_presence_can_succeed():
         except Exception:
             continue
         for pid in (x.strip() for x in out.splitlines() if x.strip()):
+            tried += 1
             named = lib._ctty_name(int(pid))
             if not named:
-                return Result("operator_presence_can_succeed", FAIL,
-                              f"pid {pid} sits in login session {tty}, and lib could not name its "
-                              f"controlling terminal at all — operator_present() cannot be true "
-                              f"for any real operator on this machine")
+                vanished += 1
+                continue
             if named != tty:
                 return Result("operator_presence_can_succeed", FAIL,
                               f"pid {pid} sits in {tty} but lib names its controlling terminal "
@@ -2246,6 +2402,12 @@ def _operator_presence_can_succeed():
                           f"present; the refusing direction stays covered by "
                           f"init_requires_operator")
 
+    if tried and vanished == tried:
+        return Result("operator_presence_can_succeed", FAIL,
+                      f"none of {tried} process(es) across login session(s) {sessions} could be "
+                      f"named at all. One vanishing is a race; all of them is the macOS "
+                      f"controlling-terminal defect returning, and operator_present() cannot be "
+                      f"true for any real operator on this machine")
     return Result("operator_presence_can_succeed", SKIP,
                   f"login session(s) {sessions} visible but no process could be read from them")
 
@@ -2633,7 +2795,14 @@ def _no_divergent_twins():
     legitimately differ and are named.
     """
     import ast as _ast
-    ENTRY_POINTS = {"main", "handle_bash", "handle_mcp", "handle_edit", "handle_read"}
+    # One name per SURFACE the gates are dispatched from, and each gate answers for itself.
+    # handle_argv is the exec-time shim's surface: prod_write_gate authorizes the target,
+    # destructive_data_gate applies the shield and the token requirement, exactly as the two
+    # already differ on handle_bash. This list earns its place only while every entry is a
+    # dispatch target — the moment something is added here because it merely happens to be
+    # duplicated, the check has been talked out of its own finding.
+    ENTRY_POINTS = {"main", "handle_bash", "handle_mcp", "handle_edit", "handle_read",
+                    "handle_argv"}
     seen = {}
     for f in sorted((ROOT / "hooks").glob("*.py")):
         try:
