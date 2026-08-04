@@ -577,9 +577,13 @@ entries:
     and every field label comes back absent. getByText, allTextContents and page.content() all
     return nothing for labels that a human can plainly see on screen.
   cause: >
-    The record page nests ~564 open shadow roots. `page.content()` serialises the light DOM only.
-    `textContent` and `allTextContents()` do not cross shadow boundaries either — the elements
-    are found (28 `.test-id__field-label` nodes matched) and their text reads as empty string.
+    The record page nests ~564 open shadow roots. Playwright's locator engine DOES pierce them —
+    which is exactly why this is confusing: `.test-id__field-label` matched 28 nodes. What does
+    not cross the boundary is the TEXT: `page.content()` serialises the light DOM only, and
+    `textContent`/`allTextContents()` return empty string for those same matched elements.
+    Matching pierces; text extraction does not. An adversarial review correctly noted that
+    Playwright pierces open shadow DOM, and the distinction above is why both statements are
+    true at once — a claim that "Playwright cannot reach these" would be wrong.
   remedy: >
     Walk the shadow roots explicitly inside page.evaluate, recursing into every element's
     shadowRoot, and collect .test-id__field-label text. Measured working 2026-08-04: an admin
@@ -699,10 +703,19 @@ entries:
     A rehearsal that never commits still trips a governor limit, and the DML statement count
     after Database.rollback is HIGHER than it was before the savepoint was set.
   cause: >
-    Savepoints and rollbacks are DML statements themselves. setSavepoint spends one, the DML
-    spends one, Database.rollback spends a third, and the counter is not rewound when the data
-    is. Nothing in the transaction reports this: the records really are gone, so the run looks
-    free.
+    The savepoint/rollback pair costs DML statements, and the counter is not rewound when the
+    data is. Nothing in the transaction reports this: the records really are gone, so the run
+    looks free.
+  attribution_caveat: >
+    MEASURED: the DML statement counter went 0 → 2 → 3 across setSavepoint, one insert, and
+    Database.rollback — so the pair costs two statements beyond the DML itself, and a shadow run
+    spends three where the real operation spends one. NOT MEASURED: which of setSavepoint and
+    rollback each statement belongs to, because the experiment never sampled between them. An
+    adversarial review (gemini-3.1-pro-high, 2026-08-04) asserts Database.rollback consumes zero;
+    Salesforce documents that each savepoint counts. Both are consistent with the observed
+    total under a different split, so the aggregate claim stands and the per-call attribution is
+    withdrawn until someone samples Limits.getDmlStatements() between the two calls. The
+    re-run is one line in harness/experiments/shadow-rollback-boundary.py.
   remedy: >
     Budget a shadow run as costing MORE than the operation it rehearses, not less — three DML
     statements where the real thing spends one. An operation already near the limit cannot be
