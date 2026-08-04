@@ -312,7 +312,7 @@ python 3.14.3.
 
 The run happened on 2026-08-02 and was never written down. Until then the newest entry here was
 P7 — "59/59 checks pass. 11 mutators" — while the attestation directory already held a 71/71
-release pass with 15 mutators. For eight commits this log understated the thing it exists to
+release pass with 15 mutators. For three commits this log understated the thing it exists to
 record, which is a gentler failure than overstating it and the same underlying defect: a number
 written once and not re-derived. It was found by an external evaluation reading the artifacts
 against the prose, not by any check, because no check compares this log's newest entry to the
