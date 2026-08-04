@@ -39,15 +39,28 @@
 //   · The banner is the only usable impersonation signal — `servlet.sulogout` is absent from
 //     the Lightning DOM entirely — and it renders LATER than the shell. Polled 15s it still
 //     returned false on one run in three of a session that was genuinely impersonating.
-//   · The privilege differential was the attempt to replace a cosmetic signal with a semantic
-//     one, and it has not discriminated. Setup Home failed for a knowable reason: Standard User
-//     carries PermissionsViewSetup=true here, so it is not a boundary. Manage Users SHOULD
-//     discriminate — PermissionsManageUsers is false for that profile and true for an admin —
-//     and still reports ABSENT across four runs with the pattern-overlap bug fixed. Either
-//     Lightning renders the refusal in a form none of these patterns match, or the session is
-//     not being refused. That is unresolved and is NOT worth more detection-tuning; the next
-//     person should capture the actual denial page once and read it, rather than guessing a
-//     seventh regex.
+//   · The differential has never discriminated, across FOUR designs, and every failure was in
+//     the detector rather than the org. Recorded in order because the pattern is the lesson:
+//
+//       1. Setup Home — not a boundary. Standard User carries PermissionsViewSetup=true.
+//          Found by asking the org. Good failure: it reported ABSENT rather than inventing.
+//       2. Manage Users — PermissionsManageUsers is false for that profile, so it should have
+//          discriminated. It did not: the page LOADS, title "Users | Salesforce", no refusal.
+//          That permission gates actions on users, not access to the page.
+//       3. Field visibility via page.content() — content() returns the LIGHT DOM only and
+//          Lightning renders labels inside shadow roots, so the search was in a haystack the
+//          needle cannot be in. Locators pierce; content() does not. This probably also
+//          invalidates 1 and 2, whose refusal patterns were content()-based, so "the door is
+//          not locked" may itself have been an artefact.
+//       4. Field visibility via locators — still absent for an admin who demonstrably has the
+//          field: the granting permission set is assigned to them, the label is exactly
+//          "Wholesale Tier" (asked, not derived), and the field was temporarily put on the
+//          layout to rule that out. Remaining hypothesis, untested: Lightning record pages put
+//          detail fields behind a DETAILS TAB, and the settled-marker matches the highlights
+//          panel that renders first — so the check looks for a field on a tab nobody opened.
+//
+//     Three org states were verified against the org before the detector was suspected, which
+//     is the wrong order and cost a layout change to learn. Suspect the measurement first.
 //
 // Everything here reports ABSENT or UNSETTLED rather than picking a side, which is why this is
 // an experiment and not a check.
@@ -107,30 +120,55 @@ const impersonationMarker = async (page, tries = 10) => {
 // and Setup Home is therefore not a privilege boundary at all. Asked the org instead of
 // guessing a second time: PermissionsManageUsers is false for Standard User and true for an
 // admin, so this door discriminates and that one never did.
-const SETUP_URL = '/lightning/setup/ManageUsers/home';
-const setupDenied = async (page, instanceUrl) => {
+// FIELD VISIBILITY, not a Setup page. Two Setup doors were tried as a proxy for privilege and
+// neither is locked: Standard User carries PermissionsViewSetup=true, and ManageUsers gates
+// ACTIONS on users rather than access to the page — read directly off the org, the page loads
+// with title "Users | Salesforce" and no refusal at all.
+//
+// The proxy was the mistake. The completion gate's actual question is whether a given profile
+// can SEE A FIELD, and field-level security is a real boundary rather than a stand-in for one.
+// So the differential is now the measurement: the field label is present on the record page for
+// a session that has the permission set and absent for one that does not. Same navigation
+// count, and a result that means something on its own rather than by analogy.
+const FIELD_LABEL = process.env.TORQUE_FIELD_LABEL || 'Wholesale Tier';
+const RECORD_ID = process.env.TORQUE_RECORD_ID || '';
+// true = the field is visible to this session, false = it is not, null = the page never
+// settled, which is neither and must not be rounded to either.
+const fieldVisible = async (page, instanceUrl, recordId) => {
+  if (!recordId) return null;
   try {
-    await page.goto(instanceUrl + SETUP_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  } catch (e) { /* a redirect mid-navigation is normal here; the poll below settles it */ }
-  for (let i = 0; i < 10; i++) {
-    // Setup redirects more than once on the way in, and page.content() throws outright while a
-    // navigation is in flight. The first version let that exception escape and killed the whole
-    // run on what is the page behaving normally. A read that races a redirect is a retry, not a
-    // failure.
-    let html = '';
-    try { html = await page.content(); } catch (e) { html = ''; }
-    if (/insufficient privileges|you do not have permission|not authorized/i.test(html)) {
-      return true;
-    }
-    // The page rendering for real is the other terminal state; stop as soon as either settles.
-    //
-    // `manage users` was in this list and must not be: it is the breadcrumb, present on the
-    // DENIAL page too, so the two patterns overlapped and "rendered" matched a refusal. Only
-    // strings that appear when the page genuinely loaded belong here.
-    if (/all users|new user|user detail/i.test(html)) return false;
+    await page.goto(`${instanceUrl}/lightning/r/Account/${recordId}/view`,
+                    { waitUntil: 'domcontentloaded', timeout: 30000 });
+  } catch (e) { /* a redirect mid-navigation is normal; the poll below settles it */ }
+  // LOCATORS, not page.content().
+  //
+  // content() returns the LIGHT DOM only, and Lightning renders field labels inside shadow
+  // roots — so `content().includes('Wholesale Tier')` was searching a haystack the needle is
+  // never in. It reported the admin as unable to see a field they demonstrably can: the
+  // permission set that grants it is assigned to them, and the field is on the layout. Both
+  // were checked against the org before suspecting the detector, which is the wrong order and
+  // cost an org change to learn.
+  //
+  // The same mistake almost certainly explains the Setup-denial regexes never matching: those
+  // were content()-based too, so a refusal rendered in shadow DOM would have been invisible to
+  // them, and "the door is not locked" may itself have been a detection artefact.
+  //
+  // Playwright's locator engine pierces open shadow roots. getByText does; content() cannot.
+  for (let i = 0; i < 12; i++) {
+    try {
+      if (await page.getByText(FIELD_LABEL, { exact: false }).count() > 0) return true;
+      // Settled-and-absent needs its own evidence, or "not found yet" and "not permitted" are
+      // the same observation. A rendered record header proves the page arrived; only then does
+      // the field's absence mean anything.
+      if (await page.locator('records-lwc-highlights-panel, force-highlights2, '
+                             + 'records-record-layout-item').count() > 0) {
+        await page.waitForTimeout(2500);          // one more pass for a late-rendering field
+        return await page.getByText(FIELD_LABEL, { exact: false }).count() > 0;
+      }
+    } catch (e) { /* a read racing a redirect is a retry, not a failure */ }
     await page.waitForTimeout(1500);
   }
-  return null;                                  // neither state settled — say so, do not guess
+  return null;                                  // never settled — say so, do not guess
 };
 const shell = async (page) => {
   // Never networkidle on Lightning — it polls forever. Poll for a concrete marker instead.
@@ -154,8 +192,8 @@ try {
   // Baseline: the admin must NOT be denied Setup. Without it, "the impersonated session was
   // denied" could just mean this org denies everyone, and the differential would be measuring
   // nothing — the same vacuous-mutator trap the harness asserts against before every mutation.
-  const adminDenied = await setupDenied(page, instanceUrl);
-  mark('adminSetupDenied', adminDenied);
+  const adminSees = await fieldVisible(page, instanceUrl, RECORD_ID);
+  mark('adminFieldVisible', adminSees);
 
   // ── the hop ──
   const t1 = Date.now();
@@ -208,11 +246,22 @@ try {
   const impersonating = await impersonationMarker(page);
   mark('impersonating', impersonating);
   // The privilege differential, which is the assertion meant to survive.
-  const userDenied = await setupDenied(page, instanceUrl);
-  mark('asUserSetupDenied', userDenied);
-  mark('privilegeDifferential',
-       adminDenied === false && userDenied === true ? 'PROVEN'
-       : (adminDenied === null || userDenied === null) ? 'UNSETTLED' : 'ABSENT');
+  const userSees = await fieldVisible(page, instanceUrl, RECORD_ID);
+  mark('asUserFieldVisible', userSees);
+  // What did the page ACTUALLY say? Guessing at the wording of a refusal is what produced six
+  // runs of regexes; the title and the settled URL are cheap, decisive, and carry no record
+  // data. Names and field values are never printed — a diagnostic that leaks PII to explain
+  // itself has traded one problem for a worse one.
+  try {
+    mark('asUserSetupTitle', (await page.title()).slice(0, 70).replace(/\s+/g, ' '));
+    mark('asUserSetupUrl', new URL(page.url()).pathname);
+    const heads = await page.locator('h1, h2, [role="alert"]').allTextContents();
+    mark('asUserSetupHeadings',
+         heads.map(h => h.trim()).filter(Boolean).slice(0, 4).join(' | ').slice(0, 120));
+  } catch (e) { mark('asUserSetupTitle', 'unavailable'); }
+  mark('fieldVisibilityDifferential',
+       adminSees === true && userSees === false ? 'PROVEN'
+       : (adminSees === null || userSees === null) ? 'UNSETTLED' : 'ABSENT');
   // Decisive diagnostic when the locator and the earlier measurement disagree: is the logout
   // hook in the raw HTML at all? Present-but-not-located is a selector problem; absent is a
   // session that stopped impersonating. Two very different bugs that look identical from a
