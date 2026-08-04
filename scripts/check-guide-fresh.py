@@ -15,9 +15,17 @@ extractor, no parsing of page content, no assumption about commit order.
 The first version compared COMMIT ORDER — was the PDF committed no earlier than its source. That
 catches the ordinary mistake (edit the HTML, forget to rebuild) and nothing else: ANY change to
 the PDF satisfies it, so a touched-but-not-rebuilt file passes. A recorded source hash is not
-satisfiable by accident. Commit order is kept as the fallback for PDFs built before the stamp
-existed, and the output says which test it actually ran, because a guard that silently degrades
-to the weaker check is the class of defect this repo keeps finding.
+satisfiable by accident.
+
+Commit order was briefly kept as a fallback for PDFs built before the stamp existed. That is
+gone. It ran in CI on its first push — pypdf was not installed there — and reported STALE from
+commit archaeology that was wrong about a repository where the strong check would have said
+fresh. A guard that silently degrades to a weaker test is the defect class this repo keeps
+finding, and a weaker test that is also wrong is worse than no test.
+
+So: if the stamp cannot be read, this reports that it could not run, exit 2, and says why. A
+check that cannot reach its subject is BLOCKED with a reason, never a verdict from something
+else it happened to be able to measure.
 
 This is a freshness guard, not a correctness guard. It cannot tell you the PDF's numbers are
 right; it can tell you they were generated from the current source. The correctness half belongs
@@ -26,23 +34,12 @@ recorded here as owed rather than done.
 
 Exit 0 fresh, 1 stale, 2 cannot tell.
 """
-import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = "guide/torque-guide.html"
 PDF = "guide/Torque-Guide.pdf"
-
-
-def last_commit(path):
-    r = subprocess.run(["git", "log", "-1", "--format=%H %ct %s", "--", path],
-                       capture_output=True, text=True, cwd=ROOT)
-    line = r.stdout.strip()
-    if not line:
-        return None
-    sha, ts, subject = line.split(" ", 2)
-    return sha, int(ts), subject
 
 
 def stamped_source_sha():
@@ -68,37 +65,23 @@ def main():
     import hashlib
     actual = hashlib.sha256((ROOT / SRC).read_bytes()).hexdigest()
     stamped = stamped_source_sha()
-    if stamped:
-        print(f"  source sha  {actual[:16]}…")
-        print(f"  PDF records {stamped[:16]}…")
-        if stamped == actual:
-            print("\nfresh: the PDF records the hash of the current source")
-            return 0
-        print(f"\nSTALE: the PDF was built from a different {SRC}.")
-        print("Rebuild it:  node guide/build-pdf.mjs")
-        return 1
-    print("  (PDF carries no source stamp — falling back to commit order, which is weaker: "
-          "any change to the PDF satisfies it)")
-
-    src, pdf = last_commit(SRC), last_commit(PDF)
-    if not src or not pdf:
-        print("cannot tell: no commit history for one of the files")
+    if not stamped:
+        print("BLOCKED: the PDF carries no readable source stamp.")
+        print("  Either pypdf is not installed here, or the PDF predates the stamp.")
+        print("  Not falling back to comparing commit order: that test is weaker, it is")
+        print("  satisfied by any change to the PDF, and it reported a wrong answer the one")
+        print("  time it ran. A check that cannot run says so.")
+        print("  Fix:  pip install pypdf  &&  node guide/build-pdf.mjs")
         return 2
 
-    print(f"  source  {SRC}\n            {src[0][:9]}  {src[2][:64]}")
-    print(f"  built   {PDF}\n            {pdf[0][:9]}  {pdf[2][:64]}")
-
-    if pdf[1] >= src[1]:
-        print("\nfresh: the PDF was committed no earlier than its source")
+    print(f"  source sha  {actual[:16]}…")
+    print(f"  PDF records {stamped[:16]}…")
+    if stamped == actual:
+        print("\nfresh: the PDF records the hash of the current source")
         return 0
-
-    behind = subprocess.run(
-        ["git", "rev-list", "--count", f"{pdf[0]}..HEAD", "--", SRC],
-        capture_output=True, text=True, cwd=ROOT).stdout.strip() or "?"
-    print(f"\nSTALE: {SRC} has changed in {behind} commit(s) since the PDF was last built.")
-    print("The PDF is what a reader downloads. Rebuild it:  node guide/build-pdf.mjs")
+    print(f"\nSTALE: the PDF was built from a different {SRC}.")
+    print("Rebuild it:  node guide/build-pdf.mjs")
     return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())
