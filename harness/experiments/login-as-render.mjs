@@ -89,6 +89,22 @@
 //     ever going to make it work. Four designs were tuned against a page that had already
 //     failed for a reason printed on it in two words.
 //
+//   · RULED OUT, each tested against the same org and record, none of them the cause: a
+//     realistic viewport; the full bundled Chromium instead of the headless shell; the system
+//     Chrome; navigating on lightning.force.com rather than my.salesforce.com, with the settled
+//     URL host and path read back to confirm it landed; and reloading, which is what the error
+//     dialog itself offers. It fails identically for the ADMIN, before any impersonation, so it
+//     was never about Login As.
+//
+//     Four configurations returned a byte-identical 57 labels, which is not four confirmations
+//     — it is the sign that none of them changed what was being looked at. Checking the settled
+//     URL, which took one line and should have been the first thing, was done ninth.
+//
+// STOP HERE. The bisecting question needs a human: does that same record URL render in the
+// operator's ordinary browser? If it fails there too, this is the org or the page layout. If it
+// renders, it is the frontdoor-token session or the automation context. Thirty seconds, and no
+// amount of selector work substitutes for it.
+//
 // IMPERSONATION IS CONFIRMED THREE WAYS, which is the one thing that did land: the servlet
 // redirects to its retURL target, the "Logged in as" banner appears, and the in-app guidance
 // prompt addresses the impersonated user BY NAME. The third is free, appears in the dialog
@@ -164,14 +180,36 @@ const impersonationMarker = async (page, tries = 10) => {
 // count, and a result that means something on its own rather than by analogy.
 const FIELD_LABEL = process.env.TORQUE_FIELD_LABEL || 'Wholesale Tier';
 const RECORD_ID = process.env.TORQUE_RECORD_ID || '';
+// Lightning serves its assets from lightning.force.com; the frontdoor lands on
+// my.salesforce.com. A record page deep-linked on the wrong host renders its chrome and then
+// fails to pull the record bundle — which is what "CSS Error" is. Home and Setup survive it,
+// record pages do not, and that asymmetry is the tell.
+//
+// Not a browser problem: the headless shell, the full bundled Chromium and the system Chrome
+// all failed identically, and it failed for the ADMIN too, before any impersonation.
+const LIGHTNING_HOST = (process.env.TORQUE_LIGHTNING_HOST || '').replace(/\/$/, '');
+const uiHost = (instanceUrl) =>
+  LIGHTNING_HOST || instanceUrl.replace('.my.salesforce.com', '.lightning.force.com');
 // true = the field is visible to this session, false = it is not, null = the page never
 // settled, which is neither and must not be rounded to either.
 const fieldVisible = async (page, instanceUrl, recordId) => {
   if (!recordId) return null;
   try {
-    await page.goto(`${instanceUrl}/lightning/r/Account/${recordId}/view`,
+    await page.goto(`${uiHost(instanceUrl)}/lightning/r/Account/${recordId}/view`,
                     { waitUntil: 'domcontentloaded', timeout: 30000 });
   } catch (e) { /* a redirect mid-navigation is normal; the poll below settles it */ }
+  // The CSS Error dialog offers "Refresh", and doing what the page asks was never tried across
+  // five detector designs. A reload after the first-load asset failure is the remedy Salesforce
+  // itself prints; treating it as fatal was an assumption, not an observation.
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const errored = await page.getByText(/CSS Error/i).count() > 0;
+      if (!errored) break;
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(4000);
+    }
+  } catch (e) { /* a reload racing a redirect is not a failure */ }
+
   // LOCATORS, not page.content().
   //
   // content() returns the LIGHT DOM only, and Lightning renders field labels inside shadow
@@ -211,7 +249,17 @@ const shell = async (page) => {
   return false;
 };
 
-const browser = await chromium.launch({ headless: true });
+// `headless: true` on its own gets the CHROMIUM HEADLESS SHELL — a stripped build Playwright
+// ships alongside the full one, and the likely source of "CSS Error" on Lightning record pages
+// when Home and Setup render fine. `channel: 'chromium'` selects the complete browser in new
+// headless mode. Both are already installed here; the shell was simply the default.
+//
+// Overridable so the next person can try 'chrome' against the system install without editing
+// this file.
+const CHANNEL = process.env.TORQUE_BROWSER_CHANNEL || 'chromium';
+const browser = await chromium.launch(
+  CHANNEL === 'default' ? { headless: true } : { headless: true, channel: CHANNEL });
+mark('browserChannel', CHANNEL);
 try {
   // A realistic viewport, because Lightning record pages failed with "Sorry to interrupt / CSS
   // Error" at the headless default — an asset/layout failure, not a permission one. Read out of
@@ -307,7 +355,7 @@ try {
   // problem for a disclosure one.
   if (process.env.TORQUE_DUMP_LABELS === '1') {
     try {
-      await page.goto(`${instanceUrl}/lightning/r/Account/${RECORD_ID}/view`,
+      await page.goto(`${uiHost(instanceUrl)}/lightning/r/Account/${RECORD_ID}/view`,
                       { waitUntil: 'domcontentloaded', timeout: 30000 });
       // 8s was not a settle, it was a guess — and shells alone have taken 5–7s on this org, so
       // the first dump may have photographed a page mid-load and reported "no record" about a
@@ -337,6 +385,12 @@ try {
         const body = dlg.map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' | ');
         mark('errorDialogText', body.slice(0, 400) || 'no dialog element matched');
       } catch (e) { mark('errorDialogText', 'unavailable'); }
+      // WHERE AM I? Never checked, across every variant — and the label count came back
+      // identical (57) for the headless shell, full Chromium, system Chrome, and two different
+      // hosts. Identical output from four different configurations is not four confirmations,
+      // it is a hint that none of them changed what was being looked at.
+      mark('dumpUrlHost', new URL(page.url()).host);
+      mark('dumpUrlPath', new URL(page.url()).pathname);
       mark('labelCount', labelish.length);
       mark('hasFieldLabel', labelish.some(s => s.includes(FIELD_LABEL)));
       mark('labelSample', labelish.slice(0, 40).join(' / ').slice(0, 700));
