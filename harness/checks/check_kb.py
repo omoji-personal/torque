@@ -1856,6 +1856,23 @@ def _impact_bound_approval(target):
     except Exception:
         return Result("impact_bound_approval", SKIP, "could not establish a live scope")
 
+    # C6: the drift half of this check mints for max(0, live - 1) and requires the gate to refuse
+    # the widened scope. With live == 0 that is max(0, -1) == 0, which is the SAME scope, so there
+    # is no drift to detect, the gate correctly allows, and the check FAILS — reporting a broken
+    # gate because the org happens to have no Leads.
+    #
+    # A fresh Developer Edition with Leads cleared would redden the release profile for a reason
+    # that is entirely about the fixture and not at all about the control. The alternative fix was
+    # to create a flagged probe record and delete it by Id; that is a real org write inside a
+    # check, and a check that mutates the org to make itself runnable is a worse trade than an
+    # honest skip.
+    if live == 0:
+        return Result("impact_bound_approval", SKIP,
+                      f"{obj} WHERE {where} matches 0 rows on {target}, so the widened-scope half "
+                      f"of this check has nothing to widen: max(0, live-1) is the same scope, the "
+                      f"gate correctly allows it, and a FAIL here would describe the org rather "
+                      f"than the control. Load a Lead, or point at an org that has one.")
+
     tok = mint(live)
     rc, err = fire()
     if rc != 0:
