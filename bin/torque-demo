@@ -141,7 +141,7 @@ def main():
     print(f"{DIM}That was the parser layer only — it needs no org because it never got that far.")
     nfix = sum(len(json.loads(f.read_text()).get("fixtures", []))
                for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
-    print(f"The full suite ({nfix} recorded fixtures, 17 mutation tests, a live deploy→verify→purge cycle)")
+    print(f"The full suite ({nfix} recorded fixtures, 19 mutation tests, a live deploy→verify→purge cycle)")
     print(f"runs against your own Developer Edition org:{RST}")
     print(f"    python3 bin/torque init <your-org-alias>")
     print(f"    python3 harness/validate.py --profile release --target-org <your-org-alias>\n")

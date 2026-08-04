@@ -205,7 +205,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <div><b>Enforcement</b><span>2 hooks, 4 tool surfaces</span></div>
       <div><b>Validation</b><span>103 checks, live org</span></div>
       <div><b>Adversarial fixtures</b><span>196</span></div>
-      <div><b>Self-proof</b><span>17 mutators</span></div>
+      <div><b>Self-proof</b><span>19 mutators</span></div>
       <div><b>Try it with no org</b><span>3 seconds</span></div>
     </div>
   </div>
@@ -316,7 +316,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <tr><td>Shows what a change will set off, before it runs</td><td class="no">—</td><td class="win">design-time, in a UI</td><td class="no">—</td><td class="us">at the command, in the agent loop</td></tr>
       <tr><td>Binds approval to a verified record count</td><td class="no">command string</td><td class="no">env / role</td><td class="no">—</td><td class="us">record count</td></tr>
       <tr><td>Remembers what THIS org does</td><td class="no">stateless</td><td class="no">deploy history</td><td class="no">—</td><td class="us">per-org, by orgId</td></tr>
-      <tr><td>Proves its own checks can fail</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">17 mutators</td></tr>
+      <tr><td>Proves its own checks can fail</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">19 mutators</td></tr>
       <tr><td>Rollback across environments</td><td class="no">—</td><td class="win"><strong>yes</strong></td><td class="no">—</td><td class="us">single-org only</td></tr>
       <tr><td>Works outside Claude Code</td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="us">enforcement yes, via the PATH shim; skills and rules no</td></tr>
       <tr><td>Vendor support / SLA</td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="no">community</td><td class="us">none</td></tr>
@@ -417,7 +417,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     can re-point the write between the check and the execution, so the combination is denied.</p>
 
   <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 196 adversarial fixtures and
-    17 mutation tests that neuter each guard in turn and require the attack it blocks to start
+    19 mutation tests that neuter each guard in turn and require the attack it blocks to start
     working. A guard that cannot be shown to be
     load-bearing is decoration. Every enforcement claim carries a machine-checked label, resolved against the live code, so the
     documentation cannot quietly overstate it.</p>
@@ -903,7 +903,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     story in section 02. Both are the same discipline: a claim nobody can falsify is not
     knowledge, it is decoration.</p>
 
-  <h4>17 mutation tests — the part that matters</h4>
+  <h4>19 mutation tests — the part that matters</h4>
   <p>
     Each temporarily neuters one guard and requires the corresponding attack to succeed — or, for
     the static scanners, requires the check to fail. One needs an org, because the check it neuters
@@ -1031,7 +1031,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     <tr><td>.claude/rules/</td><td>The seven rule files, byte-capped, each labelled with what backs it</td></tr>
     <tr><td>.claude/agents/</td><td>org-explorer (read-only) · hostile-qa (adversarial reviewer)</td></tr>
     <tr><td>hooks/</td><td>The shared expansion-aware parser and the two gates</td></tr>
-    <tr><td>harness/</td><td>103 checks, 216 gate fixtures (213 recorded + 3 minted live), 17 mutators, live_matrix.sh, the run log</td></tr>
+    <tr><td>harness/</td><td>103 checks, 216 gate fixtures (213 recorded + 3 minted live), 19 mutators, live_matrix.sh, the run log</td></tr>
     <tr><td>SECURITY.md</td><td>Disclosure policy — 72-hour confirmation, 90-day ceiling, fixtures credited</td></tr>
   </tbody></table>
 

@@ -508,7 +508,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 17            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 19            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -861,6 +861,67 @@ def self_test(target=None):
             ok &= passed
         finally:
             _lib_p.is_protected_target = _real_ipt             # always restore
+    # observe-boundary mutator: empty OBSERVE_NEVER, so an open observe-only window would swallow
+    # trust-boundary refusals along with org ones. observe_never_opens_the_trust_boundary must
+    # then FAIL — proving the exclusion list is load-bearing rather than decorative.
+    #
+    # This is the mutation that matters for observe-only. The mode is a bypass by design: while a
+    # window is open a denial becomes a log line. The only thing standing between that and a hole
+    # is that it refuses to apply to anchor reads, auth-store reads, protected-source edits and
+    # `local/` reaching git. A window that could permit an anchor read could go looking for the
+    # secret that mints windows, so an empty exclusion list must be caught here and not by
+    # somebody reading the diff.
+    orig_ob = lbf.read_text()
+    try:
+        lbf.write_text(orig_ob.replace(
+            "OBSERVE_NEVER = frozenset({\n"
+            "    \"anchor-ref\", \"auth-ref\", \"artifact-edit\", \"protected-write\", "
+            "\"stages-local\",\n"
+            "    \"invalid-event\", \"crash\",\n"
+            "})",
+            "OBSERVE_NEVER = frozenset()  # MUTANT: nothing is excluded from observation", 1))
+        fn = dict((n, f) for n, _p, _c, f in REGISTRY).get(
+            "observe_never_opens_the_trust_boundary")
+        r = fn()
+        passed = r.outcome == FAIL and "anchor" in r.detail
+        print(f"  {'✓' if passed else '✗'} observe-boundary mutator: expected FAIL naming the "
+              f"anchor, got {r.outcome}")
+        ok &= passed
+    finally:
+        lbf.write_text(orig_ob)
+    # shim-deferral mutator: route a POLICY refusal through the deferral helper AND add its code
+    # to the deferrable set. shim_deferral_stops_at_the_shape_classes must then FAIL.
+    #
+    # BOTH HALVES ARE REQUIRED, and that is the whole reason this mutator is worth writing.
+    # Adding anchor-ref to DEFERRABLE_TO_SHIM alone changes nothing, because that call site
+    # returns a deny dict directly. Routing the site through _deny_or_defer alone changes nothing
+    # either, because the code is not in the set. Each half is inert; only together do they
+    # produce a deferral. So the realistic regression — someone tidying every deny onto one
+    # helper, or widening the set during a refactor — is a two-part change, and a one-part
+    # mutation would report a vacuous PASS. Verified by hand at three attempts before it fired.
+    orig_sd = spf.read_text()
+    try:
+        _m = orig_sd.replace(
+            "                                \"indirect-sf\", \"unparseable\"})",
+            "                                \"indirect-sf\", \"unparseable\", \"anchor-ref\"})", 1)
+        _m = _m.replace(
+            "                return {\"deny\": (\"reference to the trust anchor (~/.torque) — "
+            "secret and tokens \"\n"
+            "                                 \"are operator-only\", \"anchor-ref\")}",
+            "                return _deny_or_defer(\"reference to the trust anchor (~/.torque) — "
+            "secret \"\n"
+            "                                      \"and tokens are operator-only\", "
+            "\"anchor-ref\")", 1)
+        spf.write_text(_m)
+        fn = dict((n, f) for n, _p, _c, f in REGISTRY).get(
+            "shim_deferral_stops_at_the_shape_classes")
+        r = fn()
+        passed = r.outcome == FAIL and "anchor-ref" in r.detail
+        print(f"  {'✓' if passed else '✗'} shim-deferral mutator: expected FAIL naming "
+              f"anchor-ref, got {r.outcome}")
+        ok &= passed
+    finally:
+        spf.write_text(orig_sd)
     # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
     # Editing the FILE does nothing here — lib is already imported, so the check would keep using
     # the cached function and report a false PASS. Patching the live module object is both the
