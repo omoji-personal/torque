@@ -173,8 +173,16 @@ def parse_marks(text):
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--target-org", required=True)
-    p.add_argument("--wait", type=int, default=25,
-                   help="seconds to let async work settle before measuring it")
+    # Default 0. This waited 25s "for async work to settle", which sounded prudent and was the
+    # reason two runs came back inconclusive: an empty Queueable finishes instantly and this org
+    # retains no AsyncApexJob row for a completed one, so the wait was not letting the
+    # measurement settle, it was letting it expire. Kept as a flag because an org that DOES
+    # retain rows might want it, and removing an option because it was misused once is how the
+    # next person loses a knob they needed.
+    p.add_argument("--wait", type=int, default=0,
+                   help="seconds to pause before the job lookups. Default 0: an empty Queueable "
+                        "completes immediately and a completed job's row may not be retained, so "
+                        "waiting can destroy the evidence rather than settle it")
     a = p.parse_args()
 
     import lib
@@ -207,6 +215,27 @@ def main():
               "measurement. Raw output follows.\n", file=sys.stderr)
         print(blob[:1500], file=sys.stderr)
         return 2
+
+    # FIRST, before anything else queries anything: look for the treatment job. An empty
+    # Queueable finishes in well under a second and this org keeps no AsyncApexJob row for a
+    # completed one, so every step taken before this one is a step during which the evidence can
+    # vanish. The two findings below involve queries of their own; running them first is what
+    # made the first two attempts inconclusive.
+    def _job_row(job_id):
+        if not job_id:
+            return None, "no job id captured"
+        rows_, err_ = query(a.target_org,
+                            f"SELECT Id, Status FROM AsyncApexJob WHERE Id = '{job_id}'")
+        if err_:
+            return None, err_
+        return bool(rows_), (rows_[0].get("Status") if rows_ else None)
+
+    if a.wait:
+        print(f"  --wait {a.wait}: pausing before the job lookups. On an org that does not "
+              f"retain\n  completed AsyncApexJob rows this destroys the evidence rather than "
+              f"settling it.\n")
+        time.sleep(a.wait)
+    treat_seen, treat_note = _job_row(marks.get("jobId", ""))
 
     findings = []
 
@@ -247,7 +276,18 @@ def main():
         findings.append(("governor limits", NOT_ESTABLISHED,
                          f"the limit markers did not parse: dml={marks.get('dml')!r}"))
 
-    # 3. did the Queueable survive? Needs the control arm to mean anything.
+    # 3. did the Queueable survive? Needs the control arm to mean anything, AND needs to be
+    #    asked BEFORE the evidence expires.
+    #
+    #    The first version waited 25 seconds "for async work to settle", which is exactly wrong
+    #    here. An empty Queueable finishes in well under a second and this org retains no
+    #    AsyncApexJob row for a completed one — the control proved that by being enqueued,
+    #    COMMITTED, and still absent. So the wait was not letting the measurement settle, it was
+    #    letting it disappear, and both arms came back empty for a reason that had nothing to do
+    #    with rollback semantics.
+    #
+    #    Each job is now queried immediately after its own Apex run, so the window between
+    #    enqueue and observation is as short as two subprocess calls allow.
     job = marks.get("jobId", "")
     ctrl_tmp = ROOT / "local" / f".shadow-control-{run}.apex"
     ctrl_tmp.write_text(CONTROL_APEX.format(mark=MARK))
@@ -257,22 +297,7 @@ def main():
         ctrl_tmp.unlink(missing_ok=True)
     ctrl = parse_marks(debug_log(cr.stdout) + "\n" + (cr.stderr or ""))
     ctrl_job = ctrl.get("ctrlJob", "")
-
-    if a.wait:
-        print(f"  waiting {a.wait}s for async work to settle...\n")
-        time.sleep(a.wait)
-
-    def job_exists(job_id):
-        if not job_id:
-            return None, "no job id captured"
-        rows_, err_ = query(a.target_org,
-                            f"SELECT Id, Status FROM AsyncApexJob WHERE Id = '{job_id}'")
-        if err_:
-            return None, err_
-        return bool(rows_), (rows_[0].get("Status") if rows_ else None)
-
-    treat_seen, treat_note = job_exists(job)
-    ctrl_seen, ctrl_note = job_exists(ctrl_job)
+    ctrl_seen, ctrl_note = _job_row(ctrl_job)      # immediately, for the same reason
 
     if ctrl_seen is None:
         findings.append(("queueable and rollback", NOT_ESTABLISHED,
