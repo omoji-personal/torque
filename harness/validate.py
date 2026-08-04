@@ -282,7 +282,7 @@ def run_profile(profile, target, only=None):
         results.append(res)
     return results
 
-def print_report(profile, results, only=None):
+def print_report(profile, results, only=None, allow_skip=None):
     if only is not None and not results:
         print(f"\n  ! no check named {only!r}. A filter that matches nothing is not a pass.")
         print("  → verdict: FAIL")
@@ -302,6 +302,14 @@ def print_report(profile, results, only=None):
         print(f"  {mark} {r.name:22} {outcome:5} {r.detail}{tp}")
         seen.append(outcome)
         if outcome == FAIL: verdict = FAIL
+        elif outcome == SKIP and r.name in (allow_skip or {}):
+            # An ACKNOWLEDGED skip: the operator named this check and gave a reason, so it is
+            # not an unexplained gap. The run is still DEGRADED — never PASS — because the check
+            # did not run and no flag can make an unasked question answered. What the flag buys
+            # is a zero exit, so a pipeline can proceed on a gap someone has looked at and
+            # accepted, instead of on one nobody noticed.
+            print(f"      ↳ skip allowed: {allow_skip[r.name]}")
+            if verdict == PASS: verdict = "DEGRADED"
         elif outcome in (SKIP, LIMITED, WARN) and verdict == PASS: verdict = "DEGRADED"
         # WARN degrades. It did not, which made every warning decoration — a check could report
         # that something was wrong and the run would still say PASS, which is the shape of
@@ -669,14 +677,46 @@ def main():
     ap.add_argument("--target-org")
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--only", help="run a single named check (fast, targeted)")
+    ap.add_argument("--allow-skip", action="append", metavar="CHECK:REASON",
+                    help="acknowledge one check's SKIP with a stated reason (repeatable). The "
+                         "run stays DEGRADED — never PASS — but exits 0. Refused for release.")
     a = ap.parse_args()
+    # `--allow-skip=<id>:<reason>`, repeatable. Documented in .claude/rules/validation.md since
+    # the contract was written, and NOT IMPLEMENTED until now — the same shape as TOOLCHAIN.md's
+    # preflight that never existed. A rule file describing a flag the tool does not accept is a
+    # contract nobody can comply with, and it went unnoticed because enforcement_map checks that
+    # ENFORCEMENT labels resolve to real checks, not that the mechanisms the prose describes are
+    # real.
+    allow_skip = {}
+    for spec in a.allow_skip or []:
+        name, _, reason = spec.partition(":")
+        if not name or not reason.strip():
+            print(f"--allow-skip needs <check-id>:<reason>, got {spec!r}. A skip without a "
+                  f"stated reason is the thing this flag exists to prevent.", file=sys.stderr)
+            sys.exit(2)
+        allow_skip[name.strip()] = reason.strip()
+    if allow_skip and a.profile == "release":
+        # The contract says release refuses skips entirely: a release verdict is the one claim
+        # that must mean every check ran.
+        print("--allow-skip is refused in the release profile: a release run may not carry an "
+              "unrun check, however well explained.", file=sys.stderr)
+        sys.exit(2)
     if a.self_test:
         sys.exit(0 if self_test(a.target_org) else 1)
     # self-test runs as part of static and above
     st_ok = True if a.only else self_test(a.target_org)
     results = run_profile(a.profile, a.target_org, a.only)
-    verdict = print_report(a.profile, results, a.only)
-    sys.exit(0 if (verdict == PASS and st_ok) else 1)
+    unknown = allow_skip.keys() - {r.name for r in results}
+    if unknown:
+        print(f"\n  ! --allow-skip names check(s) this profile does not run: {sorted(unknown)}. "
+              f"An allowance for a check that never runs hides the day it starts to.")
+        print("  → verdict: FAIL")
+        sys.exit(1)
+    verdict = print_report(a.profile, results, a.only, allow_skip)
+    sys.exit(0 if (verdict == PASS and st_ok) else
+             0 if (verdict == "DEGRADED" and st_ok and allow_skip and
+                   all(r.outcome != FAIL for r in results) and
+                   all(r.name in allow_skip for r in results if r.outcome == SKIP)) else 1)
 
 if __name__ == "__main__":
     main()

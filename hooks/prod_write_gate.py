@@ -121,9 +121,13 @@ def handle_edit(tinput):
                 lib.deny("maintainer edit could not be recorded; refusing rather than editing "
                          "the enforcement layer with no audit trail", "artifact-edit", HOOK)
             continue
+        # approve_cmd, not a bare "torque approve ...". `torque` is not on PATH and nothing puts
+        # it there, so the literal string printed a command that does not resolve — the precise
+        # mistake approve_cmd was written to end, made again here in the deny an operator reads
+        # at the worst possible moment. It cost a round trip the first time it was hit.
         lib.deny(f"agent modification of protected file {os.path.basename(path)} is denied; "
-                 "operator-present issuance only — open a window with "
-                 "`torque approve --maintainer <minutes>`", "artifact-edit", HOOK)
+                 f"operator-present issuance only. Open a window with: "
+                 f"{lib.approve_cmd('--maintainer', '<minutes>')}", "artifact-edit", HOOK)
     lib.allow()
 
 
