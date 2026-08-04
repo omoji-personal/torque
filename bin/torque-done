@@ -246,11 +246,18 @@ def layer_profile_render(profile, evidence):
                      VERIFIED, f"observed by a person: {evidence}")
     return Layer("profile_render",
                  f"visible in the UI as {profile or 'a non-admin profile'}", BLOCKED,
-                 f"not automated, since {BROWSER_BLOCKED_SINCE}. The roadmap gates the browser "
-                 f"half on three unanswered questions: whether it can render as a non-admin "
-                 f"profile at all, the real wall-clock cost, and the flake rate. A query can "
-                 f"tell you a permission row exists; only a render tells you a human sees the "
-                 f"field. Do it by hand and record it with --render-evidence.")
+                 f"not automated YET, and no longer for want of a method. Demonstrated live "
+                 f"2026-08-04 (harness/experiments/login-as-render.mjs): impersonate via the su "
+                 f"servlet, open the record, click Details, then walk the shadow roots "
+                 f"explicitly — an admin session returned 29 field labels and an impersonated "
+                 f"Standard User returned 28, differing by exactly the field gated behind a "
+                 f"permission set the second user lacks. That is field-level security observed "
+                 f"in the UI rather than inferred from a permission row, which is the whole "
+                 f"point of this layer. About 10 seconds. What remains is turning a "
+                 f"demonstrated procedure into a check that fails honestly on a flaky org, plus "
+                 f"the impersonation banner's 1-in-3 flake, which the label differential does "
+                 f"not depend on. Until then, do the render by hand and record it with "
+                 f"--render-evidence.")
 
 
 def layer_automation(evidence):

@@ -1,8 +1,10 @@
 {
   "note": "Checks declared to make no org mutation, and therefore runnable by the agent against a live org via `validate.py --only <name> --target-org X`. Generated from the @check declarations; verified against source by readonly_manifest_is_derived. Editing this by hand widens what the agent may run, which is why no maintainer window grants it.",
   "checks": [
+    "cache_poison_resistant",
     "describe_first",
     "detect_probes_run",
+    "gate_adversarial_fixtures",
     "kb_live_claims",
     "org_classify",
     "preflight_credentials"

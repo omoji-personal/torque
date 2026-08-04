@@ -90,7 +90,12 @@ def _experiments_are_not_checks():
     d = ROOT / "harness" / "experiments"
     if not d.is_dir():
         return Result(name, NA, "no experiments directory")
-    files = [p for p in sorted(d.rglob("*.py"))]
+    # Every experiment, not only the Python ones. The glob was `*.py`, so a probe written in any
+    # other language was neither inspected nor counted — and the PASS line said "1 experiment(s)"
+    # while two sat in the directory. A count that understates is the same defect as a claim that
+    # overstates; it just fails in the flattering direction.
+    files = [p for p in sorted(d.rglob("*")) if p.is_file() and p.suffix in (".py", ".mjs", ".js",
+                                                                            ".sh", ".ts")]
     if not files:
         return Result(name, NA, "no experiments present")
     bad = []
