@@ -55,6 +55,20 @@ Precedence when the target classifies production: valid session grant → valid 
 token → **deny** (the deny message names both commands). Every production write is audited as a
 first-class `PROD-WRITE` event. A dry-run / validate-only deploy is a read and needs no override.
 
+**A shape refusal is not a policy refusal.** When the classifier cannot statically resolve a
+command (`$(…)`, an interpreter, an unbalanced quote) it has judged nothing about the operation —
+it could not read it. Measured on six months of real commands, 97% of all denials were this, not
+policy. With the shim verified those DEFER to it (audited `DEFER`, decided on resolved argv);
+without it they still deny, and the message says so and names `install-gates --shim`.
+
+## Layer 2c — observe-only (operator-present, measures instead of blocking)
+`torque approve --observe <minutes>` (≤120) makes denials RECORD instead of enforce, so the cost
+of the gates can be measured on real work before they block real work. Signed, tree-bound,
+anchor-only, revocable with `--end-observe`. **While it is open the org protections are advisory:
+a production write that would have been denied proceeds.** It never applies to trust-boundary
+refusals (anchor, auth store, protected source, `local/` into git), and an observation that
+cannot be recorded denies instead of passing.
+
 ## Layer 2b — the exec-time shim (optional, closes the subprocess channel)
 `torque install-gates --shim` puts an `sf` shim on PATH, installed into the trust anchor where
 the agent cannot read or rewrite it. It decides at exec time, on the argv the kernel is about to
