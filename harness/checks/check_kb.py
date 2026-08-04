@@ -969,7 +969,18 @@ def _claimed_counts():
     recorded = sum(len(_kb_json.loads(f.read_text()).get("fixtures", []))
                    for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
     bad = []
-    for rel in ("guide/torque-guide.html", "README.md", "bin/torque-demo", "bin/torque-init"):
+    # B3: ROADMAP.md is scanned too, and was not for the first fourteen adversarial rounds. It
+    # carried "66 checks" against a real 71 for eight commits — the ONE wrong count in the repo,
+    # sitting in the ONE prose file that neither this check nor scripts/sync-counts.py covered.
+    # An external evaluation found it by reading; nothing here could have.
+    #
+    # Dated snapshots stay OUT on purpose. docs/EVAL-2026-08.md and the handoff state numbers
+    # that were true of a named commit and are not claims about the tree as it stands; scanning
+    # them would force a choice between rewriting history and failing the build forever. The
+    # distinction worth holding is "living surfaces are scanned; dated documents name their
+    # commit and are exempt".
+    for rel in ("guide/torque-guide.html", "README.md", "bin/torque-demo", "bin/torque-init",
+                "ROADMAP.md"):
         f = ROOT / rel
         if not f.exists():
             continue

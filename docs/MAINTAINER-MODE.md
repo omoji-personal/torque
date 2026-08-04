@@ -224,6 +224,61 @@ The first application cannot be the agent's, by construction. Apply the three ed
 the checks. Once the mechanism exists, every later change to it is made under it, audited, in a
 bounded window — which is the property that makes this different from switching the gates off.
 
+## Operating a window — learned from the first one
+
+### If the session locks itself out
+
+A syntax error in any `hooks/*.py` file takes both gates down with it: they import `lib`, an
+import failure fails closed, and every subsequent tool call is denied — including the ones needed
+to undo it. **The window grants edit rights, not recovery rights.** Only the operator can clear
+it.
+
+This happened on the first window ever opened, from prose written after a closing `"""`. The
+recovery is:
+
+```
+cd /Users/omidmojtahedi/Desktop/torque
+python3 -c "import py_compile; py_compile.compile('hooks/lib.py', doraise=True)"   # see the error
+# fix the named line, then confirm:
+python3 -c "import sys; sys.path.insert(0,'hooks'); import lib; print('gates importable')"
+```
+
+Do **not** reach for `git checkout hooks/lib.py` reflexively — it discards uncommitted work in
+the same file, which during a window is exactly the work in progress.
+
+`hooks/syntax_guard.py` now makes this class impossible: a PreToolUse hook that computes what the
+file would contain and refuses the write if it would not parse. It is dependency-free (a guard
+against "lib is broken" that imports lib is not a guard) and deliberately fail-open, since it
+authorizes nothing and a fail-closed bug in it would reproduce the very lockout it prevents.
+The recovery above is kept anyway, for the failure it does not cover — a hook that parses and
+still raises on import.
+
+### No all-PASS run while a window is open
+
+`guards_are_case_insensitive` and `runnable_implies_unwritable` assert the agent cannot write
+protected paths. With a window open the gate allows exactly that, audited, on purpose — which
+from inside the check is indistinguishable from a broken guard. They SKIP with that reason, so
+the run is **DEGRADED** for as long as the window lasts.
+
+That is the intended rule, not a wrinkle to work around: validating a boundary while it is
+deliberately lifted certifies something nobody tested. Close the window before a run you intend
+to attest:
+
+```
+python3 bin/torque approve --end-maintainer
+```
+
+### Known gap: the window covers tools, not Bash
+
+The grant is consulted in `handle_edit`, so the Edit/Write tools can modify protected paths. It
+is **not** consulted in `handle_bash`, so `rm hooks/x.py`, `mv`, and shell redirection into
+`hooks/` are still refused. The practical effect is that an agent in a window can create a file
+under `hooks/` and cannot delete it.
+
+Left as-is deliberately for now. Extending a grant across the Bash surface is a much larger
+blast radius than extending it across two tool handlers, and the asymmetry is inconvenient rather
+than unsafe. Documented so the next person meets it as a known edge rather than a mystery.
+
 ## The honest caveat
 
 This narrows, but does not close, the disclosed Layer-0 boundary. An operator-present grant means
@@ -231,3 +286,10 @@ a human deliberately opened a window; it does not make the agent's edits correct
 agent writes to `hooks/` during a window still has to survive review and the harness — the grant
 buys write access, not trust. Keeping windows short and reading the `MAINTAINER-EDIT` records is
 the point of them being time-boxed and audited at all.
+
+The first window bears that out. Inside it the agent broke the enforcement layer, registered a
+hook without mirroring it into the installer, and reintroduced a defect (`torque approve` printed
+as an unrunnable command) that this repo had already fixed once and documented. All three were
+caught — by fail-closed imports, by `installer_roundtrip`, and by an operator hitting the message.
+None were caught by the agent noticing. That is the argument for the window being bounded,
+audited, and closed before anything is attested.
