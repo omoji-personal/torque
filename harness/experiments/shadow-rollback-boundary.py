@@ -90,7 +90,7 @@ Integer rows1 = Limits.getDmlRows();
 // A Queueable enqueued INSIDE the savepoint. Its side effect is deliberately nothing: the
 // question is whether the JOB survives the rollback, and AsyncApexJob answers that without the
 // job needing to touch any data.
-Id jobId = System.enqueueJob(new TorqueNoopQueueable());
+Id jobId = System.enqueueJob(new TorqueProbeQueueable());
 
 Database.rollback(sp);
 
@@ -107,9 +107,9 @@ System.debug('{mark}rows=' + rows0 + ',' + rows1 + ',' + rows2);
 // by a unit test on a synthetic log, before it ever touched an org.
 System.debug('{mark}done=1');
 
-public class TorqueNoopQueueable implements Queueable {{
+public class TorqueProbeQueueable implements Queueable {{
     public void execute(QueueableContext ctx) {{
-        // deliberately empty: existence in AsyncApexJob is the whole measurement
+        insert new Account(Name = '{mark}{run}-async-treat');
     }}
 }}
 """
@@ -126,13 +126,13 @@ public class TorqueNoopQueueable implements Queueable {{
 # Same discipline as the harness mutators: assert the baseline before concluding anything from
 # the mutated case.
 CONTROL_APEX = """
-Id jobId = System.enqueueJob(new TorqueNoopQueueable());
+Id jobId = System.enqueueJob(new TorqueProbeQueueable());
 System.debug('{mark}ctrlJob=' + jobId);
 System.debug('{mark}ctrlDone=1');
 
-public class TorqueNoopQueueable implements Queueable {{
+public class TorqueProbeQueueable implements Queueable {{
     public void execute(QueueableContext ctx) {{
-        // no side effect: the AsyncApexJob row is the observation
+        insert new Account(Name = '{mark}{run}-async-ctrl');
     }}
 }}
 """
@@ -173,16 +173,16 @@ def parse_marks(text):
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--target-org", required=True)
-    # Default 0. This waited 25s "for async work to settle", which sounded prudent and was the
-    # reason two runs came back inconclusive: an empty Queueable finishes instantly and this org
-    # retains no AsyncApexJob row for a completed one, so the wait was not letting the
-    # measurement settle, it was letting it expire. Kept as a flag because an org that DOES
-    # retain rows might want it, and removing an option because it was misused once is how the
-    # next person loses a knob they needed.
-    p.add_argument("--wait", type=int, default=0,
-                   help="seconds to pause before the job lookups. Default 0: an empty Queueable "
-                        "completes immediately and a completed job's row may not be retained, so "
-                        "waiting can destroy the evidence rather than settle it")
+    # This flag has been 25, then 0, and is now 20, which looks like indecision and is not. The
+    # observation changed underneath it. Waiting could only LOSE an AsyncApexJob row, because
+    # the row exists from the moment of enqueue; waiting is REQUIRED for a side effect, because
+    # the effect exists only once the job has run. Same knob, opposite requirement, and the
+    # reason is worth writing down rather than leaving the next reader to wonder.
+    p.add_argument("--wait", type=int, default=20,
+                   help="seconds to let the queued work execute before looking for its side "
+                        "effect. Needed now that the observation is what the Queueable DID "
+                        "rather than whether a job row existed: a row exists from the moment of "
+                        "enqueue, an effect only after execution")
     a = p.parse_args()
 
     import lib
@@ -221,21 +221,24 @@ def main():
     # completed one, so every step taken before this one is a step during which the evidence can
     # vanish. The two findings below involve queries of their own; running them first is what
     # made the first two attempts inconclusive.
-    def _job_row(job_id):
-        if not job_id:
-            return None, "no job id captured"
+    def _async_effect(suffix):
+        """Did the Queueable actually RUN? Observed by its side effect, not by its job row.
+
+        Three runs used AsyncApexJob and all three were inconclusive: `System.enqueueJob`
+        returned an Id every time and the org holds zero AsyncApexJob rows, ever, even for a
+        control that was enqueued and committed and queried with no delay. Whether the row is
+        never written or purged instantly cannot be told apart from here, and either way the
+        channel cannot carry this measurement.
+
+        So the Queueable now inserts a marked Account and the Account is the observation. It is
+        durable, it is queryable, it is deletable by Id, and it answers a strictly better
+        question: not "was a job scheduled" but "did the work happen".
+        """
         rows_, err_ = query(a.target_org,
-                            f"SELECT Id, Status FROM AsyncApexJob WHERE Id = '{job_id}'")
+                            f"SELECT Id FROM Account WHERE Name = '{MARK}{run}-async-{suffix}'")
         if err_:
             return None, err_
-        return bool(rows_), (rows_[0].get("Status") if rows_ else None)
-
-    if a.wait:
-        print(f"  --wait {a.wait}: pausing before the job lookups. On an org that does not "
-              f"retain\n  completed AsyncApexJob rows this destroys the evidence rather than "
-              f"settling it.\n")
-        time.sleep(a.wait)
-    treat_seen, treat_note = _job_row(marks.get("jobId", ""))
+        return bool(rows_), [r["Id"] for r in rows_]
 
     findings = []
 
@@ -276,51 +279,65 @@ def main():
         findings.append(("governor limits", NOT_ESTABLISHED,
                          f"the limit markers did not parse: dml={marks.get('dml')!r}"))
 
-    # 3. did the Queueable survive? Needs the control arm to mean anything, AND needs to be
-    #    asked BEFORE the evidence expires.
+    # 3. did the enqueued work actually RUN? Observed by side effect, with a control.
     #
-    #    The first version waited 25 seconds "for async work to settle", which is exactly wrong
-    #    here. An empty Queueable finishes in well under a second and this org retains no
-    #    AsyncApexJob row for a completed one — the control proved that by being enqueued,
-    #    COMMITTED, and still absent. So the wait was not letting the measurement settle, it was
-    #    letting it disappear, and both arms came back empty for a reason that had nothing to do
-    #    with rollback semantics.
-    #
-    #    Each job is now queried immediately after its own Apex run, so the window between
-    #    enqueue and observation is as short as two subprocess calls allow.
-    job = marks.get("jobId", "")
+    #    The wait is back, and the earlier reasoning for removing it was right about the wrong
+    #    thing. An AsyncApexJob ROW exists from the moment of enqueue, so waiting could only
+    #    lose it. A side EFFECT exists only after the job executes, so waiting is exactly what
+    #    it needs. Same flag, opposite requirement, because the observation changed.
     ctrl_tmp = ROOT / "local" / f".shadow-control-{run}.apex"
-    ctrl_tmp.write_text(CONTROL_APEX.format(mark=MARK))
+    ctrl_tmp.write_text(CONTROL_APEX.format(mark=MARK, run=run))
     try:
         cr = sh("apex", "run", "--file", str(ctrl_tmp), "--target-org", a.target_org, "--json")
     finally:
         ctrl_tmp.unlink(missing_ok=True)
     ctrl = parse_marks(debug_log(cr.stdout) + "\n" + (cr.stderr or ""))
     ctrl_job = ctrl.get("ctrlJob", "")
-    ctrl_seen, ctrl_note = _job_row(ctrl_job)      # immediately, for the same reason
+
+    print(f"  waiting {a.wait}s for the queued work to execute...\n")
+    time.sleep(a.wait)
+    ctrl_seen, ctrl_ids = _async_effect("ctrl")
+    treat_seen, treat_ids = _async_effect("treat")
+    residue = []
 
     if ctrl_seen is None:
-        findings.append(("queueable and rollback", NOT_ESTABLISHED,
-                         f"the CONTROL job could not be read ({ctrl_note}), so the treatment "
-                         f"arm has nothing to be compared against"))
+        findings.append(("enqueued work and rollback", NOT_ESTABLISHED,
+                         f"the control could not be read ({ctrl_ids}), so the treatment arm has "
+                         f"nothing to be compared against"))
     elif not ctrl_seen:
-        findings.append(("queueable and rollback", NOT_ESTABLISHED,
-                         f"the control job {ctrl_job} was enqueued and COMMITTED and still does "
-                         f"not appear in AsyncApexJob. This org does not retain rows for a "
-                         f"completed Queueable, so the treatment arm's absence proves nothing "
-                         f"either way. INCONCLUSIVE by construction, not by failure — a control "
-                         f"that does not show up is the honest reason to withhold the finding"))
+        findings.append(("enqueued work and rollback", NOT_ESTABLISHED,
+                         f"the CONTROL Queueable was enqueued (job {ctrl_job}) and committed, "
+                         f"and left no record after {a.wait}s. Its work did not run, so the "
+                         f"treatment arm's silence says nothing about rollback — it says a "
+                         f"Queueable declared inside anonymous Apex may not execute at all here. "
+                         f"INCONCLUSIVE by construction: a control that does not show up is the "
+                         f"honest reason to withhold the finding, and the third design to reach "
+                         f"this same wall. Establishing it needs a deployed ApexClass rather "
+                         f"than an inner class, which is a metadata change this must not make."))
     elif treat_seen:
-        findings.append(("queueable SURVIVES rollback", ESTABLISHED,
-                         f"control job {ctrl_job} present ({ctrl_note}) AND treatment job {job} "
-                         f"present ({treat_note}). Enqueuing inside a savepoint and rolling back "
-                         f"does NOT unschedule the work: shadowing an operation that enqueues "
-                         f"anything runs that work for real"))
+        residue += (treat_ids or []) + (ctrl_ids or [])
+        findings.append(("enqueued work SURVIVES rollback", ESTABLISHED,
+                         f"the control ran ({ctrl_ids}) AND the treatment ran ({treat_ids}). "
+                         f"Enqueuing inside a savepoint and rolling back does NOT unschedule the "
+                         f"work: shadowing an operation that enqueues anything runs that work "
+                         f"for real, against real data, outside the transaction that was "
+                         f"supposed to contain it"))
     else:
-        findings.append(("queueable is removed by rollback", ESTABLISHED,
-                         f"control job {ctrl_job} IS in AsyncApexJob ({ctrl_note}) and treatment "
-                         f"job {job} is NOT — so the org does retain these rows, and the rollback "
-                         f"is what removed this one"))
+        residue += ctrl_ids or []
+        findings.append(("enqueued work is discarded by rollback", ESTABLISHED,
+                         f"the control ran and left {ctrl_ids}; the treatment left nothing. The "
+                         f"channel works, so the rollback is what stopped the queued work"))
+
+    # The docstring said "deletes by Id" from the first version and nothing ever deleted
+    # anything. It happened to be harmless while the rollback removed the probe record — which
+    # is the very thing under test, so the one scenario where residue appears is the one where
+    # the claim was about to matter. Claiming a cleanup that does not run is the defect class
+    # this repository exists to find.
+    if residue:
+        print(f"  cleaning up {len(residue)} record(s) left by the async arms, by Id\n")
+        for rid in residue:
+            sh("data", "delete", "record", "--sobject", "Account", "--record-id", rid,
+               "--target-org", a.target_org)
 
     findings.append(("platform events", NOT_ESTABLISHED,
                      "observing one needs a subscriber that writes something, which needs a "
