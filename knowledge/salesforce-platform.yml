@@ -587,10 +587,17 @@ entries:
     impersonated user, so it is not about Login As. The org side is clear: org-wide default
     Edit, profile Read on the object, the granting permission set assigned, the field label
     confirmed against FieldDefinition, and the field temporarily placed on the layout.
-    Unresolved from automation. The bisecting question is whether the same URL renders in the
-    operator's own everyday browser: if it fails there too this is the org or the page layout,
-    and if it renders there it is something about the frontdoor-token session or the automation
-    context. That is a thirty-second human check and no amount of selector work substitutes.
+    Also ruled out: HEADED mode, in a real browser window on a real display, which is the
+    standard remediation for Lightning automation failures and shows the identical error. That
+    was effectively the human check.
+    The single variable left is the FRONTDOOR-TOKEN session versus an ordinary username and
+    password login; everything else has been held constant and eliminated.
+  cross_check: >
+    A mature Lightning browser-test suite running against several orgs for months has never
+    recorded this error — not in code, docs or audit history. It launches plainly
+    (chromium.launch(headless=...), no channel, no viewport, no args) and navigates on
+    my.salesforce.com. So this is not a general browser-automation problem, and the remedies
+    that would normally apply have all been tried.
   gotcha: >
     The header alone says nothing. Four detector designs were refined against this page before
     anyone read the dialog BODY, which names the cause in two words. When a page fails, read the
