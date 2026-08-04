@@ -44,19 +44,58 @@ def _bypass(target):
 
 @check("image_manifest", "static", catastrophe=True)
 def _image_manifest():
-    # every image under guide/ must be manifest-listed with a matching hash. No images = pass.
+    """Every image under guide/ must be manifest-listed with a matching hash.
+
+    B1. This was catastrophe-class and COULD NOT FAIL. The manifest file does not exist, so it
+    defaulted to {"images": []}; guide/ holds no images, so the loop never executed; and it
+    returned PASS reading "0 manifest entries; all guide images verified" — the word "verified"
+    describing nothing at all. Three independent conditions each made it vacuous, and it needed
+    all three to be false before a single line of its logic ran.
+
+    That is the exact sin the fifteen mutators exist to prevent, sitting in a check marked
+    catastrophe=True, and an external evaluation found it rather than the harness.
+
+    The distinction the old code could not draw is between NOTHING TO VERIFY and NOTHING
+    VERIFIED. Absent manifest with zero images is the first: no claim was made, so there is no
+    claim to check, and the honest outcome is N/A. Absent manifest WITH images is the second: a
+    capture is being published with nothing binding it to a real screenshot of a real org, which
+    is precisely what the manifest exists to prevent.
+
+    N/A rather than PASS matters here. Per validate.py, N/A never degrades a run, so this stays
+    quiet when there is genuinely nothing to check, while never again claiming to have verified
+    something it did not look at.
+    """
     import hashlib
     manifest_p = ROOT/"harness"/"image-manifest.json"
-    manifest = _j.loads(manifest_p.read_text()) if manifest_p.exists() else {"images": []}
+    images = [p for p in (ROOT/"guide").rglob("*")
+              if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp")]
+
+    if not manifest_p.exists():
+        if not images:
+            return Result("image_manifest", NA,
+                          "no image manifest and no images under guide/ — nothing is claimed, so "
+                          "nothing is verified. This check reports N/A rather than PASS: an empty "
+                          "loop is not evidence.")
+        return Result("image_manifest", FAIL,
+                      f"{len(images)} image(s) under guide/ and NO manifest at "
+                      f"{manifest_p.name} — a published capture with nothing binding it to a real "
+                      f"screenshot of a real org is the thing the manifest exists to prevent")
+
+    manifest = _j.loads(manifest_p.read_text())
     listed = {e["file"]: e["sha256"] for e in manifest.get("images", [])}
-    for img in (ROOT/"guide").rglob("*"):
-        if img.suffix.lower() in (".png",".jpg",".jpeg",".gif",".webp"):
-            h = hashlib.sha256(img.read_bytes()).hexdigest()
-            if img.name not in listed:
-                return Result("image_manifest", FAIL, f"{img.name} not in manifest (unverified capture)")
-            if listed[img.name] != h:
-                return Result("image_manifest", FAIL, f"{img.name} hash mismatch")
-    return Result("image_manifest", PASS, f"{len(listed)} manifest entries; all guide images verified")
+    if not images:
+        return Result("image_manifest", NA,
+                      f"manifest present with {len(listed)} entr(ies) but no images under guide/ "
+                      f"— nothing to verify against")
+    for img in images:
+        h = hashlib.sha256(img.read_bytes()).hexdigest()
+        if img.name not in listed:
+            return Result("image_manifest", FAIL, f"{img.name} not in manifest (unverified capture)")
+        if listed[img.name] != h:
+            return Result("image_manifest", FAIL, f"{img.name} hash mismatch")
+    return Result("image_manifest", PASS,
+                  f"{len(images)} image(s) under guide/, each manifest-listed with a matching "
+                  f"hash, against {len(listed)} manifest entr(ies)")
 
 @check("deliverable_coverage", "release")
 def _coverage():
