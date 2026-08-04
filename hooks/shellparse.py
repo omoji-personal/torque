@@ -161,8 +161,8 @@ def stages_local(argv) -> bool:
 # is more maintenance than a path rule and that is the point: a new tool under bin/ gets no
 # trust until someone decides it deserves some.
 READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log", "torque-done",
-                         "torque-receipt"}
-READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done", "receipt"}
+                         "torque-receipt", "torque-needs"}
+READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done", "receipt", "needs"}
 
 # Legacy sfdx command IDs and the modern `sf` words that mean the same operation.
 #

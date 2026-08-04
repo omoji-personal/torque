@@ -78,9 +78,19 @@ hazard, therefore invisible to closure. No new platform claims were made. Retrie
 rose from 85% to 88% as a side effect of removing the over-match; it had been sitting exactly on
 its FAIL floor.
 
-**Still open here:** ask-by-intent. `closure_for` answers from a command, so you must already
-know what you are going to type. A `torque needs <operation>` front door is drafted and not
-built. Also `audit-fields-not-writable` carries a requirement no ordinary command reaches.
+**Ask-by-intent shipped the same day.** `torque needs <operation>` is the front door, because
+`closure_for` answers from a command and you had to already know what you were going to type.
+
+Free text was rejected as an interface, not as a nicety. Catalogue triggers are regexes written
+against CLI text, so a sentence matches nothing and returns an empty set — and that empty set
+reads as "requires nothing". Manufacturing exactly that confusion inside the tool built to remove
+it would be a joke at the reader's expense. So each of the nine named operations carries a
+canonical command as its exemplar, matched by the triggers that already exist rather than by a
+second matcher, and `needs_vocabulary_reaches_the_catalogue` fails if one stops reaching an
+entry. An unknown operation is refused with the list, never answered with silence.
+
+**Still open here:** `audit-fields-not-writable` carries a requirement no ordinary command
+reaches.
 
 ### 2. Shadow execution
 `Savepoint` → the real DML → the real runtime errors → `Database.rollback`. The trial-and-error
@@ -159,7 +169,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 96 checks (76 static, 93 capability, 96 release),
+The current state, measured rather than claimed: 97 checks (77 static, 94 capability, 97 release),
 17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.
