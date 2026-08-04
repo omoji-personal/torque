@@ -114,10 +114,58 @@ public class TorqueNoopQueueable implements Queueable {{
 }}
 """
 
+# The control arm. Enqueues the same Queueable and COMMITS — no savepoint, no DML, so nothing
+# to clean up afterwards.
+#
+# Without this the treatment arm cannot interpret itself. Measured on the first run: the job
+# enqueued inside the rolled-back savepoint had no AsyncApexJob row, and neither did anything
+# else — the org holds ZERO AsyncApexJob rows, ever. "Not found" was therefore equally
+# consistent with "the rollback removed it" and "this org does not retain those rows", and
+# reporting the first would have been a guess wearing a measurement's clothes.
+#
+# Same discipline as the harness mutators: assert the baseline before concluding anything from
+# the mutated case.
+CONTROL_APEX = """
+Id jobId = System.enqueueJob(new TorqueNoopQueueable());
+System.debug('{mark}ctrlJob=' + jobId);
+System.debug('{mark}ctrlDone=1');
+
+public class TorqueNoopQueueable implements Queueable {{
+    public void execute(QueueableContext ctx) {{
+        // no side effect: the AsyncApexJob row is the observation
+    }}
+}}
+"""
+
+
+def debug_log(raw):
+    """The debug log, with real newlines.
+
+    `sf apex run --json` returns the log inside a JSON string, so its line breaks arrive as the
+    two characters backslash-n. Regexing the raw stdout therefore ran every marker value into
+    the following log line: probeId came back as `001gK00001I5VhsQAF\\n09:43:19.42`, and the
+    limit triple as `0,2,3\\n09:43:19.42`, which parsed as nothing. Three of five findings were
+    NOT ESTABLISHED for a reason that had nothing to do with the org.
+
+    Decode the JSON and take the log; fall back to raw text only if that fails, since a run that
+    produced no parseable envelope is one where reading the raw output is the last thing left.
+    """
+    try:
+        doc = json.loads(raw)
+        res = doc.get("result") or {}
+        for key in ("logs", "log", "compiled"):
+            if isinstance(res.get(key), str) and MARK in res[key]:
+                return res[key]
+    except Exception:                                      # noqa: BLE001
+        pass
+    return raw or ""
+
 
 def parse_marks(text):
+    # A backslash ends a value too. The character class excluded whitespace and the log's field
+    # separator and not the escape, which is exactly the character the JSON envelope introduces.
     out = {}
-    for m in re.finditer(re.escape(MARK) + r"([a-zA-Z]+)=([^\s|]*)", text or ""):
+    for m in re.finditer(re.escape(MARK) + r"([a-zA-Z]+)=([^\s|\\]*)", text or ""):
         out[m.group(1)] = m.group(2)
     return out
 
@@ -152,7 +200,7 @@ def main():
     finally:
         tmp.unlink(missing_ok=True)
 
-    blob = (r.stdout or "") + (r.stderr or "")
+    blob = debug_log(r.stdout) + "\n" + (r.stderr or "")
     marks = parse_marks(blob)
     if "done" not in marks:
         print("REFUSED: the Apex did not reach its final marker, so nothing below would be a "
@@ -199,29 +247,55 @@ def main():
         findings.append(("governor limits", NOT_ESTABLISHED,
                          f"the limit markers did not parse: dml={marks.get('dml')!r}"))
 
-    # 3. did the Queueable survive?
+    # 3. did the Queueable survive? Needs the control arm to mean anything.
     job = marks.get("jobId", "")
-    if not job:
-        findings.append(("queueable survives rollback", NOT_ESTABLISHED,
-                         "no job id was captured, so there is nothing to look for"))
+    ctrl_tmp = ROOT / "local" / f".shadow-control-{run}.apex"
+    ctrl_tmp.write_text(CONTROL_APEX.format(mark=MARK))
+    try:
+        cr = sh("apex", "run", "--file", str(ctrl_tmp), "--target-org", a.target_org, "--json")
+    finally:
+        ctrl_tmp.unlink(missing_ok=True)
+    ctrl = parse_marks(debug_log(cr.stdout) + "\n" + (cr.stderr or ""))
+    ctrl_job = ctrl.get("ctrlJob", "")
+
+    if a.wait:
+        print(f"  waiting {a.wait}s for async work to settle...\n")
+        time.sleep(a.wait)
+
+    def job_exists(job_id):
+        if not job_id:
+            return None, "no job id captured"
+        rows_, err_ = query(a.target_org,
+                            f"SELECT Id, Status FROM AsyncApexJob WHERE Id = '{job_id}'")
+        if err_:
+            return None, err_
+        return bool(rows_), (rows_[0].get("Status") if rows_ else None)
+
+    treat_seen, treat_note = job_exists(job)
+    ctrl_seen, ctrl_note = job_exists(ctrl_job)
+
+    if ctrl_seen is None:
+        findings.append(("queueable and rollback", NOT_ESTABLISHED,
+                         f"the CONTROL job could not be read ({ctrl_note}), so the treatment "
+                         f"arm has nothing to be compared against"))
+    elif not ctrl_seen:
+        findings.append(("queueable and rollback", NOT_ESTABLISHED,
+                         f"the control job {ctrl_job} was enqueued and COMMITTED and still does "
+                         f"not appear in AsyncApexJob. This org does not retain rows for a "
+                         f"completed Queueable, so the treatment arm's absence proves nothing "
+                         f"either way. INCONCLUSIVE by construction, not by failure — a control "
+                         f"that does not show up is the honest reason to withhold the finding"))
+    elif treat_seen:
+        findings.append(("queueable SURVIVES rollback", ESTABLISHED,
+                         f"control job {ctrl_job} present ({ctrl_note}) AND treatment job {job} "
+                         f"present ({treat_note}). Enqueuing inside a savepoint and rolling back "
+                         f"does NOT unschedule the work: shadowing an operation that enqueues "
+                         f"anything runs that work for real"))
     else:
-        if a.wait:
-            print(f"  waiting {a.wait}s for async work to settle...\n")
-            time.sleep(a.wait)
-        rows, err = query(a.target_org,
-                          f"SELECT Id, Status FROM AsyncApexJob WHERE Id = '{job}'")
-        if err:
-            findings.append(("queueable survives rollback", NOT_ESTABLISHED,
-                             f"could not ask the org about job {job}: {err}"))
-        elif rows:
-            findings.append(("queueable SURVIVES rollback", ESTABLISHED,
-                             f"job {job} exists with status {rows[0].get('Status')!r}. Enqueuing "
-                             f"inside a savepoint and rolling back does NOT unschedule the work "
-                             f"— shadowing an operation that enqueues anything runs that work "
-                             f"for real"))
-        else:
-            findings.append(("queueable is removed by rollback", ESTABLISHED,
-                             f"job {job} is not in AsyncApexJob after the rollback"))
+        findings.append(("queueable is removed by rollback", ESTABLISHED,
+                         f"control job {ctrl_job} IS in AsyncApexJob ({ctrl_note}) and treatment "
+                         f"job {job} is NOT — so the org does retain these rows, and the rollback "
+                         f"is what removed this one"))
 
     findings.append(("platform events", NOT_ESTABLISHED,
                      "observing one needs a subscriber that writes something, which needs a "
