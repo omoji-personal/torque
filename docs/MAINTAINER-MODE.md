@@ -33,11 +33,15 @@ flag you would put it behind the gate that the flag exists to open.
 **An ungated clone is worse than it looks.** `org-safety.md` notes that a session started
 elsewhere loads no gates, so a second checkout with its hook registration stripped would let an
 agent edit freely. It would also let that agent reach every authenticated org on this machine —
-and on this machine that currently includes `REDACTED-ORG`, `REDACTED-ORG`, `REDACTED-ORG`, `REDACTED-ORG`,
-`REDACTED-ORG`, `MAP`, `REDACTED-ORG`, `REDACTED-ORG`, `REDACTED-ORG`, `REDACTED-ORG`. Those are real legal-aid
-production orgs holding real client data. An ungated workspace on this laptop is not a
-development convenience; it is the exact configuration Layer 1 exists to prevent, and it trades a
+and a working laptop typically has a double-digit number of them authenticated at once, most of
+them production orgs holding real client data. An ungated workspace there is not a development
+convenience; it is the exact configuration Layer 1 exists to prevent, and it trades a
 file-editing inconvenience for an unbounded org risk.
+
+(An earlier revision of this paragraph listed the specific org aliases from the author's machine
+to make the risk concrete. `clean_ip` failed the build on it, correctly: client identities do not
+belong in a public repo, and "it was only in an argument for being careful" is not an exemption.
+The count carries the argument; the names only carried the clients.)
 
 ## The design
 
@@ -60,7 +64,7 @@ torque approve --end-maintainer       # revoke it
 it.**
 
 That split is the whole design, and it costs nothing: editing `lib.py` does not require writing
-to `REDACTED-ORG`. Under an active grant, a production write is still denied, a destructive operation
+to a client's production org. Under an active grant, a production write is still denied, a destructive operation
 still needs its own impact-bound token, live classification still runs at write time, and the
 allowlist still governs. What changes is *who may edit Torque's source* — and only that.
 
