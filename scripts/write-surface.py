@@ -101,11 +101,22 @@ def survey() -> int:
     tw = sum(g[0] for g in groups.values())
     tb = sum(g[1] for g in groups.values())
     print(f"  {tw:>8}  {tb:>7}  TOTAL")
+    ro = ROOT / "harness" / "checks" / "read-only-checks.json"
+    try:
+        import json as _j
+        names = ", ".join(_j.loads(ro.read_text())["checks"])
+    except Exception:
+        names = "(manifest unreadable — nothing is exempt)"
     print("\nAlso locked, and not a path question: an org-touching harness run.\n"
           "  python3 harness/validate.py --profile capability --target-org <org>\n"
-          "is refused as a Salesforce operation via interpreter. Targeted read-only checks DO\n"
-          "run: python3 harness/validate.py --only <check>. Ask the operator to run profile runs\n"
-          "with the ! prefix so the output lands in the conversation.")
+          "is refused. probe_cycle deploys and hard-deletes, so the harness as a whole is not\n"
+          "read-only and is never treated as if it were. Ask the operator to run profile runs\n"
+          "with the ! prefix so the output lands in the conversation.\n"
+          "\nWhat you CAN run against a live org, one check at a time:\n"
+          f"  python3 harness/validate.py --only <check> --target-org <org>\n"
+          f"  where <check> is one of: {names}\n"
+          "Any --only runs offline without a target. The list is declared per check and\n"
+          "re-derived from source by readonly_declaration_survives_source.")
     return 0
 
 

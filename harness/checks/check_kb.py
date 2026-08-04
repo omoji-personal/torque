@@ -454,7 +454,7 @@ def _kb_integrity():
                   f"{live} verified-live, {doc} documented, {prac} practitioner")
 
 
-@check("kb_live_claims", "capability", catastrophe=True)
+@check("kb_live_claims", "capability", catastrophe=True, reads_only=True)
 def _kb_live_claims(target):
     """Re-verify every `verified-live` claim against a real org.
 
@@ -1835,7 +1835,7 @@ def _verifiers_can_fail():
                   f"their entry is false ({len(describe_falsifying)} falsified through describe)")
 
 
-@check("detect_probes_run", "capability", catastrophe=True)
+@check("detect_probes_run", "capability", catastrophe=True, reads_only=True)
 def _detect_probes_run(target):
     """Every detect probe must actually run, and its outcome must match what the entry claims.
 

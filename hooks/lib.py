@@ -648,6 +648,9 @@ def is_authorization_input(path) -> bool:
         return True                       # unresolvable ⇒ treat as authorization data, fail closed
     for target in (ALLOWLIST, CACHE, PROTECTED, ALIAS_INDEX, AUDIT,
                    TORQUE_HOME / "harness" / "checks" / "cli-write-surface.json",
+                   # names the checks the agent may run against a live org; editing it widens
+                   # the agent's own reach, which is authorization by any other name
+                   TORQUE_HOME / "harness" / "checks" / "read-only-checks.json",
                    LOCAL / "clean-ip.rules"):
         try:
             if rp == target.resolve() if target.exists() else rp == target:
@@ -664,7 +667,8 @@ def is_authorization_input(path) -> bool:
     # somewhere unexpected still must not be one of these by name.
     return os.path.basename(str(path)) in {
         "writable-orgs.json", ".classify-cache.json", "protected-objects",
-        ".alias-index.json", "audit.log", "cli-write-surface.json", "clean-ip.rules"}
+        ".alias-index.json", "audit.log", "cli-write-surface.json", "clean-ip.rules",
+        "read-only-checks.json"}
 
 
 def maintainer_grant_valid(tree: str = ""):
