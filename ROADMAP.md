@@ -195,7 +195,7 @@ be this tool vouching for a control it has no access to.
 **The adversarial assurance corpus is the asset.** The observation that changed my mind, from the
 mechanism review: the catalogue's facts are copyable; the evidence that the gates, the retrieval
 and the verifiers fail correctly under hostile variation is not. 196 bypass fixtures, 34 negative
-retrieval cases, 17 mutators, the live experiments and the verifier-falsification seams are what
+retrieval cases, 19 mutators, the live experiments and the verifier-falsification seams are what
 the adversarial rounds left behind.
 
 So new capability ships with its bypass fixtures and its mutator, or it does not ship.
@@ -213,7 +213,7 @@ distinctive position, and it is a product decision rather than an engineering on
 
 The current state, measured rather than claimed: 103 checks (83 static, 100 capability, 103
 release),
-17 mutators, 216 adversarial fixtures, and retrieval measured against an evaluation set written by
+19 mutators, 216 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.
 
