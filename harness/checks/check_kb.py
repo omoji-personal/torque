@@ -1347,21 +1347,66 @@ def _allow_decisions_logged():
                        input=_kb_json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
                        capture_output=True, text=True, cwd=ROOT, timeout=60, env=env)
 
-        fire("sf data query --target-org zzz --query \"SELECT Id FROM Account\"")
+        # P1-006. This used to fire exactly one command — the single literal spelling the old
+        # `_SF_SHAPED` regex handled — so it was written in the detector's own vocabulary and
+        # would have stayed green through the entire drift class it exists to catch. An
+        # adjudicated Salesforce WRITE spelled `/usr/local/bin/sf …` or `sfdx force:data:…` was
+        # authorized and left no ALLOW record, and this check could not see it.
+        #
+        # Now it fires the spellings the classifier accepts and the regex missed. A check whose
+        # inputs come from the same list as the thing it tests is not a test.
+        # Spellings the classifier ADJUDICATES and then allows. Each must appear as an ALLOW.
+        # `nice sf …` is deliberately absent: a wrapped invocation is DENIED ("call `sf`
+        # directly"), so it belongs in the deny assertion below, not here. Asserting an ALLOW for
+        # it was my own wrong assumption, and this check caught it.
+        sf_spellings = [
+            'sf data query --target-org zzz --query "SELECT Id FROM Account"',
+            '/usr/local/bin/sf data query --target-org zzz --query "SELECT Id FROM Account"',
+            'sfdx force:data:soql:query --targetusername zzz --query "SELECT Id FROM Account"',
+        ]
+        for _c in sf_spellings:
+            fire(_c)
+        fire('nice sf data query --target-org zzz --query "SELECT Id FROM Account"')
         fire("ls -la")
+        fire("grep -rn 'sf data delete --target-org' .")   # names sf, is not an invocation
         if not log.exists():
             return Result("allow_decisions_logged", NA,
                           "audit log path is not overridable by env; cannot assert in isolation")
         lines = [_kb_json.loads(x) for x in log.read_text().splitlines() if x.strip()]
         allows = [x for x in lines if x.get("decision") == "ALLOW"]
-        if not any("sf data query" in str(x.get("detail")) for x in allows):
+        blob = " ".join(str(x.get("detail")) for x in allows)
+        # Each spelling must appear, identified by something unique to it, so a single logged
+        # command cannot satisfy the whole set.
+        missing = [m for m in ("/usr/local/bin/sf", "sfdx force:data:soql:query")
+                   if m not in blob]
+        if "sf data query" not in blob:
             return Result("allow_decisions_logged", FAIL,
                           "an allowed Salesforce operation produced no ALLOW entry")
+        if missing:
+            return Result("allow_decisions_logged", FAIL,
+                          f"these adjudicated Salesforce spellings produced NO ALLOW entry: "
+                          f"{missing} — the decision trail has a silent omission class, which "
+                          f"reads exactly like a complete trail")
         if any("ls -la" in str(x.get("detail")) for x in lines):
             return Result("allow_decisions_logged", FAIL,
                           "an ordinary shell command was logged — the trail will drown")
+        if any("grep -rn" in str(x.get("detail")) for x in allows):
+            return Result("allow_decisions_logged", FAIL,
+                          "a command that merely NAMES sf was logged as a Salesforce decision — "
+                          "the detector has become indiscriminate, which drowns the trail as "
+                          "surely as logging everything")
+        # A refused Salesforce operation must be in the trail too. A decision record that holds
+        # only the permissions granted is not a decision record.
+        denies = " ".join(str(x.get("detail")) for x in lines
+                          if x.get("decision") == "DENY")
+        if "wrapper-sf" not in denies:
+            return Result("allow_decisions_logged", FAIL,
+                          "a wrapped Salesforce invocation was refused but produced no DENY "
+                          "entry — the trail records what was permitted and not what was stopped")
     return Result("allow_decisions_logged", PASS,
-                  "an allowed Salesforce operation is recorded; ordinary shell calls are not")
+                  f"{len(sf_spellings)} allowed Salesforce spellings each recorded (plain, "
+                  f"absolute path, sfdx legacy) and a wrapped one recorded as DENY; ordinary "
+                  f"shell calls and a command that merely names sf are not logged")
 
 
 @check("python_floor_is_real", "static", catastrophe=False)
