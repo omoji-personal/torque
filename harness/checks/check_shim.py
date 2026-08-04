@@ -289,10 +289,20 @@ def _shim_and_bash_paths_agree():
     different roads. That is the shape this repository keeps getting wrong — a second
     representation nobody puts next to the first — so it is checked rather than assumed.
 
-    They are permitted to disagree in exactly one direction, on exactly one class of input: when
-    a value carries shell punctuation, the text road cannot tell a byte the kernel delivered
-    from a substitution a human typed, and refuses. The argv road knows. That case is listed
-    here as an expected disagreement WITH its direction asserted, so it cannot silently invert.
+    They USED to be permitted to disagree in one direction on one class of input: a value
+    carrying shell punctuation, where the text road could not tell a byte the kernel delivered
+    from a substitution a human typed, and refused. That disagreement is now closed, and this
+    check is how it was noticed — it failed the moment grouping detection became quote-aware,
+    reporting the licensed disagreement as "inverted or vanished".
+
+    It had vanished, in the right direction. A backtick inside a single-quoted value is a literal
+    backtick; bash expands nothing inside single quotes, so refusing it was a false positive, not
+    caution. The same defect denied `WHERE Id IN ('a','b')` and every relationship subquery — 854
+    denials across six months of real commands.
+
+    So the case moves into the agreeing set rather than staying licensed. A tolerated
+    disagreement that turns out to be a bug should stop being tolerated, and the list of
+    exceptions a system carries is exactly where fixed bugs go to hide.
     """
     name = "shim_and_bash_paths_agree"
     import shlex as _shx
@@ -311,6 +321,17 @@ def _shim_and_bash_paths_agree():
          "torque-test-nonexistent"],
         ["data", "delete", "bulk", "--sobject", "Log__c", "--file", "i.csv", "--target-org",
          "torque-test-nonexistent"],
+        # Formerly the licensed disagreement: a value carrying a backtick. shlex.join puts it in
+        # single quotes, where bash expands nothing, so both roads now read it as the literal it
+        # is. Kept as an agreeing case rather than deleted — it is the regression test for the
+        # quote-aware fix, and deleting it would remove the only place the old bug is pinned.
+        ["data", "query", "--query", "SELECT Id FROM A WHERE N=" + chr(96) + "x" + chr(96),
+         "--target-org", "torque-test-nonexistent"],
+        # The same punctuation in the shapes that actually cost 854 denials.
+        ["data", "query", "--query", "SELECT Id FROM Account WHERE Id IN ('a','b')",
+         "--target-org", "torque-test-nonexistent"],
+        ["data", "query", "--query", "SELECT Id, (SELECT Id FROM Contacts) FROM Account",
+         "--target-org", "torque-test-nonexistent"],
     ]
     bad = []
     for argv in agree:
@@ -319,17 +340,18 @@ def _shim_and_bash_paths_agree():
         if a != t:
             bad.append(f"{argv[:3]}: argv exit {a}, text exit {t}")
 
-    # the one licensed disagreement, asserted in its direction
-    odd = ["data", "query", "--query", "SELECT Id FROM A WHERE N=" + chr(96) + "x" + chr(96),
-           "--target-org", "torque-test-nonexistent"]
-    a = verdict({"tool_name": "SfArgv", "tool_input": {"argv": odd}})
-    t = verdict({"tool_name": "Bash", "tool_input": {"command": _shx.join(["sf", *odd])}})
-    if not (a == 0 and t == 2):
-        bad.append(f"the licensed disagreement inverted or vanished: argv exit {a} "
-                   f"(want 0, a read), text exit {t} (want 2, refused on punctuation)")
+    # The punctuation-carrying shapes must agree at ALLOW specifically, not merely agree. Two
+    # roads that both refuse a legal query agree perfectly and are both wrong, which is the state
+    # this check reported as PASS for as long as the false positive existed.
+    for argv in agree[-3:]:
+        a = verdict({"tool_name": "SfArgv", "tool_input": {"argv": argv}})
+        if a != 0:
+            bad.append(f"a read carrying SOQL punctuation was refused by the argv road "
+                       f"(exit {a}) — agreement at the wrong verdict is not agreement")
+
     if bad:
         return Result(name, FAIL, "; ".join(bad))
     return Result(name, PASS,
-                  f"{len(agree)} shapes reach the same verdict by both roads; the one shape that "
-                  f"differs is a value carrying a backtick, where the text road refuses and the "
-                  f"argv road is right")
+                  f"{len(agree)} shapes reach the same verdict by both roads, including three "
+                  f"carrying shell punctuation inside quoted SOQL — formerly the one licensed "
+                  f"disagreement, now closed because refusing them was a false positive")
