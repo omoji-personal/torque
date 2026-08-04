@@ -1,14 +1,18 @@
 # Maintainer mode — developing Torque without turning Torque off
 
-**Status: written and behaviourally verified, not applied.** All three files it touches are
-protected, which is the problem it solves, so the first application has to be the operator's.
-After that it is self-sustaining.
+**Status: applied and in use.** This header said "written and behaviourally verified, not
+applied" while the paragraph twenty lines down said "Shipped 2026-08-04" — the document
+contradicted itself about the only fact a reader checks first, which is whether the mechanism is
+real. It is: `lib.maintainer_grant_valid()` is consulted by `prod_write_gate`, and a window
+opened on 2026-08-04 was used to apply the quote-aware parser fix and observe-only mode.
 
 ```
-git apply local/patches/maintainer-mode.patch     # operator, from the repo root
 torque approve --maintainer 90                    # operator, from a REAL terminal
 torque approve --end-maintainer                   # revoke early
 ```
+
+The patch step is gone with it: `local/patches/maintainer-mode.patch` was the bootstrap for a
+mechanism that is now in the tree.
 
 Minting cannot be done with `!` from inside a Claude session, and that is not a bug:
 `torque approve` requires a login TTY whose ancestry is clear of `claude`/`node`, which is the
