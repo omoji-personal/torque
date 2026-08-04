@@ -979,12 +979,43 @@ def _claimed_counts():
     # them would force a choice between rewriting history and failing the build forever. The
     # distinction worth holding is "living surfaces are scanned; dated documents name their
     # commit and are exempt".
+    # The shipped PDF's own length. Two documents said "14 pages" about a 20-page file, and had
+    # for as long as anyone had counted: the guide grew, the sentence introducing it did not, and
+    # no count in this check covered it because every other number here derives from source under
+    # git and this one derives from a build artifact. A page count is the first number a reader
+    # can check without cloning anything, which makes it the worst one to have wrong.
+    _pdf = ROOT / "guide" / "Torque-Guide.pdf"
+    _pages, _pages_why = None, ""
+    if _pdf.exists():
+        try:
+            import pypdf as _pp
+            _pages = len(_pp.PdfReader(str(_pdf)).pages)
+        except ImportError:
+            _pages_why = "pypdf is not installed"
+        except Exception as _e:
+            _pages_why = f"{type(_e).__name__} reading the PDF"
+    else:
+        _pages_why = "guide/Torque-Guide.pdf is not present"
+    unverified = []
+
     for rel in ("guide/torque-guide.html", "README.md", "bin/torque-demo", "bin/torque-init",
-                "ROADMAP.md"):
+                "ROADMAP.md", "guide/TORQUE-GUIDE.md"):
         f = ROOT / rel
         if not f.exists():
             continue
         body = f.read_text()
+        # Page claims about the shipped guide. Scoped to sentences that name the PDF, so an
+        # unrelated "12 pages" elsewhere is not dragged in.
+        for m in _kb_re.finditer(r"(?i)torque-guide\.pdf[^\n]{0,80}?(\d{1,3})\s+pages?"
+                                 r"|(\d{1,3})[- ]pages?[^\n]{0,80}?torque-guide\.pdf", body):
+            stated = int(m.group(1) or m.group(2))
+            if _pages is None:
+                # An unverifiable claim must not read as a verified one. This is the failure the
+                # repo keeps re-learning: a check that cannot reach its evidence reports nothing
+                # and the absence gets read as agreement.
+                unverified.append(f"{rel} claims {stated} pages, unchecked — {_pages_why}")
+            elif stated != _pages:
+                bad.append(f"{rel} says the guide is {stated} pages; the built PDF is {_pages}")
         for m in _kb_re.finditer(r"(\d{2,4}) recorded", body):
             if int(m.group(1)) != recorded:
                 bad.append(f"{rel} says {m.group(1)} recorded, on disk there are {recorded}")
@@ -1028,9 +1059,13 @@ def _claimed_counts():
                            f"{_exact[prof]}")
     if bad:
         return Result("claimed_counts", FAIL, "; ".join(bad))
+    if unverified:
+        return Result("claimed_counts", WARN,
+                      f"{recorded} recorded fixtures and {len(REGISTRY)} registered checks match; "
+                      f"page claims NOT verified: {'; '.join(unverified)}")
     return Result("claimed_counts", PASS,
-                  f"{recorded} recorded fixtures and {len(REGISTRY)} registered checks; every "
-                  f"prose count matches the fixtures on disk or a real profile total")
+                  f"{recorded} recorded fixtures, {len(REGISTRY)} registered checks and a "
+                  f"{_pages}-page guide; every prose count matches the artifact it describes")
 
 
 @check("lesson_backlog", "static", catastrophe=False)

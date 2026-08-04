@@ -18,11 +18,14 @@ not read front to back.
    not FLS; a formula field can expose the fields it references.
 5. **When an API name does not resolve** — `packaging`. The namespace prefix appears in the
    packaging org too, not only in subscriber orgs.
-6. **Before treating an org as safe because of its type** — `orgs`. Developer Edition is neither
+6. **When identical code behaves differently in two orgs, or the CLI rejects valid SOQL** —
+   `api`. API version is stored per class and per flow and changes runtime semantics; some
+   standard relationships can never be counted; `ALL ROWS` is a CLI flag, not SOQL text here.
+7. **Before treating an org as safe because of its type** — `orgs`. Developer Edition is neither
    a sandbox nor production; Full and Partial Copy sandboxes hold real customer data.
-7. **When browser or login automation fails** — `auth`. Phishing-resistant MFA, and what
+8. **When browser or login automation fails** — `auth`. Phishing-resistant MFA, and what
    actually breaks the frontdoor session handoff.
-8. **Whenever a result looks green but wrong** — the API reported success and the outcome is
+9. **Whenever a result looks green but wrong** — the API reported success and the outcome is
    still wrong. That is the failure this catalogue exists for; search it by symptom first.
 
 If none of these apply, this rule is silent. It is a lookup, not a ritual.

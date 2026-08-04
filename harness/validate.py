@@ -482,7 +482,7 @@ def self_test(target=None):
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
     ok = True
-    TOTAL_MUTATORS = 16            # keep in step with the mutators below; asserted by the count check
+    TOTAL_MUTATORS = 17            # keep in step with the mutators below; asserted by the count check
     skipped = []                   # (label, count) — mutators that could not run; never read as caught
     op = _operator_mode()          # clean-IP mutators need the private pattern list
     if not op:
@@ -800,6 +800,41 @@ def self_test(target=None):
         ok &= passed
     finally:
         lbf.write_text(orig8)
+    # protected-path mutator: neuter lib.is_protected_target, leaving ONLY the basename list.
+    # wired_hooks_are_unwritable must then FAIL — because PROTECTED_BASENAMES names four files
+    # in hooks/ and settings.json wires four, and the two sets are not the same four. The two
+    # most recently added hooks are the ones the basename list has never heard of, which is the
+    # whole shape of the defect: narrow the resolve-based half and the newest gates go writable
+    # while every older one stays protected and every existing gate check stays green.
+    # Monkeypatched on the live module, not the file — the check holds an imported reference, so
+    # editing hooks/lib.py on disk would change nothing and the mutator would report a false
+    # catch. Same reasoning as the redaction mutator below.
+    import importlib as _il_p
+    _lib_p = _il_p.import_module("lib")
+    _real_ipt = _lib_p.is_protected_target
+    _fn_p = dict((n, f) for n, _p, _c, f in REGISTRY).get("every_wired_hook_classifies_protected")
+    if _fn_p is None:
+        print("  ✗ protected-path mutator: every_wired_hook_classifies_protected is not registered")
+        ok = False
+    else:
+        try:
+            # ASSERT BEFORE MUTATING. If the un-mutated check does not PASS, its FAIL under
+            # mutation says nothing about the predicate.
+            base_r = _fn_p()
+            _lib_p.is_protected_target = lambda p: False       # MUTANT: basename list only
+            r = _fn_p()
+            if base_r.outcome != PASS:
+                passed = False
+                print(f"  ✗ protected-path mutator: VACUOUS — the un-mutated check was "
+                      f"{base_r.outcome}, not PASS ({base_r.detail[:70]}), so neutering "
+                      f"is_protected_target proves nothing about it")
+            else:
+                passed = r.outcome == FAIL
+                print(f"  {'✓' if passed else '✗'} protected-path (is_protected_target) mutator: "
+                      f"expected FAIL, got {r.outcome}")
+            ok &= passed
+        finally:
+            _lib_p.is_protected_target = _real_ipt             # always restore
     # redaction mutator: monkeypatch lib.redact to identity and call the session-log check.
     # Editing the FILE does nothing here — lib is already imported, so the check would keep using
     # the cached function and report a false PASS. Patching the live module object is both the

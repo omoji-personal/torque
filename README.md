@@ -204,7 +204,7 @@ Torque validates itself the way it validates Salesforce work. `--profile release
 - **196 gate fixtures** (193 recorded on disk, 3 HMAC tokens minted during the run) — every
   attack class found across the audits, each one a named,
   runnable test.
-- **16 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
+- **17 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
   attack to succeed (or, for the static scanners, requires the check to FAIL). A check that
   cannot fail proves nothing; these prove each guard is load-bearing. Three exercise the clean-IP
   scan and need the private pattern list, so they report as operator-only rather than pretending
@@ -249,7 +249,7 @@ is the system working, and the log will say which.
 
 ## The guide
 
-[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 14 pages: what it does, why it isn't
+[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 20 pages: what it does, why it isn't
 the MCP server, setup, the operations worked through, the safety model, troubleshooting,
 and how the harness proves itself.
 
