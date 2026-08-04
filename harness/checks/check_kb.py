@@ -614,16 +614,73 @@ def _first_party_trust():
     bin/ named torque* — so torque-shadow was written, landed in bin/, inherited trust nobody had
     granted it, and handed the agent arbitrary Apex around the anonymous-Apex control.
 
-    Trust is now a named set of tools that only read. This asserts both halves: the read-only
-    tools keep working, because a gate that refuses the tool's own documented commands gets routed
-    around; and a NEW tool in the same directory gets nothing (P1-002, external audit).
+    Trust is now a named set of tools that only read. This asserts three halves, the third added
+    2026-08-04: the read-only tools keep working, because a gate that refuses the tool's own
+    documented commands gets routed around; a NEW tool in the same directory gets nothing
+    (P1-002, external audit); and every tool ON the list is READ-ONLY IN ITS SOURCE.
+
+    That third one closes the gap the other two leave. Membership was a name in a set, and
+    nothing ever opened the file to see whether the name was still telling the truth. A tool
+    joins the list on the day it only reads and keeps its exemption forever after — which is
+    location-based trust again, wearing a list instead of a directory. Every leading run of
+    string literals that starts with an `sf` verb is now pulled out of the AST and put through
+    `is_read`, so a trusted tool that grows an `sf data delete` loses the exemption in the same
+    commit that adds it.
     """
+    import ast as _fp_ast
     import importlib.util as _il
     spec = _il.spec_from_file_location("torque_sp_fp", ROOT / "hooks" / "shellparse.py")
     sp = _il.module_from_spec(spec); spec.loader.exec_module(sp)
+
+    # every top-level `sf` verb the CLI has, so a run of literals can be recognised as one
+    _VERBS = {"data", "org", "project", "apex", "sobject", "schema", "package", "limits",
+              "alias", "config", "force", "sf", "lightning", "visualforce", "static-resource"}
+    writes = []
+    for tool in sorted(sp.READ_ONLY_FIRST_PARTY):
+        f = ROOT / "bin" / tool
+        if not f.exists():
+            return Result("first_party_trust_is_capability_based", FAIL,
+                          f"{tool} is trusted as read-only and does not exist")
+        try:
+            tree = _fp_ast.parse(f.read_text())
+        except SyntaxError as e:
+            return Result("first_party_trust_is_capability_based", FAIL,
+                          f"{tool} does not parse ({e}), so its behaviour cannot be established "
+                          f"— and an unestablished tool does not keep an exemption")
+        for node in _fp_ast.walk(tree):
+            if isinstance(node, (_fp_ast.List, _fp_ast.Tuple)):
+                items = node.elts
+            elif isinstance(node, _fp_ast.Call):
+                items = node.args
+            else:
+                continue
+            run = []
+            for el in items:
+                if isinstance(el, _fp_ast.Constant) and isinstance(el.value, str):
+                    run.append(el.value)
+                else:
+                    break
+            if not run:
+                continue
+            if run[0] == "sf":
+                run = run[1:]
+            # A real sf invocation carries a verb AND a subcommand. Requiring both is not
+            # cosmetic: the one-element form matched `ap.add_argument("org")` in torque-log and
+            # reported the argument parser as a write. A check whose first finding is noise gets
+            # the finding waved through, and then the next one does too.
+            if len(run) < 2 or run[0] not in _VERBS:
+                continue
+            if not sp.is_read(run):
+                writes.append(f"{tool} line {node.lineno}: sf {' '.join(run)}")
+    if writes:
+        return Result("first_party_trust_is_capability_based", FAIL,
+                      f"a tool trusted as read-only invokes a write: {writes}")
+
     for cmd in ("python3 bin/torque-checkup --target-org acme",
                 "python3 bin/torque-blast-radius --target-org acme --sobject Account",
-                "python3 bin/torque checkup --target-org acme"):
+                "python3 bin/torque-done --target-org acme --field Account.X__c",
+                "python3 bin/torque checkup --target-org acme",
+                "python3 bin/torque done --target-org acme --field Account.X__c"):
         if not sp._is_own_harness(cmd.split()):
             return Result("first_party_trust_is_capability_based", FAIL,
                           f"a documented read-only command is refused: {cmd!r} — a gate that "
@@ -637,8 +694,10 @@ def _first_party_trust():
             return Result("first_party_trust_is_capability_based", FAIL,
                           f"trusted a tool that {why}: {cmd!r} — location is not capability")
     return Result("first_party_trust_is_capability_based", PASS,
-                  "3 declared read-only commands exempt; 5 that execute, deploy, authorize or "
-                  "are simply unknown get nothing from living in the same directory")
+                  f"{len(sp.READ_ONLY_FIRST_PARTY)} trusted tools verified read-only in their "
+                  f"own source; 5 declared read-only commands exempt; 5 that execute, deploy, "
+                  f"authorize or are simply unknown get nothing from living in the same "
+                  f"directory")
 
 
 @check("production_allow_requires_a_record", "static", catastrophe=True)

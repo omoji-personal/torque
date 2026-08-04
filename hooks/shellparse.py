@@ -158,8 +158,8 @@ def stages_local(argv) -> bool:
 # Trust is a property of what a tool DOES, not of where it lives. Naming each read-only tool
 # is more maintenance than a path rule and that is the point: a new tool under bin/ gets no
 # trust until someone decides it deserves some.
-READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log"}
-READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log"}
+READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log", "torque-done"}
+READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done"}
 
 
 def _is_own_harness(argv) -> bool:
