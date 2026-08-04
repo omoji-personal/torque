@@ -124,6 +124,31 @@ jobs:
       - name: Guide PDF is not stale relative to its source
         run: python3 scripts/check-guide-fresh.py
 
+      # An attestation records exactly what a run did, and the newest one in this repo went
+      # roughly sixty commits stale — because producing it was a hand operation, so it happened
+      # rarely, on the artifact whose entire job is to be trustworthy.
+      #
+      # This is a STATIC attestation: no org, no secrets, and it says so in its own org field
+      # rather than leaving a null a reader has to interpret. It is NOT a release attestation
+      # and cannot be read as one — `.claude/rules/validation.md` requires an all-PASS release
+      # entry for publication, and that still needs an operator and a disposable org.
+      #
+      # Written outside the repo on purpose. The clean-tree assertion below exists to catch a
+      # mutator that failed to restore a hook, and an attestation committed into harness/attest/
+      # would trip it with a file that is not residue.
+      - name: Static attestation
+        run: |
+          python3 bin/torque attest --profile static --out "$RUNNER_TEMP/attest"
+          cat "$RUNNER_TEMP"/attest/*.json
+
+      - name: Upload the attestation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torque-static-attestation-${{ github.sha }}
+          path: ${{ runner.temp }}/attest/*.json
+          if-no-files-found: warn
+
       # The static profile includes --self-test, which MUTATES HOOK SOURCES IN PLACE and
       # restores them in a finally. If a restore is ever missed, the mutation is a source edit
       # that would ride along in the next commit — a neutered guard, merged silently, which is
