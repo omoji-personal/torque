@@ -17,7 +17,20 @@ import pathlib
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKS = ROOT / "harness" / "checks"
-DENYLIST = Path.home() / "Desktop" / "torque-planning" / "denylist.txt"   # PRIVATE, external
+# PRIVATE, external, and NEVER committed — publishing the list of denied terms would itself be
+# the disclosure it exists to prevent.
+#
+# C2: this was hardcoded to the author's Desktop layout, so on any other machine clean_ip
+# reported operator-only and torque-attest recorded the denylist digest as "ABSENT". The check
+# that guards against publishing client identities was therefore structurally unrunnable by
+# anyone except one person on one laptop — including in CI, which is where it would have caught
+# the one time this actually went wrong.
+#
+# TORQUE_DENYLIST overrides it, keeping the old path as the fallback so nothing changes for the
+# author. This is what makes an Actions-secret denylist possible: clean_ip names the offending
+# FILE and never the matched term, so it can run in CI without leaking into logs.
+DENYLIST = Path(os.environ.get(
+    "TORQUE_DENYLIST", Path.home() / "Desktop" / "torque-planning" / "denylist.txt"))
 PROFILES = ("static", "capability", "release")
 RANK = {p: i for i, p in enumerate(PROFILES)}
 
