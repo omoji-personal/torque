@@ -130,7 +130,12 @@ def _preflight(target):
     return Result("preflight_credentials", PASS,
                   base + "; every allowlisted org is still authenticated")
 
-@check("local_hygiene", "capability")
+# D6: registered "capability" while doing no org work at all — it scans local/ file modes and
+# secret shapes, which needs no org and no credentials. That mismatch meant the one check
+# guarding the operator's own secret store only ran on org-touching profiles, so a plain
+# `--profile static` never looked at local/. Moved to static, where it now runs on every
+# invocation and in CI, which is exactly where you want a secret scanner.
+@check("local_hygiene", "static")
 def _local_hygiene():
     # scan local/ for secret shapes and assert 0600 on sensitive files
     import stat
@@ -211,12 +216,26 @@ def _enforcement_map():
 
 @check("gate_adversarial_fixtures", "capability", catastrophe=True)
 def _gate_adversarial_fixtures(target):
-    # Runs harness/tests/run_gate_fixtures.py — 37 adversarial + legit fixtures plus dynamic
+    # Runs harness/tests/run_gate_fixtures.py over the recorded fixture corpus plus dynamic
     # valid-token allow-path tests, exercising both gates against every audited attack class
     # (parser evasion, compound/quote, legacy verbs, decoy target, secret-read self-mint,
     # protected-path redirect, MCP destructive, apex TOCTOU, forged signature). The attack
     # strings live as DATA in the JSON so they never touch a Bash command line.
+    #
+    # D4: the count is not written here. It said "37 adversarial + legit fixtures" against a
+    # corpus of 193 recorded ones. A number in a comment has nothing that re-derives it, and
+    # claimed_counts cannot reach inside one, so a fresh figure would be the same defect with a
+    # later date. The corpus size is asserted where it is checked.
     import os as _os
+    # C5: with no --target-org this built env={..., "TORQUE_TEST_ORG": None}, which raises
+    # TypeError, gets caught upstream, and surfaces as a crash-shaped FAIL. The house taxonomy
+    # says a check that cannot reach its subject is SKIP with a reason, never a failure — a red
+    # verdict here reads as "the gates are broken" when the truth is "nobody said which org".
+    if not target:
+        return Result("gate_adversarial_fixtures", SKIP,
+                      "no --target-org: the fixtures substitute a writable org alias at load "
+                      "time, so there is nothing to substitute and the corpus cannot run. Not a "
+                      "gate failure, and deliberately not reported as one.")
     r = subprocess.run(["python3", str(ROOT / "harness" / "tests" / "run_gate_fixtures.py")],
                        capture_output=True, text=True, cwd=ROOT, timeout=300,
                        env={**_os.environ, "TORQUE_TEST_ORG": target})   # portable to any org

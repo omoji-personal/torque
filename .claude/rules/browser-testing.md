@@ -1,7 +1,9 @@
 # Browser testing
 
 Auth is a **frontdoor handoff from the CLI session** — never a UI login. Salesforce enforces
-phishing-resistant MFA (staggered from 2026-07-20; the earlier 1 July date was withdrawn), so UI login in automation hits a WebAuthn wall;
+phishing-resistant MFA (enforcement began 2026-07-20, staggered over roughly 15 days, for
+admin-class users; the earlier 1 July date was PAUSED over a security-key re-registration bug and
+then restarted, not withdrawn), so UI login in automation hits a WebAuthn wall;
 `sf org open --url-only` mints a session URL from the already-authenticated CLI. That URL
 **contains a live session token — it must never be echoed** to stdout, logs, or a
 screenshot. Use `bin/torque-frontdoor` (writes it to a mode-0600 file, prints nothing).

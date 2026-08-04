@@ -1011,6 +1011,21 @@ def _claimed_counts():
             if int(m.group(1)) not in valid:
                 bad.append(f"{rel} says {m.group(1)} checks; no profile has that many "
                            f"(profiles: {sorted(valid)})")
+        # The per-profile breakdown was NOT checked, and it is the form the prose actually uses:
+        # "72 checks (51 static, 69 capability, 72 release)". Only the leading "72 checks"
+        # matched above, so moving one check between profiles left three numbers in that sentence
+        # and only one of them under test. Caught by moving local_hygiene from capability to
+        # static and watching claimed_counts stay green while the sentence went stale.
+        #
+        # Each name now has to equal ITS OWN cumulative total, not merely be one of the three,
+        # which is a stronger claim than the line above makes.
+        _exact = {pr: sum(n for pp, n in _c.items() if _v.RANK[pp] <= _v.RANK[pr])
+                  for pr in _v.PROFILES}
+        for m in _kb_re.finditer(r"(\d{1,3})\s+(static|capability|release)\b", body):
+            stated, prof = int(m.group(1)), m.group(2)
+            if stated != _exact[prof]:
+                bad.append(f"{rel} says {stated} {prof}; the {prof} profile runs "
+                           f"{_exact[prof]}")
     if bad:
         return Result("claimed_counts", FAIL, "; ".join(bad))
     return Result("claimed_counts", PASS,
@@ -1949,17 +1964,49 @@ def _public_description_accurate(target):
     _c2 = _C(pr for _n, pr, _cc, _f in REGISTRY)
     profiles = {sum(n for pp, n in _c2.items() if _v2.RANK[pp] <= _v2.RANK[pr])
                 for pr in _v2.PROFILES}
+    # B2. All three derivations below were broken, and each failed silently to a number that
+    # matched nothing:
+    #
+    #   mutators — split validate.py on the string "REGRESSIONS", which appears in that file
+    #     exactly zero times. The split degenerated, the regex ran over the whole file, and the
+    #     count came out wrong. TOTAL_MUTATORS is the declared value and is already asserted by
+    #     claimed_counts, so read that.
+    #   fuzz — counted lines matching ^\s*[A-Z_]+\s*=\s*\( in differential_fuzz.py, a shape that
+    #     occurs nowhere in it, deriving 0. Meanwhile a regex for "N generated cases" WAS run,
+    #     its result assigned to `m`, and `m` was then never used: the correct value was computed
+    #     and thrown away one line later, while 128 was hardcoded into `real` beside it.
+    #   the hardcoded 128 — the literal this check exists to catch, written into the check.
+    #
+    # Net effect: `real` admitted 0, so a public description claiming "0 mutators" would have
+    # passed, and the correct "15" would have FAILED. A guard against stale numbers, itself
+    # deriving stale numbers, is worse than no guard: it certifies the thing it cannot see.
+    # Derived from the generator's own inputs, not from a literal and not from a regex over
+    # source. generate() is one product over RUNNERS x SF_FORMS x ORG_POS, plus RUNNERS[:4] x
+    # SECRET_FORMS, plus BENIGN — so add a form and this number moves on its own, which a
+    # hardcoded 128 could never do.
+    fz = ROOT / "harness" / "tests" / "differential_fuzz.py"
     fuzz = 0
-    m = _kb_re.search(r"(\d+)\s+generated cases", (ROOT / "harness" / "tests" /
-                                                   "differential_fuzz.py").read_text())
-    try:
-        fz = ROOT / "harness" / "tests" / "differential_fuzz.py"
-        fuzz = len(_kb_re.findall(r"^\s*[A-Z_]+\s*=\s*\(", fz.read_text(), _kb_re.M))
-    except Exception:
-        pass
-    mutators = len(_kb_re.findall(r"^\s*\(", (ROOT / "harness" / "validate.py").read_text()
-                                  .split("REGRESSIONS", 1)[-1].split("]", 1)[0], _kb_re.M))
-    real = {fixtures, fixtures + 3, kb, mutators, 128} | profiles
+    if fz.exists():
+        try:
+            import importlib.util as _ifz
+            _s = _ifz.spec_from_file_location("torque_dfz_count", fz)
+            _m = _ifz.module_from_spec(_s); _s.loader.exec_module(_m)
+            fuzz = (len(_m.RUNNERS) * len(_m.SF_FORMS) * len(_m.ORG_POS)
+                    + len(_m.RUNNERS[:4]) * len(_m.SECRET_FORMS)
+                    + len(_m.BENIGN))
+        except Exception:
+            fuzz = 0
+    mt = _kb_re.search(r"TOTAL_MUTATORS\s*=\s*(\d+)",
+                       (ROOT / "harness" / "validate.py").read_text())
+    mutators = int(mt.group(1)) if mt else 0
+    if not mutators or not fuzz:
+        # Refuse to compare against a metric set built from a derivation that silently produced
+        # nothing. That failure mode is what this check was blind to for its whole life.
+        return Result("public_description_accurate", FAIL,
+                      f"could not derive the metrics to compare against "
+                      f"(mutators={mutators}, fuzz={fuzz}) — this check must not pass by finding "
+                      f"nothing, which is exactly how it used to pass")
+    real = {fixtures, fixtures + 3, kb, mutators, fuzz} | profiles
     bad = [n for n in _kb_re.findall(r"\b(\d{2,4})\b", desc) if int(n) not in real]
     if bad:
         return Result("public_description_accurate", FAIL,

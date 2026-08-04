@@ -461,7 +461,13 @@ def self_test(target=None):
             DENYLIST.rename(bak)
             r = _clean_ip()
             passed = r.outcome == FAIL and "FAIL-CLOSED" in r.detail
-            print(f"  {'✓' if passed else '✗'} clean_ip fail-closed (denylist absent): expected FAIL, got {r.outcome}")
+            # The word "mutator" is load-bearing, not decoration. Two readers parse these lines on
+            # that exact token: named_mutators_exist, to derive the set of real mutator names, and
+            # torque-attest:61, to record which ones a run caught. This line lacked it, so both
+            # read 14 while TOTAL_MUTATORS said 15, and every attestation counted a mutator it
+            # could not name. A count and a list disagreeing, inside the artifact offered as
+            # evidence, is the exact defect this harness exists to catch.
+            print(f"  {'✓' if passed else '✗'} clean_ip fail-closed (denylist absent) mutator: expected FAIL, got {r.outcome}")
             ok &= passed
         finally:
             bak.rename(DENYLIST)
