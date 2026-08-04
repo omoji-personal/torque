@@ -562,6 +562,34 @@ entries:
   confidence: practitioner
   updated: 2026-08-01
 
+- id: savepoint-rollback-does-not-refund-limits
+  domain: limits
+  title: A rollback restores the data and not the governor budget, and spends a statement of its own
+  symptom: >
+    A rehearsal that never commits still trips a governor limit, and the DML statement count
+    after Database.rollback is HIGHER than it was before the savepoint was set.
+  cause: >
+    Savepoints and rollbacks are DML statements themselves. setSavepoint spends one, the DML
+    spends one, Database.rollback spends a third, and the counter is not rewound when the data
+    is. Nothing in the transaction reports this: the records really are gone, so the run looks
+    free.
+  remedy: >
+    Budget a shadow run as costing MORE than the operation it rehearses, not less — three DML
+    statements where the real thing spends one. An operation already near the limit cannot be
+    safely rehearsed this way, and the rehearsal will fail for a reason that says nothing about
+    whether the operation would have worked.
+  gotcha: >
+    Measured on a Developer Edition org, four runs, 2026-08-04: DML statements 0 → 2 → 3 and DML
+    rows 0 → 1 → 1 across setSavepoint, one insert, and Database.rollback. Re-runnable with
+    harness/experiments/shadow-rollback-boundary.py.
+  triggers: ['setSavepoint', 'Database\.rollback', 'Savepoint\s+\w+\s*=', 'torque\s+shadow']
+  requires: >
+    A shadow or rehearsal run needs governor headroom for the savepoint, the DML and the
+    rollback — three statements where the real operation spends one — so the headroom it needs
+    is larger than the operation it is standing in for.
+  confidence: practitioner
+  updated: 2026-08-04
+
 - id: tooling-api-refuses-permission-objects
   domain: api
   title: The Tooling API does not serve the permission objects, and says so only at run time

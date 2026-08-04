@@ -106,7 +106,31 @@ production.
 classifies live and re-checks the identity before running, so only sandbox, developer and scratch
 are eligible.
 
-**The measurement is built and not yet run.** `harness/experiments/shadow-rollback-boundary.py`
+**Run four times, 2026-08-04. Two of five established, and the other three are bounded rather
+than pending.**
+
+- **DML rolls back.** The probe record is gone, confirmed by the experiment and independently.
+- **Governor limits do NOT rewind, and the rollback bills for the undo.** 0 → 2 → 3 statements,
+  0 → 1 → 1 rows. `setSavepoint` spends one, the insert spends one, `Database.rollback` spends a
+  third. `torque-shadow`'s docstring already asserted the 2 → 3 half; this reproduced it with a
+  re-runnable script and the full triple, and it is now a catalogue entry
+  (`savepoint-rollback-does-not-refund-limits`) so it reaches an operator who never opens that
+  file. The tool knew and the catalogue did not, which is the same two-lists shape found four
+  times this week.
+- **The Queueable question is CLOSED AS UNMEASURABLE from here**, not left open. Four designs:
+  `AsyncApexJob` by id, then with a control arm, then with the wait removed, then observing a
+  side effect instead of a job row. The org holds zero `AsyncApexJob` rows ever, and a Queueable
+  declared as an inner class inside anonymous Apex left no side effect even when enqueued and
+  committed — so the control never showed up and every treatment result was uninterpretable.
+  Establishing it needs a deployed `ApexClass`, which is a metadata change an experiment must
+  not push into somebody's org. Platform events and callouts are bounded the same way, by a
+  subscriber object and a Remote Site Setting respectively.
+
+The guard regexes in `torque-shadow` refuse all three shapes regardless, which is the safe
+direction and does not turn a documented claim into a measured one. The docstring now says which
+of its claims are which.
+
+**The experiment.** `harness/experiments/shadow-rollback-boundary.py`
 sets a savepoint, inserts a marked record, enqueues a Queueable, rolls back, and then measures
 three things: whether the DML is really gone, whether the governor counters rewound with the
 data, and whether the job survived. It names platform events and callouts as NOT ESTABLISHED
