@@ -51,7 +51,12 @@ entries:
     and an editable=true entry fails the whole deploy. The boilerplate that works for every
     other field breaks on them.
   detect: "SELECT Field, Parent.Name FROM FieldPermissions WHERE Field = 'Account.My_Field__c'"
-  triggers: ['project\s+deploy.*(CustomField|fields/)', 'deploy:start.*CustomField', 'metadata\s+CustomField', 'FieldPermissions', 'project\s+deploy.*manifest', 'deploy.*package\.xml']
+  # `metadata\s+CustomField` was here and matched on the metadata TYPE regardless of the verb,
+  # so `project delete source --metadata CustomField` was told it needed a permission set. A
+  # delete needs no field-level security, and a requirement set carrying things the operation
+  # does not require misleads as surely as one that leaves things out. Dropped rather than
+  # narrowed: the deploy case it was meant to catch is already covered by the first pattern.
+  triggers: ['project\s+deploy.*(CustomField|fields/)', 'deploy:start.*CustomField', 'FieldPermissions', 'project\s+deploy.*manifest', 'deploy.*package\.xml']
   requires: >
     A CustomField alone is not a feature. To be usable it needs, in the same deploy: field-level
     security carried by a PermissionSet (or Profile) — nothing grants it implicitly — and, to be
@@ -214,6 +219,10 @@ entries:
     Recycle Bin for 15 days and a hard delete is not — that difference is usually the reason
     someone wanted it, and also the reason to be careful.
   triggers: ['--hard-delete', 'hardDelete']
+  requires: >
+    A hard delete needs the "Bulk API Hard Delete" user permission granted to the running user
+    before the job is submitted, and a decision made in advance that the records are not wanted
+    back — a normal delete is recoverable from the Recycle Bin for 15 days and this is not.
   confidence: documented
   source: "Bulk API Developer Guide — hardDelete"
   updated: 2026-08-01
@@ -247,6 +256,10 @@ entries:
     Run queries in USER_MODE (or use WITH SECURITY_ENFORCED), and strip inaccessible fields
     with Security.stripInaccessible before returning data.
   triggers: ['apex\s+run', 'apex:run', 'ApexClass']
+  requires: >
+    Apex that returns user data needs field and object access enforced explicitly: queries run
+    in USER_MODE or carrying WITH SECURITY_ENFORCED, and Security.stripInaccessible applied
+    before anything is returned. A sharing declaration does not supply this and cannot.
   confidence: documented
   source: "Apex Developer Guide — Enforcing Object and Field Permissions"
   updated: 2026-08-01
@@ -565,6 +578,10 @@ entries:
     for the job id, and compare a before and after count. This is the single most important
     habit in any mass update: success means the job finished, not that it worked.
   triggers: ['data\s+\w+\s+bulk', 'data:\w+:bulk', '--file\b.*\.csv']
+  requires: >
+    A bulk operation needs its per-record results read for the job id, and a before-and-after
+    count compared, before anyone says the data changed. The exit code and the job state answer
+    a different question — whether the job finished — and both say success when every row failed.
   confidence: documented
   source: 'Salesforce Bulk API 2.0 Developer Guide — Get Job Failed Record Results'
   updated: 2026-08-01

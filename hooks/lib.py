@@ -928,12 +928,22 @@ def platform_notes(command: str, limit: int = 2):
     """
     if not command:
         return []
+    # Triggers are written against modern `sf` wording. Match the legacy spelling too, by
+    # normalising a copy — the operator on `force:data:bulk:delete` is doing the same thing as
+    # the one on `data delete bulk`, and used to be told nothing at all. Both forms are searched
+    # rather than only the normalised one, so a trigger deliberately written against legacy text
+    # keeps working.
+    try:
+        import shellparse as _sp_notes
+        forms = (command, _sp_notes.modernize(command))
+    except Exception:
+        forms = (command,)
     hits = []
     for e in _kb_entries():
         matched = 0
         for pat in e.get("triggers") or []:
             try:
-                if re.search(pat, command, re.I):
+                if any(re.search(pat, f, re.I) for f in forms):
                     matched += 1
             except re.error:
                 continue
@@ -979,24 +989,68 @@ def closure_for(command: str, limit: int = None):
     entries that matched, and says so. Nothing here walks a dependency graph or proves the set
     closed, and the audit's proposal to build that is a different piece of work.
     """
+    return closure_report(command, limit)["requirements"]
+
+
+def closure_report(command: str, limit: int = None):
+    """The whole picture, including the part that used to be silence.
+
+    `closure_for` returns a list, and an empty list meant two completely different things: no
+    catalogue entry matched this operation at all, and several matched but none of them records
+    what the operation requires. The gate printed nothing in both cases, so an agent that saw no
+    TORQUE NEEDS line concluded there was no requirement.
+
+    Measured, before this existed: a bulk update matches SEVEN entries and none carries a
+    requirement. A hard delete matches five, one of which is `hard-delete-permission` — an entry
+    whose entire subject is a permission the operation needs, filed as a hazard and therefore
+    invisible to closure. The knowledge was there. The shape was wrong, and the wrong shape read
+    as an answer.
+
+    Empty is not an answer. It has now appeared in the parser, in blast-radius, in a probe
+    script, in the catalogue verifier and here, which is five, and this one had the distinction
+    of being in the capability the roadmap calls completeness closure.
+    """
     if not command:
-        return []
-    out = []
+        return {"requirements": [], "matched": [], "unrecorded": []}
     if limit is None:
         limit = len(_kb_entries())
+    reqs, unrecorded, matched = [], [], []
     for e in platform_notes(command, limit=limit):
+        matched.append(e["id"])
         req = (e.get("requires") or "").strip()
         if req:
-            out.append((e["id"], " ".join(req.split())))
-    return out
+            reqs.append((e["id"], " ".join(req.split())))
+        else:
+            unrecorded.append(e["id"])
+    return {"requirements": reqs, "matched": matched, "unrecorded": unrecorded}
+
+
+def _is_write_command(command: str) -> bool:
+    """Best effort, used only to decide whether to SPEAK. Never to authorize."""
+    try:
+        import shellparse as _sp
+        v = _sp.analyze_bash(command)
+        return bool(v.get("writes") or v.get("deny"))
+    except Exception:
+        return False
 
 
 def emit_closure(command: str):
-    """Print the requirement set for this operation, if the catalogue knows one."""
+    """Print the requirement set — and, when there isn't one, say which kind of nothing it is."""
     if os.environ.get("TORQUE_NO_NOTES") == "1":
         return
-    for eid, req in closure_for(command):
+    rep = closure_report(command)
+    for eid, req in rep["requirements"]:
         print(f"TORQUE NEEDS [{eid}] {req}", file=sys.stderr)
+    # Only on writes, and only when the catalogue clearly knows this territory. A read needs
+    # nothing and saying so on every query would train the reader to skip the line — which
+    # would cost more than the silence it replaced.
+    if not rep["requirements"] and rep["unrecorded"] and _is_write_command(command):
+        n = len(rep["unrecorded"])
+        print(f"TORQUE NEEDS [none recorded] {n} catalogue entr"
+              f"{'y' if n == 1 else 'ies'} match this operation and none states what it "
+              f"requires. Treat that as a gap in the catalogue, not as nothing being required; "
+              f"the notes above are what is known.", file=sys.stderr)
 
 
 def _speak(command: str):

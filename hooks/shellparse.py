@@ -161,6 +161,68 @@ def stages_local(argv) -> bool:
 READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log", "torque-done"}
 READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done"}
 
+# Legacy sfdx command IDs and the modern `sf` words that mean the same operation.
+#
+# The gate has always authorized both spellings — classify_destructive pairs each modern shape
+# with its `force:` twin, one `or` at a time. The CATALOGUE never learned the legacy half, and
+# its triggers are written against modern text, so `sf force:data:bulk:delete -s Log__c -f
+# ids.csv` reached ZERO catalogue entries while `sf data delete bulk --sobject Log__c --file
+# ids.csv` reached four. Measured across five operation pairs: legacy reached nothing, five
+# times out of five. An operator on the older syntax was correctly gated and told nothing about
+# what they were doing.
+#
+# The table lives here rather than in lib because this module owns the CLI vocabulary, and a
+# second copy of it next to the notes engine is the defect it exists to fix.
+# `legacy_map_covers_the_classifier` fails the build when a `force:` prefix the classifier knows
+# about is missing here, so the two cannot drift apart quietly.
+LEGACY_TO_MODERN = {
+    "force:data:bulk:delete": "data delete bulk",
+    "force:data:bulk:upsert": "data upsert bulk",
+    "force:data:bulk:update": "data update bulk",
+    "force:data:bulk:status": "data bulk results",
+    "force:data:record:create": "data create record",
+    "force:data:record:update": "data update record",
+    "force:data:record:delete": "data delete record",
+    "force:data:record:get": "data get record",
+    "force:data:soql:query": "data query",
+    "force:data:tree:import": "data import tree",
+    "force:data:tree:export": "data export tree",
+    "force:source:deploy": "project deploy start",
+    "force:source:retrieve": "project retrieve start",
+    "force:source:delete": "project delete source",
+    "force:mdapi:deploy": "project deploy start",
+    "force:mdapi:retrieve": "project retrieve start",
+    "force:apex:execute": "apex run",
+    "force:apex:test:run": "apex run test",
+    "force:apex:log:get": "apex get log",
+    "force:apex:class:list": "apex list class",
+    "force:org:display": "org display",
+    "force:org:list": "org list",
+    "force:org:open": "org open",
+    "force:org:create": "org create scratch",
+    "force:org:delete": "org delete scratch",
+    "force:schema:sobject:describe": "sobject describe",
+    "force:schema:sobject:list": "sobject list",
+    "force:package:installed:list": "package installed list",
+    "force:api:request:rest": "api request rest",
+}
+
+
+def modernize(command: str) -> str:
+    """The command with every legacy ID replaced by its modern words.
+
+    For MATCHING ONLY — notes, requirements, retrieval. Nothing authorizes from this. The
+    authorization path reads argv and knows both spellings already; this exists so knowledge
+    written against one spelling reaches an operator using the other.
+    """
+    if not command or "force:" not in command:
+        return command
+    out = command
+    # longest first, so force:apex:test:run is not eaten by a shorter prefix
+    for legacy in sorted(LEGACY_TO_MODERN, key=len, reverse=True):
+        out = out.replace(legacy, LEGACY_TO_MODERN[legacy])
+    return out
+
 
 def _is_own_harness(argv) -> bool:
     """True only for first-party tools explicitly declared READ-ONLY, under TORQUE_HOME.

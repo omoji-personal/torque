@@ -49,11 +49,38 @@ Not that models lack Salesforce knowledge — they have it. Three failures survi
 
 ## Next, in order
 
-### 1. Completeness closure
+### 1. Completeness closure — shipped 2026-08-04
 The catalogue already encodes "X alone does not work" — `fls-not-automatic` is a closure rule
 filed as a hazard. Turning that into *"you asked for X; here is the set X actually requires"* is a
-different query over data that already exists. First because it is nearly free and it de-risks
-what follows.
+different query over data that already exists.
+
+It was already half-built and quietly broken in three ways, each found by testing rather than
+reading:
+
+- **An empty requirement set meant two different things.** A bulk update matched seven catalogue
+  entries, none in requirement form, and the gate printed nothing — so an agent that saw no
+  `TORQUE NEEDS` line concluded there was none. `closure_report` now separates "nothing matched"
+  from "matched, and nobody has recorded what it requires", and the gate says which.
+- **A delete was told it needed field-level security.** `fls-not-automatic` carried a trigger
+  matching the metadata *type* regardless of the verb. A requirement set carrying things the
+  operation does not require misleads as much as one that omits things, and errs toward doing
+  more work, so it is less likely to be questioned.
+- **Every legacy `force:` spelling reached nothing.** The gate authorizes both spellings — the
+  destructive classifier pairs each modern shape with its `force:` twin — but the catalogue's
+  triggers were written against modern wording only. Five operation pairs tested, legacy reached
+  zero entries five times out of five: correctly gated, and told nothing. `LEGACY_TO_MODERN` in
+  `shellparse` now normalises for matching, with a check that fails when the map falls behind the
+  classifier.
+
+Requirement coverage went from 5 entries to 8 by re-pointing knowledge the entries already
+carried — `hard-delete-permission` is about a permission a hard delete needs and was filed as a
+hazard, therefore invisible to closure. No new platform claims were made. Retrieval precision
+rose from 85% to 88% as a side effect of removing the over-match; it had been sitting exactly on
+its FAIL floor.
+
+**Still open here:** ask-by-intent. `closure_for` answers from a command, so you must already
+know what you are going to type. A `torque needs <operation>` front door is drafted and not
+built. Also `audit-fields-not-writable` carries a requirement no ordinary command reaches.
 
 ### 2. Shadow execution
 `Savepoint` → the real DML → the real runtime errors → `Database.rollback`. The trial-and-error
@@ -114,7 +141,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 90 checks (70 static, 87 capability, 90 release),
+The current state, measured rather than claimed: 91 checks (71 static, 88 capability, 91 release),
 17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.
