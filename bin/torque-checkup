@@ -281,6 +281,32 @@ def main():
         by.setdefault(r["status"], []).append(r)
     print(f"\nCHECKUP — {a.target_org}   {len(results)} probe(s) from the platform catalogue")
 
+    # ENFORCEMENT POSTURE, said out loud. A tool called `checkup` that reports on the org and
+    # says nothing about whether the gates are actually enforcing is answering half the question
+    # the name promises. The shim's absence was silent everywhere until now: it is optional, it
+    # is the difference between a shape refusal deferring and denying, and on six months of real
+    # commands that difference was 706 denials versus 22. A user could run every diagnostic
+    # Torque has and never learn that installing it would stop most of their friction.
+    try:
+        # hooks/ is only on sys.path inside _record(); without this the import below always
+        # raises and the except branch prints "could not be determined" forever — a permanent
+        # failure wearing the manners of a graceful one.
+        if str(ROOT / "hooks") not in sys.path:
+            sys.path.insert(0, str(ROOT / "hooks"))
+        import shellparse as _sp_posture
+        if _sp_posture.shim_enforcing():
+            print("  gates: hooks + exec-time shim (unreadable commands defer to the shim and "
+                  "are decided on resolved argv)")
+        else:
+            print("  gates: hooks only — no exec-time shim on PATH. Commands this layer cannot "
+                  "statically read are REFUSED rather than deferred, which is a parsing limit "
+                  "rather than a policy one.")
+            print("         python3 bin/torque install-gates --shim   (then put it on PATH "
+                  "ahead of the real CLI)")
+    except Exception:                                  # noqa: BLE001
+        # A posture line is a courtesy; failing to render it must never take down a checkup.
+        print("  gates: enforcement posture could not be determined")
+
     def show(status, header, with_remedy):
         rows = by.get(status) or []
         if not rows:
