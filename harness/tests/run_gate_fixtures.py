@@ -34,11 +34,17 @@ def _home_rel(h):
 def _stub_env(org):
     """Put a stub `sf` on PATH for the gate subprocesses so the fixture suite is HERMETIC.
 
-    Without this, every fixture triggers real `sf` callouts: ~125 fixtures x 2 gates x 2 calls,
-    which takes seconds on the author's warm machine and MINUTES on anyone else's — so the very
-    command the README tells strangers to run appeared to hang. The gates' own security code is
-    untouched (no test-only env switch inside lib.py, which would itself be a bypass); we only
+    Without this, every fixture triggers real `sf` callouts — the whole corpus x 2 gates x 2
+    calls, which takes seconds on the author's warm machine and MINUTES on anyone else's, so the
+    very command the README tells strangers to run appeared to hang. The gates' own security code
+    is untouched (no test-only env switch inside lib.py, which would itself be a bypass); we only
     control what `sf` means for the child processes.
+
+    The corpus size is deliberately NOT written here. It said "~125" while the tree carried 193
+    recorded fixtures, because a number in a comment has nothing that re-derives it — which is
+    the defect claimed_counts exists to catch in prose and cannot reach inside a docstring. The
+    count is worth knowing and is available where it is checked; the point of this comment is the
+    cost, which does not need it.
 
     The stub reports the FIRST eligible org from the real allowlist, so authorization still has
     to match a genuine allowlisted orgId — the fixtures test the gate logic, while live-org

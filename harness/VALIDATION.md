@@ -344,3 +344,79 @@ carry it. So the artifact counts a mutator it cannot name — a count and a list
 source, disagreeing in the file the repo offers a reader as evidence. Filed as D7 in
 `docs/HANDOFF-DEFECTS-2026-08.md`; the fix is one word on one line in `validate.py`, and it is
 blocked pending operator-present issuance because `validate.py` is a protected basename.
+
+---
+
+## P9 — capability · RED, and the red is self-inflicted · 2026-08-04
+
+**No attestation.** `bin/torque-attest` refuses to write one for a run that is not a pass, so
+there is no `attest-*.json` for this entry and there should not be. The newest attestation on
+disk remains `attest-3c662cf5`, which is P8's and is older than this tree.
+
+Commit `94ef337` (A1 applied) · **profile: capability · target `sf-coffee` · verdict: FAIL**
+
+**67 of 68 checks pass. Self-test: FAILURE.**
+
+### The one real failure
+
+```
+✗ clean_ip   FAIL   denied term in tracked file docs/MAINTAINER-MODE.md
+```
+
+A document written that day to argue that the safety machinery should not be switched off named
+the actual client org aliases authenticated on the author's machine, to make the risk concrete.
+That is client identity, in a repository that has been public since 2026-07-31. The argument
+never needed them: a count carries "a working laptop has a double-digit number of production
+orgs authenticated" exactly as well.
+
+`clean_ip` caught it. No human did, and the reviewing session that wrote the file did not. It is
+worth being precise about why that is the system working rather than a lucky catch: the leak was
+in a *privacy-and-safety design document*, which is the last place anyone would think to look,
+and the check does not depend on anyone thinking to look.
+
+The second red line is a consequence, not a second defect:
+
+```
+✗ clean_ip historical-blob mutator: expected FAIL, got FAIL
+```
+
+That mutator asserts the failure detail names a historical blob. `clean_ip` was already failing
+for an unrelated reason, so the mutator could not distinguish its own signal from the noise and
+scored itself red. One leak took out both a check and that check's proof — a failing check makes
+every check downstream of it less informative, which is an argument for fixing red immediately
+rather than reading around it.
+
+The working tree was redacted in `665fa8e`. **The terms remain in git history** (`c1bf28a`, in
+both its content and its commit message, already on `origin/main`), so `clean_ip` stays red on
+the historical blob until a history rewrite and force-push — an operator decision, outward-facing
+and destructive, not the agent's to take. Until then no capability or release run can be
+all-PASS, correctly, because the repository does still carry the terms.
+
+### What this run does establish
+
+Every org-touching check passed live against a disposable Developer Edition org — the half of the
+harness that no static run and no CI job can reach:
+
+| Check | Result |
+|---|---|
+| `org_classify` | `sf-coffee` classified 'developer' (IsSandbox=False, Developer Edition) |
+| `probe_cycle` | deploy → verify (field ok, FLS asserted) → purge → teardown; live residue 0, one `_del` tombstone in the 15-day queue as expected |
+| `mass_update_cycle` | created → preview (exact 2) → update → verify → undo (restored); teardown by Id |
+| `impact_bound_approval` | 43 Leads; within-scope proceeds and consumes, grown scope refused, unverifiable scope refused |
+| `session_log_integrity` | written, reversible, redacted (session id + org id), 0600, parseable |
+| `browser_render` | Lightning shell rendered live (`RENDER_OK Home | Salesforce`) |
+
+It is also the first capability run to cover A1's fix: `shadow_cannot_escape_the_transaction`
+now refuses eight disqualifying shapes by named reason, having previously been unable to fail at
+all.
+
+Two known defects were visible passing, both still blocked on operator-present issuance:
+`image_manifest` reporting "0 manifest entries; all guide images verified" while verifying
+nothing (B1), and `named_mutators_exist` deriving 14 names against `TOTAL_MUTATORS = 15` (D7).
+
+### What it is not
+
+One run, one disposable org, by the author, and **red**. It is retained as diagnostic. A later
+all-PASS run supersedes it, and cannot happen until the history carries no denied term — which
+is the correct ordering, since the alternative is a green log above a repository that still
+publishes client names.
