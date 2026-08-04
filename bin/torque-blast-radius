@@ -76,7 +76,19 @@ def _describe(target, sobject):
 # ── the parts of the picture ───────────────────────────────────────────────────────────────
 def scope(target, sobject, where, operation):
     if operation == "insert":
-        raise Unknown("insert scope requires an input row source; none was provided")
+        # C8: `--operation insert` is accepted by argparse and then raises here every time, so
+        # the flag is an interface over nothing. It is kept rather than removed because the rest
+        # of the analysis IS meaningful for an insert — triggers, flows and roll-ups all fire on
+        # one, and knowing what an insert will set off is a real question. Only the ROW COUNT is
+        # unknowable, because an insert's scope comes from a file this tool was never given.
+        #
+        # So it raises Unknown, which the caller turns into UNDETERMINED rather than an error,
+        # and the automation picture below is still produced. That is the honest shape: one part
+        # of the answer is unavailable and named, instead of the whole command failing or, worse,
+        # reporting a count of the rows that already exist as though they were the ones affected.
+        raise Unknown("insert scope needs the rows being inserted, and no input file was given "
+                      "(--where selects existing records, which are not the ones an insert "
+                      "creates). The automation picture below still applies.")
     soql = f"SELECT COUNT() FROM {sobject}" + (f" WHERE {where}" if where else "")
     return _query(target, soql)["totalSize"]
 

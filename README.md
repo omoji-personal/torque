@@ -136,6 +136,16 @@ BLAST RADIUS — update on Account @ sf-coffee
 Any source that cannot answer reports **UNDETERMINED** and the exit code turns 3. A blast radius
 that silently under-reports is worse than none, because somebody would act on it.
 
+**Expect exit 3 on a real org.** It means incomplete, not broken. Roll-up summary fields are the
+common cause: every roll-up candidate is suffixed UNDETERMINED by design, because whether a parent
+recalculates depends on state this tool will not guess at, so any object whose parents carry one
+cannot exit 0. Seven automation surfaces are queried today and roughly fifteen exist — no
+duplicate rules, assignment or escalation rules, sharing recalculation, invocable Apex, or
+platform-event subscribers. Read exit 3 as "here is what I could establish, and here is what I
+could not", which is the only honest answer available. `--operation insert` behaves the same way
+and for the same reason: the automation picture is real, and the row count is unknowable without
+the file being inserted.
+
 **It gets smarter from being used, without being asked.** `torque lesson` turns something learned
 into a catalogue entry the schema enforces or a gate fixture that runs forever — never a free-text
 note, because note-based lesson systems reliably go inert. But the right *format* does not fix
