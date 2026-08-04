@@ -228,15 +228,59 @@ def _has_tty():
         return False
 
 
+def _ctty_name(pid=None):
+    """This process's CONTROLLING TERMINAL, named the way `who` prints it, or "" if it has none.
+
+    Deliberately not `os.ttyname(os.open("/dev/tty"))`, which is what this used to do. On macOS
+    that returns "/dev/tty" itself — the controlling-terminal ALIAS. The alias is its own device
+    node (st_rdev 33554432 on the machine this was found on) and carries nothing identifying the
+    terminal it aliases, so basename() gave "tty", which matches no `who` row, ever.
+
+    The consequence was not a cosmetic one. _tty_is_login() returned False for a genuine
+    Terminal.app login session, so operator_present() could never be true on macOS, so
+    `torque approve` — the ONLY path to a production write, a destructive-op token, or a
+    maintainer window — refused the operator on the platform this is developed on. Layer 3 was
+    documented, implemented, and unreachable.
+
+    It survived because the tests only ever asserted the refusing direction:
+    init_requires_operator proves approve REFUSES without a login terminal, and nothing proved it
+    ACCEPTS with one. "Correctly refuses an agent" and "refuses absolutely everyone" are the same
+    observation until something exercises the positive case.
+
+    Also deliberately not `os.ttyname(0)`. Descriptor 0 is inherited and can be pointed at any tty
+    the uid can open — including the operator's real login session — so that spelling would swap
+    a fail-closed bug for a genuine bypass.
+
+    ps reports the kernel's own record of the controlling terminal, which is a SESSION property.
+    A process cannot take over another session's controlling terminal by moving descriptors
+    around; the most it can do is setsid() and TIOCSCTTY a pty it opened itself — and that pty is
+    absent from utmp, because utmp is written by login/getty. So the trust still rests exactly
+    where audit R10-07 put it, and only the naming changed.
+
+    `pid` defaults to this process and exists so a CHECK can ask the question about some OTHER
+    process — specifically one the harness can see is sitting in a real login session. Without
+    that, the positive direction is untestable from an agent context (which by design has no
+    controlling terminal), and untestable is exactly how the macOS bug survived. It widens
+    nothing: the answer is read from ps, never supplied by the caller.
+    """
+    try:
+        out = subprocess.run([_PS, "-o", "tty=", "-p", str(pid if pid is not None else os.getpid())],
+                             capture_output=True, text=True, timeout=10,
+                             env=_TRUSTED_ENV).stdout
+    except Exception:
+        return ""
+    name = out.strip()
+    if not name or name == "??":          # no controlling terminal at all
+        return ""
+    return name if name.startswith("tty") else "tty" + name
+
+
 def _tty_is_login():
     """The controlling tty must be an active login session in utmp (`who`). A pty the agent
     forges via openpty is NOT a login session, so it fails here (audit R10-07)."""
-    try:
-        fd = os.open("/dev/tty", os.O_RDWR)
-        name = os.ttyname(fd); os.close(fd)
-    except OSError:
+    short = _ctty_name()
+    if not short:
         return False
-    short = os.path.basename(name)
     try:
         who = subprocess.run([_WHO], capture_output=True, text=True, timeout=10,
                              env=_TRUSTED_ENV).stdout

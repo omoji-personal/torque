@@ -1959,6 +1959,40 @@ def _public_description_accurate(target):
                   f"{sorted(real)}")
 
 
+def _window_blocks_boundary_checks(name):
+    """A SKIP Result if a maintainer window is open, else None.
+
+    Checks that assert "the agent cannot write protected paths" have exactly one question to ask,
+    and an open maintainer window makes the honest answer "not right now, deliberately". The
+    gate is allowing those writes because an operator opened a bounded window and every one is
+    audited — which is indistinguishable, from inside the check, from the guard being broken.
+
+    Reporting PASS would be a lie and reporting FAIL would cry wolf at the operator's own
+    decision, so this reports what is true: the boundary is not in force, so it was not measured.
+    SKIP makes the run DEGRADED, which is the point rather than a side effect — **no all-PASS run
+    is possible while a window is open**, and that is the correct rule. Validating the write
+    boundary while it is deliberately lifted would certify something that was not tested.
+
+    Discovered the first time a window was ever opened: two catastrophe-class checks went red at
+    once, and the reflex reading was that the new mechanism had broken the gate. It had not. The
+    checks simply had no way to say "not assessable", which is the same missing vocabulary that
+    let init_requires_operator prove only the refusing direction of operator_present().
+    """
+    try:
+        import importlib.util as _il
+        _s = _il.spec_from_file_location("torque_lib_win", ROOT / "hooks" / "lib.py")
+        _lib = _il.module_from_spec(_s); _s.loader.exec_module(_lib)
+        if _lib.maintainer_grant_valid() is None:
+            return None
+    except Exception:
+        return None          # cannot tell ⇒ run the real check; never skip on a guess
+    return Result(name, SKIP,
+                  "a maintainer window is open, so protected paths are intentionally writable "
+                  "and this boundary was NOT measured. Close it "
+                  "(`torque approve --end-maintainer`) and re-run; validation has to happen with "
+                  "the boundary in force.")
+
+
 @check("runnable_implies_unwritable", "static", catastrophe=True)
 def _runnable_implies_unwritable():
     """Anything the gate lets the agent RUN, the agent must not be able to WRITE.
@@ -1971,6 +2005,9 @@ def _runnable_implies_unwritable():
     That is a coupling between two lists in different files, which is the kind of thing that
     silently comes apart. Asserted here in both directions.
     """
+    blocked = _window_blocks_boundary_checks("runnable_implies_unwritable")
+    if blocked:
+        return blocked
     import importlib.util as _il
     spec = _il.spec_from_file_location("torque_shellparse", ROOT / "hooks" / "shellparse.py")
     sp = _il.module_from_spec(spec); spec.loader.exec_module(sp)
@@ -2447,6 +2484,9 @@ def _guards_are_case_insensitive():
     no_divergent_twins cannot catch them; what they share is an assumption, and assumptions need
     their own test.
     """
+    blocked = _window_blocks_boundary_checks("guards_are_case_insensitive")
+    if blocked:
+        return blocked
     import importlib.util as _il
     spec = _il.spec_from_file_location("torque_lib_ci", ROOT / "hooks" / "lib.py")
     lib = _il.module_from_spec(spec); spec.loader.exec_module(lib)

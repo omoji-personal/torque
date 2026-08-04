@@ -28,11 +28,24 @@ def main():
         {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
     hooks.append({"matcher": "mcp__.*", "hooks": [
         {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
-    hooks.append({"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": cmd}]})
+    # syntax_guard runs FIRST on edits: it refuses a write that would leave a hooks/*.py file
+    # unparseable. Both gates import from hooks/, so such a write fails them closed on every
+    # subsequent tool call — including the one needed to undo it. That happened once, inside a
+    # maintainer window, and only the operator could clear it.
+    scmd = (f'TORQUE_HOME="{TORQUE_HOME}" python3 "{TORQUE_HOME}/hooks/syntax_guard.py"')
+    hooks.append({"matcher": "Edit|Write|MultiEdit", "hooks": [
+        {"type": "command", "command": scmd, "timeout": 20},
+        {"type": "command", "command": cmd}]})
     hooks.append({"matcher": "Read", "hooks": [{"type": "command", "command": cmd}]})
     # The observer runs AFTER the tool, because its whole subject is the result.
+    #
+    # A2: this used to .append unconditionally while PreToolUse was deduped above, so running the
+    # installer twice registered the observer twice — against a docstring that says "Idempotent."
+    # Same strip-then-append as PreToolUse, so the claim is true for both lists rather than one.
     obs = f'python3 "{TORQUE_HOME}/hooks/lesson_observer.py"'
-    cfg["hooks"].setdefault("PostToolUse", []).append(
+    post = cfg["hooks"].setdefault("PostToolUse", [])
+    post[:] = [h for h in post if "torque" not in json.dumps(h).lower()]
+    post.append(
         {"matcher": "Bash", "hooks": [{"type": "command", "command": obs, "timeout": 20}]})
     cfg.setdefault("_torque", {})["home"] = str(TORQUE_HOME)
     # Back up before rewriting the operator's whole settings file.

@@ -36,6 +36,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/syntax_guard.py\"",
+            "timeout": 20
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
             "timeout": 55
           }
