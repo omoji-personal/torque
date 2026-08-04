@@ -2058,6 +2058,78 @@ def _runnable_implies_unwritable():
                   f"foreign interpreters still refused")
 
 
+@check("operator_presence_can_succeed", "static", catastrophe=True)
+def _operator_presence_can_succeed():
+    """operator_present() must be able to return TRUE — not merely able to return False.
+
+    THIS CHECK EXISTS BECAUSE ITS ABSENCE HID A REAL DEFECT FOR THE LIFE OF THE PROJECT.
+
+    _tty_is_login() identified the controlling terminal with os.ttyname(os.open("/dev/tty")).
+    On macOS that returns "/dev/tty" — the alias, not the device — so basename() was "tty",
+    which matches no `who` row, ever. A genuine Terminal.app login session was refused, so
+    operator_present() could not return True on macOS, so `torque approve` refused the operator.
+    Layer 3 — the production override, the destructive-op tokens, the maintainer window — was
+    documented, implemented and unreachable on the platform this is developed on.
+
+    Every existing test asserted the REFUSING direction: init_requires_operator proves approve
+    refuses without a login terminal, and the fixtures prove an agent context is rejected. All of
+    them passed throughout, because "correctly refuses an agent" and "refuses absolutely
+    everyone" are the same observation until something exercises the other direction. A control
+    that only ever says no is indistinguishable from a control that is broken shut.
+
+    The harness cannot BE an operator — it runs without a controlling terminal by design. So it
+    asks the question about somebody else: find a login session in `who`, find a process sitting
+    in it, and require lib's own identification to name that session. That exercises the exact
+    step that was broken, using the real implementation, without forging anything.
+
+    SKIPs where no login session is visible (CI, a container). That is honest rather than
+    convenient — but note it means CI cannot cover this, and the operator's own machine is the
+    only place it runs. Which is precisely where the bug was.
+    """
+    import importlib.util as _il
+    lspec = _il.spec_from_file_location("torque_lib_presence", ROOT / "hooks" / "lib.py")
+    lib = _il.module_from_spec(lspec); lspec.loader.exec_module(lib)
+
+    try:
+        who = _kb_sp.run(["who"], capture_output=True, text=True, timeout=15).stdout
+    except Exception as e:
+        return Result("operator_presence_can_succeed", SKIP, f"`who` unavailable: {e}")
+
+    sessions = [p[1] for p in (l.split() for l in who.splitlines())
+                if len(p) >= 2 and p[1].startswith("tty")]
+    if not sessions:
+        return Result("operator_presence_can_succeed", SKIP,
+                      "no login session in `who` — nothing to identify. Expected in CI and in "
+                      "containers; it means this check did NOT run, not that presence works.")
+
+    for tty in sessions:
+        try:
+            out = _kb_sp.run(["ps", "-t", tty, "-o", "pid="], capture_output=True, text=True,
+                             timeout=15).stdout
+        except Exception:
+            continue
+        for pid in (x.strip() for x in out.splitlines() if x.strip()):
+            named = lib._ctty_name(int(pid))
+            if not named:
+                return Result("operator_presence_can_succeed", FAIL,
+                              f"pid {pid} sits in login session {tty}, and lib could not name its "
+                              f"controlling terminal at all — operator_present() cannot be true "
+                              f"for any real operator on this machine")
+            if named != tty:
+                return Result("operator_presence_can_succeed", FAIL,
+                              f"pid {pid} sits in {tty} but lib names its controlling terminal "
+                              f"{named!r} — that will never match a `who` row, so a real login "
+                              f"session is refused and Layer 3 is unreachable")
+            return Result("operator_presence_can_succeed", PASS,
+                          f"a real login session ({tty}) is identified as itself, so "
+                          f"operator_present() can be satisfied by an operator who is actually "
+                          f"present; the refusing direction stays covered by "
+                          f"init_requires_operator")
+
+    return Result("operator_presence_can_succeed", SKIP,
+                  f"login session(s) {sessions} visible but no process could be read from them")
+
+
 @check("init_requires_operator", "static", catastrophe=True)
 def _init_requires_operator():
     """Granting an org write eligibility requires the operator the entry claims made the grant.
