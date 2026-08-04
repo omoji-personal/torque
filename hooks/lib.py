@@ -947,7 +947,7 @@ def platform_notes(command: str, limit: int = 2):
     return [e for _, e in hits[:limit]]
 
 
-def closure_for(command: str, limit: int = 2):
+def closure_for(command: str, limit: int = None):
     """What an operation actually NEEDS to work — not what might go wrong with it.
 
     The catalogue was written as hazards: "deploy a field and it arrives invisible". That is the
@@ -958,10 +958,32 @@ def closure_for(command: str, limit: int = 2):
     This is the cheapest capability in the roadmap because nothing had to be learned — the
     entries already said it in their remedies. Only the shape changed, from prose a human
     re-reads to a set a tool can return.
+
+    P1-001. This took `limit=2` and passed it straight to platform_notes, so machine closure
+    inherited a PRESENTATION policy. The two-note cap exists so an operator is not buried under
+    ten advisories; it has nothing to do with what an operation requires. Because the cap is
+    applied by rank BEFORE this filters for `requires`, two higher-ranked advisory entries could
+    consume the budget and a genuine requirement never reached the caller. Reproduced on a
+    field-plus-flow-plus-permset deploy: `deploy-order` carries a requirement, matches the
+    command, and was dropped, leaving `fls-not-automatic` alone.
+
+    A truncated requirement set is worse than none, because it is indistinguishable from a
+    complete one. "Here is what this needs" that quietly means "here are two of the things this
+    needs" is the same failure as a green check that verified nothing.
+
+    So closure asks for every matching entry and filters afterwards. The signature keeps `limit`
+    for callers that genuinely want a bounded list, but it now defaults to no cap rather than to
+    the display budget.
+
+    What this is NOT: recursive completeness. It returns the KNOWN DIRECT requirements of the
+    entries that matched, and says so. Nothing here walks a dependency graph or proves the set
+    closed, and the audit's proposal to build that is a different piece of work.
     """
     if not command:
         return []
     out = []
+    if limit is None:
+        limit = len(_kb_entries())
     for e in platform_notes(command, limit=limit):
         req = (e.get("requires") or "").strip()
         if req:
