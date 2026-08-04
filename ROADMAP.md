@@ -65,14 +65,25 @@ What remains is not the mechanism but the honesty around it: establish by test �
 how governor limits accumulate inside the shadow transaction, and a hard refusal against
 production.
 
-### 3. The completion gate
+### 3. The completion gate — ledger shipped, browser half still gated
 A verified / not-verified ledger, ending in the browser under a **non-admin** profile — admin sees
 everything and proves nothing. The same discipline the harness already applies, where a skip is
 never allowed to read as a pass, applied to the word *done*.
 
-Gated on three questions being answered first, because they decide whether it survives use: can it
-render as a non-admin profile, what is the real wall-clock cost, and how flaky is it. A completion
-gate that costs two minutes gets routed around, which is worse than not having one.
+**`torque done` ships the ledger** (2026-08-04). Six layers: the field exists in the org, FLS is
+granted, somebody actually holds the permission set, it renders for a non-admin, the automation
+fired, a human agreed. An unobserved layer is NOT VERIFIED, and the denominator does not move when
+evidence arrives — layers get answered, never removed, because subtraction is how a partial check
+comes to read as a complete one.
+
+**The browser half is not built, on purpose.** It is still gated on the same three questions: can
+it render as a non-admin profile at all, what is the real wall-clock cost, and how flaky is it. A
+completion gate that costs two minutes gets routed around, which is worse than not having one, and
+none of the three has been answered against a real org. So that layer reports BLOCKED with a dated
+reason, `--na` is refused on it — a blocker is a fact about the tool, not a judgement about the
+change — and a human who did the render by hand records it with `--render-evidence`. Without that
+seam the verdict would be NOT DONE for every input ever, which is a ledger with one row and no
+information in it.
 
 ### 4. Proof-carrying operations
 The unifying frame: every meaningful operation carries preconditions, predicted impact,
@@ -103,7 +114,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 85 checks (65 static, 82 capability, 85 release),
+The current state, measured rather than claimed: 88 checks (68 static, 85 capability, 88 release),
 17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.
