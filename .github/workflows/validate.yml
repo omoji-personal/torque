@@ -136,10 +136,37 @@ jobs:
       # Written outside the repo on purpose. The clean-tree assertion below exists to catch a
       # mutator that failed to restore a hook, and an attestation committed into harness/attest/
       # would trip it with a file that is not residue.
+      #
+      # Exit codes are NOT all the same failure. `torque attest` returns 2 when it refuses to
+      # write — a parse mismatch, a verdict disagreeing with an exit code, no check outcomes at
+      # all — and that is a real defect in the artifact and fails this job. It returns 1 when it
+      # wrote a complete attestation whose verdict was not PASS, and on this runner that is the
+      # expected state: the gating "Static profile" step above declares one allowed skip
+      # (operator_presence_can_succeed, which needs a login TTY), and `torque attest` re-runs the
+      # profile WITHOUT that declaration, so it lands on DEGRADED every time. Failing the job on
+      # exit 1 would mean CI is red for a condition the gate above already ruled on.
+      #
+      # The artifact is still accurate: it lists that check with outcome SKIP. What it does not
+      # carry is the declared REASON, because `torque attest` has no --allow-skip to forward.
+      # That flag is the actual fix and it is OWED — bin/ is outside the agent write surface, so
+      # it needs the operator. Until then this comment is where the reason lives, which is worse
+      # than the attestation carrying it and better than nobody being told.
       - name: Static attestation
         run: |
+          set +e
           python3 bin/torque attest --profile static --out "$RUNNER_TEMP/attest"
+          rc=$?
+          set -e
+          if [ "$rc" -ge 2 ]; then
+            echo "::error::torque attest refused to write an attestation (exit $rc)"
+            exit "$rc"
+          fi
+          # An attestation step that produces no attestation has failed regardless of exit code.
+          ls "$RUNNER_TEMP"/attest/*.json >/dev/null
           cat "$RUNNER_TEMP"/attest/*.json
+          if [ "$rc" -ne 0 ]; then
+            echo "::notice::attestation recorded a non-PASS verdict (exit $rc); see the artifact"
+          fi
 
       - name: Upload the attestation
         if: always()
