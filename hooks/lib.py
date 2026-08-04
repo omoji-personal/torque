@@ -23,6 +23,7 @@ SECRET = ANCHOR / "secret"
 APPROVED = ANCHOR / "approved"
 PROD_SESSIONS = ANCHOR / "prod-sessions"           # signed, time-boxed prod-write windows
 MAINTAINER_GRANT = ANCHOR / "maintainer.grant"     # signed, time-boxed SOURCE-edit window
+OBSERVE_GRANT = ANCHOR / "observe.grant"           # signed, time-boxed OBSERVE-ONLY window
 ALLOWLIST = LOCAL / "writable-orgs.json"
 CACHE = LOCAL / ".classify-cache.json"
 ORGS = LOCAL / "orgs"                       # per-org knowledge, keyed by 18-char orgId
@@ -702,6 +703,68 @@ def maintainer_grant_valid(tree: str = ""):
         return None
     return g
 
+
+# ---- observe-only: a gate that records instead of blocking ---------------------------------
+#
+# WHY THIS EXISTS. Torque had no way to ride along on real work without blocking it, and that is
+# the thing standing between a three-week-old tool and any field evidence at all. Replaying six
+# months of real client commands through the classifier denied 80.1% of them; one defect
+# accounted for 854 of those, and finding it took a corpus rather than more fixtures. The
+# remaining friction cannot be measured the same way, because a replayed command is not a
+# session: it never adapts, never re-phrases, never asks for approval. Only a live session does
+# that, and nobody will run a live session through a gate they cannot first watch.
+#
+# So: compute the decision, RECORD it, and let the operation through. That is a WAF in detection
+# mode, an IDS before it is inline, a policy engine in dry-run — the ordinary way a blocking
+# system earns the right to block.
+#
+# WHAT IT DELIBERATELY DOES NOT COVER, which is the whole security argument.
+# Observe-only is a bypass. If the agent could enable it, the gates would be decorative. Two
+# properties keep that from being true, and both are load-bearing:
+#
+#   1. The grant lives in the trust anchor — signed, time-boxed, tree-bound, mintable only by an
+#      operator at a real login TTY. The agent's Bash, Edit, Write and Read cannot reach it.
+#      Identical trust model to the maintainer window, for identical reasons.
+#   2. It NEVER applies to a denial that protects the gate's own trust boundary. A window that
+#      could permit an anchor write could mint itself a permanent one; a window that could permit
+#      a protected-source edit could delete the check that enforces it. Those denials stay
+#      denials while observing, exactly as the maintainer window refuses the anchor.
+#
+# It is also never silent. Every observation is recorded durably before the operation proceeds,
+# and if that record cannot be written the gate denies — an observation nobody can read later is
+# indistinguishable from having switched the gate off.
+#
+# Fingerprints that stay DENY under observation. These are the trust boundary itself, not org
+# operations: reaching the anchor or the CLI auth store, editing Torque's own protected source,
+# or putting `local/` into git (which publishes org findings and session logs).
+OBSERVE_NEVER = frozenset({
+    "anchor-ref", "auth-ref", "artifact-edit", "protected-write", "stages-local",
+    "invalid-event", "crash",
+})
+
+
+def observe_grant_valid(tree: str = ""):
+    """A signed, unexpired, tree-bound window in which denials are RECORDED, not enforced.
+
+    Same shape and same anchor-only boundary as maintainer_grant_valid. Deliberately a separate
+    grant: a maintainer editing Torque's source is doing something quite different from an
+    operator measuring how much Torque would interrupt a real day, and one should never imply
+    the other.
+    """
+    try:
+        g = json.loads(OBSERVE_GRANT.read_text())
+    except Exception:
+        return None
+    sig = g.pop("sig", None)
+    if not sig or not _hmac.compare_digest(sig, sign(g)):
+        return None
+    if g.get("exp", 0) <= time.time():
+        return None
+    if g.get("tree") != (tree or str(TORQUE_HOME.resolve())):
+        return None
+    return g
+
+
 # ---- approval tokens (consulted here; MINTED only by bin/torque-approve) --
 import hmac as _hmac
 
@@ -1243,6 +1306,25 @@ def _is_salesforce_decision(cmd: str) -> bool:
     return bool(_SF_SHAPED.search(cmd))
 
 def deny(reason: str, fingerprint: str = "", hook_id: str = ""):
+    # OBSERVE-ONLY. Checked here rather than at each call site so no future deny path can be
+    # added that forgets to be observable — and checked AFTER the trust-boundary exclusion, so
+    # the window can never be the thing that lets the agent reach the anchor holding the window.
+    if fingerprint not in OBSERVE_NEVER and observe_grant_valid():
+        # Durable, and fatal if it fails. An observation that cannot be recorded is not an
+        # observation; it is the gate switched off with nobody able to find out afterwards.
+        recorded = audit("OBSERVE", f"[{hook_id}:{fingerprint}] WOULD DENY: {reason}",
+                         durable=True)
+        if not recorded:
+            print(f"TORQUE GATE DENY [{hook_id}] {reason}\n"
+                  f"  (an observe-only window is open, but this observation could not be "
+                  f"recorded — denying rather than passing an operation nobody can review)",
+                  file=sys.stderr)
+            _speak(_JUDGED["command"])
+            sys.exit(2)
+        print(f"TORQUE OBSERVE-ONLY [{hook_id}] would have denied: {reason}\n"
+              f"  Recorded, not enforced. This operation is proceeding because an operator "
+              f"opened an observe-only window.", file=sys.stderr)
+        allow()          # speaks the catalogue note and exits 0; do not _speak() twice
     audit("DENY", f"[{hook_id}:{fingerprint}] {reason}")
     print(f"TORQUE GATE DENY [{hook_id}] {reason}", file=sys.stderr)
     # A deny is the moment the note matters MOST: the operator is about to decide whether to

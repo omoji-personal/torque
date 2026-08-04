@@ -41,6 +41,15 @@ SESSION_MAX_MIN = 120
 # still revocable with --end-maintainer, still tree-bound, and every edit under it is still
 # audited as MAINTAINER-EDIT. What it is not is a prompt that fires when nobody is awake.
 MAINTAINER_MAX_MIN = 720
+# An observe-only window is the one grant that is dangerous FOR ITS WHOLE DURATION, and in the
+# direction the other two are not: while it is open the org protections are advisory, so every
+# minute is a minute in which a production write proceeds because nobody was blocking it. That is
+# the production-session risk profile, not the maintainer one, so it takes the production number.
+#
+# It also has a natural session length. What it is for is watching one real work session and
+# counting the interruptions, and if two hours of real work has not shown the friction, a longer
+# window will not — it will just be an unprotected afternoon.
+OBSERVE_MAX_MIN = 120
 
 
 def _ensure_secret():
@@ -119,6 +128,62 @@ def _maintainer(args):
     lib.audit("MAINTAINER-GRANT", f"{mins}m source-edit window for {tree}", durable=True)
     print(f"maintainer window open for {mins} min ({tree})")
     print("revoke: torque approve --end-maintainer")
+
+
+def _observe(args):
+    """Open or revoke a window in which the gates RECORD their denials instead of enforcing them.
+
+    Also deliberately org-free, and for a sharper reason than the maintainer window: this grant
+    must never be confused with permission to write anywhere. It permits nothing. It changes what
+    happens when something is REFUSED — the refusal is written down and the operation proceeds —
+    and it is the only way to find out what Torque would cost a real day's work without betting
+    that day on a three-week-old gate.
+
+    The confirmation text says the dangerous part out loud, because during this window the org
+    protections are advisory: a production write that would have been denied will go through.
+    That is the entire point and it is also the entire risk, so the operator types PRODUCTION IS
+    UNPROTECTED rather than something reassuring.
+    """
+    if args[0] == "--end-observe":
+        lib.OBSERVE_GRANT.unlink(missing_ok=True)
+        lib.audit("OBSERVE-REVOKE", "observe-only window revoked", durable=True)
+        print("observe-only window revoked")
+        return
+    try:
+        mins = int(args[1])
+    except (IndexError, ValueError):
+        print("usage: torque approve --observe <minutes>", file=sys.stderr); sys.exit(2)
+    if mins <= 0:
+        print("minutes must be positive", file=sys.stderr); sys.exit(2)
+    mins = min(mins, OBSERVE_MAX_MIN)
+    tree = str(lib.TORQUE_HOME.resolve())
+    with open("/dev/tty") as tty:
+        sys.stderr.write(
+            f"\n*** OBSERVE-ONLY WINDOW — THE GATES STOP BLOCKING ***\n"
+            f"  tree:     {tree}\n"
+            f"  duration: {mins} min\n"
+            f"For {mins} minutes the gates RECORD what they would have refused and let it\n"
+            f"through. Denials become OBSERVE entries in the audit trail. This is how you\n"
+            f"measure what Torque would cost real work before you let it block real work.\n"
+            f"\n"
+            f"WHAT THIS MEANS RIGHT NOW: a write to a production org that would have been\n"
+            f"denied WILL PROCEED. A destructive operation with no approval token WILL\n"
+            f"PROCEED. Do not open this window against an org you cannot afford to lose.\n"
+            f"\n"
+            f"Still refused, window or no window: reaching the trust anchor or the CLI auth\n"
+            f"store, editing Torque's own protected source, and putting local/ into git.\n"
+            f"Type exactly  PRODUCTION IS UNPROTECTED  to authorize: ")
+        sys.stderr.flush()
+        if tty.readline().strip() != "PRODUCTION IS UNPROTECTED":
+            print("refused", file=sys.stderr); sys.exit(3)
+    _ensure_secret()
+    g = {"tree": tree, "exp": int(time.time()) + mins * 60, "iat": int(time.time())}
+    g["sig"] = lib.sign(g)
+    lib.ANCHOR.mkdir(parents=True, exist_ok=True); os.chmod(lib.ANCHOR, 0o700)
+    lib.OBSERVE_GRANT.write_text(json.dumps(g)); os.chmod(lib.OBSERVE_GRANT, 0o600)
+    lib.audit("OBSERVE-GRANT", f"{mins}m observe-only window for {tree}", durable=True)
+    print(f"observe-only window open for {mins} min ({tree}) — gates are RECORDING, not blocking")
+    print("revoke: torque approve --end-observe")
 
 
 def _confirm(prompt):
@@ -229,6 +294,11 @@ def main():
     # Source-edit window: no org, so it is dispatched before any org resolution below.
     if args and args[0] in ("--maintainer", "--end-maintainer"):
         return _maintainer(args)
+
+    # Observe-only window: also org-free. It authorizes no write anywhere — it changes what
+    # happens to a refusal — so resolving an org here would imply a scope it does not have.
+    if args and args[0] in ("--observe", "--end-observe"):
+        return _observe(args)
 
     if len(args) < 2:
         print(__doc__, file=sys.stderr); sys.exit(2)
