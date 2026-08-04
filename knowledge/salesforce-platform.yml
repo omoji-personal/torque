@@ -562,6 +562,40 @@ entries:
   confidence: practitioner
   updated: 2026-08-01
 
+- id: login-as-servlet-beats-the-setup-link
+  domain: auth
+  title: Login As from the Setup UI link is unreliable; the su servlet is the path that works
+  symptom: >
+    Automation cannot find the "Login" link on a user detail page, or finds it and the click does
+    nothing. Role and text locators report no such element even when an admin can see it.
+  cause: >
+    The Setup UI link is gated by the "Administrators Can Log In as Any User" org preference, it
+    renders inside a Classic iframe, and in Lightning it sits behind shadow DOM — so a locator
+    can miss it for three unrelated reasons at once, and the failure looks the same each time.
+  remedy: >
+    Drive the servlet directly:
+    /servlet/servlet.su?oid=<org_id_18>&suorgadminid=<user_id_15>&retURL=%2F&targetURL=%2F —
+    then navigate to a Lightning URL, because the servlet lands in Classic and an impersonated
+    Classic page is not what an end user sees. The user Id must be truncated to FIFTEEN
+    characters.
+  gotcha: >
+    The servlet still needs the org preference. Measured on a Developer Edition org 2026-08-04:
+    with the preference unset the browser simply STAYS on /servlet/servlet.su, no redirect and no
+    error page, and a subsequent Lightning navigation renders perfectly as the ORIGINAL user. So
+    "the Lightning shell rendered" is not evidence that impersonation happened, and a check that
+    asserts only the render will report a non-admin verification that never left the admin
+    session.
+  detect: "SELECT Id, Profile.Name FROM User WHERE IsActive = true"
+  triggers: ['servlet\.su', 'suorgadminid', 'Login\s+As', 'sulogout', 'impersonat']
+  requires: >
+    Rendering as another user needs three things established first: the "Administrators Can Log
+    In as Any User" preference enabled, a target user who is NOT the session's own user, and an
+    assertion that the session is actually impersonating — the "Log out as" link, which
+    Salesforce renders only while impersonating. Without the third, a failed hop is
+    indistinguishable from a successful one.
+  confidence: practitioner
+  updated: 2026-08-04
+
 - id: savepoint-rollback-does-not-refund-limits
   domain: limits
   title: A rollback restores the data and not the governor budget, and spends a statement of its own

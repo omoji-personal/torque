@@ -246,11 +246,18 @@ def layer_profile_render(profile, evidence):
                      VERIFIED, f"observed by a person: {evidence}")
     return Layer("profile_render",
                  f"visible in the UI as {profile or 'a non-admin profile'}", BLOCKED,
-                 f"not automated, since {BROWSER_BLOCKED_SINCE}. The roadmap gates the browser "
-                 f"half on three unanswered questions: whether it can render as a non-admin "
-                 f"profile at all, the real wall-clock cost, and the flake rate. A query can "
-                 f"tell you a permission row exists; only a render tells you a human sees the "
-                 f"field. Do it by hand and record it with --render-evidence.")
+                 f"not automated, since {BROWSER_BLOCKED_SINCE}. Two of the three gating "
+                 f"questions now have answers, measured 2026-08-04 by "
+                 f"harness/experiments/login-as-render.mjs: the cost is about 10 seconds "
+                 f"(admin shell 3-6s, the Login-As hop 5-6s) and the render was stable across "
+                 f"four runs. What is NOT established is the hop itself — the su servlet needs "
+                 f"the 'Administrators Can Log In as Any User' org preference, and without it "
+                 f"the browser stays on the servlet URL while a following Lightning navigation "
+                 f"renders perfectly AS THE ADMIN. So a check that asserted only the render "
+                 f"would report this layer verified having never left the admin session, which "
+                 f"is the exact failure the layer exists to catch. Blocked on an org preference "
+                 f"and a non-admin user, not on feasibility. Do it by hand and record it with "
+                 f"--render-evidence.")
 
 
 def layer_automation(evidence):
