@@ -363,11 +363,11 @@ Commit `94ef337` (A1 applied) · **profile: capability · target `sf-coffee` · 
 ✗ clean_ip   FAIL   denied term in tracked file docs/MAINTAINER-MODE.md
 ```
 
-A document written that day to argue that the safety machinery should not be switched off named
-the actual client org aliases authenticated on the author's machine, to make the risk concrete.
-That is client identity, in a repository that has been public since 2026-07-31. The argument
-never needed them: a count carries "a working laptop has a double-digit number of production
-orgs authenticated" exactly as well.
+A document written that day to argue that the safety machinery should not be switched off reached
+for real identifying detail to make the risk concrete. In a public repository. The argument never
+needed it: a count carries "a working laptop has a double-digit number of production orgs
+authenticated" exactly as well as a list does, and only the list carries anything back to the
+organisations named.
 
 `clean_ip` caught it. No human did, and the reviewing session that wrote the file did not. It is
 worth being precise about why that is the system working rather than a lucky catch: the leak was
@@ -386,11 +386,16 @@ scored itself red. One leak took out both a check and that check's proof — a f
 every check downstream of it less informative, which is an argument for fixing red immediately
 rather than reading around it.
 
-The working tree was redacted in `665fa8e`. **The terms remain in git history** (`c1bf28a`, in
-both its content and its commit message, already on `origin/main`), so `clean_ip` stays red on
-the historical blob until a history rewrite and force-push — an operator decision, outward-facing
-and destructive, not the agent's to take. Until then no capability or release run can be
-all-PASS, correctly, because the repository does still carry the terms.
+The working tree was corrected in the same session. The history was rewritten separately, because
+a redaction that only touches the tip leaves the term reachable in the objects behind it, and
+`clean_ip` scans the objects rather than the checkout. That is the whole reason it has a
+historical-blob path at all.
+
+Two things are worth keeping from this, and neither needs the specifics. Removing a term from
+history is an operator action, outward-facing and destructive, and not the agent's to take. And
+until it is done, no capability or release run can be all-PASS, correctly, because the repository
+still carries what the check objects to. A green log above a repository in that state would be
+worth less than a red one.
 
 ### What this run does establish
 
@@ -417,6 +422,6 @@ nothing (B1), and `named_mutators_exist` deriving 14 names against `TOTAL_MUTATO
 ### What it is not
 
 One run, one disposable org, by the author, and **red**. It is retained as diagnostic. A later
-all-PASS run supersedes it, and cannot happen until the history carries no denied term — which
-is the correct ordering, since the alternative is a green log above a repository that still
-publishes client names.
+all-PASS run supersedes it, and could not happen until the history carried no denied term — which
+is the correct ordering, since the alternative is a green log sitting above a repository that
+still contains what the check objects to.

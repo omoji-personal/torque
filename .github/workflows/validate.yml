@@ -69,13 +69,13 @@ jobs:
       #                                 reports operator-only. It must not fail the job, and it
       #                                 must not be mistaken for having run.
       #
-      #                                 THIS IS A REAL HOLE, not a formality, and it has already
-      #                                 been through: on 2026-08-04 a commit carrying client org
-      #                                 aliases reached main behind a green tick from this very
-      #                                 workflow, and was caught minutes later by an operator-mode
-      #                                 capability run. CI IS STRUCTURALLY BLIND TO IP LEAKS —
-      #                                 the denylist cannot be committed, because publishing the
-      #                                 list of client names would itself be the leak.
+      #                                 THIS IS A REAL HOLE, not a formality, and something has
+      #                                 already gone through it: a commit this workflow marked
+      #                                 green was caught minutes later by an operator-mode run,
+      #                                 for a term CI could not see. CI IS STRUCTURALLY BLIND TO
+      #                                 THIS CLASS — the denylist cannot be committed, because
+      #                                 publishing the list of denied terms would itself be the
+      #                                 disclosure it exists to prevent.
       #                                 So: green here is NOT clearance to publish. A run on the
       #                                 operator's machine is the only thing that checks it.
       #                                 The fix is to put the denylist in an Actions secret and
