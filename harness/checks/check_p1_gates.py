@@ -178,13 +178,28 @@ def _enforcement_map():
     # can only ever exit 0, so a rule claiming hook-enforced(lesson_observer) would be false —
     # and this check, which exists to catch exactly that class of false claim, would have
     # accepted it purely because the file exists.
+    #
+    # Being able to block is necessary and not sufficient: a hook has to be WIRED to run. Both
+    # gates could sit on disk, deny-paths intact, every fixture passing when invoked directly,
+    # with one line deleted from settings.json and nothing calling them on a real tool use.
+    # Nothing here noticed, because the file the label names would still be there, still able
+    # to deny, still passing its own tests. Read settings.json without assuming its schema:
+    # what matters is whether the path appears at all.
+    settings = ROOT / ".claude" / "settings.json"
+    wired = set(re.findall(r"hooks/([A-Za-z_][A-Za-z0-9_]*)\.py",
+                           settings.read_text() if settings.exists() else ""))
+    if not wired:
+        return Result("enforcement_map", FAIL,
+                      "settings.json wires no hooks at all — every hook-enforced label in the "
+                      "rules is currently false, or this reader has stopped reading")
     hooks = set()
+    unwired = set()
     for p_ in (ROOT / "hooks").glob("*.py"):
         if p_.stem == "lib":
             continue
         body = p_.read_text()
         if "lib.deny" in body or "exit(2)" in body:
-            hooks.add(p_.stem)
+            (hooks if p_.stem in wired else unwired).add(p_.stem)
     checks = {name for name, _p, _c, _fn in REGISTRY}
     unresolved = []
     for rf in rules.glob("*.md"):
@@ -192,7 +207,9 @@ def _enforcement_map():
         for m in re.finditer(r"ENFORCEMENT:\s*hook-enforced\s*\(([^)]+)\)", text):
             for nm in (x.strip() for x in m.group(1).split(",")):
                 if nm and nm not in hooks:
-                    unresolved.append(f"{rf.name}: hook '{nm}'")
+                    why = ("exists and can deny, but settings.json wires nothing to it"
+                           if nm in unwired else "is not a hook that can deny")
+                    unresolved.append(f"{rf.name}: hook '{nm}' {why}")
         for m in re.finditer(r"ENFORCEMENT:\s*harness-enforced\s*\(([^)]+)\)", text):
             for nm in (x.strip() for x in m.group(1).split(",")):
                 if nm and nm not in checks:
@@ -209,9 +226,12 @@ def _enforcement_map():
     if len(labelled) < len(all_rules):
         tail = (f"; {len(all_rules) - len(labelled)} rule file(s) make no enforcement claim "
                 f"and are therefore unverified by this check")
+    if unwired:
+        tail += (f"; {len(unwired)} hook(s) can deny but are wired to nothing "
+                 f"({sorted(unwired)}) — no rule claims them, and none may")
     return Result("enforcement_map", PASS,
                   f"{len(labelled)}/{len(all_rules)} rule files claim enforcement, and every "
-                  f"label resolves to one of {len(hooks)} blocking hook(s) or "
+                  f"label resolves to one of {len(hooks)} wired blocking hook(s) or "
                   f"{len(checks)} registered check(s){tail}")
 
 @check("gate_adversarial_fixtures", "capability", catastrophe=True)
