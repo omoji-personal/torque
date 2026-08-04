@@ -108,10 +108,14 @@ jobs:
       # Which means CI CANNOT cover that check, and the only place it runs is an operator's own
       # machine — precisely where the defect it was written for lived. Same shape as clean_ip
       # above. Both gaps are named here rather than left for someone to infer from a green tick.
+      # Declared ONCE and reused by the attestation step below. Two steps running the same
+      # profile from two copies of this string is how they came to disagree in the first place.
       - name: Static profile
+        env:
+          ALLOW_SKIP: "operator_presence_can_succeed:no login session on a CI runner; this check runs only on an operator machine"
         run: |
-          python3 harness/validate.py --profile static \
-            --allow-skip="operator_presence_can_succeed:no login session on a CI runner; this check runs only on an operator machine"
+          echo "ALLOW_SKIP=$ALLOW_SKIP" >> "$GITHUB_ENV"
+          python3 harness/validate.py --profile static --allow-skip="$ALLOW_SKIP"
 
       # The guide PDF is the artifact a reader downloads and the only one with no check on it:
       # claimed_counts and named_mutators_exist both scan guide/torque-guide.html and neither
@@ -137,36 +141,23 @@ jobs:
       # mutator that failed to restore a hook, and an attestation committed into harness/attest/
       # would trip it with a file that is not residue.
       #
-      # Exit codes are NOT all the same failure. `torque attest` returns 2 when it refuses to
-      # write — a parse mismatch, a verdict disagreeing with an exit code, no check outcomes at
-      # all — and that is a real defect in the artifact and fails this job. It returns 1 when it
-      # wrote a complete attestation whose verdict was not PASS, and on this runner that is the
-      # expected state: the gating "Static profile" step above declares one allowed skip
-      # (operator_presence_can_succeed, which needs a login TTY), and `torque attest` re-runs the
-      # profile WITHOUT that declaration, so it lands on DEGRADED every time. Failing the job on
-      # exit 1 would mean CI is red for a condition the gate above already ruled on.
+      # It runs the profile with the SAME declared skip as the gating step above, taken from the
+      # same variable rather than a second copy of the string. It re-runs validation rather than
+      # reading the step above, so the two must be given identical inputs or they answer
+      # different questions — which is exactly what happened when this step was added: it ran
+      # without the declaration, landed on DEGRADED, exited 1, and turned the build red for a
+      # condition the gate had already ruled on.
       #
-      # The artifact is still accurate: it lists that check with outcome SKIP. What it does not
-      # carry is the declared REASON, because `torque attest` has no --allow-skip to forward.
-      # That flag is the actual fix and it is OWED — bin/ is outside the agent write surface, so
-      # it needs the operator. Until then this comment is where the reason lives, which is worse
-      # than the attestation carrying it and better than nobody being told.
+      # The skip and its reason are recorded IN the attestation, so a reader sees the verdict and
+      # the excuse together instead of a SKIP with no stated grounds.
       - name: Static attestation
         run: |
-          set +e
-          python3 bin/torque attest --profile static --out "$RUNNER_TEMP/attest"
-          rc=$?
-          set -e
-          if [ "$rc" -ge 2 ]; then
-            echo "::error::torque attest refused to write an attestation (exit $rc)"
-            exit "$rc"
-          fi
-          # An attestation step that produces no attestation has failed regardless of exit code.
+          python3 bin/torque attest --profile static --out "$RUNNER_TEMP/attest" \
+            --allow-skip="$ALLOW_SKIP"
+          # A step named "Static attestation" that produced no attestation has failed whatever
+          # it exited with.
           ls "$RUNNER_TEMP"/attest/*.json >/dev/null
           cat "$RUNNER_TEMP"/attest/*.json
-          if [ "$rc" -ne 0 ]; then
-            echo "::notice::attestation recorded a non-PASS verdict (exit $rc); see the artifact"
-          fi
 
       - name: Upload the attestation
         if: always()

@@ -80,6 +80,18 @@ def main():
     # Two true things collide unless the artifact can be put elsewhere and uploaded.
     ap.add_argument("--out", metavar="DIR",
                     help="directory to write the attestation into (default harness/attest)")
+    # Forwarded to validate.py, and RECORDED below. Without this, CI ran the static profile
+    # twice with different flags: the gating step declared one allowed skip
+    # (operator_presence_can_succeed needs a login TTY, which a runner has not got) and this
+    # tool re-ran the same profile without it, landed on DEGRADED, and exited 1 — so the build
+    # went red for a condition the gate had already ruled on, and would have every run forever.
+    #
+    # The recording half is not optional. An attestation that carries an excused check without
+    # saying it was excused is the failure this file exists to avoid: a reader sees a verdict
+    # and cannot tell that a question went unasked. `allowed_skips` is written whether or not
+    # any were passed, so its absence in an older artifact is distinguishable from an empty one.
+    ap.add_argument("--allow-skip", action="append", metavar="CHECK:REASON", default=[],
+                    help="forwarded verbatim to validate.py and recorded in the attestation")
     a = ap.parse_args()
     if a.profile != "static" and not a.target_org:
         print(f"--target-org is required for --profile {a.profile}: it reaches a live org and "
@@ -108,6 +120,8 @@ def main():
     _argv = [sys.executable, str(ROOT / "harness" / "validate.py"), "--profile", a.profile]
     if a.target_org:
         _argv += ["--target-org", a.target_org]
+    for spec in a.allow_skip:
+        _argv += [f"--allow-skip={spec}"]
     run = subprocess.run(_argv, capture_output=True, text=True, cwd=ROOT)
     clean = re.sub(r"\x1b\[[0-9;]*m", "", run.stdout + run.stderr)
 
@@ -171,6 +185,14 @@ def main():
         "org_classification": next(
             (c["detail"] for c in checks if c["check"] == "org_classify"), None),
         "verdict": verdict,
+        # Which checks were excused and on what stated grounds. A DEGRADED verdict with no
+        # allowed_skips means checks were skipped for reasons NOBODY declared, and that is a
+        # different and worse artifact than one carrying a reason a reader can weigh. Always
+        # written, so an empty list is distinguishable from an older schema that never had it.
+        "allowed_skips": [
+            {"check": s.split(":", 1)[0].strip(),
+             "reason": s.split(":", 1)[1].strip() if ":" in s else "unstated"}
+            for s in a.allow_skip],
         "exit_code": run.returncode,
         "counts": {"checks": len(checks),
                    # Counted from what was actually parsed, rather than from a hand-written
@@ -210,9 +232,16 @@ def main():
         print("refusing to write an attestation with no check outcomes — the validation run "
               "produced nothing parseable", file=sys.stderr)
         return 2
-    if (verdict == "PASS") != (run.returncode == 0):
+    # validate.py exits 0 on DEGRADED when every SKIP was declared with --allow-skip, so the
+    # old `(verdict == "PASS") != (returncode == 0)` form would refuse a run that behaved exactly
+    # as its contract says. The invariant being defended is not "PASS means zero" — it is that
+    # the verdict and the exit code must not tell a reader two different stories. Declared
+    # allowances are the one case where DEGRADED and zero agree.
+    expected_zero = verdict == "PASS" or (verdict == "DEGRADED" and bool(a.allow_skip))
+    if expected_zero != (run.returncode == 0):
         print(f"refusing: validator verdict {verdict} disagrees with exit "
-              f"{run.returncode}", file=sys.stderr)
+              f"{run.returncode}"
+              + (" (allowed skips were declared)" if a.allow_skip else ""), file=sys.stderr)
         return 2
     out_dir = Path(a.out).expanduser() if a.out else OUT
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -224,8 +253,10 @@ def main():
         shown = f
     print(f"{shown}  verdict={verdict}  "
           f"{att['counts'].get('pass', 0)}/{len(checks)} passed  "
-          f"{att['self_test']['mutators_caught']} mutators caught")
-    return 0 if verdict == "PASS" else 1
+          f"{att['self_test']['mutators_caught']} mutators caught"
+          + (f"  ({len(a.allow_skip)} declared skip"
+             f"{'s' if len(a.allow_skip) != 1 else ''})" if a.allow_skip else ""))
+    return 0 if expected_zero else 1
 
 
 if __name__ == "__main__":
