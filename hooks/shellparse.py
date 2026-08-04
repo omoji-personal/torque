@@ -8,7 +8,7 @@ that could reach `sf` but cannot be statically resolved. Every bypass found rout
 sf-base0 classifier (relocation under a runner, glued redirect, legacy colon syntax, MCP
 naming), so the fixes harden those seams while keeping direct-`sf` authorization intact.
 """
-import os, re, shlex, hashlib, fnmatch
+import os, re, shlex, hashlib, fnmatch, json
 from pathlib import Path
 import lib
 
@@ -126,6 +126,8 @@ REDIR_FUSED = re.compile(r"^(?:\{\w+\}|&|\d+)?<?>{1,2}[|!&]?(.*)$")  # > >> 1> 2
 PROTECTED_BASENAMES = {"lib.py", "shellparse.py", "prod_write_gate.py", "destructive_data_gate.py",
                        "lib_cli.py", "settings.json", "writable-orgs.json", "protected-objects",
                        "cli-write-surface.json", "clean-ip.rules", ".classify-cache.json",
+                       # decides which checks the agent may run against a live org
+                       "read-only-checks.json",
                        "audit.log", "torque-approve", "torque-frontdoor", "torque-install-gates",
                        "validate.py",
                        # The catalogue and the alias index feed regular expressions into the
@@ -255,6 +257,11 @@ def _is_own_harness(argv) -> bool:
         home = lib.TORQUE_HOME.resolve()
         cand = Path(argv[1])
         cand = (cand if cand.is_absolute() else (lib.TORQUE_HOME / cand)).resolve()
+        # The harness sits in harness/, not bin/, and is trusted only one check at a time. Its
+        # file is in PROTECTED_BASENAMES, so the same equivalence bin/ relies on holds: the agent
+        # cannot write the file it would then be allowed to run.
+        if cand.parent == (home / "harness") and cand.name == "validate.py":
+            return _harness_check_is_read_only(argv[2:], home)
         if cand.parent != (home / "bin"):
             return False
         if cand.name == "torque":                       # the dispatcher: only its read-only verbs
@@ -262,6 +269,50 @@ def _is_own_harness(argv) -> bool:
         return cand.name in READ_ONLY_FIRST_PARTY
     except Exception:
         return False
+
+
+def _harness_check_is_read_only(rest, home) -> bool:
+    """`validate.py --only <check>` where THAT CHECK is declared to make no org mutation.
+
+    The harness as a whole is not read-only and must never be trusted as if it were — probe_cycle
+    deploys and hard-deletes metadata, which is why P1-002 took its exemption away. Most of its
+    checks are another matter: describe_first only queries. Refusing the whole tool meant every
+    live diagnosis needed the operator to run a full profile and paste it back, which is friction
+    against a correctness control and therefore something that eventually gets removed.
+
+    Parsed, not pattern-matched. `--only describe_first --profile release` must NOT walk through
+    on the strength of containing a permitted name, and neither must a second `--only`, an
+    `--only` whose value is absent, or `--self-test` riding alongside. Anything this cannot
+    resolve exactly is refused, which is the same posture the rest of this module takes toward
+    argv it cannot statically settle.
+    """
+    try:
+        names = set(json.loads((home / "harness" / "checks" /
+                                "read-only-checks.json").read_text())["checks"])
+    except Exception:
+        return False                                    # no manifest, no exemption
+    only, seen = None, 0
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--self-test" or tok.startswith("--self-test="):
+            return False                                # runs mutators, and one needs an org
+        if tok == "--allow-skip" or tok.startswith("--allow-skip="):
+            return False                                # degrading a run is the operator's call
+        if tok == "--only":
+            seen += 1
+            if i + 1 >= len(rest):
+                return False                            # a flag with no value settles nothing
+            only = rest[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--only="):
+            seen += 1
+            only = tok.split("=", 1)[1]
+        i += 1
+    if seen != 1 or not only:
+        return False                                    # exactly one check, named exactly once
+    return only in names
 
 
 def strip_continuations(cmd: str) -> str:

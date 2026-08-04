@@ -75,9 +75,27 @@ class Result:
 
 # ---- registry: (name, lowest_profile, catastrophe_class, fn) --------------
 REGISTRY = []
-def check(name, profile="static", catastrophe=False):
+# name -> True for checks DECLARED to make no org mutation. Recorded from the same decorator
+# call as the registry entry, so there is one declaration site and nothing maintained beside it.
+#
+# WHY THIS EXISTS. validate.py lost its read-only exemption when P1-002 closed, correctly:
+# probe_cycle deploys and hard-deletes metadata, so the harness is an org-mutating tool and the
+# gate refuses `python3 harness/validate.py --target-org X`. That is true of the harness and
+# false of most of its checks — describe_first only queries — and the consequence was that
+# diagnosing any live failure required the operator to run the whole profile and paste it back.
+#
+# The exemption is now per check, on the principle P1-002 itself established: trust by
+# capability, not by location. And a declaration alone is a label, so `readonly_manifest_is_
+# derived` re-derives from source and FAILS if anything declared here shows an org write. Both
+# are required — the label must be made deliberately AND survive the analysis. Neither is
+# sufficient: a declaration alone is trusting a name, and the derivation alone is trusting an
+# incomplete static analysis to prove a negative.
+READS_ONLY = {}
+def check(name, profile="static", catastrophe=False, reads_only=False):
     def deco(fn):
-        REGISTRY.append((name, profile, catastrophe, fn)); return fn
+        REGISTRY.append((name, profile, catastrophe, fn))
+        READS_ONLY[name] = reads_only
+        return fn
     return deco
 
 def sh(*args, **kw):
@@ -206,7 +224,7 @@ def _secret_scan():
                   f"all clean")
 
 # ---- CHECK: org classification (three-valued; dev != production) ----------
-@check("org_classify", "capability", catastrophe=True)
+@check("org_classify", "capability", catastrophe=True, reads_only=True)
 def _org_classify(target):
     if not target:
         return Result("org_classify", SKIP, "no --target-org")
@@ -235,7 +253,7 @@ def _org_classify(target):
     return Result("org_classify", PASS, f"{target} classified '{verdict}' (IsSandbox={is_sandbox}, {otype})")
 
 # ---- CHECK: live verification helper — real vs hallucinated field ---------
-@check("describe_first", "capability", catastrophe=True)
+@check("describe_first", "capability", catastrophe=True, reads_only=True)
 def _describe_first(target):
     if not target:
         return Result("describe_first", SKIP, "no --target-org")

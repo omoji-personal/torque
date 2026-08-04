@@ -73,7 +73,7 @@ def _approval_boundary(target):
     if second != 2: return Result("approval_boundary", FAIL, f"token was reusable (2nd exit {second})")
     return Result("approval_boundary", PASS, "agent cannot mint; operator token authorizes exactly once")
 
-@check("preflight_credentials", "capability", catastrophe=True)
+@check("preflight_credentials", "capability", catastrophe=True, reads_only=True)
 def _preflight(target):
     """What this CLI session can reach, and whether any of it is both production and writable.
 
