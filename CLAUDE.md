@@ -21,6 +21,24 @@ reads, deploys, data operations, browser verification — against any org, safel
 6. **QA honesty.** State exactly what ran and what did not. SKIP is not green. A claim
    without a check is labeled model-honored, never implied enforced.
 
+## Know what you can change BEFORE you plan
+
+Most of this repo is not agent-writable: `hooks/`, `bin/`, `.claude/`, `harness/checks/`,
+`knowledge/`, `local/orgs/`, and protected basenames (`validate.py`, `lib.py`, …) wherever they
+live. There is no token for it — `torque approve` mints ORG tokens only, and an artifact edit has
+no agent path by construction. Org-touching harness runs (`--profile capability|release`) are
+refused too; `--only <check>` works.
+
+Ask, do not discover by being refused:
+
+```
+python3 scripts/write-surface.py --plan docs/SOME-HANDOFF.md   # before working any plan
+python3 scripts/write-surface.py <paths>                       # exit 1 if any are blocked
+```
+
+A punch list written from a code survey will name files you cannot touch — that has already cost
+one session half its context. Check first, and say up front which items need the operator.
+
 ## The rules
 
 `.claude/rules/` auto-loads (byte-budgeted, harness-enforced). Deep detail lives in
