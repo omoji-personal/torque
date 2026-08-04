@@ -50,6 +50,11 @@ try {
     tqObs.add('OUTCOME~@~failed~@~' + tqE.getTypeName() + '~@~' + tqE.getMessage());
 } finally {
     Database.rollback(tqSp);
+    // Emitted only after rollback() actually returns, so "residue none" is an OBSERVATION
+    // rather than a claim the template makes on the transaction's behalf. If the rollback
+    // throws, or the process dies first, this line never appears and the caller reports
+    // residue UNCONFIRMED instead of asserting zero (P0-002).
+    tqObs.add('ROLLBACK~@~done');
 }
 tqObs.add('COST~@~dml=' + (Limits.getDmlStatements() - tqDml0)
           + '~@~soql=' + (Limits.getQueries() - tqSoql0)
@@ -142,6 +147,7 @@ def main() -> int:
 
     print(f"\nSHADOW RUN — {a.target_org} ({verdict}, {orgid})")
     rc = 0
+    rolled_back = False
     for o in obs:
         parts = o.split("~@~")
         if parts[0] == "OUTCOME" and parts[1] == "failed":
@@ -153,9 +159,35 @@ def main() -> int:
         elif parts[0] == "COST":
             print(f"  cost     {'  '.join(parts[1:])}   (SPENT — a rollback does not refund "
                   f"governor limits; the rollback itself is one DML statement)")
+        elif parts[0] == "ROLLBACK":
+            rolled_back = True
         else:
             print(f"  {o}")
-    print("  residue  none — the transaction was rolled back")
+
+    # P0-002, first half. The marker lines were the whole verdict, so a NONZERO `sf apex run`
+    # still printed SUCCEEDED as long as an OUTCOME line appeared anywhere in the output. An
+    # anonymous-Apex call can fail after the observation is emitted — a compile error on a later
+    # block, a governor limit, a killed process — and the tool would report that the operation
+    # "would have worked". Reporting success on a failed invocation is the exact class this
+    # project exists to refuse, in the tool built to rehearse operations safely.
+    if r.returncode != 0 and rc == 0:
+        print(f"  INCONCLUSIVE — the Apex reported success, but `sf apex run` exited "
+              f"{r.returncode}. The observation cannot be trusted over the invocation that "
+              f"produced it.")
+        print(f"           {lib.first_line(r.stderr, r.stdout)[:200]}")
+        rc = 3
+
+    # P0-002, second half. "residue none" was printed unconditionally, including on the paths
+    # where nothing established it. The rollback is claimed by the template; it should be
+    # OBSERVED. If the transaction did not report rolling back, say that instead of asserting it.
+    if rolled_back:
+        print("  residue  none — the transaction reported its rollback")
+    else:
+        print("  residue  UNCONFIRMED — no rollback observation was returned. The template rolls "
+              "back to the savepoint, but this run did not see it reported, so treat residue as "
+              "unestablished rather than zero.")
+        if rc == 0:
+            rc = 3
     print("  NOT covered: callouts, @future/Queueable, publishImmediate events, CDC — a "
           "consequence that left the transaction cannot be rolled back with it\n")
     return rc
