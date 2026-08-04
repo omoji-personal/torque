@@ -144,6 +144,108 @@ def _completion_blocked_cannot_be_waved():
                   f"reason, and a legitimate one records its reason in the ledger")
 
 
+_RECEIPT = ROOT / "bin" / "torque-receipt"
+
+
+def _receipt_mod():
+    import importlib.machinery as _cg_mach2
+    loader = _cg_mach2.SourceFileLoader("torque_receipt_mod", str(_RECEIPT))
+    spec = _cg_il.spec_from_loader("torque_receipt_mod", loader)
+    m = _cg_il.module_from_spec(spec)
+    loader.exec_module(m)
+    return m
+
+
+@check("receipt_refuses_partial_credit", "static", catastrophe=True)
+def _receipt_refuses_partial_credit():
+    """A receipt showing five of six must not read as complete.
+
+    The evidence element is the self-referential one and the only place this could go wrong
+    quietly: it is the receipt vouching for itself, so if it can be ESTABLISHED while another
+    element is outstanding, the document certifies a claim it has not got. Everything else in
+    this tool is an honest report of somebody else's answer; this one is its own.
+    """
+    name = "receipt_refuses_partial_credit"
+    m = _receipt_mod()
+
+    def E(key, state):
+        return m.Element(key, key, state, "synthetic")
+
+    # the evidence element, shown a set with a hole in it
+    ev = m.el_evidence([E("preconditions", m.ESTABLISHED), E("predicted_impact", m.OUTSTANDING)],
+                       None)
+    if ev.state != m.OUTSTANDING:
+        return Result(name, FAIL,
+                      f"the evidence element reported {ev.state} while predicted_impact was "
+                      f"outstanding — the receipt is certifying itself on an incomplete set")
+    if "predicted_impact" not in ev.detail:
+        return Result(name, FAIL,
+                      "the evidence element withheld itself without naming what is missing, "
+                      "which leaves the reader with a refusal and no next step")
+    # and it must settle when the set is whole, or the verdict is unreachable
+    ev2 = m.el_evidence([E("a", m.ESTABLISHED), E("b", m.NA)], None)
+    if ev2.state != m.ESTABLISHED:
+        return Result(name, FAIL,
+                      f"the evidence element reported {ev2.state} on a set where every element "
+                      f"is established or inapplicable — PROOF-CARRYING would be unreachable")
+
+    # the verdict itself, both directions, driven at render()
+    class _A:
+        target_org, sobject, operation, where, json = "org", "Account", "update", None, True
+
+    import contextlib
+    import io
+
+    def verdict(states):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = m.render([E(f"e{i}", s) for i, s in enumerate(states)], _A())
+        return code, _cg_json.loads(buf.getvalue())
+
+    code, doc = verdict([m.ESTABLISHED] * 5 + [m.NA])
+    if code != DONE or doc["verdict"] != "PROOF-CARRYING":
+        return Result(name, FAIL,
+                      f"a complete set gave exit {code} / {doc['verdict']!r} — a receipt that "
+                      f"can only ever be incomplete carries no information")
+    for hole in (m.OUTSTANDING,):
+        code, doc = verdict([m.ESTABLISHED, hole, m.ESTABLISHED])
+        if code != NOT_DONE or doc["verdict"] != "INCOMPLETE":
+            return Result(name, FAIL,
+                          f"one {hole} element gave exit {code} / {doc['verdict']!r}")
+    return Result(name, PASS,
+                  "the evidence element withholds itself while any other is outstanding and "
+                  "names what is missing; the verdict is reachable in both directions")
+
+
+@check("receipt_composes_rather_than_reimplements", "static")
+def _receipt_composes_rather_than_reimplements():
+    """The receipt must run the existing tools, not grow its own copies of them.
+
+    A second implementation of blast radius would diverge from the first and nothing would
+    compare them — the defect this repository has now found in six places. So this asserts the
+    receipt reaches the real binaries, and that it does not carry the query text that would mean
+    it had started answering the question itself.
+    """
+    name = "receipt_composes_rather_than_reimplements"
+    src = _RECEIPT.read_text()
+    for tool in ("torque-blast-radius", "torque-done"):
+        if tool not in src:
+            return Result(name, FAIL, f"the receipt no longer invokes {tool}")
+    if "closure_report" not in src:
+        return Result(name, FAIL, "the receipt no longer asks lib for the requirement set")
+    # a re-implementation would need to query the org for automation itself
+    for smell in ("FROM ApexTrigger", "FROM FlowDefinitionView", "FROM ValidationRule",
+                  "sobject describe"):
+        if smell in src:
+            return Result(name, FAIL,
+                          f"the receipt contains {smell!r} — it has begun computing blast radius "
+                          f"itself instead of asking the tool that already does, which is how "
+                          f"two answers to one question start diverging")
+    return Result(name, PASS,
+                  "the receipt invokes blast-radius and the completion ledger and asks lib for "
+                  "the requirement set; it computes none of them itself")
+
+
 @check("completion_can_say_done", "static", catastrophe=True)
 def _completion_can_say_done():
     """The verdict must be reachable in both directions, or it carries no information.

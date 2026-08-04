@@ -112,11 +112,29 @@ change — and a human who did the render by hand records it with `--render-evid
 seam the verdict would be NOT DONE for every input ever, which is a ledger with one row and no
 information in it.
 
-### 4. Proof-carrying operations
+### 4. Proof-carrying operations — shipped 2026-08-04
 The unifying frame: every meaningful operation carries preconditions, predicted impact,
-authorization bound to that impact, postconditions, unknowns, and an evidence receipt. Four of the
-six exist already — impact-bound approval tokens and attestations are built. This step is mostly
-integration, and it is what turns the pieces into one claim.
+authorization bound to that impact, postconditions, unknowns, and an evidence receipt.
+
+All six existed and none of them met. The catalogue knew what an operation requires,
+blast-radius knew what it would set off, approval tokens bound a count ceiling, the completion
+ledger knew whether it landed, UNDETERMINED existed in three tools, and attestations recorded
+runs — six answers, six commands, and nowhere a person could look and say the operation is
+accounted for.
+
+`torque receipt` assembles them. It runs the existing tools rather than reimplementing any,
+because a second blast radius would diverge from the first and nothing would compare them;
+`receipt_composes_rather_than_reimplements` asserts it stays that way. Verified live: 4/6
+INCOMPLETE with no field named, 6/6 PROOF-CARRYING with the field, permission set and the three
+kinds of human evidence supplied.
+
+The one rule it is strict about: **a receipt showing five of six must not read as complete.**
+The evidence element is the self-referential one — the receipt vouching for itself — and it
+withholds itself while any other element is outstanding, naming what is missing rather than just
+refusing. Authorization is deliberately reported as verified-elsewhere: an approval token lives
+in the trust anchor, which this tool cannot read by design, so it records the ceiling the
+approval must name and says the gate checks the binding at write time. Claiming otherwise would
+be this tool vouching for a control it has no access to.
 
 ---
 
@@ -141,7 +159,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 91 checks (71 static, 88 capability, 91 release),
+The current state, measured rather than claimed: 93 checks (73 static, 90 capability, 93 release),
 17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.

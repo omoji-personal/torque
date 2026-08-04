@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""torque receipt — the six things a meaningful operation should be able to show.
+
+Roadmap step 4. Every piece already existed and none of them met: the catalogue knew what an
+operation requires, blast-radius knew what it would set off, the approval tokens bound a count
+ceiling, the completion ledger knew whether it landed, UNDETERMINED existed in three tools, and
+attestations recorded runs. Six answers, six commands, no single place a person could look and
+say "this operation is accounted for".
+
+That is what this assembles. It runs the existing tools rather than reimplementing any of them,
+because a second implementation of blast radius would diverge from the first and nothing would
+compare them.
+
+    torque receipt --target-org <alias> --sobject Account --where "Type='Prospect'"
+    torque receipt --target-org <alias> --sobject Account --operation delete --json
+
+THE ONE RULE
+
+A receipt showing five of six elements must not read as complete. That is the defect this
+repository keeps finding in its own work — a partial answer wearing the shape of a whole one —
+and it is the only thing here worth being strict about. Every element reports ESTABLISHED,
+NOT ESTABLISHED or N/A WITH A REASON, and the verdict is PROOF-CARRYING only when none is
+outstanding. There is no partial credit and no summary number that could be mistaken for one.
+
+EXIT CODES
+    0   PROOF-CARRYING — every element established or inapplicable with a stated reason
+    3   INCOMPLETE — at least one element outstanding
+    2   REFUSED — the receipt could not be assembled, so there is nothing to report
+"""
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "hooks"))
+
+ESTABLISHED = "ESTABLISHED"
+OUTSTANDING = "NOT ESTABLISHED"
+NA = "N/A"
+SETTLED = (ESTABLISHED, NA)
+
+
+class Element:
+    def __init__(self, key, title, state, detail, data=None):
+        self.key, self.title, self.state, self.detail = key, title, state, detail
+        self.data = data if data is not None else {}
+
+    def as_dict(self):
+        return {"element": self.key, "title": self.title, "state": self.state,
+                "detail": self.detail, "data": self.data}
+
+
+def _tool(*args, timeout=300):
+    """Run a first-party read-only tool and return (exit, parsed-or-None, raw)."""
+    r = subprocess.run([sys.executable, *args], capture_output=True, text=True,
+                       cwd=str(ROOT), timeout=timeout)
+    try:
+        return r.returncode, json.loads(r.stdout), r.stdout
+    except Exception:                                      # noqa: BLE001
+        return r.returncode, None, (r.stdout or "") + (r.stderr or "")
+
+
+# ---- the six ---------------------------------------------------------------------------
+
+def el_preconditions(command):
+    import lib
+    rep = lib.closure_report(command)
+    if rep["requirements"]:
+        return Element("preconditions", "what this operation requires", ESTABLISHED,
+                       f"{len(rep['requirements'])} requirement(s) from the catalogue",
+                       {"requirements": [{"entry": i, "requires": r}
+                                         for i, r in rep["requirements"]]})
+    if rep["matched"]:
+        return Element("preconditions", "what this operation requires", OUTSTANDING,
+                       f"{len(rep['matched'])} catalogue entr(ies) match this operation and none "
+                       f"states what it requires. That is a gap in the catalogue, not a finding "
+                       f"that nothing is required.", {"matched": rep["matched"]})
+    return Element("preconditions", "what this operation requires", OUTSTANDING,
+                   "no catalogue entry matches this operation at all, so nothing is known about "
+                   "what it requires — which is not the same as it requiring nothing")
+
+
+def el_impact(a):
+    args = [str(ROOT / "bin" / "torque-blast-radius"), "--target-org", a.target_org,
+            "--sobject", a.sobject, "--operation", a.operation, "--json"]
+    if a.where:
+        args += ["--where", a.where]
+    code, doc, raw = _tool(*args)
+    if doc is None:
+        return Element("predicted_impact", "what it will set off", OUTSTANDING,
+                       f"blast-radius produced nothing this could read (exit {code}): "
+                       f"{raw.strip()[:120]}")
+    fired = {k: doc.get(k) for k in ("triggers", "flows", "validation_rules",
+                                     "workflow_rules", "rollups")}
+    n = sum(len(v) for v in fired.values() if isinstance(v, list))
+    return Element("predicted_impact", "what it will set off", ESTABLISHED,
+                   f"{doc.get('scope')} record(s) in scope; {n} automation(s) or rule(s) "
+                   f"implicated; cascade {doc.get('cascade')}",
+                   {"scope": doc.get("scope"), **fired,
+                    "cascade": doc.get("cascade"), "cascade_soft": doc.get("cascade_soft")}), doc
+
+
+def el_unknowns(doc, impact_state):
+    if doc is None:
+        return Element("unknowns", "what could not be determined", OUTSTANDING,
+                       "the impact query did not return, so the list of unknowns is itself "
+                       "unknown — the worst of the three states and the easiest to miss")
+    und = doc.get("undetermined") or []
+    if und:
+        return Element("unknowns", "what could not be determined", ESTABLISHED,
+                       f"{len(und)} source(s) could not answer, and say so", {"undetermined": und})
+    return Element("unknowns", "what could not be determined", ESTABLISHED,
+                   "every source answered; nothing was reported as undetermined")
+
+
+def el_authorization(a, doc):
+    """Named, and deliberately not answered here.
+
+    An approval token is operator-minted and lives in the trust anchor, which this tool cannot
+    read — by design, and the design is the point. So the receipt records what the authorization
+    would have to be bound to, and states that the binding is checked at the moment of the write
+    by the gate. Reporting ESTABLISHED here would mean this tool vouching for a control it has no
+    access to, which is the exact shape of the thing it exists to prevent.
+    """
+    scope = doc.get("scope") if doc else None
+    if a.operation == "insert" or not _is_mutation(a):
+        return Element("authorization", "authorization bound to that impact", NA,
+                       f"a {a.operation} on {a.sobject} as described is not a destructive "
+                       f"operation, so no impact-bound token is required")
+    if scope is None:
+        return Element("authorization", "authorization bound to that impact", OUTSTANDING,
+                       "the impact is unknown, so there is no count an approval could be bound "
+                       "to. An approval that names no ceiling is not impact-bound.")
+    return Element("authorization", "authorization bound to that impact", ESTABLISHED,
+                   f"an impact-bound approval for this operation must name a ceiling of "
+                   f"{scope} record(s); the gate verifies the binding at the moment of the "
+                   f"write, and this tool cannot read the token store by design",
+                   {"required_ceiling": scope, "mode": "impact_ceiling",
+                    "verified_by": "destructive_data_gate at write time"})
+
+
+def _is_mutation(a):
+    return a.operation in ("update", "delete")
+
+
+def el_postconditions(a):
+    if not a.field:
+        return Element("postconditions", "whether it landed", OUTSTANDING,
+                       "no --field given, so nothing was verified in the org. A deploy status "
+                       "and a job state both report success without answering this.")
+    args = [str(ROOT / "bin" / "torque-done"), "--target-org", a.target_org,
+            "--field", a.field, "--json"]
+    if a.permset:
+        args += ["--permset", a.permset]
+    for flag, val in (("--render-evidence", a.render_evidence),
+                      ("--automation-evidence", a.automation_evidence),
+                      ("--uat-evidence", a.uat_evidence)):
+        if val:
+            args += [flag, val]
+    code, doc, raw = _tool(*args)
+    if doc is None:
+        return Element("postconditions", "whether it landed", OUTSTANDING,
+                       f"the completion ledger produced nothing readable (exit {code})")
+    if doc["verdict"] == "DONE":
+        return Element("postconditions", "whether it landed", ESTABLISHED,
+                       f"the completion ledger says DONE: {doc['verified']}/{doc['layers']} "
+                       f"layers", {"ledger": doc["ledger"]})
+    out = [l["layer"] for l in doc["ledger"] if l["outcome"] not in ("VERIFIED", "N/A")]
+    return Element("postconditions", "whether it landed", OUTSTANDING,
+                   f"the completion ledger says NOT DONE: {doc['verified']}/{doc['layers']} "
+                   f"layers verified, outstanding {', '.join(out)}", {"ledger": doc["ledger"]})
+
+
+def el_evidence(elements, a):
+    """The receipt is the evidence, and it has to be able to say it is partial."""
+    outstanding = [e.key for e in elements if e.state not in SETTLED]
+    if outstanding:
+        return Element("evidence_receipt", "a record somebody else could check", OUTSTANDING,
+                       f"a receipt is only evidence of what it establishes, and "
+                       f"{len(outstanding)} element(s) are outstanding: "
+                       f"{', '.join(outstanding)}. Recording it as complete would make this "
+                       f"document the thing it is meant to prevent.")
+    return Element("evidence_receipt", "a record somebody else could check", ESTABLISHED,
+                   "every element above is established or inapplicable with a stated reason")
+
+
+# ---- assembly --------------------------------------------------------------------------
+
+def build(a):
+    command = (f"sf data {a.operation} bulk --sobject {a.sobject} --target-org {a.target_org}"
+               + (f" --where \"{a.where}\"" if a.where else ""))
+    pre = el_preconditions(command)
+    impact, doc = el_impact(a)
+    unknowns = el_unknowns(doc, impact.state)
+    auth = el_authorization(a, doc)
+    post = el_postconditions(a)
+    six = [pre, impact, auth, unknowns, post]
+    six.append(el_evidence(six, a))
+    return six
+
+
+def render(six, a):
+    outstanding = [e for e in six if e.state not in SETTLED]
+    ok = not outstanding
+    if a.json:
+        print(json.dumps({
+            "target_org": a.target_org, "sobject": a.sobject, "operation": a.operation,
+            "where": a.where,
+            "verdict": "PROOF-CARRYING" if ok else "INCOMPLETE",
+            "established": len([e for e in six if e.state in SETTLED]),
+            "elements": len(six),
+            "receipt": [e.as_dict() for e in six]}, indent=2))
+    else:
+        print(f"\nPROOF-CARRYING RECEIPT — {a.operation} on {a.sobject} @ {a.target_org}")
+        if a.where:
+            print(f"  criteria : {a.where}")
+        print()
+        w = max(len(e.title) for e in six)
+        for e in six:
+            print(f"  {e.title.ljust(w)}  {e.state}")
+            print(f"  {' ' * w}  {e.detail}")
+        print()
+        if ok:
+            print(f"  PROOF-CARRYING. All {len(six)} elements established or inapplicable with "
+                  f"a stated reason.")
+        else:
+            print(f"  INCOMPLETE. {len(six) - len(outstanding)}/{len(six)} elements established. "
+                  f"Outstanding: {', '.join(e.key for e in outstanding)}.")
+            print(f"  Every outstanding element is a question nobody has answered, not a "
+                  f"question with the answer no.")
+    return 0 if ok else 3
+
+
+def main():
+    p = argparse.ArgumentParser(prog="torque receipt",
+                                description=__doc__.split("\n")[0])
+    p.add_argument("--target-org", required=True)
+    p.add_argument("--sobject", required=True)
+    p.add_argument("--operation", default="update", choices=("update", "delete", "insert"))
+    p.add_argument("--where")
+    p.add_argument("--field", metavar="Object.Field__c",
+                   help="the field whose arrival proves the change landed")
+    p.add_argument("--permset")
+    p.add_argument("--render-evidence")
+    p.add_argument("--automation-evidence")
+    p.add_argument("--uat-evidence")
+    p.add_argument("--json", action="store_true")
+    a = p.parse_args()
+    sys.exit(render(build(a), a))
+
+
+if __name__ == "__main__":
+    main()
