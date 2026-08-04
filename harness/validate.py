@@ -401,12 +401,69 @@ def _self_test_guard():
     return _restore
 
 
+def _self_test_isolated(target=None):
+    """Run the self-test against a DISPOSABLE COPY of the tree, never the live hooks.
+
+    P1-007. The mutators edit hooks/shellparse.py, hooks/lib.py, hooks/prod_write_gate.py and
+    hooks/destructive_data_gate.py in place — 26 sites — and those four files are REGISTERED
+    PreToolUse hooks. For the length of each mutation window the guard under test is neutered in
+    the live workspace. Backups, a lock and residue detection reduce the risk of a leftover; none
+    of them isolates another process from the window itself.
+
+    That is not hypothetical here. This repo routinely runs several agent sessions at once, and
+    the guard below records what a killed run already did once: 16 stacked MUTANT lines in
+    hooks/lib.py. A second session hitting a gate mid-window sees a transient refusal at best,
+    and at worst is gated by a guard that has been switched off.
+
+    The fix is isolation rather than more careful mutation. The tree is copied to a temp
+    directory, TORQUE_HOME is pointed at the copy, and validate.py re-runs its own self-test
+    there. Every mutation lands on the copy; the registered hooks are never written to, so the
+    audit's acceptance criterion — file hashes of active hook files unchanged throughout — holds
+    by construction rather than by cleanup.
+
+    The WORKING TREE is copied, not `git worktree add HEAD`. A worktree would test committed
+    source while the mutators exist to prove the guards you are editing right now are
+    load-bearing. And .git comes with it: three mutators plant a tracked file with `git add -f`
+    and require the check to go red, so without a repo they cannot plant, the check correctly
+    passes, and the mutator reports a false failure. Learned by excluding it and misreading the
+    result.
+    """
+    import shutil as _sh, tempfile as _tf
+    box = _tf.mkdtemp(prefix="torque-selftest-")
+    dst = Path(box) / "tree"
+    print("=== --self-test: isolating to a disposable copy (P1-007) ===")
+    try:
+        _sh.copytree(ROOT, dst, ignore=_sh.ignore_patterns("__pycache__", "node_modules",
+                                                           ".venv", "*.pyc"),
+                     symlinks=True)
+        env = {**os.environ, "TORQUE_SELFTEST_ISOLATED": "1", "TORQUE_HOME": str(dst)}
+        cmd = [sys.executable, str(dst / "harness" / "validate.py"), "--self-test"]
+        if target:
+            cmd += ["--target-org", target]
+        r = subprocess.run(cmd, cwd=str(dst), env=env, text=True)
+        # The copy is disposable, but the LIVE hooks must be provably untouched. Assert it
+        # rather than trust it: this is the acceptance criterion the audit actually named.
+        residue = _mutant_residue()
+        if residue:
+            print(f"  ✗ ISOLATION FAILED — live hooks carry a mutation after an isolated run: "
+                  f"{residue}. That should be impossible; do not trust this result.")
+            return False
+        return r.returncode == 0
+    finally:
+        _sh.rmtree(box, ignore_errors=True)
+
+
 def self_test(target=None):
     # HARD GUARD: a mutator spawns validate.py as a subprocess; without this the child runs
     # self_test() too and mutates the same source again — recursively. A killed run then
     # leaves the tree broken. Observed for real: 16 stacked MUTANT lines in hooks/lib.py.
     if os.environ.get("TORQUE_IN_SELFTEST") == "1":
         return True
+    # P1-007: unless we are already inside the disposable copy, go and make one. Everything
+    # below this line mutates hook sources in place, and this is the last point at which it can
+    # be redirected away from the registered ones.
+    if os.environ.get("TORQUE_SELFTEST_ISOLATED") != "1":
+        return _self_test_isolated(target)
     os.environ["TORQUE_IN_SELFTEST"] = "1"
     _restore_hooks = _self_test_guard()
     print("=== --self-test: proving catastrophe-class checks can FAIL ===")
