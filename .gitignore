@@ -1,6 +1,12 @@
 # Content mount — per-firm client work, credentials context, run artifacts. Never publishes.
 local/
 
+# Career-facing drafting agent. Gitignored deliberately: it encodes the owner's job-search
+# positioning, his truth boundary, and the phrases he has banned from his own public writing.
+# All of that is private context that has no business in a public repo, and publishing it would
+# also make the artifact look like a marketing exercise, which is the one framing it must avoid.
+.claude/agents/torque-marketing.md
+
 # Tooling set — enumerated in harness/checks/tooling-ignore.allowed with reasons.
 __pycache__/
 .sf/

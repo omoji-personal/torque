@@ -4,3 +4,4 @@ __pycache__/    # Python bytecode — harness/hooks are Python
 node_modules/   # Playwright (P4) vendor tree
 .venv/          # optional Python virtualenv
 knowledge/cache/  # locally-built documentation cache; vendor docs are not redistributable and the DIGESTED catalogue is what ships
+.claude/agents/torque-marketing.md  # career-facing drafting agent: encodes the owner's job-search positioning and banned phrasing, which is private context and would also make the artifact read as a marketing exercise
