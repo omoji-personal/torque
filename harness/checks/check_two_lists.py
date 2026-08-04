@@ -58,6 +58,24 @@ _2L_SPELLINGS = ("hooks/{n}", "./hooks/{n}", "{root}/hooks/{n}",
 
 # ---- the pure comparisons -------------------------------------------------------------
 
+def _2l_shadowed(fname, bound, owners, provided):
+    """PURE. Which of this file's bindings collide with a name another file bound differently?
+
+    `owners` is mutated as files are walked, name -> (file, what). Two files binding one name to
+    the SAME thing (the same module under the same alias) is not a collision; two files binding
+    it to different things is, and the loader resolves that silently in load order.
+    """
+    out = []
+    for b, what in bound.items():
+        if b in provided:
+            continue
+        prev = owners.get(b)
+        if prev and prev[0] != fname and prev[1] != what:
+            out.append(f"{b!r}: {prev[1]} in {prev[0]}, {what} in {fname}")
+        owners.setdefault(b, (fname, what))
+    return out
+
+
 def _2l_unprotected(paths, is_protected):
     """PURE. Which of these paths does the gate predicate leave writable?"""
     return [p for p in paths if not is_protected(p)]
@@ -209,6 +227,17 @@ def _two_list_checks_can_fail():
     if _2l_unprotected(["hooks/lib.py"], lambda p: True):
         survived.append("unprotected() reported a hole against a predicate that protects all")
 
+    # plugin shadowing: the real collision, and the benign one it must not cry wolf about.
+    owners = {"_REQUIRED": ("check_kb.py", "value:check_kb.py"),
+              "_sp": ("check_kb.py", "import:subprocess")}
+    if not _2l_shadowed("check_attest.py", {"_REQUIRED": "value:check_attest.py"},
+                        dict(owners), set()):
+        survived.append("shadowed() missed two files binding one name to different values")
+    if _2l_shadowed("check_attest.py", {"_sp": "import:subprocess"}, dict(owners), set()):
+        survived.append("shadowed() flagged the same module imported under the same alias")
+    if _2l_shadowed("check_attest.py", {"ROOT": "value:check_attest.py"}, dict(owners), {"ROOT"}):
+        survived.append("shadowed() flagged a name the loader itself provides")
+
     # domains: an entry nobody is routed to, and a trigger pointing at nothing.
     unreachable, phantom = _2l_domain_gaps({"a", "b"}, {"a", "c"})
     if unreachable != ["b"] or phantom != ["c"]:
@@ -219,8 +248,8 @@ def _two_list_checks_can_fail():
     if survived:
         return Result("two_list_checks_can_fail", FAIL, "; ".join(survived))
     return Result("two_list_checks_can_fail", PASS,
-                  "both comparisons report the divergence they are for and stay quiet on lists "
-                  "that agree (4 cases)")
+                  "all three comparisons report the divergence they are for and stay quiet on "
+                  "lists that agree (7 cases)")
 
 
 @check("mutation_coverage_is_stated_honestly", "static")
@@ -262,6 +291,72 @@ def _mutation_coverage_is_stated_honestly():
                   f"{mutators} mutators against {len(catastrophic)} catastrophe-class checks, "
                   f"and the harness docstring claims no universal coverage (searched for a "
                   f"'proving each/every/all catastrophe-class' assertion)")
+
+
+@check("check_plugins_do_not_shadow_each_other", "static")
+def _check_plugins_do_not_shadow_each_other():
+    """Every check_*.py is exec'd into ONE namespace, so a repeated module-level name rebinds.
+
+    Not hypothetical. check_attest.py was written with `_REQUIRED = ("schema", "verdict", ...)`
+    and check_kb.py already used that name for catalogue entry fields. check_kb loads later
+    alphabetically, so the attestation check ran against the catalogue's required fields and
+    reported that every attestation was missing an id, a symptom and a remedy.
+
+    That one announced itself. The dangerous direction is the other one: a name that shadows
+    something a LATER-loading file only reads, where the shadowed check keeps running and
+    quietly measures the wrong thing. Nothing about the loader makes this visible — the files
+    look like modules and are not.
+
+    Bare names in a shared namespace are the failure. The convention is a per-file prefix, and
+    this is what enforces it.
+    """
+    name = "check_plugins_do_not_shadow_each_other"
+    import ast as _2l_ast
+    # Provided by the loader to every plugin; a plugin re-binding one of these is a different
+    # (and worse) problem, caught by the collision rule below only if two files do it.
+    PROVIDED = {"check", "Result", "sh", "ROOT", "CHECKS", "PASS", "FAIL", "WARN", "SKIP", "NA",
+                "REGISTRY", "subprocess", "json", "os", "re", "Path"}
+    owners = {}
+    clashes = []
+    for f in sorted((ROOT / "harness" / "checks").glob("check_*.py")):
+        try:
+            tree = _2l_ast.parse(f.read_text())
+        except SyntaxError as e:
+            return Result(name, FAIL, f"{f.name} does not parse ({e})")
+        # Each binding carries WHAT it binds, not merely that it binds. Two files doing
+        # `import subprocess as _sp` rebind the same alias to the same module and nothing
+        # changes meaning — flagging that trains a reader to skim the finding. Two files
+        # binding one name to different objects is the real defect, and it is what this
+        # reports.
+        bound = {}
+        for node in tree.body:                     # module level only — locals cannot collide
+            # Anything carrying a `.name` at module level defines that name: functions, async
+            # functions, classes. Asking for the attribute rather than listing the three node
+            # types covers all of them and cannot fall behind a future one.
+            declared = getattr(node, "name", None)
+            if isinstance(declared, str):
+                bound[declared] = f"def:{f.name}"
+            elif isinstance(node, _2l_ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, _2l_ast.Name):
+                        bound[t.id] = f"value:{f.name}"
+            elif isinstance(node, _2l_ast.AnnAssign) and isinstance(node.target, _2l_ast.Name):
+                bound[node.target.id] = f"value:{f.name}"
+            elif isinstance(node, _2l_ast.Import):
+                for a in node.names:
+                    bound[(a.asname or a.name).split(".")[0]] = f"import:{a.name}"
+            elif isinstance(node, _2l_ast.ImportFrom):
+                for a in node.names:
+                    bound[a.asname or a.name] = f"from:{node.module}.{a.name}"
+        clashes += _2l_shadowed(f.name, bound, owners, PROVIDED)
+    if clashes:
+        return Result(name, FAIL,
+                      f"{len(clashes)} module-level name(s) shared across check plugins, which "
+                      f"the loader silently rebinds: {clashes[:6]}")
+    return Result(name, PASS,
+                  f"{len(owners)} module-level names across "
+                  f"{len(list((ROOT / 'harness' / 'checks').glob('check_*.py')))} plugin files, "
+                  f"each bound in exactly one of them")
 
 
 def _2l_fake_tree(root, wire=("gate",)):
