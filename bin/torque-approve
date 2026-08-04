@@ -25,7 +25,22 @@ ROOT = Path(__file__).resolve().parent.parent
 DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-update",
                    "destructive-metadata"}
 SESSION_MAX_MIN = 120
-MAINTAINER_MAX_MIN = 120
+# A maintainer window is bounded by the WORK, not by the same clock as a production-write
+# session, and the two should not share a number just because they started with one.
+#
+# A production session is dangerous while it is open: every minute is a minute in which a
+# mistaken write reaches a customer's org. Short is correct there, and 120 stays.
+#
+# A maintainer window is dangerous at the MOMENT IT IS OPENED, because that is when a human
+# decides the agent may edit the enforcement layer. After that decision, an expiry that lands
+# mid-task buys nothing: the work is unfinished, the operator is asked to re-authorise the same
+# thing they just authorised, and the ritual degrades into a reflex. A rubber-stamped renewal is
+# worth less than one deliberate grant.
+#
+# 12 hours covers an overnight autonomous run, which is the actual use. It is still time-boxed,
+# still revocable with --end-maintainer, still tree-bound, and every edit under it is still
+# audited as MAINTAINER-EDIT. What it is not is a prompt that fires when nobody is awake.
+MAINTAINER_MAX_MIN = 720
 
 
 def _ensure_secret():
