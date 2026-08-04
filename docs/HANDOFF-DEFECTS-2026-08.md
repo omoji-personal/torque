@@ -4,6 +4,37 @@ Work order for a local Claude Code session with live org access. Context and rat
 `docs/EVAL-2026-08.md`. Every location below was verified against commit `04d142a` before
 being written down.
 
+---
+
+## STATUS as of 2026-08-04 — all items closed except C6's live half
+
+**A1 A2 B1 B2 B3 B4 B5 C1 C2 C3 C4 C5 C7 C8 C9 D1 D2 D3 D4 D5 D6 D7 D8 E1** — closed, each with
+a check that fails when it regresses, each verified in both directions before commit.
+
+**C6** — the zero-rows SKIP is implemented and the check no longer reddens on an org with no
+Leads. The positive path still needs a run against an org that has one.
+
+Line numbers below are as-written on `04d142a` and have moved. Two entries did not survive
+contact and are corrected rather than silently fixed:
+
+- **C3** — the claim that the un-mutated gate *allows* the hardcoded attack off macOS could not
+  be reproduced. With `TORQUE_ANCHOR` relocated the gate still denies, so it refuses that string
+  for a broader reason than reaching the real anchor. Not disproven either: simulating a
+  filesystem without `/Users` is not possible from macOS. The fix landed on other grounds.
+- **B1's remedy** was "absent manifest + zero images → N/A". Correct, and it understated the
+  defect: three independent conditions each made the check vacuous, so it needed all three to be
+  false before a line of its logic ran.
+
+Two defects were found while fixing others, neither in this list:
+
+- `bin/torque-attest` never imported `os`, so a module-level `os.environ.get` added for C2 would
+  have raised `NameError` on every attestation. `py_compile` passed it; compiling is not
+  executing.
+- `claimed_counts` matched `"N checks"` but never the per-profile breakdown beside it, so moving
+  one check between profiles left two of three numbers in the same sentence unverifiable.
+
+---
+
 **Rules of engagement (the repo's own):**
 
 - Every fix ships with its proof — a fixture, a mutator arm, or a check that fails when the
