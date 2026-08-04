@@ -109,7 +109,7 @@ def _why_it_failed(r):
     return (pick[0][:160] if pick else f"sf exited {r.returncode} and said nothing")
 
 
-def soql(target, query):
+def soql(target, query, tooling=False):
     """Returns (rows, error). An error is NEVER an empty result.
 
     This confusion has now appeared in the parser, in blast-radius, in a probe script and in the
@@ -117,9 +117,18 @@ def soql(target, query):
     response and a query that genuinely matched nothing are three different facts, and only one
     of them is "no". Callers get the error and must decide; nothing here turns it into zero.
     """
+    # Which API serves which object is not a detail. FieldDefinition and EntityDefinition are
+    # Tooling-only; FieldPermissions, PermissionSet and PermissionSetAssignment are ordinary
+    # objects and the Tooling endpoint refuses them outright with "sObject type
+    # 'FieldPermissions' is not supported". This helper hardcoded --use-tooling-api, so the two
+    # layers that read permissions could never have returned a row — in any invocation, ever.
+    # Every offline test passed, because against an unreachable org everything errors anyway and
+    # the layer was going to be NOT VERIFIED regardless. It took one run against a real org.
+    args = ["data", "query", "--target-org", target, "--json", "--query", query]
+    if tooling:
+        args.insert(4, "--use-tooling-api")
     try:
-        r = sh("data", "query", "--target-org", target, "--use-tooling-api", "--json",
-               "--query", query)
+        r = sh(*args)
     except Exception as e:                                 # noqa: BLE001
         return None, f"{type(e).__name__} running the query"
     if r.returncode != 0:
@@ -133,7 +142,7 @@ def soql(target, query):
 def layer_field_exists(target, obj, field):
     rows, err = soql(target, "SELECT QualifiedApiName FROM FieldDefinition WHERE "
                              f"EntityDefinition.QualifiedApiName='{obj}' AND "
-                             f"QualifiedApiName='{field}'")
+                             f"QualifiedApiName='{field}'", tooling=True)
     if err:
         return Layer("field_exists", f"{obj}.{field} exists in the org", UNVERIFIED,
                      f"the org could not answer: {err}")
@@ -145,13 +154,45 @@ def layer_field_exists(target, obj, field):
                  "confirmed by FieldDefinition, in the org, not in a deploy response")
 
 
+def _is_custom(field):
+    """`Widget__c` and `ns__Widget__c` are custom; `Name` and `CreatedDate` are not."""
+    return field.endswith("__c") or field.endswith("__C")
+
+
 def layer_fls(target, obj, field, permset):
     if not permset:
+        # "Nothing was checked" was true and lazy. Without a named permission set this cannot
+        # confirm the RIGHT grant exists, but it can still ask whether ANY does, and for a custom
+        # field zero grants is the answer to the question people actually have. Reporting a
+        # blank where a cheap query was available is the same withholding this tool exists to
+        # stop, one level up.
+        rows, err = soql(target, "SELECT Id FROM FieldPermissions WHERE "
+                                 f"Field='{obj}.{field}'")
+        if not _is_custom(field):
+            # The custom-field rule is the usual cause here and it does not apply to a standard
+            # field. Quoting it anyway would be a true sentence used as a false explanation.
+            n = "an unknown number of" if err else str(len(rows))
+            return Layer("fls", "field-level security granted", UNVERIFIED,
+                         f"no --permset given, so no specific grant was confirmed. {field} is a "
+                         f"STANDARD field, so the usual cause of this layer failing — no custom "
+                         f"field gets FLS automatically from the Metadata API — does not apply "
+                         f"to it. {n} permission row(s) mention it. Name a permission set to "
+                         f"check the grant this change depends on.")
+        if err:
+            return Layer("fls", "field-level security granted", UNVERIFIED,
+                         f"no --permset given, and the org could not be asked whether anything "
+                         f"grants {field} at all: {err}")
+        if not rows:
+            return Layer("fls", "field-level security granted", UNVERIFIED,
+                         f"no --permset given, and NOTHING grants {obj}.{field} to anyone. No "
+                         f"custom field gets field-level security automatically from the "
+                         f"Metadata API, for any profile, System Administrator included. The "
+                         f"field is deployed and invisible.")
         return Layer("fls", "field-level security granted", UNVERIFIED,
-                     "no --permset given, so nothing was checked. NO custom field gets FLS "
-                     "automatically from the Metadata API, for any profile, System "
-                     "Administrator included — so 'not checked' here is the single most likely "
-                     "reason a deployed field is invisible to everyone.")
+                     f"no --permset given, so the specific grant this change depends on was not "
+                     f"confirmed. {len(rows)} permission row(s) do grant {obj}.{field} to "
+                     f"something, so it is not invisible to everyone. Name the permission set to "
+                     f"turn this green.")
     rows, err = soql(target,
                      "SELECT Id, PermissionsRead, PermissionsEdit FROM FieldPermissions WHERE "
                      f"Field='{obj}.{field}' AND Parent.Name='{permset}'")
