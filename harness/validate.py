@@ -91,7 +91,21 @@ def _byte_budget():
 # ---- CHECK: local/ ignored, nothing tracked under it ----------------------
 @check("local_ignored", "static")
 def _local_ignored():
-    r = sh("git", "check-ignore", "local")
+    # Ask about a path INSIDE local/, not about `local` itself. The .gitignore pattern is
+    # `local/`, which matches DIRECTORIES — and git can only tell that `local` is a directory if
+    # it exists on disk. On a fresh clone it does not, so `git check-ignore local` returns 1 and
+    # this check reported that the content mount was unprotected when it was fine.
+    #
+    # It passed for two years by accident: lib.audit() does LOCAL.mkdir(exist_ok=True), so any
+    # earlier check that provoked a gate created the directory, and this one then found it. The
+    # dependency surfaced the moment the self-test was isolated to a disposable copy (P1-007) —
+    # the gates it spawns now create local/ over there, so nothing created it here first, and CI
+    # went red on a clean checkout.
+    #
+    # A check whose result depends on whether an unrelated check ran before it is not measuring
+    # what it claims to. Reproduced on a fresh clone: `check-ignore local` exits 1,
+    # `check-ignore local/anything.txt` exits 0.
+    r = sh("git", "check-ignore", "local/anything.txt")
     if r.returncode != 0:
         return Result("local_ignored", FAIL, "local/ is NOT gitignored")
     tracked = sh("git", "ls-files", "local/").stdout.strip()

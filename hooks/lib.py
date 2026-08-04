@@ -1112,6 +1112,11 @@ def _is_salesforce_decision(cmd: str) -> bool:
     only if the classifier cannot parse — a command too malformed to classify is one the gate
     denied anyway, and refusing to log it would be the same silence in a new place.
     """
+    # An MCP tool call has no command line. prod_write_gate.handle_mcp synthesises a description
+    # prefixed "[mcp] " and hands it to remember_command, so this prefix exists only because the
+    # gate adjudicated an MCP Salesforce tool. Nothing a user types produces it.
+    if cmd.startswith("[mcp] "):
+        return True
     try:
         import shellparse as _sp
         verdict = _sp.analyze_bash(cmd)

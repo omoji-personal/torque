@@ -45,6 +45,23 @@ def handle_bash(cmd):
 
 
 def handle_mcp(tool, tinput):
+    # P1-006, second surface. allow() falls back to _JUDGED["command"], which is populated only
+    # by lib.remember_command — and that was called in handle_bash only. So EVERY authorized MCP
+    # Salesforce operation produced no ALLOW entry, regardless of spelling: not a detector gap
+    # like the Bash side, but a whole surface missing from the decision trail.
+    #
+    # The same empty _JUDGED also meant deny()'s platform notes never rendered on an MCP refusal,
+    # so the notes were absent exactly where the operator has least context — an MCP tool call
+    # shows no command line to reason about.
+    #
+    # An MCP call has no command string, so one is synthesised for the record. It is clearly
+    # marked as such: a trail entry that looked like a shell command nobody typed would be its
+    # own small lie.
+    desc = f"[mcp] {tool} " + " ".join(
+        f"{k}={v}" for k, v in sorted((tinput or {}).items())
+        if k in ("org", "targetOrg", "target_org", "username", "sobject", "objectName"))
+    lib.remember_command(desc.strip())
+
     r = shellparse.mcp_analyze(tool, tinput)
     if r.get("read"):
         lib.allow()
