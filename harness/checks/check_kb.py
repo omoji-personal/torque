@@ -874,19 +874,66 @@ def _closure_is_delivered():
             return Result("closure_is_delivered", FAIL,
                           f"a read produced a requirement set: {cmd[:50]!r}")
 
+    # ...and NOT claim a requirement the operation does not have. `fls-not-automatic` carried a
+    # trigger matching the metadata TYPE regardless of the verb, so deleting a field was told it
+    # needed a permission set. A requirement set carrying things the operation does not require
+    # misleads exactly as much as one that leaves things out, and is harder to notice because it
+    # errs toward doing more work.
+    del_cmd = "sf project delete source --metadata CustomField --target-org dev"
+    false_reqs = [i for i, _r in lib.closure_for(del_cmd)]
+    if "fls-not-automatic" in false_reqs:
+        return Result("closure_is_delivered", FAIL,
+                      "deleting a field is told it needs field-level security; a delete grants "
+                      "nothing and needs no permission set")
+
+    # ...and above all, an empty requirement set must not be able to mean two things. A bulk
+    # update matched SEVEN entries and produced no requirement, and the gate printed nothing, so
+    # an agent that saw no TORQUE NEEDS line concluded there was none. Both halves are asserted:
+    # the report must distinguish the two kinds of nothing, and the gate must say which it is.
+    rep = lib.closure_report("sf data delete bulk --sobject Log__c --file i.csv --target-org dev")
+    if not rep["matched"]:
+        return Result("closure_is_delivered", FAIL,
+                      "a bulk delete matched no catalogue entry at all — the report cannot "
+                      "distinguish kinds of nothing if it never sees anything")
+    silent = "sf project retrieve start --metadata Flow:X --target-org dev"
+    srep = lib.closure_report(silent)
+    if srep["requirements"] or not srep["unrecorded"]:
+        # If this shape ever grows a requirement, pick another; what must not happen is the
+        # check quietly passing because it stopped exercising the case it names.
+        return Result("closure_is_delivered", FAIL,
+                      f"the unrecorded-requirement case is no longer exercised by {silent[:44]!r}"
+                      f" ({len(srep['requirements'])} reqs, {len(srep['unrecorded'])} unrecorded)"
+                      f" — repoint it at a shape that still has matched-but-unrecorded entries")
+
     # and it must actually PRINT — a capability that never reaches the operator is not one
     ev = _j.dumps({"tool_name": "Bash", "tool_input": {"command":
                    "sf project deploy start --metadata CustomField:Account.X__c --target-org dev"}})
     r = _sp.run([_sy.executable, str(ROOT / "hooks" / "prod_write_gate.py")], input=ev,
                 capture_output=True, text=True, cwd=ROOT, timeout=90,
                 env=dict(_os.environ, TORQUE_NO_NOTES="0"))
+    # and the OTHER kind of nothing must print too, from a real gate, or the distinction lives
+    # only in a return value nobody reads.
+    ev2 = _j.dumps({"tool_name": "Bash", "tool_input": {"command":
+                    "sf data update record --sobject Account --record-id 001x --values Name=y "
+                    "--target-org dev"}})
+    r2 = _sp.run([_sy.executable, str(ROOT / "hooks" / "prod_write_gate.py")], input=ev2,
+                 capture_output=True, text=True, cwd=ROOT, timeout=90,
+                 env=dict(_os.environ, TORQUE_NO_NOTES="0"))
+    if "none recorded" not in (r2.stdout + r2.stderr):
+        return Result("closure_is_delivered", FAIL,
+                      "a write whose matched entries record no requirement printed no "
+                      "'none recorded' line — silence is indistinguishable from 'nothing is "
+                      "required', which is what this was written to end")
+
     if "TORQUE NEEDS" not in (r.stdout + r.stderr):
         return Result("closure_is_delivered", FAIL,
                       "the requirement set never printed from a real gate run — it exists in the "
                       "catalogue and does not reach the decision")
     return Result("closure_is_delivered", PASS,
                   f"{len(with_req)} requirement set(s); 2 operations received theirs, 2 reads "
-                  f"stayed silent, and it prints from a real gate run")
+                  f"stayed silent, a delete is not told it needs field-level security, and both "
+                  f"kinds of nothing print from a real gate — the requirement set and the "
+                  f"'none recorded' line that used to be silence")
 
 
 @check("retrieval_quality", "static", catastrophe=True)

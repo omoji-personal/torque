@@ -252,6 +252,70 @@ def _two_list_checks_can_fail():
                   "lists that agree (7 cases)")
 
 
+@check("legacy_spelling_reaches_the_catalogue", "static")
+def _legacy_spelling_reaches_the_catalogue():
+    """The gate authorizes both CLI spellings. The catalogue must speak to both.
+
+    `classify_destructive` pairs every modern shape with its `force:` twin, one `or` at a time,
+    so a legacy bulk delete is gated exactly like a modern one. The catalogue's triggers were
+    written against modern wording only, so the same command reached ZERO entries — measured at
+    five operation pairs, legacy reached nothing five times out of five. Correctly refused, and
+    told nothing about what it was doing.
+
+    Two comparisons, because the defect has two halves. The map must not fall behind the
+    classifier: any `force:` command ID the parser knows must be in `LEGACY_TO_MODERN`. And the
+    map must actually work: for each pair, the legacy spelling must reach entries.
+
+    Exact parity is NOT required, and pretending otherwise would make this a check that gets
+    weakened rather than fixed. Some triggers match flag text (`--manifest`, `--sobject`) whose
+    legacy spellings are single letters, so a small residual gap is expected. The gap is
+    reported in the detail rather than hidden, so it is visible if it grows.
+    """
+    name = "legacy_spelling_reaches_the_catalogue"
+    src = (ROOT / "hooks" / "shellparse.py").read_text()
+    known = set(re.findall(r"force:[a-z]+:[a-z:]+", src))
+    mapped = set(_2l_sp.LEGACY_TO_MODERN)
+    missing = sorted(i for i in known
+                     if i not in mapped and not any(k.startswith(i) for k in mapped))
+    if missing:
+        return Result(name, FAIL,
+                      f"the parser knows {len(missing)} legacy command id(s) the map does not, "
+                      f"so knowledge written for the modern spelling cannot reach them: "
+                      f"{missing[:6]}")
+
+    PAIRS = [
+        ("bulk delete",
+         "sf data delete bulk --sobject Log__c --file ids.csv --target-org dev",
+         "sf force:data:bulk:delete -s Log__c -f ids.csv -u dev"),
+        ("bulk upsert",
+         "sf data upsert bulk --sobject Account --file r.csv --external-id Id --target-org dev",
+         "sf force:data:bulk:upsert -s Account -f r.csv -i Id -u dev"),
+        ("record create",
+         "sf data create record --sobject Account --values Name=x --target-org dev",
+         "sf force:data:record:create -s Account -v Name=x -u dev"),
+        ("deploy",
+         "sf project deploy start --manifest p.xml --target-org dev",
+         "sf force:source:deploy -x p.xml -u dev"),
+        ("anonymous apex",
+         "sf apex run --file s.apex --target-org dev",
+         "sf force:apex:execute -f s.apex -u dev"),
+    ]
+    silent, gaps = [], []
+    for label, modern, legacy in PAIRS:
+        m = _2l_lib.closure_report(modern)
+        l = _2l_lib.closure_report(legacy)
+        if m["matched"] and not l["matched"]:
+            silent.append(f"{label}: modern reaches {len(m['matched'])}, legacy reaches nothing")
+        elif len(l["matched"]) < len(m["matched"]):
+            gaps.append(f"{label} {len(l['matched'])}/{len(m['matched'])}")
+    if silent:
+        return Result(name, FAIL, "; ".join(silent))
+    tail = f"; residual flag-spelling gap on {', '.join(gaps)}" if gaps else "; full parity"
+    return Result(name, PASS,
+                  f"{len(mapped)} legacy ids mapped, covering every one the parser knows; all "
+                  f"{len(PAIRS)} operation pairs reach the catalogue by either spelling{tail}")
+
+
 @check("mutation_coverage_is_stated_honestly", "static")
 def _mutation_coverage_is_stated_honestly():
     """`catastrophe=True` is a claim, and TOTAL_MUTATORS is the other half of it.
