@@ -246,16 +246,18 @@ def layer_profile_render(profile, evidence):
                      VERIFIED, f"observed by a person: {evidence}")
     return Layer("profile_render",
                  f"visible in the UI as {profile or 'a non-admin profile'}", BLOCKED,
-                 f"not automated, since {BROWSER_BLOCKED_SINCE}. All three gating questions now "
-                 f"have measured answers (harness/experiments/login-as-render.mjs, 2026-08-04): "
-                 f"it CAN render as another user via the su servlet; it costs about 10 seconds; "
-                 f"and the impersonation assertion FLAKES — false once in three runs even polled "
-                 f"for 15 seconds, because the 'Logged in as' banner renders later than the "
-                 f"Lightning shell and is the only usable signal (servlet.sulogout is absent "
-                 f"from the Lightning DOM entirely). Not automated on that third answer: a "
-                 f"layer that reports a non-admin render as verified one time in three when it "
-                 f"is not would be worse than this BLOCKED, which at least never lies. Do the "
-                 f"render by hand and record it with --render-evidence.")
+                 f"not automated YET, and no longer for want of a method. Demonstrated live "
+                 f"2026-08-04 (harness/experiments/login-as-render.mjs): impersonate via the su "
+                 f"servlet, open the record, click Details, then walk the shadow roots "
+                 f"explicitly — an admin session returned 29 field labels and an impersonated "
+                 f"Standard User returned 28, differing by exactly the field gated behind a "
+                 f"permission set the second user lacks. That is field-level security observed "
+                 f"in the UI rather than inferred from a permission row, which is the whole "
+                 f"point of this layer. About 10 seconds. What remains is turning a "
+                 f"demonstrated procedure into a check that fails honestly on a flaky org, plus "
+                 f"the impersonation banner's 1-in-3 flake, which the label differential does "
+                 f"not depend on. Until then, do the render by hand and record it with "
+                 f"--render-evidence.")
 
 
 def layer_automation(evidence):

@@ -562,13 +562,45 @@ entries:
   confidence: practitioner
   updated: 2026-08-01
 
+- id: lightning-field-labels-live-in-shadow-dom
+  domain: auth
+  title: Lightning field labels are unreachable by text selectors; only an explicit shadow-root walk finds them
+  symptom: >
+    Browser automation opens a record page, the record's NAME is found, the Details tab clicks,
+    and every field label comes back absent. getByText, allTextContents and page.content() all
+    return nothing for labels that a human can plainly see on screen.
+  cause: >
+    The record page nests ~564 open shadow roots. `page.content()` serialises the light DOM only.
+    `textContent` and `allTextContents()` do not cross shadow boundaries either — the elements
+    are found (28 `.test-id__field-label` nodes matched) and their text reads as empty string.
+  remedy: >
+    Walk the shadow roots explicitly inside page.evaluate, recursing into every element's
+    shadowRoot, and collect .test-id__field-label text. Measured working 2026-08-04: an admin
+    session returned 29 labels and an impersonated Standard User returned 28, differing by
+    exactly the one field gated behind a permission set the second user lacks. That difference
+    IS field-level security observed in the UI rather than inferred from a permission row.
+  gotcha: >
+    "Sorry to interrupt / CSS Error" appears on EVERY Lightning page in this configuration,
+    including the home page that renders correctly, so it is a persistent global overlay and NOT
+    evidence that a page failed. Four hours went into treating it as the cause. The page under
+    it renders fine — the record name, the Related/Details/Activity/Chatter tabs and 32 layout
+    items are all present. Check for content before believing an error banner.
+  triggers: ['test-id__field-label', 'shadowRoot', 'lightning/r/', 'field label', 'Sorry to interrupt']
+  requires: >
+    Verifying in the UI that a profile can see a field needs an explicit shadow-root walk, the
+    Details tab clicked, and a poll until labels appear — plus an admin baseline on the same
+    record, since a differential against nothing proves nothing.
+  confidence: practitioner
+  updated: 2026-08-04
+
 - id: lightning-record-pages-css-error-headless
   domain: auth
-  title: A Lightning record page can fail with "CSS Error" in headless Chromium while every other page renders
+  title: SUPERSEDED — "CSS Error" is a global overlay, not a record-page failure
   symptom: >
-    Automation opens /lightning/r/<Object>/<id>/view and gets navigation chrome, no record
-    content, and a dialog headed "Sorry to interrupt". Home and Setup pages in the SAME session
-    render perfectly, so the session, the auth and the permissions all look fine.
+    SUPERSEDED 2026-08-04 by lightning-field-labels-live-in-shadow-dom. Kept because the wrong
+    conclusion is instructive. The dialog appears on every Lightning page including ones that
+    demonstrably render, so it was never the cause; the real problem was that field labels sit
+    in shadow DOM and no text selector reaches them.
   cause: >
     The dialog body reads "CSS Error" — a static-resource/layout failure specific to the record
     page bundle. It is not access. Verified on a Developer Edition org 2026-08-04 with

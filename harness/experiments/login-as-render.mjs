@@ -100,10 +100,32 @@
 //     — it is the sign that none of them changed what was being looked at. Checking the settled
 //     URL, which took one line and should have been the first thing, was done ninth.
 //
-// STOP HERE. The bisecting question needs a human: does that same record URL render in the
-// operator's ordinary browser? If it fails there too, this is the org or the page layout. If it
-// renders, it is the frontdoor-token session or the automation context. Thirty seconds, and no
-// amount of selector work substitutes for it.
+// ── SOLVED 2026-08-04. Everything above is the record of getting it wrong. ────────────────
+//
+// The page was rendering the whole time. "Sorry to interrupt / CSS Error" appears on EVERY
+// Lightning page here INCLUDING the home page that has passed `adminShell=true` in every run —
+// a persistent global overlay, never evidence of failure. Under it: the record name, the
+// Related/Details/Activity/Chatter tabs, 32 layout items, 28 field-label nodes.
+//
+// The field labels are unreachable by every text API. `page.content()` serialises the light DOM
+// only; `textContent` and `allTextContents()` do not cross shadow boundaries; `getByText` found
+// nothing. The elements MATCH (28 of them) and read as empty string. There are ~564 open shadow
+// roots on that page.
+//
+// What works is an explicit recursive shadowRoot walk inside page.evaluate:
+//
+//     const w = r => { r.querySelectorAll('*').forEach(e => { if (e.shadowRoot) w(e.shadowRoot) });
+//                      r.querySelectorAll('.test-id__field-label')
+//                       .forEach(e => out.push(e.textContent.trim())) };
+//     w(document);
+//
+// Measured end to end: admin 29 labels, impersonated Standard User 28, differing by exactly the
+// field gated behind a permission set the second user lacks. That is FLS observed in the UI
+// rather than inferred from a permission row.
+//
+// The lesson is the ordering, again: nine variants of browser, host, viewport and reload were
+// tried against a symptom, before anyone asked whether the content was present and simply
+// unreadable. It was.
 //
 // IMPERSONATION IS CONFIRMED THREE WAYS, which is the one thing that did land: the servlet
 // redirects to its retURL target, the "Logged in as" banner appears, and the in-app guidance
