@@ -95,8 +95,18 @@ jobs:
       # classifies production — the fail-closed direction. If the first run shows a check that
       # needs sf reaching a wrong conclusion rather than an honest refusal, install it here
       # rather than skipping the check.
+      # The skip is acknowledged, not hidden. operator_presence_can_succeed needs a real login
+      # session in `who` to identify, and a CI runner has none — so it reports SKIP, the run is
+      # DEGRADED, and this flag only buys a zero exit. The verdict line still says DEGRADED, on
+      # purpose: no flag turns an unasked question into an answered one.
+      #
+      # Which means CI CANNOT cover that check, and the only place it runs is an operator's own
+      # machine — precisely where the defect it was written for lived. Same shape as clean_ip
+      # above. Both gaps are named here rather than left for someone to infer from a green tick.
       - name: Static profile
-        run: python3 harness/validate.py --profile static
+        run: |
+          python3 harness/validate.py --profile static \
+            --allow-skip="operator_presence_can_succeed:no login session on a CI runner; this check runs only on an operator machine"
 
       # The static profile includes --self-test, which MUTATES HOOK SOURCES IN PLACE and
       # restores them in a finally. If a restore is ever missed, the mutation is a source edit
