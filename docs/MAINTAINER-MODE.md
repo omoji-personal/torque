@@ -1,7 +1,38 @@
 # Maintainer mode — developing Torque without turning Torque off
 
-**Status: designed, not applied.** Every file it touches is protected, which is the problem it
-solves, so the first application has to be the operator's. After that it is self-sustaining.
+**Status: written and behaviourally verified, not applied.** All three files it touches are
+protected, which is the problem it solves, so the first application has to be the operator's.
+After that it is self-sustaining.
+
+```
+git apply local/patches/maintainer-mode.patch     # operator, from the repo root
+torque approve --maintainer 90                    # operator, from a REAL terminal
+torque approve --end-maintainer                   # revoke early
+```
+
+Minting cannot be done with `!` from inside a Claude session, and that is not a bug:
+`torque approve` requires a login TTY whose ancestry is clear of `claude`/`node`, which is the
+check standing between "an operator is present" and "the agent says one is".
+
+Verified before emitting, by executing the staged code against a throwaway anchor — the
+validator over 7 cases (no grant, expired, different tree, forged signature, unparseable, and
+two valid), and the gate itself over 7 more:
+
+| case | result |
+|---|---|
+| protected source, no window | DENY |
+| protected source, window open | ALLOW, one `MAINTAINER-EDIT` audit record |
+| protected source, window expired | DENY |
+| **trust anchor, window open** | **DENY** |
+| **sf auth store, window open** | **DENY** |
+| ordinary file, with or without a window | ALLOW (unchanged) |
+
+The two bold rows are the design. A window that could rewrite the signing secret could extend
+itself, so the anchor is checked before the grant and always wins.
+
+**Still owed:** the four checks below, including the mutator. The runs above prove the behaviour
+today; a check is what keeps it true, and they live in `harness/checks/` — so they can be written
+from inside the first window this opens.
 
 ## What is actually blocked
 
