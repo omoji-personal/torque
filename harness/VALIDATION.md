@@ -491,3 +491,65 @@ and `active_enforcement_is_anchor_owned` have nothing to measure until it is.
 Red, and superseded by any later all-PASS release run. Retained as diagnostic. The two fixes land
 in the commit that follows this entry, so the tree this attestation names is deliberately NOT the
 tree they are on.
+
+---
+
+## P11 — release · GREEN, and the trust plane is measured rather than assumed · 2026-08-05
+
+Commit `b99390ce`, tree `0d815117230b`, working tree clean · **profile: release · target
+`sf-coffee` (classified `developer`, IsSandbox=False, Developer Edition) · verdict: PASS** · 432s
+· 117 checks: **114 PASS, 0 FAIL, 3 N/A** · all 19 mutators caught, `redaction` included
+· artifact `harness/attest/attest-b99390ce.json`
+
+Supersedes P9 and P10. The first all-PASS release run since the trust plane was built, and the
+first in which `maintainer_edit_cannot_change_active_gate` had anything to measure.
+
+### What changed today, and none of it was found by reading
+
+Seven defects, every one found by running Torque rather than inspecting it. Three external audit
+lenses had been over this code and found none of them.
+
+| | |
+|---|---|
+| `apex run test` classified as anonymous Apex | a refusal no operator could satisfy — no `--file`, so no digest to approve |
+| M8: the protected-object floor | unreachable on delete-by-Id, the spelling the rules mandate |
+| M8's MCP twin | the same delete refused through Bash and allowed through MCP |
+| `install-gates --project` | the flag activation's own success message named did not exist |
+| the enforcement manifest | keyed two different ways, so it could never report a match |
+| `cache_poison_resistant` | raised rather than judged, because another check left `sys.modules` altered |
+| `write-surface.py` | reported a path as writable that the gate refuses |
+
+Two of the seven were introduced today, by this session, and caught the same way.
+
+### The check that had never run
+
+`maintainer_edit_cannot_change_active_gate` reported N/A from the day it was written, correctly:
+enforcement was not activated, so there was nothing to measure and it said so rather than passing.
+It now reads:
+
+> a window-legal edit to `authorize_write` flips the workspace copy (exit 0) and leaves the active
+> gate denying — enforcement is running from the anchor
+
+That is P0-01 closed by measurement. The agent can still edit `hooks/` under a maintainer window;
+the edit no longer changes what adjudicates a write.
+
+### The three N/A, and why none is a pass
+
+- `installed_shim_matches_its_source` — no exec-time shim on this machine. Nothing to compare
+  rather than nothing wrong. **Without the shim the allowlist is advisory**, and the README says
+  so in those words.
+- `must_allow_corpus_has_no_shape_denials` — no corpus configured. Real commands carry client
+  names and record Ids and cannot live in this repository; `TORQUE_ALLOW_CORPUS` points at one the
+  operator keeps.
+- `image_manifest` — no images claimed, so none verified. An empty loop is not evidence.
+
+### What this run is evidence of, and what it is not
+
+Every org-touching check passed live against a disposable Developer Edition org — the half no
+static run and no CI job can reach. Classification was exercised across six disposable orgs, and
+four of them classified perfectly non-production and were still refused for not being on the
+allowlist: eligibility is not sufficient, which is the claim the design rests on.
+
+It remains one run, one org, by the author. The evidence is a day old on a tool that is weeks old,
+and the shim — the thing that makes the allowlist enforced rather than advisory — is not installed
+on the machine that produced this log. Both are stated in the README rather than implied away.
