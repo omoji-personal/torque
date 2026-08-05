@@ -1,0 +1,643 @@
+{
+  "schema": "torque.attestation/2",
+  "generated_at_utc": "2026-08-05T22:31:44Z",
+  "duration_s": 569,
+  "head": "dab11c50a7afb975181137cd74b27a9aef6c64e9",
+  "tree": "bcfe38e45d10466d67c9e15792a7c4cb209facba",
+  "working_tree_clean": true,
+  "profile": "release",
+  "org": {
+    "alias": "sf-coffee",
+    "org_id_sha256_16": "43030f28daf29ee3"
+  },
+  "org_classification": "sf-coffee classified 'developer' (IsSandbox=False, Developer Edition)",
+  "verdict": "PASS",
+  "allowed_skips": [],
+  "exit_code": 0,
+  "counts": {
+    "checks": 117,
+    "na": 3,
+    "pass": 114
+  },
+  "self_test": {
+    "mutators_caught": 19,
+    "all_caught": true,
+    "not_run": null,
+    "mutators": [
+      "clean_ip",
+      "secret_scan",
+      "clean_ip historical-blob",
+      "clean_ip fail-closed (denylist absent)",
+      "anchor-guard",
+      "destructive token",
+      "redirect-detection",
+      "wrapper (wrapped_sf)",
+      "expansion-awareness",
+      "glob-matcher (_glob_reaches)",
+      "command-word (cmd_base)",
+      "deadline (_arm_deadline)",
+      "maintainer-expiry",
+      "single-use (rename-claim)",
+      "identity-binding",
+      "protected-path (is_protected_target)",
+      "observe-boundary",
+      "shim-deferral",
+      "redaction"
+    ]
+  },
+  "checks": [
+    {
+      "check": "byte_budget",
+      "outcome": "PASS",
+      "detail": "CLAUDE.md 3054B, rules 19747B"
+    },
+    {
+      "check": "local_ignored",
+      "outcome": "PASS",
+      "detail": "local/ ignored, nothing tracked"
+    },
+    {
+      "check": "tooling_ignore_exact",
+      "outcome": "PASS",
+      "detail": "7 tooling entries, all declared"
+    },
+    {
+      "check": "clean_ip",
+      "outcome": "PASS",
+      "detail": "14 patterns; tree, blobs, paths, metadata, tags clean [operator-reproducible]"
+    },
+    {
+      "check": "secret_scan",
+      "outcome": "PASS",
+      "detail": "6 patterns across 164 tracked files, all readable, all clean"
+    },
+    {
+      "check": "org_classify",
+      "outcome": "PASS",
+      "detail": "sf-coffee classified 'developer' (IsSandbox=False, Developer Edition)"
+    },
+    {
+      "check": "describe_first",
+      "outcome": "PASS",
+      "detail": "known field resolves, hallucinated field refused"
+    },
+    {
+      "check": "assurance_corpus_is_protected",
+      "outcome": "PASS",
+      "detail": "8 assurance paths protected, 3 ordinary files still writable; legitimate writers (lesson, attest, log renderer) are subprocesses and unaffected"
+    },
+    {
+      "check": "shadow_reports_async_escape",
+      "outcome": "PASS",
+      "detail": "the template counts AsyncApexJob across the rollback; the reader separates zero, positive and unmeasured; unmeasured moves the exit code; and the footer says detection is not prevention"
+    },
+    {
+      "check": "unreachable_org_can_never_be_done",
+      "outcome": "PASS",
+      "detail": "the ledger refuses (exit 2): a verifier that could not run is UNANSWERED, and the caller being graded may not waive it"
+    },
+    {
+      "check": "installed_shim_matches_its_source",
+      "outcome": "N/A",
+      "detail": "no exec-time shim installed on this machine; `torque install-gates --shim` puts one on PATH. Nothing to compare rather than nothing wrong"
+    },
+    {
+      "check": "approval_vocabulary_matches_the_gates",
+      "outcome": "PASS",
+      "detail": "all 10 op class(es) the destructive gate can demand are mintable, and unknown labels are refused rather than minted generically"
+    },
+    {
+      "check": "staging_guard_survives_a_runner_prefix",
+      "outcome": "PASS",
+      "detail": "5 runner spellings all denied stages-local; 3 benign git commands still allowed"
+    },
+    {
+      "check": "attestations_carry_a_verdict",
+      "outcome": "PASS",
+      "detail": "24 attestation(s), every one carrying a schema, verdict, profile, tree and head (3 FAIL, 21 PASS); 3 pre-schema-2 record(s) held in legacy/ and not counted here"
+    },
+    {
+      "check": "attestation_signature_detects_an_edit",
+      "outcome": "PASS",
+      "detail": "attest signs through lib.sign; a signed record verifies, an edited one does not, and an unsigned one does not \u2014 one HMAC implementation, not a second that drifts"
+    },
+    {
+      "check": "uninstall_requires_an_operator",
+      "outcome": "PASS",
+      "detail": "both remove paths refuse without operator presence and exit 2, and the guard returns for a present operator rather than refusing everyone (no shim installed, so survival was not observable)"
+    },
+    {
+      "check": "deploy_directory_destructiveness_is_seen",
+      "outcome": "PASS",
+      "detail": "8 cases: a destructiveChanges manifest on disk charges a token through 5 flag spellings, and a clean directory, an unresolvable path and a retrieve do not"
+    },
+    {
+      "check": "completion_counts_the_unobserved",
+      "outcome": "PASS",
+      "detail": "6 layers, none green without evidence, each carrying a stated reason; the denominator holds at 6 as evidence takes the count from 1 to 3"
+    },
+    {
+      "check": "completion_blocked_cannot_be_waved",
+      "outcome": "PASS",
+      "detail": "5 malformed or overreaching uses of --na refused with a stated reason, and a legitimate one records its reason in the ledger"
+    },
+    {
+      "check": "receipt_refuses_partial_credit",
+      "outcome": "PASS",
+      "detail": "the evidence element withholds itself while any other is outstanding and names what is missing; the verdict is reachable in both directions"
+    },
+    {
+      "check": "receipt_composes_rather_than_reimplements",
+      "outcome": "PASS",
+      "detail": "the receipt invokes blast-radius and the completion ledger and asks lib for the requirement set; it computes none of them itself"
+    },
+    {
+      "check": "completion_can_say_done",
+      "outcome": "PASS",
+      "detail": "all-green produces DONE, N/A with a reason counts as answered, and one NOT VERIFIED or BLOCKED row is enough to withhold the word"
+    },
+    {
+      "check": "install_parity_project_and_user",
+      "outcome": "PASS",
+      "detail": "6 user-level gate hooks across 4 matcher(s), every one declaring timeout 55, matching the project registration"
+    },
+    {
+      "check": "kb_integrity",
+      "outcome": "PASS",
+      "detail": "44 entries across 9 domains; 10 verified-live, 17 documented, 17 practitioner"
+    },
+    {
+      "check": "kb_live_claims",
+      "outcome": "PASS",
+      "detail": "10/10 live claims re-verified against sf-coffee"
+    },
+    {
+      "check": "kb_injection",
+      "outcome": "PASS",
+      "detail": "3 operations received the right note; ordinary work stayed silent"
+    },
+    {
+      "check": "failure_keeps_its_reason",
+      "outcome": "PASS",
+      "detail": "5 empty-stderr shapes yield a default rather than an exception; blast-radius raises Unknown on all 3, so the source becomes UNDETERMINED"
+    },
+    {
+      "check": "first_party_trust_is_capability_based",
+      "outcome": "PASS",
+      "detail": "7 trusted tools verified read-only in their own source; 5 declared read-only commands exempt; 5 that execute, deploy, authorize or are simply unknown get nothing from living in the same directory"
+    },
+    {
+      "check": "production_allow_requires_a_record",
+      "outcome": "PASS",
+      "detail": "an unwritable sink makes audit() report failure, both production allow paths check it, and best-effort logging still degrades quietly"
+    },
+    {
+      "check": "shadow_cannot_escape_the_transaction",
+      "outcome": "PASS",
+      "detail": "8 disqualifying shape(s) refused by NAMED reason before any org is contacted; a clean body is not"
+    },
+    {
+      "check": "shadow_refuses_unverified",
+      "outcome": "PASS",
+      "detail": "an unverifiable org is refused with a reason; savepoint, rollback and the eligibility gate are all present"
+    },
+    {
+      "check": "closure_is_delivered",
+      "outcome": "PASS",
+      "detail": "13 requirement set(s); 2 operations received theirs, 2 reads stayed silent, a delete is not told it needs field-level security, and both kinds of nothing print from a real gate \u2014 the requirement set and the 'none recorded' line that used to be silence"
+    },
+    {
+      "check": "retrieval_quality",
+      "outcome": "PASS",
+      "detail": "recall 95% matched / 88% surfaced over 81 case(s); precision 88% over 34 negative(s); 6 case(s) have more relevant entries than the 2 slots platform_notes shows \u2014 a capacity limit, not a mis-ranking"
+    },
+    {
+      "check": "named_mutators_exist",
+      "outcome": "PASS",
+      "detail": "every mutator named in the documents is one of the 19 validate.py runs"
+    },
+    {
+      "check": "claimed_counts",
+      "outcome": "PASS",
+      "detail": "237 recorded fixtures, 117 registered checks and a 22-page guide; every prose count matches the artifact it describes"
+    },
+    {
+      "check": "lesson_backlog",
+      "outcome": "PASS",
+      "detail": "266 observation(s), no resolved pair yet \u2014 nothing to record"
+    },
+    {
+      "check": "observer_is_not_a_gate",
+      "outcome": "PASS",
+      "detail": "observer cannot deny, cannot write knowledge, and exits 0 on a gate-denied shape"
+    },
+    {
+      "check": "blast_radius_honesty",
+      "outcome": "PASS",
+      "detail": "6 unanswerable source(s) reported as UNDETERMINED, exit 3; an UNDETERMINED item inside a source that answered also forces INCOMPLETE (exit 3); no source silently returned zero"
+    },
+    {
+      "check": "lesson_writer_roundtrip",
+      "outcome": "PASS",
+      "detail": "a fact with apostrophes, double quotes and a colon round-trips intact"
+    },
+    {
+      "check": "limit_relabel_is_safe",
+      "outcome": "PASS",
+      "detail": "rate-limited run degrades to 'DEGRADED', never PASS; ordinary failures still FAIL"
+    },
+    {
+      "check": "session_log_path_containment",
+      "outcome": "PASS",
+      "detail": "8 hostile aliases contained; an ordinary alias is unchanged"
+    },
+    {
+      "check": "allow_decisions_logged",
+      "outcome": "PASS",
+      "detail": "3 allowed Salesforce spellings each recorded (plain, absolute path, sfdx legacy) and a wrapped one recorded as DENY; ordinary shell calls and a command that merely names sf are not logged"
+    },
+    {
+      "check": "python_floor_is_real",
+      "outcome": "PASS",
+      "detail": "46 source files: syntax and stdlib both land exactly on the documented floor 3.8"
+    },
+    {
+      "check": "component_self_tests",
+      "outcome": "PASS",
+      "detail": "3 component self-test(s) pass: hooks/lesson_observer.py, harness/capture.py, bin/torque-blast-radius"
+    },
+    {
+      "check": "readme_transcripts_are_real",
+      "outcome": "PASS",
+      "detail": "5 transcript line(s) reproduced verbatim from a live gate run"
+    },
+    {
+      "check": "token_store_hygiene",
+      "outcome": "PASS",
+      "detail": "0 live, 0 expired, all owner-only"
+    },
+    {
+      "check": "verifiers_can_fail",
+      "outcome": "PASS",
+      "detail": "all 10 verifiers return False when their entry is false (3 falsified through describe)"
+    },
+    {
+      "check": "detect_probes_run",
+      "outcome": "PASS",
+      "detail": "13/17 probes executed against sf-coffee (10 live, 2 confirmed, 1 clear); 4 are not queries and are reported as such"
+    },
+    {
+      "check": "per_org_knowledge",
+      "outcome": "PASS",
+      "detail": "5 finding(s) across 1 org(s), owner-only, untracked; reaches its own org, not another, and not an unknown one"
+    },
+    {
+      "check": "impact_bound_approval",
+      "outcome": "PASS",
+      "detail": "approved for 43 Lead record(s): within scope proceeds and consumes, grown scope refused, unverifiable scope refused"
+    },
+    {
+      "check": "observer_cost_bounded",
+      "outcome": "PASS",
+      "detail": "adds 30 ms over bare interpreter startup (67 ms total, 37 ms of it Python itself) \u2014 the early exit means no extra work on a non-Salesforce command"
+    },
+    {
+      "check": "public_description_accurate",
+      "outcome": "PASS",
+      "detail": "every number in the public description matches a real metric [19, 44, 96, 114, 117, 128, 237, 240]"
+    },
+    {
+      "check": "runnable_implies_unwritable",
+      "outcome": "PASS",
+      "detail": "18 first-party command(s) runnable and none writable; foreign interpreters still refused"
+    },
+    {
+      "check": "operator_presence_can_succeed",
+      "outcome": "PASS",
+      "detail": "a real login session (ttys009) is identified as itself, so operator_present() can be satisfied by an operator who is actually present; the refusing direction stays covered by init_requires_operator"
+    },
+    {
+      "check": "init_requires_operator",
+      "outcome": "PASS",
+      "detail": "init refuses without a login terminal and wrote nothing; approve and init share one presence implementation"
+    },
+    {
+      "check": "redaction_covers_credentials",
+      "outcome": "PASS",
+      "detail": "6 credential shapes redacted; ordinary commands untouched"
+    },
+    {
+      "check": "local_cannot_reach_git",
+      "outcome": "PASS",
+      "detail": "5 malformed org Ids refused as filenames; 4 staging paths blocked; 4 ordinary git commands unaffected; nothing under local/ is tracked"
+    },
+    {
+      "check": "checkup_cannot_confirm_on_auth_failure",
+      "outcome": "PASS",
+      "detail": "auth and limit failures are errors, not confirmation; a real refusal still confirms; the verdict is non-zero whenever the picture is untrustworthy"
+    },
+    {
+      "check": "shield_is_case_insensitive",
+      "outcome": "PASS",
+      "detail": "3 protected object(s), 4 casings, both the Apex-body and CLI-token paths; unprotected objects unaffected"
+    },
+    {
+      "check": "observer_cannot_cross_clients",
+      "outcome": "PASS",
+      "detail": "observations are org-scoped, a succeeding command records nothing, and the queue is capped at 500"
+    },
+    {
+      "check": "no_divergent_twins",
+      "outcome": "PASS",
+      "detail": "147 function(s) across hooks/, none defined twice outside the 6 named per-gate entry points"
+    },
+    {
+      "check": "guards_are_case_insensitive",
+      "outcome": "PASS",
+      "detail": "5 protected paths in 5 casings each are refused, ordinary files are not, and credentials are redacted under both naming conventions"
+    },
+    {
+      "check": "guards_share_no_blind_assumption",
+      "outcome": "PASS",
+      "detail": "11 same-file spellings blocked by the path guard, 4 by the anchor guard, 3 by the auth-store guard; 4 ordinary paths unaffected"
+    },
+    {
+      "check": "classification_is_identity_bound",
+      "outcome": "PASS",
+      "detail": "5 ways a verdict can fail to describe its identity all return unverifiable \u2014 refused like production, named as the unknown it is; a matching org still classifies"
+    },
+    {
+      "check": "token_is_single_use",
+      "outcome": "PASS",
+      "detail": "one approval survives exactly one consume \u2014 sequentially and against 16 concurrent claimers over 3 trials; bound to org, operation and criteria; expiry, field rewrite and forged signature all refused"
+    },
+    {
+      "check": "budget_fits_hook_timeout",
+      "outcome": "PASS",
+      "detail": "budget 40.0s + grace 5.0s fits under the 55s timeout settings.json really declares; a CPU-bound overrun denied in 1.2s on a 1.0s deadline, not on its own schedule"
+    },
+    {
+      "check": "command_word_spellings",
+      "outcome": "PASS",
+      "detail": "17 bash-resolvable spellings of a command word are seen by the parser as the command bash runs; 4 ordinary commands keep their identity"
+    },
+    {
+      "check": "maintainer_grant_is_operator_only",
+      "outcome": "PASS",
+      "detail": "4 invalid window shape(s) refused; a valid one permits the edit AND records it as MAINTAINER-EDIT; ordinary files unaffected"
+    },
+    {
+      "check": "maintainer_grant_never_touches_orgs",
+      "outcome": "PASS",
+      "detail": "with a valid window open, 3 org-touching command(s) and 5 authorization input(s) are still refused, while ordinary source stays editable; the grant reaches what Torque IS, never what it may write to"
+    },
+    {
+      "check": "maintainer_grant_cannot_reach_the_anchor",
+      "outcome": "PASS",
+      "detail": "4 anchor/credential path(s) refused even with a valid window open; the grant is checked after them, never before"
+    },
+    {
+      "check": "must_allow_corpus_has_no_shape_denials",
+      "outcome": "N/A",
+      "detail": "no corpus given; set TORQUE_ALLOW_CORPUS to a file of real commands (one per line) to measure the must-allow direction against actual use rather than against twenty hand-written fixtures"
+    },
+    {
+      "check": "observe_grant_is_operator_only",
+      "outcome": "PASS",
+      "detail": "5 cases: absent/forged/expired/wrong-tree all still deny; a valid window records and allows"
+    },
+    {
+      "check": "observe_never_opens_the_trust_boundary",
+      "outcome": "PASS",
+      "detail": "under an open window the trust anchor and PRODUCTION both stay denied, and every observation is written to the durable trail before the operation proceeds"
+    },
+    {
+      "check": "gate_write_authz",
+      "outcome": "PASS",
+      "detail": "5 write-gate cases correct"
+    },
+    {
+      "check": "gate_destructive",
+      "outcome": "PASS",
+      "detail": "4 destructive-gate cases correct"
+    },
+    {
+      "check": "approval_boundary",
+      "outcome": "PASS",
+      "detail": "agent cannot mint; operator token authorizes exactly once"
+    },
+    {
+      "check": "preflight_credentials",
+      "outcome": "PASS",
+      "detail": "28 orgs authenticated, 22 not sandboxes (production or Developer Edition \u2014 local data cannot tell them apart); 2 eligible entr(ies) on the writable allowlist; sf-coffee=developer; every allowlisted org is still authenticated"
+    },
+    {
+      "check": "local_hygiene",
+      "outcome": "PASS",
+      "detail": "local/ clean, sensitive files 0600"
+    },
+    {
+      "check": "enforcement_map",
+      "outcome": "PASS",
+      "detail": "7/7 rule files claim enforcement, and every label resolves to one of 4 wired blocking hook(s) or 117 registered check(s); 1 hook(s) can deny but are wired to nothing (['lib_cli']) \u2014 no rule claims them, and none may"
+    },
+    {
+      "check": "gate_adversarial_fixtures",
+      "outcome": "PASS",
+      "detail": "240 adversarial gate fixtures pass"
+    },
+    {
+      "check": "cache_poison_resistant",
+      "outcome": "PASS",
+      "detail": "write decision re-derives live; cache file protected"
+    },
+    {
+      "check": "probe_cycle",
+      "outcome": "PASS",
+      "detail": "deploy\u2192verify(field ok, FLS asserted)\u2192purge\u2192teardown; live residue=0 (asserted 0); 1 `_del` tombstone in the 15-day queue \u2014 expected, because purge-on-delete makes a field eligible for deletion, not erased"
+    },
+    {
+      "check": "skills_justified",
+      "outcome": "PASS",
+      "detail": "5 skills, each justified vs raw CLI"
+    },
+    {
+      "check": "agents_readonly",
+      "outcome": "PASS",
+      "detail": "org-explorer has Bash: destructive shapes and production are refused by the gates (3 verified); ordinary writes to an allowlisted developer org are allowed, so that half is model-honoured \u2014 its prompt, not a gate"
+    },
+    {
+      "check": "mass_update_cycle",
+      "outcome": "PASS",
+      "detail": "created\u2192preview(exact 2)\u2192update\u2192verify\u2192undo(restored); teardown by Id"
+    },
+    {
+      "check": "installer_roundtrip",
+      "outcome": "PASS",
+      "detail": "installer compiles; 8 hook registrations mirror the project exactly (installed and removed against a throwaway HOME); records TORQUE_HOME for CWD-independent resolution"
+    },
+    {
+      "check": "frontdoor_noecho",
+      "outcome": "PASS",
+      "detail": "session URL in 0600 file; token not echoed"
+    },
+    {
+      "check": "browser_render",
+      "outcome": "PASS",
+      "detail": "Lightning shell rendered live (RENDER_OK Home | Salesforce)"
+    },
+    {
+      "check": "excepted_org_hardfail",
+      "outcome": "PASS",
+      "detail": "no excepted production orgs; absolute claim holds"
+    },
+    {
+      "check": "bypass_suite",
+      "outcome": "PASS",
+      "detail": "agent minting refused; 7 bypass shapes denied"
+    },
+    {
+      "check": "image_manifest",
+      "outcome": "N/A",
+      "detail": "no image manifest and no images under guide/ \u2014 nothing is claimed, so nothing is verified. This check reports N/A rather than PASS: an empty loop is not evidence."
+    },
+    {
+      "check": "deliverable_coverage",
+      "outcome": "PASS",
+      "detail": "165 tracked paths, all classified"
+    },
+    {
+      "check": "differential_fuzz",
+      "outcome": "PASS",
+      "detail": "128 generated cases, 0 disagreement(s) with real bash"
+    },
+    {
+      "check": "session_log_integrity",
+      "outcome": "PASS",
+      "detail": "entry written, reversible, redacted (session-id + org id), 0600, parseable"
+    },
+    {
+      "check": "experiments_are_not_checks",
+      "outcome": "PASS",
+      "detail": "2 experiment(s) register no checks and cannot be loaded as one"
+    },
+    {
+      "check": "readonly_declaration_survives_source",
+      "outcome": "PASS",
+      "detail": "all 7 declared read-only check(s) re-derive clean from source (cache_poison_resistant, describe_first, detect_probes_run, gate_adversarial_fixtures, kb_live_claims, org_classify, preflight_credentials)"
+    },
+    {
+      "check": "readonly_manifest_matches_declarations",
+      "outcome": "PASS",
+      "detail": "the manifest lists exactly the 7 declared read-only check(s)"
+    },
+    {
+      "check": "readonly_gate_honours_exactly_the_list",
+      "outcome": "PASS",
+      "detail": "the gate runs all 7 listed check(s) against an org and refuses 7 other shape(s), including a permitted name carried alongside a forbidden one"
+    },
+    {
+      "check": "shim_gates_the_subprocess_channel",
+      "outcome": "PASS",
+      "detail": "6 write shapes refused at exec time under both binary names, each with exit 2 and a stated reason, and the real CLI was never reached"
+    },
+    {
+      "check": "shim_lets_real_work_through",
+      "outcome": "PASS",
+      "detail": "4 read shapes reach the CLI ungated, and a value carrying backticks, $( and quotes arrives byte-for-byte"
+    },
+    {
+      "check": "shim_fails_closed",
+      "outcome": "PASS",
+      "detail": "4 indeterminate states (no home, wrong home, re-entry, no CLI behind it) all refuse, and a missing CLI says so rather than posing as a policy denial"
+    },
+    {
+      "check": "shim_gate_consultation_is_load_bearing",
+      "outcome": "PASS",
+      "detail": "the same write is refused with the gates and executes without them; the refusal is theirs"
+    },
+    {
+      "check": "shim_and_bash_paths_agree",
+      "outcome": "PASS",
+      "detail": "8 shapes reach the same verdict by both roads, including three carrying shell punctuation inside quoted SOQL \u2014 formerly the one licensed disagreement, now closed because refusing them was a false positive"
+    },
+    {
+      "check": "shim_deferral_requires_a_verified_shim",
+      "outcome": "PASS",
+      "detail": "no shim \u21d2 all 7 classes still deny; shim_enforcing() false"
+    },
+    {
+      "check": "shim_deferral_stops_at_the_shape_classes",
+      "outcome": "PASS",
+      "detail": "3 shape classes defer to the shim; 4 policy classes (anchor-ref, flags-dir, protected-write, wrapper-sf) still deny"
+    },
+    {
+      "check": "surfaces_agree",
+      "outcome": "PASS",
+      "detail": "9 operation(s) reach the same verdict through Bash, the shim's argv and MCP, and each verdict is the intended one"
+    },
+    {
+      "check": "maintainer_edit_cannot_change_active_gate",
+      "outcome": "PASS",
+      "detail": "a window-legal edit to authorize_write flips the workspace copy (exit 0) and leaves the active gate denying \u2014 enforcement is running from commit b99390cea864 in the anchor"
+    },
+    {
+      "check": "active_enforcement_is_anchor_owned",
+      "outcome": "PASS",
+      "detail": "every consumer of the gates resolves them inside the trust anchor"
+    },
+    {
+      "check": "registered_gates_resolve",
+      "outcome": "PASS",
+      "detail": "all 16 registered hook(s) name a file that exists, and a planted unresolvable registration is caught"
+    },
+    {
+      "check": "every_wired_hook_classifies_protected",
+      "outcome": "PASS",
+      "detail": "4 wired hooks classify protected under all 6 path spellings, settings.json included (classification only \u2014 runnable_implies_unwritable measures the write boundary)"
+    },
+    {
+      "check": "catalogue_domains_reachable",
+      "outcome": "PASS",
+      "detail": "all 9 catalogue domains (44 entries) are named by a trigger, and every trigger names a domain that has entries"
+    },
+    {
+      "check": "two_list_checks_can_fail",
+      "outcome": "PASS",
+      "detail": "all three comparisons report the divergence they are for and stay quiet on lists that agree (7 cases)"
+    },
+    {
+      "check": "needs_vocabulary_reaches_the_catalogue",
+      "outcome": "PASS",
+      "detail": "all 9 offered operation(s) reach the catalogue; 2 reach entries that record no requirement (delete-metadata, retrieve-flow), which the tool reports as a catalogue gap rather than as nothing being required"
+    },
+    {
+      "check": "legacy_spelling_reaches_the_catalogue",
+      "outcome": "PASS",
+      "detail": "29 legacy ids mapped, covering every one the parser knows; all 5 operation pairs reach the catalogue by either spelling; residual flag-spelling gap on record create 5/7, deploy 4/5"
+    },
+    {
+      "check": "mutation_coverage_is_stated_honestly",
+      "outcome": "PASS",
+      "detail": "19 mutators against 80 catastrophe-class checks, and the harness docstring claims no universal coverage (searched for a 'proving each/every/all catastrophe-class' assertion)"
+    },
+    {
+      "check": "check_plugins_do_not_shadow_each_other",
+      "outcome": "PASS",
+      "detail": "283 module-level names across 21 plugin files, each bound in exactly one of them"
+    },
+    {
+      "check": "enforcement_map_can_fail",
+      "outcome": "PASS",
+      "detail": "enforcement_map passes a wired hook and fails both unwired shapes (3 cases, against a throwaway tree)"
+    }
+  ],
+  "toolchain": {
+    "sf": "@salesforce/cli/2.144.6 darwin-arm64 node-v22.23.1",
+    "node": "v24.11.1",
+    "python": "3.14.3"
+  },
+  "denylist_digest": "129a9dfe7db454b8",
+  "reproduce": "python3 harness/validate.py --profile release --target-org <your-disposable-org>",
+  "sig": "9d899155f36a92ab17c4b1db0a7b9482198b81001daafa7686c4e4a643ab2d9b"
+}
