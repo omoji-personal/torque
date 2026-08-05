@@ -780,8 +780,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     bounding each <code>sf</code> callout was not enough: classification makes two sequential calls,
     and two 45-second caps come to 90 seconds — past the host’s timeout, and therefore a fail-open
     window. Torque sets one wall-clock budget for the whole gate, clamps every callout to what
-    remains, and treats an exhausted budget as an unverifiable org — which means production, which
-    means deny. A hung <code>sf</code> on the PATH is a live test case in the harness.
+    remains, and treats an exhausted budget as an <em>unverifiable</em> org — which denies, but is reported as unverifiable rather than as production, because “I could not establish what this org is” is not a finding that it is production. A hung <code>sf</code> on the PATH is a live test case in the harness.
   </p>
 
   <h4>Why the agent cannot self-approve</h4>
@@ -828,9 +827,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     else: the live non-production check runs inside the gate, so there is no second layer behind
     it.</strong> That is precisely why L1 is load-bearing here rather than belt-and-braces — this
     sentence used to claim the opposite, and an outside review was right that it could not be
-    true of a check the bypassed component performs. A PATH shim that closes the subprocess channel is roadmap,
-    not shipped; v1 raises the direct-tool-surface bar as high as a parsing gate honestly can and
-    states the rest plainly.
+    true of a check the bypassed component performs. A PATH shim closes the subprocess channel and <strong>is shipped</strong> — <code>torque install-gates --shim</code>. It is not an extra: on 2026-08-05 an agent wrote a Salesforce write into a file, ran it with bash, and deployed to an org that was not on the write allowlist — no hook fired and no audit line was written. <strong>Without the shim the allowlist is advisory rather than enforced.</strong> This page called it roadmap while the README said it shipped; two files in one repository disagreeing about whether a control exists is worse than either answer.
   </p>
 </section>
 
@@ -848,8 +845,8 @@ The operation grew after approval; re-approve with the current scope.</pre>
 
   <table class="plain"><tbody>
     <tr><td>Nothing is gated</td><td>The session isn’t in this workspace. Hooks load per-workspace — run <code>torque install-gates</code> for user-level registration.</td></tr>
-    <tr><td>init refuses my org</td><td>Working as designed: it will not configure against an org that classifies as production, and an org it cannot classify counts as production. Use a Developer Edition org.</td></tr>
-    <tr><td>Everything says PRODUCTION</td><td>Usually expired <code>sf</code> auth — classification fails, and failure means production. Re-authenticate. Correct fail-safe, confusing symptom.</td></tr>
+    <tr><td>init refuses my org</td><td>Working as designed: it will not configure against an org that classifies as production, and an org it cannot classify is <em>unverifiable</em> — refused for the same reason and named differently, so nobody approves a production override for a sandbox. Use a Developer Edition org.</td></tr>
+    <tr><td>Everything says PRODUCTION</td><td>Usually expired <code>sf</code> auth — classification fails and the verdict is <em>unverifiable</em>, which denies and explicitly says it is not a production finding. Re-authenticate. Correct fail-safe, confusing symptom.</td></tr>
     <tr><td>Denied despite a token</td><td>Either the token expired (5 min), the <code>&lt;op&gt;</code> didn’t match the operation, or the sObject is on the protected list — which no token lifts.</td></tr>
     <tr><td>clean_ip reports N/A</td><td>Expected on any clone but the author’s: it needs a private pattern list. An honest N/A, not a failure, and it does not degrade the verdict.</td></tr>
     <tr><td>browser_render BLOCKED</td><td>No Chromium — <code>npx playwright install chromium</code>. Detection is macOS-path-based today.</td></tr>
