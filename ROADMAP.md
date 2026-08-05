@@ -177,8 +177,15 @@ accounted for.
 `torque receipt` assembles them. It runs the existing tools rather than reimplementing any,
 because a second blast radius would diverge from the first and nothing would compare them;
 `receipt_composes_rather_than_reimplements` asserts it stays that way. Verified live: 4/6
-INCOMPLETE with no field named, 6/6 PROOF-CARRYING with the field, permission set and the three
-kinds of human evidence supplied.
+INCOMPLETE with no field named, 6/6 ASSESSMENT COMPLETE with the field, permission set and the
+three kinds of human evidence supplied.
+
+**That verdict used to be called PROOF-CARRYING, and an external audit was right that the name
+claimed what the tool does not establish.** There is no execution element: all six describe org
+state and what approval would require, so a receipt assembled against an org whose state already
+matches reads identically to one assembled after a real change. The JSON now carries
+`execution_proven: false`, and a check fails if the verdict ever says proof again. A signed,
+operation-bound, execution-referencing receipt is a different artifact and is not this one.
 
 The one rule it is strict about: **a receipt showing five of six must not read as complete.**
 The evidence element is the self-referential one — the receipt vouching for itself — and it
@@ -211,7 +218,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 108 checks (88 static, 105 capability, 108 release),
+The current state, measured rather than claimed: 109 checks (89 static, 106 capability, 109 release),
 19 mutators, 216 adversarial fixtures, and retrieval measured against an evaluation set written by
 someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
 recall, 85% precision over 34 negatives.

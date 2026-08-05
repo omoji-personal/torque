@@ -13,7 +13,14 @@ Usage:
   torque approve <org> <op> --prod [--apex-file <path>]     # PRODUCTION single-op override
   torque approve <org> --session <minutes>                  # PRODUCTION window (<=120 min)
   torque approve <org> --end-session                        # revoke the window
-op ∈ apex | bulk-delete | bulk-write | where-delete | where-update | destructive-metadata | write
+op ∈ apex | bulk-delete | bulk-write | where-delete | where-update | destructive-metadata
+    | org-delete | opaque-write | unrecognised-destructive        (destructive classes)
+    | write | deploy | update | delete | insert | upsert          (ordinary labels)
+
+The destructive classes are the names the gates actually demand, so those are the ones to mint.
+An ordinary label is recorded for the audit trail and does NOT narrow a production token: the
+gate consumes `prod-write` for any ordinary production write on that org. The confirmation
+prompt says so rather than repeating the label back as if it were a scope.
 """
 import json, os, sys, time, hashlib, subprocess
 from pathlib import Path
@@ -24,6 +31,13 @@ ROOT = Path(__file__).resolve().parent.parent
 
 DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-update",
                    "destructive-metadata"}
+# The ordinary (non-destructive) labels an approval may name. These do NOT narrow a production
+# token — the gate consumes `prod-write` for any of them — but the set is closed so the operator
+# cannot confirm a word that means nothing. `opaque-write` and `unrecognised-destructive` are
+# included because the destructive gate really does demand tokens under those exact names, and an
+# operator following the usage text must be able to mint one.
+KNOWN_OPS = DESTRUCTIVE_OPS | {"write", "deploy", "update", "delete", "insert", "upsert",
+                               "opaque-write", "unrecognised-destructive", "org-delete"}
 SESSION_MAX_MIN = 120
 # A maintainer window is bounded by the WORK, not by the same clock as a production-write
 # session, and the two should not share a number just because they started with one.
@@ -192,11 +206,28 @@ def _confirm(prompt):
         return tty.readline().strip() == "YES"
 
 
-def _confirm_prod(target, orgid, username, instance):
+def _confirm_prod(target, orgid, username, instance, op):
+    """Show the operator what the token ACTUALLY authorizes, which is broader than the label.
+
+    The usage reads `torque approve <org> <op> --prod` and the confirmation named `<op>`, so the
+    operator reasonably concluded they were approving that operation. For a non-destructive
+    production write the mechanism mints `prod-write` with the label DISCARDED, and any ordinary
+    production write on that org consumes it. Single-use is not single-operation.
+
+    The honest fix has two halves and this is the one that matters: say so at the moment of
+    consent. Binding the token to a normalized action hash is the real remedy and is a contract
+    change, not a prompt change — until it exists, the operator is told the true scope rather
+    than a narrower one that reads better.
+    """
+    scope = (f"ONE destructive `{op}` operation" if op in DESTRUCTIVE_OPS else
+             f"ONE ordinary production write of ANY class — the label `{op}` is recorded for "
+             f"the audit trail and does NOT narrow what the token authorizes")
     with open("/dev/tty") as tty:
         sys.stderr.write(
             f"\n*** PRODUCTION WRITE ***\n  org:      {target}  ({orgid})\n"
             f"  user:     {username}\n  instance: {instance}\n"
+            f"  grants:   {scope}\n"
+            f"            single use, 5 minutes, this org only\n"
             f"Type exactly  WRITE PRODUCTION  to authorize: ")
         sys.stderr.flush()
         return tty.readline().strip() == "WRITE PRODUCTION"
@@ -314,7 +345,7 @@ def main():
             mins = min(int(args[args.index("--session") + 1]), SESSION_MAX_MIN)
         except Exception:
             print("usage: torque approve <org> --session <minutes>", file=sys.stderr); sys.exit(2)
-        if not _confirm_prod(target, orgid, username, instance):
+        if not _confirm_prod(target, orgid, username, instance, op):
             print("aborted", file=sys.stderr); sys.exit(1)
         lib.PROD_SESSIONS.mkdir(parents=True, exist_ok=True); os.chmod(lib.PROD_SESSIONS, 0o700)
         grant = {"orgId": orgid, "exp": int(time.time()) + mins * 60, "iat": int(time.time())}
@@ -329,6 +360,18 @@ def main():
         print(f"production session for {target} revoked"); return
 
     op = args[1]
+    # A closed vocabulary. `op` was taken verbatim and never checked, so
+    # `torque approve my-prod banana --prod` was accepted and minted a generic production token
+    # — the operator confirmed a word the mechanism never consulted. Refusing unknown labels does
+    # not make the token operation-bound (that needs a contract hash), but it stops the approval
+    # flow accepting a description of an operation that does not exist.
+    if op not in KNOWN_OPS:
+        print(f"unknown operation {op!r}. Approval names an operation from a closed set so the "
+              f"word you confirm is one the gates use.\n"
+              f"  destructive : {', '.join(sorted(DESTRUCTIVE_OPS))}\n"
+              f"  ordinary    : {', '.join(sorted(KNOWN_OPS - DESTRUCTIVE_OPS))}",
+              file=sys.stderr)
+        sys.exit(2)
     is_prod = "--prod" in args
     digest = ""
     impact = None
@@ -342,7 +385,7 @@ def main():
         digest = args[2]
 
     if is_prod:
-        if not _confirm_prod(target, orgid, username, instance):
+        if not _confirm_prod(target, orgid, username, instance, op):
             print("aborted", file=sys.stderr); sys.exit(1)
         _mint("prod-write", orgid, "")                 # authorizes the prod write itself
         if op in DESTRUCTIVE_OPS:

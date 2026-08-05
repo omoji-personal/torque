@@ -58,6 +58,51 @@ def _assurance_corpus_is_protected():
                   f"subprocesses and unaffected")
 
 
+@check("approval_vocabulary_matches_the_gates", "static")
+def _approval_vocabulary_matches_the_gates():
+    """Every op class a gate can demand must be one an operator can actually mint.
+
+    Two lists, and nothing compared them. `torque approve`'s usage named `write`, while the
+    destructive gate demands `opaque-write` and `unrecognised-destructive` — so an operator
+    following the usage text minted a token the gate would never consume, and an operator hitting
+    one of those denials had no documented way to satisfy it.
+
+    Also asserts the reverse direction, because the fix for the first half is trivially gamed by
+    accepting everything: an unknown label must still be refused, which is what stopped
+    `torque approve <org> banana --prod` minting a generic production token against a word the
+    mechanism never consulted.
+    """
+    import re as _are
+
+    ap = (ROOT / "bin" / "torque-approve").read_text()
+    m = _are.search(r"KNOWN_OPS\s*=\s*DESTRUCTIVE_OPS\s*\|\s*\{([^}]*)\}", ap, _are.S)
+    d = _are.search(r"DESTRUCTIVE_OPS\s*=\s*\{([^}]*)\}", ap, _are.S)
+    if not (m and d):
+        return Result("approval_vocabulary_matches_the_gates", FAIL,
+                      "torque-approve no longer declares DESTRUCTIVE_OPS | KNOWN_OPS as "
+                      "literals, so the vocabulary it accepts cannot be compared to the gates'")
+    mintable = set(_are.findall(r'"([a-z][a-z-]+)"', m.group(1) + d.group(1)))
+
+    sp = (ROOT / "hooks" / "shellparse.py").read_text()
+    body = sp[sp.index("def classify_destructive("):]
+    body = body[:body.index("\ndef ", 1)]
+    demanded = set(_are.findall(r'return "([a-z][a-z-]+)"', body))
+
+    unmintable = demanded - mintable
+    if unmintable:
+        return Result("approval_vocabulary_matches_the_gates", FAIL,
+                      f"the destructive gate can demand {sorted(unmintable)} and torque-approve "
+                      f"will not mint them — an operator meets a denial naming a token they have "
+                      f"no documented way to create")
+    if "if op not in KNOWN_OPS" not in ap:
+        return Result("approval_vocabulary_matches_the_gates", FAIL,
+                      "torque-approve no longer refuses unknown operation labels, so an operator "
+                      "can confirm a word the mechanism never consults")
+    return Result("approval_vocabulary_matches_the_gates", PASS,
+                  f"all {len(demanded)} op class(es) the destructive gate can demand are "
+                  f"mintable, and unknown labels are refused rather than minted generically")
+
+
 @check("staging_guard_survives_a_runner_prefix", "static", catastrophe=True)
 def _staging_guard_survives_a_runner_prefix():
     """`local/` must not reach the git index behind a runner.
