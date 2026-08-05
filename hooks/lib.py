@@ -1398,6 +1398,27 @@ def protected_write_paths():
             str(ALLOWLIST.resolve()), str(PROTECTED.resolve()),
             str((hd/"harness"/"checks"/"cli-write-surface.json").resolve()),
             str((hd/"harness"/"checks"/"clean-ip.rules").resolve()),
+            # THE ASSURANCE CORPUS. `harness/checks/` was protected and the evidence it produces
+            # was not — so the agent could rewrite the fixtures that certify the gates, flip an
+            # attack case to `allow`, and make a genuinely weakened suite read green. ROADMAP
+            # calls this corpus "the asset"; it was the one assurance-relevant directory outside
+            # the predicate.
+            #
+            # Not hypothetical. This agent wrote gate_fixtures_r17.json and edited
+            # run_gate_fixtures.py earlier the same day with ordinary Write/Edit calls, observed
+            # that the directory was writable, and recorded that as convenient. The same
+            # keystrokes flip an expectation.
+            #
+            # Safe to protect because every legitimate writer here is a SUBPROCESS —
+            # `torque lesson --gate` appending a fixture, `torque attest` writing an attestation,
+            # the validation-log renderer — and the gates do not inspect subprocess I/O. What
+            # this blocks is exactly the tool-surface write: Edit, Write, and Bash redirection.
+            # Hand-authoring evidence now flows through the maintainer window, audited and
+            # time-boxed, which is the correct posture for editing the thing that certifies.
+            str((hd/"harness"/"tests").resolve()),
+            str((hd/"harness"/"attest").resolve()),
+            str((hd/"harness"/"experiments").resolve()),
+            str((hd/"harness"/"VALIDATION.md").resolve()),
             str(CACHE.resolve()), str(ANCHOR.resolve())]
     _PWP_CACHE[key] = out
     return out
