@@ -58,6 +58,64 @@ def _assurance_corpus_is_protected():
                   f"subprocesses and unaffected")
 
 
+@check("shadow_reports_async_escape", "static")
+def _shadow_reports_async_escape():
+    """A rolled-back database is not the same claim as nothing having escaped.
+
+    `torque shadow` scans the SUBMITTED source for callout/@future/Queueable shapes, which cannot
+    see `ExistingService.process()` reaching them through a class the body merely calls. Two
+    external reviews named this identically, and it is the shape an agent produces most naturally,
+    because reusing an existing class is what agents do. An enqueued job does not roll back.
+
+    A regex cannot be taught to see it; a COUNT can. The template now takes an `AsyncApexJob`
+    count either side of the rollback, so a positive delta is evidence rather than inference.
+
+    This asserts the three READER branches, because the live positive case is unreachable from
+    here: the guard correctly refuses inline async, and producing the transitive case needs a
+    deployed ApexClass, which an experiment must not push into somebody's org. Verified live on
+    2026-08-05 for the zero branch only — `residue none … AsyncApexJob delta 0`.
+    """
+    src = (ROOT / "bin" / "torque-shadow").read_text()
+
+    missing = [s for s in ("FROM AsyncApexJob", "ASYNC~@~", "tqAsync0", "tqAsync1")
+               if s not in src]
+    if missing:
+        return Result("shadow_reports_async_escape", FAIL,
+                      f"the shadow template no longer measures async escape ({missing}) — the "
+                      f"source scan is back to being the only thing standing between a "
+                      f"transitive enqueue and a 'residue none' report")
+
+    # All three branches must be distinguishable in the reader, and each must say something
+    # different. A tool that renders "unknown" the same as "0" is the defect this exists to stop.
+    branches = {
+        "zero": "delta 0",
+        "positive": "ENQUEUED and did not roll back",
+        "unmeasured": "async escape UNMEASURED",
+    }
+    absent = [k for k, v in branches.items() if v not in src]
+    if absent:
+        return Result("shadow_reports_async_escape", FAIL,
+                      f"the reader does not distinguish these async outcomes: {absent} — an "
+                      f"unmeasured delta reported as zero is a safety claim nobody established")
+
+    # And the unmeasured branch must not pass silently: it has to move the exit code.
+    seg = src[src.index("async escape UNMEASURED"):][:400]
+    if "rc = 3" not in seg:
+        return Result("shadow_reports_async_escape", FAIL,
+                      "an unmeasurable async delta leaves the exit code at success, so a caller "
+                      "scripting on it cannot tell the measurement did not happen")
+
+    if "@future/Queueable/Batch are now DETECTED" not in src:
+        return Result("shadow_reports_async_escape", FAIL,
+                      "the not-covered footer still lists async as uncovered, or no longer says "
+                      "that detection is not prevention — the delta detects after the enqueue "
+                      "has already happened and must not read as a guard")
+    return Result("shadow_reports_async_escape", PASS,
+                  "the template counts AsyncApexJob across the rollback; the reader separates "
+                  "zero, positive and unmeasured; unmeasured moves the exit code; and the footer "
+                  "says detection is not prevention")
+
+
 @check("unreachable_org_can_never_be_done", "static", catastrophe=True)
 def _unreachable_org_can_never_be_done():
     """The audit's deterministic false-DONE, pinned as a permanent test.
