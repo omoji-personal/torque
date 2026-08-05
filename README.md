@@ -5,6 +5,10 @@ itself against a live org. It tells you what a change will set off before it run
 the flows, the cascading deletes, the records left orphaned. And it confirms its changes in the
 org instead of trusting a return code.
 
+Concretely: a set of PreToolUse hooks and a CLI, in a repository you clone. Nothing hosted, no
+account, no data leaves your machine. It gates the agent's own tool calls, so it works with the
+`sf` CLI and the MCP server you already use rather than replacing them.
+
 Coding agents can already query, deploy, run Apex and move data. Capability was never what was
 missing. What was missing is everything that makes capability safe to point at somebody's live
 system, which is why the agent usually gets a sandbox and the real work still happens by hand.
@@ -103,8 +107,6 @@ becomes a visible warning rather than a file nobody opens.
 
 ---
 
----
-
 ## Run it against your own org
 
 Prerequisites: [Claude Code](https://claude.com/claude-code) (the hooks are its PreToolUse surface),
@@ -175,8 +177,6 @@ Then open the folder in Claude Code and work. The hooks fire on the tool calls t
 
 ---
 
----
-
 ## See it in 3 seconds — no org, no credentials, no risk
 
 ```
@@ -227,8 +227,6 @@ blocks real work gets switched off.**
 
 ---
 
----
-
 ## How it holds — five layers
 
 1. **Credentials.** Connect production read-only. Torque stores no org credentials; the `sf` CLI is
@@ -251,8 +249,6 @@ blocks real work gets switched off.**
    Every production write is audited.
 5. **Verified enforcement.** Every rule is labeled hook-enforced, harness-enforced, or
    model-honored — and the labels are *checked*, not decorative.
-
----
 
 ---
 
@@ -283,9 +279,11 @@ fixture. The trail is in [`harness/VALIDATION.md`](harness/VALIDATION.md).
 
 ### How this was built
 
-Torque was written with AI agents, in the open, and the commit history says so: 192 of 246 commits
-carry a `Co-Authored-By: Claude` trailer. That is not a disclaimer buried at the bottom. It is the
-point of the artifact.
+Torque was written with AI agents, in the open, and the commit history says so: at 2026-08-05,
+202 of 256 commits carried a `Co-Authored-By: Claude` trailer. That is not a disclaimer buried at
+the bottom. It is the point of the artifact. The figure is dated because it moves with every
+commit, and an undated count is a number waiting to be wrong — this one already was, at
+"192 of 246", for as long as it took someone to check.
 
 The problem this tool exists to solve is that an agent operating on a Salesforce org will report
 success it has not earned. The way to demonstrate a solution to that is not to write the code by
@@ -306,8 +304,6 @@ is the system working, and the log will say which.
 
 ---
 
----
-
 ## The guide
 
 [`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 22 pages: what it does, why it isn't
@@ -320,8 +316,6 @@ it is Salesforce-specific: test both directions or you have tested neither; back
 classifier against real commands before deploying it; get a second opinion without ingesting
 anyone's data; and separate *I judged this unsafe* from *I could not read this*, which turned out
 to be 97% of everything this tool refused.
-
----
 
 ---
 
@@ -358,8 +352,6 @@ security.
 
 **Found a way through?** That's the whole point — every fixture in the suite exists because a
 review beat an earlier version of this code. See [`SECURITY.md`](SECURITY.md) for where to send it.
-
----
 
 ---
 
