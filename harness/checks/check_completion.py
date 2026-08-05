@@ -187,7 +187,8 @@ def _receipt_refuses_partial_credit():
     if ev2.state != m.ESTABLISHED:
         return Result(name, FAIL,
                       f"the evidence element reported {ev2.state} on a set where every element "
-                      f"is established or inapplicable — PROOF-CARRYING would be unreachable")
+                      f"is established or inapplicable — the settled verdict would be "
+                      f"unreachable")
 
     # the verdict itself, both directions, driven at render()
     class _A:
@@ -203,10 +204,22 @@ def _receipt_refuses_partial_credit():
         return code, _cg_json.loads(buf.getvalue())
 
     code, doc = verdict([m.ESTABLISHED] * 5 + [m.NA])
-    if code != DONE or doc["verdict"] != "PROOF-CARRYING":
+    if code != DONE or doc["verdict"] != "ASSESSMENT COMPLETE":
         return Result(name, FAIL,
                       f"a complete set gave exit {code} / {doc['verdict']!r} — a receipt that "
                       f"can only ever be incomplete carries no information")
+    # The verdict must never again claim proof, and the document must say so about itself.
+    # An external audit was right that PROOF-CARRYING named something no element establishes:
+    # there is no execution element, so a receipt assembled against an org whose state already
+    # matches reads identically to one assembled after a real change.
+    if "PROOF" in doc["verdict"].upper():
+        return Result(name, FAIL,
+                      f"the verdict claims proof ({doc['verdict']!r}) while no element of the "
+                      f"receipt observes execution")
+    if doc.get("execution_proven") is not False:
+        return Result(name, FAIL,
+                      "a settled receipt does not carry execution_proven:false — a reader "
+                      "parsing it cannot tell that nothing here establishes the operation ran")
     for hole in (m.OUTSTANDING,):
         code, doc = verdict([m.ESTABLISHED, hole, m.ESTABLISHED])
         if code != NOT_DONE or doc["verdict"] != "INCOMPLETE":
