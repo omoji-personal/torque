@@ -299,6 +299,10 @@ def _gate_adversarial_fixtures(target):
 def _cache_poison(target):
     if not target: return Result("cache_poison_resistant", SKIP, "no --target-org")
     import time, json as _j, importlib
+    # reload() needs the name registered, and another check pops "lib" to force a fresh import of
+    # the current source. It now restores it; this line means a future check that forgets to
+    # costs a re-registration rather than a raised exception reported as a gate failure.
+    _sys.modules.setdefault(_lib.__name__, _lib)
     importlib.reload(_lib)
     disp = _lib._sf("org","display","--target-org",target,"--json")
     d = _j.loads(disp.stdout)["result"]; user = d["username"]; oid = _lib.norm_id(d["id"])
