@@ -166,16 +166,81 @@ def _apex_digest(path_str):
     return digest, body.decode("utf-8", "replace")
 
 
+# DELETE only, and the omission of update is a DECISION rather than an oversight.
+#
+# An update can be as destructive as a delete — one field wiped across every Account, a record
+# at a time — so the symmetry is tempting. Three things argue against it, and the fixtures
+# record all three. A record-level update is reversible: working-discipline.md requires the
+# before-values in the session log, and there is nothing equivalent for a deleted row beyond the
+# recycle bin. Updating an Account by Id is the single most ordinary write in Salesforce
+# consulting, and gating it would put an approval in front of the daily path — the corpus of
+# real commands in gate_fixtures_r17.json contains exactly such an update, and an earlier draft
+# of this patch denied it. And the operator authorised deletion; extending to update on the way
+# past would be a scope change nobody agreed to.
+#
+# If update should be covered, it is one entry in this dict plus its fixtures — deliberately
+# cheap, so the decision can be revisited without re-deriving it.
+_PROTECTED_RECORD_OPS = {"delete": "protected-record-delete"}
+
+
+def _protected_record_mutation(sf_args):
+    """A record-level delete naming an Id, on an sObject the operator declared protected.
+
+    `classify_destructive` returns None for these DELIBERATELY: delete-by-Id is the form
+    working-discipline.md mandates, and gating it for every object would kill the primitive the
+    rules require. The consequence nobody had traced is that `_gate_write` returned on `not op`
+    BEFORE `_shield_tokens` ran, so the protected-object floor existed only on the
+    destructive-class path. The three objects an operator listed by hand could be removed one
+    record at a time, unlimited and unasked, while the bulk spelling of the identical deletion
+    was refused outright (M8, 2026-08-05 — twelve chained single-Id deletes, zero approvals).
+
+    The floor is the backstop against token over-scope: bulk-delete tokens are not object-scoped,
+    so a legitimately-issued one plus a lowercase name reached the protected objects (red-team
+    P1-6). A backstop that the mandated spelling of delete walks past is not one.
+
+    Returns an op NAME, so this joins the ordinary token path rather than the shield's absolute
+    refusal. The capability survives with an approval attached — including the impact-bound token,
+    which is the answer to doing this at volume: one approval naming a scope, not one per record.
+    Refusing absolutely is the stronger floor and stays one line away; it was not taken because it
+    would stop the agent deleting a TEST- Account it created itself.
+    """
+    sub = shellparse.subcommand(sf_args)
+    f = sub[0] if sub else ""
+    for verb, op in _PROTECTED_RECORD_OPS.items():
+        if sub[:3] == ("data", verb, "record") or f.startswith(f"force:data:record:{verb}"):
+            break
+    else:
+        return None
+    if not shellparse.has_record_id(sf_args):
+        return None                    # no Id => classify_destructive already said where-delete
+    sv = shellparse.sobject_value(sf_args)
+    if not sv:
+        return None
+    # Case-insensitive for the reason _shield_tokens is: Salesforce object names are, so
+    # `--sobject account` reaches the same table as `Account`.
+    if sv.strip().lower() not in {p.strip().lower() for p in lib.protected_objects()}:
+        return None
+    return op
+
+
 def _gate_write(sf_args):
     op = shellparse.classify_destructive(sf_args)
     if not op:
-        return
+        op = _protected_record_mutation(sf_args)
+        if not op:
+            return
     # Exactly one target, or deny — the rule its twin already had. Without it a destructive
     # command with no target looked up a token for the identity "?", and one with several
     # picked an arbitrary member of a set.
     target = lib.sole_target(shellparse.targets(sf_args), HOOK)
     _, oid, _ = lib.classify(target)
     orgid = oid or "?"
+    if op in _PROTECTED_RECORD_OPS.values():
+        # Deliberately AHEAD of _shield_tokens: the shield refuses absolutely and no token clears
+        # it, which is right for a bulk delete and wrong here — this is the spelling the rules
+        # mandate, so it gets an approval path rather than a wall.
+        _need_token(orgid, op)
+        return
     # protected-object shield over the SHLEX-DECODED positional token stream (audit R10-R3),
     # PLUS the parsed --sobject/-s value incl. the equals form --sobject=X (audit R11-07)
     shield_toks = [a for a in sf_args if not a.startswith("-")]

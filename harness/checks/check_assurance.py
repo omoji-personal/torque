@@ -238,6 +238,19 @@ def _approval_vocabulary_matches_the_gates():
     body = body[:body.index("\ndef ", 1)]
     demanded = set(_are.findall(r'return "([a-z][a-z-]+)"', body))
 
+    # classify_destructive was the ONLY demand site this check knew about, and that was an
+    # assumption rather than a fact. When M8 added `protected-record-delete` — demanded by the
+    # gate itself, because delete-by-Id is deliberately not destructive-class — the op became
+    # unmintable while this check went on reporting that every demand was satisfiable. A check
+    # scoped to one function cannot notice a second function appearing; it reports PASS about a
+    # question it no longer covers, which is the vacuous-pass shape this file exists to prevent.
+    # Read the gate too: every literal reaching _need_token, and the values of any *_OPS mapping
+    # it demands through.
+    dg = (ROOT / "hooks" / "destructive_data_gate.py").read_text()
+    demanded |= set(_are.findall(r'_need_token\(\s*[A-Za-z_]+\s*,\s*"([a-z][a-z-]+)"', dg))
+    for mapping in _are.findall(r'^_[A-Z_]*OPS\s*=\s*\{(.*?)\}', dg, _are.S | _are.M):
+        demanded |= set(_are.findall(r':\s*"([a-z][a-z-]+)"', mapping))
+
     unmintable = demanded - mintable
     if unmintable:
         return Result("approval_vocabulary_matches_the_gates", FAIL,
