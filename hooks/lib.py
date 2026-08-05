@@ -478,10 +478,10 @@ def classify_live(target: str):
     The cache is agent-writable and must not be trusted for an authorization decision."""
     username, orgid = _org_display(target)
     if username is None and orgid is None:
-        return "production", None, None
+        return "unverifiable", None, None
     rec = _org_record(target, orgid)
     if rec is None:
-        return "production", orgid, username           # unverifiable, or a different org ⇒ fail safe
+        return "unverifiable", orgid, username
     return _verdict_from_org_record(rec, orgid, username), orgid, username
 
 def _org_record(target: str, orgid: str):
@@ -595,6 +595,33 @@ def authorize_write(target: str, op_hint: str = "write"):
     time-boxed session grant, or a single-use prod token minted by bin/torque-approve. The
     agent can request either; it cannot mint one."""
     verdict, orgid, username = classify_live(target)   # security path: never trust the cache
+
+    # "I could not establish what this org is" is NOT "this org is production", and reporting the
+    # second for the first is how a wrong reason becomes dangerous advice.
+    #
+    # Both failure paths in classify_live used to return "production": a target that would not
+    # resolve, and an Organization row that could not be read or did not match. So a Developer
+    # Edition org on the allowlist — verified developer seconds earlier — was refused with
+    # "sf-coffee is PRODUCTION — denied by default", offering `torque approve --prod` as the
+    # remedy. Following that remedy means typing WRITE PRODUCTION for a sandbox, which trains the
+    # one ritual in this product that must never become a reflex.
+    #
+    # Observed live, and INTERMITTENTLY: classification makes two live CLI callouts per gate, both
+    # gates classify independently, and a write costs 6.7-13.1s end to end. When that exceeds the
+    # 40s SIGALRM budget the callouts fail and the verdict fell through to production. The denial
+    # was correct; only its reason and its remedy were wrong.
+    #
+    # `unverifiable` stays OUT of ELIGIBLE, so the operation is still refused — an org whose
+    # identity cannot be established might genuinely be production, and fail-closed is the only
+    # safe direction. What changes is that the message says what happened and offers a next step
+    # that helps.
+    if verdict == "unverifiable":
+        return False, (
+            f"{target} could not be classified: the live identity check did not complete, so "
+            f"whether this org is production is UNKNOWN and the write is refused. This is not a "
+            f"finding that the org IS production — do not approve a production override for it. "
+            f"Check the org is authenticated (`sf org display --target-org {target}`) and retry; "
+            f"a classification that times out under load looks exactly like this.")
     if verdict == "production":
         if _prod_session_valid(orgid):
             if not audit("PROD-WRITE", f"session-authorized {op_hint} on {orgid} ({target})",
@@ -761,6 +788,12 @@ OBSERVE_NEVER = frozenset({
 PROD_DENY_MARKER = " is PRODUCTION — denied by default."
 
 
+# An unverifiable org must be treated exactly like a production one by anything that would relax
+# a refusal, because it might BE one. Splitting the verdict for honesty must not accidentally
+# create a class of denial that observe-only is willing to wave through.
+UNVERIFIABLE_MARKER = "could not be classified"
+
+
 def is_production_denial(reason: str) -> bool:
     """A production refusal is never advisory, whatever window is open.
 
@@ -776,7 +809,8 @@ def is_production_denial(reason: str) -> bool:
     apply to the majority of them. Excluding the one class that must never be advisory is
     narrower, and it is the class the operator was warned about at mint time.
     """
-    return PROD_DENY_MARKER in (reason or "")
+    r = reason or ""
+    return PROD_DENY_MARKER in r or UNVERIFIABLE_MARKER in r
 
 
 def observe_grant_valid(tree: str = ""):
