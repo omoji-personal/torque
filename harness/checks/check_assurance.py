@@ -58,6 +58,52 @@ def _assurance_corpus_is_protected():
                   f"subprocesses and unaffected")
 
 
+@check("unreachable_org_can_never_be_done", "static", catastrophe=True)
+def _unreachable_org_can_never_be_done():
+    """The audit's deterministic false-DONE, pinned as a permanent test.
+
+    Reported verbatim by an external review: point the ledger at an org that does not exist, so
+    every machine layer comes back unverified because nothing answered, then clear those with
+    `--na` and supply the three human-evidence strings. Every layer green, verdict DONE, against
+    an org that was never reached.
+
+    Two things made it work and both are fixed. `--na` cleared anything that was not BLOCKED,
+    including a layer whose verifier could not run; and the difference between "the org answered
+    no" and "the org did not answer" lived only in the detail TEXT, so nothing downstream could
+    act on it. The second is the real defect — the distinction was known and unusable.
+
+    Runs the real command. A check that asserted this against a stubbed ledger would be testing
+    its own stub.
+    """
+    import subprocess as _usp
+    import sys as _usys
+
+    cmd = [_usys.executable, str(ROOT / "bin" / "torque-done"),
+           "--target-org", "torque-no-such-org-9f3a",
+           "--field", "Account.Tier__c",
+           "--render-evidence", "seen",
+           "--automation-evidence", "ran",
+           "--uat-evidence", "accepted",
+           "--na", "field_exists:not applicable",
+           "--na", "fls:not applicable",
+           "--json"]
+    r = _usp.run(cmd, capture_output=True, text=True, timeout=300)
+    out = (r.stdout or "") + (r.stderr or "")
+
+    if r.returncode == 0:
+        return Result("unreachable_org_can_never_be_done", FAIL,
+                      "DONE against an org that does not exist — caller-supplied prose and "
+                      "caller-issued waivers turned every layer green without anything being "
+                      "observed")
+    if "UNANSWERED" not in out:
+        return Result("unreachable_org_can_never_be_done", FAIL,
+                      f"the refusal does not name the unanswered verifier, so an operator cannot "
+                      f"tell it apart from a failed check: {out.strip()[:150]}")
+    return Result("unreachable_org_can_never_be_done", PASS,
+                  f"the ledger refuses (exit {r.returncode}): a verifier that could not run is "
+                  f"UNANSWERED, and the caller being graded may not waive it")
+
+
 @check("installed_shim_matches_its_source", "static")
 def _installed_shim_matches_its_source():
     """The shim is installed as a COPY, and nothing noticed when the copy went stale.
