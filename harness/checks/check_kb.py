@@ -2982,7 +2982,13 @@ def _guards_share_no_blind_assumption():
                               f"{v!r} — the directory rule is defeated by that spelling")
 
     # and the guards must not become walls: ordinary files stay writable in any spelling
-    for v in ("README.md", "./README.md", "docs/DESCRIBING-TORQUE.md", "harness/tests/x.json"):
+    #
+    # `harness/tests/x.json` used to be one of these controls, and stopped being ordinary on
+    # 2026-08-05 when the assurance corpus was protected — an external review found the agent
+    # could rewrite the fixtures that certify the gates. The control moved rather than the
+    # protection, because the protection is the point. A control path has to be somewhere nobody
+    # will later decide is load-bearing.
+    for v in ("README.md", "./README.md", "docs/DESCRIBING-TORQUE.md", "docs/x-ordinary.md"):
         if lib.is_protected_target(v):
             return Result("guards_share_no_blind_assumption", FAIL,
                           f"an ordinary path was treated as protected: {v!r}")
@@ -3031,11 +3037,21 @@ def _classification_is_identity_bound():
                  "TrialExpirationDate": None}]}}))
         return f
 
-    cases = [("the Organization row belongs to a DIFFERENT org", stub(rec_id=B), "production"),
-             ("output succeeded but is malformed", stub(body='{"result": trunc'), "production"),
-             ("output succeeded but has no rows", stub(body='{"result":{"records":[]}}'), "production"),
-             ("output is missing every field", stub(body='{"result":{"records":[{}]}}'), "production"),
-             ("the callout failed", stub(body="", rc=1), "production")]
+    # Every one of these is a FAILURE TO ESTABLISH IDENTITY, not a finding that the org is
+    # production, and since 2026-08-05 the verdict says so: `unverifiable`. It is outside
+    # ELIGIBLE exactly as `production` is, so the write is refused identically — what changed is
+    # that the refusal no longer tells an operator to approve a production override for an org
+    # nobody could classify. That advice was reaching operators for real: a Developer Edition org
+    # on the allowlist was refused as "is PRODUCTION" whenever classification timed out.
+    #
+    # The assertion is stronger than it was, not weaker. Expecting "production" here could not
+    # distinguish "the row belongs to another org" from "this really is production"; expecting
+    # `unverifiable` requires the code to have kept them apart.
+    cases = [("the Organization row belongs to a DIFFERENT org", stub(rec_id=B), "unverifiable"),
+             ("output succeeded but is malformed", stub(body='{"result": trunc'), "unverifiable"),
+             ("output succeeded but has no rows", stub(body='{"result":{"records":[]}}'), "unverifiable"),
+             ("output is missing every field", stub(body='{"result":{"records":[{}]}}'), "unverifiable"),
+             ("the callout failed", stub(body="", rc=1), "unverifiable")]
     for label, fn, want in cases:
         lib._sf = fn
         try:
@@ -3057,7 +3073,8 @@ def _classification_is_identity_bound():
                       f"refusing the org it exists to accept")
     return Result("classification_is_identity_bound", PASS,
                   f"{len(cases)} ways a verdict can fail to describe its identity all return "
-                  f"production; a matching org still classifies")
+                  f"unverifiable — refused like production, named as the unknown it is; a "
+                  f"matching org still classifies")
 
 
 @check("token_is_single_use", "static", catastrophe=True)
