@@ -255,9 +255,23 @@ is the system working, and the log will say which.
 the MCP server, setup, the operations worked through, the safety model, troubleshooting,
 and how the harness proves itself.
 
+[`docs/TESTING-A-GATE.md`](docs/TESTING-A-GATE.md) — how to test a gate before you put it in
+somebody's way, written from the defects that produced each method rather than as advice. None of
+it is Salesforce-specific: test both directions or you have tested neither; backtest the
+classifier against real commands before deploying it; get a second opinion without ingesting
+anyone's data; and separate *I judged this unsafe* from *I could not read this*, which turned out
+to be 97% of everything this tool refused.
+
 ---
 
 ## What Torque does *not* claim
+
+**They bind the workspace you install them in.** Hooks load from the active workspace, so a
+session started in a client folder loads none of them — `python3 bin/torque install-gates`
+registers them at user level so they bind everywhere, and until you run it the honest claim is
+"Torque binds the agent's tool surface *in this repository*, and gates `sf` everywhere the shim is
+on PATH." That is a materially smaller claim than the rest of this page makes, which is why it is
+here and not in an appendix.
 
 The gates bind the agent's **tool surface** (Bash / Edit / Write / Read / MCP). Within that surface they
 stop accidents deterministically and defeat enumerable circumvention. They do **not** claim to stop a same-user actor
