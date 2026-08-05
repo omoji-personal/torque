@@ -553,3 +553,61 @@ allowlist: eligibility is not sufficient, which is the claim the design rests on
 It remains one run, one org, by the author. The evidence is a day old on a tool that is weeks old,
 and the shim — the thing that makes the allowlist enforced rather than advisory — is not installed
 on the machine that produced this log. Both are stated in the README rather than implied away.
+
+---
+
+## P12 — release · GREEN, after a documentation audit that found the shipped default was wrong · 2026-08-05
+
+Commit `dab11c50`, tree `bcfe38e45d10`, working tree clean · **profile: release · target
+`sf-coffee` (classified `developer`, IsSandbox=False, Developer Edition) · verdict: PASS** · 569s
+· 117 checks: **114 PASS, 0 FAIL, 3 N/A** · all 19 mutators caught, `redaction` included
+· artifact `harness/attest/attest-dab11c50.json`
+
+Supersedes P11. Same green, one tree later, and the tree in between is why this entry exists.
+
+### The audit that produced it
+
+P11 was green and the documentation describing it was not. `activate-enforcement` — the command
+that closes P0-01 — appeared in **zero tracked documents**. `org-safety.md` carries the layer model
+and had no layer for it. The guide mentioned it nowhere across 22 pages. `MAINTAINER-MODE.md`,
+whose entire subject is what a maintainer window may do, did not say the window's power is now
+bounded by it. A safety property a reader cannot find is not one they can rely on.
+
+### What the audit found that was worse than stale prose
+
+The tracked `.claude/settings.json` named `$HOME/.torque/enforcement/current/hooks/`, which does
+not exist on a machine that has never activated. Measured rather than assumed: the interpreter
+exits **2** for a missing script, and the enforcement contract reads exit 2 as deny. **A fresh
+clone of this repository would have blocked every gated tool call** with an opaque `can't open
+file`, while the guide promised "nothing further is needed".
+
+Fail-closed rather than unsafe, and still a wall for anyone trying the tool for the first time.
+`install-gates --project` now writes an **untracked** `settings.local.json`: the committed
+registration stays workspace-pointing so a clone works with no setup, the hardened registration
+lives beside it without entering the repository, and the working tree stays clean — which matters
+because a dirty tree can neither be re-activated nor anchor an attestation.
+
+The trust-plane checks now read the **effective** registration, the merge of both files. Reading
+only the tracked one would report the portable default and call a correctly-hardened machine
+unprotected.
+
+### Numbers `claimed_counts` could not see
+
+It re-derives counts from the artifacts they describe, and it checks one phrasing. These used
+others and had drifted: the guide said "196 adversarial fixtures" twice (237), "34 entries" twice
+for a 44-entry catalogue, and `release (98)` for a 117-check profile. `ROADMAP.md` said 216
+fixtures and quoted retrieval as 94/86/85 against measured values of 95% matched, 88% surfaced over
+81 cases, 88% precision over 34 negatives — so the precision headroom is three points rather than
+none. The allow share is now stated as measured: 67 of 237, 28%.
+
+`claimed_counts` did catch the guide growing to 22 pages, which is the half of it that works.
+
+### What this run is evidence of, and what it is not
+
+Every org-touching check passed live against a disposable Developer Edition org. Enforcement runs
+from the trust anchor, and `maintainer_edit_cannot_change_active_gate` measures that rather than
+assuming it.
+
+Still one run, one org, by the author, days old on a tool that is weeks old. The exec-time shim is
+not installed on this machine, so `installed_shim_matches_its_source` reports N/A and the allowlist
+is advisory here rather than enforced. The README says that in those words.
