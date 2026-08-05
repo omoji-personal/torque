@@ -120,9 +120,18 @@ def _active_enforcement_is_anchor_owned():
     anchor = str(_anchor().resolve())
     problems = []
 
+    # The EFFECTIVE registration, which is the merge of the tracked file and the untracked local
+    # override. Reading only settings.json would report the portable default and miss the
+    # hardened one — and the portable default is deliberately workspace-pointing, so that reading
+    # would call a correctly-hardened machine unprotected. What adjudicates a write is what the
+    # host loads, not what is committed.
     settings = ROOT / ".claude" / "settings.json"
+    local = ROOT / ".claude" / "settings.local.json"
     try:
-        blob = _tj.dumps(_tj.loads(settings.read_text()).get("hooks", {}))
+        hooks = _tj.loads(settings.read_text()).get("hooks", {})
+        if local.is_file():
+            hooks = _tj.loads(local.read_text() or "{}").get("hooks", hooks) or hooks
+        blob = _tj.dumps(hooks)
     except Exception as e:                                 # noqa: BLE001
         return Result(name, FAIL, f"cannot read the project registration ({e})")
     # Either spelling counts. `install-gates --project` writes `$HOME/.torque/...` rather than an
@@ -185,8 +194,14 @@ def _registered_gates_resolve():
                             out.append(tok)
         return out
 
+    # Both files, because either can register a hook and either can name a path that is not there.
+    local = ROOT / ".claude" / "settings.local.json"
     try:
         cfg = _tj.loads(settings.read_text())
+        if local.is_file():
+            lcfg = _tj.loads(local.read_text() or "{}")
+            for evt, arr in (lcfg.get("hooks") or {}).items():
+                cfg.setdefault("hooks", {}).setdefault(evt, []).extend(arr)
     except Exception as e:                                 # noqa: BLE001
         return Result(name, FAIL, f"cannot read the project registration ({e})")
 

@@ -1,6 +1,6 @@
 # Torque — the guide
 
-**The guide is [`Torque-Guide.pdf`](Torque-Guide.pdf)** (21 pages), built from
+**The guide is [`Torque-Guide.pdf`](Torque-Guide.pdf)** (22 pages), built from
 [`torque-guide.html`](torque-guide.html) with `node guide/build-pdf.mjs`.
 
 This file used to be a second, older guide. It said the same things in different words, and then

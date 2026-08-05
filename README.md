@@ -142,6 +142,31 @@ Skip `npm install` and everything still runs — the browser check reports `BLOC
 reason and the verdict is `DEGRADED` rather than `PASS`. That is deliberate: a check that cannot
 run is never reported as green.
 
+### The second hardening step: move the gates out of the repository
+
+Out of the box the gates run from `hooks/` in your clone. That stops the accidents and the
+enumerable circumventions, and it leaves one honest gap: those files are in the repository, so
+anything that can write to the repository can rewrite the gate. Developing Torque needs exactly
+that — an operator-present maintainer window — and while one is open, the files being edited are
+the files adjudicating. A window-legal edit making `authorize_write` return `(True, "mutant")`
+turned a production denial into an allow on the next tool call.
+
+```
+python3 bin/torque activate-enforcement    # runs static, then asks you to type ACTIVATE
+python3 bin/torque install-gates --project # points this workspace at the activated copy
+```
+
+Activation copies the **tested** tree into `~/.torque/enforcement/versions/<tree>/` at mode 0400
+behind an atomic symlink, and refuses on a dirty tree, a failing static profile, or without an
+operator at a real terminal. A maintainer window still edits `hooks/`; the edit decides nothing
+until a present operator tests and promotes it. `maintainer_edit_cannot_change_active_gate`
+measures precisely that, and reported `N/A` until the day it had something to measure.
+
+`--project` writes an **untracked** local override, so the committed registration stays
+workspace-pointing and a clone of this repo works with no setup at all. Reverse with
+`install-gates --workspace`. While both registrations are present the gates may be consulted
+twice, so a gated write can cost roughly double the 6–13 seconds above.
+
 `torque init` refuses to allowlist a production org, creates the trust anchor outside the repo,
 and proves the gates bind before telling you it worked. The allowlist is deliberately not shipped:
 which org you may write to is a decision only the person at the keyboard can make.
@@ -285,7 +310,7 @@ is the system working, and the log will say which.
 
 ## The guide
 
-[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 21 pages: what it does, why it isn't
+[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 22 pages: what it does, why it isn't
 the MCP server, setup, the operations worked through, the safety model, troubleshooting,
 and how the harness proves itself.
 

@@ -294,6 +294,28 @@ Left as-is deliberately for now. Extending a grant across the Bash surface is a 
 blast radius than extending it across two tool handlers, and the asymmetry is inconvenient rather
 than unsafe. Documented so the next person meets it as a known edge rather than a mystery.
 
+## What bounds the window now: activated enforcement (2026-08-05)
+
+Everything above describes a window that makes `hooks/` writable while the gates in `hooks/` are
+the ones adjudicating. That was the real exposure, and it was not hypothetical: a window-legal
+edit making `authorize_write` return `(True, "mutant")` turned a production denial into an allow
+on the next tool call. A window granted to fix a check also granted the power to delete one.
+
+`torque activate-enforcement` separates the two. The tested tree is copied into
+`~/.torque/enforcement/versions/<tree>/` at mode 0400, an atomic `current` symlink points at it,
+and `torque install-gates --project` repoints this repository's registration there. From then on a
+maintainer window still edits `hooks/` — and the edit decides nothing until a present operator
+tests it and promotes it. Activation itself refuses without operator presence, on a dirty tree, or
+if the static profile does not pass.
+
+`maintainer_edit_cannot_change_active_gate` measures exactly this, and reported N/A from the day it
+was written until enforcement was activated — correctly, because there was nothing to measure and
+an empty loop is not evidence. It now reads: *a window-legal edit to `authorize_write` flips the
+workspace copy (exit 0) and leaves the active gate denying.*
+
+The caveat below still stands in full. Activation bounds what a window can change; it does nothing
+about whether what the agent wrote is any good.
+
 ## The honest caveat
 
 This narrows, but does not close, the disclosed Layer-0 boundary. An operator-present grant means

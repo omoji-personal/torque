@@ -219,13 +219,19 @@ operations layer to the thing that will not let an agent claim done. That is a n
 distinctive position, and it is a product decision rather than an engineering one.
 
 The current state, measured rather than claimed: 117 checks (96 static, 114 capability, 117 release),
-19 mutators, 216 adversarial fixtures, and retrieval measured against an evaluation set written by
-someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
-recall, 85% precision over 34 negatives.
+19 mutators, 237 adversarial fixtures — 67 of them asserting that ordinary work is *allowed* — and
+retrieval measured against an evaluation set written by someone other than the author of the thing
+being measured: 95% *matched* recall, 88% *surfaced* recall over 81 cases, 88% precision over 34
+negatives.
 
 Both recall numbers, because they answer different questions and quoting only the first flatters
 the tool: MATCHED is whether the entry's triggers fired at all; SURFACED is whether it survived the
-two-slot display limit and actually reached the operator. The 8-point gap is a capacity limit
+two-slot display limit and actually reached the operator. The 7-point gap is a capacity limit
 rather than a mis-ranking, and only matched recall currently has a FAIL floor. Precision sits at
-85% against a floor of 85% — one more false positive turns the build red, which is the intended
-tension and worth stating rather than discovering.
+88% against a floor of 85% — three points of headroom, so a handful of new false positives turns
+the build red, which is the intended tension and worth stating rather than discovering.
+
+Enforcement now runs from the trust anchor rather than the workspace, and
+`maintainer_edit_cannot_change_active_gate` measures it rather than assuming it — it reported
+`N/A` from the day it was written until there was something to measure. That closes the largest
+disclosed gap: a maintainer window could previously rewrite the gate it was granted under.

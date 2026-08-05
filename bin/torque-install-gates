@@ -12,6 +12,19 @@ SHIM_DIR = ANCHOR / "shim"
 SHIM_SRC = TORQUE_HOME / "bin" / "torque-shim-sf"
 
 PROJECT_SETTINGS = TORQUE_HOME / ".claude" / "settings.json"
+# The LOCAL override is where the anchor-pointing registration goes, and the reason is the one
+# thing the tracked file cannot be: correct for two machines at once.
+#
+# settings.json is committed, so whatever it names is what a clone gets. Naming the anchor there
+# means a fresh clone registers gates that do not exist on that machine and blocks every gated
+# call — fail-closed, and a wall the first time someone tries the tool. Naming the workspace there
+# is right for the clone and wrong for a machine that HAS activated, where it silently means
+# activation is in effect for nothing.
+#
+# settings.local.json is untracked (globally gitignored), so the hardened registration lives
+# beside the portable one without entering the repository, and the working tree stays clean —
+# which matters because a dirty tree cannot be re-activated and cannot anchor an attestation.
+LOCAL_SETTINGS = TORQUE_HOME / ".claude" / "settings.local.json"
 # $HOME rather than an absolute /Users/… : settings.json is TRACKED, and a committed absolute home
 # directory is one machine's path sitting in everyone else's checkout.
 ANCHOR_HOOKS = '"$HOME/.torque/enforcement/current/hooks/'
@@ -41,27 +54,48 @@ def project(to_anchor=True):
     if not PROJECT_SETTINGS.is_file():
         print(f"refusing: {PROJECT_SETTINGS} is not a readable file", file=sys.stderr)
         return 2
-    frm, to = (WORKSPACE_HOOKS, ANCHOR_HOOKS) if to_anchor else (ANCHOR_HOOKS, WORKSPACE_HOOKS)
+
+    if not to_anchor:
+        # --workspace removes the local override rather than editing the tracked file, because
+        # the tracked file is already the workspace-pointing one and always should be.
+        if LOCAL_SETTINGS.exists():
+            cfg = json.loads(LOCAL_SETTINGS.read_text() or "{}")
+            cfg.pop("hooks", None)
+            if cfg:
+                LOCAL_SETTINGS.write_text(json.dumps(cfg, indent=2) + "\n")
+            else:
+                LOCAL_SETTINGS.unlink()
+            print(f"removed the anchor-pointing override from {LOCAL_SETTINGS.name}; the gates "
+                  f"run from the workspace again")
+        else:
+            print("nothing to do: no local override is installed")
+        return 0
+
     cfg = json.loads(PROJECT_SETTINGS.read_text())
     changed = 0
     for arr in cfg.get("hooks", {}).values():
         for m in arr:
             for h in m.get("hooks", []):
                 c = h.get("command", "")
-                if frm in c:
-                    h["command"] = c.replace(frm, to)
+                if WORKSPACE_HOOKS in c:
+                    h["command"] = c.replace(WORKSPACE_HOOKS, ANCHOR_HOOKS)
                     changed += 1
     if not changed:
-        print(f"nothing to do: no hook command names {frm.strip(chr(34))}")
+        print("nothing to do: the tracked registration names no workspace hooks to repoint")
         return 0
-    PROJECT_SETTINGS.write_text(json.dumps(cfg, indent=2) + "\n")
-    where = "the activated enforcement copy" if to_anchor else "the workspace"
-    print(f"repointed {changed} hook registration(s) in {PROJECT_SETTINGS} at {where}")
-    if to_anchor:
-        print("Editing this repository's hooks/ no longer changes what adjudicates a write. "
-              "Re-run `torque activate-enforcement` to promote new source after testing it.")
-        print("A clone that has never activated registers gates that do not exist there — "
-              "`registered_gates_resolve` fails loudly on that rather than leaving it silent.")
+
+    local = {}
+    if LOCAL_SETTINGS.exists():
+        local = json.loads(LOCAL_SETTINGS.read_text() or "{}")
+    local["hooks"] = cfg["hooks"]
+    LOCAL_SETTINGS.parent.mkdir(exist_ok=True)
+    LOCAL_SETTINGS.write_text(json.dumps(local, indent=2) + "\n")
+    print(f"wrote {changed} anchor-pointing hook registration(s) to {LOCAL_SETTINGS}")
+    print("  untracked, so the committed registration stays workspace-pointing and a clone of "
+          "this repo works with no setup.")
+    print("Editing this repository's hooks/ no longer changes what adjudicates a write. Re-run "
+          "`torque activate-enforcement` to promote new source after testing it.")
+    print("Reverse with: torque install-gates --workspace")
     return 0
 
 

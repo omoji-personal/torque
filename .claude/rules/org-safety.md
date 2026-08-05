@@ -94,6 +94,29 @@ classifying an org runs `sf org display`, and that comes back as a read).
 An operator at a real login terminal passes through ungated, checked before any classification,
 so a classifier bug can never take an operator's `sf` away from them.
 
+## Layer 2d — activated enforcement (the gates stop being files the agent can edit)
+Until this is run, the gates adjudicating every write are files in `hooks/`, and an operator-present
+maintainer window makes them writable. A window granted to fix a check also granted the power to
+delete one. Demonstrated 2026-08-05: a window-legal edit making `authorize_write` return
+`(True, "mutant")` turned a production denial into an allow on the next tool call.
+
+`torque activate-enforcement` copies the tested tree into `~/.torque/enforcement/versions/<tree>/`
+at mode 0400, flips an atomic `current` symlink, and records a sha256 manifest. It refuses without
+operator presence, on a dirty tree, or if the static profile does not pass — activating untested
+enforcement is how a safe-looking install becomes the thing that fails open.
+
+Activation alone changes nothing: the consumers must be repointed with
+`torque install-gates --project`, which rewrites this repo's registration to load from
+`$HOME/.torque/enforcement/current/hooks/`. **A clone that has never activated registers gates that
+do not exist there and blocks every gated call** (the interpreter exits 2, which the contract reads
+as deny) — fail-closed, and `registered_gates_resolve` names it at validation rather than leaving
+it to a confusing runtime error.
+
+A maintainer window still edits `hooks/`. The edit no longer decides anything until it is tested
+and promoted by a present operator, which is the whole point.
+
+ENFORCEMENT: harness-enforced (maintainer_edit_cannot_change_active_gate, active_enforcement_is_anchor_owned, registered_gates_resolve)
+
 ## Boundaries (stated honestly)
 The gates bind the agent's **tool surface** (Bash / Edit / Write / Read / MCP) and defeat both
 accidents and enumerable circumvention (40+ adversarial fixtures, three independent audit
