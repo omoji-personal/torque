@@ -160,9 +160,15 @@ def stages_local(argv) -> bool:
 # Trust is a property of what a tool DOES, not of where it lives. Naming each read-only tool
 # is more maintenance than a path rule and that is the point: a new tool under bin/ gets no
 # trust until someone decides it deserves some.
+# "READ-ONLY" HERE MEANS NO **ORG** MUTATION, not no writes at all — `torque log` has always
+# written to local/ and has always been in this set, so the name has described the wrong property
+# for as long as the set has existed. The property actually relied on is narrower and is the one
+# that makes the exemption safe: these live in bin/, which the agent cannot write, and none of
+# them touches a Salesforce org. Stated here rather than left for the next person to infer from a
+# set name that says something else.
 READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log", "torque-done",
-                         "torque-receipt", "torque-needs"}
-READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done", "receipt", "needs"}
+                         "torque-receipt", "torque-needs", "torque-week"}
+READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done", "receipt", "needs", "week"}
 
 # Legacy sfdx command IDs and the modern `sf` words that mean the same operation.
 #
