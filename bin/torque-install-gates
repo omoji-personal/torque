@@ -11,6 +11,59 @@ ANCHOR = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
 SHIM_DIR = ANCHOR / "shim"
 SHIM_SRC = TORQUE_HOME / "bin" / "torque-shim-sf"
 
+PROJECT_SETTINGS = TORQUE_HOME / ".claude" / "settings.json"
+# $HOME rather than an absolute /Users/… : settings.json is TRACKED, and a committed absolute home
+# directory is one machine's path sitting in everyone else's checkout.
+ANCHOR_HOOKS = '"$HOME/.torque/enforcement/current/hooks/'
+WORKSPACE_HOOKS = '"$CLAUDE_PROJECT_DIR/hooks/'
+
+
+def project(to_anchor=True):
+    """Point this repository's hook registration at the activated enforcement copy, or back.
+
+    THE GAP THIS CLOSES. `torque activate-enforcement` ends by printing
+
+        Regenerate the project registration with:
+            python3 bin/torque install-gates --project
+
+    and there was no such flag. The dispatch fell through to `main()`, which registers hooks at
+    USER level — machine-wide scope nobody asked for, pointing at the workspace, repointing
+    nothing. So activation installed a tested, read-only copy of the gates into the anchor and
+    the workspace copies went on adjudicating every write, exactly as activation's own warning
+    said would happen. `active_enforcement_is_anchor_owned` failed the release run and was right:
+    activation without repointing the consumers changes nothing, which is the most convincing way
+    to be wrong about whether you are protected.
+
+    A rewrite rather than a regeneration: this repository's settings.json carries matchers,
+    timeouts and non-torque entries that are not this command's to invent. It substitutes one
+    path prefix and leaves the structure alone, and `--workspace` reverses it exactly.
+    """
+    if not PROJECT_SETTINGS.is_file():
+        print(f"refusing: {PROJECT_SETTINGS} is not a readable file", file=sys.stderr)
+        return 2
+    frm, to = (WORKSPACE_HOOKS, ANCHOR_HOOKS) if to_anchor else (ANCHOR_HOOKS, WORKSPACE_HOOKS)
+    cfg = json.loads(PROJECT_SETTINGS.read_text())
+    changed = 0
+    for arr in cfg.get("hooks", {}).values():
+        for m in arr:
+            for h in m.get("hooks", []):
+                c = h.get("command", "")
+                if frm in c:
+                    h["command"] = c.replace(frm, to)
+                    changed += 1
+    if not changed:
+        print(f"nothing to do: no hook command names {frm.strip(chr(34))}")
+        return 0
+    PROJECT_SETTINGS.write_text(json.dumps(cfg, indent=2) + "\n")
+    where = "the activated enforcement copy" if to_anchor else "the workspace"
+    print(f"repointed {changed} hook registration(s) in {PROJECT_SETTINGS} at {where}")
+    if to_anchor:
+        print("Editing this repository's hooks/ no longer changes what adjudicates a write. "
+              "Re-run `torque activate-enforcement` to promote new source after testing it.")
+        print("A clone that has never activated registers gates that do not exist there — "
+              "`registered_gates_resolve` fails loudly on that rather than leaving it silent.")
+    return 0
+
 
 def install_shim():
     """Put the exec-time shim on PATH, under the trust anchor.
@@ -217,11 +270,35 @@ def _require_operator(what):
     sys.exit(2)
 
 
+KNOWN_FLAGS = {"--remove-shim", "--shim", "--remove", "--project", "--workspace"}
+
 if __name__ == "__main__":
     import sys
+    # AN UNRECOGNISED FLAG MUST NOT RUN THE DEFAULT. This dispatch used to end in a bare `else:
+    # main()`, so `install-gates --project` — a flag that did not exist, named by
+    # activate-enforcement's own success message — silently registered hooks at USER level, in
+    # every workspace on the machine. Nothing was wrong with main(); what was wrong was reaching
+    # it by not matching anything. A default action with machine-wide scope must be asked for by
+    # name, because the alternative is that a typo asks for it.
+    unknown = [a for a in sys.argv[1:] if a.startswith("-") and a not in KNOWN_FLAGS]
+    if unknown:
+        print(f"unknown flag(s) {unknown}. Refusing rather than running the default, which "
+              f"registers gates at USER level for every workspace on this machine.\n"
+              f"  --project        point THIS repo's hooks at the activated enforcement copy\n"
+              f"  --workspace      point them back at the workspace (reverses --project)\n"
+              f"  --shim           install the exec-time sf shim\n"
+              f"  --remove         remove the user-level registration (operator)\n"
+              f"  --remove-shim    remove the shim (operator)\n"
+              f"  (no flags)       register the gates at user level, all workspaces",
+              file=sys.stderr)
+        sys.exit(2)
     if "--remove-shim" in sys.argv:
         _require_operator("--remove-shim")
         remove_shim()
+    elif "--project" in sys.argv:
+        sys.exit(project(to_anchor=True))
+    elif "--workspace" in sys.argv:
+        sys.exit(project(to_anchor=False))
     elif "--shim" in sys.argv and "--remove" not in sys.argv and len(sys.argv) == 2:
         # `--shim` alone adds the shim without rewriting the operator's settings.json.
         install_shim()

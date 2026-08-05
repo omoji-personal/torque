@@ -1622,6 +1622,38 @@ def _mcp_destructive(name, tinput):
     return None
 
 
+_MCP_SOBJECT_KEYS = ("sobject", "sObject", "objectName", "object", "objectType", "type")
+
+
+def mcp_record_delete(tool, tinput):
+    """The sObject an MCP call deletes BY RECORD ID, or None if that is not what this call is.
+
+    Shape only. Whether that sObject may be deleted is the gate's question — the same division
+    that keeps _shield_tokens in the gate and protected_object_hits in lib.
+
+    Exists because _mcp_destructive returns None here deliberately: a delete naming one Id is
+    bounded, exactly as on the argv path, where delete-by-Id is the spelling
+    working-discipline.md mandates. The protected-object floor still has to see it. M8 closed
+    that on argv and left this twin open, so for as long as it took to test the second surface
+    the identical delete was refused through Bash and allowed through MCP — and an agent picks
+    its surface.
+    """
+    if not isinstance(tinput, dict):
+        return None
+    comps = _name_comps((tool or "").split("__")[-1])
+    if not (comps & {"delete", "purge", "destroy", "remove", "erase"}):
+        return None
+    if comps & {"bulk", "hard", "all", "mass"}:
+        return None                            # already bulk-delete, already destructive-class
+    if not (tinput.get("recordId") or tinput.get("id") or tinput.get("record-id")):
+        return None                            # already where-delete
+    for k in _MCP_SOBJECT_KEYS:
+        v = tinput.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
 def is_mcp_tool(tool: str) -> bool:
     """Any tool name that names a server, in either host convention.
 
