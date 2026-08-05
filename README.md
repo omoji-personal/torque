@@ -5,98 +5,28 @@ itself against a live org. It tells you what a change will set off before it run
 the flows, the cascading deletes, the records left orphaned. And it confirms its changes in the
 org instead of trusting a return code.
 
-You can point it at the orgs you actually run, production included, because the enforcement sits
-at the tool call and not in a prompt.
+Coding agents can already query, deploy, run Apex and move data. Capability was never what was
+missing. What was missing is everything that makes capability safe to point at somebody's live
+system, which is why the agent usually gets a sandbox and the real work still happens by hand.
 
-Coding agents can already query, deploy, run Apex and move data. Capability was never the problem.
-The problem is that the same session which fixes a flow can write to a client's production org on
-one mistaken alias, and telling the agent to be careful does not stop it.
+The failures worth preventing are mundane, not exotic. A mass update fires a record-triggered
+flow nobody remembered. A validation rule added after those records were created kills the job
+partway through and leaves you half-migrated. A delete cascades to children and leaves lookups
+pointing at nothing. A deploy reports success while nobody can see the field, because no profile
+got field-level security. Every piece of that is knowable before you press enter, and every piece
+of it is queryable. Nothing assembles it and puts it in front of you.
 
-Torque stops it, so you can use the capability. Sandbox and developer orgs move freely.
-Production moves too, on an approval you issue at your own terminal, in one command. The name
-comes from the wrench you reach for when the number matters.
-
----
-
-## See it in 3 seconds — no org, no credentials, no risk
-
-```
-git clone https://github.com/omoji-personal/torque.git && cd torque
-python3 bin/torque-demo
-```
-
-Real attacks, run through the real hooks. Abridged, and with one substitution: the paths below
-read `/Users/you/` because the real run prints whoever is running it, resolved against the
-trust anchor on that machine. Nothing else here is edited.
-
-```
-Shell indirection
-The gate never sees the literal word `sf` — it is assembled at runtime.
-  DENIED  x=sf; $x data delete bulk --sobject Account --target-org acme-prod
-          variable-assembled command → Salesforce operation hidden in a shell assignment value
-  DENIED  s$'\x66' data delete bulk --sobject Account --target-org acme-prod
-          ANSI-C hex escape spells 'sf' → indirect command invocation cannot be
-          authorized — call `sf` literal
-
-Path expansion
-A glob or variable that only becomes the secret's path when bash expands it.
-  DENIED  cat /Users/you/.tor*/secret
-          glob reaches the signing secret → reference to the trust anchor (~/.torque) —
-          secret and tokens are operator-only
-  DENIED  p=$HOME/.torque;cat $p/secret
-          path assembled through a shell variable → reference to the trust anchor (~/.torque)
-
-Overwriting the gate itself
-Disable the hook and everything downstream is ungated.
-  DENIED  : >hooks/lib.py >/tmp/z
-          two redirects; bash truncates BOTH → write to a protected path: hooks/lib.py
-  DENIED  git checkout HEAD~5 -- hooks/
-          restore an older, weaker gate from git → git checkout targeting protected paths
-
-Normal work is untouched
-A gate that blocks real work gets turned off. These all run.
-  allowed sf data query --query "SELECT Id FROM Account" --target-org any-org
-  allowed grep -rn 'sf data delete --target-org' .
-  allowed sf project deploy start --dry-run --manifest p.xml --target-org acme-prod
-
-  all 24 behaved correctly
-```
-
-Every attack there was found by an adversarial audit against an earlier version of this code, and
-is now a permanent regression fixture. The last section matters as much as the rest: **a gate that
-blocks real work gets switched off.**
-
----
-
-## How it holds — five layers
-
-1. **Credentials.** Connect production read-only. Torque stores no org credentials; the `sf` CLI is
-   the only credential path. (It does create one local signing secret, `~/.torque/secret`,
-   which is what makes approval tokens unforgeable.)
-2. **Authorization by identity, not inference.** A non-production write is allowed only when its
-   target is on an explicit allowlist **and** classifies non-production from a *live* org query at
-   the moment of the write — never from an alias or a URL guess.
-3. **Deterministic gates.** Two PreToolUse hooks share one expansion-aware parser. They authorize
-   by *parsing argv* and default to deny — so indirection, grouping, wrappers, interpreters
-   carrying a Salesforce target, glued redirects, legacy `force:data:*` verbs and glob/`$var`
-   path tricks are refused rather than guessed. A script that carries no visible target is a
-   different matter, and the guide's threat model says so rather than implying otherwise.
-   Destructive operations and anonymous Apex need an operator-present, HMAC-signed,
-   single-use token. **The agent can request approval; through its tool surface it provably cannot
-   mint one.** A crashing gate denies rather than opens.
-4. **Production override — deliberate, not impossible.** Real work includes deploying to a client's
-   prod. `torque approve <org> <op> --prod` mints a single-use token (you type `WRITE PRODUCTION`
-   at a real terminal); `torque approve <org> --session <min>` opens a bounded, revocable window.
-   Every production write is audited.
-5. **Verified enforcement.** Every rule is labeled hook-enforced, harness-enforced, or
-   model-honored — and the labels are *checked*, not decorative.
+Torque does. And because the enforcement sits at the tool call rather than in a prompt, you can
+point all of it at the orgs you actually run. Sandbox and developer orgs move freely. Production
+moves too, on an approval you issue at your own terminal, in one command. The name comes from the
+wrench you reach for when the number matters.
 
 ---
 
 ## What it knows, and what it learns
 
-Enforcement is the part that has to be right. It is not the part that makes Torque worth using
-day to day — this is.
+This is the part you use every day. The enforcement further down is what makes it safe to point
+at a real org; this is what makes it worth pointing at one.
 
 **The platform answers back, at the moment of the operation.** Torque carries a catalogue of
 Salesforce behaviours where every entry declares how it is known: re-checked against a live org,
@@ -173,6 +103,8 @@ becomes a visible warning rather than a file nobody opens.
 
 ---
 
+---
+
 ## Run it against your own org
 
 Prerequisites: [Claude Code](https://claude.com/claude-code) (the hooks are its PreToolUse surface),
@@ -196,6 +128,87 @@ and proves the gates bind before telling you it worked. The allowlist is deliber
 which org you may write to is a decision only the person at the keyboard can make.
 
 Then open the folder in Claude Code and work. The hooks fire on the tool calls that can reach an org or the gate's own files — Bash, MCP, Edit/Write/MultiEdit and Read.
+
+---
+
+---
+
+## See it in 3 seconds — no org, no credentials, no risk
+
+```
+git clone https://github.com/omoji-personal/torque.git && cd torque
+python3 bin/torque-demo
+```
+
+Real attacks, run through the real hooks. Abridged, and with one substitution: the paths below
+read `/Users/you/` because the real run prints whoever is running it, resolved against the
+trust anchor on that machine. Nothing else here is edited.
+
+```
+Shell indirection
+The gate never sees the literal word `sf` — it is assembled at runtime.
+  DENIED  x=sf; $x data delete bulk --sobject Account --target-org acme-prod
+          variable-assembled command → Salesforce operation hidden in a shell assignment value
+  DENIED  s$'\x66' data delete bulk --sobject Account --target-org acme-prod
+          ANSI-C hex escape spells 'sf' → indirect command invocation cannot be
+          authorized — call `sf` literal
+
+Path expansion
+A glob or variable that only becomes the secret's path when bash expands it.
+  DENIED  cat /Users/you/.tor*/secret
+          glob reaches the signing secret → reference to the trust anchor (~/.torque) —
+          secret and tokens are operator-only
+  DENIED  p=$HOME/.torque;cat $p/secret
+          path assembled through a shell variable → reference to the trust anchor (~/.torque)
+
+Overwriting the gate itself
+Disable the hook and everything downstream is ungated.
+  DENIED  : >hooks/lib.py >/tmp/z
+          two redirects; bash truncates BOTH → write to a protected path: hooks/lib.py
+  DENIED  git checkout HEAD~5 -- hooks/
+          restore an older, weaker gate from git → git checkout targeting protected paths
+
+Normal work is untouched
+A gate that blocks real work gets turned off. These all run.
+  allowed sf data query --query "SELECT Id FROM Account" --target-org any-org
+  allowed grep -rn 'sf data delete --target-org' .
+  allowed sf project deploy start --dry-run --manifest p.xml --target-org acme-prod
+
+  all 24 behaved correctly
+```
+
+Every attack there was found by an adversarial audit against an earlier version of this code, and
+is now a permanent regression fixture. The last section matters as much as the rest: **a gate that
+blocks real work gets switched off.**
+
+---
+
+---
+
+## How it holds — five layers
+
+1. **Credentials.** Connect production read-only. Torque stores no org credentials; the `sf` CLI is
+   the only credential path. (It does create one local signing secret, `~/.torque/secret`,
+   which is what makes approval tokens unforgeable.)
+2. **Authorization by identity, not inference.** A non-production write is allowed only when its
+   target is on an explicit allowlist **and** classifies non-production from a *live* org query at
+   the moment of the write — never from an alias or a URL guess.
+3. **Deterministic gates.** Two PreToolUse hooks share one expansion-aware parser. They authorize
+   by *parsing argv* and default to deny — so indirection, grouping, wrappers, interpreters
+   carrying a Salesforce target, glued redirects, legacy `force:data:*` verbs and glob/`$var`
+   path tricks are refused rather than guessed. A script that carries no visible target is a
+   different matter, and the guide's threat model says so rather than implying otherwise.
+   Destructive operations and anonymous Apex need an operator-present, HMAC-signed,
+   single-use token. **The agent can request approval; through its tool surface it provably cannot
+   mint one.** A crashing gate denies rather than opens.
+4. **Production override — deliberate, not impossible.** Real work includes deploying to a client's
+   prod. `torque approve <org> <op> --prod` mints a single-use token (you type `WRITE PRODUCTION`
+   at a real terminal); `torque approve <org> --session <min>` opens a bounded, revocable window.
+   Every production write is audited.
+5. **Verified enforcement.** Every rule is labeled hook-enforced, harness-enforced, or
+   model-honored — and the labels are *checked*, not decorative.
+
+---
 
 ---
 
@@ -226,7 +239,7 @@ fixture. The trail is in [`harness/VALIDATION.md`](harness/VALIDATION.md).
 
 ### How this was built
 
-Torque was written with AI agents, in the open, and the commit history says so: 119 of 166 commits
+Torque was written with AI agents, in the open, and the commit history says so: 192 of 246 commits
 carry a `Co-Authored-By: Claude` trailer. That is not a disclaimer buried at the bottom. It is the
 point of the artifact.
 
@@ -249,6 +262,8 @@ is the system working, and the log will say which.
 
 ---
 
+---
+
 ## The guide
 
 [`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 21 pages: what it does, why it isn't
@@ -261,6 +276,8 @@ it is Salesforce-specific: test both directions or you have tested neither; back
 classifier against real commands before deploying it; get a second opinion without ingesting
 anyone's data; and separate *I judged this unsafe* from *I could not read this*, which turned out
 to be 97% of everything this tool refused.
+
+---
 
 ---
 
@@ -297,6 +314,8 @@ security.
 
 **Found a way through?** That's the whole point — every fixture in the suite exists because a
 review beat an earlier version of this code. See [`SECURITY.md`](SECURITY.md) for where to send it.
+
+---
 
 ---
 
