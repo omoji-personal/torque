@@ -103,14 +103,6 @@ def main() -> "None":
         name = "sf"
     real = real_binary(name)
 
-    if os.environ.get("TORQUE_SHIM_DEPTH"):
-        # Reached only if the bounded-by-construction argument above is wrong. Refusing is the
-        # safe direction: the alternative is an unbounded fork chain that ends in the OS killing
-        # something, and a gate that dies is a gate that decided nothing.
-        refuse("re-entered the shim. A Salesforce operation was reached from inside a gate "
-               "decision, which should be impossible; refusing rather than recursing.",
-               "shim-reentry")
-
     home = torque_home()
     sys.path.insert(0, str(home / "hooks"))
     try:
@@ -137,6 +129,28 @@ def main() -> "None":
                f"Salesforce command is refused, not assumed harmless.", "unclassifiable")
     if reads_only:
         os.execv(real, [name, *sys.argv[1:]])
+
+    # RE-ENTRY GUARD, and it must sit HERE — after the read check, not before it.
+    #
+    # It used to be the first thing this function did, and that made the shim deny every write on
+    # the machine. The chain: the shim spawns a gate with TORQUE_SHIM_DEPTH=1; the gate calls
+    # `sf org display` to classify the target; that `sf` resolves back through PATH to this shim;
+    # the depth flag was checked before is_read, so the classifying READ was refused; the
+    # classification failed; the fail-safe verdict is `production`; and a write to an allowlisted
+    # Developer Edition org came back "sf-coffee is PRODUCTION — denied by default".
+    #
+    # The docstring above already had the right argument — recursion is bounded because reads pass
+    # straight through — and the ordering contradicted it. Two mechanisms for one property, and
+    # the one that ran first defeated the one that worked.
+    #
+    # Found by running the C2 arm of the test matrix and noticing that the shim "closed the
+    # bypass" a little too well: it also closed everything else. A gate that denies every write
+    # passes every deny fixture, which is why `shim_lets_real_work_through` — testing four READ
+    # shapes — stayed green through all of it.
+    if os.environ.get("TORQUE_SHIM_DEPTH"):
+        refuse("re-entered the shim on a WRITE. A mutation was reached from inside a gate "
+               "decision, which should be impossible; refusing rather than recursing.",
+               "shim-reentry")
 
     # A write. Hand it to the SAME gates the tool surface uses, and hand over ARGV — not a
     # command string rebuilt from it. Every rule those gates learn, this learns with them; a

@@ -86,7 +86,42 @@ class _Bench:
         r = _sh_sp.run([str(self.shim_dir / name), *args], input="", capture_output=True,
                        text=True, env=self.env(**envextra), cwd=str(self.dir), timeout=180)
         after = self.ran.read_text() if self.ran.exists() else ""
-        return r, after != before          # (result, did the real binary run)
+
+        # "Did the real binary run" has to mean "did the WRITE reach it", not "was it invoked at
+        # all". Authorizing a write requires classifying the org, and classification is a READ
+        # (`sf org display`) that legitimately resolves back through the shim and out to the CLI.
+        #
+        # This returned any-invocation, and stayed green only because a re-entry guard sitting
+        # ahead of the read check refused that classifying read — so no org could ever classify,
+        # every write was denied as PRODUCTION, and "the binary never ran" was true for the worst
+        # possible reason. A check that cannot tell a denied write from a broken classifier
+        # reports the same green for both.
+        _sh_sys.path.insert(0, str(ROOT / "hooks"))
+        import shellparse as _sh_parse
+
+        new = [l for l in after[len(before):].splitlines() if l.strip()]
+        wrote = []
+        for line in new:
+            try:
+                argv = _sh_json.loads(line)                # the fake CLI records argv[1:] as a list
+                if not isinstance(argv, list):
+                    raise ValueError("not a list")
+                if not _sh_parse.is_read(argv):
+                    wrote.append(" ".join(str(a) for a in argv[:4]))
+            except Exception:                              # noqa: BLE001
+                wrote.append(line[:60])                    # unreadable ⇒ cannot vouch for it
+        self.last_writes_that_ran = wrote
+        return r, bool(new)                # (result, did the real binary run at all)
+
+    def writes_that_ran(self):
+        """Only the NON-READ invocations from the last run().
+
+        Kept separate from run()'s boolean because the two questions are different and conflating
+        them is what let a broken classifier read as a working gate. `shim_lets_real_work_through`
+        needs "did anything reach the CLI"; `shim_gates_the_subprocess_channel` needs "did a WRITE
+        reach it" — and a write's own authorization legitimately sends a classifying read through.
+        """
+        return getattr(self, "last_writes_that_ran", [])
 
 
 @check("shim_gates_the_subprocess_channel", "static", catastrophe=True)
@@ -115,13 +150,17 @@ def _shim_gates_the_subprocess_channel():
     ]
     bad = []
 
-    def judge(r, ran, label):
+    def judge(r, ran, label, bench=None):
         # "Non-zero" is not "refused". 127 is the shell saying it could not start the shim, and
         # an earlier version of this check accepted it as a denial across every case — five
         # green assertions, none of which had reached a gate. The verdict must be exit 2 AND a
         # denial message, which is the contract every other gate in this repo is held to.
-        if ran:
-            bad.append(f"{label}: the binary RAN (exit {r.returncode})")
+        # A WRITE reaching the CLI is the failure. The classifying READ that authorization
+        # performs reaches it legitimately, and conflating the two is what kept this green while
+        # every org failed to classify.
+        wrote = bench.writes_that_ran() if bench is not None else ([] if not ran else ["unknown"])
+        if wrote:
+            bad.append(f"{label}: a WRITE reached the binary ({wrote[:2]}), exit {r.returncode}")
         elif r.returncode != DENY_CODE:
             bad.append(f"{label}: exit {r.returncode}, want {DENY_CODE} — "
                        f"{((r.stderr or r.stdout) or '(silent)').strip()[:70]}")
@@ -136,10 +175,10 @@ def _shim_gates_the_subprocess_channel():
                           "a real sf/sfdx sits beside this interpreter, so the bench cannot "
                           "guarantee the fake CLI is the only one reachable")
         for argv, label in cases:
-            judge(*b.run(*argv), label)
+            judge(*b.run(*argv), label, b)
         # and the legacy name is shimmed too, or half the vocabulary is ungated
         judge(*b.run("data", "update", "record", "--sobject", "Account", "--values", "N=x",
-                     name="sfdx"), "sfdx spelling")
+                     name="sfdx"), "sfdx spelling", b)
     if bad:
         return Result(name, FAIL, "; ".join(bad))
     return Result(name, PASS,
@@ -262,10 +301,15 @@ def _shim_gate_consultation_is_load_bearing():
              "--target-org", "torque-test-nonexistent"]
     with _sh_tf.TemporaryDirectory() as td:
         base = _Bench(_ShP(td) / "real")
-        r_base, ran_base = base.run(*write)
+        r_base, _ = base.run(*write)
+        # The WRITE reaching the CLI is what would make this vacuous. The classifying read that
+        # authorization performs reaches it legitimately, and reading any-invocation as "the write
+        # executed" made this check fail the moment classification started working.
+        ran_base = base.writes_that_ran()
         with _sh_tf.TemporaryDirectory() as td2:
             mut = _Bench(td2, gates=())
-            r_mut, ran_mut = mut.run(*write)
+            r_mut, _ = mut.run(*write)
+            ran_mut = mut.writes_that_ran()
     if r_base.returncode == 0 or ran_base:
         return Result(name, FAIL,
                       f"VACUOUS — the un-mutated shim did not refuse this write "
