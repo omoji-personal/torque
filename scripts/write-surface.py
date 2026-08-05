@@ -65,6 +65,35 @@ def blocked_reason(path: str) -> str:
     return ""
 
 
+def ungrantable_reason(path: str) -> str:
+    """Non-empty if NO maintainer window can unlock this path, whatever the window says.
+
+    `handle_edit` has three tiers, and this tool used to mirror only one of them. The anchor and
+    the auth store are refused first and are never grantable; then anything the gate READS to
+    decide — the allowlist, the classification cache, the shield, the read-only manifest — is
+    refused with "a window unlocks what this tool IS, never what it is allowed to write to";
+    only then does the window apply.
+
+    Asking `blocked_reason` alone and then adding "editable now: maintainer window open" reported
+    read-only-checks.json as writable while the real gate refused it. That is the exact failure
+    this tool exists to prevent: its whole purpose is "ask, do not discover by being refused",
+    and a wrong yes costs more than no answer, because the plan is already built on it.
+
+    Calls the same predicates the gate calls, in the gate's order. A second implementation of a
+    boundary is how the first two answers in this file came to disagree with it.
+    """
+    try:
+        resolved = str(Path(path).expanduser().resolve())
+    except Exception:
+        resolved = path
+    if shellparse.anchor_ref(resolved) or shellparse.sf_auth_ref(resolved):
+        return "trust anchor / sf auth store — no maintainer window grants it"
+    if lib.is_authorization_input(resolved):
+        return (f"{os.path.basename(resolved)} is an input the gate reads to decide "
+                f"authorization, not source — no maintainer window grants it")
+    return ""
+
+
 def tracked_files() -> list[str]:
     r = subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=ROOT)
     return [l for l in r.stdout.split("\n") if l.strip()]
@@ -97,8 +126,16 @@ def report(paths, label) -> int:
     width = min(max((len(p) for p in paths), default=10), 58)
     blocked, unlocked = [], []
     for p in paths:
-        why = blocked_reason(str(ROOT / p) if not os.path.isabs(p) else p)
-        if why and window:
+        full = str(ROOT / p) if not os.path.isabs(p) else p
+        why = blocked_reason(full)
+        never = ungrantable_reason(full)
+        if never:
+            # Checked BEFORE the window, in the gate's own order. A window does not reach these,
+            # so reporting them as "editable now" is a wrong yes — and a wrong yes is worse than
+            # no answer, because the plan is already built on it by the time the gate refuses.
+            blocked.append(p)
+            state, why = "NEVER", never
+        elif why and window:
             unlocked.append(p)
             state, why = "window", f"{why} — editable now: maintainer window open"
         elif why:

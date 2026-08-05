@@ -1,0 +1,77 @@
+{
+  "_comment": "R20 — the MCP twin of R19. M8 was fixed in `_gate_write`, which handle_bash and handle_argv call and handle_mcp does not, so `sf data delete record --sobject Account --record-id …` was refused through Bash and allowed through MCP. An agent meeting a refusal does not need to defeat it; it needs only to phrase the same request through the other surface. `no_divergent_twins` cannot see this — it compares same-named functions across modules and exempts per-gate entry points, which is exactly what these are — so `surfaces_agree` was added to compare verdicts rather than source. These fixtures pin the MCP surface specifically; the parity check pins the relationship between surfaces.",
+  "fixtures": [
+    {
+      "id": "R20 deny: MCP delete of a protected sObject by record Id",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "mcp__sf__delete_records",
+        "tool_input": {"targetOrg": "sf-cb-test", "sobject": "Account", "recordId": "001000000000001AAA"}
+      }
+    },
+    {
+      "id": "R20 deny: MCP delete, lowercase object name reaches the same table",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "mcp__sf__delete_records",
+        "tool_input": {"targetOrg": "sf-cb-test", "sobject": "account", "recordId": "001000000000001AAA"}
+      }
+    },
+    {
+      "id": "R20 deny: MCP delete under the objectName spelling",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "mcp__sf__deleteRecord",
+        "tool_input": {"targetOrg": "sf-cb-test", "objectName": "Contact", "id": "003000000000001AAA"}
+      }
+    },
+    {
+      "id": "R20 allow: MCP delete of a non-protected sObject by record Id",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "mcp__sf__delete_records",
+        "tool_input": {"targetOrg": "sf-cb-test", "sobject": "Lead", "recordId": "00Q000000000001AAA"}
+      }
+    },
+    {
+      "id": "R20 allow: MCP update of a protected sObject by record Id stays ungated, as on argv",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "mcp__sf__update_records",
+        "tool_input": {"targetOrg": "sf-cb-test", "sobject": "Account", "recordId": "001000000000001AAA", "values": {"Name": "TEST r20"}}
+      }
+    },
+    {
+      "id": "R20 allow: MCP read of a protected sObject",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "mcp__sf__query_records",
+        "tool_input": {"targetOrg": "sf-cb-test", "soql": "SELECT Id FROM Account LIMIT 1"}
+      }
+    },
+    {
+      "id": "R20 deny: MCP where-delete of a protected sObject still refuses for its OWN reason",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "mcp__sf__delete_records",
+        "tool_input": {"targetOrg": "sf-cb-test", "sobject": "Account", "where": "Name != null"}
+      }
+    },
+    {
+      "id": "R20 deny: MCP bulk delete is unchanged by any of this",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "mcp__sf__bulk_delete_records",
+        "tool_input": {"targetOrg": "sf-cb-test", "sobject": "Lead", "file": "ids.csv"}
+      }
+    }
+  ]
+}

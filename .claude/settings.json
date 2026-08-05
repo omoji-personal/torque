@@ -6,12 +6,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/prod_write_gate.py\"",
             "timeout": 55
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/destructive_data_gate.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/destructive_data_gate.py\"",
             "timeout": 55
           }
         ]
@@ -21,12 +21,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/prod_write_gate.py\"",
             "timeout": 55
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/destructive_data_gate.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/destructive_data_gate.py\"",
             "timeout": 55
           }
         ]
@@ -36,12 +36,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/syntax_guard.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/syntax_guard.py\"",
             "timeout": 20
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/prod_write_gate.py\"",
             "timeout": 55
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/prod_write_gate.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/prod_write_gate.py\"",
             "timeout": 55
           }
         ]
@@ -63,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/hooks/lesson_observer.py\"",
+            "command": "python3 \"$HOME/.torque/enforcement/current/hooks/lesson_observer.py\"",
             "timeout": 20
           }
         ]

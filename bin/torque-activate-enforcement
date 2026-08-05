@@ -97,7 +97,13 @@ def status():
         print(f"  the repository is {n or '?'} commit(s) ahead of what is enforcing. That is not "
               f"a fault — source moves, enforcement is activated deliberately.")
 
-    live = digest_tree(Path(os.path.realpath(CURRENT)))
+    # `/ "hooks"` is load-bearing. activate() records digest_tree(dest / "hooks"), keyed "lib.py";
+    # CURRENT points at dest, not dest/hooks, so recomputing from CURRENT keyed "hooks/lib.py" and
+    # EVERY recorded file was `bad` while EVERY live file was `extra` — on every activation, from
+    # the first one. A tamper detector that reports tampering unconditionally is worse than no
+    # detector: it is a line the operator learns to skip, and it would have been skipped on the
+    # day it finally meant something.
+    live = digest_tree(Path(os.path.realpath(CURRENT)) / "hooks")
     recorded = m.get("files", {})
     bad = [f for f, d in recorded.items() if live.get(f) != d]
     extra = [f for f in live if f not in recorded]

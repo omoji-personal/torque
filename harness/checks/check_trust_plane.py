@@ -125,7 +125,13 @@ def _active_enforcement_is_anchor_owned():
         blob = _tj.dumps(_tj.loads(settings.read_text()).get("hooks", {}))
     except Exception as e:                                 # noqa: BLE001
         return Result(name, FAIL, f"cannot read the project registration ({e})")
-    if "prod_write_gate" in blob and anchor not in blob:
+    # Either spelling counts. `install-gates --project` writes `$HOME/.torque/...` rather than an
+    # absolute /Users/… path, because settings.json is TRACKED and a committed absolute home
+    # directory is one machine's path in everyone else's checkout. Testing only the resolved form
+    # would have read a correctly-repointed registration as a workspace one, and this check would
+    # have gone on failing after the thing it asks for had been done.
+    anchor_spellings = (anchor, "$HOME/.torque", "${HOME}/.torque", "~/.torque")
+    if "prod_write_gate" in blob and not any(s in blob for s in anchor_spellings):
         problems.append("the project hooks still load gates from the workspace")
 
     shim_home = _anchor() / "shim" / "home"
@@ -138,3 +144,83 @@ def _active_enforcement_is_anchor_owned():
                       "changes nothing, which is the most convincing way to be wrong about this")
     return Result(name, PASS,
                   "every consumer of the gates resolves them inside the trust anchor")
+
+
+@check("registered_gates_resolve", "static", catastrophe=True)
+def _registered_gates_resolve():
+    """Every hook this repository registers must name a file that exists.
+
+    A hook command pointing at a missing file does not fail loudly. It simply does not gate — and
+    silent non-enforcement in a repository whose README says the gates are enforced is the worst
+    thing this project could ship.
+
+    The risk is created BY the fix for P0-01. Pointing the TRACKED settings.json at
+    `$HOME/.torque/enforcement/current/hooks/` is what makes activation real on this machine, and
+    it means a fresh clone registers gates that do not exist there until that machine runs
+    `torque activate-enforcement`. This check turns that from a silent gap into a loud one: it
+    fails at validation, names the missing path, and names the remedy — rather than letting
+    someone believe they are protected because the file says so.
+
+    Both directions. A resolvable registration passes; a registration naming a missing path fails
+    with the path quoted. The negative arm runs against a throwaway copy, because the positive one
+    alone would pass just as well if this check never looked at anything.
+    """
+    name = "registered_gates_resolve"
+    settings = ROOT / ".claude" / "settings.json"
+
+    def _unresolved(cfg):
+        out = []
+        for arr in cfg.get("hooks", {}).values():
+            for m in arr:
+                for h in m.get("hooks", []):
+                    cmd = h.get("command", "")
+                    for tok in cmd.split('"'):
+                        if not tok.endswith(".py"):
+                            continue
+                        p = (tok.replace("$CLAUDE_PROJECT_DIR", str(ROOT))
+                                .replace("${CLAUDE_PROJECT_DIR}", str(ROOT))
+                                .replace("$HOME", str(_TP.home()))
+                                .replace("${HOME}", str(_TP.home())))
+                        if not _TP(p).expanduser().exists():
+                            out.append(tok)
+        return out
+
+    try:
+        cfg = _tj.loads(settings.read_text())
+    except Exception as e:                                 # noqa: BLE001
+        return Result(name, FAIL, f"cannot read the project registration ({e})")
+
+    missing = _unresolved(cfg)
+    if missing:
+        return Result(name, FAIL,
+                      f"{len(missing)} registered hook(s) name a file that does not exist, so "
+                      f"they register enforcement and deliver none: {sorted(set(missing))[:3]} — "
+                      f"run `torque activate-enforcement` if this is a clone that never has")
+
+    # the check must be able to fail: a registration naming a path that is not there
+    broken = _tj.loads(_tj.dumps(cfg))
+    planted = False
+    for arr in broken.get("hooks", {}).values():
+        for m in arr:
+            for h in m.get("hooks", []):
+                if h.get("command", "").endswith('.py"'):
+                    h["command"] = 'python3 "/nonexistent/torque/no_such_gate.py"'
+                    planted = True
+                    break
+            if planted:
+                break
+        if planted:
+            break
+    if not planted:
+        return Result(name, FAIL,
+                      "no hook command ends in a .py path, so this check could not plant a "
+                      "broken one and has proven nothing about its own ability to fail")
+    if not _unresolved(broken):
+        return Result(name, FAIL,
+                      "a registration naming /nonexistent/torque/no_such_gate.py was NOT "
+                      "reported missing — this check cannot fail and is therefore not evidence")
+
+    n = sum(len(m.get("hooks", [])) for arr in cfg.get("hooks", {}).values() for m in arr)
+    return Result(name, PASS,
+                  f"all {n} registered hook(s) name a file that exists, and a planted "
+                  f"unresolvable registration is caught")

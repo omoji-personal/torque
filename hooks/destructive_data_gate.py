@@ -206,21 +206,36 @@ def _protected_record_mutation(sf_args):
     """
     sub = shellparse.subcommand(sf_args)
     f = sub[0] if sub else ""
-    for verb, op in _PROTECTED_RECORD_OPS.items():
+    for verb in _PROTECTED_RECORD_OPS:
         if sub[:3] == ("data", verb, "record") or f.startswith(f"force:data:record:{verb}"):
             break
     else:
         return None
     if not shellparse.has_record_id(sf_args):
         return None                    # no Id => classify_destructive already said where-delete
-    sv = shellparse.sobject_value(sf_args)
-    if not sv:
+    return _protected_record_op(shellparse.sobject_value(sf_args))
+
+
+def _protected_record_op(sobject):
+    """The op name a record-Id delete of `sobject` must be approved under, or None.
+
+    ONE function, because this decision has two askers that share no code path: `_gate_write`,
+    reached from Bash and from the exec-time shim, and `handle_mcp`. M8 was fixed on the first
+    and the identical delete stayed allowed through the second — refused on one surface,
+    permitted on another. That is the divergence `no_divergent_twins` is named for and cannot
+    see: it compares same-named functions across modules and exempts per-gate entry points,
+    which is exactly what `handle_bash` and `handle_mcp` are. `surfaces_agree` compares the
+    verdicts instead, which is the only thing that catches a control reachable from one entry
+    point and not another.
+
+    Case-insensitive, like every other protected-object comparison here: Salesforce object names
+    are, so `account` reaches the same table as `Account`.
+    """
+    if not sobject:
         return None
-    # Case-insensitive for the reason _shield_tokens is: Salesforce object names are, so
-    # `--sobject account` reaches the same table as `Account`.
-    if sv.strip().lower() not in {p.strip().lower() for p in lib.protected_objects()}:
+    if sobject.strip().lower() not in {p.strip().lower() for p in lib.protected_objects()}:
         return None
-    return op
+    return _PROTECTED_RECORD_OPS["delete"]
 
 
 def _gate_write(sf_args):
@@ -304,6 +319,18 @@ def handle_mcp(tool, tinput):
         lib.allow()
     dest = r.get("destructive")
     if not dest:
+        # The argv path's protected-record branch, on this surface. Without it the floor exists
+        # for Bash and the shim and not for MCP, which is not a floor — it is a preference about
+        # how you phrase the request.
+        prot = _protected_record_op(shellparse.mcp_record_delete(tool, tinput))
+        if not prot:
+            lib.allow()
+        t = r.get("write")
+        oid = "?"
+        if t:
+            _, _oid, _ = lib.classify(t)
+            oid = _oid or "?"
+        _need_token(oid, prot)             # returns only if a token was accepted
         lib.allow()
     op, digest, body = dest
     if op == "apex":
