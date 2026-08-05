@@ -203,7 +203,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <div><b>Org path</b><span>sf CLI + official MCP</span></div>
       <div><b>Skills · subagents</b><span>5 · 2</span></div>
       <div><b>Enforcement</b><span>2 hooks, 4 tool surfaces</span></div>
-      <div><b>Validation</b><span>107 checks, live org</span></div>
+      <div><b>Validation</b><span>108 checks, live org</span></div>
       <div><b>Adversarial fixtures</b><span>196</span></div>
       <div><b>Self-proof</b><span>19 mutators</span></div>
       <div><b>Try it with no org</b><span>3 seconds</span></div>
@@ -477,8 +477,8 @@ python3 bin/torque init my-dev-org</pre>
 <pre>npm install          <span class="cmt"># optional — only the live browser check needs this</span>
 python3 harness/validate.py --profile release --target-org my-dev-org</pre>
   <p>
-    Three profiles nest: <code>static</code> (87 checks, <strong>no org needed</strong> — the
-    try-before-you-connect path), <code>capability</code> (104 checks, adding the live cycles), and
+    Three profiles nest: <code>static</code> (88 checks, <strong>no org needed</strong> — the
+    try-before-you-connect path), <code>capability</code> (105 checks, adding the live cycles), and
     <code>release</code> (98). <code>--only &lt;check&gt;</code> runs one.
   </p>
 
@@ -1031,7 +1031,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     <tr><td>.claude/rules/</td><td>The seven rule files, byte-capped, each labelled with what backs it</td></tr>
     <tr><td>.claude/agents/</td><td>org-explorer (read-only) · hostile-qa (adversarial reviewer)</td></tr>
     <tr><td>hooks/</td><td>The shared expansion-aware parser and the two gates</td></tr>
-    <tr><td>harness/</td><td>107 checks, 216 gate fixtures (213 recorded + 3 minted live), 19 mutators, live_matrix.sh, the run log</td></tr>
+    <tr><td>harness/</td><td>108 checks, 216 gate fixtures (213 recorded + 3 minted live), 19 mutators, live_matrix.sh, the run log</td></tr>
     <tr><td>SECURITY.md</td><td>Disclosure policy — 72-hour confirmation, 90-day ceiling, fixtures credited</td></tr>
   </tbody></table>
 

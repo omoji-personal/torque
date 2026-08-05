@@ -85,10 +85,25 @@ def main():
     # bind everywhere") got NO MCP-write gating and NO Read gating on the trust anchor in every
     # other workspace, while believing they were covered. Silent partial protection is worse than
     # none, because it is indistinguishable from the real thing until it matters.
+    # EVERY GATE HOOK CARRIES THE TIMEOUT, and it comes from lib rather than a literal here.
+    #
+    # The project settings.json declares timeout 55 on each gate; this installer declared it only
+    # on syntax_guard and the observer, so a user-level install registered the gates with NO
+    # timeout and the host's default applied. That is not a cosmetic divergence: GATE_BUDGET_S is
+    # 40 with a 5s grace to render a refusal, and the enforcement contract is "exit 2 blocks, any
+    # other exit allows". A host default below 45s kills the gate mid-decision, the host sees a
+    # non-2 exit, and the operation is ALLOWED. The user-level install — the one that binds every
+    # workspace — was the one that could fail open.
+    #
+    # Sourced from lib.HOOK_TIMEOUT_S because budget_fits_hook_timeout already asserts that value
+    # against settings.json; a literal here would be a third copy of a number two checks compare.
+    _t = {"timeout": _hook_timeout()}
     hooks.append({"matcher": "Bash", "hooks": [
-        {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
+        {"type": "command", "command": cmd, **_t},
+        {"type": "command", "command": dcmd, **_t}]})
     hooks.append({"matcher": "mcp__.*", "hooks": [
-        {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
+        {"type": "command", "command": cmd, **_t},
+        {"type": "command", "command": dcmd, **_t}]})
     # syntax_guard runs FIRST on edits: it refuses a write that would leave a hooks/*.py file
     # unparseable. Both gates import from hooks/, so such a write fails them closed on every
     # subsequent tool call — including the one needed to undo it. That happened once, inside a
@@ -96,8 +111,8 @@ def main():
     scmd = (f'TORQUE_HOME="{TORQUE_HOME}" python3 "{TORQUE_HOME}/hooks/syntax_guard.py"')
     hooks.append({"matcher": "Edit|Write|MultiEdit", "hooks": [
         {"type": "command", "command": scmd, "timeout": 20},
-        {"type": "command", "command": cmd}]})
-    hooks.append({"matcher": "Read", "hooks": [{"type": "command", "command": cmd}]})
+        {"type": "command", "command": cmd, **_t}]})
+    hooks.append({"matcher": "Read", "hooks": [{"type": "command", "command": cmd, **_t}]})
     # The observer runs AFTER the tool, because its whole subject is the result.
     #
     # A2: this used to .append unconditionally while PreToolUse was deduped above, so running the
@@ -147,6 +162,25 @@ def remove():
     print(f"removed: {before - len(hooks)} torque hook block(s) from {HOME_SETTINGS}")
     print("the project-level gates in this repo are unaffected")
     remove_shim()
+
+def _hook_timeout():
+    """The gate timeout, from lib, or refuse to install.
+
+    Fail-closed on purpose: registering gates with no timeout is worse than registering none,
+    because the host default may be shorter than the gate's own budget and a killed gate exits
+    non-2, which the enforcement contract reads as ALLOW. An installer that cannot determine the
+    timeout cannot install a gate that fails closed, so it does not install one at all.
+    """
+    try:
+        sys.path.insert(0, str(TORQUE_HOME / "hooks"))
+        import lib
+        return int(lib.HOOK_TIMEOUT_S)
+    except Exception as e:                             # noqa: BLE001
+        print(f"refusing to install: cannot read the gate timeout from hooks/lib.py ({e}). "
+              f"Gates registered without one can be killed mid-decision, and a killed gate exits "
+              f"non-2, which means ALLOW.", file=sys.stderr)
+        sys.exit(2)
+
 
 def _require_operator(what):
     """Uninstalling enforcement is an operator act, not an agent one.
