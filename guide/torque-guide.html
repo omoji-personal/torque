@@ -311,7 +311,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <tr><td>Encodes <em>how</em> to do the work</td><td class="no">—</td><td class="no">UI-guided</td><td class="win">for humans</td><td class="us">for agents</td></tr>
       <tr><td>Verifies the outcome in the org</td><td class="no">—</td><td class="no">partial</td><td class="no">partial</td><td class="us">yes</td></tr>
       <tr><td>Distinguishes prod at write time</td><td class="no">trusts alias</td><td class="win">env model</td><td class="no">trusts alias</td><td class="us">live query</td></tr>
-      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">34 entries</td></tr>
+      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">44 entries</td></tr>
       <tr><td>Gets smarter from being used</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">lessons → checks</td></tr>
       <tr><td>Shows what a change will set off, before it runs</td><td class="no">—</td><td class="win">design-time, in a UI</td><td class="no">—</td><td class="us">at the command, in the agent loop</td></tr>
       <tr><td>Binds approval to a verified record count</td><td class="no">command string</td><td class="no">env / role</td><td class="no">—</td><td class="us">record count</td></tr>
@@ -336,7 +336,8 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
     gives an agent verbs. It does not tell it that a deployed field stays invisible until a
     PermissionSet grants it, that a bulk job can report success with thousands of failed records,
     or that a no-op update rewrites who last touched forty thousand rows. Torque ships that as a
-    structured catalogue — 34 entries — where every one declares <em>how it is known</em>:
+    structured catalogue — 44 entries, 10 of them re-verified against a live org on every release —
+    where every one declares <em>how it is known</em>:
     re-checked against a live org, cited to Salesforce, or plainly marked as learned the hard
     way. The live ones are re-run by the harness, and a claim that stops holding fails the build.</p>
 
@@ -416,7 +417,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     and writes in the same breath: <code>sf config set target-org=x &amp;&amp; sf data update …</code>
     can re-point the write between the check and the execution, so the combination is denied.</p>
 
-  <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 196 adversarial fixtures and
+  <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 237 adversarial fixtures and
     19 mutation tests that neuter each guard in turn and require the attack it blocks to start
     working. A guard that cannot be shown to be
     load-bearing is decoration. Every enforcement claim carries a machine-checked label, resolved against the live code, so the
@@ -479,7 +480,32 @@ python3 harness/validate.py --profile release --target-org my-dev-org</pre>
   <p>
     Three profiles nest: <code>static</code> (96 checks, <strong>no org needed</strong> — the
     try-before-you-connect path), <code>capability</code> (114 checks, adding the live cycles), and
-    <code>release</code> (98). <code>--only &lt;check&gt;</code> runs one.
+    <code>release</code> (117). <code>--only &lt;check&gt;</code> runs one.
+  </p>
+
+  <h4>Step 3½ — optional hardening, and what it buys</h4>
+  <p>
+    Out of the box the gates run from <code>hooks/</code> in your clone. That is enough to stop the
+    accidents and the enumerable circumventions, and it is what everything above describes. It
+    leaves one honest gap: those files are in the repository, so anything that can write to the
+    repository can rewrite the gate. Developing Torque itself needs exactly that — an
+    operator-present <em>maintainer window</em> — and while one is open, the files being edited are
+    the files adjudicating.
+  </p>
+<pre>python3 bin/torque activate-enforcement   <span class="cmt"># runs static, then asks you to type ACTIVATE</span>
+python3 bin/torque install-gates --project</pre>
+  <p>
+    That copies the <em>tested</em> tree into the trust anchor at mode 0400 behind an atomic
+    symlink and points this workspace at it. A maintainer window still edits <code>hooks/</code>;
+    the edit decides nothing until a present operator tests and promotes it. The second command
+    writes an untracked local override, so your clone stays portable and its committed
+    registration keeps working for everyone else. Reverse it with
+    <code>install-gates --workspace</code>.
+  </p>
+  <p>
+    Two costs, stated rather than discovered: activation refuses on a dirty tree or a failing static
+    profile, and while both registrations are present the gates may be consulted twice, so a gated
+    write can take roughly double the usual 6.7–13.1&nbsp;s.
   </p>
 
   <h4>Step 4 — work</h4>
@@ -880,11 +906,14 @@ The operation grew after approval; re-approve with the current scope.</pre>
     denies rather than hangs.
   </p>
 
-  <h4>196 adversarial fixtures</h4>
+  <h4>237 adversarial fixtures</h4>
   <p>
-    Every attack class found across the audit rounds, each a named, runnable regression test. Just
-    over a fifth assert that <em>ordinary work is allowed</em> — the property that keeps a gate
-    switched on.
+    Every attack class found across the audit rounds, each a named, runnable regression test.
+    <strong>67 of them — 28% — assert that <em>ordinary work is allowed</em></strong>, which is the
+    property that keeps a gate switched on. That share has been climbing on purpose: a replay of six
+    months of real client commands found a parser defect that refused 71% of them, and 193 fixtures
+    had not caught it because their allow cases were toy commands. Proving a control refuses is not
+    proving it accepts.
   </p>
 
   <h4>The knowledge is mutation-tested too</h4>
@@ -906,6 +935,29 @@ The operation grew after approval; re-approve with the current scope.</pre>
     the static scanners, requires the check to fail. One needs an org, because the check it neuters
     queries one. Three exercise the clean_ip scan against a private pattern list and report as
     operator-only on your clone rather than pretending to pass. The rest run anywhere.
+  </p>
+
+  <h4>Who guards the guards</h4>
+  <p>
+    An honest question this project had the wrong answer to for weeks. Developing Torque means
+    editing Torque’s own gates, which needs an operator-present <em>maintainer window</em> — and
+    while that window was open, the files being edited were the files adjudicating every write. A
+    window granted to fix a check also granted the power to delete one. That is not theoretical: a
+    window-legal edit making <code>authorize_write</code> return <code>(True, "mutant")</code>
+    turned a production denial into an allow on the very next tool call.
+  </p>
+  <p>
+    <code>torque activate-enforcement</code> separates the two. It runs the static profile, refuses
+    on a dirty tree or a failing one, and copies the tested tree into the trust anchor at mode 0400
+    behind an atomic symlink. From then on a maintainer window still edits <code>hooks/</code> — and
+    the edit decides nothing until a present operator tests and promotes it.
+  </p>
+  <p>
+    The check that measures this reported <strong>N/A for as long as the feature was unused</strong>,
+    because there was nothing to measure and an empty loop is not evidence. It now reads: <em>a
+    window-legal edit to <code>authorize_write</code> flips the workspace copy (exit 0) and leaves
+    the active gate denying.</em> That is the difference between a safety property being configured
+    and being measured, and it is the only version worth claiming.
   </p>
 
 <pre>python3 harness/validate.py --self-test
