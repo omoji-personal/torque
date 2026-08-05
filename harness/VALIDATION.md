@@ -425,3 +425,69 @@ One run, one disposable org, by the author, and **red**. It is retained as diagn
 all-PASS run supersedes it, and could not happen until the history carried no denied term — which
 is the correct ordering, since the alternative is a green log sitting above a repository that
 still contains what the check objects to.
+
+---
+
+## P10 — release · RED, and both reds were the harness misreading itself · 2026-08-05
+
+Commit `32d3e759`, tree `70d16940`, working tree clean · **profile: release · target `sf-coffee`
+(classified `developer`, IsSandbox=False, Developer Edition) · verdict: FAIL** · 538s
+· 115 checks: 108 PASS, 2 FAIL, 5 N/A · artifact `harness/attest/attest-32d3e759.json`
+
+The first release run an operator has performed at their own terminal rather than through an
+agent session. That difference produced one of the two failures, and it is the more interesting
+one.
+
+### `uninstall_requires_an_operator` — FAIL, and the product was fine
+
+> uninstalling enforcement is reachable from the agent tool surface: `--remove-shim`: exit 0;
+> `--remove`: exit 0, said 'removed: 0 torque hook blocks'
+
+It was not reachable. The check ran the uninstaller as a subprocess and asserted a refusal, on a
+stated assumption: *this process is a descendant of the agent, so `lib.operator_present()` is
+false here exactly as it is for any tool call.* True when an agent runs the harness. False when
+an operator does — and a release attestation is precisely the run an operator performs. The
+subprocess inherited a real login tty, the uninstall was legitimately authorised, and the check
+reported the product broken.
+
+The polarity is what makes it worth an entry. It passed in the context that mattered least and
+failed in the one that mattered most; written the other way round it would have reported PASS
+indefinitely while never once testing the agent case. Verified by hand from inside a session
+before touching it: `install-gates --remove-shim` refuses with exit 2 and names operator
+presence.
+
+Fixed by making the context deterministic instead of inherited — `start_new_session=True` drops
+the controlling terminal, and `_has_tty()` opens `/dev/tty`, so presence is false whoever
+launched the harness. The acceptance direction was missing entirely and is now asserted
+in-process against a stubbed `lib`, because refuse-always passes a refusal-only test and a login
+session must not become forgeable to satisfy a check.
+
+### `cache_poison_resistant` — FAIL, raised rather than judged
+
+> check raised: module lib not in sys.modules
+
+`deploy_directory_destructiveness_is_seen` pops `shellparse` and `lib` from `sys.modules` to
+force a fresh import of the current source, and did not put them back. `cache_poison_resistant`
+holds a reference to `lib` and calls `importlib.reload` on it, which requires the name still be
+registered. Order-dependent, so it fails in a full run and passes in isolation — which is why it
+had not been seen. Reproduced exactly, then fixed at the cause (the popper restores what it
+borrowed) and at the consumer (a re-registration before reload, so the next check that forgets
+costs nothing).
+
+Neither failure was a gate defect. Both were the harness measuring itself wrongly, which is the
+category this log is least able to catch by design — every other check here is aimed at the
+product.
+
+### What this run does establish
+
+108 checks passed live against a disposable Developer Edition org, including the whole
+org-touching half no static run reaches. The five N/A entries are honest: no shim installed on
+this machine, no image manifest, no must-allow corpus configured, and two that report N/A
+specifically because enforcement is not yet activated — `maintainer_edit_cannot_change_active_gate`
+and `active_enforcement_is_anchor_owned` have nothing to measure until it is.
+
+### What it is not
+
+Red, and superseded by any later all-PASS release run. Retained as diagnostic. The two fixes land
+in the commit that follows this entry, so the tree this attestation names is deliberately NOT the
+tree they are on.
