@@ -155,6 +155,19 @@ def audit(decision: str, detail: str, durable: bool = False) -> bool:
         line = json.dumps({"t": int(time.time()), "decision": decision, "detail": redact(detail)[:400]})
         with open(AUDIT, "a") as f:
             f.write(line + "\n")
+            # `durable=True` named a property the function did not have: it changed nothing about
+            # storage, and the caller merely checked that append() had not raised. A write sitting
+            # in the page cache is not a record — a production ALLOW followed by a crash left an
+            # unrecorded write, which is the exact case the parameter exists for.
+            #
+            # flush + fsync makes the word true for the callers that pass it. It does NOT make the
+            # trail tamper-evident: there is no hash chain and no signature, so this defends
+            # against loss, not against edits. An external audit was right to say that "durable
+            # audit" was doing more work in the prose than in the code; this closes the half that
+            # is a one-line fix and leaves the other half named rather than implied.
+            if durable:
+                f.flush()
+                os.fsync(f.fileno())
         os.chmod(AUDIT, 0o600)
         return True
     except Exception:
