@@ -30,7 +30,11 @@ import lib
 ROOT = Path(__file__).resolve().parent.parent
 
 DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-update",
-                   "destructive-metadata"}
+                   "destructive-metadata",
+                   # Record-level delete of an operator-protected sObject. The only op name the
+                   # destructive gate demands from OUTSIDE classify_destructive — delete-by-Id is
+                   # not destructive-class, and the protected floor is what makes this one so (M8).
+                   "protected-record-delete"}
 # The ordinary (non-destructive) labels an approval may name. These do NOT narrow a production
 # token — the gate consumes `prod-write` for any of them — but the set is closed so the operator
 # cannot confirm a word that means nothing. `opaque-write` and `unrecognised-destructive` are

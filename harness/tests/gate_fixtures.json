@@ -91,7 +91,8 @@
      "event": {"tool_name": "mcp__sf__update_records", "tool_input": {"targetOrg": "sf-coffee", "where": "Id != null", "values": {"Status__c": "X"}}}},
 
     {"id": "ALLOW bounded delete by record-id", "gate": "destructive_data_gate", "expect": "allow",
-     "event": {"tool_name": "Bash", "tool_input": {"command": "sf data delete record --record-id 001abc --sobject Account --target-org sf-coffee"}}},
+     "_comment": "sObject changed Account -> Lead at M8. What this fixture asserts is BOUNDEDNESS — a delete naming one Id is allowed where a WHERE-clause delete is not — and Account was incidental to that. Account is on the operator's protected list, and record-level deletion of a protected object now takes an approval, which gate_fixtures_r19.json pins in both directions. Leaving Account here would have made this fixture quietly assert the opposite of R19 and made whichever ran last the answer.",
+     "event": {"tool_name": "Bash", "tool_input": {"command": "sf data delete record --record-id 00Qabc --sobject Lead --target-org sf-coffee"}}},
     {"id": "ALLOW plain query non-destructive", "gate": "destructive_data_gate", "expect": "allow",
      "event": {"tool_name": "Bash", "tool_input": {"command": "sf data query --query \"SELECT Id FROM Contact\" --target-org sf-coffee"}}}
   ]
