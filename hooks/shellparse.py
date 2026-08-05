@@ -1035,10 +1035,16 @@ def strip_runners(argv):
         argv = argv[1:]
         while argv and (argv[0].startswith("-") or re.match(r"^\w+=", argv[0])):
             argv = argv[1:]
-        # `timeout 5 tee ...`: the duration is a POSITIONAL, so peeling only flags left "5"
-        # as argv[0] and the classifier saw no write shape. A command is never a bare
-        # number, so dropping a duration-shaped token cannot swallow a real command.
-        if runner == "timeout" and argv and re.match(r"^[0-9]+(\.[0-9]+)?[smhd]?$", argv[0]):
+        # A runner can leave a bare NUMBER as argv[0] two different ways, and both defeat every
+        # downstream test that keys on the command word:
+        #   `timeout 5 tee …`   — the duration is a positional, so flag-peeling never sees it.
+        #   `nice -n 10 git …`  — `-n` peels as a flag and its value does not.
+        # The timeout half was already fixed; the nice half was found by a check written for a
+        # different bug (`env git add -f local/`) that happened to include a flagged runner.
+        # A command is never a bare number, so dropping a numeric token here cannot swallow a
+        # real one.
+        if (runner in ("timeout", "nice", "ionice", "chrt")
+                and argv and re.match(r"^-?[0-9]+(\.[0-9]+)?[smhd]?$", argv[0])):
             argv = argv[1:]
     return argv
 
@@ -1423,7 +1429,13 @@ def analyze_bash(cmd: str):
             continue
         if not argv:
             continue
-        if stages_local(argv):
+        # strip_runners FIRST. `stages_local` requires argv[0] to be git, so `env git add -f
+        # local/x` put `env` in argv[0] and walked straight past the guard — as did `nice` and
+        # every other runner. `git add` is correctly absent from GIT_WRITE_SUBS (it is not a
+        # working-tree write), so check_write_shapes did not catch it either, and `local/` —
+        # per-org findings, before-values, the audit log — entered the index one `-f` away from
+        # a push. Three spellings verified bypassing before this line moved.
+        if stages_local(strip_runners(argv)):
             return {"deny": ("that would put a `local/` path into git — it holds per-org "
                              "findings, session logs with record values, and the audit log. "
                              "It is gitignored, and -f overrides that in one flag.",
