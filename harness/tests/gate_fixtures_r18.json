@@ -1,0 +1,59 @@
+{
+  "_comment": "R18 — found by running the consulting-week matrix against a live org, which is exactly where an external audit predicted it: 'Apex tests are the sharp case, they mutate org state while feeling read-only to a practitioner.' `sf apex run test` was classified as anonymous Apex because the match was on sub[:2] and both spellings begin (apex, run). The LEGACY form force:apex:test:run had been excluded since TQ-011; the modern form never was — the same two-spellings-one-handled shape LEGACY_TO_MODERN exists for. The cost was an UNSATISFIABLE refusal: the apex class demands the operator-approved copy at ~/.torque/approved/<digest>.apex, and `apex run test` takes no --file, so there was no digest to approve and no way for an operator to clear it. Running the suite before a deploy is ordinary work. The deny fixtures sit alongside deliberately: the fix must not buy the allows by making anonymous Apex reachable.",
+  "fixtures": [
+    {
+      "id": "R18 allow: apex run test is a test, not anonymous Apex",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {"command": "sf apex run test --target-org sf-coffee --wait 5"}
+      }
+    },
+    {
+      "id": "R18 allow: apex run test with a class filter",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {"command": "sf apex run test --class-names MyTest --target-org sf-coffee"}
+      }
+    },
+    {
+      "id": "R18 allow: legacy force:apex:test:run, unchanged",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_input": {"command": "sf force:apex:test:run --target-org sf-coffee"},
+        "tool_name": "Bash"
+      }
+    },
+    {
+      "id": "R18 deny: anonymous Apex inline is still gated",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {"command": "sf apex run --target-org sf-coffee"}
+      }
+    },
+    {
+      "id": "R18 deny: anonymous Apex from a file is still gated",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {"command": "sf apex run --file /tmp/x.apex --target-org sf-coffee"}
+      }
+    },
+    {
+      "id": "R18 deny: legacy force:apex:execute is still gated",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {"command": "sf force:apex:execute --apexcodefile /tmp/x.apex --target-org sf-coffee"}
+      }
+    }
+  ]
+}

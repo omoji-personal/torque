@@ -955,8 +955,23 @@ def classify_destructive(sf_args):
         return "opaque-write"
     sub = _normalize_subcommand(sub)
     f = sub[0]
+    # `apex run test` is running TESTS, not executing anonymous Apex. The legacy spelling was
+    # excluded here from the start — the comment below has said "NOT force:apex:test:run" since
+    # TQ-011 — and the modern spelling was not, because the match is on sub[:2] and both begin
+    # ("apex", "run").
+    #
+    # The cost was an UNSATISFIABLE refusal: the apex class demands the operator-approved
+    # immutable copy at ~/.torque/approved/<digest>.apex, and `apex run test` takes no --file, so
+    # there is no digest to approve and no way for an operator to clear it. Running the test suite
+    # before a deploy is ordinary work, and it was denied with a remedy that cannot be performed.
+    #
+    # Found by running the consulting-week matrix against a live org, which is where an external
+    # audit predicted it would be: "Apex tests are the sharp case — they mutate org state while
+    # feeling read-only to a practitioner."
+    if sub[:3] == ("apex", "run", "test") or f.startswith("force:apex:test"):
+        return None                                   # a test run, not anonymous Apex
     if sub[:2] == ("apex", "run") or f.startswith("force:apex:execute"):
-        return "apex"                                 # NOT force:apex:test:run (that's a test, TQ-011)
+        return "apex"
     if sub[:2] == ("org", "delete") or f.startswith("force:org:delete"):
         return "org-delete"                           # destroy a sandbox/scratch org (RU-2)
     if (sub[:2] == ("api", "request") or f.startswith("force:api")) \
