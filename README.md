@@ -251,7 +251,7 @@ is the system working, and the log will say which.
 
 ## The guide
 
-[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 20 pages: what it does, why it isn't
+[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) — 21 pages: what it does, why it isn't
 the MCP server, setup, the operations worked through, the safety model, troubleshooting,
 and how the harness proves itself.
 

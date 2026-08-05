@@ -1,9 +1,15 @@
 # Org safety
 
-**The agent can never write to production on its own.** A write to a production-classified
-org is denied by default; production writes happen ONLY through a deliberate, operator-present
-override (Layer 3). Nothing the agent can do — no alias, no configuration, no obfuscation —
-authorizes a production write by itself.
+**Through its tool surface, the agent can never write to production on its own.** A write to a
+production-classified org is denied by default; production writes happen ONLY through a
+deliberate, operator-present override (Layer 3). No alias, no configuration and no obfuscation
+authorizes one.
+
+**The qualifier is load-bearing and belongs here, not 80 lines down.** Demonstrated live
+2026-08-05: an agent wrote `sf` into a file, ran `bash script.sh`, and deployed metadata to an org
+that was NOT on the allowlist — no hook saw it, no audit line was written. The hooks read the
+command; they do not open a script the command names. **Without the exec-time shim (Layer 2b) the
+allowlist is advisory, not enforced.** Install it, or state the smaller claim.
 
 ## Layer 0 — credentials
 Connect production read-only / least-privilege. If a firm cannot provide that, the org is not
@@ -14,7 +20,11 @@ secrets. `local/` holds org Ids, notes, before-values only.
 ## Layer 1 — authorization by identity
 A NON-production write is allowed only when the target org is on `local/writable-orgs.json`
 AND classifies non-production **at write time** — a live `Organization` query (strict boolean
-`IsSandbox is True`), never an alias or URL guess, with a callout timeout that fails safe.
+`IsSandbox is True`), never an alias or URL guess, with a callout timeout that fails safe. A
+failed check returns `unverifiable`, which denies like production and is **not reported as**
+production: an org whose identity could not be established is an unknown, and telling an operator
+to approve a production override for one is how that ritual becomes a reflex. Classification costs
+two live callouts per gate and both gates classify, so a gated write measures 6.7–13.1s.
 Only `sandbox` / `developer` / `scratch` verdicts are eligible; `scratch` needs local dev-hub
 evidence, else a trial-shaped org classifies `production`.
 
@@ -69,7 +79,11 @@ a production write that would have been denied proceeds.** It never applies to t
 refusals (anchor, auth store, protected source, `local/` into git), and an observation that
 cannot be recorded denies instead of passing.
 
-## Layer 2b — the exec-time shim (optional, closes the subprocess channel)
+## Layer 2b — the exec-time shim (REQUIRED for the allowlist to hold)
+Called "optional" here until 2026-08-05, when a script bypass was demonstrated live. It is opt-in
+to *install* and load-bearing once you rely on the allowlist. It was also broken until that date —
+the re-entry guard sat ahead of the read check, so the gate's own classifying read was refused,
+classification always failed, and every write on the machine was denied as production.
 `torque install-gates --shim` puts an `sf` shim on PATH, installed into the trust anchor where
 the agent cannot read or rewrite it. It decides at exec time, on the argv the kernel is about to
 run — bash has finished every expansion by then, so there is no text left to reason about. It
