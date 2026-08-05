@@ -112,12 +112,31 @@ Prerequisites: [Claude Code](https://claude.com/claude-code) (the hooks are its 
 and any non-production org — a [free Developer Edition](https://developer.salesforce.com/signup) is fine.
 (`node` is optional; it only affects the live browser check.)
 
+Not ready to connect one? `python3 bin/torque-demo` runs 24 real attacks through the real hooks
+with no org and no credentials — see [below](#see-it-in-3-seconds--no-org-no-credentials-no-risk).
+
 ```
 sf org login web --alias my-dev-org
 python3 bin/torque init my-dev-org        # verifies the org is NOT production, then configures
+python3 bin/torque install-gates --shim   # REQUIRED — see below
+export PATH="$HOME/.torque/shim:$HOME/<path-to>/torque/bin:$PATH"   # add to your shell profile
 npm install                               # optional: only the live browser check needs this
 python3 harness/validate.py --profile release --target-org my-dev-org
 ```
+
+**The shim is not optional hardening, and this is the one thing to get right.** The PreToolUse
+hooks read the command an agent runs; they do not open a script that command names. So an agent
+that writes `sf` into a file and runs it reaches the org with no allowlist check and no audit
+entry — demonstrated live on 2026-08-05 against an org that was deliberately *not* allowlisted.
+The exec-time shim decides on the argv the kernel is about to run, where there is nothing left to
+misread.
+
+> **Without the shim, Torque's allowlist is advisory. With it, it is enforced.**
+
+Measured on six months of real commands: 706 refusals without it, 22 with it. Budget 6–13 seconds
+for a gated write — org classification is two live CLI callouts and both gates classify
+independently. `python3 bin/torque checkup --target-org <org>` prints which posture you are in on
+its first line.
 
 Skip `npm install` and everything still runs — the browser check reports `BLOCKED` with a dated
 reason and the verdict is `DEGRADED` rather than `PASS`. That is deliberate: a check that cannot
@@ -216,7 +235,7 @@ blocks real work gets switched off.**
 
 Torque validates itself the way it validates Salesforce work. `--profile release` runs:
 
-- **216 gate fixtures** (213 recorded on disk, 3 HMAC tokens minted during the run) — every
+- **222 gate fixtures** (219 recorded on disk, 3 HMAC tokens minted during the run) — every
   attack class found across the audits, each one a named,
   runnable test.
 - **19 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
