@@ -58,6 +58,52 @@ def _assurance_corpus_is_protected():
                   f"subprocesses and unaffected")
 
 
+@check("installed_shim_matches_its_source", "static")
+def _installed_shim_matches_its_source():
+    """The shim is installed as a COPY, and nothing noticed when the copy went stale.
+
+    `check_shim.py` exercises the shim in `bin/` against a bench; the thing that actually runs is
+    the copy under the anchor, placed there once by the installer. After any repo update that
+    changes the shim, the installed copy keeps running the old logic indefinitely — and the shim
+    is security logic, so stale is not benign. It would still refuse writes; it would refuse them
+    according to a classifier the tree no longer contains.
+
+    Source-vs-copy, so it belongs in the static profile. Reports N/A when no shim is installed,
+    because "the operator has not installed it" and "the installed one is wrong" are different
+    facts and only the second is a failure.
+    """
+    import hashlib as _ahash
+    import os as _aos
+    from pathlib import Path as _AP
+
+    src = ROOT / "bin" / "torque-shim-sf"
+    anchor = _AP(_aos.environ.get("TORQUE_ANCHOR", _AP.home() / ".torque"))
+    if not src.is_file():
+        return Result("installed_shim_matches_its_source", FAIL,
+                      "bin/torque-shim-sf is missing, so there is no source to install from")
+
+    def digest(p):
+        return _ahash.sha256(p.read_bytes()).hexdigest()[:16]
+
+    installed = [(n, anchor / "shim" / n) for n in ("sf", "sfdx")]
+    present = [(n, p) for n, p in installed if p.is_file()]
+    if not present:
+        return Result("installed_shim_matches_its_source", NA,
+                      "no exec-time shim installed on this machine; `torque install-gates "
+                      "--shim` puts one on PATH. Nothing to compare rather than nothing wrong")
+
+    want = digest(src)
+    stale = [n for n, p in present if digest(p) != want]
+    if stale:
+        return Result("installed_shim_matches_its_source", FAIL,
+                      f"the installed shim differs from bin/torque-shim-sf ({stale}) — the copy "
+                      f"under the anchor is what actually runs, and it is enforcing a classifier "
+                      f"this tree no longer contains. Re-run: torque install-gates --shim")
+    return Result("installed_shim_matches_its_source", PASS,
+                  f"{len(present)} installed shim binar(ies) match bin/torque-shim-sf "
+                  f"(sha256:{want})")
+
+
 @check("approval_vocabulary_matches_the_gates", "static")
 def _approval_vocabulary_matches_the_gates():
     """Every op class a gate can demand must be one an operator can actually mint.

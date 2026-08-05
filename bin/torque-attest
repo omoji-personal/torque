@@ -246,6 +246,31 @@ def main():
     out_dir = Path(a.out).expanduser() if a.out else OUT
     out_dir.mkdir(parents=True, exist_ok=True)
     f = out_dir / f"attest-{att['head'][:8]}.json"
+    # SIGN IT. An attestation was unsigned JSON in what was, until today, an agent-writable
+    # directory — so a hand-written `attest-ffffffff.json` claiming an all-PASS release validated
+    # on schema alone, and `check_attest` checked shape rather than authenticity.
+    #
+    # What the signature does and does not prove, stated because the difference matters: attest
+    # runs as the operator's uid and can read the anchor secret, and so can any same-uid process.
+    # This is therefore a guard against ACCIDENTAL corruption and against forgery through the
+    # agent's tool surface — which is the surface everything else here is scoped to — and it
+    # becomes a real boundary the day the agent's process cannot read the anchor. It is not a
+    # claim about a determined same-uid adversary.
+    #
+    # Signed over the document WITHOUT the signature field, via lib.sign, so there is one HMAC
+    # implementation in the repository rather than a second that drifts from it.
+    try:
+        sys.path.insert(0, str(ROOT / "hooks"))
+        import lib as _lib
+        if _lib.SECRET.exists():
+            att["sig"] = _lib.sign(att)
+        else:
+            att["sig"] = None
+            att["sig_note"] = "no anchor secret on this machine; attestation is unauthenticated"
+    except Exception as e:                                 # noqa: BLE001
+        att["sig"] = None
+        att["sig_note"] = f"could not sign ({type(e).__name__}); attestation is unauthenticated"
+
     f.write_text(json.dumps(att, indent=2) + "\n")
     try:
         shown = f.relative_to(ROOT)
