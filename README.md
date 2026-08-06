@@ -256,7 +256,7 @@ blocks real work gets switched off.**
 
 Torque validates itself the way it validates Salesforce work. `--profile release` runs:
 
-- **251 gate fixtures** (248 recorded on disk, 3 HMAC tokens minted during the run) — every
+- **254 gate fixtures** (251 recorded on disk, 3 HMAC tokens minted during the run) — every
   attack class found across the audits, each one a named,
   runnable test.
 - **19 mutation tests** — each temporarily neuters one guard and *requires* the corresponding
