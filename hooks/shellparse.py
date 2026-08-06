@@ -260,6 +260,13 @@ def _resolved_runner_target(argv):
             return None                 # -c / -m / - : nothing statically resolvable
         if any(ch in tok for ch in "$`*?[{"):
             return None                 # expansion or glob: the NAME is not settled yet
+        # A BARE WORD IS NOT A SCRIPT PATH. `eval sf data query …` puts `sf` in argv[1], and
+        # reading that as "the script eval will run" is simply wrong: eval takes code, not a file.
+        # Treating it as resolved turned a deferrable shape refusal into a policy denial with a
+        # nonsense reason, and would have refused an interpreter-wrapped READ that the shim is
+        # perfectly able to authorize. Require something that actually looks like a path.
+        if "/" not in tok and not tok.endswith((".py", ".sh", ".js", ".mjs", ".rb", ".pl")):
+            return None
         try:
             p = Path(tok)
             # DELIBERATELY not conditioned on the file EXISTING. The first version of this
