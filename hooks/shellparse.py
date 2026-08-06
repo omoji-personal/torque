@@ -233,6 +233,40 @@ def modernize(command: str) -> str:
     return out
 
 
+def _resolved_runner_target(argv):
+    """The concrete script an interpreter was handed, or None when there is nothing to resolve.
+
+    This is the line between a SHAPE refusal and a POLICY one, and it decides whether a refusal
+    may be deferred to the exec-time shim.
+
+    `python3 -c '…'`, a here-string, `python3 $VAR` — the gate genuinely cannot read what will
+    run, so refusing is a parsing limit and the shim, which sees argv after every expansion, is
+    strictly better placed to decide. Those still defer.
+
+    `python3 harness/validate.py --profile capability --target-org X` is nothing of the kind. The
+    path resolves, the flags parse, and the answer is known here: that check is not on the
+    read-only list. Handing it to the shim does not defer the decision to a better-informed
+    layer, it deferes it to NO layer — the shim wraps `sf` and `sfdx`, so it never sees a
+    `python3` invocation at all and can never refuse one.
+
+    Measured 2026-08-06: with the shim on PATH, all seven shapes
+    `readonly_gate_honours_exactly_the_list` requires to be refused came back exit 0, and
+    `runnable_implies_unwritable` reported a script outside TORQUE_HOME authorized against an org.
+    Both were the same deferral. org-safety.md already draws this line — "a shape refusal is not a
+    policy refusal" — and these were policy refusals wearing a shape code.
+    """
+    for tok in argv[1:]:
+        if tok.startswith("-"):
+            return None                 # -c / -m / - : nothing statically resolvable
+        try:
+            p = Path(tok)
+            p = (p if p.is_absolute() else (lib.TORQUE_HOME / p)).resolve()
+        except Exception:               # noqa: BLE001 — unresolvable is a shape problem
+            return None
+        return p if p.is_file() else None
+    return None
+
+
 def _is_own_harness(argv) -> bool:
     """True only for first-party tools explicitly declared READ-ONLY, under TORQUE_HOME.
 
@@ -852,13 +886,58 @@ _DESTRUCTIVE_WORDS = ("delete", "destroy", "purge", "erase", "truncate", "drop",
 # logic has ALREADY decided — including deciding that something is fine, like a bounded delete
 # by record id, which is deliberately free. The shape net must not second-guess a rule that
 # looked at the command and said yes.
+#
+# MATCHED AT THE GRAIN THE PRECISE RULE ACTUALLY DECIDES AT. `None` means the rule decides on
+# (topic, verb) alone and every third token is covered; a frozenset means only those third tokens
+# were reasoned about, and anything else must fall through to the shape net.
+#
+# This was a bare set of pairs, tested with `tuple(sub[:2]) in _PRECISELY_HANDLED`. So
+# ("data","delete") claimed `sf data delete all` on behalf of a rule that only handles
+# bulk/record/resume — the precise rule declined, the shape net was suppressed, and nothing
+# classified it. Measured 2026-08-06: `sf data delete all --sobject Account` ran the whole gate
+# and came out ALLOWED, with no token AND no protected-object shield (the shield sits behind an
+# early return that fires when the op is None).
+#
+# An incomplete set here OVER-gates a novel form; the old shape UNDER-gated it. Only one of those
+# is a safe direction to be wrong in.
 _PRECISELY_HANDLED = {
-    ("data", "delete"), ("data", "update"), ("data", "upsert"), ("data", "import"),
-    ("data", "export"), ("data", "query"), ("data", "get"), ("data", "create"),
-    ("apex", "run"), ("apex", "test"), ("apex", "get"),
-    ("org", "delete"), ("org", "create"), ("org", "list"), ("org", "display"),
-    ("api", "request"), ("project", "delete"), ("project", "deploy"), ("project", "retrieve"),
+    ("data", "delete"):      frozenset({"bulk", "record", "resume"}),
+    ("data", "update"):      frozenset({"bulk", "record", "resume"}),
+    ("data", "upsert"):      None,      # decided at (data, upsert) — bulk-write
+    ("data", "import"):      None,      # decided at (data, import) — bulk-write
+    ("data", "export"):      None,
+    ("data", "query"):       None,
+    ("data", "get"):         None,
+    ("data", "create"):      None,
+    ("apex", "run"):         None,      # (apex, run) => apex, with the (apex, run, test) carve-out
+    ("apex", "test"):        None,
+    ("apex", "get"):         None,
+    ("org", "delete"):       None,      # decided at (org, delete) => org-delete
+    ("org", "create"):       None,
+    ("org", "list"):         None,
+    ("org", "display"):      None,
+    ("api", "request"):      None,      # every form now decided above, incl. --file and graphql
+    # Only `source` is reasoned about. `tracking` is listed to PRESERVE today's behaviour — it is
+    # a real shipping command that removes LOCAL source-tracking files and touches no org data.
+    # Note the inconsistency it leaves: `sf project reset tracking` is charged
+    # unrecognised-destructive while `sf project delete tracking` is free. Both are local. That is
+    # worth settling deliberately; it is not settled here, because a security patch is the wrong
+    # place to quietly change what a command costs.
+    ("project", "delete"):   frozenset({"source", "tracking"}),
+    ("project", "deploy"):   None,
+    ("project", "retrieve"): None,
 }
+
+
+def _precisely_handled(sub) -> bool:
+    """Has a precise rule ALREADY decided this command — at its own grain, not at two tokens?"""
+    key = tuple(sub[:2])
+    if key not in _PRECISELY_HANDLED:
+        return False
+    thirds = _PRECISELY_HANDLED[key]
+    if thirds is None:
+        return True
+    return len(sub) > 2 and sub[2] in thirds
 
 
 def _destructive_shape(sub):
@@ -871,7 +950,7 @@ def _destructive_shape(sub):
     """
     if not sub:
         return False
-    if tuple(sub[:2]) in _PRECISELY_HANDLED or sub[0].startswith("force:"):
+    if _precisely_handled(sub) or sub[0].startswith("force:"):
         return False
     joined = ":".join(sub)
     return any(w in joined for w in _DESTRUCTIVE_WORDS)
@@ -974,10 +1053,30 @@ def classify_destructive(sf_args):
         return "apex"
     if sub[:2] == ("org", "delete") or f.startswith("force:org:delete"):
         return "org-delete"                           # destroy a sandbox/scratch org (RU-2)
-    if (sub[:2] == ("api", "request") or f.startswith("force:api")) \
-       and (_api_method_glued(sf_args) or _api_method(sf_args)) in ("POST", "PUT", "PATCH", "DELETE"):   # glued FIRST: _api_method defaults to "GET" when no separate -X is present, so the other
-       # order short-circuits on that default and never sees `-XPOST`.
-        return "destructive-metadata"                 # raw REST DML bypasses data-* verbs (TQ-F3)
+    if sub[:2] == ("api", "request") or f.startswith("force:api"):
+        # glued FIRST: _api_method defaults to "GET" when no separate -X is present, so the other
+        # order short-circuits on that default and never sees `-XPOST`.
+        if (_api_method_glued(sf_args) or _api_method(sf_args)) in ("POST", "PUT", "PATCH",
+                                                                   "DELETE"):
+            return "destructive-metadata"             # raw REST DML bypasses data-* verbs (TQ-F3)
+        # THE METHOD IS NOT ALWAYS IN ARGV, and _api_method's "GET" default made both of these
+        # read as reads. Measured 2026-08-06 against an allowlisted org, both ALLOWED end-to-end:
+        #   api request rest --file f.json   Salesforce's own flag summary: "JSON file that
+        #                                    contains values for the request header, body,
+        #                                    METHOD, and URL." A DELETE lives inside the file.
+        #   api request graphql              has NO --method flag at all in the installed plugin
+        #                                    manifest, so this rule could never fire for it; the
+        #                                    transport is POST and the operation is in the body.
+        # Returning None here did more than skip the token. destructive_data_gate._gate_write
+        # returns early when the op is None, BEFORE _shield_tokens, so the protected-object floor
+        # never ran either: a `--file` DELETE against Account reached DML with neither control.
+        # Same rule as an expansion-supplied verb above, and the same rule
+        # _deploy_dir_carries_destructive already applies to deploy directories — when the
+        # destructiveness genuinely is not in argv, charge it as the most dangerous thing it could
+        # be rather than as the cheapest. An explicit read (no -X, no --file) keeps the CLI's real
+        # default and stays free.
+        if sub[:3] == ("api", "request", "graphql") or file_value(sf_args):
+            return "opaque-write"
     if sub[:3] == ("data", "delete", "bulk") or "--hard-delete" in sf_args \
        or f.startswith("force:data:bulk:delete"):
         return "bulk-delete"
@@ -1495,6 +1594,21 @@ def analyze_bash(cmd: str):
             # PROTECTED_BASENAMES, so the agent's Edit/Write on it is already denied, and the path
             # must resolve inside TORQUE_HOME. The agent cannot point this at anything it controls.
             if not _is_own_harness(a):
+                # A RESOLVED script is a policy decision, made here, and must not be deferred to
+                # a layer that never sees interpreters. See _resolved_runner_target.
+                target = _resolved_runner_target(a)
+                if target is not None:
+                    try:
+                        inside = str(target).startswith(str(lib.TORQUE_HOME.resolve()))
+                    except Exception:                    # noqa: BLE001 — unknown ⇒ treat as outside
+                        inside = False
+                    why = ("it is not on the read-only manifest"
+                           if inside else "it lives outside TORQUE_HOME, where the agent can write it")
+                    return {"deny": (
+                        f"running {target.name} against an org is refused because {why}. This is "
+                        f"a POLICY refusal, not a parsing one — the command was read exactly, and "
+                        f"the exec-time shim cannot decide it because it wraps `sf`, not "
+                        f"`{base0}`. An operator runs this themselves.", "runner-not-authorized")}
                 return _deny_or_defer(f"Salesforce operation via interpreter/here-string "
                                       f"({base0}) — not authorizable", "interp-sf")
         if wrapped_sf(a):

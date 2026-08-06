@@ -37,6 +37,13 @@ _POLICY = {
                  "--record-id 001abc --values X=1",
     "wrapper-sf": "sudo sf data delete record --record-id 001abc --sobject Account "
                   "--target-org acme-prod",
+    # A RESOLVED interpreter target is policy, not shape. The shim wraps `sf` and `sfdx`; it never
+    # sees `python3`, so deferring this hands the decision to no layer at all. Measured
+    # 2026-08-06: with the shim on PATH every shape readonly_gate_honours_exactly_the_list
+    # requires refused came back exit 0, and runnable_implies_unwritable reported a script outside
+    # TORQUE_HOME authorized against an org. Both were this one deferral.
+    "runner-not-authorized": "python3 harness/validate.py --profile capability "
+                             "--target-org acme-prod",
 }
 
 

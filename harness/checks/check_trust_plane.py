@@ -10,6 +10,8 @@
 # These checks are written to FAIL until enforcement is activated out of the anchor, and to keep
 # failing if it is ever pointed back at the workspace. A check that goes green because the feature
 # is absent would be the same defect one level up.
+import importlib.machinery as _tilm
+import importlib.util as _tilu
 import json as _tj
 import os as _tos
 import shutil as _tsh
@@ -143,9 +145,40 @@ def _active_enforcement_is_anchor_owned():
     if "prod_write_gate" in blob and not any(s in blob for s in anchor_spellings):
         problems.append("the project hooks still load gates from the workspace")
 
+    # ASK THE SHIM, do not read a file it wrote. The recorded `home` is the INPUTS root and is
+    # SUPPOSED to be the workspace — that is where the allowlist, the classification cache, the
+    # protected-object manifest and the maintainer-window binding live. Asserting the anchor
+    # appeared in it demanded the one thing that breaks all four, and would have been "fixed" by
+    # recording a path under which no org is allowlisted and the protected-object floor is an
+    # empty set. Both faces of that conflation were live on 2026-08-06.
+    #
+    # So the question is not what the shim recorded, it is where the shim RESOLVES ITS GATE CODE,
+    # which it decides at runtime because activation can happen after installation. Load the
+    # shim as a module and call the function.
     shim_home = _anchor() / "shim" / "home"
-    if shim_home.exists() and anchor not in shim_home.read_text():
-        problems.append("the installed shim still resolves its gates from the workspace")
+    if shim_home.exists():
+        recorded = _TP(shim_home.read_text().strip())
+        try:
+            # An explicit SourceFileLoader, because the shim has no .py suffix and
+            # spec_from_file_location hands back loader=None for an unrecognised extension —
+            # which surfaces as a bare AttributeError three lines later. Safe to exec: the
+            # module guards its entry point behind `if __name__ == "__main__"`.
+            shim_path = ROOT / "bin" / "torque-shim-sf"
+            spec = _tilu.spec_from_file_location(
+                "_torque_shim", shim_path,
+                loader=_tilm.SourceFileLoader("_torque_shim", str(shim_path)))
+            mod = _tilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            resolved = str(mod.gates_home(recorded))
+        except Exception as e:                             # noqa: BLE001 — unreadable ⇒ FAIL
+            problems.append(f"cannot ask the shim where it loads gates from ({type(e).__name__})")
+        else:
+            if not resolved.startswith(anchor):
+                problems.append(f"the installed shim resolves its gates to {resolved}, outside "
+                                f"the anchor")
+            elif not (recorded / "local").exists():
+                problems.append(f"the shim's INPUTS root {recorded} has no local/ — its allowlist "
+                                f"and protected-object manifest would both read empty")
 
     if problems:
         return Result(name, FAIL,

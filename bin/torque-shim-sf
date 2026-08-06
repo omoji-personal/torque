@@ -52,7 +52,10 @@ def refuse(msg: str, code: str) -> "None":
 
 
 def torque_home() -> Path:
-    """Where the gates live. Recorded at install time; env wins for tests.
+    """Where the AUTHORIZATION INPUTS live — the allowlist, the classification cache, the
+    protected-object manifest, the tree a maintainer window is bound to. The workspace.
+
+    Recorded at install time; env wins for tests.
 
     Fails closed. A shim that cannot find the gates must refuse, not shrug and exec — the whole
     point of it is to be the thing standing in the way, and "I could not load my own rules" is
@@ -69,6 +72,38 @@ def torque_home() -> Path:
     refuse("cannot locate TORQUE_HOME, so no rules could be loaded. Reinstall with "
            "`torque install-gates --shim`, or run the real binary by absolute path if you "
            "meant to work outside Torque.", "no-home")
+
+
+def gates_home(inputs_home: Path) -> Path:
+    """Where the GATE CODE lives — the activated copy in the anchor, when there is one.
+
+    TORQUE_HOME used to mean both things at once, and that conflation is a bug with two faces.
+    Point it at the workspace and the shim runs mutable code the agent can edit, which is the
+    whole reason Layer 2d exists. Point it at the anchor and the gate reads its allowlist,
+    classification cache, protected-object manifest and maintainer-window binding from
+    `<anchor>/enforcement/current/...`, where none of them exist — so every org falls off the
+    allowlist, the protected-object floor becomes an empty set, and no maintainer window can ever
+    validate because the grant is bound to the workspace path.
+
+    That second face was live on this machine on 2026-08-06: the project registration was
+    repointed at the anchor with no TORQUE_HOME, and source edits became impossible while the
+    protected-object shield silently emptied on that path.
+
+    So: CODE from the anchor, INPUTS from the workspace. Resolved at runtime rather than recorded
+    at install time, because activation can happen after the shim is installed and a recorded
+    answer would be stale exactly when it matters.
+
+    Falls back to the workspace when nothing is activated — that is the honest pre-2d posture,
+    not a silent downgrade, and `active_enforcement_is_anchor_owned` is what reports it.
+    """
+    anchor = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
+    current = anchor / "enforcement" / "current"
+    try:
+        if (current / "hooks" / "lib.py").exists():
+            return current.resolve()
+    except OSError:
+        pass
+    return inputs_home
 
 
 def real_binary(name: str) -> str:
@@ -103,8 +138,14 @@ def main() -> "None":
         name = "sf"
     real = real_binary(name)
 
-    home = torque_home()
-    sys.path.insert(0, str(home / "hooks"))
+    home = torque_home()               # inputs: the workspace
+    gates = gates_home(home)           # code: the anchor's activated copy, when there is one
+    # Set BEFORE importing lib, because lib resolves TORQUE_HOME from the environment first
+    # (hooks/lib.py:16). That single line is what lets the code come from the anchor while the
+    # allowlist, the cache, the protected-object manifest and the window binding stay in the
+    # workspace — without it, importing an anchor-owned lib would silently relocate all four.
+    os.environ["TORQUE_HOME"] = str(home)
+    sys.path.insert(0, str(gates / "hooks"))
     try:
         import lib
         import shellparse
@@ -162,10 +203,13 @@ def main() -> "None":
     # finished expanding — there was no substitution, only somebody's Description field. Text
     # was the only place an error could enter, so the text is gone.
     payload = json.dumps({"tool_name": "SfArgv", "tool_input": {"argv": sf_args}})
+    # TORQUE_HOME is the INPUTS root (the workspace); the gate FILE comes from `gates` (the
+    # anchor's activated copy). Same split as the import above, and it has to be spelled out
+    # here too because this is a fresh process that inherits neither.
     env = dict(os.environ, TORQUE_SHIM_DEPTH="1", TORQUE_HOME=str(home))
     for gate in GATES:
         try:
-            r = subprocess.run([sys.executable, str(home / "hooks" / gate)],
+            r = subprocess.run([sys.executable, str(gates / "hooks" / gate)],
                                input=payload, capture_output=True, text=True,
                                cwd=str(home), env=env, timeout=lib.HOOK_TIMEOUT_S)
         except Exception as e:                          # noqa: BLE001
