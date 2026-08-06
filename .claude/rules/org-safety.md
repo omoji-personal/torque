@@ -1,9 +1,15 @@
 # Org safety
 
-**The agent can never write to production on its own.** A write to a production-classified
-org is denied by default; production writes happen ONLY through a deliberate, operator-present
-override (Layer 3). Nothing the agent can do — no alias, no configuration, no obfuscation —
-authorizes a production write by itself.
+**Through its tool surface, the agent can never write to production on its own.** A write to a
+production-classified org is denied by default; production writes happen ONLY through a
+deliberate, operator-present override (Layer 3). No alias, no configuration and no obfuscation
+authorizes one.
+
+**The qualifier is load-bearing and belongs here, not 80 lines down.** Demonstrated live
+2026-08-05: an agent wrote `sf` into a file, ran `bash script.sh`, and deployed metadata to an org
+that was NOT on the allowlist — no hook saw it, no audit line was written. The hooks read the
+command; they do not open a script the command names. **Without the exec-time shim (Layer 2b) the
+allowlist is advisory, not enforced.** Install it, or state the smaller claim.
 
 ## Layer 0 — credentials
 Connect production read-only / least-privilege. If a firm cannot provide that, the org is not
@@ -14,7 +20,11 @@ secrets. `local/` holds org Ids, notes, before-values only.
 ## Layer 1 — authorization by identity
 A NON-production write is allowed only when the target org is on `local/writable-orgs.json`
 AND classifies non-production **at write time** — a live `Organization` query (strict boolean
-`IsSandbox is True`), never an alias or URL guess, with a callout timeout that fails safe.
+`IsSandbox is True`), never an alias or URL guess, with a callout timeout that fails safe. A
+failed check returns `unverifiable`, which denies like production and is **not reported as**
+production: an org whose identity could not be established is an unknown, and telling an operator
+to approve a production override for one is how that ritual becomes a reflex. Classification costs
+two live callouts per gate and both gates classify, so a gated write measures 6.7–13.1s.
 Only `sandbox` / `developer` / `scratch` verdicts are eligible; `scratch` needs local dev-hub
 evidence, else a trial-shaped org classifies `production`.
 
@@ -55,7 +65,25 @@ Precedence when the target classifies production: valid session grant → valid 
 token → **deny** (the deny message names both commands). Every production write is audited as a
 first-class `PROD-WRITE` event. A dry-run / validate-only deploy is a read and needs no override.
 
-## Layer 2b — the exec-time shim (optional, closes the subprocess channel)
+**A shape refusal is not a policy refusal.** When the classifier cannot statically resolve a
+command (`$(…)`, an interpreter, an unbalanced quote) it has judged nothing about the operation —
+it could not read it. Measured on six months of real commands, 97% of all denials were this, not
+policy. With the shim verified those DEFER to it (audited `DEFER`, decided on resolved argv);
+without it they still deny, and the message says so and names `install-gates --shim`.
+
+## Layer 2c — observe-only (operator-present, measures instead of blocking)
+`torque approve --observe <minutes>` (≤120) makes denials RECORD instead of enforce, so the cost
+of the gates can be measured on real work before they block real work. Signed, tree-bound,
+anchor-only, revocable with `--end-observe`. **While it is open the org protections are advisory:
+a production write that would have been denied proceeds.** It never applies to trust-boundary
+refusals (anchor, auth store, protected source, `local/` into git), and an observation that
+cannot be recorded denies instead of passing.
+
+## Layer 2b — the exec-time shim (REQUIRED for the allowlist to hold)
+Called "optional" here until 2026-08-05, when a script bypass was demonstrated live. It is opt-in
+to *install* and load-bearing once you rely on the allowlist. It was also broken until that date —
+the re-entry guard sat ahead of the read check, so the gate's own classifying read was refused,
+classification always failed, and every write on the machine was denied as production.
 `torque install-gates --shim` puts an `sf` shim on PATH, installed into the trust anchor where
 the agent cannot read or rewrite it. It decides at exec time, on the argv the kernel is about to
 run — bash has finished every expansion by then, so there is no text left to reason about. It
@@ -65,6 +93,29 @@ classifying an org runs `sf org display`, and that comes back as a read).
 
 An operator at a real login terminal passes through ungated, checked before any classification,
 so a classifier bug can never take an operator's `sf` away from them.
+
+## Layer 2d — activated enforcement (the gates stop being files the agent can edit)
+Until this is run, the gates adjudicating every write are files in `hooks/`, and an operator-present
+maintainer window makes them writable. A window granted to fix a check also granted the power to
+delete one. Demonstrated 2026-08-05: a window-legal edit making `authorize_write` return
+`(True, "mutant")` turned a production denial into an allow on the next tool call.
+
+`torque activate-enforcement` copies the tested tree into `~/.torque/enforcement/versions/<tree>/`
+at mode 0400, flips an atomic `current` symlink, and records a sha256 manifest. It refuses without
+operator presence, on a dirty tree, or if the static profile does not pass — activating untested
+enforcement is how a safe-looking install becomes the thing that fails open.
+
+Activation alone changes nothing: the consumers must be repointed with
+`torque install-gates --project`, which rewrites this repo's registration to load from
+`$HOME/.torque/enforcement/current/hooks/`. **A clone that has never activated registers gates that
+do not exist there and blocks every gated call** (the interpreter exits 2, which the contract reads
+as deny) — fail-closed, and `registered_gates_resolve` names it at validation rather than leaving
+it to a confusing runtime error.
+
+A maintainer window still edits `hooks/`. The edit no longer decides anything until it is tested
+and promoted by a present operator, which is the whole point.
+
+ENFORCEMENT: harness-enforced (maintainer_edit_cannot_change_active_gate, active_enforcement_is_anchor_owned, registered_gates_resolve)
 
 ## Boundaries (stated honestly)
 The gates bind the agent's **tool surface** (Bash / Edit / Write / Read / MCP) and defeat both

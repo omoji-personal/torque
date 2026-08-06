@@ -65,20 +65,92 @@ def blocked_reason(path: str) -> str:
     return ""
 
 
+def ungrantable_reason(path: str) -> str:
+    """Non-empty if NO maintainer window can unlock this path, whatever the window says.
+
+    `handle_edit` has three tiers, and this tool used to mirror only one of them. The anchor and
+    the auth store are refused first and are never grantable; then anything the gate READS to
+    decide — the allowlist, the classification cache, the shield, the read-only manifest — is
+    refused with "a window unlocks what this tool IS, never what it is allowed to write to";
+    only then does the window apply.
+
+    Asking `blocked_reason` alone and then adding "editable now: maintainer window open" reported
+    read-only-checks.json as writable while the real gate refused it. That is the exact failure
+    this tool exists to prevent: its whole purpose is "ask, do not discover by being refused",
+    and a wrong yes costs more than no answer, because the plan is already built on it.
+
+    Calls the same predicates the gate calls, in the gate's order. A second implementation of a
+    boundary is how the first two answers in this file came to disagree with it.
+    """
+    try:
+        resolved = str(Path(path).expanduser().resolve())
+    except Exception:
+        resolved = path
+    if shellparse.anchor_ref(resolved) or shellparse.sf_auth_ref(resolved):
+        return "trust anchor / sf auth store — no maintainer window grants it"
+    if lib.is_authorization_input(resolved):
+        return (f"{os.path.basename(resolved)} is an input the gate reads to decide "
+                f"authorization, not source — no maintainer window grants it")
+    return ""
+
+
 def tracked_files() -> list[str]:
     r = subprocess.run(["git", "ls-files"], capture_output=True, text=True, cwd=ROOT)
     return [l for l in r.stdout.split("\n") if l.strip()]
 
 
+def maintainer_window_open() -> bool:
+    """Is a source-edit window live right now?
+
+    This tool's whole job is to answer "can I write this" BEFORE the work is planned — CLAUDE.md
+    says to ask rather than discover by being refused. It was answering without consulting the
+    one mechanism that changes the answer, so during a maintainer window it reported protected
+    source as BLOCKED while that source was in fact editable. An agent reading that plans around
+    a restriction that is not in force, or hands the operator a list of items it could have done
+    itself. Observed: a session was told `hooks/shellparse.py` was blocked, worked around it, and
+    then edited the file successfully minutes later.
+
+    Never raises. A tool that cannot determine the window must report the STRICTER answer, which
+    is what returning False does — the same direction the gates fail.
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "hooks"))
+        import lib
+        return bool(lib.maintainer_grant_valid())
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
 def report(paths, label) -> int:
+    window = maintainer_window_open()
     width = min(max((len(p) for p in paths), default=10), 58)
-    blocked = []
+    blocked, unlocked = [], []
     for p in paths:
-        why = blocked_reason(str(ROOT / p) if not os.path.isabs(p) else p)
-        if why:
+        full = str(ROOT / p) if not os.path.isabs(p) else p
+        why = blocked_reason(full)
+        never = ungrantable_reason(full)
+        if never:
+            # Checked BEFORE the window, in the gate's own order. A window does not reach these,
+            # so reporting them as "editable now" is a wrong yes — and a wrong yes is worse than
+            # no answer, because the plan is already built on it by the time the gate refuses.
             blocked.append(p)
-        print(f"  {'BLOCKED' if why else 'writable':9} {p:<{width}}  {why}")
-    print(f"\n{label}: {len(paths) - len(blocked)} writable, {len(blocked)} blocked")
+            state, why = "NEVER", never
+        elif why and window:
+            unlocked.append(p)
+            state, why = "window", f"{why} — editable now: maintainer window open"
+        elif why:
+            blocked.append(p)
+            state = "BLOCKED"
+        else:
+            state = "writable"
+        print(f"  {state:9} {p:<{width}}  {why}")
+    print(f"\n{label}: {len(paths) - len(blocked) - len(unlocked)} writable, "
+          f"{len(unlocked)} unlocked by the open window, {len(blocked)} blocked")
+    if unlocked:
+        print("\nA maintainer window is OPEN, so protected source is editable for its duration.\n"
+              "It does not unlock the trust anchor, the sf auth store, or any org write. Check\n"
+              "the time remaining before planning around it; `torque approve --end-maintainer`\n"
+              "revokes it early.")
     if blocked:
         print("\nBlocked paths need operator-present issuance — the operator applies the change\n"
               "outside the agent's tool surface. There is no token that unlocks an artifact edit;\n"

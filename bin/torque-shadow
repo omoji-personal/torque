@@ -54,8 +54,25 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "hooks"))
 import lib  # noqa: E402
 
-TEMPLATE = """Savepoint tqSp = Database.setSavepoint();
-List<String> tqObs = new List<String>();
+TEMPLATE = """List<String> tqObs = new List<String>();
+// ASYNC BASELINE, taken BEFORE the savepoint.
+//
+// The escape guards below scan the SUBMITTED SOURCE for callout/@future/Queueable/event shapes.
+// That cannot see what a body reaches through: `ExistingService.process();` matches no regex
+// while the class it calls enqueues a Queueable, publishes an event, or fires a callout — and an
+// enqueued job does not roll back. Two external reviews named this the same way, and it is the
+// shape an agent produces most naturally, because reusing an existing class is what agents do.
+//
+// A regex cannot be made to see it. A COUNT can: AsyncApexJob rows created during the
+// transaction survive the rollback, so a before/after delta is evidence rather than a guess. It
+// needs no job Id and no control arm — any positive delta means something escaped.
+//
+// Deliberately not a guard. It cannot PREVENT the escape (the enqueue has already happened by
+// the time we count), so it exists to stop the tool reporting "residue none" when something did
+// leave the transaction. Detection, honestly labelled, rather than a boundary claim.
+Integer tqAsync0 = -1;
+try { tqAsync0 = [SELECT COUNT() FROM AsyncApexJob]; } catch (Exception tqIgn) {}
+Savepoint tqSp = Database.setSavepoint();
 Integer tqDml0 = Limits.getDmlStatements();
 Integer tqSoql0 = Limits.getQueries();
 try {
@@ -71,6 +88,13 @@ try {
     // residue UNCONFIRMED instead of asserting zero (P0-002).
     tqObs.add('ROLLBACK~@~done');
 }
+// Counted AFTER the rollback, because that is the question: did anything survive it. Reports
+// `unknown` rather than `0` when either count failed — an async delta that could not be measured
+// and an async delta of zero are different facts, and only one of them is reassuring.
+Integer tqAsync1 = -1;
+try { tqAsync1 = [SELECT COUNT() FROM AsyncApexJob]; } catch (Exception tqIgn2) {}
+tqObs.add('ASYNC~@~' + ((tqAsync0 < 0 || tqAsync1 < 0)
+                        ? 'unknown' : String.valueOf(tqAsync1 - tqAsync0)));
 tqObs.add('COST~@~dml=' + (Limits.getDmlStatements() - tqDml0)
           + '~@~soql=' + (Limits.getQueries() - tqSoql0)
           + '~@~cpu=' + Limits.getCpuTime());
@@ -163,6 +187,7 @@ def main() -> int:
     print(f"\nSHADOW RUN — {a.target_org} ({verdict}, {orgid})")
     rc = 0
     rolled_back = False
+    async_delta = None
     for o in obs:
         parts = o.split("~@~")
         if parts[0] == "OUTCOME" and parts[1] == "failed":
@@ -176,6 +201,8 @@ def main() -> int:
                   f"governor limits; the rollback itself is one DML statement)")
         elif parts[0] == "ROLLBACK":
             rolled_back = True
+        elif parts[0] == "ASYNC":
+            async_delta = parts[1] if len(parts) > 1 else "unknown"
         else:
             print(f"  {o}")
 
@@ -196,15 +223,32 @@ def main() -> int:
     # where nothing established it. The rollback is claimed by the template; it should be
     # OBSERVED. If the transaction did not report rolling back, say that instead of asserting it.
     if rolled_back:
-        print("  residue  none — the transaction reported its rollback")
+        # "The DATABASE rolled back" and "nothing escaped" are different claims, and printing the
+        # first while implying the second is what the async delta exists to stop. An enqueued job
+        # survives Database.rollback; the count taken after it is the only evidence either way.
+        if async_delta is None or async_delta == "unknown":
+            print("  residue  database rolled back; async escape UNMEASURED — the AsyncApexJob "
+                  "count could not be taken, so whether work was enqueued is unestablished")
+            if rc == 0:
+                rc = 3
+        elif async_delta != "0":
+            print(f"  residue  database rolled back, but {async_delta} async job(s) were "
+                  f"ENQUEUED and did not roll back with it. Something the source scan could not "
+                  f"see reached @future, Queueable or Batch — most likely through a class the "
+                  f"body called rather than anything written in it.")
+            rc = 1
+        else:
+            print("  residue  none — the transaction reported its rollback, and no async job "
+                  "was enqueued (AsyncApexJob delta 0, measured across the rollback)")
     else:
         print("  residue  UNCONFIRMED — no rollback observation was returned. The template rolls "
               "back to the savepoint, but this run did not see it reported, so treat residue as "
               "unestablished rather than zero.")
         if rc == 0:
             rc = 3
-    print("  NOT covered: callouts, @future/Queueable, publishImmediate events, CDC — a "
-          "consequence that left the transaction cannot be rolled back with it\n")
+    print("  NOT covered: callouts, publishImmediate events, CDC — a consequence that left the "
+          "transaction cannot be rolled back with it. @future/Queueable/Batch are now DETECTED "
+          "after the fact by the AsyncApexJob delta, which is not the same as prevented.\n")
     return rc
 
 

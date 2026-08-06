@@ -299,6 +299,17 @@ def _gate_adversarial_fixtures(target):
 def _cache_poison(target):
     if not target: return Result("cache_poison_resistant", SKIP, "no --target-org")
     import time, json as _j, importlib
+    # reload() requires sys.modules[name] to BE this object — identity, not presence. Seven checks
+    # pop "lib"/"shellparse" to force a fresh import of the current source, and a re-import leaves
+    # a DIFFERENT object under the name. setdefault was the first attempt and is a no-op in
+    # exactly that case, which is the case that occurs: the release run still raised. Unconditional
+    # assignment is the fix.
+    #
+    # CPython's message is no help — it says "module lib not in sys.modules" even when the name is
+    # present, meaning "not the same object". That sentence sent the first diagnosis to the wrong
+    # condition, and a reproduction that only POPPED the name passed against a fix that did not
+    # hold. Reproduce the failure that happened, not the one that is easy to build.
+    _sys.modules[_lib.__name__] = _lib
     importlib.reload(_lib)
     disp = _lib._sf("org","display","--target-org",target,"--json")
     d = _j.loads(disp.stdout)["result"]; user = d["username"]; oid = _lib.norm_id(d["id"])

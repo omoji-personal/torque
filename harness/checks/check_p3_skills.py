@@ -168,9 +168,25 @@ def _installer_roundtrip():
                           f"installer did not produce settings (rc={r2.returncode}) "
                           f"{(r2.stderr or '')[:120]}")
         have_t = _triples(_json.loads(produced.read_text()))
-        # and it must undo itself completely
-        subprocess.run(["python3", str(ROOT / "bin" / "torque-install-gates"), "--remove"],
-                       capture_output=True, text=True, env=env, timeout=60)
+        # And it must undo itself completely.
+        #
+        # Calls remove() as a FUNCTION rather than through the CLI entry point, because
+        # `--remove` now requires operator presence — an agent that can uninstall its own
+        # enforcement has enforcement only while it agrees with it. This check is about the
+        # registration logic being a true inverse, not about who may invoke it; the authorization
+        # half is asserted separately and adversarially by `uninstall_requires_an_operator`,
+        # which runs the real entry point and requires exit 2.
+        #
+        # Without this split the operator gate silently broke this check: `--remove` refused,
+        # left every hook registered, and the roundtrip failed for a reason that had nothing to
+        # do with the roundtrip.
+        subprocess.run(
+            ["python3", "-c",
+             "import runpy,sys;"
+             f"sys.argv=['torque-install-gates'];"
+             f"m=runpy.run_path({str(ROOT / 'bin' / 'torque-install-gates')!r});"
+             "m['remove']()"],
+            capture_output=True, text=True, env=env, timeout=60)
         left = _triples(_json.loads(produced.read_text()))
     if left:
         return Result("installer_roundtrip", FAIL, f"--remove left {sorted(left)} behind")

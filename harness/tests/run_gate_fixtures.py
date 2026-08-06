@@ -12,8 +12,36 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent          # torque/
 HOOKS = ROOT / "hooks"
+
+# HERMETIC ANCHOR — set before `import lib`, because lib resolves ANCHOR at import time.
+#
+# The suite already went to some trouble to be hermetic about `sf`. It was not hermetic about
+# the trust anchor, and that is a bigger dependency: the anchor holds the maintainer window, and
+# a window grants exactly what the "Edit protected hook" fixture asserts is denied. So running
+# the suite on an operator's own machine during a maintainer window reported a correct gate as
+# red — observed, not hypothesised. The same exposure applies to any token left in the real
+# anchor by an earlier approve.
+#
+# A throwaway anchor removes the whole class. The token tests below mint into it themselves, so
+# nothing is lost by starting empty — that is what they were written to do. The operator's real
+# anchor is never read and never written by this suite.
+#
+# TORQUE_ANCHOR is honoured only when it points somewhere the agent cannot reach anyway; here it
+# is a per-run temp directory, so this cannot become a bypass of anything. It is also set for the
+# gate subprocesses further down, via the same environment.
+import tempfile                                                  # noqa: E402
+_HERMETIC_ANCHOR = Path(tempfile.mkdtemp(prefix="torque-fixture-anchor-"))
+os.environ["TORQUE_ANCHOR"] = str(_HERMETIC_ANCHOR)
+
 sys.path.insert(0, str(HOOKS))
-import lib
+import lib  # noqa: E402
+
+if lib.ANCHOR != _HERMETIC_ANCHOR:
+    # If lib stops honouring TORQUE_ANCHOR, this suite would silently go back to reading the
+    # operator's real anchor and the hermeticity above would be a comment describing nothing.
+    print(f"refusing: TORQUE_ANCHOR was not honoured (lib.ANCHOR={lib.ANCHOR}); the fixture "
+          f"suite would run against the real trust anchor", file=sys.stderr)
+    sys.exit(2)
 
 GREEN, RED, DIM, RST = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 
@@ -105,27 +133,42 @@ def main():
     org = os.environ.get("TORQUE_TEST_ORG", "sf-coffee")
     _stub_env(org)   # hermetic: stub sf on PATH for the gate subprocesses
     fixtures = []
-    for fn in ("gate_fixtures.json", "gate_fixtures_r11.json", "gate_fixtures_r12.json", "gate_fixtures_r13.json", "gate_fixtures_r14.json", "gate_fixtures_r15.json", "gate_fixtures_r16.json", "gate_fixtures_lessons.json", "gate_fixtures_conf.json"):
-        p = ROOT / "harness/tests" / fn
-        if p.exists():
-            raw = p.read_text().replace("sf-coffee", org)
-            # Attack paths are written against the DEFAULT anchor (~/.torque). If the operator
-            # relocated it with TORQUE_ANCHOR, those strings no longer reach the real anchor and
-            # the gate correctly allows them — turning a correct gate into a red suite. Rewrite
-            # them to the configured anchor so the fixtures test the anchor that actually exists.
-            A = str(lib.ANCHOR)
-            H = str(lib.TORQUE_HOME)
-            import os as _o2
-            for frm, to in (("d=.torque", f"d={_o2.path.basename(A)}"),   # var holds the anchor name
-                            ("$HOME/$d/", f"{_o2.path.dirname(A)}/$d/"),  # var-composed, single var
-                            ("$HOME/$d$e", A),        # var-composed
-                            ("~/$a$b",      A),        # var-composed, tilde form
-                            ("~/.torq*",    A[:-3] + "*"),   # glob
-                            ("~/.[t]orque", A),        # character class
-                            ("~/.torque",   A),        # literal
-                            ("Desktop/torque/hooks/", _home_rel(H) + "/hooks/")):
-                raw = raw.replace(frm, to)
-            fixtures += json.loads(raw).get("fixtures", [])
+    # Discovered, not enumerated. This was a hardcoded tuple of nine filenames, which means a
+    # fixture file added and never listed contributes nothing and the suite still reports green —
+    # a corpus that silently shrinks is the same defect class as an attestation that silently
+    # drops check outcomes. Sorted so the run order stays deterministic.
+    discovered = sorted((ROOT / "harness/tests").glob("gate_fixtures*.json"))
+    if not discovered:
+        print("refusing: no gate_fixtures*.json found — an empty corpus passes every assertion",
+              file=sys.stderr)
+        return 2
+    per_file = []
+    for p in discovered:
+        raw = p.read_text().replace("sf-coffee", org)
+        # Attack paths are written against the DEFAULT anchor (~/.torque). If the operator
+        # relocated it with TORQUE_ANCHOR, those strings no longer reach the real anchor and
+        # the gate correctly allows them — turning a correct gate into a red suite. Rewrite
+        # them to the configured anchor so the fixtures test the anchor that actually exists.
+        A = str(lib.ANCHOR)
+        H = str(lib.TORQUE_HOME)
+        import os as _o2
+        for frm, to in (("d=.torque", f"d={_o2.path.basename(A)}"),   # var holds the anchor name
+                        ("$HOME/$d/", f"{_o2.path.dirname(A)}/$d/"),  # var-composed, single var
+                        ("$HOME/$d$e", A),        # var-composed
+                        ("~/$a$b",      A),        # var-composed, tilde form
+                        ("~/.torq*",    A[:-3] + "*"),   # glob
+                        ("~/.[t]orque", A),        # character class
+                        ("~/.torque",   A),        # literal
+                        ("Desktop/torque/hooks/", _home_rel(H) + "/hooks/")):
+            raw = raw.replace(frm, to)
+        found = json.loads(raw).get("fixtures", [])
+        per_file.append((p.name, len(found)))
+        fixtures += found
+    # Print what was loaded. Discovery without a manifest of what it found is how a file that
+    # parses to zero fixtures becomes invisible — it contributes nothing and says nothing.
+    print(f"  {DIM}corpus: " + ", ".join(f"{n}={c}" for n, c in per_file) +
+          f"  → {len(fixtures)} fixtures{RST}\n")
+
     passed = failed = 0
     fails = []
     for fx in fixtures:

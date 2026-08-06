@@ -1,14 +1,23 @@
 # Maintainer mode — developing Torque without turning Torque off
 
-**Status: written and behaviourally verified, not applied.** All three files it touches are
-protected, which is the problem it solves, so the first application has to be the operator's.
-After that it is self-sustaining.
+**Status: applied and in use.** This header said "written and behaviourally verified, not
+applied" while the paragraph twenty lines down said "Shipped 2026-08-04" — the document
+contradicted itself about the only fact a reader checks first, which is whether the mechanism is
+real. It is: `lib.maintainer_grant_valid()` is consulted by `prod_write_gate`, and a window
+opened on 2026-08-04 was used to apply the quote-aware parser fix and observe-only mode.
 
 ```
-git apply local/patches/maintainer-mode.patch     # operator, from the repo root
 torque approve --maintainer 90                    # operator, from a REAL terminal
 torque approve --end-maintainer                   # revoke early
 ```
+
+**`torque` must be on PATH**, or both of those read `command not found` — observed, on the
+command an operator reaches for when a deny message tells them to. Put the repo's `bin/` there
+(`torque install-gates --shim` prints the full line), or run `python3 bin/torque approve …` from
+the repo root.
+
+The patch step is gone with it: `local/patches/maintainer-mode.patch` was the bootstrap for a
+mechanism that is now in the tree.
 
 Minting cannot be done with `!` from inside a Claude session, and that is not a bug:
 `torque approve` requires a login TTY whose ancestry is clear of `claude`/`node`, which is the
@@ -284,6 +293,28 @@ under `hooks/` and cannot delete it.
 Left as-is deliberately for now. Extending a grant across the Bash surface is a much larger
 blast radius than extending it across two tool handlers, and the asymmetry is inconvenient rather
 than unsafe. Documented so the next person meets it as a known edge rather than a mystery.
+
+## What bounds the window now: activated enforcement (2026-08-05)
+
+Everything above describes a window that makes `hooks/` writable while the gates in `hooks/` are
+the ones adjudicating. That was the real exposure, and it was not hypothetical: a window-legal
+edit making `authorize_write` return `(True, "mutant")` turned a production denial into an allow
+on the next tool call. A window granted to fix a check also granted the power to delete one.
+
+`torque activate-enforcement` separates the two. The tested tree is copied into
+`~/.torque/enforcement/versions/<tree>/` at mode 0400, an atomic `current` symlink points at it,
+and `torque install-gates --project` repoints this repository's registration there. From then on a
+maintainer window still edits `hooks/` — and the edit decides nothing until a present operator
+tests it and promotes it. Activation itself refuses without operator presence, on a dirty tree, or
+if the static profile does not pass.
+
+`maintainer_edit_cannot_change_active_gate` measures exactly this, and reported N/A from the day it
+was written until enforcement was activated — correctly, because there was nothing to measure and
+an empty loop is not evidence. It now reads: *a window-legal edit to `authorize_write` flips the
+workspace copy (exit 0) and leaves the active gate denying.*
+
+The caveat below still stands in full. Activation bounds what a window can change; it does nothing
+about whether what the agent wrote is any good.
 
 ## The honest caveat
 

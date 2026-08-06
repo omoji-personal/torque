@@ -1,0 +1,226 @@
+{
+  "_comment": "R17 — the must-allow direction, with REAL SOQL in it. Written after replaying six months of genuine client-work commands (1,193 Salesforce CLI invocations) through the classifier: 80.1% were denied, and 854 of those 955 denials were one defect — grouping_or_subst scanned raw command text with no quote awareness, so a parenthesis inside a single-quoted SOQL string read as shell grouping. The 193 fixtures then in the tree did not catch it. 44 of them assert allow, and their entire SOQL vocabulary was four instances of `SELECT Id FROM Account`: no WHERE clause, no IN list, no subquery, no quoted literal anywhere. The suite had a must-allow direction; what it did not have was a must-allow direction that looked like the language people actually write. These fixtures are that. The deny half at the end is not decoration — it is the proof that quote-awareness did not buy the allows by loosening the gate, and it must stay adjacent to them.",
+  "fixtures": [
+    {
+      "id": "R17 allow: SOQL IN clause — parens inside a quoted string",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT Id, Name FROM Account WHERE Id IN ('001aaa','001bbb')\" --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: relationship subquery — the commonest SOQL idiom after a plain select",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT Id, (SELECT Id, Email FROM Contacts) FROM Account\" --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: semi-join — a SELECT nested inside a WHERE IN",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT Id FROM Contact WHERE AccountId IN (SELECT Id FROM Account WHERE BillingCountry = 'Canada')\" --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: a quoted literal containing a parenthesis",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT Id FROM Account WHERE Name = 'Acme Holdings (US)'\" --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: aggregate with GROUP BY and HAVING",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT StageName, COUNT(Id) FROM Opportunity GROUP BY StageName HAVING COUNT(Id) > 5\" --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: date function in the WHERE clause",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT Id FROM Case WHERE CALENDAR_YEAR(CreatedDate) = 2026\" --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: read piped to jq — how a practitioner actually reads a query",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT Id FROM Account WHERE Name LIKE 'TEST%'\" --target-org sf-coffee --json | jq -r '.result.records[].Id'"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: query result redirected to a CSV file",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --query \"SELECT Id, Name FROM Contact WHERE Email != null\" --target-org sf-coffee --result-format csv > /tmp/contacts.csv"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: Tooling API field lookup, the documented way to verify a field",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data query --use-tooling-api --query \"SELECT QualifiedApiName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = 'Account'\" --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: describe piped to jq for field names",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf sobject describe --sobject Account --target-org sf-coffee --json | jq -r '.result.fields[].name'"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: dry-run deploy is a read and stays one",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf project deploy start --dry-run --source-dir force-app/main/default/objects --target-org sf-coffee"
+        }
+      }
+    },
+    {
+      "id": "R17 allow: bounded update by record Id with a value containing a paren",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data update record --sobject Account --record-id 001abc --values \"Name='Acme (Canada)'\" --target-org sf-coffee"
+        }
+      }
+    },
+
+    {
+      "id": "R17 deny: command substitution supplying the target org",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data update record --sobject Account --record-id 001abc --values X=1 --target-org $(cat /tmp/org.txt)"
+        }
+      }
+    },
+    {
+      "id": "R17 deny: backtick substitution supplying the target org",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data update record --sobject Account --record-id 001abc --values X=1 --target-org `cat /tmp/org.txt`"
+        }
+      }
+    },
+    {
+      "id": "R17 deny: substitution INSIDE double quotes still expands",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data update record --sobject Account --record-id 001abc --values X=1 --target-org \"$(cat /tmp/org.txt)\""
+        }
+      }
+    },
+    {
+      "id": "R17 deny: backtick inside double quotes still expands",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf apex run --file /tmp/x.apex --target-org \"`echo acme-prod`\""
+        }
+      }
+    },
+    {
+      "id": "R17 deny: subshell grouping around the operation",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "( sf data update record --sobject Account --record-id 001abc --values X=1 --target-org acme-prod )"
+        }
+      }
+    },
+    {
+      "id": "R17 deny: brace grouping around the operation",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "{ sf data update record --sobject Account --record-id 001abc --values X=1 --target-org acme-prod ; }"
+        }
+      }
+    },
+    {
+      "id": "R17 deny: process substitution carrying a Salesforce read",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "diff <(sf data query --query \"SELECT Id FROM Account\" --target-org acme-prod) /tmp/b.txt"
+        }
+      }
+    },
+    {
+      "id": "R17 deny: an escaped quote must not be read as opening a literal region",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data update record --sobject Account --record-id 001abc --values \"Name=\\\"x\\\"\" --target-org $(cat /tmp/org.txt)"
+        }
+      }
+    }
+  ]
+}

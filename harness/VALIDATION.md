@@ -425,3 +425,189 @@ One run, one disposable org, by the author, and **red**. It is retained as diagn
 all-PASS run supersedes it, and could not happen until the history carried no denied term — which
 is the correct ordering, since the alternative is a green log sitting above a repository that
 still contains what the check objects to.
+
+---
+
+## P10 — release · RED, and both reds were the harness misreading itself · 2026-08-05
+
+Commit `32d3e759`, tree `70d16940`, working tree clean · **profile: release · target `sf-coffee`
+(classified `developer`, IsSandbox=False, Developer Edition) · verdict: FAIL** · 538s
+· 115 checks: 108 PASS, 2 FAIL, 5 N/A · artifact `harness/attest/attest-32d3e759.json`
+
+The first release run an operator has performed at their own terminal rather than through an
+agent session. That difference produced one of the two failures, and it is the more interesting
+one.
+
+### `uninstall_requires_an_operator` — FAIL, and the product was fine
+
+> uninstalling enforcement is reachable from the agent tool surface: `--remove-shim`: exit 0;
+> `--remove`: exit 0, said 'removed: 0 torque hook blocks'
+
+It was not reachable. The check ran the uninstaller as a subprocess and asserted a refusal, on a
+stated assumption: *this process is a descendant of the agent, so `lib.operator_present()` is
+false here exactly as it is for any tool call.* True when an agent runs the harness. False when
+an operator does — and a release attestation is precisely the run an operator performs. The
+subprocess inherited a real login tty, the uninstall was legitimately authorised, and the check
+reported the product broken.
+
+The polarity is what makes it worth an entry. It passed in the context that mattered least and
+failed in the one that mattered most; written the other way round it would have reported PASS
+indefinitely while never once testing the agent case. Verified by hand from inside a session
+before touching it: `install-gates --remove-shim` refuses with exit 2 and names operator
+presence.
+
+Fixed by making the context deterministic instead of inherited — `start_new_session=True` drops
+the controlling terminal, and `_has_tty()` opens `/dev/tty`, so presence is false whoever
+launched the harness. The acceptance direction was missing entirely and is now asserted
+in-process against a stubbed `lib`, because refuse-always passes a refusal-only test and a login
+session must not become forgeable to satisfy a check.
+
+### `cache_poison_resistant` — FAIL, raised rather than judged
+
+> check raised: module lib not in sys.modules
+
+`deploy_directory_destructiveness_is_seen` pops `shellparse` and `lib` from `sys.modules` to
+force a fresh import of the current source, and did not put them back. `cache_poison_resistant`
+holds a reference to `lib` and calls `importlib.reload` on it, which requires the name still be
+registered. Order-dependent, so it fails in a full run and passes in isolation — which is why it
+had not been seen. Reproduced exactly, then fixed at the cause (the popper restores what it
+borrowed) and at the consumer (a re-registration before reload, so the next check that forgets
+costs nothing).
+
+Neither failure was a gate defect. Both were the harness measuring itself wrongly, which is the
+category this log is least able to catch by design — every other check here is aimed at the
+product.
+
+### What this run does establish
+
+108 checks passed live against a disposable Developer Edition org, including the whole
+org-touching half no static run reaches. The five N/A entries are honest: no shim installed on
+this machine, no image manifest, no must-allow corpus configured, and two that report N/A
+specifically because enforcement is not yet activated — `maintainer_edit_cannot_change_active_gate`
+and `active_enforcement_is_anchor_owned` have nothing to measure until it is.
+
+### What it is not
+
+Red, and superseded by any later all-PASS release run. Retained as diagnostic. The two fixes land
+in the commit that follows this entry, so the tree this attestation names is deliberately NOT the
+tree they are on.
+
+---
+
+## P11 — release · GREEN, and the trust plane is measured rather than assumed · 2026-08-05
+
+Commit `b99390ce`, tree `0d815117230b`, working tree clean · **profile: release · target
+`sf-coffee` (classified `developer`, IsSandbox=False, Developer Edition) · verdict: PASS** · 432s
+· 117 checks: **114 PASS, 0 FAIL, 3 N/A** · all 19 mutators caught, `redaction` included
+· artifact `harness/attest/attest-b99390ce.json`
+
+Supersedes P9 and P10. The first all-PASS release run since the trust plane was built, and the
+first in which `maintainer_edit_cannot_change_active_gate` had anything to measure.
+
+### What changed today, and none of it was found by reading
+
+Seven defects, every one found by running Torque rather than inspecting it. Three external audit
+lenses had been over this code and found none of them.
+
+| | |
+|---|---|
+| `apex run test` classified as anonymous Apex | a refusal no operator could satisfy — no `--file`, so no digest to approve |
+| M8: the protected-object floor | unreachable on delete-by-Id, the spelling the rules mandate |
+| M8's MCP twin | the same delete refused through Bash and allowed through MCP |
+| `install-gates --project` | the flag activation's own success message named did not exist |
+| the enforcement manifest | keyed two different ways, so it could never report a match |
+| `cache_poison_resistant` | raised rather than judged, because another check left `sys.modules` altered |
+| `write-surface.py` | reported a path as writable that the gate refuses |
+
+Two of the seven were introduced today, by this session, and caught the same way.
+
+### The check that had never run
+
+`maintainer_edit_cannot_change_active_gate` reported N/A from the day it was written, correctly:
+enforcement was not activated, so there was nothing to measure and it said so rather than passing.
+It now reads:
+
+> a window-legal edit to `authorize_write` flips the workspace copy (exit 0) and leaves the active
+> gate denying — enforcement is running from the anchor
+
+That is P0-01 closed by measurement. The agent can still edit `hooks/` under a maintainer window;
+the edit no longer changes what adjudicates a write.
+
+### The three N/A, and why none is a pass
+
+- `installed_shim_matches_its_source` — no exec-time shim on this machine. Nothing to compare
+  rather than nothing wrong. **Without the shim the allowlist is advisory**, and the README says
+  so in those words.
+- `must_allow_corpus_has_no_shape_denials` — no corpus configured. Real commands carry client
+  names and record Ids and cannot live in this repository; `TORQUE_ALLOW_CORPUS` points at one the
+  operator keeps.
+- `image_manifest` — no images claimed, so none verified. An empty loop is not evidence.
+
+### What this run is evidence of, and what it is not
+
+Every org-touching check passed live against a disposable Developer Edition org — the half no
+static run and no CI job can reach. Classification was exercised across six disposable orgs, and
+four of them classified perfectly non-production and were still refused for not being on the
+allowlist: eligibility is not sufficient, which is the claim the design rests on.
+
+It remains one run, one org, by the author. The evidence is a day old on a tool that is weeks old,
+and the shim — the thing that makes the allowlist enforced rather than advisory — is not installed
+on the machine that produced this log. Both are stated in the README rather than implied away.
+
+---
+
+## P12 — release · GREEN, after a documentation audit that found the shipped default was wrong · 2026-08-05
+
+Commit `dab11c50`, tree `bcfe38e45d10`, working tree clean · **profile: release · target
+`sf-coffee` (classified `developer`, IsSandbox=False, Developer Edition) · verdict: PASS** · 569s
+· 117 checks: **114 PASS, 0 FAIL, 3 N/A** · all 19 mutators caught, `redaction` included
+· artifact `harness/attest/attest-dab11c50.json`
+
+Supersedes P11. Same green, one tree later, and the tree in between is why this entry exists.
+
+### The audit that produced it
+
+P11 was green and the documentation describing it was not. `activate-enforcement` — the command
+that closes P0-01 — appeared in **zero tracked documents**. `org-safety.md` carries the layer model
+and had no layer for it. The guide mentioned it nowhere across 22 pages. `MAINTAINER-MODE.md`,
+whose entire subject is what a maintainer window may do, did not say the window's power is now
+bounded by it. A safety property a reader cannot find is not one they can rely on.
+
+### What the audit found that was worse than stale prose
+
+The tracked `.claude/settings.json` named `$HOME/.torque/enforcement/current/hooks/`, which does
+not exist on a machine that has never activated. Measured rather than assumed: the interpreter
+exits **2** for a missing script, and the enforcement contract reads exit 2 as deny. **A fresh
+clone of this repository would have blocked every gated tool call** with an opaque `can't open
+file`, while the guide promised "nothing further is needed".
+
+Fail-closed rather than unsafe, and still a wall for anyone trying the tool for the first time.
+`install-gates --project` now writes an **untracked** `settings.local.json`: the committed
+registration stays workspace-pointing so a clone works with no setup, the hardened registration
+lives beside it without entering the repository, and the working tree stays clean — which matters
+because a dirty tree can neither be re-activated nor anchor an attestation.
+
+The trust-plane checks now read the **effective** registration, the merge of both files. Reading
+only the tracked one would report the portable default and call a correctly-hardened machine
+unprotected.
+
+### Numbers `claimed_counts` could not see
+
+It re-derives counts from the artifacts they describe, and it checks one phrasing. These used
+others and had drifted: the guide said "196 adversarial fixtures" twice (237), "34 entries" twice
+for a 44-entry catalogue, and `release (98)` for a 117-check profile. `ROADMAP.md` said 216
+fixtures and quoted retrieval as 94/86/85 against measured values of 95% matched, 88% surfaced over
+81 cases, 88% precision over 34 negatives — so the precision headroom is three points rather than
+none. The allow share is now stated as measured: 67 of 237, 28%.
+
+`claimed_counts` did catch the guide growing to 22 pages, which is the half of it that works.
+
+### What this run is evidence of, and what it is not
+
+Every org-touching check passed live against a disposable Developer Edition org. Enforcement runs
+from the trust anchor, and `maintainer_edit_cannot_change_active_gate` measures that rather than
+assuming it.
+
+Still one run, one org, by the author, days old on a tool that is weeks old. The exec-time shim is
+not installed on this machine, so `installed_shim_matches_its_source` reports N/A and the allowlist
+is advisory here rather than enforced. The README says that in those words.

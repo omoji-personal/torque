@@ -19,7 +19,24 @@ try {
     if (count > 0) break;
   }
   if (count > 0) { console.log('RENDER_OK ' + (await page.title()).slice(0, 40)); process.exit(0); }
-  console.log('RENDER_FAIL nav bar absent after settle; url=' + page.url().slice(0, 60));
+  // NAME WHERE IT STOPPED. This printed page.url().slice(0, 60), which truncated mid-host to
+  // "...develop.my." and threw away the only fact that identified the problem — and slicing a
+  // raw URL is also how a session token escapes into a log. host+pathname carries no query.
+  //
+  // Measured 2026-08-06: the frontdoor session was fine and the chain ended at
+  // /_ui/system/security/ChangePassword — an EXPIRED PASSWORD. Lightning never boots because the
+  // org never lets you past the password screen, and "nav bar absent" reads as a render fault.
+  // Four hours and eight ruled-out hypotheses went into a Lightning bug that was not there.
+  let where = '(unparseable)';
+  try { const u = new URL(page.url()); where = u.host + u.pathname; } catch {}
+  let hint = '';
+  if (where.includes('/_ui/system/security/ChangePassword')) {
+    hint = ' — the org is forcing a password change, so NO Lightning page can load. Reset the '
+         + 'password, and set the profile policy to never expire so it does not recur.';
+  } else if (where.includes('/login') || where.includes('/secur/')) {
+    hint = ' — still inside the auth chain; the session handoff did not complete.';
+  }
+  console.log('RENDER_FAIL nav bar absent after settle; landed=' + where + hint);
   process.exit(1);
 } catch (e) {
   console.log('RENDER_FAIL ' + String(e).slice(0, 80));

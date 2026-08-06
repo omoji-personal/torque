@@ -13,7 +13,14 @@ Usage:
   torque approve <org> <op> --prod [--apex-file <path>]     # PRODUCTION single-op override
   torque approve <org> --session <minutes>                  # PRODUCTION window (<=120 min)
   torque approve <org> --end-session                        # revoke the window
-op ∈ apex | bulk-delete | bulk-write | where-delete | where-update | destructive-metadata | write
+op ∈ apex | bulk-delete | bulk-write | where-delete | where-update | destructive-metadata
+    | org-delete | opaque-write | unrecognised-destructive        (destructive classes)
+    | write | deploy | update | delete | insert | upsert          (ordinary labels)
+
+The destructive classes are the names the gates actually demand, so those are the ones to mint.
+An ordinary label is recorded for the audit trail and does NOT narrow a production token: the
+gate consumes `prod-write` for any ordinary production write on that org. The confirmation
+prompt says so rather than repeating the label back as if it were a scope.
 """
 import json, os, sys, time, hashlib, subprocess
 from pathlib import Path
@@ -23,7 +30,18 @@ import lib
 ROOT = Path(__file__).resolve().parent.parent
 
 DESTRUCTIVE_OPS = {"apex", "bulk-delete", "bulk-write", "where-delete", "where-update",
-                   "destructive-metadata"}
+                   "destructive-metadata",
+                   # Record-level delete of an operator-protected sObject. The only op name the
+                   # destructive gate demands from OUTSIDE classify_destructive — delete-by-Id is
+                   # not destructive-class, and the protected floor is what makes this one so (M8).
+                   "protected-record-delete"}
+# The ordinary (non-destructive) labels an approval may name. These do NOT narrow a production
+# token — the gate consumes `prod-write` for any of them — but the set is closed so the operator
+# cannot confirm a word that means nothing. `opaque-write` and `unrecognised-destructive` are
+# included because the destructive gate really does demand tokens under those exact names, and an
+# operator following the usage text must be able to mint one.
+KNOWN_OPS = DESTRUCTIVE_OPS | {"write", "deploy", "update", "delete", "insert", "upsert",
+                               "opaque-write", "unrecognised-destructive", "org-delete"}
 SESSION_MAX_MIN = 120
 # A maintainer window is bounded by the WORK, not by the same clock as a production-write
 # session, and the two should not share a number just because they started with one.
@@ -41,6 +59,15 @@ SESSION_MAX_MIN = 120
 # still revocable with --end-maintainer, still tree-bound, and every edit under it is still
 # audited as MAINTAINER-EDIT. What it is not is a prompt that fires when nobody is awake.
 MAINTAINER_MAX_MIN = 720
+# An observe-only window is the one grant that is dangerous FOR ITS WHOLE DURATION, and in the
+# direction the other two are not: while it is open the org protections are advisory, so every
+# minute is a minute in which a production write proceeds because nobody was blocking it. That is
+# the production-session risk profile, not the maintainer one, so it takes the production number.
+#
+# It also has a natural session length. What it is for is watching one real work session and
+# counting the interruptions, and if two hours of real work has not shown the friction, a longer
+# window will not — it will just be an unprotected afternoon.
+OBSERVE_MAX_MIN = 120
 
 
 def _ensure_secret():
@@ -121,17 +148,90 @@ def _maintainer(args):
     print("revoke: torque approve --end-maintainer")
 
 
+def _observe(args):
+    """Open or revoke a window in which the gates RECORD their denials instead of enforcing them.
+
+    Also deliberately org-free, and for a sharper reason than the maintainer window: this grant
+    must never be confused with permission to write anywhere. It permits nothing. It changes what
+    happens when something is REFUSED — the refusal is written down and the operation proceeds —
+    and it is the only way to find out what Torque would cost a real day's work without betting
+    that day on a three-week-old gate.
+
+    The confirmation text says the dangerous part out loud, because during this window the org
+    protections are advisory: a production write that would have been denied will go through.
+    That is the entire point and it is also the entire risk, so the operator types PRODUCTION IS
+    UNPROTECTED rather than something reassuring.
+    """
+    if args[0] == "--end-observe":
+        lib.OBSERVE_GRANT.unlink(missing_ok=True)
+        lib.audit("OBSERVE-REVOKE", "observe-only window revoked", durable=True)
+        print("observe-only window revoked")
+        return
+    try:
+        mins = int(args[1])
+    except (IndexError, ValueError):
+        print("usage: torque approve --observe <minutes>", file=sys.stderr); sys.exit(2)
+    if mins <= 0:
+        print("minutes must be positive", file=sys.stderr); sys.exit(2)
+    mins = min(mins, OBSERVE_MAX_MIN)
+    tree = str(lib.TORQUE_HOME.resolve())
+    with open("/dev/tty") as tty:
+        sys.stderr.write(
+            f"\n*** OBSERVE-ONLY WINDOW — THE GATES STOP BLOCKING ***\n"
+            f"  tree:     {tree}\n"
+            f"  duration: {mins} min\n"
+            f"For {mins} minutes the gates RECORD what they would have refused and let it\n"
+            f"through. Denials become OBSERVE entries in the audit trail. This is how you\n"
+            f"measure what Torque would cost real work before you let it block real work.\n"
+            f"\n"
+            f"WHAT THIS MEANS RIGHT NOW: a write to a production org that would have been\n"
+            f"denied WILL PROCEED. A destructive operation with no approval token WILL\n"
+            f"PROCEED. Do not open this window against an org you cannot afford to lose.\n"
+            f"\n"
+            f"Still refused, window or no window: reaching the trust anchor or the CLI auth\n"
+            f"store, editing Torque's own protected source, and putting local/ into git.\n"
+            f"Type exactly  PRODUCTION IS UNPROTECTED  to authorize: ")
+        sys.stderr.flush()
+        if tty.readline().strip() != "PRODUCTION IS UNPROTECTED":
+            print("refused", file=sys.stderr); sys.exit(3)
+    _ensure_secret()
+    g = {"tree": tree, "exp": int(time.time()) + mins * 60, "iat": int(time.time())}
+    g["sig"] = lib.sign(g)
+    lib.ANCHOR.mkdir(parents=True, exist_ok=True); os.chmod(lib.ANCHOR, 0o700)
+    lib.OBSERVE_GRANT.write_text(json.dumps(g)); os.chmod(lib.OBSERVE_GRANT, 0o600)
+    lib.audit("OBSERVE-GRANT", f"{mins}m observe-only window for {tree}", durable=True)
+    print(f"observe-only window open for {mins} min ({tree}) — gates are RECORDING, not blocking")
+    print("revoke: torque approve --end-observe")
+
+
 def _confirm(prompt):
     with open("/dev/tty") as tty:
         sys.stderr.write(prompt); sys.stderr.flush()
         return tty.readline().strip() == "YES"
 
 
-def _confirm_prod(target, orgid, username, instance):
+def _confirm_prod(target, orgid, username, instance, op):
+    """Show the operator what the token ACTUALLY authorizes, which is broader than the label.
+
+    The usage reads `torque approve <org> <op> --prod` and the confirmation named `<op>`, so the
+    operator reasonably concluded they were approving that operation. For a non-destructive
+    production write the mechanism mints `prod-write` with the label DISCARDED, and any ordinary
+    production write on that org consumes it. Single-use is not single-operation.
+
+    The honest fix has two halves and this is the one that matters: say so at the moment of
+    consent. Binding the token to a normalized action hash is the real remedy and is a contract
+    change, not a prompt change — until it exists, the operator is told the true scope rather
+    than a narrower one that reads better.
+    """
+    scope = (f"ONE destructive `{op}` operation" if op in DESTRUCTIVE_OPS else
+             f"ONE ordinary production write of ANY class — the label `{op}` is recorded for "
+             f"the audit trail and does NOT narrow what the token authorizes")
     with open("/dev/tty") as tty:
         sys.stderr.write(
             f"\n*** PRODUCTION WRITE ***\n  org:      {target}  ({orgid})\n"
             f"  user:     {username}\n  instance: {instance}\n"
+            f"  grants:   {scope}\n"
+            f"            single use, 5 minutes, this org only\n"
             f"Type exactly  WRITE PRODUCTION  to authorize: ")
         sys.stderr.flush()
         return tty.readline().strip() == "WRITE PRODUCTION"
@@ -230,6 +330,11 @@ def main():
     if args and args[0] in ("--maintainer", "--end-maintainer"):
         return _maintainer(args)
 
+    # Observe-only window: also org-free. It authorizes no write anywhere — it changes what
+    # happens to a refusal — so resolving an org here would imply a scope it does not have.
+    if args and args[0] in ("--observe", "--end-observe"):
+        return _observe(args)
+
     if len(args) < 2:
         print(__doc__, file=sys.stderr); sys.exit(2)
     target = args[0]
@@ -244,7 +349,7 @@ def main():
             mins = min(int(args[args.index("--session") + 1]), SESSION_MAX_MIN)
         except Exception:
             print("usage: torque approve <org> --session <minutes>", file=sys.stderr); sys.exit(2)
-        if not _confirm_prod(target, orgid, username, instance):
+        if not _confirm_prod(target, orgid, username, instance, op):
             print("aborted", file=sys.stderr); sys.exit(1)
         lib.PROD_SESSIONS.mkdir(parents=True, exist_ok=True); os.chmod(lib.PROD_SESSIONS, 0o700)
         grant = {"orgId": orgid, "exp": int(time.time()) + mins * 60, "iat": int(time.time())}
@@ -259,6 +364,18 @@ def main():
         print(f"production session for {target} revoked"); return
 
     op = args[1]
+    # A closed vocabulary. `op` was taken verbatim and never checked, so
+    # `torque approve my-prod banana --prod` was accepted and minted a generic production token
+    # — the operator confirmed a word the mechanism never consulted. Refusing unknown labels does
+    # not make the token operation-bound (that needs a contract hash), but it stops the approval
+    # flow accepting a description of an operation that does not exist.
+    if op not in KNOWN_OPS:
+        print(f"unknown operation {op!r}. Approval names an operation from a closed set so the "
+              f"word you confirm is one the gates use.\n"
+              f"  destructive : {', '.join(sorted(DESTRUCTIVE_OPS))}\n"
+              f"  ordinary    : {', '.join(sorted(KNOWN_OPS - DESTRUCTIVE_OPS))}",
+              file=sys.stderr)
+        sys.exit(2)
     is_prod = "--prod" in args
     digest = ""
     impact = None
@@ -272,7 +389,7 @@ def main():
         digest = args[2]
 
     if is_prod:
-        if not _confirm_prod(target, orgid, username, instance):
+        if not _confirm_prod(target, orgid, username, instance, op):
             print("aborted", file=sys.stderr); sys.exit(1)
         _mint("prod-write", orgid, "")                 # authorizes the prod write itself
         if op in DESTRUCTIVE_OPS:

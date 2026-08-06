@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Capture what a week of real work did to Torque, and what Torque did to it — in one line.
+
+WHY THIS EXISTS, and why it is this small.
+
+The usability plan turns on three counts that only the person doing the work can produce: a SAVE
+(Torque changed an outcome), an ESCAPE (the work was finished outside the agent after a refusal),
+and a SKIPPED (the agent stopped proposing a category of work). Two adversarial lenses said the
+same thing about them independently: a manual log kept by somebody under deadline will have two
+entries and then stop.
+
+This repository already has the proof. `torque lesson` holds 236 captured observations and zero
+resolved pairs — the intake works and nobody has ever emptied the queue. A capture mechanism that
+costs more than a few seconds does not get used on a Thursday afternoon, and then the week
+produces a verdict with no evidence underneath it, which is worse than not running the week.
+
+So: one command, three flags, no arguments to remember, no file to open.
+
+    torque week --save    "would have deployed the field with no FLS; needs caught it"
+    torque week --escape  "blast-radius UNDETERMINED, did the update in Setup instead"
+    torque week --skipped "stopped proposing bulk deletes entirely after Tuesday"
+    torque week                      # the week so far, with counts
+    torque week --close              # summarise and start a new week
+
+WHAT IT DELIBERATELY DOES NOT DO.
+
+No judgement, no scoring, no severity. The counts are the finding; interpreting them during the
+week is how a week gets talked into a conclusion. It also does not touch an org, take a target,
+or read anything but its own log — which is why it can sit in the read-only first-party set.
+
+ESCAPE AND SKIPPED ARE THE POINT. A save log alone measures the tool's value and nothing about
+its cost, and the two costs that matter are invisible by construction: work that left the audited
+channel, and work that stopped being proposed. Both are silences. Neither shows up in an audit
+log, because nothing happened.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+LOG = Path(os.environ.get("TORQUE_WEEK_LOG", ROOT / "local" / "week-log.jsonl"))
+
+KINDS = {
+    "save": "Torque changed an outcome",
+    "escape": "finished outside the agent after a refusal",
+    "skipped": "the agent stopped proposing this",
+    "note": "context, neither cost nor value",
+}
+
+# The entry is written through lib.redact, because a week log is written fast, in the middle of
+# real client work, and that is exactly when a record value or an org id gets pasted into a note.
+sys.path.insert(0, str(ROOT / "hooks"))
+try:
+    import lib as _lib
+    _redact = _lib.redact
+except Exception:                                      # noqa: BLE001
+    def _redact(t):                                    # never block capture on an import
+        return t
+
+
+def _entries():
+    if not LOG.exists():
+        return []
+    out = []
+    for line in LOG.read_text(errors="ignore").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except Exception:                              # noqa: BLE001
+            continue
+    return out
+
+
+def _add(kind, text):
+    if not text.strip():
+        print(f"--{kind} needs something to record; an empty entry is not an observation",
+              file=sys.stderr)
+        return 2
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"t": int(time.time()), "kind": kind, "text": _redact(text.strip())[:500]}
+    with LOG.open("a") as f:
+        f.write(json.dumps(rec) + "\n")
+    os.chmod(LOG, 0o600)
+    n = sum(1 for e in _entries() if e.get("kind") == kind)
+    print(f"recorded: {kind} ({n} this week) — {KINDS[kind]}")
+    return 0
+
+
+def _report(entries, header):
+    by = {}
+    for e in entries:
+        by.setdefault(e.get("kind", "?"), []).append(e)
+    print(header)
+    if not entries:
+        # An empty week is a real result and must not read as a clean one. Nothing was recorded;
+        # whether nothing happened is a different question and this tool cannot answer it.
+        print("  nothing recorded. That is not the same as nothing happening — an empty log "
+              "means the instrument was not used.")
+        return 0
+    for kind in ("save", "escape", "skipped", "note"):
+        rows = by.get(kind) or []
+        if not rows:
+            continue
+        print(f"\n  {kind.upper()}  ({len(rows)}) — {KINDS[kind]}")
+        for e in rows:
+            when = time.strftime("%a %H:%M", time.localtime(e["t"]))
+            print(f"    {when}  {e['text'][:110]}")
+    saves = len(by.get("save") or [])
+    escapes = len(by.get("escape") or [])
+    skipped = len(by.get("skipped") or [])
+    print(f"\n  saves {saves} · escapes {escapes} · not-attempted {skipped}")
+    # The bars from the usability plan, stated rather than scored. A tool that says "PASS" about
+    # its own trial is doing the interpreting the operator was supposed to do.
+    if saves == 0:
+        print("  → no save recorded. The plan's bar is one per week; below it, Torque is "
+              "harmless rather than useful.")
+    if escapes:
+        print("  → work left the audited channel. A refusal that moves an operation to Setup is "
+              "the failure that looks like success.")
+    if skipped:
+        print("  → categories stopped being attempted. Denials falling to zero for this reason "
+              "reads identical to the tool being right.")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="torque week", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    for k, why in KINDS.items():
+        ap.add_argument(f"--{k}", metavar="TEXT", help=why)
+    ap.add_argument("--close", action="store_true",
+                    help="summarise the week and rotate the log")
+    a = ap.parse_args()
+
+    for k in KINDS:
+        v = getattr(a, k)
+        if v:
+            return _add(k, v)
+
+    entries = _entries()
+    if a.close:
+        rc = _report(entries, f"\nWEEK CLOSED — {len(entries)} entries")
+        if entries:
+            stamp = time.strftime("%Y-%m-%d", time.localtime(entries[0]["t"]))
+            dest = LOG.with_name(f"week-log-{stamp}.jsonl")
+            LOG.rename(dest)
+            try:
+                shown = dest.relative_to(ROOT)
+            except ValueError:
+                shown = dest
+            print(f"\n  archived to {shown}; a new week starts on the next entry")
+        return rc
+    return _report(entries, f"\nWEEK SO FAR — {len(entries)} entries")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

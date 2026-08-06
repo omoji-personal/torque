@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Install a TESTED commit's gates into the trust anchor and make them the running system.
+
+WHY THIS EXISTS — P0-01, reproduced 2026-08-05.
+
+`prod_write_gate` refuses, before it ever consults the maintainer grant, any edit to the trust
+anchor, the sf auth store, the allowlist, the classification cache, the protected-object list, the
+alias index and the audit log. Its own comment states the principle it is defending:
+
+    A window unlocks what this tool IS, never what it is allowed to write to.
+
+The inputs were made immutable and THE INTERPRETER WAS LEFT MUTABLE. Every one of those protected
+files is read by code a maintainer window permits the agent to rewrite, and the next tool call
+imports the rewritten copy. Demonstrated: edit `authorize_write` to `return True, "mutant"` and a
+production write goes DENIED -> ALLOWED. Protecting the answer while the thing that reads it stays
+editable is not a boundary.
+
+WHAT THIS CHANGES, AND WHAT IT DELIBERATELY DOES NOT
+
+Only the CODE moves. `hooks/` is copied into `~/.torque/enforcement/versions/<tree>/` and a
+`current` symlink points at it. Authorization DATA — the allowlist, the cache, the protected
+objects — stays in the workspace, because `is_authorization_input` already denies edits to it
+under a window. This adds one mechanism rather than reworking three.
+
+The repository's `hooks/` stays editable under a window and becomes SOURCE. That is the split
+`docs/MAINTAINER-MODE.md` has claimed since it was written; this makes the claim true rather than
+adding a new one.
+
+WHAT IT DOES NOT FIX, said here because the temptation is to overclaim: a process running as the
+operator can read `~/.torque` and rewrite the installed tree. This closes the agent's TOOL
+SURFACE, which is the surface every other control in this project is scoped to. It becomes a real
+boundary only under OS isolation — a separate uid, or a sandboxed runtime — and that is a
+deployment property, not a hook property.
+
+    torque activate-enforcement            # install the current commit's gates and activate
+    torque activate-enforcement --status   # what is active, and how far the repo has moved
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+TORQUE_HOME = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(TORQUE_HOME / "hooks"))
+import lib  # noqa: E402
+
+ENFORCEMENT = lib.ANCHOR / "enforcement"
+VERSIONS = ENFORCEMENT / "versions"
+CURRENT = ENFORCEMENT / "current"
+MANIFEST = ENFORCEMENT / "manifest.json"
+
+# Everything the gates need to decide. Copied wholesale rather than file-by-file: a list of files
+# to install is one more list nobody compares, and the failure mode is a gate importing a helper
+# that was not copied.
+SOURCE_DIR = TORQUE_HOME / "hooks"
+
+
+def sh(*a):
+    return subprocess.run(a, capture_output=True, text=True, cwd=TORQUE_HOME)
+
+
+def digest_tree(root: Path):
+    out = {}
+    for p in sorted(root.rglob("*.py")):
+        out[str(p.relative_to(root))] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
+
+
+def read_manifest():
+    try:
+        return json.loads(MANIFEST.read_text())
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def status():
+    m = read_manifest()
+    if not m or not CURRENT.exists():
+        print("enforcement: NOT ACTIVATED — the gates run from the repository, which a "
+              "maintainer window can edit.")
+        print("  activate with: torque activate-enforcement   (operator, real terminal)")
+        return 1
+    head = sh("git", "rev-parse", "HEAD").stdout.strip()
+    print(f"enforcement: ACTIVE")
+    print(f"  commit    {m.get('commit', '?')[:12]}   tree {m.get('tree', '?')[:12]}")
+    print(f"  activated {m.get('activated_at', '?')}")
+    print(f"  path      {CURRENT}")
+
+    # Drift is EXPECTED here — the repo moves ahead of what was tested and activated, and that is
+    # the point of separating them. What matters is that a reader can see how far.
+    if head and head != m.get("commit"):
+        n = sh("git", "rev-list", "--count", f"{m.get('commit')}..HEAD").stdout.strip()
+        print(f"  the repository is {n or '?'} commit(s) ahead of what is enforcing. That is not "
+              f"a fault — source moves, enforcement is activated deliberately.")
+
+    # `/ "hooks"` is load-bearing. activate() records digest_tree(dest / "hooks"), keyed "lib.py";
+    # CURRENT points at dest, not dest/hooks, so recomputing from CURRENT keyed "hooks/lib.py" and
+    # EVERY recorded file was `bad` while EVERY live file was `extra` — on every activation, from
+    # the first one. A tamper detector that reports tampering unconditionally is worse than no
+    # detector: it is a line the operator learns to skip, and it would have been skipped on the
+    # day it finally meant something.
+    live = digest_tree(Path(os.path.realpath(CURRENT)) / "hooks")
+    recorded = m.get("files", {})
+    bad = [f for f, d in recorded.items() if live.get(f) != d]
+    extra = [f for f in live if f not in recorded]
+    if bad or extra:
+        print(f"  !! INSTALLED TREE DOES NOT MATCH ITS MANIFEST: {sorted(bad + extra)[:4]}")
+        print(f"     Detection only — a same-uid process can recompute the manifest. This "
+              f"catches accidental corruption and unprepared tampering, not a determined actor.")
+        return 2
+    print(f"  {len(recorded)} file(s) match the recorded digests")
+    return 0
+
+
+def activate():
+    if not lib.operator_present():
+        print("refusing: activating enforcement decides what adjudicates every future write, so "
+              "it needs an operator at a real terminal — the same presence proof `torque approve` "
+              "uses.\n  Run it yourself from a login shell, clear of the agent:\n"
+              f"    cd {TORQUE_HOME} && python3 bin/torque activate-enforcement",
+              file=sys.stderr)
+        return 2
+
+    dirty = sh("git", "status", "--porcelain").stdout.strip()
+    if dirty:
+        print("refusing: the working tree is dirty. An enforcement tree that maps to no commit "
+              "cannot be re-derived by anyone, including you in a month.\n"
+              f"uncommitted:\n{dirty[:400]}", file=sys.stderr)
+        return 2
+
+    # Activating untested enforcement is how a safe-looking install becomes the thing that fails
+    # open. The static profile is the floor; it needs no org and it exercises every gate path.
+    print("running the static profile before activating…")
+    r = subprocess.run([sys.executable, str(TORQUE_HOME / "harness" / "validate.py"),
+                        "--profile", "static"], cwd=TORQUE_HOME)
+    if r.returncode != 0:
+        print("refusing: the static profile did not pass, so this commit's gates are not "
+              "established. Fix, commit, and re-run.", file=sys.stderr)
+        return 2
+
+    commit = sh("git", "rev-parse", "HEAD").stdout.strip()
+    tree = sh("git", "rev-parse", "HEAD^{tree}").stdout.strip()
+    prev = read_manifest()
+
+    with open("/dev/tty") as tty:
+        sys.stderr.write(
+            f"\n*** ACTIVATE ENFORCEMENT ***\n"
+            f"  commit:   {commit[:12]}\n"
+            f"  tree:     {tree[:12]}\n"
+            f"  replaces: {(prev or {}).get('commit', '<nothing — first activation>')[:12]}\n"
+            f"From now on the gates that adjudicate every write run from the trust anchor, and\n"
+            f"editing this repository's hooks/ will NOT change them. Re-run this command to\n"
+            f"promote new source after it is tested.\n"
+            f"Type exactly  ACTIVATE  to authorize: ")
+        sys.stderr.flush()
+        if tty.readline().strip() != "ACTIVATE":
+            print("refused", file=sys.stderr)
+            return 3
+
+    dest = VERSIONS / tree
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    shutil.copytree(SOURCE_DIR, dest / "hooks")
+    for p in (dest / "hooks").rglob("*"):
+        if p.is_file():
+            os.chmod(p, 0o400)                             # read-only even to the owner's tools
+    os.chmod(lib.ANCHOR, 0o700)
+
+    tmp = ENFORCEMENT / ".current.new"
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    tmp.symlink_to(dest)
+    os.replace(tmp, CURRENT)                               # atomic flip; never a missing `current`
+
+    MANIFEST.write_text(json.dumps({
+        "schema": "torque.enforcement/1",
+        "commit": commit, "tree": tree,
+        "activated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "files": digest_tree(dest / "hooks"),
+    }, indent=2) + "\n")
+    os.chmod(MANIFEST, 0o600)
+
+    lib.audit("ENFORCEMENT-ACTIVATED", f"commit {commit[:12]} tree {tree[:12]}", durable=True)
+
+    print(f"\nenforcement active: {CURRENT} -> versions/{tree[:12]}")
+    print("\nThe hooks must now be pointed at it. Regenerate the project registration with:")
+    print(f"    cd {TORQUE_HOME} && python3 bin/torque install-gates --project")
+    print("Until that is done the repository's hooks are still the ones running, and this "
+          "activation changes nothing.")
+    return 0
+
+
+def main():
+    if "--status" in sys.argv:
+        return status()
+    return activate()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

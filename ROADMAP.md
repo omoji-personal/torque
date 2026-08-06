@@ -177,8 +177,15 @@ accounted for.
 `torque receipt` assembles them. It runs the existing tools rather than reimplementing any,
 because a second blast radius would diverge from the first and nothing would compare them;
 `receipt_composes_rather_than_reimplements` asserts it stays that way. Verified live: 4/6
-INCOMPLETE with no field named, 6/6 PROOF-CARRYING with the field, permission set and the three
-kinds of human evidence supplied.
+INCOMPLETE with no field named, 6/6 ASSESSMENT COMPLETE with the field, permission set and the
+three kinds of human evidence supplied.
+
+**That verdict used to be called PROOF-CARRYING, and an external audit was right that the name
+claimed what the tool does not establish.** There is no execution element: all six describe org
+state and what approval would require, so a receipt assembled against an org whose state already
+matches reads identically to one assembled after a real change. The JSON now carries
+`execution_proven: false`, and a check fails if the verdict ever says proof again. A signed,
+operation-bound, execution-referencing receipt is a different artifact and is not this one.
 
 The one rule it is strict about: **a receipt showing five of six must not read as complete.**
 The evidence element is the self-referential one — the receipt vouching for itself — and it
@@ -195,7 +202,7 @@ be this tool vouching for a control it has no access to.
 **The adversarial assurance corpus is the asset.** The observation that changed my mind, from the
 mechanism review: the catalogue's facts are copyable; the evidence that the gates, the retrieval
 and the verifiers fail correctly under hostile variation is not. 196 bypass fixtures, 34 negative
-retrieval cases, 17 mutators, the live experiments and the verifier-falsification seams are what
+retrieval cases, 19 mutators, the live experiments and the verifier-falsification seams are what
 the adversarial rounds left behind.
 
 So new capability ships with its bypass fixtures and its mutator, or it does not ship.
@@ -211,14 +218,20 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 98 checks (78 static, 95 capability, 98 release),
-17 mutators, 196 adversarial fixtures, and retrieval measured against an evaluation set written by
-someone other than the author of the thing being measured — 94% *matched* recall, 86% *surfaced*
-recall, 85% precision over 34 negatives.
+The current state, measured rather than claimed: 117 checks (96 static, 114 capability, 117 release),
+19 mutators, 237 adversarial fixtures — 67 of them asserting that ordinary work is *allowed* — and
+retrieval measured against an evaluation set written by someone other than the author of the thing
+being measured: 95% *matched* recall, 88% *surfaced* recall over 81 cases, 88% precision over 34
+negatives.
 
 Both recall numbers, because they answer different questions and quoting only the first flatters
 the tool: MATCHED is whether the entry's triggers fired at all; SURFACED is whether it survived the
-two-slot display limit and actually reached the operator. The 8-point gap is a capacity limit
+two-slot display limit and actually reached the operator. The 7-point gap is a capacity limit
 rather than a mis-ranking, and only matched recall currently has a FAIL floor. Precision sits at
-85% against a floor of 85% — one more false positive turns the build red, which is the intended
-tension and worth stating rather than discovering.
+88% against a floor of 85% — three points of headroom, so a handful of new false positives turns
+the build red, which is the intended tension and worth stating rather than discovering.
+
+Enforcement now runs from the trust anchor rather than the workspace, and
+`maintainer_edit_cannot_change_active_gate` measures it rather than assuming it — it reported
+`N/A` from the day it was written until there was something to measure. That closes the largest
+disclosed gap: a maintainer window could previously rewrite the gate it was granted under.

@@ -49,8 +49,29 @@ ROOT = Path(__file__).resolve().parent.parent
 VERIFIED = "VERIFIED"
 UNVERIFIED = "NOT VERIFIED"
 BLOCKED = "BLOCKED"
+# The org did not answer, so the verifier did not run. Distinct from NOT VERIFIED, which means
+# it ran and the answer was no.
+#
+# WHY THIS EXISTS. An external audit gave a deterministic false-DONE: point the tool at an
+# unreachable org, and field_exists and fls both come back NOT VERIFIED with the detail "the org
+# could not answer" — then `--na` clears both, because --na cleared anything not BLOCKED. Add
+# three evidence strings and every layer is green against an org that was never reached.
+#
+# The distinction was already in the DETAIL TEXT of every one of those branches and in none of
+# the outcomes, so nothing downstream could act on it. An unanswered verifier is a fact about the
+# tool and the environment, exactly like BLOCKED, and the same rule follows: it cannot be waived
+# by the caller being graded.
+UNANSWERED = "UNANSWERED"
+# Supplied by a person rather than observed by a query. Green-eligible — otherwise the verdict is
+# unreachable for every input and a ledger with one row carries no information — but counted and
+# named separately in the verdict, because "a human said so" and "the org said so" are different
+# kinds of knowing and conflating them is what made the false-DONE readable as a real one.
+ASSERTED = "ASSERTED"
 NA = "N/A"
-GREEN = (VERIFIED, NA)          # the only two outcomes that do not withhold the word
+GREEN = (VERIFIED, NA, ASSERTED)   # the outcomes that do not withhold the word
+# Neither of these may be cleared by --na: one is the tool failing to look, the other is the tool
+# being unable to look. Both are facts about the tool, not judgements about the change.
+UNWAIVABLE = (BLOCKED, UNANSWERED)
 
 # Dated so a blocker cannot age into background noise: a reader can see how long it has been
 # true and decide whether it is still a reason or has become an excuse.
@@ -144,7 +165,7 @@ def layer_field_exists(target, obj, field):
                              f"EntityDefinition.QualifiedApiName='{obj}' AND "
                              f"QualifiedApiName='{field}'", tooling=True)
     if err:
-        return Layer("field_exists", f"{obj}.{field} exists in the org", UNVERIFIED,
+        return Layer("field_exists", f"{obj}.{field} exists in the org", UNANSWERED,
                      f"the org could not answer: {err}")
     if not rows:
         return Layer("field_exists", f"{obj}.{field} exists in the org", UNVERIFIED,
@@ -197,7 +218,7 @@ def layer_fls(target, obj, field, permset):
                      "SELECT Id, PermissionsRead, PermissionsEdit FROM FieldPermissions WHERE "
                      f"Field='{obj}.{field}' AND Parent.Name='{permset}'")
     if err:
-        return Layer("fls", f"field-level security granted via {permset}", UNVERIFIED,
+        return Layer("fls", f"field-level security granted via {permset}", UNANSWERED,
                      f"the org could not answer: {err}")
     if not rows:
         return Layer("fls", f"field-level security granted via {permset}", UNVERIFIED,
@@ -218,7 +239,7 @@ def layer_assigned(target, permset):
     rows, err = soql(target, "SELECT COUNT(Id) c FROM PermissionSetAssignment WHERE "
                              f"PermissionSet.Name='{permset}'")
     if err:
-        return Layer("assignment", f"somebody actually holds {permset}", UNVERIFIED,
+        return Layer("assignment", f"somebody actually holds {permset}", UNANSWERED,
                      f"the org could not answer: {err}")
     n = (rows[0].get("c") if rows else 0) or 0
     if not n:
@@ -243,7 +264,7 @@ def layer_profile_render(profile, evidence):
     """
     if evidence:
         return Layer("profile_render", f"visible in the UI as {profile or 'a non-admin profile'}",
-                     VERIFIED, f"observed by a person: {evidence}")
+                     ASSERTED, f"observed by a person: {evidence}")
     return Layer("profile_render",
                  f"visible in the UI as {profile or 'a non-admin profile'}", BLOCKED,
                  f"not automated YET, and no longer for want of a method. Demonstrated live "
@@ -303,9 +324,11 @@ def build(a):
             sys.exit(2)
         # Only an UNVERIFIED layer may be declared inapplicable. A BLOCKED one may not: that
         # would let the browser blocker be waved away by the person it is there to stop.
-        if hit[0].outcome == BLOCKED:
-            print(f"--na cannot clear {key.strip()!r}: it is BLOCKED, not merely unchecked. "
-                  f"A blocker is a fact about the tool, not a judgement about this change.",
+        if hit[0].outcome in UNWAIVABLE:
+            print(f"--na cannot clear {key.strip()!r}: it is {hit[0].outcome}, not merely unchecked. "
+                  f"A blocker and an unanswered org are both facts about the tool, not "
+                  f"judgements about this change — and the caller being graded may not "
+                  f"waive the verifier that failed to run.",
                   file=sys.stderr)
             sys.exit(2)
         hit[0].outcome, hit[0].detail = NA, f"declared inapplicable: {reason.strip()}"

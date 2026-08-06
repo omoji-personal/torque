@@ -41,13 +41,62 @@ def sh(*a):
     return r.stdout.strip()
 
 
+def tool_version(*a):
+    """A toolchain version, or a stated absence. Never an exception.
+
+    `sh()` raises on a missing binary, and the toolchain block calls it for `sf` and `node` —
+    so the static attestation step this repo just added to CI died on its first run with
+    FileNotFoundError, because a runner that needs no org has no Salesforce CLI on it. The
+    attestation was recording the toolchain as a fact it assumed present rather than one it
+    checked.
+    An absent tool is a real, recordable fact about the environment a run happened in. It is
+    NOT a reason to have no attestation at all — which is what raising produced.
+    """
+    try:
+        r = subprocess.run(a, capture_output=True, text=True, cwd=ROOT)
+    except FileNotFoundError:
+        return f"absent ({a[0]} not on PATH)"
+    except Exception as e:                                 # noqa: BLE001
+        return f"unavailable ({type(e).__name__})"
+    if r.returncode != 0:
+        return f"present but did not report a version (exit {r.returncode})"
+    return (r.stdout or "").strip()[:60]
+
+
 def main():
     ap = argparse.ArgumentParser(prog="torque attest", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--target-org", required=True)
+    # Required for capability and release, which reach an org. NOT for static, which does not
+    # touch one — and demanding it there kept static attestations out of CI, which is the only
+    # place they could be produced automatically. The newest attestation in this repo is around
+    # sixty commits stale for exactly that reason: the artifact whose one job is to be
+    # trustworthy was produced by hand, so it was produced rarely.
+    ap.add_argument("--target-org")
     ap.add_argument("--profile", default="release",
                     choices=["static", "capability", "release"])
+    # Somewhere other than harness/attest/. CI asserts the working tree is clean after the run —
+    # a mutator that failed to restore a hook must not ride into a commit — and an attestation
+    # written into the repo would trip that assertion with a file that is not residue at all.
+    # Two true things collide unless the artifact can be put elsewhere and uploaded.
+    ap.add_argument("--out", metavar="DIR",
+                    help="directory to write the attestation into (default harness/attest)")
+    # Forwarded to validate.py, and RECORDED below. Without this, CI ran the static profile
+    # twice with different flags: the gating step declared one allowed skip
+    # (operator_presence_can_succeed needs a login TTY, which a runner has not got) and this
+    # tool re-ran the same profile without it, landed on DEGRADED, and exited 1 — so the build
+    # went red for a condition the gate had already ruled on, and would have every run forever.
+    #
+    # The recording half is not optional. An attestation that carries an excused check without
+    # saying it was excused is the failure this file exists to avoid: a reader sees a verdict
+    # and cannot tell that a question went unasked. `allowed_skips` is written whether or not
+    # any were passed, so its absence in an older artifact is distinguishable from an empty one.
+    ap.add_argument("--allow-skip", action="append", metavar="CHECK:REASON", default=[],
+                    help="forwarded verbatim to validate.py and recorded in the attestation")
     a = ap.parse_args()
+    if a.profile != "static" and not a.target_org:
+        print(f"--target-org is required for --profile {a.profile}: it reaches a live org and "
+              f"an attestation that cannot name which one attests nothing.", file=sys.stderr)
+        return 2
 
     dirty = sh("git", "status", "--porcelain")
 
@@ -68,9 +117,12 @@ def main():
         return 2
 
     started = int(time.time())
-    run = subprocess.run([sys.executable, str(ROOT / "harness" / "validate.py"),
-                          "--profile", a.profile, "--target-org", a.target_org],
-                         capture_output=True, text=True, cwd=ROOT)
+    _argv = [sys.executable, str(ROOT / "harness" / "validate.py"), "--profile", a.profile]
+    if a.target_org:
+        _argv += ["--target-org", a.target_org]
+    for spec in a.allow_skip:
+        _argv += [f"--allow-skip={spec}"]
+    run = subprocess.run(_argv, capture_output=True, text=True, cwd=ROOT)
     clean = re.sub(r"\x1b\[[0-9;]*m", "", run.stdout + run.stderr)
 
     checks = [{"check": m.group(1), "outcome": m.group(2), "detail": m.group(3).strip()}
@@ -81,25 +133,40 @@ def main():
                   r"^\s+[✓✗!−·⧗]\s+(\S+)\s+(PASS|FAIL|WARN|SKIP|N/A|NA|LIMIT|LIMITED)\s+(.*)$",
                   clean, re.M)]
     mutators = [m.group(1) for m in re.finditer(r"^\s+✓\s+(.+?) mutator:", clean, re.M)]
+    # "ALL N MUTATORS CAUGHT" is printed only when NOTHING was skipped. Keying the count on it
+    # meant any skipped mutator — the redaction one needs an org, so every static run — reported
+    # `mutators_caught: 0` in the same document that listed sixteen mutators by name, each one
+    # observed catching what it was pointed at. An artifact that contradicts itself in adjacent
+    # fields is worse than one that admits a gap.
     self_test = re.search(r"ALL (\d+) MUTATORS CAUGHT", clean)
+    not_run = re.search(r"NOT RUN:\s*(.+?)\s*$", clean, re.M)
     verdict = (re.search(r"→ verdict:\s+(\S+)", clean) or [None, "UNKNOWN"])[1]
 
     # The org's identity is attested without being published: a reader can confirm two runs hit
     # the same org, and cannot learn which org that is.
-    try:
-        org_run = subprocess.run(
-            ["sf", "org", "display", "--target-org", a.target_org, "--json"],
-            capture_output=True, text=True)
-        d = json.loads(org_run.stdout)["result"]
-        org_id = d.get("id")
-        if org_run.returncode != 0 or not re.fullmatch(
-                r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", org_id or ""):
-            raise ValueError("org display returned no valid org id")
-        org = {"alias": a.target_org,
-               "org_id_sha256_16": hashlib.sha256(org_id.encode()).hexdigest()[:16]}
-    except Exception:
-        org = {"alias": a.target_org, "org_id_sha256_16": None, "note": "org did not answer"}
-        verdict = "UNKNOWN"
+    #
+    # A static run reached no org, so there is no identity to attest and none is invented. It
+    # records N/A with the reason rather than an empty alias, because a null org field on an
+    # attestation should say WHY it is null — "this profile does not touch an org" and "the org
+    # did not answer" are opposite facts and the older code produced the same shape for both.
+    if a.profile == "static":
+        org = {"alias": None, "org_id_sha256_16": None,
+               "note": "static profile reaches no org; nothing to attest here"}
+    else:
+        try:
+            org_run = subprocess.run(
+                ["sf", "org", "display", "--target-org", a.target_org, "--json"],
+                capture_output=True, text=True)
+            d = json.loads(org_run.stdout)["result"]
+            org_id = d.get("id")
+            if org_run.returncode != 0 or not re.fullmatch(
+                    r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", org_id or ""):
+                raise ValueError("org display returned no valid org id")
+            org = {"alias": a.target_org,
+                   "org_id_sha256_16": hashlib.sha256(org_id.encode()).hexdigest()[:16]}
+        except Exception:
+            org = {"alias": a.target_org, "org_id_sha256_16": None, "note": "org did not answer"}
+            verdict = "UNKNOWN"
 
     # A dirty non-release run is still worth recording; it is just not a release claim. The
     # schema says which it is, in the field a reader looks at first. "2-draft" cannot be mistaken
@@ -118,6 +185,14 @@ def main():
         "org_classification": next(
             (c["detail"] for c in checks if c["check"] == "org_classify"), None),
         "verdict": verdict,
+        # Which checks were excused and on what stated grounds. A DEGRADED verdict with no
+        # allowed_skips means checks were skipped for reasons NOBODY declared, and that is a
+        # different and worse artifact than one carrying a reason a reader can weigh. Always
+        # written, so an empty list is distinguishable from an older schema that never had it.
+        "allowed_skips": [
+            {"check": s.split(":", 1)[0].strip(),
+             "reason": s.split(":", 1)[1].strip() if ":" in s else "unstated"}
+            for s in a.allow_skip],
         "exit_code": run.returncode,
         "counts": {"checks": len(checks),
                    # Counted from what was actually parsed, rather than from a hand-written
@@ -125,10 +200,15 @@ def main():
                    # every NA and LIMIT total read zero (release panel round 3).
                    **{o.lower().replace("/", ""): sum(1 for c in checks if c["outcome"] == o)
                       for o in sorted({c["outcome"] for c in checks})}},
-        "self_test": {"mutators_caught": int(self_test.group(1)) if self_test else 0,
-                      "all_caught": bool(self_test), "mutators": mutators},
+        "self_test": {"mutators_caught": int(self_test.group(1)) if self_test
+                      else len(mutators),
+                      "all_caught": bool(self_test),
+                      "not_run": None if self_test else (not_run.group(1) if not_run
+                                                         else "unstated"),
+                      "mutators": mutators},
         "checks": checks,
-        "toolchain": {"sf": sh("sf", "--version")[:60], "node": sh("node", "--version"),
+        "toolchain": {"sf": tool_version("sf", "--version"),
+                      "node": tool_version("node", "--version"),
                       "python": sys.version.split()[0]},
         "denylist_digest": (hashlib.sha256(DENY.read_bytes()).hexdigest()[:16]
                             if DENY.exists() else "ABSENT"),
@@ -152,17 +232,56 @@ def main():
         print("refusing to write an attestation with no check outcomes — the validation run "
               "produced nothing parseable", file=sys.stderr)
         return 2
-    if (verdict == "PASS") != (run.returncode == 0):
+    # validate.py exits 0 on DEGRADED when every SKIP was declared with --allow-skip, so the
+    # old `(verdict == "PASS") != (returncode == 0)` form would refuse a run that behaved exactly
+    # as its contract says. The invariant being defended is not "PASS means zero" — it is that
+    # the verdict and the exit code must not tell a reader two different stories. Declared
+    # allowances are the one case where DEGRADED and zero agree.
+    expected_zero = verdict == "PASS" or (verdict == "DEGRADED" and bool(a.allow_skip))
+    if expected_zero != (run.returncode == 0):
         print(f"refusing: validator verdict {verdict} disagrees with exit "
-              f"{run.returncode}", file=sys.stderr)
+              f"{run.returncode}"
+              + (" (allowed skips were declared)" if a.allow_skip else ""), file=sys.stderr)
         return 2
-    OUT.mkdir(parents=True, exist_ok=True)
-    f = OUT / f"attest-{att['head'][:8]}.json"
+    out_dir = Path(a.out).expanduser() if a.out else OUT
+    out_dir.mkdir(parents=True, exist_ok=True)
+    f = out_dir / f"attest-{att['head'][:8]}.json"
+    # SIGN IT. An attestation was unsigned JSON in what was, until today, an agent-writable
+    # directory — so a hand-written `attest-ffffffff.json` claiming an all-PASS release validated
+    # on schema alone, and `check_attest` checked shape rather than authenticity.
+    #
+    # What the signature does and does not prove, stated because the difference matters: attest
+    # runs as the operator's uid and can read the anchor secret, and so can any same-uid process.
+    # This is therefore a guard against ACCIDENTAL corruption and against forgery through the
+    # agent's tool surface — which is the surface everything else here is scoped to — and it
+    # becomes a real boundary the day the agent's process cannot read the anchor. It is not a
+    # claim about a determined same-uid adversary.
+    #
+    # Signed over the document WITHOUT the signature field, via lib.sign, so there is one HMAC
+    # implementation in the repository rather than a second that drifts from it.
+    try:
+        sys.path.insert(0, str(ROOT / "hooks"))
+        import lib as _lib
+        if _lib.SECRET.exists():
+            att["sig"] = _lib.sign(att)
+        else:
+            att["sig"] = None
+            att["sig_note"] = "no anchor secret on this machine; attestation is unauthenticated"
+    except Exception as e:                                 # noqa: BLE001
+        att["sig"] = None
+        att["sig_note"] = f"could not sign ({type(e).__name__}); attestation is unauthenticated"
+
     f.write_text(json.dumps(att, indent=2) + "\n")
-    print(f"{f.relative_to(ROOT)}  verdict={verdict}  "
+    try:
+        shown = f.relative_to(ROOT)
+    except ValueError:
+        shown = f
+    print(f"{shown}  verdict={verdict}  "
           f"{att['counts'].get('pass', 0)}/{len(checks)} passed  "
-          f"{att['self_test']['mutators_caught']} mutators caught")
-    return 0 if verdict == "PASS" else 1
+          f"{att['self_test']['mutators_caught']} mutators caught"
+          + (f"  ({len(a.allow_skip)} declared skip"
+             f"{'s' if len(a.allow_skip) != 1 else ''})" if a.allow_skip else ""))
+    return 0 if expected_zero else 1
 
 
 if __name__ == "__main__":

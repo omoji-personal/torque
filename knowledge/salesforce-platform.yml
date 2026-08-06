@@ -234,8 +234,15 @@ entries:
   symptom: "\"Too many SOQL queries: 101\" or \"Too many DML statements: 151\" under load only."
   cause: >
     Per-transaction governor limits: 100 SOQL queries synchronous (200 asynchronous), 150 DML
-    statements, 50,000 rows retrieved by SOQL, 10,000 records per DML operation, 6 MB heap
-    synchronous (12 MB async), 10,000 ms CPU synchronous (60,000 ms async).
+    statements, 50,000 rows retrieved by SOQL, 10,000 records processed by DML ACROSS THE WHOLE
+    TRANSACTION, 6 MB heap synchronous (12 MB async), 10,000 ms CPU synchronous (60,000 ms
+    async).
+  gotcha: >
+    The DML row limit is per TRANSACTION, not per statement. This entry read "10,000 records per
+    DML operation" until 2026-08-04, which invites the reading that each statement gets its own
+    10,000 — so five updates of 5,000 rows sounds fine and is not: it is 25,000 against a 10,000
+    ceiling. Caught by an adversarial audit of a task plan that proposed rehearsing a
+    40,000-record update inside a single transaction.
   remedy: >
     Bulkify: no SOQL or DML inside a loop, ever. These limits are per transaction, so code that
     passes with one record fails at 200 — which is exactly the batch size the platform uses.
@@ -570,9 +577,13 @@ entries:
     and every field label comes back absent. getByText, allTextContents and page.content() all
     return nothing for labels that a human can plainly see on screen.
   cause: >
-    The record page nests ~564 open shadow roots. `page.content()` serialises the light DOM only.
-    `textContent` and `allTextContents()` do not cross shadow boundaries either — the elements
-    are found (28 `.test-id__field-label` nodes matched) and their text reads as empty string.
+    The record page nests ~564 open shadow roots. Playwright's locator engine DOES pierce them —
+    which is exactly why this is confusing: `.test-id__field-label` matched 28 nodes. What does
+    not cross the boundary is the TEXT: `page.content()` serialises the light DOM only, and
+    `textContent`/`allTextContents()` return empty string for those same matched elements.
+    Matching pierces; text extraction does not. An adversarial review correctly noted that
+    Playwright pierces open shadow DOM, and the distinction above is why both statements are
+    true at once — a claim that "Playwright cannot reach these" would be wrong.
   remedy: >
     Walk the shadow roots explicitly inside page.evaluate, recursing into every element's
     shadowRoot, and collect .test-id__field-label text. Measured working 2026-08-04: an admin
@@ -622,8 +633,11 @@ entries:
     Also ruled out: HEADED mode, in a real browser window on a real display, which is the
     standard remediation for Lightning automation failures and shows the identical error. That
     was effectively the human check.
-    The single variable left is the FRONTDOOR-TOKEN session versus an ordinary username and
-    password login; everything else has been held constant and eliminated.
+    The single variable left was believed to be the FRONTDOOR-TOKEN session versus an ordinary
+    username and password login. ELIMINATED 2026-08-06: with a non-expired password the frontdoor
+    session renders the Lightning shell correctly — chain frontdoor.jsp -> contentDoor ->
+    lightning.force.com/lightning/n/..., one-app-nav-bar present. The frontdoor handoff was never
+    the problem, so this entry has no remaining named variable and its cause is still open.
   cross_check: >
     A mature Lightning browser-test suite running against several orgs for months has never
     recorded this error — not in code, docs or audit history. It launches plainly
@@ -634,6 +648,14 @@ entries:
     The header alone says nothing. Four detector designs were refined against this page before
     anyone read the dialog BODY, which names the cause in two words. When a page fails, read the
     error text before improving the selector.
+    A SECOND CAUSE PRODUCES THE IDENTICAL SYMPTOM, and it is not a Lightning problem at all.
+    Measured 2026-08-06: an EXPIRED PASSWORD makes the frontdoor redirect chain end at
+    /_ui/system/security/ChangePassword, so no Lightning page loads and one-app-nav-bar is absent
+    — indistinguishable from a render failure if the probe only reports "nav bar absent". It is
+    invisible in an ordinary browser, because the forced change fires on a NEW session and an
+    existing logged-in tab never sees it. Salesforce expires passwords on a 90-day default, so a
+    fleet of Developer Edition orgs created together hits this one after another. Report the
+    landing path on failure; browser_probe.mjs now does, and names this case by name.
   triggers: ['lightning/r/', 'Sorry to interrupt', 'CSS Error', 'record page']
   requires: >
     Verifying field visibility in a browser needs proof the record page rendered at all, not
@@ -692,10 +714,19 @@ entries:
     A rehearsal that never commits still trips a governor limit, and the DML statement count
     after Database.rollback is HIGHER than it was before the savepoint was set.
   cause: >
-    Savepoints and rollbacks are DML statements themselves. setSavepoint spends one, the DML
-    spends one, Database.rollback spends a third, and the counter is not rewound when the data
-    is. Nothing in the transaction reports this: the records really are gone, so the run looks
-    free.
+    The savepoint/rollback pair costs DML statements, and the counter is not rewound when the
+    data is. Nothing in the transaction reports this: the records really are gone, so the run
+    looks free.
+  attribution_caveat: >
+    MEASURED: the DML statement counter went 0 → 2 → 3 across setSavepoint, one insert, and
+    Database.rollback — so the pair costs two statements beyond the DML itself, and a shadow run
+    spends three where the real operation spends one. NOT MEASURED: which of setSavepoint and
+    rollback each statement belongs to, because the experiment never sampled between them. An
+    adversarial review (gemini-3.1-pro-high, 2026-08-04) asserts Database.rollback consumes zero;
+    Salesforce documents that each savepoint counts. Both are consistent with the observed
+    total under a different split, so the aggregate claim stands and the per-call attribution is
+    withdrawn until someone samples Limits.getDmlStatements() between the two calls. The
+    re-run is one line in harness/experiments/shadow-rollback-boundary.py.
   remedy: >
     Budget a shadow run as costing MORE than the operation it rehearses, not less — three DML
     statements where the real thing spends one. An operation already near the limit cannot be
