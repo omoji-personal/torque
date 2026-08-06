@@ -19,11 +19,31 @@ THE ONE RULE
 A receipt showing five of six elements must not read as complete. That is the defect this
 repository keeps finding in its own work — a partial answer wearing the shape of a whole one —
 and it is the only thing here worth being strict about. Every element reports ESTABLISHED,
-NOT ESTABLISHED or N/A WITH A REASON, and the verdict is PROOF-CARRYING only when none is
+NOT ESTABLISHED or N/A WITH A REASON, and the verdict is ASSESSMENT COMPLETE only when none is
 outstanding. There is no partial credit and no summary number that could be mistaken for one.
 
+WHAT THIS IS NOT, AND THE WORD IT USED TO USE
+
+This verdict was called PROOF-CARRYING. An external audit was right that the name claimed
+something the tool does not establish, and applying its own rule to itself is the only
+consistent response.
+
+**There is no execution element.** The six are preconditions, predicted impact, authorization,
+unknowns, postconditions and evidence — every one of them a statement about org STATE and about
+what the approval machinery WOULD require. None of them establishes that the described operation
+ran. Assemble a receipt against an org where the state already happens to match and it reports
+the same verdict as one assembled after a real change.
+
+Nor is authorization observed: for update and delete it is ESTABLISHED when blast-radius produced
+a count and an impact-bound approval would therefore have to carry that ceiling. It does not
+prove a token existed, was signed, matched this operation, or was consumed before the write.
+
+So the verdict is ASSESSMENT COMPLETE, the JSON carries `execution_proven: false` where a reader
+cannot miss it, and the word proof is not used for what this does. A signed, operation-bound,
+execution-referencing receipt is a different artifact and is not this one.
+
 EXIT CODES
-    0   PROOF-CARRYING — every element established or inapplicable with a stated reason
+    0   ASSESSMENT COMPLETE — every element established or inapplicable with a stated reason
     3   INCOMPLETE — at least one element outstanding
     2   REFUSED — the receipt could not be assembled, so there is nothing to report
 """
@@ -208,12 +228,19 @@ def render(six, a):
         print(json.dumps({
             "target_org": a.target_org, "sobject": a.sobject, "operation": a.operation,
             "where": a.where,
-            "verdict": "PROOF-CARRYING" if ok else "INCOMPLETE",
+            "verdict": "ASSESSMENT COMPLETE" if ok else "INCOMPLETE",
+            # Not a footnote. A reader parsing this JSON must be told, in the document itself,
+            # that no element here establishes the operation ran — otherwise a settled verdict
+            # reads as proof of a change that may never have happened.
+            "execution_proven": False,
+            "execution_note": "no element of this receipt establishes that the operation "
+                              "executed; every element describes org state and what approval "
+                              "would require",
             "established": len([e for e in six if e.state in SETTLED]),
             "elements": len(six),
             "receipt": [e.as_dict() for e in six]}, indent=2))
     else:
-        print(f"\nPROOF-CARRYING RECEIPT — {a.operation} on {a.sobject} @ {a.target_org}")
+        print(f"\nOPERATION ASSESSMENT — {a.operation} on {a.sobject} @ {a.target_org}")
         if a.where:
             print(f"  criteria : {a.where}")
         print()
@@ -223,8 +250,11 @@ def render(six, a):
             print(f"  {' ' * w}  {e.detail}")
         print()
         if ok:
-            print(f"  PROOF-CARRYING. All {len(six)} elements established or inapplicable with "
-                  f"a stated reason.")
+            print(f"  ASSESSMENT COMPLETE. All {len(six)} elements established or inapplicable "
+                  f"with a stated reason.")
+            print(f"  This does NOT establish that the operation executed. No element here "
+                  f"observes execution;\n  every one describes org state and what approval would "
+                  f"require.")
         else:
             print(f"  INCOMPLETE. {len(six) - len(outstanding)}/{len(six)} elements established. "
                   f"Outstanding: {', '.join(e.key for e in outstanding)}.")

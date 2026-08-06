@@ -203,9 +203,9 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <div><b>Org path</b><span>sf CLI + official MCP</span></div>
       <div><b>Skills · subagents</b><span>5 · 2</span></div>
       <div><b>Enforcement</b><span>2 hooks, 4 tool surfaces</span></div>
-      <div><b>Validation</b><span>98 checks, live org</span></div>
-      <div><b>Adversarial fixtures</b><span>196</span></div>
-      <div><b>Self-proof</b><span>17 mutators</span></div>
+      <div><b>Validation</b><span>117 checks, live org</span></div>
+      <div><b>Adversarial fixtures</b><span>251</span></div>
+      <div><b>Self-proof</b><span>19 mutators</span></div>
       <div><b>Try it with no org</b><span>3 seconds</span></div>
     </div>
   </div>
@@ -311,12 +311,12 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <tr><td>Encodes <em>how</em> to do the work</td><td class="no">—</td><td class="no">UI-guided</td><td class="win">for humans</td><td class="us">for agents</td></tr>
       <tr><td>Verifies the outcome in the org</td><td class="no">—</td><td class="no">partial</td><td class="no">partial</td><td class="us">yes</td></tr>
       <tr><td>Distinguishes prod at write time</td><td class="no">trusts alias</td><td class="win">env model</td><td class="no">trusts alias</td><td class="us">live query</td></tr>
-      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">34 entries</td></tr>
+      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">44 entries</td></tr>
       <tr><td>Gets smarter from being used</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">lessons → checks</td></tr>
       <tr><td>Shows what a change will set off, before it runs</td><td class="no">—</td><td class="win">design-time, in a UI</td><td class="no">—</td><td class="us">at the command, in the agent loop</td></tr>
       <tr><td>Binds approval to a verified record count</td><td class="no">command string</td><td class="no">env / role</td><td class="no">—</td><td class="us">record count</td></tr>
       <tr><td>Remembers what THIS org does</td><td class="no">stateless</td><td class="no">deploy history</td><td class="no">—</td><td class="us">per-org, by orgId</td></tr>
-      <tr><td>Proves its own checks can fail</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">17 mutators</td></tr>
+      <tr><td>Proves its own checks can fail</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">19 mutators</td></tr>
       <tr><td>Rollback across environments</td><td class="no">—</td><td class="win"><strong>yes</strong></td><td class="no">—</td><td class="us">single-org only</td></tr>
       <tr><td>Works outside Claude Code</td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="us">enforcement yes, via the PATH shim; skills and rules no</td></tr>
       <tr><td>Vendor support / SLA</td><td class="win"><strong>yes</strong></td><td class="win"><strong>yes</strong></td><td class="no">community</td><td class="us">none</td></tr>
@@ -336,7 +336,8 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
     gives an agent verbs. It does not tell it that a deployed field stays invisible until a
     PermissionSet grants it, that a bulk job can report success with thousands of failed records,
     or that a no-op update rewrites who last touched forty thousand rows. Torque ships that as a
-    structured catalogue — 34 entries — where every one declares <em>how it is known</em>:
+    structured catalogue — 44 entries, 10 of them re-verified against a live org on every release —
+    where every one declares <em>how it is known</em>:
     re-checked against a live org, cited to Salesforce, or plainly marked as learned the hard
     way. The live ones are re-run by the harness, and a claim that stops holding fails the build.</p>
 
@@ -416,8 +417,8 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     and writes in the same breath: <code>sf config set target-org=x &amp;&amp; sf data update …</code>
     can re-point the write between the check and the execution, so the combination is denied.</p>
 
-  <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 196 adversarial fixtures and
-    17 mutation tests that neuter each guard in turn and require the attack it blocks to start
+  <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 251 adversarial fixtures and
+    19 mutation tests that neuter each guard in turn and require the attack it blocks to start
     working. A guard that cannot be shown to be
     load-bearing is decoration. Every enforcement claim carries a machine-checked label, resolved against the live code, so the
     documentation cannot quietly overstate it.</p>
@@ -477,9 +478,34 @@ python3 bin/torque init my-dev-org</pre>
 <pre>npm install          <span class="cmt"># optional — only the live browser check needs this</span>
 python3 harness/validate.py --profile release --target-org my-dev-org</pre>
   <p>
-    Three profiles nest: <code>static</code> (78 checks, <strong>no org needed</strong> — the
-    try-before-you-connect path), <code>capability</code> (95 checks, adding the live cycles), and
-    <code>release</code> (98). <code>--only &lt;check&gt;</code> runs one.
+    Three profiles nest: <code>static</code> (96 checks, <strong>no org needed</strong> — the
+    try-before-you-connect path), <code>capability</code> (114 checks, adding the live cycles), and
+    <code>release</code> (117). <code>--only &lt;check&gt;</code> runs one.
+  </p>
+
+  <h4>Step 3½ — optional hardening, and what it buys</h4>
+  <p>
+    Out of the box the gates run from <code>hooks/</code> in your clone. That is enough to stop the
+    accidents and the enumerable circumventions, and it is what everything above describes. It
+    leaves one honest gap: those files are in the repository, so anything that can write to the
+    repository can rewrite the gate. Developing Torque itself needs exactly that — an
+    operator-present <em>maintainer window</em> — and while one is open, the files being edited are
+    the files adjudicating.
+  </p>
+<pre>python3 bin/torque activate-enforcement   <span class="cmt"># runs static, then asks you to type ACTIVATE</span>
+python3 bin/torque install-gates --project</pre>
+  <p>
+    That copies the <em>tested</em> tree into the trust anchor at mode 0400 behind an atomic
+    symlink and points this workspace at it. A maintainer window still edits <code>hooks/</code>;
+    the edit decides nothing until a present operator tests and promotes it. The second command
+    writes an untracked local override, so your clone stays portable and its committed
+    registration keeps working for everyone else. Reverse it with
+    <code>install-gates --workspace</code>.
+  </p>
+  <p>
+    Two costs, stated rather than discovered: activation refuses on a dirty tree or a failing static
+    profile, and while both registrations are present the gates may be consulted twice, so a gated
+    write can take roughly double the usual 6.7–13.1&nbsp;s.
   </p>
 
   <h4>Step 4 — work</h4>
@@ -667,9 +693,9 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
     </tbody>
   </table>
   <h4>The catalogue — and the one that was wrong</h4>
-  <p>Thirty-four entries across nine domains: six re-verified against a live org on every release
-    run, sixteen cited to Salesforce, twelve marked plainly as learned the hard way. The label
-    is load-bearing rather than decorative — every one of the six live verifiers is fed, by the
+  <p>Forty-four entries across nine domains: ten re-verified against a live org on every release
+    run, seventeen cited to Salesforce, seventeen marked plainly as learned the hard way. The label
+    is load-bearing rather than decorative — every one of the ten live verifiers is fed, by the
     harness, the org response that would make its entry false, and is required to say so. Three
     of them previously could not fail at all: they queried the org, ignored the answer, and
     returned true. That is fixed, and the honest number went <em>down</em> as a result.</p>
@@ -780,8 +806,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     bounding each <code>sf</code> callout was not enough: classification makes two sequential calls,
     and two 45-second caps come to 90 seconds — past the host’s timeout, and therefore a fail-open
     window. Torque sets one wall-clock budget for the whole gate, clamps every callout to what
-    remains, and treats an exhausted budget as an unverifiable org — which means production, which
-    means deny. A hung <code>sf</code> on the PATH is a live test case in the harness.
+    remains, and treats an exhausted budget as an <em>unverifiable</em> org — which denies, but is reported as unverifiable rather than as production, because “I could not establish what this org is” is not a finding that it is production. A hung <code>sf</code> on the PATH is a live test case in the harness.
   </p>
 
   <h4>Why the agent cannot self-approve</h4>
@@ -828,9 +853,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     else: the live non-production check runs inside the gate, so there is no second layer behind
     it.</strong> That is precisely why L1 is load-bearing here rather than belt-and-braces — this
     sentence used to claim the opposite, and an outside review was right that it could not be
-    true of a check the bypassed component performs. A PATH shim that closes the subprocess channel is roadmap,
-    not shipped; v1 raises the direct-tool-surface bar as high as a parsing gate honestly can and
-    states the rest plainly.
+    true of a check the bypassed component performs. A PATH shim closes the subprocess channel and <strong>is shipped</strong> — <code>torque install-gates --shim</code>. It is not an extra: on 2026-08-05 an agent wrote a Salesforce write into a file, ran it with bash, and deployed to an org that was not on the write allowlist — no hook fired and no audit line was written. <strong>Without the shim the allowlist is advisory rather than enforced.</strong> This page called it roadmap while the README said it shipped; two files in one repository disagreeing about whether a control exists is worse than either answer.
   </p>
 </section>
 
@@ -848,8 +871,8 @@ The operation grew after approval; re-approve with the current scope.</pre>
 
   <table class="plain"><tbody>
     <tr><td>Nothing is gated</td><td>The session isn’t in this workspace. Hooks load per-workspace — run <code>torque install-gates</code> for user-level registration.</td></tr>
-    <tr><td>init refuses my org</td><td>Working as designed: it will not configure against an org that classifies as production, and an org it cannot classify counts as production. Use a Developer Edition org.</td></tr>
-    <tr><td>Everything says PRODUCTION</td><td>Usually expired <code>sf</code> auth — classification fails, and failure means production. Re-authenticate. Correct fail-safe, confusing symptom.</td></tr>
+    <tr><td>init refuses my org</td><td>Working as designed: it will not configure against an org that classifies as production, and an org it cannot classify is <em>unverifiable</em> — refused for the same reason and named differently, so nobody approves a production override for a sandbox. Use a Developer Edition org.</td></tr>
+    <tr><td>Everything says PRODUCTION</td><td>Usually expired <code>sf</code> auth — classification fails and the verdict is <em>unverifiable</em>, which denies and explicitly says it is not a production finding. Re-authenticate. Correct fail-safe, confusing symptom.</td></tr>
     <tr><td>Denied despite a token</td><td>Either the token expired (5 min), the <code>&lt;op&gt;</code> didn’t match the operation, or the sObject is on the protected list — which no token lifts.</td></tr>
     <tr><td>clean_ip reports N/A</td><td>Expected on any clone but the author’s: it needs a private pattern list. An honest N/A, not a failure, and it does not degrade the verdict.</td></tr>
     <tr><td>browser_render BLOCKED</td><td>No Chromium — <code>npx playwright install chromium</code>. Detection is macOS-path-based today.</td></tr>
@@ -883,11 +906,14 @@ The operation grew after approval; re-approve with the current scope.</pre>
     denies rather than hangs.
   </p>
 
-  <h4>196 adversarial fixtures</h4>
+  <h4>251 adversarial fixtures</h4>
   <p>
-    Every attack class found across the audit rounds, each a named, runnable regression test. Just
-    over a fifth assert that <em>ordinary work is allowed</em> — the property that keeps a gate
-    switched on.
+    Every attack class found across the audit rounds, each a named, runnable regression test.
+    <strong>67 of them — 28% — assert that <em>ordinary work is allowed</em></strong>, which is the
+    property that keeps a gate switched on. That share has been climbing on purpose: a replay of six
+    months of real client commands found a parser defect that refused 71% of them, and 193 fixtures
+    had not caught it because their allow cases were toy commands. Proving a control refuses is not
+    proving it accepts.
   </p>
 
   <h4>The knowledge is mutation-tested too</h4>
@@ -903,12 +929,35 @@ The operation grew after approval; re-approve with the current scope.</pre>
     story in section 02. Both are the same discipline: a claim nobody can falsify is not
     knowledge, it is decoration.</p>
 
-  <h4>17 mutation tests — the part that matters</h4>
+  <h4>19 mutation tests — the part that matters</h4>
   <p>
     Each temporarily neuters one guard and requires the corresponding attack to succeed — or, for
     the static scanners, requires the check to fail. One needs an org, because the check it neuters
     queries one. Three exercise the clean_ip scan against a private pattern list and report as
     operator-only on your clone rather than pretending to pass. The rest run anywhere.
+  </p>
+
+  <h4>Who guards the guards</h4>
+  <p>
+    An honest question this project had the wrong answer to for weeks. Developing Torque means
+    editing Torque’s own gates, which needs an operator-present <em>maintainer window</em> — and
+    while that window was open, the files being edited were the files adjudicating every write. A
+    window granted to fix a check also granted the power to delete one. That is not theoretical: a
+    window-legal edit making <code>authorize_write</code> return <code>(True, "mutant")</code>
+    turned a production denial into an allow on the very next tool call.
+  </p>
+  <p>
+    <code>torque activate-enforcement</code> separates the two. It runs the static profile, refuses
+    on a dirty tree or a failing one, and copies the tested tree into the trust anchor at mode 0400
+    behind an atomic symlink. From then on a maintainer window still edits <code>hooks/</code> — and
+    the edit decides nothing until a present operator tests and promotes it.
+  </p>
+  <p>
+    The check that measures this reported <strong>N/A for as long as the feature was unused</strong>,
+    because there was nothing to measure and an empty loop is not evidence. It now reads: <em>a
+    window-legal edit to <code>authorize_write</code> flips the workspace copy (exit 0) and leaves
+    the active gate denying.</em> That is the difference between a safety property being configured
+    and being measured, and it is the only version worth claiming.
   </p>
 
 <pre>python3 harness/validate.py --self-test
@@ -1031,7 +1080,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     <tr><td>.claude/rules/</td><td>The seven rule files, byte-capped, each labelled with what backs it</td></tr>
     <tr><td>.claude/agents/</td><td>org-explorer (read-only) · hostile-qa (adversarial reviewer)</td></tr>
     <tr><td>hooks/</td><td>The shared expansion-aware parser and the two gates</td></tr>
-    <tr><td>harness/</td><td>98 checks, 196 gate fixtures (193 recorded + 3 minted live), 17 mutators, live_matrix.sh, the run log</td></tr>
+    <tr><td>harness/</td><td>117 checks, 254 gate fixtures (251 recorded + 3 minted live), 19 mutators, live_matrix.sh, the run log</td></tr>
     <tr><td>SECURITY.md</td><td>Disclosure policy — 72-hour confirmation, 90-day ceiling, fixtures credited</td></tr>
   </tbody></table>
 

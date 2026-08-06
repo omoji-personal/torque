@@ -23,6 +23,7 @@ SECRET = ANCHOR / "secret"
 APPROVED = ANCHOR / "approved"
 PROD_SESSIONS = ANCHOR / "prod-sessions"           # signed, time-boxed prod-write windows
 MAINTAINER_GRANT = ANCHOR / "maintainer.grant"     # signed, time-boxed SOURCE-edit window
+OBSERVE_GRANT = ANCHOR / "observe.grant"           # signed, time-boxed OBSERVE-ONLY window
 ALLOWLIST = LOCAL / "writable-orgs.json"
 CACHE = LOCAL / ".classify-cache.json"
 ORGS = LOCAL / "orgs"                       # per-org knowledge, keyed by 18-char orgId
@@ -154,6 +155,19 @@ def audit(decision: str, detail: str, durable: bool = False) -> bool:
         line = json.dumps({"t": int(time.time()), "decision": decision, "detail": redact(detail)[:400]})
         with open(AUDIT, "a") as f:
             f.write(line + "\n")
+            # `durable=True` named a property the function did not have: it changed nothing about
+            # storage, and the caller merely checked that append() had not raised. A write sitting
+            # in the page cache is not a record — a production ALLOW followed by a crash left an
+            # unrecorded write, which is the exact case the parameter exists for.
+            #
+            # flush + fsync makes the word true for the callers that pass it. It does NOT make the
+            # trail tamper-evident: there is no hash chain and no signature, so this defends
+            # against loss, not against edits. An external audit was right to say that "durable
+            # audit" was doing more work in the prose than in the code; this closes the half that
+            # is a one-line fix and leaves the other half named rather than implied.
+            if durable:
+                f.flush()
+                os.fsync(f.fileno())
         os.chmod(AUDIT, 0o600)
         return True
     except Exception:
@@ -464,10 +478,10 @@ def classify_live(target: str):
     The cache is agent-writable and must not be trusted for an authorization decision."""
     username, orgid = _org_display(target)
     if username is None and orgid is None:
-        return "production", None, None
+        return "unverifiable", None, None
     rec = _org_record(target, orgid)
     if rec is None:
-        return "production", orgid, username           # unverifiable, or a different org ⇒ fail safe
+        return "unverifiable", orgid, username
     return _verdict_from_org_record(rec, orgid, username), orgid, username
 
 def _org_record(target: str, orgid: str):
@@ -581,6 +595,33 @@ def authorize_write(target: str, op_hint: str = "write"):
     time-boxed session grant, or a single-use prod token minted by bin/torque-approve. The
     agent can request either; it cannot mint one."""
     verdict, orgid, username = classify_live(target)   # security path: never trust the cache
+
+    # "I could not establish what this org is" is NOT "this org is production", and reporting the
+    # second for the first is how a wrong reason becomes dangerous advice.
+    #
+    # Both failure paths in classify_live used to return "production": a target that would not
+    # resolve, and an Organization row that could not be read or did not match. So a Developer
+    # Edition org on the allowlist — verified developer seconds earlier — was refused with
+    # "sf-coffee is PRODUCTION — denied by default", offering `torque approve --prod` as the
+    # remedy. Following that remedy means typing WRITE PRODUCTION for a sandbox, which trains the
+    # one ritual in this product that must never become a reflex.
+    #
+    # Observed live, and INTERMITTENTLY: classification makes two live CLI callouts per gate, both
+    # gates classify independently, and a write costs 6.7-13.1s end to end. When that exceeds the
+    # 40s SIGALRM budget the callouts fail and the verdict fell through to production. The denial
+    # was correct; only its reason and its remedy were wrong.
+    #
+    # `unverifiable` stays OUT of ELIGIBLE, so the operation is still refused — an org whose
+    # identity cannot be established might genuinely be production, and fail-closed is the only
+    # safe direction. What changes is that the message says what happened and offers a next step
+    # that helps.
+    if verdict == "unverifiable":
+        return False, (
+            f"{target} could not be classified: the live identity check did not complete, so "
+            f"whether this org is production is UNKNOWN and the write is refused. This is not a "
+            f"finding that the org IS production — do not approve a production override for it. "
+            f"Check the org is authenticated (`sf org display --target-org {target}`) and retry; "
+            f"a classification that times out under load looks exactly like this.")
     if verdict == "production":
         if _prod_session_valid(orgid):
             if not audit("PROD-WRITE", f"session-authorized {op_hint} on {orgid} ({target})",
@@ -596,7 +637,7 @@ def authorize_write(target: str, op_hint: str = "write"):
                                "and an unrecorded production write is not one this tool will "
                                "authorize")
             return True, f"{target}: PRODUCTION write authorized via single-use operator token"
-        return False, (f"{target} is PRODUCTION — denied by default. Operator override: "
+        return False, (f"{target}{PROD_DENY_MARKER} Operator override: "
                        f"`{approve_cmd(target, '<op>', '--prod')}` (one operation) or "
                        f"`{approve_cmd(target, '--session', '<minutes>')}` (a window).")
     allow = load_allowlist()
@@ -701,6 +742,98 @@ def maintainer_grant_valid(tree: str = ""):
     if g.get("tree") != (tree or str(TORQUE_HOME.resolve())):
         return None
     return g
+
+
+# ---- observe-only: a gate that records instead of blocking ---------------------------------
+#
+# WHY THIS EXISTS. Torque had no way to ride along on real work without blocking it, and that is
+# the thing standing between a three-week-old tool and any field evidence at all. Replaying six
+# months of real client commands through the classifier denied 80.1% of them; one defect
+# accounted for 854 of those, and finding it took a corpus rather than more fixtures. The
+# remaining friction cannot be measured the same way, because a replayed command is not a
+# session: it never adapts, never re-phrases, never asks for approval. Only a live session does
+# that, and nobody will run a live session through a gate they cannot first watch.
+#
+# So: compute the decision, RECORD it, and let the operation through. That is a WAF in detection
+# mode, an IDS before it is inline, a policy engine in dry-run — the ordinary way a blocking
+# system earns the right to block.
+#
+# WHAT IT DELIBERATELY DOES NOT COVER, which is the whole security argument.
+# Observe-only is a bypass. If the agent could enable it, the gates would be decorative. Two
+# properties keep that from being true, and both are load-bearing:
+#
+#   1. The grant lives in the trust anchor — signed, time-boxed, tree-bound, mintable only by an
+#      operator at a real login TTY. The agent's Bash, Edit, Write and Read cannot reach it.
+#      Identical trust model to the maintainer window, for identical reasons.
+#   2. It NEVER applies to a denial that protects the gate's own trust boundary. A window that
+#      could permit an anchor write could mint itself a permanent one; a window that could permit
+#      a protected-source edit could delete the check that enforces it. Those denials stay
+#      denials while observing, exactly as the maintainer window refuses the anchor.
+#
+# It is also never silent. Every observation is recorded durably before the operation proceeds,
+# and if that record cannot be written the gate denies — an observation nobody can read later is
+# indistinguishable from having switched the gate off.
+#
+# Fingerprints that stay DENY under observation. These are the trust boundary itself, not org
+# operations: reaching the anchor or the CLI auth store, editing Torque's own protected source,
+# or putting `local/` into git (which publishes org findings and session logs).
+OBSERVE_NEVER = frozenset({
+    "anchor-ref", "auth-ref", "artifact-edit", "protected-write", "stages-local",
+    "invalid-event", "crash",
+})
+
+# Composed into the production denial and matched when deciding whether a refusal may be
+# observed. ONE constant, two uses, so the two cannot drift — the alternative was matching
+# generated prose in a second place and discovering the mismatch the day the wording changed.
+PROD_DENY_MARKER = " is PRODUCTION — denied by default."
+
+
+# An unverifiable org must be treated exactly like a production one by anything that would relax
+# a refusal, because it might BE one. Splitting the verdict for honesty must not accidentally
+# create a class of denial that observe-only is willing to wave through.
+UNVERIFIABLE_MARKER = "could not be classified"
+
+
+def is_production_denial(reason: str) -> bool:
+    """A production refusal is never advisory, whatever window is open.
+
+    An observe-only grant is bound to the TREE, and the shim invokes the gates with TORQUE_HOME
+    set to the recorded repo regardless of the working directory. So a window opened to measure
+    friction on a sandbox made every `sf` write on the machine advisory for its duration, from
+    any directory, PRODUCTION INCLUDED. The plan that proposed observing called "non-production
+    only" a hard constraint; it was prose the tool could not enforce, which is the failure this
+    repo's own rules name — listing a risk is not gating it.
+
+    Scoping the grant to an org was the alternative and is worse: observe-only applies to
+    refusals in general, most of which have no org, so an org-scoped grant would silently not
+    apply to the majority of them. Excluding the one class that must never be advisory is
+    narrower, and it is the class the operator was warned about at mint time.
+    """
+    r = reason or ""
+    return PROD_DENY_MARKER in r or UNVERIFIABLE_MARKER in r
+
+
+def observe_grant_valid(tree: str = ""):
+    """A signed, unexpired, tree-bound window in which denials are RECORDED, not enforced.
+
+    Same shape and same anchor-only boundary as maintainer_grant_valid. Deliberately a separate
+    grant: a maintainer editing Torque's source is doing something quite different from an
+    operator measuring how much Torque would interrupt a real day, and one should never imply
+    the other.
+    """
+    try:
+        g = json.loads(OBSERVE_GRANT.read_text())
+    except Exception:
+        return None
+    sig = g.pop("sig", None)
+    if not sig or not _hmac.compare_digest(sig, sign(g)):
+        return None
+    if g.get("exp", 0) <= time.time():
+        return None
+    if g.get("tree") != (tree or str(TORQUE_HOME.resolve())):
+        return None
+    return g
+
 
 # ---- approval tokens (consulted here; MINTED only by bin/torque-approve) --
 import hmac as _hmac
@@ -1243,6 +1376,26 @@ def _is_salesforce_decision(cmd: str) -> bool:
     return bool(_SF_SHAPED.search(cmd))
 
 def deny(reason: str, fingerprint: str = "", hook_id: str = ""):
+    # OBSERVE-ONLY. Checked here rather than at each call site so no future deny path can be
+    # added that forgets to be observable — and checked AFTER the trust-boundary exclusion, so
+    # the window can never be the thing that lets the agent reach the anchor holding the window.
+    if (fingerprint not in OBSERVE_NEVER and not is_production_denial(reason)
+            and observe_grant_valid()):
+        # Durable, and fatal if it fails. An observation that cannot be recorded is not an
+        # observation; it is the gate switched off with nobody able to find out afterwards.
+        recorded = audit("OBSERVE", f"[{hook_id}:{fingerprint}] WOULD DENY: {reason}",
+                         durable=True)
+        if not recorded:
+            print(f"TORQUE GATE DENY [{hook_id}] {reason}\n"
+                  f"  (an observe-only window is open, but this observation could not be "
+                  f"recorded — denying rather than passing an operation nobody can review)",
+                  file=sys.stderr)
+            _speak(_JUDGED["command"])
+            sys.exit(2)
+        print(f"TORQUE OBSERVE-ONLY [{hook_id}] would have denied: {reason}\n"
+              f"  Recorded, not enforced. This operation is proceeding because an operator "
+              f"opened an observe-only window.", file=sys.stderr)
+        allow()          # speaks the catalogue note and exits 0; do not _speak() twice
     audit("DENY", f"[{hook_id}:{fingerprint}] {reason}")
     print(f"TORQUE GATE DENY [{hook_id}] {reason}", file=sys.stderr)
     # A deny is the moment the note matters MOST: the operator is about to decide whether to
@@ -1292,6 +1445,27 @@ def protected_write_paths():
             str(ALLOWLIST.resolve()), str(PROTECTED.resolve()),
             str((hd/"harness"/"checks"/"cli-write-surface.json").resolve()),
             str((hd/"harness"/"checks"/"clean-ip.rules").resolve()),
+            # THE ASSURANCE CORPUS. `harness/checks/` was protected and the evidence it produces
+            # was not — so the agent could rewrite the fixtures that certify the gates, flip an
+            # attack case to `allow`, and make a genuinely weakened suite read green. ROADMAP
+            # calls this corpus "the asset"; it was the one assurance-relevant directory outside
+            # the predicate.
+            #
+            # Not hypothetical. This agent wrote gate_fixtures_r17.json and edited
+            # run_gate_fixtures.py earlier the same day with ordinary Write/Edit calls, observed
+            # that the directory was writable, and recorded that as convenient. The same
+            # keystrokes flip an expectation.
+            #
+            # Safe to protect because every legitimate writer here is a SUBPROCESS —
+            # `torque lesson --gate` appending a fixture, `torque attest` writing an attestation,
+            # the validation-log renderer — and the gates do not inspect subprocess I/O. What
+            # this blocks is exactly the tool-surface write: Edit, Write, and Bash redirection.
+            # Hand-authoring evidence now flows through the maintainer window, audited and
+            # time-boxed, which is the correct posture for editing the thing that certifies.
+            str((hd/"harness"/"tests").resolve()),
+            str((hd/"harness"/"attest").resolve()),
+            str((hd/"harness"/"experiments").resolve()),
+            str((hd/"harness"/"VALIDATION.md").resolve()),
             str(CACHE.resolve()), str(ANCHOR.resolve())]
     _PWP_CACHE[key] = out
     return out

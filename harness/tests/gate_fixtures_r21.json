@@ -1,0 +1,159 @@
+{
+  "_comment": "R21 (2026-08-06) — two classifier holes found by an adversarial plan audit, both verified LIVE end-to-end before the fix and both closed by making the classifier stop returning None for operations it cannot read. (1) `api request` carries its HTTP method OUTSIDE argv in two vendor-documented forms: `--file f.json` (Salesforce's own flag summary: 'JSON file that contains values for the request header, body, METHOD, and URL') and `graphql`, which has no --method flag at all in the installed plugin manifest. _api_method defaults to GET, so both read as reads. (2) _PRECISELY_HANDLED was matched at tuple(sub[:2]), so ('data','delete') claimed `data delete all` on behalf of a rule handling only bulk/record/resume — the precise rule declined and the shape net was suppressed. THE REASON THIS MATTERED MORE THAN A MISSING TOKEN: destructive_data_gate._gate_write returns early when the op is None, BEFORE _shield_tokens, so the protected-object floor never ran either. `sf data delete all --sobject Account` was measured ALLOWED end-to-end on an allowlisted org with neither a token nor the shield. The fix is in the classifier, NOT in the shield ordering: moving _shield_tokens ahead of the early return would have denied `sf data create record --sobject Account` and blocked all Account creation, which the protected-objects manifest never intended (it scopes the shield to delete-shaped operations). ALLOW cases are first-class here: the same commit must not start charging a token for an ordinary REST GET.",
+  "fixtures": [
+    {
+      "id": "R21 deny: api request rest --file, HTTP method lives inside the file",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf api request rest --file delete-account.json --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 deny: api request rest --file= equals form",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf api request rest --file=delete-account.json --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 deny: api request graphql has no --method flag, so the method is never in argv",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf api request graphql --body mutation.txt --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 deny: data delete <unenumerated third token> against a protected sObject reaches the shield",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data delete all --sobject Account --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 deny: data delete <unenumerated third token>, ordinary object, still charged as destructive",
+      "gate": "destructive_data_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data delete everything --sobject TQ_Probe__c --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: api request rest with no method flag is the CLI's real GET default — a read",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf api request rest /services/data/v62.0/sobjects/Account/001000000000001AAA --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: api request rest -X GET stays free",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf api request rest -X GET /services/data/v62.0/limits --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: creating an Account is not delete-shaped and must not hit the shield",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data create record --sobject Account --values \"Name=TEST-r21\" --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: by-Id delete of an ordinary custom object, the mandated teardown spelling",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf data delete record --sobject TQ_Probe__c --record-id a01000000000001AAA --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: project delete tracking is local-only and keeps today's cost",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf project delete tracking --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: apex run test is a test run, not anonymous Apex",
+      "gate": "destructive_data_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sf apex run test --class-names MyTest --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 deny: a foreign script with NOTHING at the path is still policy-refused (TOCTOU)",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "python3 /tmp/not-torque.py --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 deny: a script the agent could write inside TORQUE_HOME is not runnable against an org",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "python3 local/agent_wrote_this.py --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: a declared read-only first-party command still runs against an org",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "python3 bin/torque checkup --target-org sf-cb-test"
+        }
+      }
+    }
+  ]
+}

@@ -41,8 +41,16 @@ These are documented limits, not undiscovered holes — see the threat model in
   `ptrace`, or a compiled binary; forging a login session with a purpose-built program. A
   PreToolUse hook cannot adjudicate that — it is a credentials and OS-trust boundary.
 - **`sf` spawned as a subprocess of a script the agent writes and runs.** The hook sees the
-  script's invocation, not what the script spawns. Closing this needs a PATH-level shim that
-  classifies before `exec`; it is the v2 roadmap and is **not built yet**.
+  script's invocation, not what the script spawns. **Demonstrated live 2026-08-05:** an agent
+  wrote `sf` into a file, ran `bash script.sh`, and deployed metadata to an org that was not on
+  the write allowlist — no hook fired, no audit line was written. So **without the exec-time shim
+  the allowlist is advisory rather than enforced.**
+
+  The shim that closes this **is built** — `torque install-gates --shim`, covered by five checks
+  in the static profile. This section said "v2 roadmap, not built yet" while the README said it
+  shipped; two files in one repository disagreeing about whether a control exists is worse than
+  either answer, and the disagreement is the finding. With the shim installed and first on PATH,
+  the same script-mediated write is refused at exec time on argv the kernel resolved.
 - **Anything upstream of the credentials.** If a production org is authenticated with write
   permissions in an autonomous session, Torque narrows the blast radius; it does not remove it.
   Connect production read-only.

@@ -8,7 +8,7 @@ that could reach `sf` but cannot be statically resolved. Every bypass found rout
 sf-base0 classifier (relocation under a runner, glued redirect, legacy colon syntax, MCP
 naming), so the fixes harden those seams while keeping direct-`sf` authorization intact.
 """
-import os, re, shlex, hashlib, fnmatch, json
+import os, re, shlex, hashlib, fnmatch, json, shutil
 from pathlib import Path
 import lib
 
@@ -160,9 +160,15 @@ def stages_local(argv) -> bool:
 # Trust is a property of what a tool DOES, not of where it lives. Naming each read-only tool
 # is more maintenance than a path rule and that is the point: a new tool under bin/ gets no
 # trust until someone decides it deserves some.
+# "READ-ONLY" HERE MEANS NO **ORG** MUTATION, not no writes at all — `torque log` has always
+# written to local/ and has always been in this set, so the name has described the wrong property
+# for as long as the set has existed. The property actually relied on is narrower and is the one
+# that makes the exemption safe: these live in bin/, which the agent cannot write, and none of
+# them touches a Salesforce org. Stated here rather than left for the next person to infer from a
+# set name that says something else.
 READ_ONLY_FIRST_PARTY = {"torque-checkup", "torque-blast-radius", "torque-log", "torque-done",
-                         "torque-receipt", "torque-needs"}
-READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done", "receipt", "needs"}
+                         "torque-receipt", "torque-needs", "torque-week"}
+READ_ONLY_DISPATCH = {"checkup", "blast-radius", "log", "done", "receipt", "needs", "week"}
 
 # Legacy sfdx command IDs and the modern `sf` words that mean the same operation.
 #
@@ -225,6 +231,55 @@ def modernize(command: str) -> str:
     for legacy in sorted(LEGACY_TO_MODERN, key=len, reverse=True):
         out = out.replace(legacy, LEGACY_TO_MODERN[legacy])
     return out
+
+
+def _resolved_runner_target(argv):
+    """The concrete script an interpreter was handed, or None when there is nothing to resolve.
+
+    This is the line between a SHAPE refusal and a POLICY one, and it decides whether a refusal
+    may be deferred to the exec-time shim.
+
+    `python3 -c '…'`, a here-string, `python3 $VAR` — the gate genuinely cannot read what will
+    run, so refusing is a parsing limit and the shim, which sees argv after every expansion, is
+    strictly better placed to decide. Those still defer.
+
+    `python3 harness/validate.py --profile capability --target-org X` is nothing of the kind. The
+    path resolves, the flags parse, and the answer is known here: that check is not on the
+    read-only list. Handing it to the shim does not defer the decision to a better-informed
+    layer, it deferes it to NO layer — the shim wraps `sf` and `sfdx`, so it never sees a
+    `python3` invocation at all and can never refuse one.
+
+    Measured 2026-08-06: with the shim on PATH, all seven shapes
+    `readonly_gate_honours_exactly_the_list` requires to be refused came back exit 0, and
+    `runnable_implies_unwritable` reported a script outside TORQUE_HOME authorized against an org.
+    Both were the same deferral. org-safety.md already draws this line — "a shape refusal is not a
+    policy refusal" — and these were policy refusals wearing a shape code.
+    """
+    for tok in argv[1:]:
+        if tok.startswith("-"):
+            return None                 # -c / -m / - : nothing statically resolvable
+        if any(ch in tok for ch in "$`*?[{"):
+            return None                 # expansion or glob: the NAME is not settled yet
+        # A BARE WORD IS NOT A SCRIPT PATH. `eval sf data query …` puts `sf` in argv[1], and
+        # reading that as "the script eval will run" is simply wrong: eval takes code, not a file.
+        # Treating it as resolved turned a deferrable shape refusal into a policy denial with a
+        # nonsense reason, and would have refused an interpreter-wrapped READ that the shim is
+        # perfectly able to authorize. Require something that actually looks like a path.
+        if "/" not in tok and not tok.endswith((".py", ".sh", ".js", ".mjs", ".rb", ".pl")):
+            return None
+        try:
+            p = Path(tok)
+            # DELIBERATELY not conditioned on the file EXISTING. The first version of this
+            # returned None unless p.is_file(), which failed open twice over: the path is fully
+            # known either way, and a gate decision that depends on what is on disk right now is
+            # a TOCTOU — the agent can write the file after the gate has run and before the shell
+            # execs it. `python3 /tmp/not-torque.py --target-org acme` (a path with nothing at it)
+            # therefore fell through to interp-sf and deferred, which runnable_implies_unwritable
+            # caught: "a script outside TORQUE_HOME was authorized against an org".
+            return (p if p.is_absolute() else (lib.TORQUE_HOME / p)).resolve()
+        except Exception:               # noqa: BLE001 — unresolvable is a shape problem
+            return None
+    return None
 
 
 def _is_own_harness(argv) -> bool:
@@ -358,9 +413,68 @@ def split_segments(cmd: str):
     return segs, True
 
 
+_GROUP_PRECEDED_BY = (" ", "\t", "\n", ";", "&", "|", "")
+
+
 def grouping_or_subst(cmd: str) -> bool:
-    return ("$(" in cmd or "`" in cmd or "<(" in cmd or ">(" in cmd
-            or bool(re.search(r"(?:^|[\s;&|])[({]", cmd)))
+    """Shell grouping or substitution — over the UNQUOTED regions only.
+
+    This was a raw text scan: `"$(" in cmd`, plus a regex for a standalone `(` or `{`, with no
+    idea where the quotes were — while split_segments, forty lines above, tracks quote state
+    correctly. The machinery to do this right was already in the file and this function did not
+    use it. A parenthesis inside a single-quoted SOQL string therefore read as shell grouping,
+    and bash expands nothing whatsoever inside single quotes.
+
+    What that cost, measured rather than imagined: replaying six months of real client-work
+    commands (1,193 Salesforce CLI invocations) through this classifier denied 80.1% of them,
+    and 854 of those 955 denials were this one defect. `WHERE Id IN ('a','b')` — denied.
+    `WHERE Name = 'Acme (US)'` — denied. `SELECT Id, (SELECT Id FROM Contacts) FROM Account`,
+    a relationship subquery and the commonest SOQL idiom after a plain select — denied.
+
+    193 gate fixtures did not catch it, and 44 of those assert `allow`, so the must-allow
+    direction existed. What it did not contain was SOQL: its entire query vocabulary was four
+    instances of `SELECT Id FROM Account`, with no WHERE clause, no IN list, no subquery and no
+    quoted literal. Hand-imagined allow cases were a narrower distribution than real use, which
+    is why a corpus of real commands found in one pass what the suite could not.
+
+    The rule below is bash's own semantics, not a loosening:
+      outside quotes   $(  `  <(  >(  and a standalone (  or {
+      inside "..."     $(  `        — expansion still happens in double quotes
+      inside '...'     nothing      — single quotes are literal, bash expands nothing
+    """
+    i, n, quote = 0, len(cmd), None
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if c == "\\" and i + 1 < n:            # backslash escapes inside double quotes
+                i += 2
+                continue
+            if c == "`" or cmd[i:i + 2] == "$(":
+                return True
+            if c == '"':
+                quote = None
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:                # an escaped quote does not open a region
+            i += 2
+            continue
+        if c in ("'", '"'):
+            quote = c
+            i += 1
+            continue
+        if c == "`" or cmd[i:i + 2] in ("$(", "<(", ">("):
+            return True
+        if c in ("(", "{") and (cmd[i - 1] if i else "") in _GROUP_PRECEDED_BY:
+            return True
+        i += 1
+    # An unterminated quote is not a safe parse, and returning False here grants nothing:
+    # split_segments reports the imbalance separately and analyze_bash denies on it first.
+    return False
 
 
 _BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
@@ -787,13 +901,58 @@ _DESTRUCTIVE_WORDS = ("delete", "destroy", "purge", "erase", "truncate", "drop",
 # logic has ALREADY decided — including deciding that something is fine, like a bounded delete
 # by record id, which is deliberately free. The shape net must not second-guess a rule that
 # looked at the command and said yes.
+#
+# MATCHED AT THE GRAIN THE PRECISE RULE ACTUALLY DECIDES AT. `None` means the rule decides on
+# (topic, verb) alone and every third token is covered; a frozenset means only those third tokens
+# were reasoned about, and anything else must fall through to the shape net.
+#
+# This was a bare set of pairs, tested with `tuple(sub[:2]) in _PRECISELY_HANDLED`. So
+# ("data","delete") claimed `sf data delete all` on behalf of a rule that only handles
+# bulk/record/resume — the precise rule declined, the shape net was suppressed, and nothing
+# classified it. Measured 2026-08-06: `sf data delete all --sobject Account` ran the whole gate
+# and came out ALLOWED, with no token AND no protected-object shield (the shield sits behind an
+# early return that fires when the op is None).
+#
+# An incomplete set here OVER-gates a novel form; the old shape UNDER-gated it. Only one of those
+# is a safe direction to be wrong in.
 _PRECISELY_HANDLED = {
-    ("data", "delete"), ("data", "update"), ("data", "upsert"), ("data", "import"),
-    ("data", "export"), ("data", "query"), ("data", "get"), ("data", "create"),
-    ("apex", "run"), ("apex", "test"), ("apex", "get"),
-    ("org", "delete"), ("org", "create"), ("org", "list"), ("org", "display"),
-    ("api", "request"), ("project", "delete"), ("project", "deploy"), ("project", "retrieve"),
+    ("data", "delete"):      frozenset({"bulk", "record", "resume"}),
+    ("data", "update"):      frozenset({"bulk", "record", "resume"}),
+    ("data", "upsert"):      None,      # decided at (data, upsert) — bulk-write
+    ("data", "import"):      None,      # decided at (data, import) — bulk-write
+    ("data", "export"):      None,
+    ("data", "query"):       None,
+    ("data", "get"):         None,
+    ("data", "create"):      None,
+    ("apex", "run"):         None,      # (apex, run) => apex, with the (apex, run, test) carve-out
+    ("apex", "test"):        None,
+    ("apex", "get"):         None,
+    ("org", "delete"):       None,      # decided at (org, delete) => org-delete
+    ("org", "create"):       None,
+    ("org", "list"):         None,
+    ("org", "display"):      None,
+    ("api", "request"):      None,      # every form now decided above, incl. --file and graphql
+    # Only `source` is reasoned about. `tracking` is listed to PRESERVE today's behaviour — it is
+    # a real shipping command that removes LOCAL source-tracking files and touches no org data.
+    # Note the inconsistency it leaves: `sf project reset tracking` is charged
+    # unrecognised-destructive while `sf project delete tracking` is free. Both are local. That is
+    # worth settling deliberately; it is not settled here, because a security patch is the wrong
+    # place to quietly change what a command costs.
+    ("project", "delete"):   frozenset({"source", "tracking"}),
+    ("project", "deploy"):   None,
+    ("project", "retrieve"): None,
 }
+
+
+def _precisely_handled(sub) -> bool:
+    """Has a precise rule ALREADY decided this command — at its own grain, not at two tokens?"""
+    key = tuple(sub[:2])
+    if key not in _PRECISELY_HANDLED:
+        return False
+    thirds = _PRECISELY_HANDLED[key]
+    if thirds is None:
+        return True
+    return len(sub) > 2 and sub[2] in thirds
 
 
 def _destructive_shape(sub):
@@ -806,10 +965,65 @@ def _destructive_shape(sub):
     """
     if not sub:
         return False
-    if tuple(sub[:2]) in _PRECISELY_HANDLED or sub[0].startswith("force:"):
+    if _precisely_handled(sub) or sub[0].startswith("force:"):
         return False
     joined = ":".join(sub)
     return any(w in joined for w in _DESTRUCTIVE_WORDS)
+
+
+_DEPLOY_DIR_FLAGS = ("--metadata-dir", "--source-dir", "-d", "--sourcepath", "--deploydir")
+_DESTRUCTIVE_MANIFESTS = ("destructivechanges.xml", "destructivechangespre.xml",
+                          "destructivechangespost.xml")
+
+
+def _deploy_dir_carries_destructive(sub, sf_args) -> bool:
+    """Does a deploy DIRECTORY contain a destructiveChanges manifest?
+
+    The Metadata API honours a `destructiveChanges.xml` in the package root with NO flag — that
+    is how destructive deploys worked before DX and it still works through `--metadata-dir`. The
+    classifier reasoned only about argv, so:
+
+        sf project deploy start --metadata-dir ./mdapi_out --target-org <allowlisted-sandbox>
+
+    with `./mdapi_out/destructiveChanges.xml` on disk classified NOT DESTRUCTIVE and proceeded
+    with no destructive-class token, against a documented contract that says one is required. On
+    production the write is still refused by prod_write_gate, so this was never a production
+    hole; on an allowlisted sandbox it deleted metadata untokened, and `purgeOnDelete` in that
+    manifest hard-deletes. Found by an external audit lens, reproduced before being believed.
+
+    This is the ONLY place the classifier reads the filesystem, and it does so because the
+    operation's destructiveness genuinely is not in its argv.
+
+    KNOWN LIMIT, stated rather than hidden: a relative directory is resolved against this
+    process's cwd, which is the session's for a Bash hook and TORQUE_HOME for the shim. If it
+    does not resolve, this returns False rather than claiming destructiveness it cannot see —
+    the deploy still faces ordinary write authorization (allowlist + live non-production check),
+    but it will not be charged a destructive token. Failing closed here would demand a token for
+    every deploy whose directory this process cannot locate, which is how a gate becomes the
+    thing people uninstall.
+    """
+    if not (sub[:3] == ("project", "deploy", "start")
+            or sub[0].startswith(("force:mdapi:deploy", "force:source:deploy"))):
+        return False
+    dirs = []
+    for i, a in enumerate(sf_args):
+        if a in _DEPLOY_DIR_FLAGS and i + 1 < len(sf_args):
+            dirs.append(sf_args[i + 1])
+        elif a.startswith(tuple(f + "=" for f in _DEPLOY_DIR_FLAGS)):
+            dirs.append(a.split("=", 1)[1])
+    for d in dirs:
+        try:
+            p = Path(d).expanduser()
+            if not p.is_dir():
+                continue
+            for entry in p.iterdir():
+                if entry.name.lower() in _DESTRUCTIVE_MANIFESTS:
+                    return True
+        except OSError:
+            # The directory exists and cannot be read. That is the one case where failing closed
+            # costs nothing an operator would miss: an unreadable deploy source is broken anyway.
+            return True
+    return False
 
 
 def classify_destructive(sf_args):
@@ -835,14 +1049,49 @@ def classify_destructive(sf_args):
         return "opaque-write"
     sub = _normalize_subcommand(sub)
     f = sub[0]
+    # `apex run test` is running TESTS, not executing anonymous Apex. The legacy spelling was
+    # excluded here from the start — the comment below has said "NOT force:apex:test:run" since
+    # TQ-011 — and the modern spelling was not, because the match is on sub[:2] and both begin
+    # ("apex", "run").
+    #
+    # The cost was an UNSATISFIABLE refusal: the apex class demands the operator-approved
+    # immutable copy at ~/.torque/approved/<digest>.apex, and `apex run test` takes no --file, so
+    # there is no digest to approve and no way for an operator to clear it. Running the test suite
+    # before a deploy is ordinary work, and it was denied with a remedy that cannot be performed.
+    #
+    # Found by running the consulting-week matrix against a live org, which is where an external
+    # audit predicted it would be: "Apex tests are the sharp case — they mutate org state while
+    # feeling read-only to a practitioner."
+    if sub[:3] == ("apex", "run", "test") or f.startswith("force:apex:test"):
+        return None                                   # a test run, not anonymous Apex
     if sub[:2] == ("apex", "run") or f.startswith("force:apex:execute"):
-        return "apex"                                 # NOT force:apex:test:run (that's a test, TQ-011)
+        return "apex"
     if sub[:2] == ("org", "delete") or f.startswith("force:org:delete"):
         return "org-delete"                           # destroy a sandbox/scratch org (RU-2)
-    if (sub[:2] == ("api", "request") or f.startswith("force:api")) \
-       and (_api_method_glued(sf_args) or _api_method(sf_args)) in ("POST", "PUT", "PATCH", "DELETE"):   # glued FIRST: _api_method defaults to "GET" when no separate -X is present, so the other
-       # order short-circuits on that default and never sees `-XPOST`.
-        return "destructive-metadata"                 # raw REST DML bypasses data-* verbs (TQ-F3)
+    if sub[:2] == ("api", "request") or f.startswith("force:api"):
+        # glued FIRST: _api_method defaults to "GET" when no separate -X is present, so the other
+        # order short-circuits on that default and never sees `-XPOST`.
+        if (_api_method_glued(sf_args) or _api_method(sf_args)) in ("POST", "PUT", "PATCH",
+                                                                   "DELETE"):
+            return "destructive-metadata"             # raw REST DML bypasses data-* verbs (TQ-F3)
+        # THE METHOD IS NOT ALWAYS IN ARGV, and _api_method's "GET" default made both of these
+        # read as reads. Measured 2026-08-06 against an allowlisted org, both ALLOWED end-to-end:
+        #   api request rest --file f.json   Salesforce's own flag summary: "JSON file that
+        #                                    contains values for the request header, body,
+        #                                    METHOD, and URL." A DELETE lives inside the file.
+        #   api request graphql              has NO --method flag at all in the installed plugin
+        #                                    manifest, so this rule could never fire for it; the
+        #                                    transport is POST and the operation is in the body.
+        # Returning None here did more than skip the token. destructive_data_gate._gate_write
+        # returns early when the op is None, BEFORE _shield_tokens, so the protected-object floor
+        # never ran either: a `--file` DELETE against Account reached DML with neither control.
+        # Same rule as an expansion-supplied verb above, and the same rule
+        # _deploy_dir_carries_destructive already applies to deploy directories — when the
+        # destructiveness genuinely is not in argv, charge it as the most dangerous thing it could
+        # be rather than as the cheapest. An explicit read (no -X, no --file) keeps the CLI's real
+        # default and stays free.
+        if sub[:3] == ("api", "request", "graphql") or file_value(sf_args):
+            return "opaque-write"
     if sub[:3] == ("data", "delete", "bulk") or "--hard-delete" in sf_args \
        or f.startswith("force:data:bulk:delete"):
         return "bulk-delete"
@@ -862,7 +1111,8 @@ def classify_destructive(sf_args):
     if sub[:3] == ("project", "delete", "source") or f.startswith("force:source:delete") \
        or any(a in ("--pre-destructive-changes", "--post-destructive-changes")
               or a.startswith(("--pre-destructive-changes=", "--post-destructive-changes="))
-              for a in sf_args) or "destructivechanges" in " ".join(sf_args).lower():
+              for a in sf_args) or "destructivechanges" in " ".join(sf_args).lower() \
+       or _deploy_dir_carries_destructive(sub, sf_args):
         return "destructive-metadata"
     # Nothing precise matched. If the verb still READS as destructive, charge a token;
     # otherwise let it through to the ordinary write authorisation (allowlist + live
@@ -914,10 +1164,16 @@ def strip_runners(argv):
         argv = argv[1:]
         while argv and (argv[0].startswith("-") or re.match(r"^\w+=", argv[0])):
             argv = argv[1:]
-        # `timeout 5 tee ...`: the duration is a POSITIONAL, so peeling only flags left "5"
-        # as argv[0] and the classifier saw no write shape. A command is never a bare
-        # number, so dropping a duration-shaped token cannot swallow a real command.
-        if runner == "timeout" and argv and re.match(r"^[0-9]+(\.[0-9]+)?[smhd]?$", argv[0]):
+        # A runner can leave a bare NUMBER as argv[0] two different ways, and both defeat every
+        # downstream test that keys on the command word:
+        #   `timeout 5 tee …`   — the duration is a positional, so flag-peeling never sees it.
+        #   `nice -n 10 git …`  — `-n` peels as a flag and its value does not.
+        # The timeout half was already fixed; the nice half was found by a check written for a
+        # different bug (`env git add -f local/`) that happened to include a flagged runner.
+        # A command is never a bare number, so dropping a numeric token here cannot swallow a
+        # real one.
+        if (runner in ("timeout", "nice", "ionice", "chrt")
+                and argv and re.match(r"^-?[0-9]+(\.[0-9]+)?[smhd]?$", argv[0])):
             argv = argv[1:]
     return argv
 
@@ -1177,20 +1433,117 @@ def runtime_path_risk(segs, varmap):
     return None, None
 
 
+# ---- deferral to the exec-time shim -------------------------------------------------------
+#
+# THE PROBLEM THIS SOLVES, measured rather than asserted. Replaying six months of real client
+# commands through this classifier left 706 denials. Split by cause, 686 of them — 97.2% — are
+# some form of "I cannot read this string": substitution, indirect argv0, an interpreter, an
+# unbalanced quote. Exactly 20 hit an actual policy boundary.
+#
+# So analyze_bash answers two different questions and reports both the same way: is this
+# operation AUTHORIZED, and can I statically RESOLVE this text. Failing closed on the second is
+# correct for a PreToolUse hook, which sees a command string before bash has touched it and
+# genuinely cannot know what `$(cat org.txt)` will become. What is not correct is that the user
+# cannot tell the two apart — it reads as "Torque says no", and it lands hardest on whoever
+# composes shell most fluently, which is the person this tool is for.
+#
+# The exec-time shim answers the second question exactly. It runs on the argv the kernel is
+# about to execute, and bash has finished every expansion by then: `--target-org $(cat org.txt)`
+# arrives as `--target-org acme-prod`. There is no text left to reason about. So when the shim
+# is verifiably in front of `sf`, this layer does not have to guess — it defers, and the same
+# authorization runs downstream on resolved argv instead of a reconstruction.
+#
+# That is strictly MORE accurate than denying, because the shim sees truth and this sees a guess.
+#
+# WHAT IS NOT DEFERRABLE, and why each one stays a hard deny:
+#   wrapper-sf   `sudo` resets PATH via secure_path, so the shim may not be in front of sf at all.
+#   flags-dir    --flags-dir is read by sf ITSELF, not expanded by bash, so the shim cannot see
+#                the injected target either. Deferring would hand it to a layer just as blind.
+#   runtime-path, stages-local, anchor-ref, auth-ref, protected-write, opaque-writer
+#                these are about FILES, not about invoking sf. The shim never sees them.
+# The deferrable set is only the cases where the eventual `sf` resolves through PATH in a child
+# of this shell, which is precisely where the shim is standing.
+DEFERRABLE_TO_SHIM = frozenset({"substitution", "indirect-argv0", "interp-sf",
+                                "indirect-sf", "unparseable"})
+
+_SHIM_STATE = {}
+
+
+def shim_enforcing() -> bool:
+    """Is the exec-time shim actually in front of `sf` for commands this session runs?
+
+    Installed is not enough — a shim sitting in the anchor with nothing pointing at it enforces
+    nothing. Both halves are required: the operator-controlled copy exists and is executable in
+    the anchor, AND resolving `sf` on PATH lands on it.
+
+    Deliberately NOT an environment variable or a config flag. The agent composes its own Bash
+    and therefore its own environment; any switch it can set to make this layer quieter is a
+    switch it can set to make this layer quieter. What it cannot do is write an executable into
+    a 0700 directory outside the workspace that its Bash, Edit, Write and Read cannot reach.
+    """
+    path = os.environ.get("PATH", "")
+    anchor = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
+    key = (path, str(anchor))
+    if key in _SHIM_STATE:
+        return _SHIM_STATE[key]
+    ok = False
+    try:
+        shim = (anchor / "shim" / "sf").resolve()
+        resolved = shutil.which("sf")
+        ok = (shim.is_file() and os.access(shim, os.X_OK)
+              and resolved is not None and Path(resolved).resolve() == shim)
+    except Exception:                                  # noqa: BLE001 — fail CLOSED (no deferral)
+        ok = False
+    _SHIM_STATE[key] = ok
+    return ok
+
+
+def _deny_or_defer(reason: str, code: str):
+    """A static-shape refusal — handed to the shim when the shim is verifiably there.
+
+    Fails closed in both directions that matter: an unknown code is never deferrable, and if
+    shim_enforcing() cannot decide it says no. The caller still gets a `deny` key, so any code
+    path that has not learned about deferral keeps denying exactly as it did.
+
+    WHEN IT DENIES, IT NAMES THE FIX. This is the difference between a gate and an obstacle. A
+    refusal reading "not statically authorizable" tells the user what the parser could not do and
+    nothing about what they can do, and on the real corpus that message was 686 of 706 denials —
+    every one of which would have gone through with the shim installed. A user who has hit it
+    twice concludes the tool is broken, and they are not wrong to, because nothing in the message
+    distinguishes "this operation is unsafe" from "this layer cannot read shell".
+    """
+    if code in DEFERRABLE_TO_SHIM:
+        if shim_enforcing():
+            return {"deny": None, "writes": [], "mutations": [],
+                    "defer": (f"{reason} — deferred to the exec-time shim, which will authorize "
+                              f"it on resolved argv", code)}
+        return {"deny": (
+            f"{reason}\n"
+            f"  This is a PARSING limit, not a policy one: the operation was never judged "
+            f"unsafe, it could not be read. The exec-time shim resolves it exactly — it sees "
+            f"argv after bash has finished every expansion — and with it installed this would "
+            f"be authorized normally rather than refused.\n"
+            f"    python3 bin/torque install-gates --shim\n"
+            f"  Then put it on PATH ahead of the real CLI. It gates only when it cannot see an "
+            f"operator at a login terminal, so your own `sf` is unaffected.", code)}
+    return {"deny": (reason, code)}
+
+
 def analyze_bash(cmd: str):
     cmd = strip_continuations(cmd)
     segs, ok = split_segments(cmd)
     if not ok:
-        return {"deny": ("unparseable command (unbalanced quotes)", "unparseable")}
+        return _deny_or_defer("unparseable command (unbalanced quotes)", "unparseable")
     if grouping_or_subst(cmd) and (SF_SUSPICIOUS.search(cmd) or SF_WORD.search(cmd)):
-        return {"deny": ("command grouping/substitution around a Salesforce operation — "
-                         "not statically authorizable", "substitution")}
+        return _deny_or_defer("command grouping/substitution around a Salesforce operation — "
+                              "not statically authorizable", "substitution")
     varmap = _command_vars(cmd)                       # resolve inline `VAR=...` for path guards (TQ-F1)
     ws = check_write_shapes(segs, varmap)
     if ws:
         return {"deny": ws}
     if re.search(r"(?:^|[\s;&|])(xargs|parallel)\b", cmd) and (SF_WORD.search(cmd) or SF_SUSPICIOUS.search(cmd)):
-        return {"deny": ("sf routed through xargs/parallel — target not authorizable", "indirect-sf")}
+        return _deny_or_defer("sf routed through xargs/parallel — target not authorizable",
+                              "indirect-sf")
     writes, mutations = [], []
     for seg in segs:
         seg = seg.strip()
@@ -1200,11 +1553,18 @@ def analyze_bash(cmd: str):
             argv = shlex.split(seg)
         except ValueError:
             if SF_SUSPICIOUS.search(seg) or SF_WORD.search(seg):
-                return {"deny": ("unparseable segment carrying a Salesforce operation", "unparseable")}
+                return _deny_or_defer("unparseable segment carrying a Salesforce operation",
+                                      "unparseable")
             continue
         if not argv:
             continue
-        if stages_local(argv):
+        # strip_runners FIRST. `stages_local` requires argv[0] to be git, so `env git add -f
+        # local/x` put `env` in argv[0] and walked straight past the guard — as did `nice` and
+        # every other runner. `git add` is correctly absent from GIT_WRITE_SUBS (it is not a
+        # working-tree write), so check_write_shapes did not catch it either, and `local/` —
+        # per-org findings, before-values, the audit log — entered the index one `-f` away from
+        # a push. Three spellings verified bypassing before this line moved.
+        if stages_local(strip_runners(argv)):
             return {"deny": ("that would put a `local/` path into git — it holds per-org "
                              "findings, session logs with record values, and the audit log. "
                              "It is gitignored, and -f overrides that in one flag.",
@@ -1219,8 +1579,8 @@ def analyze_bash(cmd: str):
         a, assign_vals = _strip_assignments(argv)
         for v in assign_vals:
             if SF_SUSPICIOUS.search(v) or cmd_base(v, SF_BINS) in SF_BINS:
-                return {"deny": ("Salesforce operation hidden in a shell assignment value",
-                                 "indirect-sf")}
+                return _deny_or_defer("Salesforce operation hidden in a shell assignment value",
+                                      "indirect-sf")
         if not a:
             continue
         base0 = cmd_base(a[0], SF_BINS)
@@ -1236,8 +1596,8 @@ def analyze_bash(cmd: str):
             writes.append(sf_args)
             continue
         if indirect(a[0]):
-            return {"deny": ("indirect command invocation ($VAR/$()/backtick) cannot be "
-                             "authorized — call `sf` literally", "indirect-argv0")}
+            return _deny_or_defer("indirect command invocation ($VAR/$()/backtick) cannot be "
+                                  "authorized — call `sf` literally", "indirect-argv0")
         if base0 in INTERPRETERS and (SF_WORD.search(seg) or SF_SUSPICIOUS.search(seg)
                                       or "`" in seg):
             # EXCEPT the harness itself. `--target-org` matches SF_SUSPICIOUS, so this rule was
@@ -1249,8 +1609,23 @@ def analyze_bash(cmd: str):
             # PROTECTED_BASENAMES, so the agent's Edit/Write on it is already denied, and the path
             # must resolve inside TORQUE_HOME. The agent cannot point this at anything it controls.
             if not _is_own_harness(a):
-                return {"deny": (f"Salesforce operation via interpreter/here-string ({base0}) — "
-                                 "not authorizable", "interp-sf")}
+                # A RESOLVED script is a policy decision, made here, and must not be deferred to
+                # a layer that never sees interpreters. See _resolved_runner_target.
+                target = _resolved_runner_target(a)
+                if target is not None:
+                    try:
+                        inside = str(target).startswith(str(lib.TORQUE_HOME.resolve()))
+                    except Exception:                    # noqa: BLE001 — unknown ⇒ treat as outside
+                        inside = False
+                    why = ("it is not on the read-only manifest"
+                           if inside else "it lives outside TORQUE_HOME, where the agent can write it")
+                    return {"deny": (
+                        f"running {target.name} against an org is refused because {why}. This is "
+                        f"a POLICY refusal, not a parsing one — the command was read exactly, and "
+                        f"the exec-time shim cannot decide it because it wraps `sf`, not "
+                        f"`{base0}`. An operator runs this themselves.", "runner-not-authorized")}
+                return _deny_or_defer(f"Salesforce operation via interpreter/here-string "
+                                      f"({base0}) — not authorizable", "interp-sf")
         if wrapped_sf(a):
             return {"deny": ("Salesforce operation under a wrapper/runner — call `sf` directly",
                              "wrapper-sf")}
@@ -1373,6 +1748,38 @@ def _mcp_destructive(name, tinput):
                                  ("preDestructiveChanges", "postDestructiveChanges",
                                   "pre-destructive-changes", "post-destructive-changes")):
         return ("destructive-metadata", "", str(tinput))
+    return None
+
+
+_MCP_SOBJECT_KEYS = ("sobject", "sObject", "objectName", "object", "objectType", "type")
+
+
+def mcp_record_delete(tool, tinput):
+    """The sObject an MCP call deletes BY RECORD ID, or None if that is not what this call is.
+
+    Shape only. Whether that sObject may be deleted is the gate's question — the same division
+    that keeps _shield_tokens in the gate and protected_object_hits in lib.
+
+    Exists because _mcp_destructive returns None here deliberately: a delete naming one Id is
+    bounded, exactly as on the argv path, where delete-by-Id is the spelling
+    working-discipline.md mandates. The protected-object floor still has to see it. M8 closed
+    that on argv and left this twin open, so for as long as it took to test the second surface
+    the identical delete was refused through Bash and allowed through MCP — and an agent picks
+    its surface.
+    """
+    if not isinstance(tinput, dict):
+        return None
+    comps = _name_comps((tool or "").split("__")[-1])
+    if not (comps & {"delete", "purge", "destroy", "remove", "erase"}):
+        return None
+    if comps & {"bulk", "hard", "all", "mass"}:
+        return None                            # already bulk-delete, already destructive-class
+    if not (tinput.get("recordId") or tinput.get("id") or tinput.get("record-id")):
+        return None                            # already where-delete
+    for k in _MCP_SOBJECT_KEYS:
+        v = tinput.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
     return None
 
 

@@ -19,6 +19,31 @@ ROOT = Path(__file__).resolve().parent.parent
 HOOKS = ROOT / "hooks"
 sys.path.insert(0, str(HOOKS))
 import lib
+import shellparse
+
+# THE ARGV BASH RESOLVES THESE TO, for the shapes whose refusal MOVES once the shim is installed.
+#
+# Without the shim these five are refused right here, by the parser, because it cannot read them.
+# With the shim on PATH — which the README's own install step tells you to do — they are handed to
+# the exec-time layer instead, which sees argv after every expansion and is strictly better placed
+# to judge. The hook returns 0, and this demo used to print "*** ALLOWED ***" five times and a red
+# 5/24 WRONG to anyone who had followed the instructions.
+#
+# The operation is not allowed. It is decided one layer down. Measured 2026-08-06: posted as
+# resolved argv, all five are refused, and against an allowlisted org the bulk delete is refused
+# on the destructive class rather than on org classification.
+RESOLVED = {
+    "x=sf; $x data delete bulk --sobject Account --target-org acme-prod":
+        ["data", "delete", "bulk", "--sobject", "Account", "--target-org", "acme-prod"],
+    "s$'\\x66' data delete bulk --sobject Account --target-org acme-prod":
+        ["data", "delete", "bulk", "--sobject", "Account", "--target-org", "acme-prod"],
+    "eval sf data create record --sobject Account --target-org acme-prod":
+        ["data", "create", "record", "--sobject", "Account", "--target-org", "acme-prod"],
+    "bash -c 'sf data delete bulk --sobject A --target-org acme-prod'":
+        ["data", "delete", "bulk", "--sobject", "A", "--target-org", "acme-prod"],
+    "echo sf data create record --target-org acme-prod | xargs -J{} {}":
+        ["data", "create", "record", "--target-org", "acme-prod"],
+}
 
 # Attack the anchor where it ACTUALLY is. Hardcoding ~/.torque would report false failures for
 # anyone who relocated it with TORQUE_ANCHOR — the tool would look broken on their machine.
@@ -100,17 +125,30 @@ def _reason_only(reason):
     return reason
 
 
-def run(cmd):
-    ev = {"tool_name": "Bash", "tool_input": {"command": cmd}}
-    out = []
+def _ask(ev):
+    """Both gates, in order. Returns the refusal reason, or None if both allowed."""
     for gate in ("prod_write_gate.py", "destructive_data_gate.py"):
         p = subprocess.run([sys.executable, str(HOOKS / gate)], input=json.dumps(ev),
                            capture_output=True, text=True, cwd=ROOT, timeout=60)
         if p.returncode == 2:
-            reason = (p.stderr or "").split("] ", 1)[-1].strip().split("\n")[0]
-            return True, _reason_only(reason)
-        out.append(p.returncode)
-    return False, ""
+            return _reason_only((p.stderr or "").split("] ", 1)[-1].strip().split("\n")[0])
+    return None
+
+
+def run(cmd):
+    """Where was this refused — the parser, or the exec-time shim? Returns (denied, why, layer).
+
+    Asking only the parser was measuring one layer and narrating the whole system.
+    """
+    reason = _ask({"tool_name": "Bash", "tool_input": {"command": cmd}})
+    if reason is not None:
+        return True, reason, "parser"
+    argv = RESOLVED.get(cmd)
+    if argv and shellparse.shim_enforcing():
+        reason = _ask({"tool_name": "SfArgv", "tool_input": {"argv": argv}})
+        if reason is not None:
+            return True, reason, "exec-time"
+    return False, "", "parser"
 
 
 def main():
@@ -121,14 +159,15 @@ def main():
     for cat, why, cases in CATEGORIES:
         print(f"\n{B}{cat}{RST}\n{DIM}{why}{RST}")
         for cmd, want_deny, label in (cases[:1] if quick else cases):
-            denied, reason = run(cmd)
+            denied, reason, layer = run(cmd)
             total += 1
             ok = denied == want_deny
             if not ok:
                 wrong += 1
             shown = cmd if len(cmd) <= 76 else cmd[:73] + "..."
             if want_deny:
-                tag = f"{G}DENIED{RST}" if denied else f"{R}*** ALLOWED ***{RST}"
+                tag = (f"{G}DENIED{RST}" if layer == "parser" else f"{G}DENIED{RST}{DIM}@exec{RST}") \
+                    if denied else f"{R}*** ALLOWED ***{RST}"
                 print(f"  {tag}  {shown}")
                 print(f"          {DIM}{label} → {reason[:88]}{RST}" if denied
                       else f"          {DIM}{label}{RST}")
@@ -136,12 +175,17 @@ def main():
                 tag = f"{G}allowed{RST}" if not denied else f"{R}*** BLOCKED ***{RST}"
                 print(f"  {tag} {shown}")
                 print(f"          {DIM}{label}{RST}")
+    if shellparse.shim_enforcing():
+        print(f"\n{DIM}Lines marked @exec were refused by the exec-time shim rather than the "
+              f"parser.\nThe parser cannot read them — that is a limit of reading shell, not a "
+              f"judgement about\nthe operation — so with the shim installed they are decided on "
+              f"the argv the kernel is\nabout to run. Same answer, better evidence.{RST}")
     verdict = f"{G}all {total} behaved correctly{RST}" if not wrong else f"{R}{wrong}/{total} WRONG{RST}"
     print(f"\n  {verdict}\n")
     print(f"{DIM}That was the parser layer only — it needs no org because it never got that far.")
     nfix = sum(len(json.loads(f.read_text()).get("fixtures", []))
                for f in sorted((ROOT / "harness" / "tests").glob("gate_fixtures*.json")))
-    print(f"The full suite ({nfix} recorded fixtures, 17 mutation tests, a live deploy→verify→purge cycle)")
+    print(f"The full suite ({nfix} recorded fixtures, 19 mutation tests, a live deploy→verify→purge cycle)")
     print(f"runs against your own Developer Edition org:{RST}")
     print(f"    python3 bin/torque init <your-org-alias>")
     print(f"    python3 harness/validate.py --profile release --target-org <your-org-alias>\n")

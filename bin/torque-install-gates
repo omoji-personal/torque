@@ -11,6 +11,107 @@ ANCHOR = Path(os.environ.get("TORQUE_ANCHOR", Path.home() / ".torque"))
 SHIM_DIR = ANCHOR / "shim"
 SHIM_SRC = TORQUE_HOME / "bin" / "torque-shim-sf"
 
+PROJECT_SETTINGS = TORQUE_HOME / ".claude" / "settings.json"
+# The LOCAL override is where the anchor-pointing registration goes, and the reason is the one
+# thing the tracked file cannot be: correct for two machines at once.
+#
+# settings.json is committed, so whatever it names is what a clone gets. Naming the anchor there
+# means a fresh clone registers gates that do not exist on that machine and blocks every gated
+# call — fail-closed, and a wall the first time someone tries the tool. Naming the workspace there
+# is right for the clone and wrong for a machine that HAS activated, where it silently means
+# activation is in effect for nothing.
+#
+# settings.local.json is untracked (globally gitignored), so the hardened registration lives
+# beside the portable one without entering the repository, and the working tree stays clean —
+# which matters because a dirty tree cannot be re-activated and cannot anchor an attestation.
+LOCAL_SETTINGS = TORQUE_HOME / ".claude" / "settings.local.json"
+# $HOME rather than an absolute /Users/… : settings.json is TRACKED, and a committed absolute home
+# directory is one machine's path sitting in everyone else's checkout.
+ANCHOR_HOOKS = '"$HOME/.torque/enforcement/current/hooks/'
+WORKSPACE_HOOKS = '"$CLAUDE_PROJECT_DIR/hooks/'
+
+
+def project(to_anchor=True):
+    """Point this repository's hook registration at the activated enforcement copy, or back.
+
+    THE GAP THIS CLOSES. `torque activate-enforcement` ends by printing
+
+        Regenerate the project registration with:
+            python3 bin/torque install-gates --project
+
+    and there was no such flag. The dispatch fell through to `main()`, which registers hooks at
+    USER level — machine-wide scope nobody asked for, pointing at the workspace, repointing
+    nothing. So activation installed a tested, read-only copy of the gates into the anchor and
+    the workspace copies went on adjudicating every write, exactly as activation's own warning
+    said would happen. `active_enforcement_is_anchor_owned` failed the release run and was right:
+    activation without repointing the consumers changes nothing, which is the most convincing way
+    to be wrong about whether you are protected.
+
+    A rewrite rather than a regeneration: this repository's settings.json carries matchers,
+    timeouts and non-torque entries that are not this command's to invent. It substitutes one
+    path prefix and leaves the structure alone, and `--workspace` reverses it exactly.
+    """
+    if not PROJECT_SETTINGS.is_file():
+        print(f"refusing: {PROJECT_SETTINGS} is not a readable file", file=sys.stderr)
+        return 2
+
+    if not to_anchor:
+        # --workspace removes the local override rather than editing the tracked file, because
+        # the tracked file is already the workspace-pointing one and always should be.
+        if LOCAL_SETTINGS.exists():
+            cfg = json.loads(LOCAL_SETTINGS.read_text() or "{}")
+            cfg.pop("hooks", None)
+            if cfg:
+                LOCAL_SETTINGS.write_text(json.dumps(cfg, indent=2) + "\n")
+            else:
+                LOCAL_SETTINGS.unlink()
+            print(f"removed the anchor-pointing override from {LOCAL_SETTINGS.name}; the gates "
+                  f"run from the workspace again")
+        else:
+            print("nothing to do: no local override is installed")
+        return 0
+
+    cfg = json.loads(PROJECT_SETTINGS.read_text())
+    changed = 0
+    for arr in cfg.get("hooks", {}).values():
+        for m in arr:
+            for h in m.get("hooks", []):
+                c = h.get("command", "")
+                if WORKSPACE_HOOKS in c:
+                    c = c.replace(WORKSPACE_HOOKS, ANCHOR_HOOKS)
+                    # CODE from the anchor, INPUTS from the workspace. Without this the gate
+                    # computes TORQUE_HOME from its own location (hooks/lib.py:16 falls back to
+                    # __file__.parent.parent), which relocates the allowlist, the classification
+                    # cache, the protected-object manifest and the tree a maintainer window is
+                    # bound to into `<anchor>/enforcement/current/`, where none of them exist.
+                    #
+                    # Shipped without it on 2026-08-05 and measured on 2026-08-06: every org fell
+                    # off the allowlist, the protected-object floor read as an empty set on that
+                    # path, and NO maintainer window could ever validate — the grant is bound to
+                    # the workspace path and the gate was comparing it against the anchor. Source
+                    # edits became impossible while the registration looked correctly hardened.
+                    if "TORQUE_HOME=" not in c:
+                        c = 'TORQUE_HOME="$CLAUDE_PROJECT_DIR" ' + c
+                    h["command"] = c
+                    changed += 1
+    if not changed:
+        print("nothing to do: the tracked registration names no workspace hooks to repoint")
+        return 0
+
+    local = {}
+    if LOCAL_SETTINGS.exists():
+        local = json.loads(LOCAL_SETTINGS.read_text() or "{}")
+    local["hooks"] = cfg["hooks"]
+    LOCAL_SETTINGS.parent.mkdir(exist_ok=True)
+    LOCAL_SETTINGS.write_text(json.dumps(local, indent=2) + "\n")
+    print(f"wrote {changed} anchor-pointing hook registration(s) to {LOCAL_SETTINGS}")
+    print("  untracked, so the committed registration stays workspace-pointing and a clone of "
+          "this repo works with no setup.")
+    print("Editing this repository's hooks/ no longer changes what adjudicates a write. Re-run "
+          "`torque activate-enforcement` to promote new source after testing it.")
+    print("Reverse with: torque install-gates --workspace")
+    return 0
+
 
 def install_shim():
     """Put the exec-time shim on PATH, under the trust anchor.
@@ -41,9 +142,17 @@ def install_shim():
     # plain terminal, which is a lockout wearing a security badge.
     (SHIM_DIR / "home").write_text(str(TORQUE_HOME) + "\n")
     print(f"shim installed: {SHIM_DIR}/sf and /sfdx")
-    print("add it to PATH, ahead of the real CLI, in your shell profile:")
-    print(f'  export PATH="{SHIM_DIR}:$PATH"')
-    print("it gates only when it cannot see an operator at a login terminal, so your own")
+    # BOTH directories, in one line, at the one moment the operator is already editing their
+    # profile. bin/torque exists because — in its own docstring — "every deny message tells the
+    # operator to run `torque approve ...`. Before this shim there was no such command." The
+    # dispatcher was written to close that gap and nothing ever put it on PATH, so the gap stayed
+    # open: an operator hits a production deny, reads "run torque approve", gets `command not
+    # found`, and reasonably concludes the approval mechanism is broken. That is the
+    # security-critical path failing at the exact moment it is needed, and it is a PATH entry.
+    print("add BOTH to PATH in your shell profile — the shim ahead of the real CLI, and the")
+    print("dispatcher so that `torque approve ...` resolves when a deny message tells you to:")
+    print(f'  export PATH="{SHIM_DIR}:{TORQUE_HOME / "bin"}:$PATH"')
+    print("the shim gates only when it cannot see an operator at a login terminal, so your own")
     print("`sf` is unaffected. Remove with: python3 bin/torque install-gates --remove-shim")
     return True
 
@@ -77,10 +186,25 @@ def main():
     # bind everywhere") got NO MCP-write gating and NO Read gating on the trust anchor in every
     # other workspace, while believing they were covered. Silent partial protection is worse than
     # none, because it is indistinguishable from the real thing until it matters.
+    # EVERY GATE HOOK CARRIES THE TIMEOUT, and it comes from lib rather than a literal here.
+    #
+    # The project settings.json declares timeout 55 on each gate; this installer declared it only
+    # on syntax_guard and the observer, so a user-level install registered the gates with NO
+    # timeout and the host's default applied. That is not a cosmetic divergence: GATE_BUDGET_S is
+    # 40 with a 5s grace to render a refusal, and the enforcement contract is "exit 2 blocks, any
+    # other exit allows". A host default below 45s kills the gate mid-decision, the host sees a
+    # non-2 exit, and the operation is ALLOWED. The user-level install — the one that binds every
+    # workspace — was the one that could fail open.
+    #
+    # Sourced from lib.HOOK_TIMEOUT_S because budget_fits_hook_timeout already asserts that value
+    # against settings.json; a literal here would be a third copy of a number two checks compare.
+    _t = {"timeout": _hook_timeout()}
     hooks.append({"matcher": "Bash", "hooks": [
-        {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
+        {"type": "command", "command": cmd, **_t},
+        {"type": "command", "command": dcmd, **_t}]})
     hooks.append({"matcher": "mcp__.*", "hooks": [
-        {"type": "command", "command": cmd}, {"type": "command", "command": dcmd}]})
+        {"type": "command", "command": cmd, **_t},
+        {"type": "command", "command": dcmd, **_t}]})
     # syntax_guard runs FIRST on edits: it refuses a write that would leave a hooks/*.py file
     # unparseable. Both gates import from hooks/, so such a write fails them closed on every
     # subsequent tool call — including the one needed to undo it. That happened once, inside a
@@ -88,8 +212,8 @@ def main():
     scmd = (f'TORQUE_HOME="{TORQUE_HOME}" python3 "{TORQUE_HOME}/hooks/syntax_guard.py"')
     hooks.append({"matcher": "Edit|Write|MultiEdit", "hooks": [
         {"type": "command", "command": scmd, "timeout": 20},
-        {"type": "command", "command": cmd}]})
-    hooks.append({"matcher": "Read", "hooks": [{"type": "command", "command": cmd}]})
+        {"type": "command", "command": cmd, **_t}]})
+    hooks.append({"matcher": "Read", "hooks": [{"type": "command", "command": cmd, **_t}]})
     # The observer runs AFTER the tool, because its whole subject is the result.
     #
     # A2: this used to .append unconditionally while PreToolUse was deduped above, so running the
@@ -140,12 +264,94 @@ def remove():
     print("the project-level gates in this repo are unaffected")
     remove_shim()
 
+def _hook_timeout():
+    """The gate timeout, from lib, or refuse to install.
+
+    Fail-closed on purpose: registering gates with no timeout is worse than registering none,
+    because the host default may be shorter than the gate's own budget and a killed gate exits
+    non-2, which the enforcement contract reads as ALLOW. An installer that cannot determine the
+    timeout cannot install a gate that fails closed, so it does not install one at all.
+    """
+    try:
+        sys.path.insert(0, str(TORQUE_HOME / "hooks"))
+        import lib
+        return int(lib.HOOK_TIMEOUT_S)
+    except Exception as e:                             # noqa: BLE001
+        print(f"refusing to install: cannot read the gate timeout from hooks/lib.py ({e}). "
+              f"Gates registered without one can be killed mid-decision, and a killed gate exits "
+              f"non-2, which means ALLOW.", file=sys.stderr)
+        sys.exit(2)
+
+
+def _require_operator(what):
+    """Uninstalling enforcement is an operator act, not an agent one.
+
+    THE HOLE THIS CLOSES, found by chasing an audit finding about a hypothetical kill switch and
+    discovering the real one already shipped: the gates deny `rm ~/.torque/shim/sf` as a
+    protected write, and allowed `torque install-gates --remove-shim`, which does the same thing
+    more thoroughly. Two doors on turning the enforcement off, different answers — the exact
+    shape this repo keeps finding, this time on the door marked "disable".
+
+    An agent that can uninstall its own guardrails has guardrails only while it agrees with them.
+    That makes every other control here conditional on the agent's cooperation, which is the one
+    assumption the whole design refuses to make.
+
+    Same presence test as `torque approve`: a real login TTY whose ancestry is clear of the agent
+    process. Deliberately NOT a token — a token would have to be minted by an operator anyway,
+    and this way an operator at their own terminal is never blocked from uninstalling software
+    they installed.
+    """
+    sys.path.insert(0, str(TORQUE_HOME / "hooks"))
+    import lib
+    if lib.operator_present():
+        return
+    print(f"refusing: {what} disables Torque's own enforcement, so it requires an operator at a "
+          f"real terminal — the same presence check `torque approve` uses.\n"
+          f"  Run it yourself from a login shell, clear of the agent:\n"
+          f"    cd {TORQUE_HOME} && python3 bin/torque install-gates {what}\n"
+          f"  If you are already at such a terminal and seeing this, the ancestry check found an "
+          f"agent process above this one.", file=sys.stderr)
+    try:
+        lib.audit("UNINSTALL-REFUSED", f"{what} attempted without operator presence", durable=True)
+    except Exception:                                  # noqa: BLE001 — refusal must not depend on it
+        pass
+    sys.exit(2)
+
+
+KNOWN_FLAGS = {"--remove-shim", "--shim", "--remove", "--project", "--workspace"}
+
 if __name__ == "__main__":
     import sys
+    # AN UNRECOGNISED FLAG MUST NOT RUN THE DEFAULT. This dispatch used to end in a bare `else:
+    # main()`, so `install-gates --project` — a flag that did not exist, named by
+    # activate-enforcement's own success message — silently registered hooks at USER level, in
+    # every workspace on the machine. Nothing was wrong with main(); what was wrong was reaching
+    # it by not matching anything. A default action with machine-wide scope must be asked for by
+    # name, because the alternative is that a typo asks for it.
+    unknown = [a for a in sys.argv[1:] if a.startswith("-") and a not in KNOWN_FLAGS]
+    if unknown:
+        print(f"unknown flag(s) {unknown}. Refusing rather than running the default, which "
+              f"registers gates at USER level for every workspace on this machine.\n"
+              f"  --project        point THIS repo's hooks at the activated enforcement copy\n"
+              f"  --workspace      point them back at the workspace (reverses --project)\n"
+              f"  --shim           install the exec-time sf shim\n"
+              f"  --remove         remove the user-level registration (operator)\n"
+              f"  --remove-shim    remove the shim (operator)\n"
+              f"  (no flags)       register the gates at user level, all workspaces",
+              file=sys.stderr)
+        sys.exit(2)
     if "--remove-shim" in sys.argv:
+        _require_operator("--remove-shim")
         remove_shim()
+    elif "--project" in sys.argv:
+        sys.exit(project(to_anchor=True))
+    elif "--workspace" in sys.argv:
+        sys.exit(project(to_anchor=False))
     elif "--shim" in sys.argv and "--remove" not in sys.argv and len(sys.argv) == 2:
         # `--shim` alone adds the shim without rewriting the operator's settings.json.
         install_shim()
+    elif "--remove" in sys.argv:
+        _require_operator("--remove")
+        remove()
     else:
-        (remove if "--remove" in sys.argv else main)()
+        main()
