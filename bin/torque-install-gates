@@ -78,7 +78,21 @@ def project(to_anchor=True):
             for h in m.get("hooks", []):
                 c = h.get("command", "")
                 if WORKSPACE_HOOKS in c:
-                    h["command"] = c.replace(WORKSPACE_HOOKS, ANCHOR_HOOKS)
+                    c = c.replace(WORKSPACE_HOOKS, ANCHOR_HOOKS)
+                    # CODE from the anchor, INPUTS from the workspace. Without this the gate
+                    # computes TORQUE_HOME from its own location (hooks/lib.py:16 falls back to
+                    # __file__.parent.parent), which relocates the allowlist, the classification
+                    # cache, the protected-object manifest and the tree a maintainer window is
+                    # bound to into `<anchor>/enforcement/current/`, where none of them exist.
+                    #
+                    # Shipped without it on 2026-08-05 and measured on 2026-08-06: every org fell
+                    # off the allowlist, the protected-object floor read as an empty set on that
+                    # path, and NO maintainer window could ever validate — the grant is bound to
+                    # the workspace path and the gate was comparing it against the anchor. Source
+                    # edits became impossible while the registration looked correctly hardened.
+                    if "TORQUE_HOME=" not in c:
+                        c = 'TORQUE_HOME="$CLAUDE_PROJECT_DIR" ' + c
+                    h["command"] = c
                     changed += 1
     if not changed:
         print("nothing to do: the tracked registration names no workspace hooks to repoint")
