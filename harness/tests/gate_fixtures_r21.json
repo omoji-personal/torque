@@ -121,6 +121,39 @@
           "command": "sf apex run test --class-names MyTest --target-org sf-cb-test"
         }
       }
+    },
+    {
+      "id": "R21 deny: a foreign script with NOTHING at the path is still policy-refused (TOCTOU)",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "python3 /tmp/not-torque.py --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 deny: a script the agent could write inside TORQUE_HOME is not runnable against an org",
+      "gate": "prod_write_gate",
+      "expect": "deny",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "python3 local/agent_wrote_this.py --target-org sf-cb-test"
+        }
+      }
+    },
+    {
+      "id": "R21 allow: a declared read-only first-party command still runs against an org",
+      "gate": "prod_write_gate",
+      "expect": "allow",
+      "event": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "python3 bin/torque checkup --target-org sf-cb-test"
+        }
+      }
     }
   ]
 }

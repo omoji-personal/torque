@@ -258,12 +258,20 @@ def _resolved_runner_target(argv):
     for tok in argv[1:]:
         if tok.startswith("-"):
             return None                 # -c / -m / - : nothing statically resolvable
+        if any(ch in tok for ch in "$`*?[{"):
+            return None                 # expansion or glob: the NAME is not settled yet
         try:
             p = Path(tok)
-            p = (p if p.is_absolute() else (lib.TORQUE_HOME / p)).resolve()
+            # DELIBERATELY not conditioned on the file EXISTING. The first version of this
+            # returned None unless p.is_file(), which failed open twice over: the path is fully
+            # known either way, and a gate decision that depends on what is on disk right now is
+            # a TOCTOU — the agent can write the file after the gate has run and before the shell
+            # execs it. `python3 /tmp/not-torque.py --target-org acme` (a path with nothing at it)
+            # therefore fell through to interp-sf and deferred, which runnable_implies_unwritable
+            # caught: "a script outside TORQUE_HOME was authorized against an org".
+            return (p if p.is_absolute() else (lib.TORQUE_HOME / p)).resolve()
         except Exception:               # noqa: BLE001 — unresolvable is a shape problem
             return None
-        return p if p.is_file() else None
     return None
 
 

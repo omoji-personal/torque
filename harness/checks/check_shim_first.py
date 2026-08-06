@@ -44,6 +44,12 @@ _POLICY = {
     # TORQUE_HOME authorized against an org. Both were this one deferral.
     "runner-not-authorized": "python3 harness/validate.py --profile capability "
                              "--target-org acme-prod",
+    # A path with NOTHING at it, deliberately. The first version of _resolved_runner_target
+    # required p.is_file(), so this fell through to interp-sf and deferred — which is a TOCTOU as
+    # well as a hole, because the agent can create the file after the gate has decided. The
+    # existing entry above cannot catch that regression: validate.py exists, so an is_file()
+    # check passes for it. Only a non-existent path distinguishes the two implementations.
+    "runner-not-authorized-absent": "python3 /tmp/not-torque.py --target-org acme-prod",
 }
 
 
