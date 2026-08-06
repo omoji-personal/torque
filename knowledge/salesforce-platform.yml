@@ -633,8 +633,11 @@ entries:
     Also ruled out: HEADED mode, in a real browser window on a real display, which is the
     standard remediation for Lightning automation failures and shows the identical error. That
     was effectively the human check.
-    The single variable left is the FRONTDOOR-TOKEN session versus an ordinary username and
-    password login; everything else has been held constant and eliminated.
+    The single variable left was believed to be the FRONTDOOR-TOKEN session versus an ordinary
+    username and password login. ELIMINATED 2026-08-06: with a non-expired password the frontdoor
+    session renders the Lightning shell correctly — chain frontdoor.jsp -> contentDoor ->
+    lightning.force.com/lightning/n/..., one-app-nav-bar present. The frontdoor handoff was never
+    the problem, so this entry has no remaining named variable and its cause is still open.
   cross_check: >
     A mature Lightning browser-test suite running against several orgs for months has never
     recorded this error — not in code, docs or audit history. It launches plainly
@@ -645,6 +648,14 @@ entries:
     The header alone says nothing. Four detector designs were refined against this page before
     anyone read the dialog BODY, which names the cause in two words. When a page fails, read the
     error text before improving the selector.
+    A SECOND CAUSE PRODUCES THE IDENTICAL SYMPTOM, and it is not a Lightning problem at all.
+    Measured 2026-08-06: an EXPIRED PASSWORD makes the frontdoor redirect chain end at
+    /_ui/system/security/ChangePassword, so no Lightning page loads and one-app-nav-bar is absent
+    — indistinguishable from a render failure if the probe only reports "nav bar absent". It is
+    invisible in an ordinary browser, because the forced change fires on a NEW session and an
+    existing logged-in tab never sees it. Salesforce expires passwords on a 90-day default, so a
+    fleet of Developer Edition orgs created together hits this one after another. Report the
+    landing path on failure; browser_probe.mjs now does, and names this case by name.
   triggers: ['lightning/r/', 'Sorry to interrupt', 'CSS Error', 'record page']
   requires: >
     Verifying field visibility in a browser needs proof the record page rendered at all, not
