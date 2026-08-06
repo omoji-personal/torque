@@ -204,7 +204,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <div><b>Skills · subagents</b><span>5 · 2</span></div>
       <div><b>Enforcement</b><span>2 hooks, 4 tool surfaces</span></div>
       <div><b>Validation</b><span>119 checks, live org</span></div>
-      <div><b>Adversarial fixtures</b><span>251</span></div>
+      <div><b>Adversarial fixtures</b><span>257</span></div>
       <div><b>Self-proof</b><span>19 mutators</span></div>
       <div><b>Try it with no org</b><span>3 seconds</span></div>
     </div>
@@ -417,7 +417,7 @@ TORQUE PLATFORM NOTE [unable-to-lock-row] UNABLE_TO_LOCK_ROW is usually about a 
     and writes in the same breath: <code>sf config set target-org=x &amp;&amp; sf data update …</code>
     can re-point the write between the check and the execution, so the combination is denied.</p>
 
-  <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 251 adversarial fixtures and
+  <p><strong>6 — It is built to be disbelieved.</strong> Torque ships 257 adversarial fixtures and
     19 mutation tests that neuter each guard in turn and require the attack it blocks to start
     working. A guard that cannot be shown to be
     load-bearing is decoration. Every enforcement claim carries a machine-checked label, resolved against the live code, so the
@@ -906,7 +906,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     denies rather than hangs.
   </p>
 
-  <h4>251 adversarial fixtures</h4>
+  <h4>257 adversarial fixtures</h4>
   <p>
     Every attack class found across the audit rounds, each a named, runnable regression test.
     <strong>67 of them — 28% — assert that <em>ordinary work is allowed</em></strong>, which is the
@@ -1080,7 +1080,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     <tr><td>.claude/rules/</td><td>The seven rule files, byte-capped, each labelled with what backs it</td></tr>
     <tr><td>.claude/agents/</td><td>org-explorer (read-only) · hostile-qa (adversarial reviewer)</td></tr>
     <tr><td>hooks/</td><td>The shared expansion-aware parser and the two gates</td></tr>
-    <tr><td>harness/</td><td>119 checks, 254 gate fixtures (251 recorded + 3 minted live), 19 mutators, live_matrix.sh, the run log</td></tr>
+    <tr><td>harness/</td><td>119 checks, 260 gate fixtures (257 recorded + 3 minted live), 19 mutators, live_matrix.sh, the run log</td></tr>
     <tr><td>SECURITY.md</td><td>Disclosure policy — 72-hour confirmation, 90-day ceiling, fixtures credited</td></tr>
   </tbody></table>
 

@@ -12,7 +12,19 @@ import os, re, shlex, hashlib, fnmatch, json, shutil
 from pathlib import Path
 import lib
 
-TARGET_FLAGS = {"--target-org", "-o", "--targetusername", "-u"}
+# `--target-dev-hub` names a target as explicitly as `--target-org` does, and leaving it out meant
+# every packaging command was refused `no-explicit-target` — fail-closed for the RIGHT outcome by
+# the WRONG reason, which is the kind of refusal that teaches a user the tool is broken rather
+# than that the operation needs approval. Measured on Salesforce's own published examples: 430 of
+# 763 refusals were no-explicit-target, and `package version …` alone accounted for 20 of them.
+#
+# THE OBVIOUS WORRY, CHECKED RATHER THAN ASSUMED: does recognising the flag unblock a destructive
+# Dev Hub operation? No. `package delete`, `package version delete` and `package uninstall` all
+# carry a word in _DESTRUCTIVE_WORDS and no (topic, verb) rule claims them, so _destructive_shape
+# already charges them `unrecognised-destructive` — verified before and after this change. What
+# moves is the REASON: from "you named no target" to "this needs an operator-present token", which
+# is the true one. A dev hub is also normally a production org, so Layer 1 denies it again.
+TARGET_FLAGS = {"--target-org", "-o", "--targetusername", "-u", "--target-dev-hub", "-v"}
 INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "eval", "source", ".",
                 "python", "python2", "python3", "perl", "ruby", "node", "deno", "awk"}
 # sf CLI topics — a standalone `sf` token followed by one of these (or a target flag) is an sf
