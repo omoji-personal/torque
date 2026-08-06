@@ -25,22 +25,62 @@ def _bypass(target):
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, cwd=ROOT)
     if r.returncode == 0:
         return Result("bypass_suite", FAIL, "agent-side token mint succeeded (should refuse: no TTY)")
+    # (command, the argv bash resolves it to when the class is DEFERRABLE, else None)
+    #
+    # WHY THE SECOND ELEMENT EXISTS. This check ran the shapes through the write gate and required
+    # exit 2, inheriting whatever PATH it happened to run under. With the exec-time shim on PATH —
+    # which `install-gates --shim` prints instructions to do — the interpreter shape DEFERS
+    # instead of denying, the gate exits 0, and this read that as a bypass. It was not one: posted
+    # as resolved argv, the shim layer refuses it, and against an ALLOWLISTED org it refuses on the
+    # destructive class (bulk-delete needs an operator token), not merely on org classification.
+    #
+    # So the check was right that something was wrong and wrong about what. That is the third
+    # instance of one defect in this repository — readonly_gate_honours_exactly_the_list and
+    # bin/torque-demo were the other two — and all three passed for months because the machine
+    # they ran on happened to have no shim. A check that INHERITS its environment measures the
+    # machine; one that CONSTRUCTS it measures the system. Both postures are built below.
     shapes = [
-        "sf config set target-org=prod && sf data update --sobject A --values x",  # config TOCTOU
-        "bash -c 'sf data delete bulk --sobject A --file f -o prod'",              # interpreter
-        "nice sf --json data delete record --sobject A",                          # wrapper + global flag
-        f"cat {_A[:-3]}*/secret",                       # glob reaches the configured anchor
-        f"p={_A};cat $p/secret",                        # var-composed path to the anchor
-        "printf x>hooks/lib.py",                                                    # glued redirect to gate
-        ": >hooks/lib.py >/tmp/z",                                                  # multi-glued redirect
+        ("sf config set target-org=prod && sf data update --sobject A --values x", None),
+        ("bash -c 'sf data delete bulk --sobject A --file f -o prod'",
+         ["data", "delete", "bulk", "--sobject", "A", "--file", "f", "-o", "prod"]),
+        ("nice sf --json data delete record --sobject A", None),   # wrapper-sf: never deferrable
+        (f"cat {_A[:-3]}*/secret", None),               # glob reaches the configured anchor
+        (f"p={_A};cat $p/secret", None),                # var-composed path to the anchor
+        ("printf x>hooks/lib.py", None),                # glued redirect to gate
+        (": >hooks/lib.py >/tmp/z", None),              # multi-glued redirect
     ]
-    for cmd in shapes:
-        g = subprocess.run(["python3", str(ROOT/"hooks"/"prod_write_gate.py")],
-                          input=_j.dumps({"tool_name":"Bash","tool_input":{"command":cmd}}),
-                          capture_output=True, text=True, cwd=ROOT)
-        if g.returncode != 2:
-            return Result("bypass_suite", FAIL, f"bypass shape not denied: {cmd[:44]}")
-    return Result("bypass_suite", PASS, f"agent minting refused; {len(shapes)} bypass shapes denied")
+
+    import os as _os
+    no_shim = _os.pathsep.join(p for p in _os.environ.get("PATH", "").split(_os.pathsep)
+                               if "torque" not in p)
+    with_shim = str(_lb.ANCHOR / "shim") + _os.pathsep + no_shim
+
+    def _gate(payload, path):
+        return subprocess.run(["python3", str(ROOT / "hooks" / "prod_write_gate.py")],
+                              input=_j.dumps(payload), capture_output=True, text=True, cwd=ROOT,
+                              env=dict(_os.environ, PATH=path, TORQUE_HOME=str(ROOT))).returncode
+
+    def _bash(cmd, path):
+        return _gate({"tool_name": "Bash", "tool_input": {"command": cmd}}, path)
+
+    for cmd, resolved in shapes:
+        # 1. With no shim there is nothing to defer to, so the hook must decide every time.
+        if _bash(cmd, no_shim) != 2:
+            return Result("bypass_suite", FAIL,
+                          f"bypass shape not denied with no shim on PATH: {cmd[:44]}")
+        # 2. With the shim present, deny HERE or defer and be denied THERE — never neither.
+        if _bash(cmd, with_shim) == 2:
+            continue
+        if resolved is None:
+            return Result("bypass_suite", FAIL,
+                          f"shape deferred with the shim on PATH but is not a deferrable "
+                          f"class: {cmd[:44]}")
+        if _gate({"tool_name": "SfArgv", "tool_input": {"argv": resolved}}, with_shim) != 2:
+            return Result("bypass_suite", FAIL,
+                          f"shape deferred to the shim and the SHIM allowed it: {cmd[:44]}")
+    return Result("bypass_suite", PASS,
+                  f"agent minting refused; {len(shapes)} bypass shapes denied with no shim, and "
+                  f"denied at one layer or the other with the shim installed")
 
 @check("image_manifest", "static", catastrophe=True)
 def _image_manifest():
