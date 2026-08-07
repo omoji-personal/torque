@@ -1102,3 +1102,19 @@ entries:
     Apex Developer Guide — Triggers and Order of Execution, final step;
     developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_order_of_execution.htm
   updated: 2026-08-02
+
+- id: psg-assignment-names-the-group
+  domain: security
+  title: A permission set held through a group has no assignment row of its own
+  symptom: "A permission set is live for thousands of users and SELECT COUNT(Id) FROM PermissionSetAssignment WHERE PermissionSet.Name='X' returns 0."
+  cause: "When the grant is made through a Permission Set Group, the PermissionSetAssignment row carries the GROUP's aggregate permission set. Member permission sets get no row naming them, so a query filtered on the member's name is answered truthfully and uselessly."
+  remedy: >
+    Union the direct query with one over PermissionSetGroupComponent for the same member set,
+    and treat a failure of either half as unanswered rather than as zero. Reporting the direct
+    count alone under-reports every holder in every org that grants through groups, which is
+    most orgs above a certain size. Verified live 2026-08-07: a user assigned a group returned
+    COUNT 0 for the group's member set while demonstrably holding it.
+  detect: "sf data query --target-org <org> --query \"SELECT PermissionSetGroupId, PermissionSet.Name FROM PermissionSetAssignment WHERE PermissionSetGroupId != null LIMIT 5\""
+  triggers: ['PermissionSetAssignment', 'PermissionSetGroup', 'permission\s+set\s+group']
+  confidence: practitioner
+  updated: 2026-08-07
