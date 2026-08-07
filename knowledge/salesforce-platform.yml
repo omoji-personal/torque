@@ -604,6 +604,21 @@ entries:
     Drop ALL ROWS from the statement and pass --all-rows. Do not conclude the recycle bin is
     empty because the query errored — it never ran.
   detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
+  live_evidence: >
+    MEASURED 2026-08-06 on a live org, both directions:
+    the SOQL form returned MALFORMED_QUERY, "unexpected token: 'ALL'" — the entry's symptom line
+    word for word — while `--all-rows` returned 200 with totalSize 176.
+    THE SECOND NUMBER IS THE LESSON. The recycle bin held 176 deleted Accounts at the moment the
+    keyword form errored. Anyone reading only the failure would have concluded the bin was empty,
+    which is exactly what the remedy warns against, and would have been wrong by 176 records.
+    NOT PROMOTED to verified-live, deliberately. A verifier for this cannot use the harness's
+    _sfq helper: that helper cannot express --all-rows, and it classifies MALFORMED_QUERY as
+    "cannot tell" rather than as an answer. Falsification in verifiers_can_fail runs through two
+    seams, _SFQ_STUB and _DESCRIBE_STUB, and a CLI-shaped verifier uses neither — so it could be
+    written but not BROKEN, and an unfalsifiable verifier is the defect this repository keeps
+    finding. Promoting it needs a third seam in a catastrophe-class check, which is a deliberate
+    change and not a late-night one. The evidence is recorded here so the measurement is not lost
+    while the mechanism waits.
   triggers: ['ALL\s+ROWS', 'IsDeleted\s*=\s*true']
   confidence: practitioner
   updated: 2026-08-01
