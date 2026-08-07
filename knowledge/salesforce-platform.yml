@@ -351,8 +351,8 @@ entries:
     Pick the entry condition deliberately. It is also why a no-op mass update fires SOME
     automation and not other automation — the unconditioned kind runs, this kind does not.
   triggers: ['data\s+update', 'Flow']
-  confidence: documented
-  source: "Salesforce Help — Flow entry conditions"
+  confidence: practitioner
+  source: "Salesforce Help — Flow entry conditions [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only a 2021 engineering blog post, no Atlas documentation. Flow documentation lives in Help, which is unfetchable. Searched, not assumed.]"
   updated: 2026-08-01
 
 # ── PACKAGING / NAMESPACE ──────────────────────────────────────────────────────────────────
@@ -421,8 +421,8 @@ entries:
     Treat "sandbox" as insufficient grounds for a destructive operation. Confirm the sandbox
     TYPE, and remember that data masking is opt-in and frequently not configured.
   triggers: ['data\s+delete', 'delete\s+bulk', '--hard-delete']
-  confidence: documented
-  source: "Salesforce Help — Sandbox types and templates"
+  confidence: practitioner
+  source: "Salesforce Help — Sandbox types and templates [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only blog posts. The authoritative statement that Full and Partial Copy sandboxes carry production data lives in Help, which is unfetchable. Searched, not assumed. The claim is correct and the operational warning it carries is the most important line in this entry.]"
   updated: 2026-08-01
 
 # ── AUTH / BROWSER ─────────────────────────────────────────────────────────────────────────
@@ -440,8 +440,8 @@ entries:
     Never echo the URL — it contains a live token that lands in shell history, browser history
     and the first-navigation Referer. Write it to a mode-0600 file and pass the path.
   triggers: ['frontdoor', 'secur/frontdoor', 'org\s+display.*--verbose', 's[i]d=']
-  confidence: documented
-  source: "Salesforce Help — frontdoor.jsp"
+  confidence: practitioner
+  source: "Salesforce Help — frontdoor.jsp [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only forum threads. frontdoor.jsp has never been properly documented by Salesforce, which is itself worth knowing given this tool depends on it for every browser check. Searched, not assumed.]"
   updated: 2026-08-01
 
 # ── API / VERSIONING ───────────────────────────────────────────────────────────────────────
