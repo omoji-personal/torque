@@ -1061,6 +1061,44 @@ def _named_mutators_exist():
                   f"every mutator named in the documents is one of the {len(real)} validate.py runs")
 
 
+@check("guide_pdf_matches_its_source", "static", catastrophe=False)
+def _guide_pdf_matches_its_source():
+    """The published PDF must be built from the HTML currently on disk.
+
+    THIS ALREADY EXISTED — as a WORKFLOW STEP, and that is exactly why it is being registered here.
+    scripts/check-guide-fresh.py runs in CI and nowhere else, so `validate.py --profile static`
+    passing locally said nothing about it. On 2026-08-06 the guide's fixture counts were corrected
+    three times (237 to 248 to 251 to 257), the PDF was rebuilt none of those times, five commits
+    were pushed on the strength of a green local run, and CI caught it on the first job that
+    actually got a runner.
+
+    The general defect is worth more than this instance: CI runs seven steps and only ONE of them
+    is the static profile. "Static passes locally" and "CI passes" were being treated as one claim
+    by the only party in a position to check.
+
+    Composes rather than reimplements: it invokes the script and reads its exit code, so the two
+    can never drift into disagreeing about one PDF. Exit 0 fresh, 1 stale, 2 could not tell — and
+    2 is reported as BLOCKED rather than as a pass, because a guard that cannot reach its subject
+    has not cleared it.
+    """
+    name = "guide_pdf_matches_its_source"
+    script = ROOT / "scripts" / "check-guide-fresh.py"
+    if not script.is_file():
+        return Result(name, FAIL, f"{script.name} is missing — the CI step it backs would also "
+                                  f"fail, and neither would say why")
+    p = _kb_sp.run([_kb_sys.executable, str(script)], capture_output=True, text=True,
+                   cwd=str(ROOT), timeout=120)
+    tail = " ".join((p.stdout or "").split())[-220:]
+    if p.returncode == 0:
+        return Result(name, PASS, f"the PDF records the hash of the current guide source ({tail})")
+    if p.returncode == 1:
+        return Result(name, FAIL,
+                      f"the published PDF was built from a different guide/torque-guide.html — "
+                      f"rebuild with `node guide/build-pdf.mjs`. {tail}")
+    return Result(name, BLOCKED,
+                  f"freshness could not be determined, so it is not cleared: {tail}")
+
+
 @check("claimed_counts", "static", catastrophe=False)
 def _claimed_counts():
     """Every count stated in prose must match what is on disk.
