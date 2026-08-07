@@ -206,12 +206,36 @@ def el_postconditions(a):
                        f"the completion ledger produced nothing readable (exit {code})")
     if doc["verdict"] == "DONE":
         return Element("postconditions", "whether it landed", ESTABLISHED,
-                       f"the completion ledger says DONE: {doc['verified']}/{doc['layers']} "
-                       f"layers", {"ledger": doc["ledger"]})
-    out = [l["layer"] for l in doc["ledger"] if l["outcome"] not in ("VERIFIED", "N/A")]
+                       f"the completion ledger says DONE: {_ledger_shape(doc)}",
+                       {"ledger": doc["ledger"]})
+    # ASSERTED is a GREEN outcome in the ledger. Omitting it here listed a layer somebody had
+    # attested as still outstanding, so the receipt and the ledger disagreed about the same run.
+    out = [l["layer"] for l in doc["ledger"]
+           if l["outcome"] not in ("VERIFIED", "N/A", "ASSERTED")]
     return Element("postconditions", "whether it landed", OUTSTANDING,
-                   f"the completion ledger says NOT DONE: {doc['verified']}/{doc['layers']} "
-                   f"layers verified, outstanding {', '.join(out)}", {"ledger": doc["ledger"]})
+                   f"the completion ledger says NOT DONE: {_ledger_shape(doc)}, outstanding "
+                   f"{', '.join(out)}", {"ledger": doc["ledger"]})
+
+
+def _ledger_shape(doc):
+    """Describe the ledger in the ledger's own vocabulary.
+
+    This used to render `verified/layers` as "N layers verified". That field is the count of
+    GREEN outcomes, which includes layers declared inapplicable — so a receipt reported
+    "2/6 layers verified" for a run whose own ledger said "1 verified by the org". Two
+    first-party tools describing one number two ways is the failure this repo keeps finding,
+    and it arrived here because the ledger learned to separate observation from attestation
+    and its consumer was not updated with it.
+    """
+    obs = doc.get("observed")
+    if obs is None:                     # older ledger JSON: say only what it actually reported
+        return f"{doc['verified']}/{doc['layers']} layers green"
+    bits = [f"{obs} verified by the org"]
+    if doc.get("asserted"):
+        bits.append(f"{doc['asserted']} asserted by a person")
+    if doc.get("inapplicable"):
+        bits.append(f"{doc['inapplicable']} declared inapplicable")
+    return ", ".join(bits) + f", of {doc['layers']}"
 
 
 def el_evidence(elements, a):
