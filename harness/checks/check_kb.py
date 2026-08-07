@@ -474,7 +474,47 @@ def _v_hard_delete_permission_is_off_by_default(target):
                   f"do not carry it (requirement itself not testable read-only)")
 
 
+def _v_api_version_is_stored_per_class(target):
+    """Each Apex class carries its OWN saved API version — the storage the entry's claim rests on.
+
+    THE CLAIM HAS TWO HALVES AND ONLY ONE IS TESTABLE READ-ONLY. That the version is stored per
+    class is schema, and an org will show it. That the stored version changes runtime BEHAVIOUR
+    needs the same code deployed twice under different versions and executed — Apex, a deploy and
+    an assertion about divergent output, which is not something a read-only verifier may do. This
+    verifies the storage and says so; the behaviour half stays documented.
+
+    WHY VARIANCE IS NOT THE TEST, though it is the better demonstration. Measured 2026-08-06 on a
+    managed-package org: 345 Apex classes carrying 24 DISTINCT API versions, v38 through v64, in
+    one org — classes written years apart each keeping the version they were saved against. That is
+    the claim made visible. But the release org has 4 classes all on v64, and a verifier that needs
+    variance would report "cannot tell" there and drag every release to DEGRADED. So the assertion
+    is the one that holds on any org with a single class: ApiVersion resolves per record.
+
+    Falsifies cleanly: if the version were an org-level property rather than a class one, there
+    would be no such field and the query would be refused.
+    """
+    ok, rows = _sfq(target, "SELECT Id, ApiVersion FROM ApexClass LIMIT 200", tooling=True)
+    if ok is None:
+        return None, "ApexClass not queryable via Tooling here, so nothing was observed"
+    if ok is False:
+        return False, ("the query naming ApexClass.ApiVersion was refused — the API version is "
+                       "not stored per class, and the entry's mechanism is wrong")
+    if not rows:
+        return None, "no Apex classes on this org — nothing to observe"
+    versioned = [r for r in rows if r.get("ApiVersion") is not None]
+    if not versioned:
+        return False, (f"all {len(rows)} classes report a null ApiVersion — nothing is stored "
+                       f"per class")
+    distinct = {r.get("ApiVersion") for r in versioned}
+    extra = (f"; {len(distinct)} distinct versions coexist here, which is the claim made visible"
+             if len(distinct) > 1 else
+             "; this org runs a single version, so storage is shown but coexistence is not")
+    return True, (f"{len(versioned)} of {len(rows)} classes carry their own saved ApiVersion"
+                  f"{extra} (runtime behaviour not testable read-only)")
+
+
 _VERIFIERS = {
+    "api_version_is_stored_per_class": _v_api_version_is_stored_per_class,
     "hard_delete_permission_is_off_by_default": _v_hard_delete_permission_is_off_by_default,
     "history_newvalue_not_filterable": _v_history_newvalue_not_filterable,
     "profile_deploy_is_overlay": _v_profile_deploy_is_overlay,
@@ -1870,6 +1910,10 @@ def _verifiers_can_fail():
             lambda t, q, tl: (True, [{"DeveloperName": "Homegrown_Rule", "IsActive": True}]),
         # a field matched by the tombstone query that does not carry the suffix
         "del_tombstones_visible": lambda t, q, tl: (True, [{"DeveloperName": "Not_A_Tombstone"}]),
+        # classes that carry no version of their own — the world where the API version is an
+        # org-level property and the entry's mechanism does not exist.
+        "api_version_is_stored_per_class":
+            lambda t, q, tl: (True, [{"Id": "01p000000000001", "ApiVersion": None}]),
         # an org where every profile already carries hard-delete. The entry's premise is that
         # integration users LACK it; a world where all of them have it makes the entry pointless
         # even though the permission still exists.
