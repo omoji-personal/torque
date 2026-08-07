@@ -470,7 +470,22 @@ entries:
     Set the API version explicitly in generated metadata and keep it consistent, rather than
     inheriting whatever the tool defaults to.
   triggers: ['apiVersion', 'sourceApiVersion', '--api-version', 'project\s+(deploy|retrieve)']
-  confidence: documented
+  live_evidence: >
+    VERIFIED LIVE 2026-08-06, and the storage half is the only half a read-only check can reach.
+    On a managed-package org: 345 Apex classes carrying 24 DISTINCT API versions, v38 through
+    v64, coexisting in one org — classes written years apart each keeping the version they were
+    saved against. That is this entry made visible rather than asserted.
+    The release org tells the weaker version of the same story: 4 classes, all v64, each carrying
+    its own ApiVersion. So the verifier asserts the claim that holds anywhere — the version is a
+    property of the CLASS — rather than requiring variance an org may not have, which would
+    report "cannot tell" and drag a release to DEGRADED for a reason that says nothing about the
+    claim.
+    NOT VERIFIED, and left documented: that the stored version changes runtime BEHAVIOUR. That
+    needs the same code deployed twice under different versions and executed, which no read-only
+    check may do. Cited to the Apex Developer Guide: "a class or trigger is still bound to
+    versions with specific, known behavior".
+  verify: api_version_is_stored_per_class
+  confidence: verified-live
   source: "Apex Developer Guide — Understanding API versions — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_version_settings_intro.htm [verified 2026-08-06]"
   updated: 2026-08-01
 
