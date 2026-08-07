@@ -177,6 +177,22 @@ def workflow_rules(target, sobject, operation):
 _NOT_COUNTABLE = ("INVALID_TYPE_FOR_OPERATION", "EXTERNAL_OBJECT_UNSUPPORTED_EXCEPTION",
                   "does not support query")
 
+# A narrower class, and the distinction is load-bearing. An entity type that does not support
+# `query` AT ALL — a Change Data Capture channel, a platform event, a view over other data —
+# persists no rows, so there is nothing there to be orphaned by a delete. That is NOT an
+# unknown: it is not applicable, and it can never become known.
+#
+# An EXTERNAL object is the opposite case and deliberately stays out of this tuple: it holds
+# real rows in another system that a delete really could orphan, and the platform merely will
+# not count them. That is a genuine hole in the picture and must keep reporting UNDETERMINED.
+#
+# Measured 2026-08-07 on a delete cascade over Account: 90 lines of output, 50 of them
+# UNDETERMINED for entity types in this class — 48 ChangeEvent channels plus
+# FlowExecutionErrorEvent and ProcessInstanceHistory. A reader cannot find the two real
+# unknowns in that, and learns to skip the section. The UNDETERMINED signal is only worth
+# printing while it means something that could, in principle, be resolved.
+_NOT_A_TABLE = ("INVALID_TYPE_FOR_OPERATION", "does not support query")
+
 _NON_QUERYABLE_VIEWS = {
     "ActivityHistory", "OpenActivity", "NoteAndAttachment", "CombinedAttachment",
     "AttachedContentDocument", "AttachedContentNote", "EmailStatus", "LookedUpFromActivity",
@@ -217,7 +233,7 @@ def cascade(target, sobject, operation, where):
         except Unknown as e:
             counted.append((child, None))
             unknown.append(f"cascade:{child} ({e})")
-    orphans, uncountable, self_ref = [], [], []
+    orphans, uncountable, self_ref, not_a_table = [], [], [], []
     for child, field in soft:
         if child == sobject:
             # Salesforce refuses a semi-join against the same object, so a self-referencing
@@ -231,7 +247,12 @@ def cascade(target, sobject, operation, where):
             if n:
                 orphans.append((child, field, n))
         except Unknown as e:
-            if any(m in str(e) for m in _NOT_COUNTABLE):
+            if any(m in str(e) for m in _NOT_A_TABLE):
+                # No rows exist to orphan. Counted and reported, but NOT as undetermined —
+                # nothing about it is pending.
+                if child not in not_a_table:
+                    not_a_table.append(child)
+            elif any(m in str(e) for m in _NOT_COUNTABLE):
                 uncountable.append(child)
                 unknown.append(f"orphan:{child}.{field} ({e})")
             else:
@@ -247,7 +268,8 @@ def cascade(target, sobject, operation, where):
             blockers.append((child, None))
             unknown.append(f"delete-blocker:{child} ({e})")
     return {"cascade": counted, "orphans": orphans, "views": views, "unknown": unknown,
-            "uncountable": uncountable, "self_ref": self_ref, "blockers": blockers}
+            "uncountable": uncountable, "self_ref": self_ref, "blockers": blockers,
+            "not_a_table": not_a_table}
 
 
 def rollups(target, sobject):
@@ -320,6 +342,7 @@ def main():
             report["cascade_soft"] = c["orphans"]
             report["cascade_views"] = c["views"]
             report["cascade_uncountable"] = c["uncountable"]
+            report["cascade_not_a_table"] = c["not_a_table"]
             report["cascade_self_ref"] = c["self_ref"]
             report["cascade_blockers"] = c["blockers"]
             unknowns.extend(f"self-ref:{child}.{field} requires a separate count"
@@ -453,8 +476,13 @@ def _render(a, report, unknowns):
         extra = (report.get("cascade_views") or []) + (report.get("cascade_uncountable") or [])
         if extra:
             print(f"  (not counted: {len(extra)} relationship(s) the platform will not count — "
-                  f"views over other data, external objects, and entity types that do not "
-                  f"support query)")
+                  f"views over other data and external objects. These hold real rows a delete "
+                  f"could orphan, so they are reported UNDETERMINED above)")
+        nat = report.get("cascade_not_a_table") or []
+        if nat:
+            print(f"  (not applicable: {len(nat)} entity type(s) that do not support query at "
+                  f"all — change-data-capture channels, platform events and views. They persist "
+                  f"no rows, so there is nothing for a delete to orphan)")
 
     return None
 
