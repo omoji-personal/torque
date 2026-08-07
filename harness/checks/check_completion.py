@@ -303,3 +303,204 @@ def _completion_can_say_done():
     return Result(name, PASS,
                   "all-green produces DONE, N/A with a reason counts as answered, and one "
                   "NOT VERIFIED or BLOCKED row is enough to withhold the word")
+
+
+# ---------------------------------------------------------------------------------------
+# Added 2026-08-07 after three defects were found by writing marketing copy — running the
+# tool the way a stranger would, rather than the way its author does.
+# ---------------------------------------------------------------------------------------
+
+
+def _cgd_stub(direct=0, viagroup=0, field=True, fls=1):
+    """A soql() that answers whatever the caller needs, without an org."""
+    def _q(target, q, tooling=False):
+        if "FieldDefinition" in q:
+            return ([{"QualifiedApiName": "Tier__c"}] if field else []), None
+        if "FieldPermissions" in q:
+            return [{"c": fls}], None
+        if "PermissionSetGroupComponent" in q:
+            return [{"c": viagroup}], None
+        if "PermissionSetAssignment" in q:
+            return [{"c": direct}], None
+        return [], None
+    return _q
+
+
+@check("completion_asserted_is_not_verified", "static", catastrophe=True)
+def _completion_asserted_is_not_verified():
+    """A string the caller typed must never read as the org having answered.
+
+    THE DEFECT, reproduced 2026-08-07: `--render-evidence "looked at it"
+    --automation-evidence "fine" --uat-evidence "ok"` plus one `--na` printed
+    "DONE. 6/6 layers verified" over a single real query. The module already defined
+    ASSERTED for exactly this and said in its own comment that it is "counted and named
+    separately in the verdict" — layer_profile_render honoured that and the other two
+    returned VERIFIED.
+
+    This is not a check that evidence is refused. Evidence is the seam that makes the
+    verdict reachable at all. It checks that the verdict SAYS WHICH KIND of knowing each
+    layer rests on.
+    """
+    name = "completion_asserted_is_not_verified"
+    m = _mod()
+    for layer_fn, label in ((m.layer_automation, "automation"), (m.layer_uat, "human_uat")):
+        got = layer_fn("ok")
+        if got.outcome == m.VERIFIED:
+            return Result(name, FAIL,
+                          f"{label} reports VERIFIED for the free-text string 'ok' — a caller "
+                          f"grading themselves is indistinguishable from the org answering")
+        if got.outcome != m.ASSERTED:
+            return Result(name, FAIL,
+                          f"{label} reports {got.outcome} for supplied evidence, want ASSERTED "
+                          f"— the layer must stay green-eligible or the verdict is unreachable")
+
+    # ...and the printed verdict must not roll them together.
+    class _A:
+        target_org, field, json = NO_SUCH_ORG, "Account.Tier__c", True
+
+    import contextlib
+    import io
+    layers = [m.Layer("a", "org answered", m.VERIFIED, "queried"),
+              m.Layer("b", "person said so", m.ASSERTED, "asserted by a person: ok"),
+              m.Layer("c", "not applicable", m.NA, "declared")]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = m.render(layers, _A())
+    led = _cg_json.loads(buf.getvalue())
+    if code != DONE:
+        return Result(name, FAIL, "a ledger of VERIFIED/ASSERTED/N-A withheld DONE — the "
+                                  "asserted seam must stay green-eligible")
+    if led.get("observed") != 1 or led.get("asserted") != 1:
+        return Result(name, FAIL,
+                      f"the verdict reports observed={led.get('observed')!r} "
+                      f"asserted={led.get('asserted')!r}, want 1 and 1 — the two kinds of "
+                      f"knowing are being counted as one number again")
+
+    _A.json = False
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        m.render(layers, _A())
+    text = buf.getvalue()
+    if "asserted" not in text.lower():
+        return Result(name, FAIL,
+                      "the human-readable verdict never uses the word 'asserted', so a reader "
+                      "cannot tell which layers rest on somebody's word")
+    return Result(name, PASS,
+                  "supplied evidence reports ASSERTED rather than VERIFIED on both free-text "
+                  "layers, DONE stays reachable, and the verdict counts and names the two kinds "
+                  "of knowing separately in JSON and in prose")
+
+
+@check("completion_sees_permission_set_groups", "static", catastrophe=True)
+def _completion_sees_permission_set_groups():
+    """A permission set held through a group is held.
+
+    THE DEFECT, verified live on a real org 2026-08-07: the assignment row created by a
+    Permission Set Group names the GROUP's aggregate permission set. Member sets get no row
+    of their own, so `WHERE PermissionSet.Name='<member>'` returns 0 while every user in the
+    group holds it. The ledger then printed "assigned to nobody" — confidently wrong on the
+    one line the tool sells as the org having answered.
+
+    Both directions, because a fix that always answers VERIFIED passes the first case and is
+    a worse bug than the one it replaced.
+    """
+    name = "completion_sees_permission_set_groups"
+    m = _mod()
+    original = m.soql
+    try:
+        m.soql = _cgd_stub(direct=0, viagroup=4000)
+        held = m.layer_assigned("stub", "Tier_Access")
+        if held.outcome != m.VERIFIED:
+            return Result(name, FAIL,
+                          f"a permission set held by 4000 users through a group reported "
+                          f"{held.outcome} — {held.detail[:110]}")
+
+        m.soql = _cgd_stub(direct=0, viagroup=0)
+        empty = m.layer_assigned("stub", "Tier_Access")
+        if empty.outcome == m.VERIFIED:
+            return Result(name, FAIL,
+                          "a permission set assigned by neither route reported VERIFIED — the "
+                          "group query is being read as assignment that does not exist")
+
+        # A group query that fails must not silently fall back to the direct count: that is
+        # the original false negative wearing a different hat.
+        def _half_answer(target, q, tooling=False):
+            if "PermissionSetGroupComponent" in q:
+                return [], "INVALID_TYPE: PermissionSetGroupComponent"
+            return _cgd_stub(direct=0)(target, q, tooling)
+        m.soql = _half_answer
+        broken = m.layer_assigned("stub", "Tier_Access")
+        if broken.outcome != m.UNANSWERED:
+            return Result(name, FAIL,
+                          f"the group query failed and the layer reported {broken.outcome} "
+                          f"instead of UNANSWERED — half an answer is being reported as a "
+                          f"whole one")
+    finally:
+        m.soql = original
+    return Result(name, PASS,
+                  "a set held only through a permission set group reports VERIFIED, one held "
+                  "by neither route stays UNVERIFIED, and a failed group query reports "
+                  "UNANSWERED rather than falling back to the direct count")
+
+
+@check("receipt_will_not_establish_an_unestablished_impact", "static", catastrophe=True)
+def _receipt_will_not_establish_an_unestablished_impact():
+    """A receipt must not certify a blast radius that failed.
+
+    THE DEFECT, reproduced 2026-08-07 against an unresolvable org: blast-radius exits 3 with
+    every field null and six sources unanswered, and the receipt printed
+    "what it will set off  ESTABLISHED  None record(s) in scope; 0 automation(s) implicated".
+    The exit code was captured and read only on the unparseable branch, and `0` was summed
+    over lists that were never retrieved.
+
+    That branch also returned a bare Element where the success branch returns a tuple, so
+    build()'s unconditional unpack raised TypeError on the path it existed for.
+    """
+    name = "receipt_will_not_establish_an_unestablished_impact"
+    m = _receipt_mod()
+    original = m._tool
+
+    unresolved = (3, {"scope": None, "triggers": None, "flows": None, "validation_rules": None,
+                      "workflow_rules": None, "rollups": None, "cascade": "not-applicable",
+                      "cascade_soft": "not-applicable",
+                      "undetermined": ["scope: NamedOrgNotFoundError"] * 6}, "{}")
+    unparseable = (2, None, "Traceback (most recent call last): boom")
+    healthy = (0, {"scope": 32, "triggers": [], "flows": ["Tier"], "validation_rules": ["Vol"],
+                   "workflow_rules": [], "rollups": [], "cascade": "not-applicable",
+                   "cascade_soft": "not-applicable", "undetermined": []}, "{}")
+
+    class _A:
+        target_org, sobject, operation, where = NO_SUCH_ORG, "Account", "update", None
+
+    def state(canned):
+        m._tool = lambda *a, **k: canned
+        res = m.el_impact(_A())
+        if not isinstance(res, tuple):
+            return f"BARE-ELEMENT({res.state})"
+        return res[0].state
+
+    try:
+        got = state(unresolved)
+        if got != m.OUTSTANDING:
+            return Result(name, FAIL,
+                          f"blast-radius exited 3 with a null scope and the receipt reported "
+                          f"{got} — a count assembled from sources that did not answer is not "
+                          f"a smaller impact, it is an unknown one")
+        got = state(unparseable)
+        if got.startswith("BARE-ELEMENT"):
+            return Result(name, FAIL,
+                          "the failure branch returns a bare Element where the success branch "
+                          "returns a tuple — build() unpacks unconditionally and raises")
+        if got != m.OUTSTANDING:
+            return Result(name, FAIL, f"unparseable blast-radius output reported {got}")
+        got = state(healthy)
+        if got != m.ESTABLISHED:
+            return Result(name, FAIL,
+                          f"a healthy blast-radius run reported {got}, not ESTABLISHED — the "
+                          f"element is now permanently outstanding and carries no information")
+    finally:
+        m._tool = original
+    return Result(name, PASS,
+                  "exit 3 and unparseable output both report OUTSTANDING with a stated reason, "
+                  "the failure branch returns the same shape as the success branch, and a "
+                  "healthy run still establishes")

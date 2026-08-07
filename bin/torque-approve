@@ -210,7 +210,7 @@ def _confirm(prompt):
         return tty.readline().strip() == "YES"
 
 
-def _confirm_prod(target, orgid, username, instance, op):
+def _confirm_prod(target, orgid, username, instance, op, session_min=None):
     """Show the operator what the token ACTUALLY authorizes, which is broader than the label.
 
     The usage reads `torque approve <org> <op> --prod` and the confirmation named `<op>`, so the
@@ -223,9 +223,15 @@ def _confirm_prod(target, orgid, username, instance, op):
     change, not a prompt change — until it exists, the operator is told the true scope rather
     than a narrower one that reads better.
     """
-    scope = (f"ONE destructive `{op}` operation" if op in DESTRUCTIVE_OPS else
-             f"ONE ordinary production write of ANY class — the label `{op}` is recorded for "
-             f"the audit trail and does NOT narrow what the token authorizes")
+    if session_min is not None:
+        # A window is not an operation. Rendering it as "ONE production write" would
+        # understate what the operator is consenting to by the whole duration of the window.
+        scope = (f"EVERY production write on this org for {session_min} minutes — not one "
+                 f"operation and not one class. Revoke early with --end-session")
+    else:
+        scope = (f"ONE destructive `{op}` operation" if op in DESTRUCTIVE_OPS else
+                 f"ONE ordinary production write of ANY class — the label `{op}` is recorded "
+                 f"for the audit trail and does NOT narrow what the token authorizes")
     with open("/dev/tty") as tty:
         sys.stderr.write(
             f"\n*** PRODUCTION WRITE ***\n  org:      {target}  ({orgid})\n"
@@ -349,7 +355,10 @@ def main():
             mins = min(int(args[args.index("--session") + 1]), SESSION_MAX_MIN)
         except Exception:
             print("usage: torque approve <org> --session <minutes>", file=sys.stderr); sys.exit(2)
-        if not _confirm_prod(target, orgid, username, instance, op):
+        # `op` is not bound until well below this branch — reading it here raised
+        # UnboundLocalError before the prompt ever printed. A window has no single op.
+        if not _confirm_prod(target, orgid, username, instance, "session",
+                             session_min=mins):
             print("aborted", file=sys.stderr); sys.exit(1)
         lib.PROD_SESSIONS.mkdir(parents=True, exist_ok=True); os.chmod(lib.PROD_SESSIONS, 0o700)
         grant = {"orgId": orgid, "exp": int(time.time()) + mins * 60, "iat": int(time.time())}

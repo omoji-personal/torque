@@ -331,3 +331,125 @@ def _cache_poison(target):
     finally:
         if saved is not None: _lib.CACHE.write_text(saved)
         elif _lib.CACHE.exists(): _lib.CACHE.unlink()
+
+
+# ---------------------------------------------------------------------------------------
+# Added 2026-08-07. Both defects below were found by writing marketing copy about the tool
+# and then running it as an outside reader would.
+# ---------------------------------------------------------------------------------------
+
+
+@check("gate_read_survives_a_redirect", "static", catastrophe=True)
+def _p1d_gate_read_survives_a_redirect():
+    """A shell redirection must not turn a read into an untargeted write.
+
+    THE DEFECT, reproduced 2026-08-07: `sf --version` was allowed and `sf --version 2>&1`
+    was DENIED as "Salesforce write without an explicit --target-org". The redirect token
+    survived into the argument slice, so is_read()'s fail-closed branch saw a non-dash
+    positional with no resolvable subcommand and classified a version query as a write.
+
+    A parsing failure wearing a policy message. validation.md records that this direction —
+    refusing legitimate work — has cost this repo four times, and that a deny message naming
+    a policy the classifier never applied is the worst version of it.
+
+    BOTH DIRECTIONS. A stripper that dropped every token would pass the allow half and
+    quietly launder every destructive command carrying a redirect, so the deny half is the
+    one that keeps the fix honest.
+    """
+    name = "gate_read_survives_a_redirect"
+    allow = [
+        "sf --version",
+        "sf --version 2>&1",
+        "sf --version 2>/dev/null",
+        "sf org list --json 2>&1",
+    ]
+    deny = [
+        "sf data delete bulk --sobject Account --file x.csv 2>&1",
+        "sf project deploy start --manifest p.xml 2>&1",
+        "sf data update record --sobject Account --record-id 001x --values \'Name=x\' 2>&1",
+    ]
+    for cmd in allow:
+        got = _gate("prod_write_gate.py", {"tool_name": "Bash", "tool_input": {"command": cmd}})
+        if got != 0:
+            return Result(name, FAIL,
+                          f"a read was refused because of its redirect: {cmd!r} exited {got}, "
+                          f"want 0 — the command was never judged unsafe, it was mis-read")
+    for cmd in deny:
+        got = _gate("prod_write_gate.py", {"tool_name": "Bash", "tool_input": {"command": cmd}})
+        if got == 0:
+            return Result(name, FAIL,
+                          f"a write with no target was ALLOWED once a redirect was appended: "
+                          f"{cmd!r} — stripping redirects has laundered it")
+    return Result(name, PASS,
+                  f"{len(allow)} reads carrying redirections pass the gate and {len(deny)} "
+                  f"untargeted writes still refuse with one appended — the redirect changes "
+                  f"nothing about the verdict either way")
+
+
+@check("approve_session_window_reaches_consent", "static", catastrophe=True)
+def _p1d_approve_session_window_reaches_consent():
+    """The bounded production window must reach the operator, and tell them the truth.
+
+    THE DEFECT, confirmed 2026-08-07: `torque approve <org> --session <minutes>` raised
+    UnboundLocalError. `op` was read at the session branch and bound fifteen lines below it.
+    Nothing in the harness exercised --session, and only an operator could ever reach the
+    line, because presence is checked first.
+
+    This is Layer 3 in org-safety.md, the first entry in the production precedence chain, and
+    lib.py prints it as remediation on every production denial. Same shape as the failure
+    already recorded in validation.md — the command a deny message names not working — with a
+    new mechanism: it resolves and then tracebacks.
+
+    The second assertion is the one worth keeping. Hoisting the variable alone would fix the
+    crash and leave the consent prompt saying "ONE ordinary production write" for a window
+    that authorizes every write on the org until it expires.
+    """
+    name = "approve_session_window_reaches_consent"
+    import importlib.machinery as _p1d_mach
+    import importlib.util as _p1d_il
+    tool = ROOT / "bin" / "torque-approve"
+    loader = _p1d_mach.SourceFileLoader("torque_approve_mod", str(tool))
+    spec = _p1d_il.spec_from_loader("torque_approve_mod", loader)
+    m = _p1d_il.module_from_spec(spec)
+    loader.exec_module(m)
+
+    seen = {}
+    m._operator_present = lambda: True
+    m._org_details = lambda t: ("ORGID-PLACEHOLDER", "admin@example.com", "https://x.example.com")
+    m._ensure_secret = lambda: None
+
+    def _fake_confirm(target, orgid, username, instance, op, session_min=None):
+        seen["op"] = op
+        seen["session_min"] = session_min
+        return False                      # abort before anything is minted or written
+
+    m._confirm_prod = _fake_confirm
+
+    argv = _sys.argv
+    _sys.argv = ["torque-approve", "acme-prod", "--session", "30"]
+    outcome = None
+    try:
+        m.main()
+    except SystemExit as e:
+        outcome = f"SystemExit({e.code})"
+    except Exception as e:                                 # noqa: BLE001
+        outcome = f"{type(e).__name__}: {e}"
+    finally:
+        _sys.argv = argv
+
+    if outcome and "UnboundLocalError" in outcome:
+        return Result(name, FAIL,
+                      f"--session raised before prompting: {outcome} — the bounded production "
+                      f"window is dead on its first executed line, and the production deny "
+                      f"message names it as the remedy")
+    if not seen:
+        return Result(name, FAIL,
+                      f"--session never reached the consent prompt (outcome {outcome!r})")
+    if seen.get("session_min") != 30:
+        return Result(name, FAIL,
+                      f"the consent prompt was not told this is a 30-minute window "
+                      f"(session_min={seen.get('session_min')!r}); the operator would be shown "
+                      f"the scope of ONE production write for a grant covering every write")
+    return Result(name, PASS,
+                  "--session reaches the consent prompt instead of raising, and the prompt is "
+                  "told it is a 30-minute window rather than a single operation")
