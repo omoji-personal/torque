@@ -206,7 +206,7 @@ entries:
   triggers: ['History\b', 'NewValue', 'OldValue']
   detect_expect: error
   confidence: documented
-  source: "Salesforce Object Reference — History objects"
+  source: "Object Reference — StandardObjectName History — https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_associated_objects_history.htm [verified 2026-08-06: NewValue and OldValue are listed Type anyType, Properties Nillable, Sort — Filter is absent, so they sort but do not filter]"
   updated: 2026-08-01
 
 - id: hard-delete-permission
@@ -290,8 +290,8 @@ entries:
     Treat formula fields that reference sensitive data as sensitive, and set their FLS
     accordingly. This is a common finding in a client's first security review.
   triggers: ['PermissionSet', 'fieldPermissions']
-  confidence: documented
-  source: "Salesforce Help — Field-Level Security considerations"
+  confidence: practitioner
+  source: "Salesforce Security Guide — Field-Level Security [DEMOTED to practitioner 2026-08-06: the one still-fetchable FLS page, securityImplGuide/admin_fls.htm, does not mention formula fields at all. Checked, not assumed. The behaviour is real and widely reported by practitioners; no reachable Salesforce page states it.]"
   updated: 2026-08-01
 
 - id: view-all-data-vs-fls
@@ -301,8 +301,8 @@ entries:
   cause: "The two controls are independent; VAD is a sharing-layer grant."
   remedy: "Do not use VAD to diagnose a missing field — check FieldPermissions."
   triggers: ['PermissionSet', 'PermissionSetAssignment', 'ViewAllData', 'FieldPermissions', 'Profile:']
-  confidence: documented
-  source: "Salesforce Help — User Permissions"
+  confidence: practitioner
+  source: "Salesforce Security Guide — View All and Modify All Permissions Overview [DEMOTED to practitioner 2026-08-06: securityImplGuide/users_profiles_view_all_mod_all.htm now 301-redirects to help.salesforce.com, which is Lightning-rendered and returns a CSS Error to any fetcher. Salesforce migrated the Security Implementation Guide into Help, so this claim has no machine-verifiable source. The claim is standard and almost certainly correct; the EVIDENCE is what is missing, and documented is a claim about evidence.]"
   updated: 2026-08-01
 
 # ── AUTOMATION ─────────────────────────────────────────────────────────────────────────────
@@ -498,7 +498,7 @@ entries:
   detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
   triggers: ['data\s+delete', 'data:delete', '--hard-delete']
   confidence: documented
-  source: 'Salesforce Help — Recycle Bin'
+  source: 'Best Practices for Deployments with Large Data Volumes — Deleting Data — https://developer.salesforce.com/docs/atlas.en-us.salesforce_large_data_volumes_bp.meta/salesforce_large_data_volumes_bp/ldv_deployments_techniques_deleting_data.htm [re-cited 2026-08-06 off the unfetchable Salesforce Help. Verified verbatim: "Deleted items remain in the Recycle Bin for 15 days, and during that time they can be restored."]'
   updated: 2026-08-01
 
 - id: de-daily-api-limit-masquerades
@@ -898,7 +898,7 @@ entries:
     a fix — it changes the timing, so the same operation will fail again under load.
   triggers: ['data\s+\w+\s+bulk', 'OwnerId', 'data\s+update']
   confidence: documented
-  source: 'Salesforce Help — Record Locking and Locking Errors'
+  source: 'Designing Record Access for Enterprise Scale — Record-Level Locking — https://developer.salesforce.com/docs/atlas.en-us.draes.meta/draes/draes_object_relationships_record_level_locking.htm [re-cited 2026-08-06 away from the unfetchable Salesforce Help. Verified: "when you update child records, the system locks the parent and the child records to prevent inconsistencies". CAVEAT: this page supports the MECHANISM and never names UNABLE_TO_LOCK_ROW; it speaks of locking errors generally.]'
   updated: 2026-08-01
 
 - id: restricted-picklist-rejects-inactive
