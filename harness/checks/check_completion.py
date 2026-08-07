@@ -591,3 +591,88 @@ def _cgd_cascade_separates_not_applicable_from_undetermined():
                   "a change-data-capture channel is recorded as not-applicable and kept out of "
                   "the undetermined list, while an external object that holds real rows still "
                   "reports UNDETERMINED")
+
+
+@check("receipt_and_ledger_agree_about_the_same_run", "static", catastrophe=True)
+def _cgd_receipt_and_ledger_agree_about_the_same_run():
+    """Two first-party tools must not describe one number two ways.
+
+    THE DEFECT, introduced 2026-08-07 by the fix that separated observation from attestation
+    in the ledger, and found the same day while regenerating screenshots: the ledger printed
+    "1 verified by the org" while the receipt, reading the same run, printed "2/6 layers
+    verified". The receipt was rendering the ledger's GREEN count — which includes layers
+    declared inapplicable — under the word "verified". That is the exact conflation the
+    ledger fix existed to end, surviving one level downstream in its consumer.
+
+    Second half, same cause: the receipt computed its outstanding list as
+    `outcome not in ("VERIFIED", "N/A")`, so a layer somebody had ATTESTED — a GREEN outcome —
+    was reported as still outstanding while the ledger called the run DONE.
+
+    A fix reaches its consumers or it is not finished.
+    """
+    name = "receipt_and_ledger_agree_about_the_same_run"
+    m = _receipt_mod()
+
+    ledger = {
+        "verdict": "NOT DONE", "layers": 6,
+        "verified": 4,          # GREEN total: 1 observed + 2 asserted + 1 inapplicable
+        "observed": 1, "asserted": 2, "inapplicable": 1,
+        "ledger": [
+            {"layer": "field_exists", "outcome": "VERIFIED", "detail": "queried"},
+            {"layer": "profile_render", "outcome": "ASSERTED", "detail": "a person looked"},
+            {"layer": "human_uat", "outcome": "ASSERTED", "detail": "a person signed off"},
+            {"layer": "assignment", "outcome": "N/A", "detail": "no permset given"},
+            {"layer": "fls", "outcome": "UNVERIFIED", "detail": "not checked"},
+            {"layer": "automation", "outcome": "UNANSWERED", "detail": "org did not answer"},
+        ],
+    }
+
+    class _A:
+        target_org, sobject, operation, where = NO_SUCH_ORG, "Account", "update", None
+        field, permset = "Account.Tier__c", None
+        # el_postconditions forwards every evidence flag to the ledger subprocess, so the
+        # stand-in argparse namespace has to carry them all.
+        render_evidence = automation_evidence = uat_evidence = None
+        profile = None
+        na = []
+        json = False
+
+    orig = m._tool
+    try:
+        m._tool = lambda *a, **k: (3, ledger, "{}")
+        el = m.el_postconditions(_A())
+    finally:
+        m._tool = orig
+
+    detail = el.detail
+
+    # 1. The GREEN total must not be rendered as though the org verified all of it.
+    if "4/6" in detail or "4 layers verified" in detail:
+        return Result(name, FAIL,
+                      f"the receipt reported the ledger's green total as verified: {detail!r} — "
+                      f"only 1 of those 4 was observed by the org, and conflating them is the "
+                      f"defect the ledger fix removed one level up")
+    if "1 verified by the org" not in detail:
+        return Result(name, FAIL,
+                      f"the receipt does not report the org-observed count in the ledger's own "
+                      f"vocabulary: {detail!r}")
+
+    # 2. An ASSERTED layer is GREEN and must not be listed as outstanding.
+    for green_layer in ("profile_render", "human_uat"):
+        if green_layer in detail:
+            return Result(name, FAIL,
+                          f"{green_layer} is ASSERTED — a green outcome — and the receipt listed "
+                          f"it as outstanding, so the receipt and the ledger disagree about the "
+                          f"same run")
+
+    # 3. The other direction: genuinely non-green layers MUST still be named, or a receipt that
+    #    dropped every outstanding layer would satisfy both assertions above.
+    for missing in ("fls", "automation"):
+        if missing not in detail:
+            return Result(name, FAIL,
+                          f"{missing} is not green and the receipt did not name it as "
+                          f"outstanding: {detail!r}")
+    return Result(name, PASS,
+                  "the receipt reports the org-observed count in the ledger's vocabulary, treats "
+                  "ASSERTED as green rather than outstanding, and still names every layer that "
+                  "is genuinely neither")
