@@ -405,7 +405,38 @@ def _v_profile_deploy_is_overlay(target):
         _sh.rmtree(root, ignore_errors=True)
 
 
+def _v_history_newvalue_not_filterable(target):
+    """A History object's NewValue cannot appear in a WHERE clause, though the field itself reads.
+
+    BOTH DIRECTIONS, because a refusal alone proves nothing here: an org where AccountHistory is
+    unreachable would also refuse the filtered query, and would look identical. So the control runs
+    first — SELECT the field without filtering it. If that fails, the object is the problem and
+    this reports "cannot tell" rather than claiming the entry verified.
+
+    Measured on a live Developer Edition org 2026-08-06:
+        SELECT Id, Field, NewValue FROM AccountHistory          -> 200, 0 rows
+        SELECT Id FROM AccountHistory WHERE NewValue = 'x'      -> INVALID_FIELD,
+            "field 'NewValue' can not be filtered in a query call"
+    which is the entry's symptom line word for word.
+
+    Zero rows is fine and is the usual case on a quiet org — the claim is about the SCHEMA, not
+    about data. That is what makes this cheap enough to re-run on every release.
+    """
+    ok, _ = _sfq(target, "SELECT Id, Field, NewValue FROM AccountHistory LIMIT 1")
+    if ok is not True:
+        return None, "AccountHistory is not readable here, so a refusal would prove nothing"
+    bad, _ = _sfq(target, "SELECT Id FROM AccountHistory WHERE NewValue = 'x' LIMIT 1")
+    if bad is None:
+        return None, "the filtered query neither succeeded nor returned a schema error"
+    if bad is True:
+        return False, ("NewValue WAS filterable on this org — the entry is wrong, or Salesforce "
+                       "changed the field's properties")
+    return True, ("NewValue is selectable but not filterable, exactly as the entry says "
+                  "(the unfiltered control query succeeded)")
+
+
 _VERIFIERS = {
+    "history_newvalue_not_filterable": _v_history_newvalue_not_filterable,
     "profile_deploy_is_overlay": _v_profile_deploy_is_overlay,
     "fls_absent_without_permset": _v_fls_absent_without_permset,
     "audit_fields_not_createable": _v_audit_fields_not_createable,
@@ -1799,6 +1830,11 @@ def _verifiers_can_fail():
             lambda t, q, tl: (True, [{"DeveloperName": "Homegrown_Rule", "IsActive": True}]),
         # a field matched by the tombstone query that does not carry the suffix
         "del_tombstones_visible": lambda t, q, tl: (True, [{"DeveloperName": "Not_A_Tombstone"}]),
+        # an org that ACCEPTS the filtered query. The stub answers both of this verifier's
+        # queries, so "everything succeeds" is precisely the world where the entry is false:
+        # the control passes (AccountHistory is readable) AND the WHERE on NewValue is allowed.
+        # If Salesforce ever made that field filterable, this is what the org would look like.
+        "history_newvalue_not_filterable": lambda t, q, tl: (True, []),
         # FlowDefinition unreachable via Tooling — the entry's remedy depends on it
         "flowdefinition_queryable": lambda t, q, tl: (False, []),
         # FlowDefinitionView failing on the standard API, which the entry says works
