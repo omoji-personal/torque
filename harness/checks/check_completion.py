@@ -504,3 +504,90 @@ def _receipt_will_not_establish_an_unestablished_impact():
                   "exit 3 and unparseable output both report OUTSTANDING with a stated reason, "
                   "the failure branch returns the same shape as the success branch, and a "
                   "healthy run still establishes")
+
+
+def _blast_mod():
+    import importlib.machinery as _cg_mach
+    tool = ROOT / "bin" / "torque-blast-radius"
+    loader = _cg_mach.SourceFileLoader("torque_blast_mod", str(tool))
+    spec = _cg_il.spec_from_loader("torque_blast_mod", loader)
+    mm = _cg_il.module_from_spec(spec)
+    loader.exec_module(mm)
+    return mm
+
+
+@check("cascade_separates_not_applicable_from_undetermined", "static", catastrophe=True)
+def _cgd_cascade_separates_not_applicable_from_undetermined():
+    """UNDETERMINED must mean something that could, in principle, be resolved.
+
+    THE DEFECT, found 2026-08-07 by measuring which lines no check runs — `cascade` was 49
+    unreached lines — and then exercising it: a delete cascade over Account emitted 90 lines,
+    50 of them UNDETERMINED because the entity type does not support `query` at all. 48 were
+    Change Data Capture channels. Those persist no rows, so a delete cannot orphan anything
+    in them, and the condition can never resolve. Two genuine unknowns were buried underneath.
+
+    Crying wolf debases the one signal this tool is distinctive for. A reader who meets fifty
+    unresolvable UNDETERMINED lines twice stops reading the section.
+
+    BOTH DIRECTIONS, and the second is the reason this check exists rather than a filter:
+    an EXTERNAL object also cannot be counted, but it holds real rows in another system that a
+    delete really could orphan. It must keep reporting UNDETERMINED. A fix that suppressed
+    everything uncountable would pass the first assertion and hide real data loss.
+    """
+    name = "cascade_separates_not_applicable_from_undetermined"
+    m = _blast_mod()
+
+    describe = {"childRelationships": [
+        # an event channel: no rows, must be NOT APPLICABLE
+        {"childSObject": "AccountChangeEvent", "field": "AccountId"},
+        # an external object: real rows elsewhere, must stay UNDETERMINED
+        {"childSObject": "PendingOrderSummary", "field": "AccountId"},
+        # an ordinary child that answers: must be counted
+        {"childSObject": "Contact", "field": "AccountId"},
+    ]}
+
+    def fake_describe(target, sobject):
+        return describe
+
+    def fake_query(target, soql):
+        if "AccountChangeEvent" in soql:
+            raise m.Unknown("INVALID_TYPE_FOR_OPERATION: entity type AccountChangeEvent "
+                            "does not support query")
+        if "PendingOrderSummary" in soql:
+            raise m.Unknown("EXTERNAL_OBJECT_UNSUPPORTED_EXCEPTION: COUNT() query could not "
+                            "be processed")
+        return {"totalSize": 7}
+
+    orig_q, orig_d = m._query, m._describe
+    try:
+        m._query, m._describe = fake_query, fake_describe
+        c = m.cascade("stub-org", "Account", "delete", None)
+    finally:
+        m._query, m._describe = orig_q, orig_d
+
+    joined = " ".join(c["unknown"])
+    if "AccountChangeEvent" in joined:
+        return Result(name, FAIL,
+                      "an entity type that does not support query at all was reported as "
+                      "UNDETERMINED — it holds no rows, so nothing about it is pending and it "
+                      "can never resolve")
+    if "AccountChangeEvent" not in (c.get("not_a_table") or []):
+        return Result(name, FAIL,
+                      f"a change-data-capture channel was neither undetermined nor recorded as "
+                      f"not-applicable: not_a_table={c.get('not_a_table')!r} — dropping it "
+                      f"silently states a completeness the tool did not establish")
+    if "PendingOrderSummary" not in joined:
+        return Result(name, FAIL,
+                      "an EXTERNAL object stopped reporting UNDETERMINED — it holds real rows a "
+                      "delete could orphan and merely cannot be counted, so suppressing it "
+                      "hides real data loss behind a clean picture")
+    # Third direction: the ordinary child that DID answer must still be counted. Without this,
+    # a cascade that silently dropped every relationship would satisfy both assertions above.
+    if not any(child == "Contact" and n == 7 for child, _f, n in c["orphans"]):
+        return Result(name, FAIL,
+                      f"the one child object that answered was not counted: "
+                      f"orphans={c['orphans']!r}")
+    return Result(name, PASS,
+                  "a change-data-capture channel is recorded as not-applicable and kept out of "
+                  "the undetermined list, while an external object that holds real rows still "
+                  "reports UNDETERMINED")

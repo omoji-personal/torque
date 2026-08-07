@@ -1118,3 +1118,21 @@ entries:
   triggers: ['PermissionSetAssignment', 'PermissionSetGroup', 'permission\s+set\s+group']
   confidence: practitioner
   updated: 2026-08-07
+
+- id: event-channels-do-not-support-query
+  domain: api
+  title: Change events, platform events and some platform views cannot be queried at all
+  symptom: "A relationship walk over an object's children returns INVALID_TYPE_FOR_OPERATION: entity type XChangeEvent does not support query, for dozens of children at once."
+  cause: "Change Data Capture channels (XChangeEvent), platform events and certain platform views are not tables. They persist no queryable rows, so SOQL against them is refused by the entity type rather than by permissions — it fails the same way in every org, forever."
+  remedy: >
+    Treat these as NOT APPLICABLE rather than as undetermined: there are no rows for a delete to
+    orphan and the condition can never resolve. Keep them out of any "could not determine" list,
+    or that list stops meaning anything. Do NOT extend the same treatment to EXTERNAL objects —
+    they fail with EXTERNAL_OBJECT_UNSUPPORTED_EXCEPTION, hold real rows in another system that a
+    delete really can orphan, and merely cannot be counted. That is a genuine unknown.
+    Measured 2026-08-07: a delete cascade over Account produced 90 lines, 50 of them undetermined
+    for this reason, burying the two real unknowns.
+  detect: "sf data query --target-org <org> --query \"SELECT COUNT() FROM AccountChangeEvent\""
+  triggers: ['ChangeEvent', 'INVALID_TYPE_FOR_OPERATION', 'does not support query']
+  confidence: practitioner
+  updated: 2026-08-07
