@@ -279,11 +279,23 @@ fixture. The trail is in [`harness/VALIDATION.md`](harness/VALIDATION.md).
 
 ### How this was built
 
-Torque was written with AI agents, in the open, and the commit history says so: at 2026-08-05,
-202 of 256 commits carried a `Co-Authored-By: Claude` trailer. That is not a disclaimer buried at
-the bottom. It is the point of the artifact. The figure is dated because it moves with every
-commit, and an undated count is a number waiting to be wrong — this one already was, at
-"192 of 246", for as long as it took someone to check.
+Torque was written with AI agents, in the open, and the commit history says so: on `main` at
+2026-08-07, 216 of 224 commits carried a `Co-Authored-By: Claude` trailer. That is not a
+disclaimer buried at the bottom. It is the point of the artifact.
+
+The figure names its ref and its method, because dating it turned out not to be enough. Re-derive
+it with:
+
+```
+git rev-list --count main
+git log main --format='%b' | grep -c 'Co-Authored-By: Claude'
+```
+
+Earlier revisions of this file said "202 of 256" and, before that, "192 of 246" — each dated, each
+correct when written, and neither reproducible afterwards. The count is not monotonic: this repo
+squash-merges, which collapses a branch's commits into one, so `main` can hold *fewer* commits
+than a count taken days earlier. A dated number with no recorded method is still a number waiting
+to be wrong, which is the failure this file spends the rest of its length warning about.
 
 The problem this tool exists to solve is that an agent operating on a Salesforce org will report
 success it has not earned. The way to demonstrate a solution to that is not to write the code by
