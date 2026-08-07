@@ -435,7 +435,47 @@ def _v_history_newvalue_not_filterable(target):
                   "(the unfiltered control query succeeded)")
 
 
+def _v_hard_delete_permission_is_off_by_default(target):
+    """The "Bulk API Hard Delete" permission exists, and profiles do not carry it by default.
+
+    WHY THIS ENTRY NEEDED AN ORG. The audit could not close its citation: Large Data Volumes best
+    practices confirms hard delete bypasses the Recycle Bin and says nothing about a permission,
+    and the page that does state it lives in Salesforce Help, which is Lightning-rendered and
+    unfetchable. So the claim was documented by a source no one could read. An org can answer the
+    part that matters.
+
+    WHAT THIS PROVES, EXACTLY. That the permission EXISTS under that name — PermissionSet carries
+    the field, so a query naming it resolves rather than erroring — and that it is OFF on the
+    profile-owned permission sets. Measured on a live Developer Edition org 2026-08-06: 10 of 10
+    profiles False, including System Administrator, "Minimum Access - API Only Integrations" and
+    "Salesforce API Only System Integrations". The entry says "most integration users lack it";
+    on this org every one of them does.
+
+    WHAT IT DOES NOT PROVE, and the entry now says so: that hard delete REQUIRES the permission.
+    Establishing a requirement means attempting a hard delete without it, which is a destructive
+    operation needing an operator-present token, so no check may do it. Existence plus
+    off-by-default is what is honestly available, and it is the half a practitioner acts on.
+    """
+    ok, rows = _sfq(target,
+                    "SELECT Profile.Name, PermissionsBulkApiHardDelete FROM PermissionSet "
+                    "WHERE IsOwnedByProfile = true AND Profile.Name != null LIMIT 25")
+    if ok is None:
+        return None, "PermissionSet not queryable here, so nothing was observed"
+    if ok is False:
+        return False, ("the query naming PermissionsBulkApiHardDelete was refused — the "
+                       "permission does not exist under that name, and the entry is wrong")
+    if not rows:
+        return None, "no profile-owned permission sets returned — nothing to observe"
+    granted = [r for r in rows if r.get("PermissionsBulkApiHardDelete")]
+    if len(granted) == len(rows):
+        return False, (f"all {len(rows)} profiles carry the permission — it is not something "
+                       f"integration users lack, and the entry's premise fails")
+    return True, (f"the permission exists and {len(rows) - len(granted)} of {len(rows)} profiles "
+                  f"do not carry it (requirement itself not testable read-only)")
+
+
 _VERIFIERS = {
+    "hard_delete_permission_is_off_by_default": _v_hard_delete_permission_is_off_by_default,
     "history_newvalue_not_filterable": _v_history_newvalue_not_filterable,
     "profile_deploy_is_overlay": _v_profile_deploy_is_overlay,
     "fls_absent_without_permset": _v_fls_absent_without_permset,
@@ -1830,6 +1870,12 @@ def _verifiers_can_fail():
             lambda t, q, tl: (True, [{"DeveloperName": "Homegrown_Rule", "IsActive": True}]),
         # a field matched by the tombstone query that does not carry the suffix
         "del_tombstones_visible": lambda t, q, tl: (True, [{"DeveloperName": "Not_A_Tombstone"}]),
+        # an org where every profile already carries hard-delete. The entry's premise is that
+        # integration users LACK it; a world where all of them have it makes the entry pointless
+        # even though the permission still exists.
+        "hard_delete_permission_is_off_by_default":
+            lambda t, q, tl: (True, [{"Profile": {"Name": "Admin"},
+                                      "PermissionsBulkApiHardDelete": True}]),
         # an org that ACCEPTS the filtered query. The stub answers both of this verifier's
         # queries, so "everything succeeds" is precisely the world where the entry is false:
         # the control passes (AccountHistory is readable) AND the WHERE on NewValue is allowed.

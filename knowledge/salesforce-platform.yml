@@ -216,14 +216,24 @@ entries:
   symptom: "A hard delete silently behaves like a normal delete, or the job fails outright."
   cause: "hardDelete requires the \"Bulk API Hard Delete\" user permission."
   citation_gap: >
-    AUDITED 2026-08-06: the cited source supports the Recycle Bin half of this entry and is
+    AUDITED then VERIFIED LIVE 2026-08-06. The cited source supports the Recycle Bin half and is
     SILENT on the permission, which is the half the title asserts. Large Data Volumes best
     practices states "Bulk API and Bulk API 2.0 support a hard delete option, which allows
     records to bypass the Recycle Bin", and "Deleted items remain in the Recycle Bin for 15
     days". No Atlas page found so far states the permission requirement — it appears in Help and
-    in forum answers, neither of which is fetchable or authoritative. The permission is real and
-    the claim is very likely true; what is missing is evidence, and `documented` is a claim about
-    evidence. Treat the permission line as practitioner-grade until a page that says it is found.
+    in forum answers, neither of which is fetchable or authoritative.
+    SO THE ORG WAS ASKED INSTEAD, and it answered the part that matters. On a live Developer
+    Edition org, PermissionSet carries PermissionsBulkApiHardDelete — so the permission exists
+    under exactly that name — and it is FALSE on 10 of 10 profile-owned permission sets,
+    System Administrator among them, along with "Minimum Access - API Only Integrations" and
+    "Salesforce API Only System Integrations". The entry says most integration users lack it; on
+    that org every profile did. Re-checked every release by
+    hard_delete_permission_is_off_by_default.
+    WHAT REMAINS UNPROVEN, precisely: that hard delete REQUIRES the permission. Establishing a
+    requirement means attempting one without it, which is destructive and needs an
+    operator-present token, so no check may do it. Existence plus off-by-default is what is
+    honestly available — and it is the half a practitioner acts on, because a job that fails for
+    want of a permission nobody has is the same problem either way.
   remedy: >
     Grant it deliberately and narrowly. Note that a normal delete is recoverable from the
     Recycle Bin for 15 days and a hard delete is not — that difference is usually the reason
@@ -233,7 +243,8 @@ entries:
     A hard delete needs the "Bulk API Hard Delete" user permission granted to the running user
     before the job is submitted, and a decision made in advance that the records are not wanted
     back — a normal delete is recoverable from the Recycle Bin for 15 days and this is not.
-  confidence: documented
+  verify: hard_delete_permission_is_off_by_default
+  confidence: verified-live
   source: "Bulk API Developer Guide — hardDelete"
   updated: 2026-08-01
 
