@@ -206,7 +206,7 @@ entries:
   triggers: ['History\b', 'NewValue', 'OldValue']
   detect_expect: error
   confidence: documented
-  source: "Salesforce Object Reference — History objects"
+  source: "Object Reference — StandardObjectName History — https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_associated_objects_history.htm [verified 2026-08-06: NewValue and OldValue are listed Type anyType, Properties Nillable, Sort — Filter is absent, so they sort but do not filter]"
   updated: 2026-08-01
 
 - id: hard-delete-permission
@@ -214,6 +214,15 @@ entries:
   title: Bulk API hard delete needs a user permission most integration users lack
   symptom: "A hard delete silently behaves like a normal delete, or the job fails outright."
   cause: "hardDelete requires the \"Bulk API Hard Delete\" user permission."
+  citation_gap: >
+    AUDITED 2026-08-06: the cited source supports the Recycle Bin half of this entry and is
+    SILENT on the permission, which is the half the title asserts. Large Data Volumes best
+    practices states "Bulk API and Bulk API 2.0 support a hard delete option, which allows
+    records to bypass the Recycle Bin", and "Deleted items remain in the Recycle Bin for 15
+    days". No Atlas page found so far states the permission requirement — it appears in Help and
+    in forum answers, neither of which is fetchable or authoritative. The permission is real and
+    the claim is very likely true; what is missing is evidence, and `documented` is a claim about
+    evidence. Treat the permission line as practitioner-grade until a page that says it is found.
   remedy: >
     Grant it deliberately and narrowly. Note that a normal delete is recoverable from the
     Recycle Bin for 15 days and a hard delete is not — that difference is usually the reason
@@ -248,7 +257,7 @@ entries:
     passes with one record fails at 200 — which is exactly the batch size the platform uses.
   triggers: ['apex\s+run', 'apex:run', 'force:apex:execute', 'apex:execute', '--apexcodefile', '--file.*\\.apex']
   confidence: documented
-  source: "Apex Developer Guide — Execution Governors and Limits"
+  source: "Apex Developer Guide — Execution Governors and Limits — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm [verified 2026-08-06: all six numbers]"
   updated: 2026-08-01
 
 - id: with-sharing-is-not-fls
@@ -268,7 +277,7 @@ entries:
     in USER_MODE or carrying WITH SECURITY_ENFORCED, and Security.stripInaccessible applied
     before anything is returned. A sharing declaration does not supply this and cannot.
   confidence: documented
-  source: "Apex Developer Guide — Enforcing Object and Field Permissions"
+  source: "Apex Developer Guide — Enforcing Object and Field Permissions — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_keywords_sharing.htm [verified 2026-08-06]"
   updated: 2026-08-01
 
 - id: formula-fields-bypass-fls
@@ -281,8 +290,8 @@ entries:
     Treat formula fields that reference sensitive data as sensitive, and set their FLS
     accordingly. This is a common finding in a client's first security review.
   triggers: ['PermissionSet', 'fieldPermissions']
-  confidence: documented
-  source: "Salesforce Help — Field-Level Security considerations"
+  confidence: practitioner
+  source: "Salesforce Security Guide — Field-Level Security [DEMOTED to practitioner 2026-08-06: the one still-fetchable FLS page, securityImplGuide/admin_fls.htm, does not mention formula fields at all. Checked, not assumed. The behaviour is real and widely reported by practitioners; no reachable Salesforce page states it.]"
   updated: 2026-08-01
 
 - id: view-all-data-vs-fls
@@ -292,8 +301,8 @@ entries:
   cause: "The two controls are independent; VAD is a sharing-layer grant."
   remedy: "Do not use VAD to diagnose a missing field — check FieldPermissions."
   triggers: ['PermissionSet', 'PermissionSetAssignment', 'ViewAllData', 'FieldPermissions', 'Profile:']
-  confidence: documented
-  source: "Salesforce Help — User Permissions"
+  confidence: practitioner
+  source: "Salesforce Security Guide — View All and Modify All Permissions Overview [DEMOTED to practitioner 2026-08-06: securityImplGuide/users_profiles_view_all_mod_all.htm now 301-redirects to help.salesforce.com, which is Lightning-rendered and returns a CSS Error to any fetcher. Salesforce migrated the Security Implementation Guide into Help, so this claim has no machine-verifiable source. The claim is standard and almost certainly correct; the EVIDENCE is what is missing, and documented is a claim about evidence.]"
   updated: 2026-08-01
 
 # ── AUTOMATION ─────────────────────────────────────────────────────────────────────────────
@@ -342,8 +351,8 @@ entries:
     Pick the entry condition deliberately. It is also why a no-op mass update fires SOME
     automation and not other automation — the unconditioned kind runs, this kind does not.
   triggers: ['data\s+update', 'Flow']
-  confidence: documented
-  source: "Salesforce Help — Flow entry conditions"
+  confidence: practitioner
+  source: "Salesforce Help — Flow entry conditions [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only a 2021 engineering blog post, no Atlas documentation. Flow documentation lives in Help, which is unfetchable. Searched, not assumed.]"
   updated: 2026-08-01
 
 # ── PACKAGING / NAMESPACE ──────────────────────────────────────────────────────────────────
@@ -412,8 +421,8 @@ entries:
     Treat "sandbox" as insufficient grounds for a destructive operation. Confirm the sandbox
     TYPE, and remember that data masking is opt-in and frequently not configured.
   triggers: ['data\s+delete', 'delete\s+bulk', '--hard-delete']
-  confidence: documented
-  source: "Salesforce Help — Sandbox types and templates"
+  confidence: practitioner
+  source: "Salesforce Help — Sandbox types and templates [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only blog posts. The authoritative statement that Full and Partial Copy sandboxes carry production data lives in Help, which is unfetchable. Searched, not assumed. The claim is correct and the operational warning it carries is the most important line in this entry.]"
   updated: 2026-08-01
 
 # ── AUTH / BROWSER ─────────────────────────────────────────────────────────────────────────
@@ -431,8 +440,8 @@ entries:
     Never echo the URL — it contains a live token that lands in shell history, browser history
     and the first-navigation Referer. Write it to a mode-0600 file and pass the path.
   triggers: ['frontdoor', 'secur/frontdoor', 'org\s+display.*--verbose', 's[i]d=']
-  confidence: documented
-  source: "Salesforce Help — frontdoor.jsp"
+  confidence: practitioner
+  source: "Salesforce Help — frontdoor.jsp [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only forum threads. frontdoor.jsp has never been properly documented by Salesforce, which is itself worth knowing given this tool depends on it for every browser check. Searched, not assumed.]"
   updated: 2026-08-01
 
 # ── API / VERSIONING ───────────────────────────────────────────────────────────────────────
@@ -450,7 +459,7 @@ entries:
     inheriting whatever the tool defaults to.
   triggers: ['apiVersion', 'sourceApiVersion', '--api-version', 'project\s+(deploy|retrieve)']
   confidence: documented
-  source: "Apex Developer Guide — Understanding API versions"
+  source: "Apex Developer Guide — Understanding API versions — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_version_settings_intro.htm [verified 2026-08-06]"
   updated: 2026-08-01
 
 - id: three-releases-a-year
@@ -475,7 +484,10 @@ entries:
     Someone asks to 'undo' a delete and the answer depends entirely on which kind of delete ran.
   cause: >
     A normal delete moves records to the Recycle Bin, where they are restorable for up to 15
-    days — extendable to 30 by Salesforce Support. Records in the bin do NOT count against the
+    days — "Deleted items remain in the Recycle Bin for 15 days, and during that time they can be
+    restored", verified 2026-08-06 against
+    developer.salesforce.com/docs/atlas.en-us.salesforce_large_data_volumes_bp.meta/salesforce_large_data_volumes_bp/ldv_deployments_techniques_deleting_data.htm
+    — extendable to 30 by Salesforce Support. Records in the bin do NOT count against the
     org's data storage allocation; what they occupy is the bin's own capacity, which is tied to
     storage, so the oldest entries are evicted when it overflows and a busy org can lose the
     undo before the window expires. A hard delete skips the bin entirely and is unrecoverable.
@@ -486,7 +498,7 @@ entries:
   detect: 'sf data query --all-rows --query "SELECT COUNT() FROM Account WHERE IsDeleted = true"'
   triggers: ['data\s+delete', 'data:delete', '--hard-delete']
   confidence: documented
-  source: 'Salesforce Help — Recycle Bin'
+  source: 'Best Practices for Deployments with Large Data Volumes — Deleting Data — https://developer.salesforce.com/docs/atlas.en-us.salesforce_large_data_volumes_bp.meta/salesforce_large_data_volumes_bp/ldv_deployments_techniques_deleting_data.htm [re-cited 2026-08-06 off the unfetchable Salesforce Help. Verified verbatim: "Deleted items remain in the Recycle Bin for 15 days, and during that time they can be restored."]'
   updated: 2026-08-01
 
 - id: de-daily-api-limit-masquerades
@@ -638,6 +650,15 @@ entries:
     session renders the Lightning shell correctly — chain frontdoor.jsp -> contentDoor ->
     lightning.force.com/lightning/n/..., one-app-nav-bar present. The frontdoor handoff was never
     the problem, so this entry has no remaining named variable and its cause is still open.
+    A SECOND, INDEPENDENT SIGHTING the same day, and it is the most useful thing known about this
+    error. Fetching help.salesforce.com over plain HTTP — no browser, no Playwright, no session,
+    no record page — returned the identical "Sorry to interrupt / CSS Error". So the error is a
+    generic property of Salesforce's own Lightning surfaces under automation, reproducible on a
+    public documentation page by a tool that runs no JavaScript at all. It is not about record
+    pages, not about this org, and not about field-level security. Anyone who meets it should stop
+    investigating their own automation and check whether the page renders for any non-browser
+    client. The practical cost is real: seven `documented` catalogue entries cite
+    help.salesforce.com and none of them can be machine-verified for this reason.
   cross_check: >
     A mature Lightning browser-test suite running against several orgs for months has never
     recorded this error — not in code, docs or audit history. It launches plainly
@@ -791,7 +812,7 @@ entries:
     count compared, before anyone says the data changed. The exit code and the job state answer
     a different question — whether the job finished — and both say success when every row failed.
   confidence: documented
-  source: 'Salesforce Bulk API 2.0 Developer Guide — Get Job Failed Record Results'
+  source: 'Salesforce Bulk API 2.0 Developer Guide — Get Job Failed Record Results — https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/get_job_failed_results.htm [verified 2026-08-06]'
   updated: 2026-08-01
 
 - id: sandbox-refresh-changes-orgid
@@ -816,23 +837,32 @@ entries:
 
 - id: prod-deploy-runs-tests
   domain: deploy
-  title: 'A production deploy carrying Apex runs tests, and org-wide coverage gates it'
+  title: 'A production deploy carrying Apex runs tests, and coverage gates it'
   symptom: >
     A deploy that validated in a sandbox in seconds takes an hour against production, or fails
     on coverage in code the change never touched
   cause: >
-    A production deployment that CONTAINS Apex runs tests by default and is gated on 75%
-    org-wide coverage — a property of the whole org, not of the change, so unrelated
-    under-covered code can refuse a deploy that compiles perfectly. A payload carrying NO
-    Apex components defaults to NoTestRun: no tests run and coverage is not evaluated at all.
-    That difference is why one production deploy is instant and the next takes an hour.
+    A production deployment that CONTAINS Apex runs tests by default — the Metadata API guide
+    states RunLocalTests "is the default for production deployments that include Apex classes or
+    triggers". A payload carrying NO Apex components defaults to NoTestRun: no tests run and
+    coverage is not evaluated at all. That difference is why one production deploy is instant and
+    the next takes an hour.
+  citation_gap: >
+    NARROWED 2026-08-06 after audit. This entry previously asserted a gate on "75% ORG-WIDE
+    coverage — a property of the whole org, not of the change". The cited page does not say that.
+    What it states is per-component: "Each class and trigger in the deployment package must be
+    covered by the executed tests for a minimum of 75% code coverage", in the context of
+    RunSpecifiedTests / RunRelevantTests. An org-wide 75% requirement for production is real and
+    widely known; it is simply not on the page this entry cites, and asserting it here made the
+    entry claim more than its evidence. The org-wide wording is withdrawn rather than re-sourced,
+    because a citation that does not say the thing is the exact defect full-profile-deploy had.
   remedy: >
     Validate against production ahead of the window with a validate-only deploy, and use a
     quick-deploy afterwards so the tests are not paid for twice. Know the org's coverage before
     promising a deploy time.
   triggers: ['project\s+deploy', 'deploy:start', '--test-level']
   confidence: documented
-  source: 'Salesforce Metadata API Developer Guide — Running Tests in a Deployment'
+  source: 'Salesforce Metadata API Developer Guide — Running Tests in a Deployment — https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_deploy.htm [verified 2026-08-06: supports the RunLocalTests default; org-wide coverage claim NOT supported and withdrawn]'
   updated: 2026-08-01
 
 - id: flow-activation-on-deploy
@@ -868,7 +898,7 @@ entries:
     a fix — it changes the timing, so the same operation will fail again under load.
   triggers: ['data\s+\w+\s+bulk', 'OwnerId', 'data\s+update']
   confidence: documented
-  source: 'Salesforce Help — Record Locking and Locking Errors'
+  source: 'Designing Record Access for Enterprise Scale — Record-Level Locking — https://developer.salesforce.com/docs/atlas.en-us.draes.meta/draes/draes_object_relationships_record_level_locking.htm [re-cited 2026-08-06 away from the unfetchable Salesforce Help. Verified: "when you update child records, the system locks the parent and the child records to prevent inconsistencies". CAVEAT: this page supports the MECHANISM and never names UNABLE_TO_LOCK_ROW; it speaks of locking errors generally.]'
   updated: 2026-08-01
 
 - id: restricted-picklist-rejects-inactive
