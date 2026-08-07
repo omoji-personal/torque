@@ -205,7 +205,8 @@ entries:
   detect: "SELECT NewValue FROM AccountHistory WHERE NewValue = 'x'   -- expect an error"
   triggers: ['History\b', 'NewValue', 'OldValue']
   detect_expect: error
-  confidence: documented
+  verify: history_newvalue_not_filterable
+  confidence: verified-live
   source: "Object Reference — StandardObjectName History — https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_associated_objects_history.htm [verified 2026-08-06: NewValue and OldValue are listed Type anyType, Properties Nillable, Sort — Filter is absent, so they sort but do not filter]"
   updated: 2026-08-01
 
