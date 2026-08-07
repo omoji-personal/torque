@@ -859,6 +859,29 @@ def subcommand(sf_args):
     return tuple(out)
 
 
+# --- D5 -----------------------------------------------------------------
+# Shell redirections are the SHELL's, never sf's. Leaving them in the argv slice
+# gave is_read() a non-dash token with no resolvable subcommand, so `sf --version 2>&1`
+# took the fail-closed "untargeted write" branch — a PARSING failure reported with a
+# POLICY message, which is the one confusion this file separates everywhere else.
+_REDIR_BARE = re.compile(r"\d*>{1,2}[|!&]?|<{1,3}")
+_REDIR_HEAD = re.compile(r"^(\d*>{1,2}[|!&]?|<{1,3})")
+
+
+def _strip_redirects(args):
+    out, skip = [], False
+    for tok in args:
+        if skip:
+            skip = False
+            continue
+        if _REDIR_HEAD.match(tok):
+            if _REDIR_BARE.fullmatch(tok):
+                skip = True          # bare operator: the NEXT token is its target
+            continue
+        out.append(tok)
+    return out
+
+
 def is_read(sf_args) -> bool:
     pos = subcommand(sf_args)
     if not pos:
@@ -1597,7 +1620,7 @@ def analyze_bash(cmd: str):
             continue
         base0 = cmd_base(a[0], SF_BINS)
         if base0 in SF_BINS:
-            sf_args = a[1:]
+            sf_args = _strip_redirects(a[1:])
             if _is_org_mutation(sf_args):
                 mutations.append(sf_args)             # alias/config/login re-points a target (TQ-002)
             if has_flags_dir(sf_args) and not is_read(sf_args):

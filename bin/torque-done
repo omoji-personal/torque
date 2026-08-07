@@ -236,15 +236,37 @@ def layer_assigned(target, permset):
     if not permset:
         return Layer("assignment", "somebody actually holds the permission set", NA,
                      "no --permset given, so there is no assignment to check")
+    # A permission set held through a Permission Set Group produces NO assignment row naming
+    # the member set — the row names the group's aggregate set. Verified live 2026-08-07 on
+    # sf-coffee: a user holding this set via a PSG returned COUNT 0 here while demonstrably
+    # holding it. Every org above a certain size grants this way, so the direct query alone
+    # reports "assigned to nobody" about a live permission.
     rows, err = soql(target, "SELECT COUNT(Id) c FROM PermissionSetAssignment WHERE "
                              f"PermissionSet.Name='{permset}'")
+    if not err:
+        direct = (rows[0].get("c") if rows else 0) or 0
+        grp, gerr = soql(target,
+                         "SELECT COUNT(Id) c FROM PermissionSetAssignment WHERE "
+                         "PermissionSetGroupId IN (SELECT PermissionSetGroupId FROM "
+                         "PermissionSetGroupComponent WHERE PermissionSet.Name="
+                         f"'{permset}')")
+        if gerr:
+            # Do NOT fall back to `direct` — that is the false negative this fix exists to
+            # stop. Half an answer reported as a whole one is the defect, not the remedy.
+            return Layer("assignment", f"somebody actually holds {permset}", UNANSWERED,
+                         f"direct assignments answered ({direct}), but group-based "
+                         f"assignment could not be checked: {gerr}. Reporting the direct "
+                         f"count alone would under-report anyone holding it through a "
+                         f"permission set group.")
+        rows = [{"c": direct + ((grp[0].get("c") if grp else 0) or 0)}]
     if err:
         return Layer("assignment", f"somebody actually holds {permset}", UNANSWERED,
                      f"the org could not answer: {err}")
     n = (rows[0].get("c") if rows else 0) or 0
     if not n:
         return Layer("assignment", f"somebody actually holds {permset}", UNVERIFIED,
-                     f"{permset} exists, grants the field, and is assigned to nobody. Every "
+                     f"{permset} exists, grants the field, and is assigned to nobody — "
+                     f"directly or through any permission set group. Every "
                      f"query about the permission set says yes and no user can see the field.")
     return Layer("assignment", f"somebody actually holds {permset}", VERIFIED,
                  f"{n} assignment(s)")
@@ -288,7 +310,11 @@ def layer_automation(evidence):
                      "value depends on where it sits in order of execution, and a before-save "
                      "update behaves differently from an after-save one. Neither is in the "
                      "deploy response.")
-    return Layer("automation", "the automation that should fire, fired", VERIFIED, evidence)
+    # ASSERTED, not VERIFIED: this is a string the caller typed. The tool did not watch the
+    # flow fire. Returning VERIFIED here is what let `--automation-evidence "fine"` read as
+    # though the org had answered.
+    return Layer("automation", "the automation that should fire, fired", ASSERTED,
+                 f"asserted by a person: {evidence}")
 
 
 def layer_uat(evidence):
@@ -296,7 +322,9 @@ def layer_uat(evidence):
         return Layer("human_uat", "a human used it and agreed it works", UNVERIFIED,
                      "no evidence supplied (--uat-evidence). This layer is never machine "
                      "verifiable; it is listed so its absence is counted rather than forgotten.")
-    return Layer("human_uat", "a human used it and agreed it works", VERIFIED, evidence)
+    # Never machine-verifiable by construction, so it can only ever be ASSERTED.
+    return Layer("human_uat", "a human used it and agreed it works", ASSERTED,
+                 f"asserted by a person: {evidence}")
 
 
 def build(a):
@@ -336,12 +364,17 @@ def build(a):
 
 
 def render(layers, a):
-    verified = [l for l in layers if l.outcome in GREEN]
-    done = len(verified) == len(layers)
+    green = [l for l in layers if l.outcome in GREEN]
+    observed = [l for l in layers if l.outcome == VERIFIED]
+    asserted = [l for l in layers if l.outcome == ASSERTED]
+    inapplicable = [l for l in layers if l.outcome == NA]
+    done = len(green) == len(layers)
     if a.json:
         print(json.dumps({"target_org": a.target_org, "field": a.field,
                           "verdict": "DONE" if done else "NOT DONE",
-                          "verified": len(verified), "layers": len(layers),
+                          "verified": len(green), "observed": len(observed),
+                          "asserted": len(asserted), "inapplicable": len(inapplicable),
+                          "layers": len(layers),
                           "ledger": [l.as_dict() for l in layers]}, indent=2))
     else:
         print(f"COMPLETION LEDGER — {a.field} @ {a.target_org}")
@@ -351,12 +384,15 @@ def render(layers, a):
             print(f"  {' ' * width}  {l.detail}")
         print()
         if done:
-            print(f"  DONE. {len(verified)}/{len(layers)} layers verified or declared "
-                  f"inapplicable with a reason.")
+            print(f"  DONE. {len(observed)} verified by the org, {len(asserted)} asserted "
+                  f"by a person, {len(inapplicable)} declared inapplicable.")
+            if asserted:
+                print(f"  {len(asserted)} of {len(layers)} layers rest on somebody's word. "
+                      f"That is not the same as the org answering.")
         else:
             short = [l.key for l in layers if l.outcome not in GREEN]
-            print(f"  NOT DONE. {len(verified)}/{len(layers)} layers verified. Outstanding: "
-                  f"{', '.join(short)}.")
+            print(f"  NOT DONE. {len(observed)} verified by the org, {len(asserted)} "
+                  f"asserted. Outstanding: {', '.join(short)}.")
             print(f"  The word is not available yet. That is the whole point of asking.")
     return 0 if done else 3
 

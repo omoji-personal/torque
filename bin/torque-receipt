@@ -74,8 +74,13 @@ class Element:
 
 def _tool(*args, timeout=300):
     """Run a first-party read-only tool and return (exit, parsed-or-None, raw)."""
-    r = subprocess.run([sys.executable, *args], capture_output=True, text=True,
-                       cwd=str(ROOT), timeout=timeout)
+    try:
+        r = subprocess.run([sys.executable, *args], capture_output=True, text=True,
+                           cwd=str(ROOT), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # blast-radius resolves up to 25 workflow rules at 120s each. A slow org used to
+        # traceback out of the receipt rather than report the element as outstanding.
+        return 124, None, f"timed out after {timeout}s"
     try:
         return r.returncode, json.loads(r.stdout), r.stdout
     except Exception:                                      # noqa: BLE001
@@ -109,9 +114,25 @@ def el_impact(a):
         args += ["--where", a.where]
     code, doc, raw = _tool(*args)
     if doc is None:
+        # Returned a BARE Element here while the success branch returns a tuple, and
+        # build() unpacks unconditionally — so the failure path raised TypeError instead
+        # of reporting OUTSTANDING, on the exact branch it was written for.
         return Element("predicted_impact", "what it will set off", OUTSTANDING,
                        f"blast-radius produced nothing this could read (exit {code}): "
-                       f"{raw.strip()[:120]}")
+                       f"{raw.strip()[:120]}"), None
+    if code != 0 or doc.get("scope") is None:
+        # exit 3 is blast-radius saying the picture is INCOMPLETE. Reading the code only on
+        # the unparseable branch meant a receipt could print ESTABLISHED over it — two
+        # first-party tools disagreeing on identical inputs. And summing len(v) over null
+        # lists turns "could not ask" into a confident zero, which is the one confusion
+        # this repository exists to refuse.
+        und = doc.get("undetermined") or []
+        return Element("predicted_impact", "what it will set off", OUTSTANDING,
+                       f"blast-radius exited {code} and did not establish the picture; "
+                       f"{len(und)} source(s) could not answer. An impact assembled from "
+                       f"sources that did not answer is not a smaller impact, it is an "
+                       f"unknown one.",
+                       {"blast_radius_exit": code, "undetermined": und}), doc
     fired = {k: doc.get(k) for k in ("triggers", "flows", "validation_rules",
                                      "workflow_rules", "rollups")}
     n = sum(len(v) for v in fired.values() if isinstance(v, list))
