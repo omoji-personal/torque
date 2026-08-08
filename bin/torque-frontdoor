@@ -1,14 +1,71 @@
 #!/usr/bin/env python3
 """Mint a frontdoor session URL and write it to a mode-0600 file. Prints only the PATH,
 never the URL (which carries a live session token)."""
-import json, os, subprocess, sys, tempfile
-if len(sys.argv) < 2:
-    print("usage: torque-frontdoor <alias>", file=sys.stderr); sys.exit(2)
-r = subprocess.run(["sf","org","open","--target-org",sys.argv[1],"--url-only","--json"],
-                   capture_output=True, text=True)
-if r.returncode != 0:
-    print("frontdoor: could not obtain session URL", file=sys.stderr); sys.exit(1)
-url = json.loads(r.stdout)["result"]["url"]
-fd, path = tempfile.mkstemp(prefix="torque-fd-", suffix=".url")
-os.write(fd, url.encode()); os.close(fd); os.chmod(path, 0o600)
-print(path)   # ONLY the path — never the URL
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from urllib.parse import urlparse
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="torque frontdoor",
+        description="write a Salesforce frontdoor session URL to a mode-0600 temporary file")
+    ap.add_argument("alias", help="Salesforce org alias or username")
+    a = ap.parse_args()
+
+    try:
+        r = subprocess.run(
+            ["sf", "org", "open", "--target-org", a.alias, "--url-only", "--json"],
+            capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        print("frontdoor: Salesforce CLI timed out before returning a session URL",
+              file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"frontdoor: could not run the Salesforce CLI ({type(e).__name__})",
+              file=sys.stderr)
+        return 1
+    if r.returncode != 0:
+        print("frontdoor: could not obtain session URL", file=sys.stderr)
+        return 1
+    try:
+        url = json.loads(r.stdout)["result"]["url"]
+        parsed = urlparse(url)
+        if not isinstance(url, str) or parsed.scheme != "https" or not parsed.netloc \
+                or "frontdoor.jsp" not in parsed.path:
+            raise ValueError("not a Salesforce frontdoor URL")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        # Never echo the response: on the success shape it contains the live session token.
+        print("frontdoor: Salesforce CLI returned no valid frontdoor URL", file=sys.stderr)
+        return 1
+
+    fd = None
+    path = None
+    try:
+        fd, path = tempfile.mkstemp(prefix="torque-fd-", suffix=".url")
+        with os.fdopen(fd, "w") as f:
+            fd = None                         # the file object owns it now
+            f.write(url)
+            f.flush()
+            os.fchmod(f.fileno(), 0o600)
+    except OSError as e:
+        if fd is not None:
+            os.close(fd)
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        print(f"frontdoor: could not secure the session URL file ({type(e).__name__})",
+              file=sys.stderr)
+        return 1
+    print(path)                               # ONLY the path — never the URL
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

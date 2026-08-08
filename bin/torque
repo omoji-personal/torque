@@ -14,22 +14,30 @@ import sys
 from pathlib import Path
 
 BIN = Path(__file__).resolve().parent
-SUBS = sorted(p.name[len("torque-"):] for p in BIN.glob("torque-*") if p.is_file())
+# `torque-shim-sf` is an implementation installed under the names `sf` and `sfdx`; it is not
+# an operator command. Discovering every torque-* file exposed it as `torque shim-sf`, where it
+# failed with an enforcement error that looked like a public command was broken.
+INTERNAL = {"shim-sf"}
+SUBS = sorted(p.name[len("torque-"):] for p in BIN.glob("torque-*")
+              if p.is_file() and p.name[len("torque-"):] not in INTERNAL)
 
 
-def _usage(problem=""):
+def _usage(problem="", code=2):
+    out = sys.stderr if code else sys.stdout
     if problem:
-        print(f"torque: {problem}\n", file=sys.stderr)
-    print(f"usage: torque <command> [args...]\n\ncommands:", file=sys.stderr)
+        print(f"torque: {problem}\n", file=out)
+    print(f"usage: torque <command> [args...]\n\ncommands:", file=out)
     for s in SUBS:
-        print(f"  {s}", file=sys.stderr)
-    print(f"\nEach is also runnable directly as {BIN}/torque-<command>.", file=sys.stderr)
-    return 2
+        print(f"  {s}", file=out)
+    print(f"\nEach is also runnable directly as {BIN}/torque-<command>.", file=out)
+    return code
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+    if len(sys.argv) < 2:
         return _usage()
+    if sys.argv[1] in ("-h", "--help", "help"):
+        return _usage(code=0)
     sub, rest = sys.argv[1], sys.argv[2:]
     target = BIN / f"torque-{sub}"
     if not target.is_file():

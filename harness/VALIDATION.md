@@ -611,3 +611,41 @@ assuming it.
 Still one run, one org, by the author, days old on a tool that is weeks old. The exec-time shim is
 not installed on this machine, so `installed_shim_matches_its_source` reports N/A and the allowlist
 is advisory here rather than enforced. The README says that in those words.
+
+---
+
+## Working-tree audit — five defects fixed, release not yet attested · 2026-08-08
+
+Base commit `cb86c85`, aligned with `origin/main` before the audit · **working tree dirty by
+design · no release verdict**. This is an implementation and regression record, not a release
+attestation. Nothing in this section is shipped until the tree is reviewed, committed, pushed and
+run through the operator-owned release profile.
+
+### What the audit found and fixed
+
+| Finding | Working-tree fix and regression evidence |
+|---|---|
+| Two `torque week --close` calls on the same date replaced the first archive | Archive creation is now atomic and collision-safe (`-2`, `-3`, ...); the live log is removed only after an archive exists. A component self-test closes twice and requires both observations to survive. |
+| One API 67 catalogue probe treated an expected query refusal as a detector failure | `event-channels-do-not-support-query` now declares `detect_expect: error`; a live read-only run confirmed the platform refusal is recognized. |
+| Round-22 fixtures were coupled to one local org alias | All six use the suite's target-org placeholder; the gate suite passed 260/260 against a differently named disposable Developer Edition org. |
+| `torque frontdoor --help` contacted Salesforce and malformed CLI output raised a traceback | Help is local; the CLI call is bounded to 120 seconds; missing CLI, timeout, malformed JSON, invalid URL and secure-file failures return token-safe errors. Component tests cover help and malformed success output. |
+| `torque --help` exited as an error and advertised the internal shim binary | Explicit help now exits 0 on stdout, error usage remains non-zero, and `shim-sf` is excluded from public discovery. Both directions are pinned by component tests. |
+
+### What was verified
+
+- Final static profile: zero FAIL; all 19 runnable mutators caught. The formal verdict remained
+  DEGRADED only for environment/evidence gaps: no verified shim on PATH for the vendor corpus,
+  no login session, no configured must-allow corpus and no guide image manifest.
+- `component_self_tests`, `kb_integrity`, source-boundary checks and `git diff --check`: PASS.
+- Live read-only `detect_probes_run`: PASS, 15 of 19 probes executed; expected refusals separated
+  from detector failures.
+- Gate fixtures against the supplied disposable-org alias: 260/260 PASS.
+- npm production dependency audit: zero vulnerabilities; no outdated production dependency.
+
+### What this does not establish
+
+The full capability and release profiles were not run because they include operator-owned org
+mutation and browser/session work. No commit, push, publication, release attestation or
+enforcement activation happened. The activated enforcement copy still names commit
+`1da092181e33`, so even the already-published repository is ahead of what this machine currently
+enforces; promote only a clean, published and operator-attested tree.

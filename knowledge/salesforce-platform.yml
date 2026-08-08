@@ -1133,6 +1133,7 @@ entries:
     Measured 2026-08-07: a delete cascade over Account produced 90 lines, 50 of them undetermined
     for this reason, burying the two real unknowns.
   detect: "sf data query --target-org <org> --query \"SELECT COUNT() FROM AccountChangeEvent\""
+  detect_expect: error
   triggers: ['ChangeEvent', 'INVALID_TYPE_FOR_OPERATION', 'does not support query']
   confidence: practitioner
   updated: 2026-08-07

@@ -21,7 +21,7 @@ Denials become `OBSERVE` entries in the audit trail carrying the reason they wou
 
 ## Why this exists
 
-Torque is new. It has 216 gate fixtures, 17 mutators and three audit lenses, and all of that is
+Torque is new. It has 257 recorded gate fixtures, 19 mutators and three audit lenses, and all of that is
 evidence it does what it claims — not evidence that anyone can get a day's work done through it.
 Those are different claims, and only the first had been established.
 

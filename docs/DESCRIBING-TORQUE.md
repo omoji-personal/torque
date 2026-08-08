@@ -30,13 +30,44 @@ Safety is the *enabler*, stated second. Say what it makes possible, then why you
 
 ---
 
-## One-liner — GitHub repo description, LinkedIn featured title (≤ 200 chars)
+## One-liner — GitHub repo description (≤ 200 chars)
 
 Lead with what it does that nothing else does. Safety is what makes it usable, not what it is.
 
 ```
 An AI-agent operations layer for Salesforce. It knows the platform, shows you what an operation
 will set off before it runs, and verifies its changes in the org rather than in a return code.
+```
+
+## LinkedIn Featured card
+
+The card is an introduction to the product, not a scoreboard. Keep changing process counts out of
+both fields; the repository and guide carry the validation detail for anyone who wants it.
+
+**Title**
+
+```
+Torque - an AI-agent operations layer for Salesforce
+```
+
+**Description**
+
+```
+Open source (MIT). Torque carries platform knowledge that re-verifies against a live org, shows
+what an operation will set off before it runs, and verifies changes in the org rather than
+trusting a return code. It works across the orgs you run, production included, because
+enforcement binds at the tool call and production writes require approval issued by the operator
+at a real terminal.
+```
+
+## LinkedIn About paragraph
+
+```
+Separately, I build and maintain Torque, an open-source AI-agent operations layer for Salesforce
+(MIT). It knows the platform, shows what an operation will set off before it runs, and verifies
+changes in the org rather than trusting a return code. It works across the orgs you run,
+production included, because enforcement binds at the tool call and production writes require
+approval issued by the operator at a real terminal. It is featured on this profile.
 ```
 
 ## Two-sentence — LinkedIn post opening, handoff opening, README sub-headline
@@ -99,8 +130,8 @@ evaluates the work.
 
 The distinction worth holding:
 
-- **Product facts** — what the tool knows and does — belong in the headline. "34 platform entries,
-  each declaring how it is known, the live ones re-verified against a real org" is a claim about
+- **Product facts** — what the tool knows and does — belong in the headline. "Platform entries,
+  each declaring how it is known, with the live ones re-verified against a real org" is a claim about
   the product, and it is unusual.
 - **Process facts** — how it was built and tested — belong in the body, for the engineer who digs.
   They should be *evident from the work*, not advertised ahead of it.
@@ -111,9 +142,12 @@ parser against what real bash does, verifiers that must be able to return false.
 section 07 of the guide, where someone evaluating rigour will look for it. Do not put a number on
 the cover.
 
-**Current copy that violates this and must change:** the GitHub repo description ("128 adversarial
-tests"), and the LinkedIn post hook ("I have 128 tests that break the build if that ever stops
-being true") — which is the whole hook of the post, and is the wrong one.
+**Historical failures this rule exists to prevent:** the GitHub repo description once said "128
+adversarial tests", a LinkedIn draft led with the same test count, and the live LinkedIn Featured
+card later drifted to 117 checks and 237 fixtures after the repository had moved on. The GitHub
+description was verified against the canonical one-liner on 2026-08-08. LinkedIn is not covered by
+the repository check and must be compared manually with the exact card copy above before each
+public release.
 
 ---
 
