@@ -918,12 +918,12 @@ entries:
     guarantee. Deploy success reports that the metadata landed, which is a different question
     from which version is running.
   remedy: >
-    Verify activation after every flow deploy by reading the active version back, not by
-    trusting the deploy result or the file. Retrieve and check status, or read
-    FlowDefinition.ActiveVersionId.
+    Verify activation after every flow deploy from the org's active-version index, not from the
+    deploy result or retrieved Flow XML. Query Tooling API FlowDefinition.ActiveVersionId, or
+    query standard API FlowDefinitionView.IsActive when that surface fits the workflow.
   triggers: ['(project|force:source|force:mdapi)\s*[: ]\s*(deploy|retrieve).*[Ff]low', 'metadata\s+Flow', 'Flow:[A-Za-z_]']
   confidence: practitioner
-  updated: 2026-08-01
+  updated: 2026-08-08
 
 - id: unable-to-lock-row
   domain: data

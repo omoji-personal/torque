@@ -557,6 +557,22 @@ def _kb_integrity():
         if e.get("verify") and e["verify"] not in _VERIFIERS:
             return Result("kb_integrity", FAIL,
                           f"{e['id']} names verifier {e['verify']!r} which does not exist")
+    flow_activation = next((e for e in entries
+                            if e.get("id") == "flow-activation-on-deploy"), None)
+    if flow_activation:
+        remedy = flow_activation.get("remedy", "")
+        # A retrieve returns the latest Flow version, which may be a draft while an older version
+        # remains active. The catalogue already teaches that distinction in
+        # flow-retrieve-latest-only; keep the paired remedy from quietly contradicting it.
+        if _kb_re.search(r"retrieve(?:d)?(?:\s+flow|\s+xml)?\s+(?:and\s+)?check\s+status",
+                         remedy, _kb_re.I):
+            return Result("kb_integrity", FAIL,
+                          "flow-activation-on-deploy infers activation from a retrieve; read "
+                          "the org's active-version index instead")
+        if not any(surface in remedy for surface in
+                   ("FlowDefinition.ActiveVersionId", "FlowDefinitionView.IsActive")):
+            return Result("kb_integrity", FAIL,
+                          "flow-activation-on-deploy names no active-version API surface")
     live = sum(1 for e in entries if e["confidence"] == "verified-live")
     doc = sum(1 for e in entries if e["confidence"] == "documented")
     prac = len(entries) - live - doc
@@ -1254,7 +1270,7 @@ def _claimed_counts():
     unverified = []
 
     for rel in ("guide/torque-guide.html", "README.md", "bin/torque-demo", "bin/torque-init",
-                "ROADMAP.md", "guide/TORQUE-GUIDE.md"):
+                "bin/torque-week", "ROADMAP.md", "guide/TORQUE-GUIDE.md"):
         f = ROOT / rel
         if not f.exists():
             continue
@@ -1274,6 +1290,11 @@ def _claimed_counts():
         for m in _kb_re.finditer(r"(\d{2,4}) recorded", body):
             if int(m.group(1)) != recorded:
                 bad.append(f"{rel} says {m.group(1)} recorded, on disk there are {recorded}")
+        # The lesson queue is private, live state. A numeric claim in tracked prose cannot be
+        # derived from it at checkout time and becomes stale on the next observed command. The
+        # honest living surface points readers at `torque lesson review` or the attestation.
+        if _kb_re.search(r"\b\d+[\s-]+(?:captured\s+)?observations?\b", body, _kb_re.I):
+            bad.append(f"{rel} hardcodes a live lesson-observation count; derive it at runtime")
         # Mutators were outside this check, so while every CHECK count stayed correct the
         # mutator count sat at 11 across four surfaces after it had become 15. A count this
         # check does not know about is a count that drifts, and the whole point of the check
