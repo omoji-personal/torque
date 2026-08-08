@@ -1,13 +1,53 @@
 # P2 probe cycle: a REAL metadata deploy → verify → teardown against the disposable org,
 # proving the safe-deploy capability end to end. Run-scoped field name; PermissionSet with
 # FLS; delete PSA before permset; purgeOnDelete hard-delete so nothing accumulates.
-import time as _time, tempfile as _tmp, shutil as _shutil, os as _os
+import time as _time, tempfile as _tmp, shutil as _shutil, os as _os, re as _re
 _EPOCH = int(_time.time())
+
+
+def _sf_failure(proc):
+    """Return the bounded Salesforce error, without letting an update warning hide it.
+
+    Salesforce CLI writes its structured failure to stdout and a harmless update notice to
+    stderr. Taking ``stderr[:100]`` therefore reported only the notice and discarded the reason
+    the command failed. Parse the JSON message first, then retain non-update stderr as fallback.
+    """
+    parts = []
+    try:
+        payload = json.loads(proc.stdout or "{}")
+        for key in ("message", "name", "code"):
+            value = payload.get(key) if isinstance(payload, dict) else None
+            if isinstance(value, str) and value.strip() and value.strip() not in parts:
+                parts.append(value.strip())
+    except Exception:                                   # noqa: BLE001
+        text = " ".join((proc.stdout or "").split())
+        if text:
+            parts.append(text)
+    stderr = []
+    for line in (proc.stderr or "").splitlines():
+        if _re.search(r"salesforce/cli update available", line, _re.I):
+            continue
+        line = " ".join(line.split())
+        if line:
+            stderr.append(line)
+    if stderr:
+        parts.append("; ".join(stderr))
+    return " | ".join(parts)[:300] or f"exit {proc.returncode} with no diagnostic"
 
 @check("probe_cycle", "capability", catastrophe=True)
 def _probe_cycle(target):
     if not target:
         return Result("probe_cycle", SKIP, "no --target-org")
+    # Regression for the failure renderer itself. A check that names only the CLI updater notice
+    # sends the operator debugging the wrong thing and makes a live failure unreproducible.
+    _diag_probe = type("Proc", (), {
+        "stdout": json.dumps({"message": "actual deploy failure", "name": "DeployError"}),
+        "stderr": "Warning: @salesforce/cli update available from 1.0 to 2.0\n",
+        "returncode": 1,
+    })()
+    _diag = _sf_failure(_diag_probe)
+    if "actual deploy failure" not in _diag or "update available" in _diag:
+        return Result("probe_cycle", FAIL, "Salesforce failure renderer masks the real error")
     field = f"Torque_Probe_{_EPOCH}__c"
     obj = "Account"
     permset = f"Torque_Probe_{_EPOCH}"
@@ -37,12 +77,22 @@ def _probe_cycle(target):
 
         # ---- dry-run ----
         dr = sfp("project","deploy","start","--target-org",target,"--dry-run","--json","-d","force-app")
+        dr_first = ""
         if dr.returncode != 0:
-            return Result("probe_cycle", FAIL, f"dry-run failed: {dr.stderr[:100]}")
+            # A check-only deployment can be retried safely: it cannot partially apply metadata.
+            # The CLI has returned exit 1 with only its updater notice during otherwise healthy
+            # release runs. Retry exactly once; never apply this policy to the real deployment,
+            # whose first attempt may have changed state even when its client lost the result.
+            dr_first = _sf_failure(dr)
+            _time.sleep(2)
+            dr = sfp("project","deploy","start","--target-org",target,"--dry-run","--json","-d","force-app")
+        if dr.returncode != 0:
+            return Result("probe_cycle", FAIL,
+                          f"dry-run failed twice: first={dr_first}; second={_sf_failure(dr)}")
         # ---- deploy ----
         dp = sfp("project","deploy","start","--target-org",target,"--json","-d","force-app")
         if dp.returncode != 0:
-            return Result("probe_cycle", FAIL, f"deploy failed: {dp.stderr[:100]}")
+            return Result("probe_cycle", FAIL, f"deploy failed: {_sf_failure(dp)}")
         # ---- SOQL verify the field exists ----
         vq = subprocess.run(["sf","data","query","--target-org",target,"--use-tooling-api","--json",
              "--query",f"SELECT QualifiedApiName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName='{obj}' AND QualifiedApiName='{field}'"],
@@ -129,6 +179,6 @@ def _teardown(target, obj, field, permset, work):
             r = subprocess.run(["sf","project","delete","source","--target-org",target,"--no-prompt",
                  "--json","--metadata",f"CustomField:{obj}.{field}",f"PermissionSet:{permset}"],
                  capture_output=True, text=True, cwd=work)
-        return (r.returncode == 0), r.stderr[:120]
+        return (r.returncode == 0), _sf_failure(r)
     finally:
         _shutil.rmtree(dproj, ignore_errors=True)
