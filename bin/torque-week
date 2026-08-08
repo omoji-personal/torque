@@ -9,10 +9,12 @@ and a SKIPPED (the agent stopped proposing a category of work). Two adversarial 
 same thing about them independently: a manual log kept by somebody under deadline will have two
 entries and then stop.
 
-This repository already has the proof. `torque lesson` holds 236 captured observations and zero
-resolved pairs — the intake works and nobody has ever emptied the queue. A capture mechanism that
-costs more than a few seconds does not get used on a Thursday afternoon, and then the week
-produces a verdict with no evidence underneath it, which is worse than not running the week.
+This repository already has the proof: the lesson observer accumulates captured observations much
+faster than they are reviewed. The live backlog belongs in `torque lesson review` and the
+attestation, where it is measured from the private queue; freezing its current count into source
+would make this explanation false as soon as the next observation lands. A capture mechanism that
+costs more than a few seconds does not get used on a Thursday afternoon, and then the week produces
+a verdict with no evidence underneath it, which is worse than not running the week.
 
 So: one command, three flags, no arguments to remember, no file to open.
 
