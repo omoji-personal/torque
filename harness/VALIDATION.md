@@ -614,12 +614,12 @@ is advisory here rather than enforced. The README says that in those words.
 
 ---
 
-## Working-tree audit — five defects fixed, release not yet attested · 2026-08-08
+## P13 candidate — five defects fixed and release-attested · 2026-08-08
 
-Base commit `cb86c85`, aligned with `origin/main` before the audit · **working tree dirty by
-design · no release verdict**. This is an implementation and regression record, not a release
-attestation. Nothing in this section is shipped until the tree is reviewed, committed, pushed and
-run through the operator-owned release profile.
+Commit `fa030cd6`, tree `1d35d64b` · clean attested tree · target classified live as disposable
+Developer Edition · **release verdict DEGRADED, with zero FAIL**. The signed attestation is
+`harness/attest/attest-fa030cd6.json`; reproduce with
+`python3 harness/validate.py --profile release --target-org <your-disposable-org>`.
 
 ### What the audit found and fixed
 
@@ -633,19 +633,23 @@ run through the operator-owned release profile.
 
 ### What was verified
 
-- Final static profile: zero FAIL; all 19 runnable mutators caught. The formal verdict remained
-  DEGRADED only for environment/evidence gaps: no verified shim on PATH for the vendor corpus,
-  no login session, no configured must-allow corpus and no guide image manifest.
-- `component_self_tests`, `kb_integrity`, source-boundary checks and `git diff --check`: PASS.
-- Live read-only `detect_probes_run`: PASS, 15 of 19 probes executed; expected refusals separated
-  from detector failures.
-- Gate fixtures against the supplied disposable-org alias: 260/260 PASS.
-- npm production dependency audit: zero vulnerabilities; no outdated production dependency.
+- Full operator-owned release profile: 127 checks, 124 PASS, zero FAIL, one WARN and two N/A in
+  642 seconds. All 19 runnable mutators were caught.
+- The operator-presence success path passed with a real login terminal; the release run did not
+  manufacture or bypass operator presence.
+- All 13 live claims, the real deploy/delete probe cycle, mass-update cycle, browser-render
+  evidence, frontdoor no-echo check and 260 gate fixtures passed against the disposable org.
+- `component_self_tests`, `kb_integrity`, source-boundary checks, `git diff --check` and the npm
+  production dependency audit passed; no outdated production dependency was found.
 
-### What this does not establish
+### Why this is not release-green
 
-The full capability and release profiles were not run because they include operator-owned org
-mutation and browser/session work. No commit, push, publication, release attestation or
-enforcement activation happened. The activated enforcement copy still names commit
-`1da092181e33`, so even the already-published repository is ahead of what this machine currently
-enforces; promote only a clean, published and operator-attested tree.
+- `vendor_examples_are_not_shape_denied` is WARN because this shell has no verified shim on PATH;
+  763 examples were measured, but the invariant cannot be tested in this environment.
+- `must_allow_corpus_has_no_shape_denials` is N/A because no operator corpus was supplied.
+- `image_manifest` is N/A because the guide makes no image-manifest claim and has no images.
+
+This attestation proves the tested commit, not its publication or activation. The activated
+enforcement copy still names commit `1da092181e33`; do not promote this candidate until it is
+reviewed, merged into the public base and rerun in an environment that closes the remaining
+evidence gaps.
