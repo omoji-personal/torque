@@ -83,13 +83,13 @@ could not", which is the only honest answer available. `--operation insert` beha
 and for the same reason: the automation picture is real, and the row count is unknowable without
 the file being inserted.
 
-**It gets smarter from being used, without being asked.** `torque lesson` turns something learned
-into a catalogue entry the schema enforces or a gate fixture that runs forever — never a free-text
-note, because note-based lesson systems reliably go inert. But the right *format* does not fix
-capture: nobody types six flags at the moment they learn something, because that moment is always
-inside an incident. So Torque watches instead, on one deliberately narrow signal — a Salesforce
-operation that failed with a code from the platform's own error taxonomy — and pairs it with the
-later command of the same shape that worked.
+**It turns observed failures into reviewable lessons, without filing them silently.** `torque
+lesson` turns something learned into a catalogue entry the schema enforces or a gate fixture that
+runs forever — never a free-text note, because note-based lesson systems reliably go inert. But
+the right *format* does not fix capture: nobody types six flags at the moment they learn something,
+because that moment is always inside an incident. So Torque watches instead, on one deliberately
+narrow signal — a Salesforce operation that failed with a code from the platform's own error
+taxonomy — and pairs it with the later command of the same shape that worked.
 
 ```
 $ torque lesson review

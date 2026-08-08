@@ -1,7 +1,7 @@
 {
   "name": "torque",
   "version": "1.0.0",
-  "description": "Deterministic safety gates and a live validation harness for letting an AI agent operate Salesforce orgs.",
+  "description": "An AI-agent operations layer for Salesforce. It shows impact before execution and verifies changes against a live org.",
   "scripts": {
     "test": "python3 harness/validate.py --profile capability --target-org ${TORQUE_ORG:-my-dev-org}"
   },

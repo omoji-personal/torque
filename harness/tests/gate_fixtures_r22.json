@@ -8,7 +8,7 @@
       "event": {
         "tool_name": "Bash",
         "tool_input": {
-          "command": "sf package version delete --package 04t000000000000 --target-dev-hub sf-cb-test"
+          "command": "sf package version delete --package 04t000000000000 --target-dev-hub sf-coffee"
         }
       }
     },
@@ -19,7 +19,7 @@
       "event": {
         "tool_name": "Bash",
         "tool_input": {
-          "command": "sf package delete --package MyPkg -v sf-cb-test"
+          "command": "sf package delete --package MyPkg -v sf-coffee"
         }
       }
     },
@@ -30,7 +30,7 @@
       "event": {
         "tool_name": "Bash",
         "tool_input": {
-          "command": "sf package uninstall --package 04t000000000000 --target-org sf-cb-test"
+          "command": "sf package uninstall --package 04t000000000000 --target-org sf-coffee"
         }
       }
     },
@@ -41,7 +41,7 @@
       "event": {
         "tool_name": "Bash",
         "tool_input": {
-          "command": "sf package version create --package MyPkg --target-dev-hub sf-cb-test"
+          "command": "sf package version create --package MyPkg --target-dev-hub sf-coffee"
         }
       }
     },
@@ -52,7 +52,7 @@
       "event": {
         "tool_name": "Bash",
         "tool_input": {
-          "command": "sf package version list --target-dev-hub sf-cb-test"
+          "command": "sf package version list --target-dev-hub sf-coffee"
         }
       }
     },
@@ -63,7 +63,7 @@
       "event": {
         "tool_name": "Bash",
         "tool_input": {
-          "command": "sf package install --package 04t000000000000 --target-org sf-cb-test"
+          "command": "sf package install --package 04t000000000000 --target-org sf-coffee"
         }
       }
     }

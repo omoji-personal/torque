@@ -1774,14 +1774,16 @@ def _python_floor_is_real():
 
 @check("component_self_tests", "static", catastrophe=True)
 def _component_self_tests():
-    """Every component that ships a --self-test must pass it, in this run.
+    """Every component self-test and the operator CLI's error paths must pass in this run.
 
-    A self-test nobody runs is documentation. Three of these were written and then only ever
-    invoked by hand, which is the state a self-test decays from: it passes on the day it is
-    written and silently stops being true afterwards.
+    A self-test nobody runs is documentation. The dispatcher and frontdoor command had never
+    been executed by a static check at all: `torque --help` exited 2 and advertised the internal
+    shim, while `torque frontdoor --help` called Salesforce and crashed parsing its help text as
+    JSON. The week logger was also entirely unreached, which hid a same-day archive overwrite.
     """
     comps = []
-    for rel in ("hooks/lesson_observer.py", "harness/capture.py", "bin/torque-blast-radius"):
+    for rel in ("hooks/lesson_observer.py", "harness/capture.py", "bin/torque-blast-radius",
+                "bin/torque-week"):
         p = ROOT / rel
         if p.exists() and "--self-test" in p.read_text():
             comps.append(rel)
@@ -1793,10 +1795,43 @@ def _component_self_tests():
                        capture_output=True, text=True, cwd=ROOT, timeout=180)
         if r.returncode != 0:
             failed.append(f"{rel}: {(r.stdout + r.stderr).strip().splitlines()[-1][:80]}")
+
+    dispatcher = _kb_sp.run([_kb_sys.executable, str(ROOT / "bin" / "torque"), "--help"],
+                            capture_output=True, text=True, cwd=ROOT, timeout=30)
+    if dispatcher.returncode != 0:
+        failed.append(f"torque --help exited {dispatcher.returncode}, want 0")
+    elif "shim-sf" in dispatcher.stdout or "approve" not in dispatcher.stdout:
+        failed.append("torque --help exposes the internal shim or omits a public command")
+
+    front_help = _kb_sp.run(
+        [_kb_sys.executable, str(ROOT / "bin" / "torque-frontdoor"), "--help"],
+        capture_output=True, text=True, cwd=ROOT, timeout=30)
+    if front_help.returncode != 0 or "alias" not in front_help.stdout:
+        failed.append(f"torque frontdoor --help is not a successful local help path "
+                      f"(exit {front_help.returncode})")
+
+    # A successful CLI process returning a non-JSON body used to raise JSONDecodeError and print
+    # a traceback. Run that exact branch behind a fake `sf`; neither the network nor an org is
+    # involved, and no response body is echoed because the real one would contain a live token.
+    import tempfile as _kb_tmp
+    with _kb_tmp.TemporaryDirectory(prefix="torque-frontdoor-check-") as d:
+        fake = _KbP(d) / "sf"
+        fake.write_text("#!/bin/sh\nprintf 'not-json\\n'\n")
+        fake.chmod(0o755)
+        env = dict(_kb_os.environ)
+        env["PATH"] = d + _kb_os.pathsep + env.get("PATH", "")
+        bad_front = _kb_sp.run(
+            [_kb_sys.executable, str(ROOT / "bin" / "torque-frontdoor"), "fake-org"],
+            capture_output=True, text=True, cwd=ROOT, timeout=30, env=env)
+        if bad_front.returncode != 1 or "valid frontdoor URL" not in bad_front.stderr \
+                or "Traceback" in bad_front.stderr:
+            failed.append("torque frontdoor does not turn malformed CLI output into a bounded, "
+                          "token-safe error")
     if failed:
         return Result("component_self_tests", FAIL, "; ".join(failed))
     return Result("component_self_tests", PASS,
-                  f"{len(comps)} component self-test(s) pass: {', '.join(comps)}")
+                  f"{len(comps)} component self-test(s) pass; dispatcher help and frontdoor "
+                  f"malformed-output paths behave: {', '.join(comps)}")
 
 
 @check("readme_transcripts_are_real", "static", catastrophe=True)

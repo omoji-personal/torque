@@ -13,7 +13,7 @@ So the goal is stated precisely:
 > Raise the share of Salesforce operations where Torque has something **true, specific and
 > verifiable** to say at the moment of the operation — and be able to state what that share is.
 
-The last clause is the hard part. 39 entries is not a coverage claim, because there is no
+The last clause is the hard part. 46 entries is not a coverage claim, because there is no
 denominator. This plan builds one.
 
 ---
@@ -69,7 +69,7 @@ limit-shaped, irreversible.
 Each cell is either covered by an entry, known-uncovered (in the gap log), or not applicable.
 The report is a percentage with a stated denominator, and the honest form of the sentence becomes
 *"Torque has something to say about N of M operation × failure-mode cells"* rather than
-*"39 entries"*.
+*"46 entries"*.
 
 **Deliverable:** `harness/checks/check_coverage.py` producing that grid, and failing when a
 newly-parsed operation class has no cell at all — so the map cannot silently fall behind the
@@ -100,7 +100,7 @@ important — the `documented` tier carrying real page URLs rather than guide na
 catalogue's quality. Every entry whose mechanism is observable in an org gets a verifier that
 **can return False**, registered and proven falsifiable by `verifiers_can_fail`.
 
-Current: 10 of 39 verified-live. Target: every entry whose claim is observable, with the
+Current: 13 of 46 verified-live. Target: every entry whose claim is observable, with the
 remainder explicitly classified as not-observable and why.
 
 `EntityParticle` and `FieldDefinition` turned out to expose far more field metadata to SOQL than

@@ -311,8 +311,8 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
       <tr><td>Encodes <em>how</em> to do the work</td><td class="no">—</td><td class="no">UI-guided</td><td class="win">for humans</td><td class="us">for agents</td></tr>
       <tr><td>Verifies the outcome in the org</td><td class="no">—</td><td class="no">partial</td><td class="no">partial</td><td class="us">yes</td></tr>
       <tr><td>Distinguishes prod at write time</td><td class="no">trusts alias</td><td class="win">env model</td><td class="no">trusts alias</td><td class="us">live query</td></tr>
-      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">44 entries</td></tr>
-      <tr><td>Gets smarter from being used</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">lessons → checks</td></tr>
+      <tr><td>Carries platform knowledge that re-verifies itself</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">46 entries</td></tr>
+      <tr><td>Turns failures into reviewed lessons</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="us">review → checks</td></tr>
       <tr><td>Shows what a change will set off, before it runs</td><td class="no">—</td><td class="win">design-time, in a UI</td><td class="no">—</td><td class="us">at the command, in the agent loop</td></tr>
       <tr><td>Binds approval to a verified record count</td><td class="no">command string</td><td class="no">env / role</td><td class="no">—</td><td class="us">record count</td></tr>
       <tr><td>Remembers what THIS org does</td><td class="no">stateless</td><td class="no">deploy history</td><td class="no">—</td><td class="us">per-org, by orgId</td></tr>
@@ -324,7 +324,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
   </table>
 
   <p>
-    Torque loses the last three rows on purpose. It is a workspace layer, not a release-management
+    Torque loses the last three rows on purpose. It is an operations layer, not a release-management
     platform: if you need environment-to-environment rollback or a vendor to call at 2am, buy the
     platform. What it does that they don’t is govern an <em>agent</em> operating an org in real
     time.
@@ -336,7 +336,7 @@ table.plain td:first-child{ font-family:var(--mono); font-size:8.1pt; white-spac
     gives an agent verbs. It does not tell it that a deployed field stays invisible until a
     PermissionSet grants it, that a bulk job can report success with thousands of failed records,
     or that a no-op update rewrites who last touched forty thousand rows. Torque ships that as a
-    structured catalogue — 44 entries, 10 of them re-verified against a live org on every release —
+    structured catalogue — 46 entries, 13 of them re-verified against a live org on every release —
     where every one declares <em>how it is known</em>:
     re-checked against a live org, cited to Salesforce, or plainly marked as learned the hard
     way. The live ones are re-run by the harness, and a claim that stops holding fails the build.</p>
@@ -643,13 +643,13 @@ agent  (retries — token consumed, delete runs; a second attempt is denied)</pr
 
   <h3>checkup — which of the platform’s traps are live in this org</h3>
 
-  <p>twelve catalogue entries carry a probe: the query that answers “is this happening to me right
+  <p>Nineteen catalogue entries carry a detector answering “is this happening to me right
     now”. <code>checkup</code> runs them and reports what it found, each finding citing the entry
     that predicted it and how that entry is known. That citation is the difference between this
     and an org health scanner — the scanners tell you what they found and cannot tell you how
     they know.</p>
 
-  <pre>CHECKUP — my-org   12 probe(s) from the platform catalogue
+  <pre>CHECKUP — my-org   19 probe(s) from the platform catalogue
 
   LIVE IN THIS ORG — the probe returned rows
     [deleted-field-rename]  3 row(s)
@@ -1069,6 +1069,7 @@ The operation grew after approval; re-approve with the current scope.</pre>
     <tr><td>lesson</td><td><code>fact</code> (schema-enforced platform entry) · <code>gate</code> (permanent fixture) · <code>org</code> (a finding about one org) · <code>review</code> (what the observer captured, ready to record).</td></tr>
     <tr><td>install-gates</td><td>Register the hooks at user level so they bind outside this workspace.</td></tr>
     <tr><td>log</td><td>Append a redacted session entry with before → after values.</td></tr>
+    <tr><td>week</td><td>Record saves, escapes and work that stopped being attempted. <code>--close</code> summarizes and archives without replacing an earlier close from the same day.</td></tr>
     <tr><td>attest</td><td>Emit machine-readable attestations of what was verified.</td></tr>
     <tr><td>frontdoor</td><td>Authenticated Lightning session for browser verification — writes the URL to a 0600 file and prints only the path.</td></tr>
     <tr><td>harness/validate.py</td><td><code>--profile static|capability|release</code> · <code>--self-test</code> · <code>--target-org</code> · <code>--only</code></td></tr>

@@ -201,7 +201,7 @@ be this tool vouching for a control it has no access to.
 
 **The adversarial assurance corpus is the asset.** The observation that changed my mind, from the
 mechanism review: the catalogue's facts are copyable; the evidence that the gates, the retrieval
-and the verifiers fail correctly under hostile variation is not. 196 bypass fixtures, 34 negative
+and the verifiers fail correctly under hostile variation is not. 257 recorded gate fixtures, 34 negative
 retrieval cases, 19 mutators, the live experiments and the verifier-falsification seams are what
 the adversarial rounds left behind.
 
@@ -219,14 +219,14 @@ operations layer to the thing that will not let an agent claim done. That is a n
 distinctive position, and it is a product decision rather than an engineering one.
 
 The current state, measured rather than claimed: 127 checks (106 static, 124 capability, 127 release),
-19 mutators, 237 adversarial fixtures — 67 of them asserting that ordinary work is *allowed* — and
+19 mutators, 257 recorded adversarial fixtures — 77 of them asserting that ordinary work is *allowed* — and
 retrieval measured against an evaluation set written by someone other than the author of the thing
-being measured: 95% *matched* recall, 88% *surfaced* recall over 81 cases, 88% precision over 34
+being measured: 95% *matched* recall, 84% *surfaced* recall over 81 cases, 88% precision over 34
 negatives.
 
 Both recall numbers, because they answer different questions and quoting only the first flatters
 the tool: MATCHED is whether the entry's triggers fired at all; SURFACED is whether it survived the
-two-slot display limit and actually reached the operator. The 7-point gap is a capacity limit
+two-slot display limit and actually reached the operator. The 11-point gap is a capacity limit
 rather than a mis-ranking, and only matched recall currently has a FAIL floor. Precision sits at
 88% against a floor of 85% — three points of headroom, so a handful of new false positives turns
 the build red, which is the intended tension and worth stating rather than discovering.
