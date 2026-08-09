@@ -19,6 +19,23 @@ def _sf_failure(proc):
             value = payload.get(key) if isinstance(payload, dict) else None
             if isinstance(value, str) and value.strip() and value.strip() not in parts:
                 parts.append(value.strip())
+        # Metadata deploy failures commonly have no top-level message. The actionable reason is
+        # nested under result.details.componentFailures[].problem, which is why the first
+        # structured renderer still produced only "exit 1 with no diagnostic" for a duplicate
+        # Permission Set label. Read that public result shape explicitly; never dump the whole
+        # response, which carries org URLs and identity fields irrelevant to the failure.
+        result = payload.get("result") if isinstance(payload, dict) else None
+        details = result.get("details") if isinstance(result, dict) else None
+        failures = details.get("componentFailures") if isinstance(details, dict) else None
+        if isinstance(failures, dict):
+            failures = [failures]
+        for failure in failures or []:
+            problem = failure.get("problem") if isinstance(failure, dict) else None
+            full_name = failure.get("fullName") if isinstance(failure, dict) else None
+            if isinstance(problem, str) and problem.strip():
+                rendered = f"{full_name}: {problem}" if full_name else problem
+                if rendered not in parts:
+                    parts.append(rendered)
     except Exception:                                   # noqa: BLE001
         text = " ".join((proc.stdout or "").split())
         if text:
@@ -48,9 +65,23 @@ def _probe_cycle(target):
     _diag = _sf_failure(_diag_probe)
     if "actual deploy failure" not in _diag or "update available" in _diag:
         return Result("probe_cycle", FAIL, "Salesforce failure renderer masks the real error")
+    _nested_probe = type("Proc", (), {
+        "stdout": json.dumps({"status": 1, "result": {"details": {"componentFailures": [{
+            "fullName": "RunScopedProbe", "problem": "label already in use",
+        }]}}}),
+        "stderr": "",
+        "returncode": 1,
+    })()
+    if "RunScopedProbe: label already in use" not in _sf_failure(_nested_probe):
+        return Result("probe_cycle", FAIL,
+                      "Salesforce failure renderer drops nested component errors")
     field = f"Torque_Probe_{_EPOCH}__c"
     obj = "Account"
     permset = f"Torque_Probe_{_EPOCH}"
+    label = f"Torque Probe {_EPOCH}"
+    if not all(str(_EPOCH) in value for value in (field, permset, label)):
+        return Result("probe_cycle", FAIL,
+                      "probe API names and labels must all be run-scoped")
     work = _tmp.mkdtemp(prefix="torque-probe-")
     try:
         # ---- demo-schema precondition: probe must be run-scoped, never a demo component ----
@@ -64,11 +95,11 @@ def _probe_cycle(target):
             '{"packageDirectories":[{"path":"force-app","default":true}],"namespace":"","sourceApiVersion":"62.0"}')
         open(_os.path.join(fdir, f"{field}.field-meta.xml"), "w").write(f'''<?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-  <fullName>{field}</fullName><label>Torque Probe</label><type>Text</type><length>32</length>
+  <fullName>{field}</fullName><label>{label}</label><type>Text</type><length>32</length>
 </CustomField>''')
         open(_os.path.join(pdir, f"{permset}.permissionset-meta.xml"), "w").write(f'''<?xml version="1.0" encoding="UTF-8"?>
 <PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
-  <label>Torque Probe</label><hasActivationRequired>false</hasActivationRequired>
+  <label>{label}</label><hasActivationRequired>false</hasActivationRequired>
   <fieldPermissions><editable>true</editable><field>{obj}.{field}</field><readable>true</readable></fieldPermissions>
 </PermissionSet>''')
 
