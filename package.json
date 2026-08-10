@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "An AI-agent operations layer for Salesforce. It shows impact before execution and verifies changes against a live org.",
   "scripts": {
-    "test": "python3 harness/validate.py --profile capability --target-org ${TORQUE_ORG:-my-dev-org}"
+    "test": "python3 harness/validate.py --profile static",
+    "test:capability": "python3 harness/validate.py --profile capability --target-org ${TORQUE_ORG:?set TORQUE_ORG to the alias of a disposable, non-production org on the allowlist}"
   },
   "author": "Omid Mojtahedi",
   "license": "MIT",
