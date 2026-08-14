@@ -237,7 +237,18 @@ def main():
     # as its contract says. The invariant being defended is not "PASS means zero" — it is that
     # the verdict and the exit code must not tell a reader two different stories. Declared
     # allowances are the one case where DEGRADED and zero agree.
-    expected_zero = verdict == "PASS" or (verdict == "DEGRADED" and bool(a.allow_skip))
+    #
+    # Mirrored from validate.py's own exit clause, term for term, because a looser copy here IS
+    # the two-stories defect this guard exists for: when validate stopped zeroing WARN-only
+    # DEGRADED runs (the flag excuses the gaps it names, not whatever else degraded the run),
+    # a `bool(a.allow_skip)`-only mirror would have refused every honestly-excused run — or
+    # worse, blessed the ones validate now refuses.
+    allowed_names = {s.split(":", 1)[0].strip() for s in a.allow_skip}
+    expected_zero = verdict == "PASS" or (
+        verdict == "DEGRADED" and bool(a.allow_skip)
+        and any(c["outcome"] == "SKIP" for c in checks)
+        and all(c["outcome"] != "FAIL" for c in checks)
+        and all(c["check"] in allowed_names for c in checks if c["outcome"] == "SKIP"))
     if expected_zero != (run.returncode == 0):
         print(f"refusing: validator verdict {verdict} disagrees with exit "
               f"{run.returncode}"

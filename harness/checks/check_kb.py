@@ -1578,7 +1578,8 @@ def _limit_relabel_is_safe():
     import io, contextlib
     def verdict(results):
         with contextlib.redirect_stdout(io.StringIO()):
-            return v.print_report("test", results)
+            # print_report returns (verdict, per-check outcomes); only the verdict is under test.
+            return v.print_report("test", results)[0]
 
     limited = verdict([v.Result("live", v.FAIL, "REQUEST_LIMIT_EXCEEDED: TotalRequests Limit"),
                        v.Result("ok", v.PASS, "fine")])

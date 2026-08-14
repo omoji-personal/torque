@@ -339,20 +339,27 @@ def run_profile(profile, target, only=None):
     return results
 
 def print_report(profile, results, only=None, allow_skip=None):
+    # Returns (verdict, {check_name: final_outcome}). The dict is the machine-readable half:
+    # the verdict alone cannot tell a consumer WHY a run is DEGRADED, and the one consumer that
+    # needs the difference (activate-enforcement) was left regex-scraping stdout or — worse —
+    # reading only the exit code, which folds "an environment property is absent" and "a check
+    # was skipped" into the same integer.
     if only is not None and not results:
         print(f"\n  ! no check named {only!r}. A filter that matches nothing is not a pass.")
         print("  → verdict: FAIL")
-        return "FAIL"
+        return "FAIL", {}
     if BROKEN_PLUGINS:
         print(f"\n  ! {len(BROKEN_PLUGINS)} check plugin(s) failed to load: "
               f"{', '.join(BROKEN_PLUGINS)}")
         print("  → verdict: FAIL (a check that cannot run is never a pass)")
-        return "FAIL"
+        return "FAIL", {}
     print(f"\n=== Torque validation — profile: {profile} ===")
     verdict = PASS
     seen = []
+    final = {}
     for r in results:
         outcome = LIMITED if (r.outcome == FAIL and rate_limited(r.detail)) else r.outcome
+        final[r.name] = outcome
         mark = {PASS:"✓", FAIL:"✗", WARN:"!", SKIP:"−", NA:"·", LIMITED:"⧗"}[outcome]
         tp = "" if r.third_party else " [operator-reproducible]"
         print(f"  {mark} {r.name:22} {outcome:5} {r.detail}{tp}")
@@ -375,7 +382,7 @@ def print_report(profile, results, only=None, allow_skip=None):
         print("  ⧗ the org is out of daily API requests — those checks did not run and did not "
               "fail. Re-run after the rolling window clears.")
     print(f"  → verdict: {verdict}")
-    return verdict
+    return verdict, final
 
 # ---- self-test: mutators for catastrophe-class checks ---------------------
 _MUTATED_FILES = ("hooks/shellparse.py", "hooks/destructive_data_gate.py", "hooks/lib.py",
@@ -967,6 +974,11 @@ def main():
     ap.add_argument("--allow-skip", action="append", metavar="CHECK:REASON",
                     help="acknowledge one check's SKIP with a stated reason (repeatable). The "
                          "run stays DEGRADED — never PASS — but exits 0. Refused for release.")
+    ap.add_argument("--verdict-json", metavar="PATH",
+                    help="also write the verdict, per-check outcomes, and self-test result as "
+                         "JSON to PATH. For consumers that must distinguish WHY a run is "
+                         "DEGRADED — the exit code cannot, and scraping stdout is a format "
+                         "nobody pinned.")
     a = ap.parse_args()
     # `--allow-skip=<id>:<reason>`, repeatable. Documented in .claude/rules/validation.md since
     # the contract was written, and NOT IMPLEMENTED until now — the same shape as TOOLCHAIN.md's
@@ -999,9 +1011,20 @@ def main():
               f"An allowance for a check that never runs hides the day it starts to.")
         print("  → verdict: FAIL")
         sys.exit(1)
-    verdict = print_report(a.profile, results, a.only, allow_skip)
+    verdict, outcomes = print_report(a.profile, results, a.only, allow_skip)
+    if a.verdict_json:
+        Path(a.verdict_json).write_text(json.dumps({
+            "profile": a.profile, "verdict": verdict, "self_test_ok": st_ok,
+            "outcomes": outcomes, "allow_skip": sorted(allow_skip)}, indent=2) + "\n")
+    # The DEGRADED zero-exit requires at least one check to have actually SKIPPED. Without that
+    # clause, --allow-skip zeroed the exit for a run degraded ONLY by WARN — no SKIP anywhere —
+    # so a pipeline passing the flag for one legitimately unrunnable check (CI, for
+    # operator_presence_can_succeed) was also accepting every warning as green, while a local
+    # run of the same tree exited 1. The flag buys a zero exit for the named gaps it excuses,
+    # not for whatever else degraded the run.
     sys.exit(0 if (verdict == PASS and st_ok) else
              0 if (verdict == "DEGRADED" and st_ok and allow_skip and
+                   any(r.outcome == SKIP for r in results) and
                    all(r.outcome != FAIL for r in results) and
                    all(r.name in allow_skip for r in results if r.outcome == SKIP)) else 1)
 

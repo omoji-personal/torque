@@ -102,7 +102,9 @@ delete one. Demonstrated 2026-08-05: a window-legal edit making `authorize_write
 
 `torque activate-enforcement` copies the tested tree into `~/.torque/enforcement/versions/<tree>/`
 at mode 0400, flips an atomic `current` symlink, and records a sha256 manifest. It refuses without
-operator presence, on a dirty tree, or if the static profile does not pass — activating untested
+operator presence, on a dirty tree, on any FAIL and on any unexcused SKIP in the static run —
+read from the verdict, not the exit code, so a WARN naming an environment property no commit
+changes does not strand tested gates — activating untested
 enforcement is how a safe-looking install becomes the thing that fails open.
 
 Activation alone changes nothing: the consumers must be repointed with
