@@ -102,8 +102,10 @@ $ torque lesson review
 
 It writes nothing anyone will read as knowledge. Candidates land in `local/`, redacted and 0600,
 and reach the catalogue only through `torque lesson`, where the schema and the live verifier still
-apply. And the queue cannot rot quietly: the harness reports its age, so an unconverted backlog
-becomes a visible warning rather than a file nobody opens.
+apply. The queue can still rot quietly, and that is the honest limit here: `lesson_backlog` ages
+*resolved pairs awaiting review*, not raw observations, so a queue that is captured and never
+converted reports PASS with nothing to report. The guard meant to make an unconverted backlog
+visible is measuring the wrong half of it.
 
 ---
 
@@ -120,8 +122,8 @@ with no org and no credentials — see [below](#see-it-in-3-seconds--no-org-no-c
 ```
 sf org login web --alias my-dev-org
 python3 bin/torque init my-dev-org        # verifies the org is NOT production, then configures
-python3 bin/torque install-gates --shim   # REQUIRED — see below
-export PATH="$HOME/.torque/shim:$HOME/<path-to>/torque/bin:$PATH"   # add to your shell profile
+python3 bin/torque install-gates --shim
+export PATH="$HOME/.torque/shim:$HOME/<path-to>/torque/bin:$PATH"
 npm install                               # optional: only the live browser check needs this
 python3 harness/validate.py --profile release --target-org my-dev-org
 ```
@@ -139,6 +141,22 @@ Measured on six months of real commands: 706 refusals without it, 22 with it. Bu
 for a gated write — org classification is two live CLI callouts and both gates classify
 independently. `python3 bin/torque checkup --target-org <org>` prints which posture you are in on
 its first line.
+
+**Two things about those two lines, because both decide scope rather than settings.** The `export`
+is read by `shim_enforcing()` from the PATH of the calling process, so running it in one terminal
+covers the sessions you launch from that terminal and nothing else. Moving it into a shell profile
+makes it permanent and machine-wide, and `sf` inside agent sessions in unrelated projects begins
+resolving through this repo's gates. That is a real choice, not a formality: pick the terminal
+while you are evaluating, pick the profile when you want Torque in front of every `sf` you run.
+And `install-gates` takes flags and no positional arguments, but a stray token after `--shim` (a
+trailing shell comment, say) currently slips past the guard on the shim-only branch and falls
+through to the machine-wide default, which registers gate matchers in `~/.claude/settings.json` for
+every workspace on the box. On 2026-08-10 both halves fired together on the author's machine: the
+stray token registered the hooks machine-wide, and a profile-scoped export already on PATH meant
+every Claude Code session started routing `sf` through them at once. Type that line with nothing
+after `--shim`. To undo a machine-wide install, run `python3 bin/torque install-gates --remove`
+yourself from a login terminal, since it refuses inside an agent session by design, and note that
+it takes the shim with it.
 
 Skip `npm install` and everything still runs — the browser check reports `BLOCKED` with a dated
 reason and the verdict is `DEGRADED` rather than `PASS`. That is deliberate: a check that cannot
@@ -280,22 +298,35 @@ fixture. The trail is in [`harness/VALIDATION.md`](harness/VALIDATION.md).
 ### How this was built
 
 Torque was written with AI agents, in the open, and the commit history says so: on `main` at
-2026-08-07, 216 of 224 commits carried a `Co-Authored-By: Claude` trailer. That is not a
-disclaimer buried at the bottom. It is the point of the artifact.
+`cb86c85`, 172 of 229 commits carry a `Co-Authored-By: Claude` trailer. That is not a disclaimer
+buried at the bottom. It is the point of the artifact.
 
-The figure names its ref and its method, because dating it turned out not to be enough. Re-derive
-it with:
+The figure names a commit rather than a date, and counts commits rather than trailer lines, because
+both of those turned out to matter. Re-derive it with:
 
 ```
-git rev-list --count main
-git log main --format='%b' | grep -c 'Co-Authored-By: Claude'
+git rev-list --count cb86c85
+git rev-list cb86c85 | while read c; do
+  git log -1 --format='%b' "$c" | grep -qi 'Co-Authored-By: Claude' && echo x
+done | wc -l
 ```
+
+Two ways this number went wrong before, both worth stating. **Counting lines instead of commits
+inflates it.** The previous method piped `git log --format='%b'` into `grep -c`, and this repo
+squash-merges, which collapses a branch into a single commit that then carries every trailer from
+it: at `cb86c85` one commit contributes 48 of the 218 lines that method finds. Counting commits
+instead gives 163, and matching case-insensitively gives 172, because 13 trailers in this history
+are spelled `Co-authored-by`. Git treats trailer keys as case-insensitive, so 172 is the honest
+figure, and it takes both changes to reach it. **And a self-referential count can never include its
+own commit.** The revision that published "216 of 224" carried the numerator its method produced at
+the time and a denominator one short by construction, because the commit making the claim did not
+exist yet while the claim was being written. Four more merges the same morning moved it again.
 
 Earlier revisions of this file said "202 of 256" and, before that, "192 of 246" — each dated, each
-correct when written, and neither reproducible afterwards. The count is not monotonic: this repo
-squash-merges, which collapses a branch's commits into one, so `main` can hold *fewer* commits
-than a count taken days earlier. A dated number with no recorded method is still a number waiting
-to be wrong, which is the failure this file spends the rest of its length warning about.
+correct when written, and neither reproducible afterwards. The count is not even monotonic: a
+squash can leave `main` holding *fewer* commits than a count taken days earlier. A dated number
+with no recorded method is a number waiting to be wrong, and a recorded method that measures the
+wrong thing is the same number with more ceremony.
 
 The problem this tool exists to solve is that an agent operating on a Salesforce org will report
 success it has not earned. The way to demonstrate a solution to that is not to write the code by
@@ -340,6 +371,13 @@ registers them at user level so they bind everywhere, and until you run it the h
 on PATH." That is a materially smaller claim than the rest of this page makes, which is why it is
 here and not in an appendix.
 
+Binding everywhere is a real choice with a real cost, so here is what it does: the user-level
+install writes gate matchers into `~/.claude/settings.json`, and from then on every Claude Code
+session on the machine routes Bash, MCP, Edit/Write and Read through this repo's hooks, including
+sessions in projects that never touch Salesforce. Run it when you want exactly that. Reverse it
+with `install-gates --remove`, from a login terminal and not from an agent session, and expect it
+to remove the shim in the same pass.
+
 The gates bind the agent's **tool surface** (Bash / Edit / Write / Read / MCP). Within that surface they
 stop accidents deterministically and defeat enumerable circumvention. They do **not** claim to stop a same-user actor
 who steps outside that surface by executing arbitrary code — forging a login session with a bespoke
@@ -350,7 +388,7 @@ For those, the load-bearing defense is layer 1: connect production read-only and
 production org authenticated in an autonomous session.
 
 Closing the subprocess channel needs a PATH-level shim that classifies before `exec`, and that
-one **is** built now — `torque install-gates --shim`, checked by four `shim_*` checks in the
+one **is** built now — `torque install-gates --shim`, checked by seven `shim_*` checks in the
 static profile. It is opt-in and off until installed, so the paragraph above still describes the
 default posture exactly. What changes with it installed is that anything resolving `sf` through
 PATH is gated on the argv the kernel is about to run, and — because bash has finished expanding

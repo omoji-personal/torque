@@ -10,11 +10,16 @@ reached a real operator. `bin/torque` exists precisely because every deny messag
 `torque approve …`", and nothing was putting it where a shell would find it:
 
 ```
-export PATH="$HOME/.torque/shim:<repo>/bin:$PATH"     # in your shell profile
+export PATH="$HOME/.torque/shim:<repo>/bin:$PATH"
 ```
 
-`torque install-gates --shim` prints the line with both paths filled in. Everything below can
-also be run as `python3 bin/torque approve …` from the repo root.
+Run that in the terminal you are working from. `shim_enforcing()` reads the PATH of the calling
+process, so a terminal-scoped export covers the sessions you launch from it and nothing else;
+moving it into a shell profile makes it permanent and machine-wide, which reaches agent sessions in
+unrelated projects. `torque install-gates --shim` prints the line with both paths filled in, and
+still recommends the shell profile: prefer the terminal unless you want Torque in front of every
+`sf` on the machine. Everything below can also be run as `python3 bin/torque approve …` from the
+repo root.
 
 For the duration, a gate that would have denied an operation **records it and lets it through**.
 Denials become `OBSERVE` entries in the audit trail carrying the reason they would have given.

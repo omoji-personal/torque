@@ -144,7 +144,7 @@ goes red for the author's bug rather than a finding. `experiments_are_not_checks
 under `harness/experiments/` can register into a profile. Once an operator runs it and the
 findings hold, each becomes a catalogue entry with a runnable verifier — and only then a check.
 
-### 3. The completion gate — ledger shipped, browser half still gated
+### 3. The completion gate — ledger shipped, browser half unbuilt
 A verified / not-verified ledger, ending in the browser under a **non-admin** profile — admin sees
 everything and proves nothing. The same discipline the harness already applies, where a skip is
 never allowed to read as a pass, applied to the word *done*.
@@ -155,10 +155,25 @@ fired, a human agreed. An unobserved layer is NOT VERIFIED, and the denominator 
 evidence arrives — layers get answered, never removed, because subtraction is how a partial check
 comes to read as a complete one.
 
-**The browser half is not built, on purpose.** It is still gated on the same three questions: can
-it render as a non-admin profile at all, what is the real wall-clock cost, and how flaky is it. A
-completion gate that costs two minutes gets routed around, which is worse than not having one, and
-none of the three has been answered against a real org. So that layer reports BLOCKED with a dated
+**The browser half is not built, and the reason has changed.** It was gated on three questions: can
+it render as a non-admin profile at all, what is the real wall-clock cost, and how flaky is it.
+`harness/experiments/login-as-render.mjs` answered all three against a real org on 2026-08-04. It
+renders: admin sees 29 field labels, the impersonated Standard User sees 28, differing by exactly
+the field behind a permission set the second user lacks, which is FLS observed in the UI rather than
+inferred from a permission row. It costs 10 to 19 seconds end to end, not the two minutes that would
+get a completion gate routed around. And the flakiness that mattered belonged to a signal the design
+then discarded: the "Logged in as" banner missed roughly one run in three even polled for 15
+seconds, on a handful of runs rather than a sample worth quoting as a rate.
+
+**The discarded attempts are the useful part.** Chasing the banner would have been tuning a signal
+until it passed. Two Setup doors were then tried as a proxy for privilege and neither is locked:
+Standard User carries `PermissionsViewSetup=true` in that org, so Setup Home is not a boundary at
+all, and `PermissionsManageUsers` gates actions on users rather than access to the page. The proxy
+was the mistake. The completion gate's actual question is whether a given profile can SEE A FIELD,
+and field-level security is a real boundary rather than a stand-in for one. So the differential
+above is the measurement, not an illustration of it.
+
+What is left is engineering the check. Until it lands, that layer reports BLOCKED with a dated
 reason, `--na` is refused on it — a blocker is a fact about the tool, not a judgement about the
 change — and a human who did the render by hand records it with `--render-evidence`. Without that
 seam the verdict would be NOT DONE for every input ever, which is a ledger with one row and no
