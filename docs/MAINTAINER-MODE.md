@@ -306,8 +306,10 @@ on the next tool call. A window granted to fix a check also granted the power to
 `~/.torque/enforcement/versions/<tree>/` at mode 0400, an atomic `current` symlink points at it,
 and `torque install-gates --project` repoints this repository's registration there. From then on a
 maintainer window still edits `hooks/` — and the edit decides nothing until a present operator
-tests it and promotes it. Activation itself refuses without operator presence, on a dirty tree, or
-if the static profile does not pass.
+tests it and promotes it. Activation itself refuses without operator presence, on a dirty tree, on any FAIL, and on
+any unexcused SKIP — it reads the run's verdict, not its exit code, so a WARN alone (which
+can name an environment property no commit changes, like the shim being absent from PATH)
+no longer blocks promotion of tested gates.
 
 `maintainer_edit_cannot_change_active_gate` measures exactly this, and reported N/A from the day it
 was written until enforcement was activated — correctly, because there was nothing to measure and

@@ -10,8 +10,8 @@ in capability and release.
 |---|---|
 | PASS | green |
 | FAIL | red — the run is red |
-| WARN | does not break all-PASS; reproduced verbatim in the attestation and any phase-status table; promoted to FAIL in release where a check says so |
-| SKIP/BLOCKED | non-green: allowed only via per-check `--allow-skip=<id>:<reason>`; the run verdict becomes DEGRADED; release refuses `--allow-skips` entirely |
+| WARN | degrades the verdict to DEGRADED (this row said otherwise for two months; the code was right and this file was wrong); reproduced verbatim in the attestation and any phase-status table; promoted to FAIL in release where a check says so. Activation reads the verdict and tolerates WARN-only degradation: a WARN can name an environment property no commit changes |
+| SKIP/BLOCKED | non-green: allowed only via per-check `--allow-skip=<id>:<reason>`; the run verdict becomes DEGRADED; release refuses `--allow-skips` entirely. The flag zeroes the exit only when a named SKIP actually occurred — never on behalf of a WARN |
 
 **Done-gate is the surface verdict:** a change is done when every check mapped to its
 changed surface passed. Whole-profile PASS is mandatory only for release and publication.

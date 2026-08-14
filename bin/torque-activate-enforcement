@@ -134,12 +134,47 @@ def activate():
 
     # Activating untested enforcement is how a safe-looking install becomes the thing that fails
     # open. The static profile is the floor; it needs no org and it exercises every gate path.
+    #
+    # The precondition reads the VERDICT, not the exit code. The exit folds two different facts
+    # into one integer: a WARN can name an environment property no commit changes — the shim not
+    # being on PATH — and refusing on it made the advice printed here ("Fix, commit, and re-run")
+    # impossible to follow while quietly making the shim a prerequisite for activation. What must
+    # be green before enforcement is promoted: no FAIL, no unexcused gap (SKIP/LIMIT), and a
+    # self-test that caught its mutants. A WARN is printed, named, and tolerated — the contract
+    # sentence for this lives in .claude/rules/validation.md.
     print("running the static profile before activating…")
-    r = subprocess.run([sys.executable, str(TORQUE_HOME / "harness" / "validate.py"),
-                        "--profile", "static"], cwd=TORQUE_HOME)
-    if r.returncode != 0:
-        print("refusing: the static profile did not pass, so this commit's gates are not "
-              "established. Fix, commit, and re-run.", file=sys.stderr)
+    import tempfile
+    fd, _vp = tempfile.mkstemp(prefix="torque-verdict-", suffix=".json")
+    os.close(fd)
+    vf = Path(_vp)
+    try:
+        subprocess.run([sys.executable, str(TORQUE_HOME / "harness" / "validate.py"),
+                        "--profile", "static", f"--verdict-json={vf}"], cwd=TORQUE_HOME)
+        try:
+            v = json.loads(vf.read_text())
+        except Exception:                              # noqa: BLE001
+            print("refusing: the validation run left no readable verdict, and a run whose "
+                  "conclusion cannot be read establishes nothing.", file=sys.stderr)
+            return 2
+    finally:
+        vf.unlink(missing_ok=True)
+    if not v.get("self_test_ok"):
+        print("refusing: the self-test did not catch its mutants, so the checks themselves are "
+              "not established — a verdict from unproven checks is not a verdict.",
+              file=sys.stderr)
+        return 2
+    blocking = sorted(n for n, o in v.get("outcomes", {}).items()
+                      if o in ("FAIL", "SKIP", "LIMIT"))
+    if v.get("verdict") == "DEGRADED" and not blocking:
+        warns = sorted(n for n, o in v.get("outcomes", {}).items() if o == "WARN")
+        print(f"  DEGRADED by WARN only ({', '.join(warns)}) — proceeding. Each WARN is printed "
+              f"above and worth reading; what it cannot be is a reason to leave tested gates "
+              f"unpromoted.")
+    elif v.get("verdict") != "PASS":
+        print(f"refusing: the static profile reported {v.get('verdict')}"
+              + (f" with {', '.join(blocking)}" if blocking else "")
+              + " — a FAIL needs fixing, an unexcused SKIP/LIMIT needs running, before this "
+                "commit's gates are established.", file=sys.stderr)
         return 2
 
     commit = sh("git", "rev-parse", "HEAD").stdout.strip()
