@@ -149,9 +149,14 @@ def install_shim():
     # open: an operator hits a production deny, reads "run torque approve", gets `command not
     # found`, and reasonably concludes the approval mechanism is broken. That is the
     # security-critical path failing at the exact moment it is needed, and it is a PATH entry.
-    print("add BOTH to PATH in your shell profile — the shim ahead of the real CLI, and the")
-    print("dispatcher so that `torque approve ...` resolves when a deny message tells you to:")
+    print("put BOTH on PATH — the shim ahead of the real CLI, and the dispatcher so that")
+    print("`torque approve ...` resolves when a deny message tells you to:")
     print(f'  export PATH="{SHIM_DIR}:{TORQUE_HOME / "bin"}:$PATH"')
+    print("scope is the real choice in that line. Run the export in one terminal and it covers")
+    print("the sessions launched from that terminal, for as long as it stays open. Put it in a")
+    print("shell profile and it is machine-wide: `sf` inside every agent session in every")
+    print("project resolves through these gates. Pick the terminal while you are evaluating;")
+    print("pick the profile when you want Torque in front of every `sf` you run.")
     print("the shim gates only when it cannot see an operator at a login terminal, so your own")
     print("`sf` is unaffected. Remove with: python3 bin/torque install-gates --remove-shim")
     return True
@@ -171,6 +176,13 @@ def remove_shim():
           "and `sf` resolves past it harmlessly")
 
 def main():
+    # The machine-wide default is asked for by name AND by a person. This gate used to sit only
+    # on the remove paths — installing enforcement into every session on the box ran unattended
+    # while undoing it required a login TTY, which is backwards on both halves. At the top of
+    # main() rather than in the dispatch, so reaching main() by any route asks the question.
+    _require_operator("", reason="the user-level install rewrites ~/.claude/settings.json "
+                      "and changes how every Claude Code session on this machine "
+                      "adjudicates Bash, MCP, Edit/Write and Read")
     HOME_SETTINGS.parent.mkdir(exist_ok=True)
     cfg = {}
     if HOME_SETTINGS.exists():
@@ -232,11 +244,16 @@ def main():
             bak.write_text(HOME_SETTINGS.read_text())
     HOME_SETTINGS.write_text(json.dumps(cfg, indent=2))
     print(f"installed: 4 gate matchers + 1 observer registered at user level, TORQUE_HOME={TORQUE_HOME}")
-    if "--shim" in sys.argv:
-        install_shim()
+    # The single-command "register at user level AND install the shim" is gone on purpose. It was
+    # reachable only through argv the dispatch now refuses (`--shim <stray>`), so keeping the
+    # handoff here would advertise a combination the CLI cannot express. Two scopes, two commands,
+    # each asked for by name.
+    if (SHIM_DIR / "sf").exists():
+        print(f"the exec-time shim is already installed at {SHIM_DIR} and is unchanged by this.")
     else:
         print("the exec-time shim is NOT installed. These hooks bind the agent's tool surface; "
-              "they do not see `sf` spawned by a script the agent wrote. `--shim` closes that.")
+              "they do not see `sf` spawned by a script the agent wrote. Run "
+              "`python3 bin/torque install-gates --shim` to close that.")
     print("remove with:  python3 bin/torque install-gates --remove")
 
 
@@ -283,8 +300,14 @@ def _hook_timeout():
         sys.exit(2)
 
 
-def _require_operator(what):
-    """Uninstalling enforcement is an operator act, not an agent one.
+def _require_operator(what, reason=None):
+    """Uninstalling enforcement is an operator act, not an agent one — and so is the
+    machine-wide install. Until 2026-08-13 this gate sat on exactly the wrong operations:
+    the user-level install, which rewrites ~/.claude/settings.json and changes how every
+    Claude Code session on the box adjudicates writes, ran unattended, while UNDOING it
+    required a login TTY. That asymmetry is why a stray token could do real damage on
+    2026-08-10 with nobody at the keyboard, and why an agent tripping the same path could
+    not have cleaned up after itself even had it noticed.
 
     THE HOLE THIS CLOSES, found by chasing an audit finding about a hypothetical kill switch and
     discovering the real one already shipped: the gates deny `rm ~/.torque/shim/sf` as a
@@ -305,14 +328,17 @@ def _require_operator(what):
     import lib
     if lib.operator_present():
         return
-    print(f"refusing: {what} disables Torque's own enforcement, so it requires an operator at a "
+    reason = reason or f"{what} disables Torque's own enforcement"
+    label = what or "the user-level install"
+    print(f"refusing: {reason}, so it requires an operator at a "
           f"real terminal — the same presence check `torque approve` uses.\n"
           f"  Run it yourself from a login shell, clear of the agent:\n"
-          f"    cd {TORQUE_HOME} && python3 bin/torque install-gates {what}\n"
+          f"    cd {TORQUE_HOME} && python3 bin/torque install-gates {what}".rstrip() + "\n"
           f"  If you are already at such a terminal and seeing this, the ancestry check found an "
           f"agent process above this one.", file=sys.stderr)
     try:
-        lib.audit("UNINSTALL-REFUSED", f"{what} attempted without operator presence", durable=True)
+        event = "UNINSTALL-REFUSED" if what.startswith("--remove") else "INSTALL-REFUSED"
+        lib.audit(event, f"{label} attempted without operator presence", durable=True)
     except Exception:                                  # noqa: BLE001 — refusal must not depend on it
         pass
     sys.exit(2)
@@ -328,16 +354,28 @@ if __name__ == "__main__":
     # every workspace on the machine. Nothing was wrong with main(); what was wrong was reaching
     # it by not matching anything. A default action with machine-wide scope must be asked for by
     # name, because the alternative is that a typo asks for it.
+    #
+    # A POSITIONAL IS THE SAME MISTAKE IN A SECOND SPELLING. This tool takes no positional
+    # arguments at all, and the first guard counted arguments instead of saying so: on
+    # 2026-08-10 a trailing shell comment arrived as argv (interactive zsh does not strip `#`),
+    # the length check on the --shim branch went false, and dispatch fell through to the
+    # user-level default — the incident the paragraph above was written to prevent, reached
+    # through the hole beside the one it closed.
     unknown = [a for a in sys.argv[1:] if a.startswith("-") and a not in KNOWN_FLAGS]
-    if unknown:
-        print(f"unknown flag(s) {unknown}. Refusing rather than running the default, which "
+    stray = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if unknown or stray:
+        got = " and ".join(p for p in (
+            f"unknown flag(s) {unknown}" if unknown else "",
+            f"unexpected argument(s) {stray} — this command takes flags only" if stray else "")
+            if p)
+        print(f"{got}. Refusing rather than running the default, which "
               f"registers gates at USER level for every workspace on this machine.\n"
               f"  --project        point THIS repo's hooks at the activated enforcement copy\n"
               f"  --workspace      point them back at the workspace (reverses --project)\n"
               f"  --shim           install the exec-time sf shim\n"
               f"  --remove         remove the user-level registration (operator)\n"
               f"  --remove-shim    remove the shim (operator)\n"
-              f"  (no flags)       register the gates at user level, all workspaces",
+              f"  (no flags)       register the gates at user level, all workspaces (operator)",
               file=sys.stderr)
         sys.exit(2)
     if "--remove-shim" in sys.argv:
@@ -347,11 +385,13 @@ if __name__ == "__main__":
         sys.exit(project(to_anchor=True))
     elif "--workspace" in sys.argv:
         sys.exit(project(to_anchor=False))
-    elif "--shim" in sys.argv and "--remove" not in sys.argv and len(sys.argv) == 2:
-        # `--shim` alone adds the shim without rewriting the operator's settings.json.
+    elif "--shim" in sys.argv and "--remove" not in sys.argv:
+        # `--shim` alone adds the shim without rewriting the operator's settings.json. The
+        # argv-length check that used to sit here read as the positional guard while never
+        # being one; the refusal above is the guard, so this branch now states only its match.
         install_shim()
     elif "--remove" in sys.argv:
         _require_operator("--remove")
         remove()
     else:
-        main()
+        main()      # which opens with its own operator-presence gate
