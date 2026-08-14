@@ -160,7 +160,23 @@ def _installer_roundtrip():
     want = _triples(proj)
     with _tf.TemporaryDirectory() as td:
         env = dict(_os.environ, HOME=td)
-        r2 = subprocess.run(["python3", str(ROOT / "bin" / "torque-install-gates")],
+        # Same treatment the remove half below documents: the CLI entry point now requires
+        # operator presence for the machine-wide default (2026-08-13, closing the 2026-08-10
+        # unattended-install incident), and presence must not be forgeable from the harness.
+        # The subject HERE is the registration being a faithful mirror and a true inverse,
+        # not who may invoke it — that half is install_dispatch_is_guarded's, which runs the
+        # real entry point and requires exit 2.
+        # A module OBJECT, not runpy.run_path: run_path returns a copy of the namespace, so
+        # neutering the guard in the returned dict never reaches main()'s own globals — observed
+        # here, rc=2 either way. SourceFileLoader executes into the module whose globals the
+        # functions actually close over.
+        _load = ("import importlib.machinery as im, importlib.util as iu, sys;"
+                 "sys.argv=['torque-install-gates'];"
+                 f"l=im.SourceFileLoader('ig', {str(ROOT / 'bin' / 'torque-install-gates')!r});"
+                 "m=iu.module_from_spec(iu.spec_from_loader('ig', l));"
+                 "l.exec_module(m);"
+                 "m._require_operator=lambda *a, **k: None;")
+        r2 = subprocess.run(["python3", "-c", _load + "m.main()"],
                             capture_output=True, text=True, env=env, timeout=60)
         produced = pathlib.Path(td) / ".claude" / "settings.json"
         if r2.returncode != 0 or not produced.exists():
@@ -180,13 +196,8 @@ def _installer_roundtrip():
         # Without this split the operator gate silently broke this check: `--remove` refused,
         # left every hook registered, and the roundtrip failed for a reason that had nothing to
         # do with the roundtrip.
-        subprocess.run(
-            ["python3", "-c",
-             "import runpy,sys;"
-             f"sys.argv=['torque-install-gates'];"
-             f"m=runpy.run_path({str(ROOT / 'bin' / 'torque-install-gates')!r});"
-             "m['remove']()"],
-            capture_output=True, text=True, env=env, timeout=60)
+        subprocess.run(["python3", "-c", _load + "m.remove()"],
+                       capture_output=True, text=True, env=env, timeout=60)
         left = _triples(_json.loads(produced.read_text()))
     if left:
         return Result("installer_roundtrip", FAIL, f"--remove left {sorted(left)} behind")

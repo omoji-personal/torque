@@ -51,15 +51,36 @@ def _install_parity_project_and_user():
 
     home = _IP(_itf.mkdtemp(prefix="torque-install-parity-"))
     try:
-        env = dict(_ios.environ, HOME=str(home), PYTHONDONTWRITEBYTECODE="1")
-        env.pop("TORQUE_SHIM_DEPTH", None)
-        r = _isp.run([_isys.executable, str(ROOT / "bin" / "torque-install-gates")],
-                     capture_output=True, text=True, env=env, cwd=str(ROOT))
+        # The bare user-level install refuses without operator presence (2026-08-13, closing
+        # the 2026-08-10 incident), and presence cannot and must not be forgeable from the
+        # harness. This check's subject is REGISTRATION PARITY, not the dispatch — the dispatch
+        # has its own check — so the module is loaded and main() is called with the presence
+        # guard neutered, against the same throwaway HOME the subprocess used to get.
+        import importlib.machinery as _iim
+        import importlib.util as _iiu
+        import contextlib as _ictx
+        import io as _iio
+        saved_home = _ios.environ.get("HOME")
+        _ios.environ["HOME"] = str(home)
+        try:
+            # SourceFileLoader by name: the installer has no .py suffix, so loader inference
+            # returns None and exec would die before the property under test is ever measured.
+            _ldr = _iim.SourceFileLoader("torque_install_gates_parity",
+                                         str(ROOT / "bin" / "torque-install-gates"))
+            mod = _iiu.module_from_spec(_iiu.spec_from_loader(_ldr.name, _ldr))
+            _ldr.exec_module(mod)
+            mod._require_operator = lambda *a, **k: None
+            with _ictx.redirect_stdout(_iio.StringIO()):
+                mod.main()
+        finally:
+            if saved_home is None:
+                _ios.environ.pop("HOME", None)
+            else:
+                _ios.environ["HOME"] = saved_home
         settings = home / ".claude" / "settings.json"
-        if r.returncode != 0 or not settings.exists():
+        if not settings.exists():
             return Result("install_parity_project_and_user", FAIL,
-                          f"the installer did not produce a user-level settings file "
-                          f"(exit {r.returncode}): {(r.stderr or r.stdout).strip()[:120]}")
+                          "the installer did not produce a user-level settings file")
         user = _ij.loads(settings.read_text())
         user_gates = _gate_hooks(user.get("hooks", {}).get("PreToolUse", []))
 
