@@ -13,8 +13,9 @@ torque approve --end-maintainer                   # revoke early
 
 **`torque` must be on PATH**, or both of those read `command not found` — observed, on the
 command an operator reaches for when a deny message tells them to. Put the repo's `bin/` there
-(`torque install-gates --shim` prints the full line), or run `python3 bin/torque approve …` from
-the repo root.
+(`torque install-gates --shim` prints the full line, and recommends a shell profile; a
+terminal-scoped export is the narrower and usually better choice, since a profile reaches every
+agent session on the machine), or run `python3 bin/torque approve …` from the repo root.
 
 The patch step is gone with it: `local/patches/maintainer-mode.patch` was the bootstrap for a
 mechanism that is now in the tree.

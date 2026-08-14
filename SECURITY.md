@@ -46,10 +46,12 @@ These are documented limits, not undiscovered holes — see the threat model in
   the write allowlist — no hook fired, no audit line was written. So **without the exec-time shim
   the allowlist is advisory rather than enforced.**
 
-  The shim that closes this **is built** — `torque install-gates --shim`, covered by five checks
-  in the static profile. This section said "v2 roadmap, not built yet" while the README said it
-  shipped; two files in one repository disagreeing about whether a control exists is worse than
-  either answer, and the disagreement is the finding. With the shim installed and first on PATH,
+  The shim that closes this **is built** — `torque install-gates --shim`, covered by seven
+  `shim_*` checks in the static profile. This section said "v2 roadmap, not built yet" while the
+  README said it shipped; two files in one repository disagreeing about whether a control exists
+  is worse than either answer, and the disagreement is the finding. It recurred on the count: this
+  file said five and the README said four while the registry held seven, and neither number was
+  ever right. Nothing checks it, which is why. With the shim installed and first on PATH,
   the same script-mediated write is refused at exec time on argv the kernel resolved.
 - **Anything upstream of the credentials.** If a production org is authenticated with write
   permissions in an autonomous session, Torque narrows the blast radius; it does not remove it.
