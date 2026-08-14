@@ -23,19 +23,15 @@ total = {pr: sum(n for p, n in counts.items() if v.RANK[p] <= v.RANK[pr]) for pr
 # it, so it stayed at 11 through two additions. Same treatment as the check counts.
 mutators = int(re.search(r"TOTAL_MUTATORS = (\d+)",
                          (ROOT / "harness" / "validate.py").read_text()).group(1))
-# These were exactly the files claimed_counts scans — keep it that way, or the syncer fixes four
-# of five and the check fails on the fifth, which is how it found bin/torque-demo.
-#
-# ROADMAP.md is the deliberate exception, and the asymmetry is temporary. It carried "66 checks"
-# for eight commits precisely because it is in neither list, and an external evaluation found it
-# rather than the harness. Syncing it here is the half that can be done today: adding it to
-# claimed_counts needs harness/checks/check_kb.py, which is a protected file (B3 in
-# docs/HANDOFF-DEFECTS-2026-08.md). So the syncer now covers one file the checker does not —
-# which is the SAFE direction of the two, since a rewritten-but-unchecked count is still correct
-# where an unwritten-but-unchecked one drifts. When B3 lands, this comment should stop being
-# true and the note should go.
+# These are exactly the files claimed_counts scans (harness/checks/check_kb.py:~1272) — keep
+# the two lists identical, or the syncer fixes some and the check fails on the rest, which is
+# how it found bin/torque-demo. The previous revision of this comment said ROADMAP.md was in
+# the syncer only, pending B3; B3 landed, the checker scans it, and the asymmetry that
+# remained was the OTHER way: bin/torque-week and guide/TORQUE-GUIDE.md were checked but not
+# synced, so a check added there meant a manual edit the checker would find and nobody would
+# automate — the exact friction this script exists to remove.
 for rel in ("README.md", "guide/torque-guide.html", "bin/torque-demo", "bin/torque-init",
-            "ROADMAP.md"):
+            "bin/torque-week", "ROADMAP.md", "guide/TORQUE-GUIDE.md"):
     f = ROOT / rel
     if not f.exists():
         continue
