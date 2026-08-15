@@ -12,6 +12,8 @@ dropped from the denominator — which is the specific move that lets a partial 
 complete one.
 
     torque done --target-org <alias> --field Account.Tier__c --permset Tier_Access
+    torque done --target-org <alias> --field Account.Tier__c --permset Tier_Access \
+                --as-user tester@example.org --record-id 001XXXXXXXXXXXXXXX
     torque done --target-org <alias> --field Account.Tier__c --json
 
 EXIT CODES
@@ -22,19 +24,26 @@ EXIT CODES
 Exit 3 rather than 1 for NOT DONE, matching `torque blast-radius`: an incomplete picture and a
 broken tool are different things and a caller has to be able to tell them apart.
 
-WHAT THIS DOES NOT DO YET, and why not
+THE BROWSER HALF, built 2026-08-15 from the procedure the 2026-08-04 experiment proved
 
-The roadmap's completion gate ends in the browser, rendering as a NON-ADMIN profile, because an
-admin sees everything and therefore proves nothing. That half is deliberately absent. The
-roadmap gates it on three questions — can it render as a non-admin profile at all, what is the
-real wall-clock cost, and how flaky is it — and none of the three has been answered against a
-real org. A completion gate that costs two minutes gets routed around, which is worse than not
-having one, and building it before measuring that would be guessing in the one place this tool
-exists to stop people guessing.
+The completion gate ends in the browser, rendering as a NON-ADMIN, because an admin sees
+everything and therefore proves nothing. Given `--as-user` (the non-admin the change is for)
+and `--record-id` (a record whose page should show the field), this impersonates that user via
+the su servlet, opens the record in Lightning, and walks the shadow roots for the field's
+LABEL — field-level security observed in the UI, not inferred from a permission row. Cost is
+25–40 seconds live (the bare hop measured 10–19 before this was built; the reload and
+Details-tab remedies buy honesty with the difference), still far under the two minutes that
+gets a completion gate routed around.
 
-So the profile-visibility layer reports BLOCKED with that reason, dated, and BLOCKED is not
-green. The ledger is honest about its own incompleteness in exactly the way it demands of the
-work it grades.
+The layer goes green only on the full chain: the ADMIN control saw the label (a detector that
+fails its control measures nothing), the session was PROVEN to be somebody else (a hop that
+silently stays admin passes every other assertion), and the label rendered for that somebody.
+Anything less is UNANSWERED — never rounded to yes or to no. Admin, inactive and self targets
+are refused out loud, because each renders perfectly and proves nothing.
+
+Without those two flags the layer is BLOCKED — the tool cannot look without being told where —
+and a person who did the render by hand records it with --render-evidence, which reports
+ASSERTED, a different kind of knowing than the org answering.
 """
 import argparse
 import json
@@ -73,9 +82,11 @@ GREEN = (VERIFIED, NA, ASSERTED)   # the outcomes that do not withhold the word
 # being unable to look. Both are facts about the tool, not judgements about the change.
 UNWAIVABLE = (BLOCKED, UNANSWERED)
 
-# Dated so a blocker cannot age into background noise: a reader can see how long it has been
-# true and decide whether it is still a reason or has become an excuse.
-BROWSER_BLOCKED_SINCE = "2026-08-04"
+# Where the render probe lives, and how long it may take. 240s is generous against the
+# measured 10–19s so a slow org reports its own result rather than a timeout, while a hung
+# browser still cannot hold the ledger hostage.
+RENDER_PROBE = ROOT / "harness" / "checks" / "render_probe.mjs"
+RENDER_TIMEOUT_S = 240
 
 
 class Layer:
@@ -272,35 +283,212 @@ def layer_assigned(target, permset):
                  f"{n} assignment(s)")
 
 
-def layer_profile_render(profile, evidence):
-    """The layer the whole gate is for, and the one this tool cannot do yet.
+def _browser_available():
+    """node plus a Playwright chromium, from Playwright's documented locations (the C1 fix:
+    only the author's macOS cache path was checked once, and the layer was BLOCKED forever
+    everywhere else with the browser sitting right there)."""
+    import os as _os
+    import shutil as _sh
+    if not _sh.which("node"):
+        return "no `node` on PATH"
+    cands = []
+    if _os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        cands.append(Path(_os.environ["PLAYWRIGHT_BROWSERS_PATH"]))
+    cands += [Path.home() / "Library" / "Caches" / "ms-playwright",
+              Path.home() / ".cache" / "ms-playwright"]
+    if _os.environ.get("LOCALAPPDATA"):
+        cands.append(Path(_os.environ["LOCALAPPDATA"]) / "ms-playwright")
+    if not any(c.exists() and any(c.glob("chromium*")) for c in cands):
+        return ("no Playwright chromium in any known location; "
+                "`npx playwright install chromium` enables the render")
+    return None
 
-    An admin sees everything and proves nothing, so the only render that settles it is one under
-    a non-admin profile. Automating that is gated on three questions the roadmap asks and nobody
-    has answered against a real org, so the automated answer is BLOCKED — never green, and
-    `--na` will not clear it.
 
-    A human who did the render can say so with --render-evidence, which is the difference
-    between "this tool cannot check it" and "nobody checked it". Without that seam the verdict
-    would be NOT DONE for every input ever, which is a ledger with one row and no information.
+_USER_ID = re.compile(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$")
+
+
+def _refuse(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(2)
+
+
+def _resolve_render(target, obj, field, as_user):
+    """Everything the probe needs, from the org — or the reason it cannot be had.
+
+    Returns (ctx, None) or (None, unanswered_detail). Caller MISTAKES — an admin target, an
+    inactive one, the session's own user, a user the org has never heard of — refuse loudly
+    with exit 2 instead of becoming a ledger row: each of those renders perfectly and proves
+    nothing, and a measurement of nothing must not be phrased as a fact about the change.
     """
-    if evidence:
-        return Layer("profile_render", f"visible in the UI as {profile or 'a non-admin profile'}",
-                     ASSERTED, f"observed by a person: {evidence}")
-    return Layer("profile_render",
-                 f"visible in the UI as {profile or 'a non-admin profile'}", BLOCKED,
-                 f"not automated YET, and no longer for want of a method. Demonstrated live "
-                 f"2026-08-04 (harness/experiments/login-as-render.mjs): impersonate via the su "
-                 f"servlet, open the record, click Details, then walk the shadow roots "
-                 f"explicitly — an admin session returned 29 field labels and an impersonated "
-                 f"Standard User returned 28, differing by exactly the field gated behind a "
-                 f"permission set the second user lacks. That is field-level security observed "
-                 f"in the UI rather than inferred from a permission row, which is the whole "
-                 f"point of this layer. About 10 seconds. What remains is turning a "
-                 f"demonstrated procedure into a check that fails honestly on a flaky org, plus "
-                 f"the impersonation banner's 1-in-3 flake, which the label differential does "
-                 f"not depend on. Until then, do the render by hand and record it with "
-                 f"--render-evidence.")
+    r = sh("org", "display", "--target-org", target, "--json")
+    if r.returncode != 0:
+        return None, f"the org could not answer: {_why_it_failed(r)}"
+    try:
+        d = json.loads(r.stdout)["result"]
+        instance = (d.get("instanceUrl") or "").rstrip("/")
+        org_id = d.get("id") or ""
+        session_username = d.get("username") or ""
+        if not instance or not org_id:
+            raise ValueError
+    except Exception:                                      # noqa: BLE001
+        return None, "org display returned no usable instance URL and org id"
+
+    esc = as_user.replace("\\", "\\\\").replace("'", "\\'")
+    where = (f"Id='{esc}'" if _USER_ID.fullmatch(as_user or "")
+             else f"Username='{esc}'")
+    rows, err = soql(target, "SELECT Id, Username, IsActive, Profile.Name, "
+                             "Profile.PermissionsModifyAllData FROM User WHERE " + where)
+    if err:
+        return None, f"the org could not answer about {as_user!r}: {err}"
+    if not rows:
+        _refuse(f"--as-user {as_user!r} names no user in this org. The render must run as a "
+                f"real user or it measures nothing.")
+    u = rows[0]
+    prof = (u.get("Profile") or {}).get("Name") or "unknown profile"
+    if not u.get("IsActive"):
+        _refuse(f"--as-user {as_user!r} is INACTIVE. Impersonating a dead account renders a "
+                f"session no real user has, which proves nothing about who can see the field.")
+    if (u.get("Profile") or {}).get("PermissionsModifyAllData"):
+        _refuse(f"--as-user {as_user!r} holds an admin-class profile ({prof}, "
+                f"ModifyAllData). An admin sees everything and proves nothing — name the "
+                f"non-admin user the change is actually for.")
+
+    srow, serr = soql(target, "SELECT Id FROM User WHERE Username="
+                              f"'{session_username.replace(chr(39), chr(92)+chr(39))}'")
+    session_id = (srow[0].get("Id") if srow and not serr else "") or ""
+    if session_id and session_id[:15] == (u.get("Id") or "")[:15]:
+        _refuse(f"--as-user {as_user!r} is the session's own user. Impersonating yourself is "
+                f"a no-op that renders perfectly and measures nothing — authenticate as an "
+                f"admin and name somebody else.")
+
+    lrows, lerr = soql(target, "SELECT Label FROM FieldDefinition WHERE "
+                               f"EntityDefinition.QualifiedApiName='{obj}' AND "
+                               f"QualifiedApiName='{field}'", tooling=True)
+    if lerr or not lrows or not lrows[0].get("Label"):
+        return None, (f"the field's UI label could not be resolved from FieldDefinition"
+                      f"{': ' + lerr if lerr else ''} — the field_exists layer says whether "
+                      f"the field is there at all; without a label there is nothing to look "
+                      f"for on the page")
+    return {"instance": instance, "org_id": org_id, "session_id": session_id,
+            "user_id": u["Id"], "username": u.get("Username", as_user),
+            "profile": prof, "label": lrows[0]["Label"]}, None
+
+
+def _render_outcome(marks, user_desc, label):
+    """Probe marks in, (outcome, detail) out. Pure on purpose: this is the single place that
+    decides what green means for the render, and the harness holds it to fixtures in both
+    directions. Nothing here may round UNSETTLED to an answer.
+
+    Order matters and is load-bearing: a probe that errored measured nothing; a servlet that
+    never redirected was refused by the org; a detector that failed its ADMIN control cannot
+    be trusted about anybody; a session not PROVEN to be somebody else renders as an admin,
+    which passes every remaining assertion vacuously. Only past all four does the user's own
+    result mean anything.
+    """
+    if "error" in marks:
+        return UNANSWERED, f"the probe did not finish: {marks['error']}"
+    if "servlet.su" in marks.get("suLandedPath", ""):
+        return UNANSWERED, ("the su servlet did not redirect, so the org refused the "
+                            "impersonation — 'Administrators Can Log in as Any User' "
+                            "(enableAdminLoginAsAnyUser) is likely off. The render was "
+                            "never measured.")
+    if marks.get("adminShell") != "true":
+        return UNANSWERED, ("Lightning never rendered for the admin session, so nothing "
+                            "downstream was measured")
+    if marks.get("adminFieldVisible") != "true":
+        return UNANSWERED, (f"the detector could not see {label!r} even as an admin "
+                            f"(adminFieldVisible={marks.get('adminFieldVisible', 'absent')}), "
+                            f"so it cannot be trusted about {user_desc}. Check the record id, "
+                            f"the page layout, and the label — a detector that fails its "
+                            f"control measures nothing.")
+    if not (marks.get("classicImpersonationMarker") == "true"
+            or marks.get("impersonating") == "true"):
+        return UNANSWERED, (f"the session could not be proven to be {user_desc} — no "
+                            f"impersonation marker in Classic or Lightning — and an admin "
+                            f"render proves nothing. Re-run, or record a by-hand render "
+                            f"with --render-evidence.")
+    seen = marks.get("asUserFieldVisible")
+    if seen == "true":
+        return VERIFIED, (f"{label!r} rendered on the record page for {user_desc}, "
+                          f"impersonation confirmed in the UI, "
+                          f"{marks.get('totalMs', '?')} ms end to end")
+    if seen == "false":
+        return UNVERIFIED, (f"the org's UI answered: {user_desc} cannot see {label!r}. The "
+                            f"record page rendered and the field is not on it — deployed, "
+                            f"and invisible exactly where it matters.")
+    return UNANSWERED, (f"the record page never settled for {user_desc}, which is neither "
+                        f"visible nor hidden. Re-run before believing either.")
+
+
+def _run_render_probe(target, ctx, record_id, obj):
+    """Frontdoor handoff, probe subprocess, marks. The URL file carries a live session token:
+    the probe unlinks it on read, and the finally covers the launches that never got there —
+    five stale token files in a temp dir taught check_p4 this rule the hard way."""
+    fr = subprocess.run(["python3", str(ROOT / "bin" / "torque-frontdoor"), target],
+                        capture_output=True, text=True)
+    if fr.returncode != 0:
+        return None, f"no frontdoor session URL: {(fr.stderr or '').strip()[:120]}"
+    url_file = fr.stdout.strip()
+    import os as _os
+    env = {**_os.environ, "TORQUE_SESSION_USER_15": (ctx["session_id"] or "")[:15]}
+    try:
+        try:
+            r = subprocess.run(
+                ["node", str(RENDER_PROBE), url_file, ctx["instance"], ctx["org_id"],
+                 ctx["user_id"], record_id, obj, ctx["label"]],
+                capture_output=True, text=True, timeout=RENDER_TIMEOUT_S, env=env,
+                cwd=str(ROOT))
+        except subprocess.TimeoutExpired:
+            return None, f"the probe did not finish within {RENDER_TIMEOUT_S}s"
+        except Exception as e:                             # noqa: BLE001
+            return None, f"the probe could not run: {type(e).__name__}"
+    finally:
+        Path(url_file).unlink(missing_ok=True)
+    marks = dict(m.groups() for m in
+                 re.finditer(r"^TORQUE~([A-Za-z0-9_]+)=(.*)$", r.stdout or "", re.M))
+    if not marks:
+        return None, (f"the probe emitted no marks (exit {r.returncode}): "
+                      f"{(r.stderr or '').strip()[:120]}")
+    return marks, None
+
+
+def layer_profile_render(target, obj, field, a):
+    """The layer the whole gate is for. Automated when the caller names WHERE to look.
+
+    Green requires the org's UI to answer, through the full proven chain in _render_outcome.
+    Without --as-user and --record-id the tool cannot look, so the layer is BLOCKED — a fact
+    about this invocation, unwaivable by the caller being graded, exactly like every other
+    verifier that did not run. --render-evidence remains the human seam and reports ASSERTED,
+    because "a person looked" and "the org answered" are different kinds of knowing.
+    """
+    who = a.as_user or a.profile or "a non-admin user"
+    title = f"visible in the UI as {who}"
+    if a.as_user and a.record_id:
+        why = _browser_available()
+        if why:
+            return Layer("profile_render", title, BLOCKED,
+                         f"--as-user was given but the render cannot run here: {why}. Or do "
+                         f"the render by hand and record it with --render-evidence.")
+        ctx, detail = _resolve_render(target, obj, field, a.as_user)
+        if ctx is None:
+            return Layer("profile_render", title, UNANSWERED, detail)
+        user_desc = f"{ctx['username']} ({ctx['profile']})"
+        marks, err = _run_render_probe(target, ctx, a.record_id, obj)
+        if marks is None:
+            return Layer("profile_render", f"visible in the UI as {user_desc}",
+                         UNANSWERED, err)
+        outcome, detail = _render_outcome(marks, user_desc, ctx["label"])
+        return Layer("profile_render", f"visible in the UI as {user_desc}", outcome, detail)
+    if a.render_evidence:
+        return Layer("profile_render", title, ASSERTED,
+                     f"observed by a person: {a.render_evidence}")
+    return Layer("profile_render", title, BLOCKED,
+                 "not measured. The automated render exists and needs two inputs this run "
+                 "did not give: --as-user (the non-admin the change is for; admins are "
+                 "refused because they see everything and prove nothing) and --record-id "
+                 "(a record whose page should show the field). Without them the tool cannot "
+                 "look, and a layer nobody looked at is not green. A person who did the "
+                 "render by hand records it with --render-evidence.")
 
 
 def layer_automation(evidence):
@@ -335,7 +523,7 @@ def build(a):
     layers = [layer_field_exists(a.target_org, obj, field),
               layer_fls(a.target_org, obj, field, a.permset),
               layer_assigned(a.target_org, a.permset),
-              layer_profile_render(a.profile, a.render_evidence),
+              layer_profile_render(a.target_org, obj, field, a),
               layer_automation(a.automation_evidence),
               layer_uat(a.uat_evidence)]
     for spec in a.na or []:
@@ -403,8 +591,17 @@ def main():
     p.add_argument("--field", required=True, metavar="Object.Field__c")
     p.add_argument("--permset")
     p.add_argument("--profile", help="the NON-ADMIN profile the change is for")
+    p.add_argument("--as-user", metavar="USERNAME_OR_ID",
+                   help="the non-admin user to impersonate for the automated render. Admins, "
+                        "inactive users and the session's own user are refused: each renders "
+                        "perfectly and proves nothing.")
+    p.add_argument("--record-id", metavar="ID",
+                   help="a record whose page should show the field (use a TEST-prefixed "
+                        "record). Required alongside --as-user for the automated render.")
     p.add_argument("--render-evidence",
-                   help="what a person saw, under which profile, when. This is the\n                         only way the UI layer turns green, because the tool cannot\n                         do the render itself yet.")
+                   help="what a person saw, under which profile, when. Reports ASSERTED — the "
+                        "automated render (--as-user + --record-id) is how this layer gets "
+                        "VERIFIED by the org itself.")
     p.add_argument("--automation-evidence", help="what was observed, not what was expected")
     p.add_argument("--uat-evidence", help="who used it, when, and what they saw")
     p.add_argument("--na", action="append", metavar="LAYER:REASON",

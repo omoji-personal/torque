@@ -144,7 +144,7 @@ goes red for the author's bug rather than a finding. `experiments_are_not_checks
 under `harness/experiments/` can register into a profile. Once an operator runs it and the
 findings hold, each becomes a catalogue entry with a runnable verifier — and only then a check.
 
-### 3. The completion gate — ledger shipped, browser half unbuilt
+### 3. The completion gate — shipped 2026-08-15, in both halves
 A verified / not-verified ledger, ending in the browser under a **non-admin** profile — admin sees
 everything and proves nothing. The same discipline the harness already applies, where a skip is
 never allowed to read as a pass, applied to the word *done*.
@@ -155,29 +155,34 @@ fired, a human agreed. An unobserved layer is NOT VERIFIED, and the denominator 
 evidence arrives — layers get answered, never removed, because subtraction is how a partial check
 comes to read as a complete one.
 
-**The browser half is not built, and the reason has changed.** It was gated on three questions: can
-it render as a non-admin profile at all, what is the real wall-clock cost, and how flaky is it.
-`harness/experiments/login-as-render.mjs` answered all three against a real org on 2026-08-04. It
-renders: admin sees 29 field labels, the impersonated Standard User sees 28, differing by exactly
-the field behind a permission set the second user lacks, which is FLS observed in the UI rather than
-inferred from a permission row. It costs 10 to 19 seconds end to end, not the two minutes that would
-get a completion gate routed around. And the flakiness that mattered belonged to a signal the design
-then discarded: the "Logged in as" banner missed roughly one run in three even polled for 15
-seconds, on a handful of runs rather than a sample worth quoting as a rate.
+**The browser half shipped 2026-08-15**, engineered from the procedure
+`harness/experiments/login-as-render.mjs` proved against a real org on 2026-08-04. What it means
+for the person using it: `torque done --as-user <the non-admin the change is for>
+--record-id <a record>` now ends in the org's own UI. The tool impersonates that user through the
+su servlet, opens the record in Lightning, and walks the shadow roots for the field's label —
+so "done" stops being an API claim and becomes what that user actually sees, for 25 to 40
+measured seconds — the experiment's bare hop was 10 to 19, and the reload, settle and
+Details-tab remedies buy honesty with the difference — still far under the two minutes that
+would get a completion gate routed around.
 
-**The discarded attempts are the useful part.** Chasing the banner would have been tuning a signal
-until it passed. Two Setup doors were then tried as a proxy for privilege and neither is locked:
-Standard User carries `PermissionsViewSetup=true` in that org, so Setup Home is not a boundary at
-all, and `PermissionsManageUsers` gates actions on users rather than access to the page. The proxy
-was the mistake. The completion gate's actual question is whether a given profile can SEE A FIELD,
-and field-level security is a real boundary rather than a stand-in for one. So the differential
-above is the measurement, not an illustration of it.
+The layer goes green only on the full chain: the ADMIN control saw the label (a detector that
+fails its control measures nothing), the session was PROVEN to be somebody else (a hop that
+silently stays admin passes every other assertion vacuously), and the label rendered for that
+somebody. Anything less is UNANSWERED — never rounded to yes or to no. Admin, inactive and self
+targets are refused out loud, since each renders perfectly and proves nothing.
+`render_layer_greens_only_on_the_full_chain` holds that mapping to fixtures in both directions,
+and the mutation that neuters the impersonation gate goes red on the vacuous-admin trap by name.
 
-What is left is engineering the check. Until it lands, that layer reports BLOCKED with a dated
-reason, `--na` is refused on it — a blocker is a fact about the tool, not a judgement about the
-change — and a human who did the render by hand records it with `--render-evidence`. Without that
-seam the verdict would be NOT DONE for every input ever, which is a ledger with one row and no
-information in it.
+**The discarded attempts remain the useful part**, recorded in the experiment file so they are
+consulted rather than re-learned: the "Logged in as" banner flakes one run in three and is one
+signal of two rather than the load-bearing one; two Setup doors looked like privilege boundaries
+and neither is locked; and `page.content()` cannot see through ~564 open shadow roots, so four
+detector designs were tuned against a page that had already printed, in two words, why it failed.
+
+Without `--as-user` and `--record-id` the layer still reports BLOCKED — the tool cannot look
+without being told where — `--na` is still refused on it, and a human who did the render by hand
+records it with `--render-evidence`, which reports ASSERTED: a person's word, counted separately
+from the org's.
 
 ### 4. Proof-carrying operations — shipped 2026-08-04
 The unifying frame: every meaningful operation carries preconditions, predicted impact,
@@ -233,7 +238,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 129 checks (108 static, 126 capability, 129 release),
+The current state, measured rather than claimed: 130 checks (109 static, 127 capability, 130 release),
 19 mutators, 257 recorded adversarial fixtures — 77 of them asserting that ordinary work is *allowed* — and
 retrieval measured against an evaluation set written by someone other than the author of the thing
 being measured: 95% *matched* recall, 84% *surfaced* recall over 81 cases, 88% precision over 34
