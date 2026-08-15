@@ -676,3 +676,77 @@ def _cgd_receipt_and_ledger_agree_about_the_same_run():
                   "the receipt reports the org-observed count in the ledger's vocabulary, treats "
                   "ASSERTED as green rather than outstanding, and still names every layer that "
                   "is genuinely neither")
+
+
+@check("render_layer_greens_only_on_the_full_chain", "static", catastrophe=True)
+def _render_layer_greens_only_on_the_full_chain():
+    """The automated render goes VERIFIED only when every link held, and each broken link
+    lands on the honest outcome — held to fixtures over `_render_outcome`, the one place
+    that decides what green means for the browser layer.
+
+    The trap being designed against is the vacuous admin render: an impersonation hop that
+    silently stays admin sees every field and would pass every remaining assertion, which is
+    the exact failure the layer exists to prevent. So the fixture that matters most is a
+    VISIBLE field with UNPROVEN impersonation, and the required answer is UNANSWERED — not
+    VERIFIED, and not UNVERIFIED either, because nothing was measured about the user at all.
+    """
+    name = "render_layer_greens_only_on_the_full_chain"
+    m = _mod()
+    good = {"adminShell": "true", "adminFieldVisible": "true", "suLandedPath": "/",
+            "classicImpersonationMarker": "true", "impersonating": "true",
+            "asUserFieldVisible": "true", "totalMs": "14000"}
+    user, label = "t@x.org (Standard User)", "Wholesale Tier"
+
+    def run(**over):
+        marks = {**good, **over}
+        for k, v in list(marks.items()):
+            if v is None:
+                del marks[k]
+        return m._render_outcome(marks, user, label)
+
+    cases = [
+        # (description, overrides, wanted outcome, substring the detail must carry)
+        ("the full chain", {}, m.VERIFIED, "impersonation confirmed"),
+        ("field hidden from the user", {"asUserFieldVisible": "false"}, m.UNVERIFIED,
+         "cannot see"),
+        ("visible but impersonation UNPROVEN — the vacuous-admin trap",
+         {"classicImpersonationMarker": "false", "impersonating": "false"},
+         m.UNANSWERED, "could not be proven"),
+        ("admin control failed while the user read false — a broken detector must not "
+         "report a denial", {"adminFieldVisible": "false", "asUserFieldVisible": "false"},
+         m.UNANSWERED, "control"),
+        ("the org refused the servlet", {"suLandedPath": "/servlet/servlet.su"},
+         m.UNANSWERED, "enableAdminLoginAsAnyUser"),
+        ("the page never settled", {"asUserFieldVisible": "null"}, m.UNANSWERED,
+         "neither"),
+        ("no admin shell", {"adminShell": "false"}, m.UNANSWERED, "never rendered"),
+        ("probe error outranks a visible field", {"error": "boom"}, m.UNANSWERED,
+         "did not finish"),
+    ]
+    bad = []
+    for desc, over, want, needle in cases:
+        outcome, detail = run(**over)
+        if outcome != want:
+            bad.append(f"{desc}: {outcome} (wanted {want})")
+        elif needle not in detail:
+            bad.append(f"{desc}: detail does not say {needle!r}: {detail[:60]!r}")
+
+    # Every link individually load-bearing: degrade any ONE of them and green must be gone.
+    for key, off in (("adminShell", "false"), ("adminFieldVisible", "false"),
+                     ("suLandedPath", "/servlet/servlet.su"),
+                     ("asUserFieldVisible", "null")):
+        outcome, _ = run(**{key: off})
+        if outcome == m.VERIFIED:
+            bad.append(f"green survived {key}={off} — that link is decorative")
+    outcome, _ = run(classicImpersonationMarker="false", impersonating="false")
+    if outcome == m.VERIFIED:
+        bad.append("green survived unproven impersonation — the vacuous-admin trap is open")
+
+    if bad:
+        return Result(name, FAIL, "; ".join(bad))
+    return Result(name, PASS,
+                  f"{len(cases)} fixture(s): VERIFIED only on the full chain; a hidden field "
+                  f"is UNVERIFIED naming the user; unproven impersonation, a failed admin "
+                  f"control, a refused servlet, an unsettled page and a probe error are each "
+                  f"UNANSWERED with their own reason — and degrading any single link kills "
+                  f"the green")
