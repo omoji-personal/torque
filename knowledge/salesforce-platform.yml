@@ -1137,3 +1137,21 @@ entries:
   triggers: ['ChangeEvent', 'INVALID_TYPE_FOR_OPERATION', 'does not support query']
   confidence: practitioner
   updated: 2026-08-07
+
+- id: permission-read-column-is-viewalldata
+  domain: security
+  title: 'There is no PermissionsReadAllData — the data-wide read column is PermissionsViewAllData'
+  symptom: >
+    SOQL against PermissionSet or Profile fails with "No such column 'PermissionsReadAllData'"
+    and the whole query dies, including every other column in it
+  cause: >
+    The permission is named View All Data, so the API column is PermissionsViewAllData;
+    ReadAllData is an analogy from per-object read permissions that the platform never had. One
+    hallucinated column fails the entire query, not just the column
+  remedy: >
+    Use PermissionsViewAllData (and PermissionsModifyAllData for writes). When any permission
+    column does not resolve, describe the entity instead of guessing a second spelling: sf
+    sobject describe -s PermissionSet
+  detect: 'sf data query --query "SELECT PermissionsViewAllData FROM PermissionSet LIMIT 1" --target-org <org>'
+  confidence: practitioner
+  updated: 2026-08-15
