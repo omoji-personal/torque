@@ -146,6 +146,27 @@ def _append(rec):
 _QUEUE_CAP = 500
 
 
+def _harness_run() -> bool:
+    """True when this process was started BY Torque's own validation run.
+
+    The harness exercises the observer with synthetic events — a bulk delete against
+    `acme-prod` that never happened, a malformed payload, a command that merely mentions an
+    error code. Those are fixtures, and a fixture is not an observation. Recorded anyway, they
+    made the queue 98% self-observation: 349 rows of which 6 were real, which is the inert
+    notebook this feature exists to avoid, refilled by the tests that guard it.
+
+    The checks redirect TORQUE_HOME so their writes land in a tempdir, and that is the primary
+    fix. This is the second layer, and it is here because the first one is a property of every
+    call site: it holds only as long as every future check remembers, and the failure is silent
+    when one does not. This holds no matter which path reaches the queue.
+
+    It refuses to RECORD and never to run. The observer's other invariant is that it cannot
+    interfere with a command, so this returns a verdict rather than exiting, and the caller
+    still allows.
+    """
+    return os.environ.get("TORQUE_HARNESS_RUN") == "1"
+
+
 def _pending():
     """The most recent observations. Bounded, because this file is read on the hot path.
 
@@ -191,6 +212,11 @@ def main():
     # is not a failure. Requiring a non-zero exit removes a whole class of manufactured lesson.
     if code and failed in (0, "0"):
         code = None
+
+    # Everything above is parsing, and it stays on the measured path so `observer_cost_bounded`
+    # keeps timing what a real command pays. Everything below WRITES, and a harness run may not.
+    if _harness_run():
+        lib.allow()
 
     if code:
         # The platform refused, and named why. Record the half we have.

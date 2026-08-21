@@ -25,6 +25,18 @@ import pathlib
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKS = ROOT / "harness" / "checks"
+
+# Marks every process descending from a validation run, so `lesson_observer` refuses to RECORD
+# what the harness itself provoked. Set at import rather than in main() because check plugins
+# load at module scope, and a guard that depends on reaching an entry point is a guard with a
+# path around it.
+#
+# What it buys the person using Torque: the observation queue holds things that happened to
+# THEM. A run of the test suite is not a thing that happened to them, and for months it was 98%
+# of what the queue contained. The checks also redirect TORQUE_HOME, which is the primary fix;
+# this one holds when a future call site forgets, which is the failure the first layer cannot
+# see. `harness_run_never_enqueues` proves both directions.
+os.environ["TORQUE_HARNESS_RUN"] = "1"
 # PRIVATE, external, and NEVER committed — publishing the list of denied terms would itself be
 # the disclosure it exists to prevent.
 #
