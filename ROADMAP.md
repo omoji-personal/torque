@@ -239,6 +239,13 @@ measuring the half that could not accumulate — resolved pairs, never raw obser
 called a 20-day-old backlog "nothing to record"; it now ages whichever half has waited longest.
 The queue is only worth aging once it is real, which is why these two changes belong together.
 
+What is left is smaller and named: 4 of the 6 rows now queued are the catalogue verifying itself.
+An entry carries a `detect:` probe, a command whose expected outcome IS a platform error, and
+running one by hand to confirm the entry still holds looks exactly like hitting the error for
+real. Neither layer above touches that, because the hook fires on the agent's own command rather
+than inside the suite. The fix is narrow when it comes: a command that matches a `detect:` string
+the catalogue publishes is a probe, not an observation.
+
 **Documentation ingestion continues, demoted.** The pipeline exists and is cheap to run; it
 grounds entries in Salesforce's own text instead of recall. It is not the differentiator.
 
