@@ -1353,6 +1353,19 @@ def _lesson_backlog():
     grows and is never converted is exactly the inert notebook, wearing a different name. So
     the backlog is reported here, and ages into a WARN. Visible rot is survivable; quiet rot
     is what kills these systems.
+
+    IT AGED THE WRONG HALF until 2026-08-21, and README admitted as much: only RESOLVED PAIRS
+    were aged, so a queue of raw observations that were captured and never converted reported
+    "no resolved pair yet — nothing to record" forever. That is the exact rot the check exists
+    to surface, reported as green, and the wording made it sound deliberate.
+
+    Now the oldest thing AWAITING A PERSON is aged, whichever half it is in. An unpaired
+    failure is waiting for somebody to fix it or file it; a resolved pair is waiting for
+    `torque lesson review`. Both are a person's turn, and neither should age quietly.
+
+    This became worth trusting only once the queue stopped being mostly the harness's own
+    fixtures — see `harness_run_never_enqueues`. Aging a self-observation would have WARNed
+    about work nobody could do, which trains people to ignore the warning.
     """
     cand = ROOT / "local" / "lessons" / "candidates.jsonl"
     if not cand.exists():
@@ -1368,13 +1381,16 @@ def _lesson_backlog():
         except Exception:
             return Result("lesson_backlog", FAIL, "candidates.jsonl has a malformed line")
     pairs = [r for r in recs if r.get("kind") == "resolution"]
-    if not pairs:
+    raw = [r for r in recs if r.get("kind") == "failure" and not r.get("paired")]
+    waiting = [("resolved pair", r) for r in pairs] + [("raw observation", r) for r in raw]
+    if not waiting:
         return Result("lesson_backlog", PASS,
-                      f"{len(recs)} observation(s), no resolved pair yet — nothing to record")
+                      f"{len(recs)} observation(s), none awaiting a person")
     import time as _t
-    oldest_days = (_t.time() - min(r["at"] for r in pairs)) / 86400
-    msg = (f"{len(pairs)} resolved pair(s) awaiting `torque lesson review`; "
-           f"oldest {oldest_days:.1f}d")
+    kind, oldest = min(waiting, key=lambda kr: kr[1].get("at", 0))
+    oldest_days = (_t.time() - oldest.get("at", 0)) / 86400
+    msg = (f"{len(pairs)} resolved pair(s) awaiting `torque lesson review`, "
+           f"{len(raw)} unpaired observation(s); oldest is a {kind} at {oldest_days:.1f}d")
     return Result("lesson_backlog", WARN if oldest_days > 14 else PASS, msg)
 
 
@@ -1396,35 +1412,113 @@ def _observer_is_not_a_gate():
                       "unexpected exception — correct for a gate, wrong for an observer")
     # Searching the source for `lib.deny` was the whole test, and it missed the denial reached
     # THROUGH run_gate: malformed stdin exited 2 while this check passed. Run it instead.
-    for label, payload in (("garbage stdin", "not json at all"),
-                           ("empty stdin", ""),
-                           ("no tool_input", '{"tool_name":"Bash"}'),
-                           ("null response", '{"tool_name":"Bash","tool_input":'
-                                             '{"command":"sf x"},"tool_response":null}'),
-                           ("huge command", _kb_json.dumps(
-                               {"tool_name": "Bash",
-                                "tool_input": {"command": "sf " + "a" * 200000}}))):
+    #
+    # Every invocation below redirects TORQUE_HOME into a tempdir, because the observer derives
+    # its queue from it and these events are fixtures. Without the redirect the gate-denied
+    # shape below is a REAL observation of an org named `acme-prod` that nobody has ever run a
+    # command against, appended once per static run: 285 of the 349 rows found on 2026-08-15
+    # came from this one call. A test that fills the queue it is testing is the defect.
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _td:
+        _env = {**_kb_os.environ, "TORQUE_HOME": _td}
+        for label, payload in (("garbage stdin", "not json at all"),
+                               ("empty stdin", ""),
+                               ("no tool_input", '{"tool_name":"Bash"}'),
+                               ("null response", '{"tool_name":"Bash","tool_input":'
+                                                 '{"command":"sf x"},"tool_response":null}'),
+                               ("huge command", _kb_json.dumps(
+                                   {"tool_name": "Bash",
+                                    "tool_input": {"command": "sf " + "a" * 200000}}))):
+            r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "lesson_observer.py")],
+                           input=payload, capture_output=True, text=True, cwd=ROOT,
+                           timeout=90, env=_env)
+            if r.returncode != 0:
+                return Result("observer_is_not_a_gate", FAIL,
+                              f"observer exited {r.returncode} on {label} — it runs after every "
+                              f"Bash call and must never interfere with one")
+        # and prove it: a payload that would deny at the gate must pass here
+        ev = {"tool_name": "Bash",
+              "tool_input": {"command": "sf data delete bulk --sobject Account --file x.csv "
+                                        "--hard-delete --target-org acme-prod"},
+              "tool_response": {"stdout": "", "stderr": "INVALID_FIELD", "exit_code": 1}}
         r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "lesson_observer.py")],
-                       input=payload, capture_output=True, text=True, cwd=ROOT, timeout=90)
+                       input=_kb_json.dumps(ev), capture_output=True, text=True,
+                       cwd=ROOT, timeout=60, env=_env)
         if r.returncode != 0:
             return Result("observer_is_not_a_gate", FAIL,
-                          f"observer exited {r.returncode} on {label} — it runs after every "
-                          f"Bash call and must never interfere with one")
-    # and prove it: a payload that would deny at the gate must pass here
-    ev = {"tool_name": "Bash",
-          "tool_input": {"command": "sf data delete bulk --sobject Account --file x.csv "
-                                    "--hard-delete --target-org acme-prod"},
-          "tool_response": {"stdout": "", "stderr": "INVALID_FIELD", "exit_code": 1}}
-    r = _kb_sp.run([_kb_sys.executable, str(ROOT / "hooks" / "lesson_observer.py")],
-                   input=_kb_json.dumps(ev), capture_output=True, text=True,
-                   cwd=ROOT, timeout=60)
-    if r.returncode != 0:
-        return Result("observer_is_not_a_gate", FAIL,
-                      f"observer exited {r.returncode} on a command the gate denies — "
-                      f"it would block work it is only supposed to watch")
-    st = (ROOT / "hooks" / "lesson_observer.py")
+                          f"observer exited {r.returncode} on a command the gate denies — "
+                          f"it would block work it is only supposed to watch")
     return Result("observer_is_not_a_gate", PASS,
-                  "observer cannot deny, cannot write knowledge, and exits 0 on a gate-denied shape")
+                  "observer cannot deny, cannot write knowledge, exits 0 on a gate-denied "
+                  "shape, and every fixture here landed in a tempdir queue")
+
+
+@check("harness_run_never_enqueues", "static", catastrophe=True)
+def _harness_run_never_enqueues():
+    """A validation run must never add to the person's observation queue, and must still be
+    able to observe when it is not one.
+
+    END-USER MEANING. `torque lesson review` is worth opening only if what it lists happened to
+    you. On 2026-08-15 the queue held 349 rows and 6 of them were real: the rest were this
+    harness observing itself, one synthetic `acme-prod` bulk delete per static run. Nobody
+    reviews a queue at that signal-to-noise, so the capture half of the feature was dead while
+    every check covering it was green.
+
+    BOTH DIRECTIONS, because only one of them is a bug that hides. A guard that refuses
+    everything would pass the no-pollution half perfectly and silently switch capture off, which
+    is the same dead queue reached from the other side. So the control runs first: the identical
+    event, without the harness marker, MUST record. A refusal there fails this check.
+
+    The queue under test is a tempdir in both cases. Asserting against the real one would mean
+    writing to it to find out, which is the thing being prevented.
+    """
+    import tempfile as _tf
+    obs = str(ROOT / "hooks" / "lesson_observer.py")
+    ev = _kb_json.dumps({
+        "tool_name": "Bash",
+        "tool_input": {"command": "sf data create record --sobject Account "
+                                  "--values \"Name=x\" --target-org fixture-org"},
+        "tool_response": {"stdout": "", "stderr": "No such column 'Nope__c' on entity 'Account'",
+                          "exit_code": 1}})
+
+    def rows(harness_marked):
+        with _tf.TemporaryDirectory() as td:
+            env = {**_kb_os.environ, "TORQUE_HOME": td}
+            if harness_marked:
+                env["TORQUE_HARNESS_RUN"] = "1"
+            else:
+                env.pop("TORQUE_HARNESS_RUN", None)
+            r = _kb_sp.run([_kb_sys.executable, obs], input=ev, capture_output=True,
+                           text=True, cwd=ROOT, timeout=60, env=env)
+            q = _KbP(td) / "local" / "lessons" / "candidates.jsonl"
+            n = len(q.read_text().splitlines()) if q.exists() else 0
+            return r.returncode, n
+
+    rc, n = rows(harness_marked=False)
+    if rc != 0:
+        return Result("harness_run_never_enqueues", FAIL,
+                      f"control: observer exited {rc} on an ordinary failed command")
+    if n != 1:
+        return Result("harness_run_never_enqueues", FAIL,
+                      f"control: an ordinary platform failure recorded {n} observation(s), "
+                      f"expected 1 — the fixture no longer exercises capture, so the other "
+                      f"half of this check would pass without measuring anything")
+    rc, n = rows(harness_marked=True)
+    if rc != 0:
+        return Result("harness_run_never_enqueues", FAIL,
+                      f"observer exited {rc} under TORQUE_HARNESS_RUN — it may refuse to "
+                      f"record, never to run")
+    if n != 0:
+        return Result("harness_run_never_enqueues", FAIL,
+                      f"a harness-provoked event recorded {n} observation(s) — the queue fills "
+                      f"with the suite's own fixtures, which is what made 343 of 349 rows noise")
+    if _kb_os.environ.get("TORQUE_HARNESS_RUN") != "1":
+        return Result("harness_run_never_enqueues", FAIL,
+                      "the guard works but validate.py does not set TORQUE_HARNESS_RUN, so "
+                      "nothing in a real run is actually marked")
+    return Result("harness_run_never_enqueues", PASS,
+                  "the same platform failure records once unmarked and not at all under "
+                  "TORQUE_HARNESS_RUN, and this run is marked")
 
 
 @check("blast_radius_honesty", "static", catastrophe=True)

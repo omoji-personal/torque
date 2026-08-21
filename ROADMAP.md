@@ -227,6 +227,18 @@ the adversarial rounds left behind.
 
 So new capability ships with its bypass fixtures and its mutator, or it does not ship.
 
+**The capture loop had to stop observing itself before it was worth opening.** What a person
+gets from `torque lesson review` is a list of things that went wrong in THEIR org, ready to become
+catalogue entries. What it listed instead was mostly the test suite: the harness fed the observer
+synthetic failures without redirecting `TORQUE_HOME`, so a fixture bulk-delete against an org
+nobody has ever touched was filed once per static run. 349 rows on 2026-08-15, 6 of them real, and
+every check covering the observer green throughout. Fixed 2026-08-21 in two independent layers,
+each proven load-bearing on its own: the checks redirect the queue into a tempdir, and `validate.py`
+marks its run so the observer refuses to record what the suite provoked. `lesson_backlog` was
+measuring the half that could not accumulate — resolved pairs, never raw observations — so it
+called a 20-day-old backlog "nothing to record"; it now ages whichever half has waited longest.
+The queue is only worth aging once it is real, which is why these two changes belong together.
+
 **Documentation ingestion continues, demoted.** The pipeline exists and is cheap to run; it
 grounds entries in Salesforce's own text instead of recall. It is not the differentiator.
 
@@ -238,7 +250,7 @@ Steps 1 and 2 sharpen what Torque already is. Steps 3 and 4 change what it is *f
 operations layer to the thing that will not let an agent claim done. That is a narrower and more
 distinctive position, and it is a product decision rather than an engineering one.
 
-The current state, measured rather than claimed: 130 checks (109 static, 127 capability, 130 release),
+The current state, measured rather than claimed: 131 checks (110 static, 128 capability, 131 release),
 19 mutators, 257 recorded adversarial fixtures — 77 of them asserting that ordinary work is *allowed* — and
 retrieval measured against an evaluation set written by someone other than the author of the thing
 being measured: 95% *matched* recall, 84% *surfaced* recall over 81 cases, 88% precision over 34

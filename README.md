@@ -102,10 +102,18 @@ $ torque lesson review
 
 It writes nothing anyone will read as knowledge. Candidates land in `local/`, redacted and 0600,
 and reach the catalogue only through `torque lesson`, where the schema and the live verifier still
-apply. The queue can still rot quietly, and that is the honest limit here: `lesson_backlog` ages
-*resolved pairs awaiting review*, not raw observations, so a queue that is captured and never
-converted reports PASS with nothing to report. The guard meant to make an unconverted backlog
-visible is measuring the wrong half of it.
+apply. `lesson_backlog` ages whichever half has waited longest, a raw observation or a resolved
+pair, so a queue that is captured and never converted goes WARN instead of reporting PASS with
+nothing to report. It aged only resolved pairs until 2026-08-21, which meant the guard against an
+unconverted backlog was measuring the half that could not accumulate.
+
+What made that guard worth acting on was fixing what fed it. The harness exercised the observer
+with synthetic events without redirecting `TORQUE_HOME`, so every static run appended a fixture
+failure against an org nobody has run a command against: 349 queued rows on 2026-08-15, of which
+6 were real. Checks now redirect the queue into a tempdir, `validate.py` marks its own run so the
+observer refuses to record what the suite provoked, and `harness_run_never_enqueues` proves both
+directions — the same platform failure still records once when it is genuinely yours. Neutering
+either layer alone leaves the real queue untouched; neutering both puts the fixture back in it.
 
 ---
 
