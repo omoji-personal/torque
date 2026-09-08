@@ -1,0 +1,169 @@
+# PII shape fixtures for jsc_memory.scrubber test suite
+# Each entry: {name, source_type_expected, input, expected_scrub_outcome, note}
+#
+# Per .claude/rules/lesson-capture.md, the scrubber is best-effort. These
+# fixtures encode known shapes the scrubber MUST handle correctly.
+
+fixtures:
+  # === Source-type detection edge cases (R3 + R4) ===
+  - name: simple_soql
+    source_type_expected: soql
+    input: "SELECT Id, Name FROM Account WHERE LastName = 'Smith'"
+    note: "Basic SOQL with WHERE — name in WHERE should be scrubbed"
+
+  - name: multiline_soql
+    source_type_expected: soql
+    input: |
+      SELECT Id, Name,
+             Email__c
+      FROM Contact
+      WHERE Email__c = 'jane@example.com'
+    note: "Multi-line SOQL via re.DOTALL"
+
+  - name: apex_inline_soql
+    source_type_expected: soql
+    input: "[SELECT Id FROM Contact WHERE Email__c = 'foo@bar.com']"
+    note: "Bracketed Apex SOQL must be detected BEFORE JSON (starts with `[`)"
+
+  - name: leading_log_prefix_soql
+    source_type_expected: soql
+    input: "[2026-05-12 16:30:00] SELECT Id FROM Contact"
+    note: "SOQL with leading log prefix (R3 GEM-P1-B fix)"
+
+  - name: prose_with_select
+    source_type_expected: narrative
+    input: "Select from the account list and pick the first one."
+    note: "Plain prose mentioning SELECT must NOT be classified as SOQL"
+
+  - name: markdown_separator
+    source_type_expected: narrative
+    input: |
+      === Section Header ===
+      Some narrative text follows.
+    note: "Bare === separator must NOT be classified as cli_table (R3 GEM-P1-B)"
+
+  - name: real_cli_table
+    source_type_expected: cli_table
+    input: |
+      ┌─────────┬─────────┐
+      │ Name    │ Email   │
+      ├─────────┼─────────┤
+      │ John    │ j@e.com │
+      └─────────┴─────────┘
+    note: "Real box-drawing chars indicate CLI table"
+
+  - name: pipe_table
+    source_type_expected: cli_table
+    input: |
+      | Name | Email |
+      | John | j@e.com |
+    note: "Pipe-delimited table"
+
+  - name: valid_json
+    source_type_expected: json
+    input: '{"name": "John Smith", "email": "j@example.com"}'
+    note: "Plain JSON — values get scrubbed, keys kept"
+
+  - name: json_containing_soql
+    source_type_expected: json
+    input: '{"query": "SELECT Id FROM Contact"}'
+    note: "JSON containing SOQL string — JSON wins; SOQL inside is value-stripped"
+
+  - name: invalid_json_brace
+    source_type_expected: narrative
+    input: '{this is not actually json'
+    note: "Invalid JSON despite leading { → falls through to narrative"
+
+  # large_snippet test uses MAX_SNIPPET_BYTES_FOR_DETECTION cap (verified by separate test_large_snippet_returns_narrative)
+
+  # === PII value patterns (must scrub) ===
+  - name: salesforce_id_account
+    source_type_expected: narrative
+    input: "Found Account 0011a00000aBcDeFgH"
+    expected_scrubbed: true
+    note: "001 prefix = Account ID, must scrub"
+
+  - name: salesforce_id_contact
+    source_type_expected: narrative
+    input: "Contact ID 0031a00000xYz123ABCdef"
+    expected_scrubbed: true
+    note: "003 prefix = Contact ID"
+
+  - name: email_simple
+    source_type_expected: narrative
+    input: "Send to john.smith@example.com"
+    expected_scrubbed: true
+
+  - name: email_with_plus
+    source_type_expected: narrative
+    input: "Test address: alice+filter@example.org"
+    expected_scrubbed: true
+
+  - name: ssn
+    source_type_expected: narrative
+    input: "Patient SSN: 123-45-6789"
+    expected_scrubbed: true
+
+  - name: dob_slash
+    source_type_expected: narrative
+    input: "DOB: 03/15/1985"
+    expected_scrubbed: true
+
+  - name: phone_us_paren
+    source_type_expected: narrative
+    input: "Call (555) 123-4567 for help"
+    expected_scrubbed: true
+
+  - name: phone_us_dash
+    source_type_expected: narrative
+    input: "Phone: 555-123-4567"
+    expected_scrubbed: true
+
+  - name: ipv4
+    source_type_expected: narrative
+    input: "Server at 192.168.1.1 is down"
+    expected_scrubbed: true
+
+  # === Negative cases (must NOT be scrubbed) ===
+  - name: git_sha_not_sf_id
+    source_type_expected: narrative
+    input: "Commit abc123def456789012345678 is broken"
+    expected_scrubbed: false
+    note: "Git SHA shouldn't match SF ID regex (no 001/003/etc prefix)"
+
+  - name: uuid_not_pii
+    source_type_expected: narrative
+    input: "UUID is 550e8400-e29b-41d4-a716-446655440000"
+    expected_scrubbed: false
+    note: "UUID format is distinct"
+
+  - name: schema_field_name_in_soql
+    source_type_expected: soql
+    input: "SELECT Id, Email__c, Phone__c FROM Contact"
+    expected_scrubbed: false
+    note: "Field NAMES in SELECT-list must be kept (R3 TRIPLE-P1-A)"
+
+  - name: schema_ssn_field_name_only
+    source_type_expected: narrative
+    input: "The Patient_SSN__c field stores sensitive data"
+    note: "Field name mention in narrative — neither over- nor under-scrubbed"
+
+  # === Tricky boundary cases ===
+  - name: iranian_name_with_zwnj
+    source_type_expected: narrative
+    input: "Customer name: محمد‌علی اصفهانی"
+    note: "Non-ASCII names — current regex doesn't catch; document as known limit"
+
+  - name: address_multiline
+    source_type_expected: narrative
+    input: |
+      Send to:
+      123 Main St
+      Springfield, IL 62701
+    note: "Multi-line address — current regex doesn't catch full address"
+
+  - name: narrative_multi_pii
+    source_type_expected: narrative
+    input: "John Smith (DOB 03/15/1985, SSN 123-45-6789) called from 555-123-4567"
+    expected_scrubbed: true
+    note: "Multiple PII hits → narrative drop in PARANOID mode"

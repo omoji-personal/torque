@@ -1,0 +1,30 @@
+{
+  "specs": [
+    {
+      "target_name": "parentFieldUpdates",
+      "configuration_set": "Sample_Insight_Action",
+      "mode": "Fields",
+      "base_path": "parentFieldUpdates",
+      "field_paths": [
+        "narrative_AI__c",
+        "next_status_AI__c"
+      ],
+      "description": "Parent-record field updates from a single AI scan",
+      "active": true
+    },
+    {
+      "target_name": "recordsToCreate",
+      "configuration_set": "Sample_Insight_Action",
+      "mode": "Records",
+      "base_path": "recordsToCreate",
+      "sobject_type": "Demo__Benefit__c",
+      "field_mappings": {
+        "benefit_type": "Demo__Type__c",
+        "amount": "Demo__Amount__c"
+      },
+      "parent_field": "Demo__Legal_Case__c",
+      "description": "Related-record collection — Benefits proposed by the AI",
+      "active": true
+    }
+  ]
+}

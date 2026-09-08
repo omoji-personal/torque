@@ -1,0 +1,2 @@
+# No customer objects or seed data are bundled. Supply TORQUE_BROWSER_REGISTRY.
+objects: {}

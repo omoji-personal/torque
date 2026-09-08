@@ -1,0 +1,16 @@
+{
+  "source_project": "Torque",
+  "source_path": "knowledge/salesforce-platform.yml",
+  "source_commit": "3c40916",
+  "source_sha256": "0a0bcaf08faffc9ac3e3d78de6de0df9d295c6b7ac97410c0a09d75d4a3e1de8",
+  "attested_tree_commit": "fa030cd6c009d0fbd709233f42443783861c167c",
+  "copied_utc_date": "2026-08-08",
+  "delivery_mode": "on-demand advisory only",
+  "adaptations": [
+    {
+      "entry": "flow-activation-on-deploy",
+      "reason": "Corrected the source remedy's retrieved-XML contradiction to use definition-scoped activation sources; the Torque handoff records the upstream fix."
+    }
+  ],
+  "note": "Confidence labels describe the Torque source catalogue. JSC re-verifies a fact when a dedicated read-only verifier is available and never uses a catalogue entry to deny an operation."
+}

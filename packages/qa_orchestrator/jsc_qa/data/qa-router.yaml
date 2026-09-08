@@ -1,0 +1,765 @@
+schema_version: 1
+last_updated: '2026-09-07'
+notes: Generic Salesforce change taxonomy continued from JSC. Configure client-specific
+  routes with TORQUE_QA_ROUTER; results describe coverage, not authorization.
+surfaces:
+  MetaAPI:
+    description: Exact-job and artifact-scoped Metadata API deploy/validation verification;
+      PASS requires the requested DeployRequest ID and every component supplied explicitly
+      and/or by a strict SHA-256-fingerprinted local package.xml to report terminal
+      success in the explicit target-org context
+    status: production
+    invocation: jsc-qa run <change-description> --org <alias> --deploy-job-id <0Af...>
+      (--deploy-manifest <package.xml> and/or --deploy-component <TYPE:FULL_NAME>
+      [...]) (invokes sf project deploy report --target-org <alias> --job-id <0Af...>
+      --json; rejects manifest wildcards, never uses most-recent, and excludes package.xml
+      pseudo-entries)
+  Funct-Pl:
+    description: Functional UI walkthrough via Playwright Python (scripted/CI lane).
+      Uses Layer-1 UTAM-mirrored wrappers under jsc_browser_tests/library/lightning_components/
+      + Layer-2 LightningPage thin core. Per docs/superpowers/specs/2026-05-21-sf-browser-testing-playwright-mcp-design.md
+      (v3).
+    status: production
+    invocation: /qa-browser <flow> <org>
+  Funct-MCP:
+    description: Functional UI walkthrough via playwright-mcp (Claude-driven operator-UAT,
+      turn-by-turn). Replaces chrome-devtools-mcp as the driver per design-v3 empirical
+      benchmark on sample-dev 2026-05-21 (Lightning sub-tab click 130ms via playwright-mcp
+      vs documented failure on chrome-devtools-mcp).
+    status: production
+    invocation: (operator/Claude drives mcp__playwright_* tools directly; install
+      via `claude mcp add playwright "npx @playwright/mcp@latest"`)
+  Funct-Inspect:
+    description: "Non-driving inspection: Lighthouse audits, network request capture,\
+      \ console history, accessibility snapshots via chrome-devtools-mcp. Narrowed\
+      \ role per design-v3 \u2014 retired from primary-driver duty."
+    status: production
+    invocation: (operator/Claude drives mcp__plugin_chrome-devtools-mcp_chrome-devtools__*
+      tools directly; Lighthouse via lighthouse_audit, network via list_network_requests,
+      console via list_console_messages)
+  Side-Eff:
+    description: 'Side-effect verification: SOQL post-check + jsc_loganalyzer health
+      score (packages/debug_log_analyzer)'
+    status: production
+    invocation: jsc_loganalyzer.cli --target-org <explicit-org>
+  Parity:
+    description: Cross-org per-field SOQL parity check (verify-deploy.py); DATA rows
+      only
+    status: production
+    invocation: TORQUE_PARITY_SCRIPT with explicit TORQUE_BASELINE_ORG
+  Vision:
+    description: Gemini-3 vision analysis of screenshots captured by Funct-Pl / Multi-Prof
+      runs
+    status: production
+    invocation: Optional configured screenshot analysis; client/provider scope required
+  Multi-Prof:
+    description: "Multi-profile UAT via Login As (admin \u2192 Standard User / Platform\
+      \ User)"
+    status: production
+    invocation: /qa-multiprofile <flow> <org>
+  Adv-Probe:
+    description: "Editable Apex null/empty test drafts for direct public/global methods.\
+      \ Every case contains an intentionally failing DRAFT assertion; replace it with\
+      \ a business expectation before qualification. No generic bulk, governor or FLS\
+      \ coverage is claimed. Generation returns MANUAL_REQUIRED, never a test PASS.\
+      \ Triggers and unsupported signatures are surfaced for review."
+    status: available_draft_generation
+    invocation: "Auto-invoked when /qa change-description names .cls paths (.trigger\
+      \ paths are filtered + surfaced as dropped \u2014 jsc_probes does not yet support\
+      \ trigger-aware synthesis per R1-Codex-007). Also accessible directly: PYTHONPATH=packages/adversarial_probes\
+      \ python3 -m jsc_probes.cli --target-class <file> --output <dir>. Honors JSC_QA_ADV_PROBE_MAX_FILES\
+      \ (default 10, min 1), JSC_QA_ADV_PROBE_BUDGET_S (default 300, min 10), JSC_QA_ADV_PROBE_OUT\
+      \ (default per-dispatch uuid'd subdir under $TMPDIR; if operator-set, must be\
+      \ a writable directory; existing generated files are preserved)."
+  Hook-Gate:
+    description: PreToolUse hook gates (deploy_gate, namespace_touch_gate, knowledge_readonly_gate,
+      revert_warning_pretool)
+    status: deferred
+    invocation: No global command hooks installed
+  TAA:
+    description: Multi-model adversarial audit (Claude + Gemini + Codex per multi-model-audit.md)
+    status: production
+    invocation: scripts/run-taa-audit.sh OR manual dispatch per multi-model-audit.md
+    cost_warning: "EXPENSIVE \u2014 reserve for behavioral-rule changes + ship-gates\
+      \ per multi-model-audit.md"
+  Hostile-QA:
+    description: Adversarial QA via hostile-qa-auditor subagent (Opus)
+    status: production
+    invocation: Agent dispatch with subagent_type=hostile-qa-auditor
+    cost_warning: "EXPENSIVE \u2014 operator should opt-in; do NOT auto-dispatch on\
+      \ every QA failure (per Gemini-R1-P0-1)"
+  a11y:
+    description: Accessibility automation (WCAG 2.1 AA via axe-core)
+    status: deferred_phase_2_plus
+    invocation: (not yet implemented)
+  Visual-Reg:
+    description: Visual regression baselines (screenshot diffing)
+    status: deferred_phase_2_plus
+    invocation: (not yet implemented)
+  AI-Prompt:
+    description: JSON output contract regression; local fixtures do not prove deployed
+      AI behavior
+    status: available_with_client_configuration
+    invocation: jsc_ai_prompt_regression.cli replay-all <client-fixtures>
+change_types:
+- id: A1
+  category: metadata
+  name: Custom field create/update/delete
+  examples:
+  - Custom field create/update/delete
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: optional
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+    Vision: optional
+    a11y: deferred
+    Visual-Reg: deferred
+- id: A2
+  category: metadata
+  name: Validation rule create/update/delete/activate
+  examples:
+  - Validation rule create/update/delete/activate
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: required_manual
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+- id: A3
+  category: metadata
+  name: Flow create/update/activate
+  examples:
+  - Flow create/update/activate
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: one_of
+    Funct-MCP: one_of
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+    Vision: optional
+  risk_modifiers:
+    managed_namespace: invoke_hostile_qa
+    record_triggered_create_or_update: required_multi_prof_check_create_AND_update
+- id: A4
+  category: metadata
+  name: Apex class / trigger create/update
+  examples:
+  - Apex class / trigger create/update
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Adv-Probe: required_automated
+    Hostile-QA: optional
+    TAA: optional
+  risk_modifiers:
+    contains_callout: required_hostile_qa
+- id: A5
+  category: metadata
+  name: Permission set create/update/assign
+  examples:
+  - Permission set create/update/assign
+  surfaces:
+    MetaAPI: required_automated
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+- id: A6
+  category: metadata
+  name: Profile create/update
+  examples:
+  - Profile create/update
+  surfaces:
+    MetaAPI: required_automated
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+- id: A7
+  category: metadata
+  name: FlexiPage (Lightning record page) create/update
+  examples:
+  - FlexiPage (Lightning record page) create/update
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: one_of
+    Funct-MCP: one_of
+    Multi-Prof: required_manual
+    Vision: optional
+    a11y: required_manual
+    Visual-Reg: deferred
+    Hostile-QA: optional
+- id: A8
+  category: metadata
+  name: Page Layout (classic) create/update
+  examples:
+  - Page Layout (classic) create/update
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: optional
+    Funct-MCP: optional
+    Multi-Prof: required_manual
+    Vision: optional
+    a11y: required_manual
+- id: A9
+  category: metadata
+  name: Custom object create/update
+  examples:
+  - Custom object create/update
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+- id: A10
+  category: metadata
+  name: Custom metadata type create + records
+  examples:
+  - Custom metadata type create + records
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Hostile-QA: optional
+- id: A11
+  category: metadata
+  name: Custom setting (List + Hierarchy) records
+  examples:
+  - Custom setting (List + Hierarchy) records
+  surfaces:
+    MetaAPI: not_applicable
+    Side-Eff: required_automated
+    Parity: required_automated
+    Hostile-QA: optional
+- id: A12
+  category: metadata
+  name: GlobalValueSet create/update
+  examples:
+  - GlobalValueSet create/update
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+- id: A13
+  category: metadata
+  name: App / Tab / TabSet create/update
+  examples:
+  - App / Tab / TabSet create/update
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: optional
+    Funct-MCP: optional
+    Multi-Prof: required_manual
+- id: A14
+  category: metadata
+  name: RecordType create/update
+  examples:
+  - RecordType create/update
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+- id: A15
+  category: metadata
+  name: Quick Action / Lightning Action create/update
+  examples:
+  - Quick Action / Lightning Action create/update
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: one_of
+    Funct-MCP: one_of
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Vision: optional
+- id: A16
+  category: metadata
+  name: NamedCredential / ExternalCredential / ConnectedApp
+  examples:
+  - NamedCredential / ExternalCredential / ConnectedApp
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Adv-Probe: required_automated
+    Hostile-QA: optional
+- id: A17
+  category: metadata
+  name: Lightning Web Component (LWC) / Aura component create/update
+  examples:
+  - Lightning Web Component (LWC) / Aura component create/update
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: one_of
+    Funct-MCP: one_of
+    Multi-Prof: required_manual
+    Vision: optional
+    a11y: required_manual
+    Visual-Reg: deferred
+- id: B1
+  category: configuration
+  name: Application default settings updates
+  examples:
+  - Application default settings updates
+  surfaces:
+    MetaAPI: not_applicable
+    Funct-Pl: required_manual
+    Side-Eff: required_automated
+- id: B2
+  category: configuration
+  name: Record creation settings updates
+  examples:
+  - Record creation settings updates
+  surfaces:
+    MetaAPI: not_applicable
+    Funct-Pl: required_manual
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+- id: B3
+  category: configuration
+  name: Data mapping configuration records
+  examples:
+  - Data mapping configuration records
+  surfaces:
+    MetaAPI: not_applicable
+    Side-Eff: required_automated
+    Parity: required_automated
+- id: B4
+  category: configuration
+  name: Trigger bypass configuration records
+  examples:
+  - Trigger bypass configuration records
+  surfaces:
+    MetaAPI: not_applicable
+    Side-Eff: required_automated
+    Parity: required_automated
+- id: B5
+  category: configuration
+  name: Matching threshold configuration
+  examples:
+  - Matching threshold configuration
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: required_manual
+    Side-Eff: required_automated
+- id: B6
+  category: configuration
+  name: Email config (OrgWideEmail, EmailTemplate, EmailDeliverability)
+  examples:
+  - Email config (OrgWideEmail, EmailTemplate, EmailDeliverability)
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Hostile-QA: optional
+- id: C1
+  category: data_op
+  name: Single-record CREATE via UI
+  examples:
+  - Single-record CREATE via UI
+  surfaces:
+    Funct-Pl: one_of
+    Funct-MCP: one_of
+    Side-Eff: required_automated
+    Multi-Prof: optional
+- id: C2
+  category: data_op
+  name: Single-record UPDATE via UI
+  examples:
+  - Single-record UPDATE via UI
+  surfaces:
+    Funct-Pl: one_of
+    Funct-MCP: one_of
+    Side-Eff: required_automated
+    Multi-Prof: optional
+- id: C3
+  category: data_op
+  name: Single-record DELETE via UI
+  surfaces:
+    Funct-MCP: optional
+    Side-Eff: required_automated
+  examples:
+  - Single-record DELETE via UI
+- id: C4
+  category: data_op
+  name: Bulk CREATE via Bulk API or sf data import
+  examples:
+  - Bulk CREATE via Bulk API or sf data import
+  surfaces:
+    Side-Eff: required_automated
+    Hostile-QA: optional
+- id: C5
+  category: data_op
+  name: Bulk UPDATE via Bulk API
+  surfaces:
+    Side-Eff: required_automated
+  examples:
+  - Bulk UPDATE via Bulk API
+- id: C6
+  category: data_op
+  name: "Bulk DELETE \u2014 soft (recoverable)"
+  surfaces:
+    Side-Eff: required_automated
+  examples:
+  - "Bulk DELETE \u2014 soft (recoverable)"
+- id: C7
+  category: data_op
+  name: "Bulk DELETE \u2014 hard (NOT recoverable)"
+  examples:
+  - "Bulk DELETE \u2014 hard (NOT recoverable)"
+  surfaces:
+    Side-Eff: required_automated
+    Hostile-QA: optional
+- id: C8
+  category: data_op
+  name: Anonymous Apex DML
+  examples:
+  - Anonymous Apex DML
+  surfaces:
+    Side-Eff: required_automated
+    Adv-Probe: required_automated
+- id: C9
+  category: data_op
+  name: Tooling / Metadata API DML via MCP
+  examples:
+  - Tooling / Metadata API DML via MCP
+  surfaces:
+    Side-Eff: required_automated
+- id: D1
+  category: ai
+  name: GenAiPromptTemplate create/update
+  examples:
+  - GenAiPromptTemplate create/update
+  surfaces:
+    MetaAPI: required_automated
+    AI-Prompt: optional
+    Funct-Pl: deferred_phase_2
+    Side-Eff: deferred_phase_2
+    Hostile-QA: optional
+- id: D2
+  category: ai
+  name: PromptFlow data provider create/update
+  surfaces:
+    MetaAPI: required_automated
+    AI-Prompt: optional
+    Side-Eff: deferred_phase_2
+    Hostile-QA: optional
+  examples:
+  - PromptFlow data provider create/update
+- id: D3
+  category: ai
+  name: JSON extractor and output contract configuration
+  surfaces:
+    MetaAPI: required_automated
+    AI-Prompt: optional
+    Side-Eff: deferred_phase_2
+    Adv-Probe: required_automated
+    Hostile-QA: optional
+  examples:
+  - JSON extractor and output contract configuration
+- id: D4
+  category: ai
+  name: "AI workflow end-to-end (input record \u2192 prompt \u2192 JSON \u2192 fanout)"
+  examples:
+  - "AI workflow end-to-end (input record \u2192 prompt \u2192 JSON \u2192 fanout)"
+  surfaces:
+    AI-Prompt: optional
+    Side-Eff: deferred_phase_2
+    Funct-Pl: deferred_phase_2
+    Hostile-QA: optional
+- id: E1
+  category: e2e_workflow
+  name: Guided intake or application workflow
+  surfaces:
+    Funct-Pl: required_automated
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Vision: optional
+  examples:
+  - Guided intake or application workflow
+- id: E2
+  category: e2e_workflow
+  name: Record conversion transaction
+  surfaces:
+    Funct-Pl: required_automated
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+  examples:
+  - Record conversion transaction
+- id: E3
+  category: e2e_workflow
+  name: Conflict or duplicate-check workflow
+  surfaces:
+    Funct-Pl: required_automated
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: optional
+  examples:
+  - Conflict or duplicate-check workflow
+- id: E4
+  category: e2e_workflow
+  name: Case or service lifecycle
+  surfaces:
+    Funct-Pl: required_automated
+    Funct-MCP: optional
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+  examples:
+  - Case or service lifecycle
+- id: E5
+  category: e2e_workflow
+  name: Decline or reject transaction
+  surfaces:
+    Funct-Pl: required_automated
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+  examples:
+  - Decline or reject transaction
+- id: E6
+  category: e2e_workflow
+  name: Event registration and scheduling
+  surfaces:
+    Funct-Pl: required_automated
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+  examples:
+  - Event registration and scheduling
+- id: E7
+  category: e2e_workflow
+  name: External portal user workflow
+  surfaces:
+    Funct-Pl: required_automated
+    Side-Eff: deferred_phase_2
+    Multi-Prof: deferred_phase_2
+  examples:
+  - External portal user workflow
+- id: E8
+  category: e2e_workflow
+  name: Business reporting and dashboards
+  surfaces:
+    Side-Eff: required_automated
+    Funct-Pl: required_automated
+    Hostile-QA: optional
+  examples:
+  - Business reporting and dashboards
+- id: F1
+  category: framework
+  name: .claude/rules/<rule>.md create/update
+  examples:
+  - .claude/rules/<rule>.md create/update
+  surfaces:
+    TAA: optional
+    Hostile-QA: optional
+- id: F2
+  category: framework
+  name: .claude/agents/<agent>.md create/update
+  surfaces:
+    TAA: optional
+    Hostile-QA: optional
+  examples:
+  - .claude/agents/<agent>.md create/update
+- id: F3
+  category: framework
+  name: .claude/commands/<cmd>.md create/update
+  surfaces:
+    Hostile-QA: optional
+  examples:
+  - .claude/commands/<cmd>.md create/update
+- id: F4
+  category: framework
+  name: packages/hooks/<hook>.py create/update
+  examples:
+  - packages/hooks/<hook>.py create/update
+  surfaces:
+    MetaAPI: not_applicable
+    TAA: optional
+    Hostile-QA: optional
+- id: F5
+  category: framework
+  name: packages/<module>/ create/update
+  examples:
+  - packages/<module>/ create/update
+  surfaces:
+    MetaAPI: not_applicable
+    Adv-Probe: optional
+    TAA: optional
+    Hostile-QA: optional
+- id: F6
+  category: framework
+  name: Salesforce adapter source changes
+  surfaces:
+    Adv-Probe: required_automated
+    TAA: optional
+    Hostile-QA: optional
+  examples:
+  - Salesforce adapter source changes
+- id: F7
+  category: framework
+  name: Client engagement documents
+  surfaces: {}
+  examples:
+  - Client engagement documents
+- id: G1
+  category: cross_cutting
+  name: CLAUDE.md updates
+  surfaces:
+    TAA: optional
+    Hostile-QA: optional
+  examples:
+  - CLAUDE.md updates
+- id: G2
+  category: cross_cutting
+  name: SETUP.md / status docs
+  surfaces:
+    Hostile-QA: optional
+  examples:
+  - SETUP.md / status docs
+- id: G3
+  category: cross_cutting
+  name: hooks-discipline env-var contract additions
+  surfaces:
+    MetaAPI: not_applicable
+    TAA: optional
+    Hostile-QA: optional
+  examples:
+  - hooks-discipline env-var contract additions
+- id: G4
+  category: cross_cutting
+  name: Reference knowledge refresh
+  surfaces: {}
+  examples:
+  - Reference knowledge refresh
+- id: G5
+  category: cross_cutting
+  name: Memory file create/update
+  surfaces: {}
+  examples:
+  - Memory file create/update
+- id: G6
+  category: cross_cutting
+  name: Deployment template version update
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: required_manual
+    Side-Eff: required_automated
+    Parity: required_automated
+    Multi-Prof: required_manual
+    TAA: optional
+    Hostile-QA: optional
+  examples:
+  - Deployment template version update
+- id: G7
+  category: cross_cutting
+  name: Adapter package rebuild
+  surfaces:
+    Adv-Probe: required_automated
+    TAA: optional
+    Hostile-QA: optional
+  examples:
+  - Adapter package rebuild
+- id: H1
+  category: org_access
+  name: Sharing rule / OWD / role hierarchy / public group / queue
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+  examples:
+  - Sharing rule / OWD / role hierarchy / public group / queue
+- id: H2
+  category: org_access
+  name: Permission Set Group / Muting Permission Set
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Multi-Prof: required_manual
+    Hostile-QA: optional
+  examples:
+  - Permission Set Group / Muting Permission Set
+- id: H3
+  category: org_access
+  name: Experience Cloud / Site / Community settings
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: deferred_phase_2
+    Side-Eff: required_automated
+    Hostile-QA: optional
+  examples:
+  - Experience Cloud / Site / Community settings
+- id: H4
+  category: integration
+  name: Custom Report Type / Report / Dashboard metadata
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Hostile-QA: optional
+  examples:
+  - Custom Report Type / Report / Dashboard metadata
+- id: H5
+  category: integration
+  name: Scheduled Apex / Batch Apex / CronTrigger schedule
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Adv-Probe: required_automated
+    Hostile-QA: optional
+  examples:
+  - Scheduled Apex / Batch Apex / CronTrigger schedule
+- id: H6
+  category: integration
+  name: Package install / upgrade / uninstall lifecycle
+  surfaces:
+    MetaAPI: not_applicable
+    Side-Eff: required_automated
+    Multi-Prof: optional
+    Hostile-QA: optional
+  examples:
+  - Package install / upgrade / uninstall lifecycle
+- id: H7
+  category: integration
+  name: Platform Event / outbound integration
+  surfaces:
+    MetaAPI: required_automated
+    Side-Eff: required_automated
+    Adv-Probe: required_automated
+    Hostile-QA: optional
+  examples:
+  - Platform Event / outbound integration
+- id: H8
+  category: integration
+  name: Duplicate Rule / Matching Rule
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: required_manual
+    Side-Eff: required_automated
+    Hostile-QA: optional
+  examples:
+  - Duplicate Rule / Matching Rule
+- id: H9
+  category: configuration
+  name: NameSettings / global org-level toggle
+  examples:
+  - NameSettings / global org-level toggle
+  surfaces:
+    MetaAPI: required_automated
+    Funct-Pl: required_manual
+    Side-Eff: required_automated
+    Hostile-QA: optional
+severity_modifiers:
+  production_target:
+    description: Target org is detected as production (via JSC_ORG_TYPE env, login
+      URL, or alias pattern)
+    effects:
+    - escalate_required_manual_to_required_automated_or_block
+    - require_serial_multi_profile_execution
+    - require_audit_log_entry_per_login_as
+    - require_qa_skip_token_for_any_skip
+  sandbox_target:
+    description: Target org is sandbox / scratch / dev
+    effects:
+    - default_severity_levels_apply
+    - parallel_multi_profile_concurrency_allowed_with_max_3

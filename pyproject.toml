@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torque-salesforce"
+version = "2.0.0a8"
+description = "A practical Salesforce consulting workspace, continued from JusticeserverClaude"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT AND Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*", "packages/licenses/*.txt"]
+authors = [{name = "Omid Mojtahedi"}]
+dependencies = ["PyYAML>=6.0"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.urls]
+Source = "https://github.com/omoji-personal/torque"
+Issues = "https://github.com/omoji-personal/torque/issues"
+Documentation = "https://github.com/omoji-personal/torque#readme"
+
+[project.optional-dependencies]
+browser = ["playwright>=1.45"]
+meeting = ["Pillow>=10"]
+dev = ["pytest>=8", "build>=1.2", "Pillow>=10"]
+
+[project.scripts]
+torque = "torque.cli:main"
+jsc = "jsc_revert.cli:main"
+jsc-advisory = "jsc_advisory.cli:main"
+jsc-qa = "jsc_qa.cli:main"
+jsc-browser-tests = "jsc_browser_tests.cli:main"
+jsc-memory = "jsc_memory.cli:main"
+jsc-loganalyzer = "jsc_loganalyzer.cli:main"
+jsc-probes = "jsc_probes.cli:main"
+meeting-processor = "meeting_processor.cli:main"
+jsc-ai-prompt-regression = "jsc_ai_prompt_regression.cli:main"
+
+[tool.setuptools.packages.find]
+where = [
+  "src", "packages/jsc_common", "packages/qa_orchestrator", "packages/revert",
+  "packages/debug_log_analyzer", "packages/memory", "packages/browser_tests",
+  "packages/meeting_processor", "packages/adversarial_probes",
+  "packages/ai_prompt_regression", "packages/salesforce_advisory",
+]
+exclude = ["tests*", "vendor*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+torque = ["data/*.json", "data/*.md", "data/commands/*.md", "data/rules/*.md", "data/skills/*/SKILL.md", "data/agents/*.md"]
+jsc_advisory = ["data/*.json"]
+jsc_qa = ["data/*.yaml"]
+jsc_browser_tests = ["config/*.yaml"]
+jsc_ai_prompt_regression = ["fixtures/*/*.txt", "fixtures/*/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages"]
+addopts = "--import-mode=importlib"
+norecursedirs = [".git", ".venv", ".venv-continuation", "local", "work", "build", "dist", "node_modules"]

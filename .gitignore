@@ -1,27 +1,27 @@
-# Content mount — per-firm client work, credentials context, run artifacts. Never publishes.
+# Private context and credentials.
 local/
-
-# Career-facing drafting agent. Gitignored deliberately: it encodes the owner's job-search
-# positioning, his truth boundary, and the phrases he has banned from his own public writing.
-# All of that is private context that has no business in a public repo, and publishing it would
-# also make the artifact look like a marketing exercise, which is the one framing it must avoid.
-.claude/agents/torque-marketing.md
-
-# Tooling set — enumerated in harness/checks/tooling-ignore.allowed with reasons.
-__pycache__/
+work/
+.env
+.env.*
+!.env.example
 .sf/
 .sfdx/
-node_modules/
-.venv/
-
-# Retrieved documentation. The pipeline is scripts/salesforce-docs/{ingest,extract}.py.
-# The mirror it fetches declares NO LICENCE, so the raw bodies are written to
-# local/salesforce-docs-mirror/ and are never committed — already covered by `local/` above,
-# which is where the privacy and redistribution rationale actually lives.
-# What IS committed is knowledge/salesforce-docs/ (llms.txt-style index and section files) and
-# the digested catalogue in knowledge/salesforce-platform.yml. Those are the shipped artifacts.
-#
-# knowledge/cache/ is vestigial: it was kb-fetch.py's destination, that script no longer exists,
-# and nothing writes the path today. Kept as a no-op guard, and labelled so the next reader does
-# not infer from it that an uncommitted cache still lives under knowledge/.
+.claude/settings.local.json
+.claude/agents/torque-marketing.md
 knowledge/cache/
+scripts/covprobe/hits/
+harness/tests/.stub-bin/
+
+# Local tools and generated files.
+.venv*/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.DS_Store
