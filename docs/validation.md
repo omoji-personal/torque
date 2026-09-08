@@ -1,6 +1,7 @@
 # Validation through alpha 8 — September 8, 2026
 
-This is an unpublished development alpha. Alpha 8 binds Metadata API receipts to
+This is a development alpha with a public continuation branch; no PyPI release
+has been published. Alpha 8 binds Metadata API receipts to
 the selected org and accepts equivalent, checksum-validated 15/18-character job
 IDs. Lower-effort agents ran the tests; separate agents audited the changes, and
 the primary agent reviewed the implementation, original results and source hashes.
@@ -104,8 +105,13 @@ The prior 27-case live matrix remains 23 passed and four blocked non-admin brows
 cases, as recorded in [alpha 6](validation-alpha6.md) and [alpha 5](validation-alpha5.md).
 Those journeys were not repeated here, and no org-wide Login As policy was changed.
 
-Remote macOS/Linux CI has not run for this continuation; Windows remains
-unqualified. Non-admin browser journeys, outside-user onboarding, complete
+GitHub Actions passed all six Ubuntu/macOS jobs on Python 3.10, 3.12 and 3.14
+for commit `6db2af4998461c513c4872874eaa3c68df50eb18`. Each job passed 858 tests,
+154 subtests, 12 standalone suites, distribution checks and the installed-wheel
+smoke checks. These independently built CI artifacts are separate from the local
+candidate's exact bytes. [Verified CI run](https://github.com/omoji-personal/torque/actions/runs/34240338628)
+
+Windows remains unqualified. Non-admin browser journeys, outside-user onboarding, complete
 consulting journeys across assistant hosts, existing delivery-stack compatibility
 and comparative benchmarks remain open. Optional provider behavior, accessibility
 and production-scale load remain unqualified. Bulk restore is manual; operation
