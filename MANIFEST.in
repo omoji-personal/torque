@@ -1,0 +1,24 @@
+include AGENTS.md CLAUDE.md NOTICE CONTRIBUTING.md SECURITY.md CHANGELOG.md
+recursive-include .github *.yml *.yaml *.md
+recursive-include docs *.md *.json
+recursive-include scripts *.py
+recursive-include tests *.py
+recursive-include workflows *.py *.md *.json
+recursive-include examples *.md *.json *.yaml
+recursive-include .agents/skills SKILL.md
+recursive-include .claude/commands *.md
+recursive-include .claude/rules *.md
+include .claude/settings.json
+include .claude/agents/admin-support.md .claude/agents/bulk-extract.md .claude/agents/field-audit.md
+include .claude/agents/flow-analyzer.md .claude/agents/general-worker.md .claude/agents/hostile-qa-auditor.md
+recursive-include packages *.py *.json *.yaml *.txt *.md
+prune local
+prune work
+prune build
+prune dist
+prune node_modules
+prune .venv
+prune .venv-continuation
+prune scripts/covprobe
+prune harness
+global-exclude __pycache__ *.pyc *.pyo .DS_Store

@@ -1,0 +1,8 @@
+{
+  "name": "browser_tests_vendor",
+  "private": true,
+  "description": "Vendored npm packages consumed as reference (NOT runtime deps). Currently: salesforce-pageobjects JSON page-object files for UTAM-mirrored Playwright wrappers under jsc_browser_tests/library/lightning_components/.",
+  "devDependencies": {
+    "salesforce-pageobjects": "^12.0.0"
+  }
+}

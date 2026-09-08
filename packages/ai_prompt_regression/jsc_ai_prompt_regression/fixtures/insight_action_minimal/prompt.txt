@@ -1,0 +1,1 @@
+Synthetic demonstration. Return only JSON containing parentFieldUpdates (narrative_AI__c and next_status_AI__c) and recordsToCreate (benefit_type and amount). Source: {{INPUT}}

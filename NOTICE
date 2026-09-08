@@ -1,0 +1,11 @@
+Torque 2.0 continuation
+Copyright 2026 Omid Mojtahedi
+
+Torque continues reusable components and workflows from JusticeserverClaude.
+See docs/package-migration.md for provenance.
+
+The debug-log analyzer and adversarial-probe modules retain their existing
+Apache-2.0 notices from claudeblazer. Their license is supplied at
+LICENSES/Apache-2.0.txt. Modifications for the Torque continuation include
+portable workspace paths, packaging, generic terminology, and behavior fixes;
+the provenance manifest identifies changed files. New Torque code is MIT.

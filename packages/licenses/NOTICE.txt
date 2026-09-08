@@ -1,0 +1,6 @@
+Portions of jsc_loganalyzer and jsc_probes derive from claudeblazer.
+Copyright 2026 the claudeblazer authors.
+Licensed under the Apache License, Version 2.0; see Apache-2.0.txt.
+These modules were adapted into JusticeserverClaude in May 2026 and continued
+in Torque in September 2026. Original attribution remains in source headers.
+No customer data or client-specific browser flows are included.

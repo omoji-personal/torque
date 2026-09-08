@@ -1,0 +1,1627 @@
+{
+  "source_commit": "017c20fdf3b80ef3fc4b85d621e90aa36c21fc81",
+  "purpose": "Generic framework continuation; customer domain files excluded; adaptations recorded in docs/package-migration.md",
+  "files": [
+    {
+      "path": "packages/jsc_common/jsc_common/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/jsc_common/jsc_common/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/jsc_common/jsc_common/org_classify.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/jsc_common/jsc_common/org_classify.py",
+      "source_sha256": "0e2c6c3004f30e545e7b7de4fde95faec69ba621291d37e0621683a891e5a39e",
+      "source_tracked": true,
+      "destination_sha256": "ee8ee45074f89aa0fa08df285aae5fc384046833ed17e6cbf2a41aa6fffd506a",
+      "adapted": true
+    },
+    {
+      "path": "packages/jsc_common/tests/test_org_classify.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/jsc_common/tests/test_org_classify.py",
+      "source_sha256": "4891495cf6f9838d28aa2b600fe01979066015a5f19433b0e488ba3e6fa90f79",
+      "source_tracked": true,
+      "destination_sha256": "6a52b447fc995721f36fb166043d9a4263e08eb78938ae046e5c00cf7e03196b",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/data/qa-router.yaml",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/qa-router.yaml",
+      "source_sha256": "d9f1c7a56817580d7692405aaf4d64bf79b94576bf0d2d88a6abf402688119bd",
+      "source_tracked": true,
+      "destination_sha256": "35b0215f6481f4277476a7dea7821f78f347491164018b112540388ccb009efd",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_qa_skip_token.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/tests/test_qa_skip_token.py",
+      "source_sha256": "e77978a4a46125096fede9ba6a17eba891a1148406341e8e28dc0a63c0bcfac1",
+      "source_tracked": true,
+      "destination_sha256": "e77978a4a46125096fede9ba6a17eba891a1148406341e8e28dc0a63c0bcfac1",
+      "adapted": false
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/tests/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_orchestrator.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/tests/test_orchestrator.py",
+      "source_sha256": "03a5f343d93100a3d73c891f41bb20e6dd9059da9c638c68265669e20bea0177",
+      "source_tracked": true,
+      "destination_sha256": "3aac80693dcf2a98ed744e476f070497cd43ab3908f28bcd67d7e6e5b0edd0a0",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_meta_api.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/tests/test_meta_api.py",
+      "source_sha256": "e32c5ba3de797a876127dcac3829a480fbac2fa813e23b5b6dd23978e99438a8",
+      "source_tracked": true,
+      "destination_sha256": "9ada67707d04c81ec89b56be437c81fbfe5a18819ba3d941eda35fd941b1f43d",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_seed_validator.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/tests/test_seed_validator.py",
+      "source_sha256": "ff21e8aeabac88bf17cbde88f778c2c09f8c79a5999a6485d497d48340a7f7d7",
+      "source_tracked": true,
+      "destination_sha256": "3e75fc1efc6d9f39bf8e4663b5347d600917f4c670a9d8eacc77c6a92dd7b764",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
+      "source_sha256": "d37863fc4bb6f32935244976631e9a0fe509c3660d67df4968f5b13e87e8c20d",
+      "source_tracked": true,
+      "destination_sha256": "9c4b63b3b5e651367bee0b749bf1f09142d20a2afd8322385d5586bb8c08b1ef",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/seed_validator.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/jsc_qa/seed_validator.py",
+      "source_sha256": "fa556cd4affb85af87c63837a4305ce9574574c17761fa0491af7ea245ecf292",
+      "source_tracked": true,
+      "destination_sha256": "07d6c20e9432bbdb9b430a80200a0eaad5b058117e271ab1b8749bca5f303301",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/qa_skip_token.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/jsc_qa/qa_skip_token.py",
+      "source_sha256": "fb90da9db469b97940bb2583e7c2e964d8fd284afe8ae4583bf7c588b4da1f12",
+      "source_tracked": true,
+      "destination_sha256": "a95ea05a861ee9a76a02b9d0be1e35dda3251e8491c844dc9a318c1d18431c05",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/jsc_qa/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/jsc_qa/cli.py",
+      "source_sha256": "96bb6753ada72ab93a4cd4dc94a466dc86735269f6edc09d22ca396e42917438",
+      "source_tracked": true,
+      "destination_sha256": "3f3225ba6bd090ba9eb789a44b0e96402638d9a12cbbf234da71f7a17cc34a72",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/router.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/jsc_qa/router.py",
+      "source_sha256": "c1ece999fe816c2ed06271431c0807075dbcfad21b0b208b3def945bf1609e60",
+      "source_tracked": true,
+      "destination_sha256": "b0b9e8cb282c08980686e13655bac94dd98fe9cbd6de126f509ac911ff5ec2ee",
+      "adapted": true
+    },
+    {
+      "path": "packages/qa_orchestrator/jsc_qa/report.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/qa_orchestrator/jsc_qa/report.py",
+      "source_sha256": "352695a00986bab15b6f989ee1494665494eea53965055b7f2b9ebfc7ad9c154",
+      "source_tracked": true,
+      "destination_sha256": "dabe3f2e3c07817a6f03a96d426fa6f677d9ed216c231bb47872419acf5ae28f",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/tests/test_org_sequence.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_org_sequence.py",
+      "source_sha256": "24e7b4adc7db15187ba7a4553e680e07355c175a8f6bff26554cf982c4a39999",
+      "source_tracked": true,
+      "destination_sha256": "c4a36ce24ac10bdacfbf12b0842112b05b28a5e9473db85f724880529ae24738",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_intent_marker.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_intent_marker.py",
+      "source_sha256": "0937710e1a2c48fd9589d73cbc3ba18bdfe3587e0dee105958de079062a5e09e",
+      "source_tracked": true,
+      "destination_sha256": "fa07c0c3cc83ce6a19e39e3c37f235c2d9c99280a88ad168b441080092fb14aa",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_snapshot_pre.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_snapshot_pre.py",
+      "source_sha256": "c0827dbaee2e707761788372bd031d792f816ca97ca997efb8a0cd9f677fd1e9",
+      "source_tracked": true,
+      "destination_sha256": "de60524b3a4ec47985dd0541dcd79d1d650d951990789ea624761857bcbe890f",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/tests/test_phase_i4_extended_2.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_phase_i4_extended_2.py",
+      "source_sha256": "fb95835af77d10905c369887270447becb75171fd7c1abcc6c9a755d9d49c854",
+      "source_tracked": true,
+      "destination_sha256": "8a1a2960ed414a32efce8643d2ba6d6700a3ae4eada1f125d042a8451ef60e6d",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_data_undelete_wrapper.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_data_undelete_wrapper.py",
+      "source_sha256": "0c9cb0b84efd0815d767cd84444ebcc93fe52587b05df2ba65405cea432371c3",
+      "source_tracked": true,
+      "destination_sha256": "f14ad568373580fc87e949df84e9eea45f5766587bc615b3967852482708fc99",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_cli_integration.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_cli_integration.py",
+      "source_sha256": "419a301f761db178871c794d498b5f8c43d5ec1810c078c9cce9d53d1f905300",
+      "source_tracked": true,
+      "destination_sha256": "cd82a4a6e0260fb50ef7cef1269ca0f43fca2e0a39530ce7d4c2efe8b1f69484",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_mcp_capture.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_mcp_capture.py",
+      "source_sha256": "21859a75b08cdf94d457963c8808e5f2507d13e1b533d78e64a8464765df0f01",
+      "source_tracked": true,
+      "destination_sha256": "4303d1ed88de46fa6179514a49b693467bfe293540c853199773ab0a7c79258e",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_revert_capabilities.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_revert_capabilities.py",
+      "source_sha256": "8a0b21b2aba08f511ddd489582e713bef653e8005d6995568c786f397bedb7d6",
+      "source_tracked": true,
+      "destination_sha256": "8dcbef0f33fd451a163c7e196831e70c2d5f844253e89f5bcfefffa5b3485714",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_revert_planner.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_revert_planner.py",
+      "source_sha256": "dbd07927f8dbffefd2e67d1251ddbc068601f1d681af693eb006e6a96dc332d5",
+      "source_tracked": true,
+      "destination_sha256": "e59fb8806b563a50524e4b8b64551cff9e74e86a7c7c2e27be1cfebba863f9a9",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/tests/test_restore_path.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/tests/test_restore_path.py",
+      "source_sha256": "9aea860382f1c14004ca53cba3260a266f3bef9c8d77811ab5850a65eaefd531",
+      "source_tracked": true,
+      "destination_sha256": "d03540fe231fc9dd2de795d40071ce1cdb9fa511bae0d091f44177eabe6bcaf6",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/bundle.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/bundle.py",
+      "source_sha256": "cf7852c890f13fc4f0519f034c76924cb984ab7f2ee520e69648acc59755fbcb",
+      "source_tracked": true,
+      "destination_sha256": "b6c576f7828c9cd8a8050cbf05ead13ff75da8f49ad7bf86929223feca72ebce",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/org_detect.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/org_detect.py",
+      "source_sha256": "4e8c78a2c456e040941393430dd1950e65c1a772d890a12d632d13c3865f3eba",
+      "source_tracked": true,
+      "destination_sha256": "3c6943c500bcd9d9dd63dfcfe8741964ac61b548547047376d0ba70a9704a4fb",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/manifest.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/manifest.py",
+      "source_sha256": "e9849ce7dac08e4dd58bcf2bd8d5f8e894297ebe90c05d371feae638435d19ac",
+      "source_tracked": true,
+      "destination_sha256": "ac81e3b09e09ef44c16ddb3e3b301e172a244836cbf19bbc47e4352fd69a9263",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/revert_executor.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/revert_executor.py",
+      "source_sha256": "8d2a28bef1758779a50eeef4af4c88f86e8676a2f474a2104d2c98b79ba6de0f",
+      "source_tracked": true,
+      "destination_sha256": "cd0cb1d7ae2d15d806d32a3850bc2e72a892cd5912b573c5c8e82fd7e0844a1a",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/revert_planner.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/revert_planner.py",
+      "source_sha256": "24ef5f21c20fbafe1fe36f68c1839a15298d1a80491bd98c02aecdede3c3f449",
+      "source_tracked": true,
+      "destination_sha256": "14553ec3ab903a633dae09249b2382aee236b8cc0c4b7271508814fe9c23507b",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/post_deploy_polling.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/post_deploy_polling.py",
+      "source_sha256": "565c95f63d6f1e4078c172a25370c46be1d990b1e896d9c3514c0ddf5aafaec2",
+      "source_tracked": true,
+      "destination_sha256": "5737d715fb63ebaf4d3d10cf7517897f1bafc1ee168519f333bc95c573e714c6",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/__init__.py",
+      "source_sha256": "f5c563c68f79fb3994498151623dc404d2515fe7eb966a8558b785d3caeded3a",
+      "source_tracked": true,
+      "destination_sha256": "15ba711eca1465e30a4e527b801802dda7dcebe446216363a2c3879bb9726fc2",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/intent_marker.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/intent_marker.py",
+      "source_sha256": "bb83cab27ee9e9d45494c50c4545ac156c1af9f7a88a5239b66eb0a0e536b994",
+      "source_tracked": true,
+      "destination_sha256": "dac0a9e0a1e4e7a630c834fac21149ef93842a54c3eebbb9b6cc632e5b2b670b",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/stale_detector.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/stale_detector.py",
+      "source_sha256": "927ac58a81dd7fe6ad21495f46fe72a01015b8dcc20725d6a94b3c6a8272c98e",
+      "source_tracked": true,
+      "destination_sha256": "b2633eece52ffaf9168e06d30b5f44dc0c23c93cc25d22a057bbe621cf52dd23",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/snapshot_pre.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/snapshot_pre.py",
+      "source_sha256": "075334af50f924c5e53d6c276f49a02b1ed4abf26774931716d047ca268af5c4",
+      "source_tracked": true,
+      "destination_sha256": "6c8a64f88c7809d49f2f00b0a7a342f4ff62a3db596297fd9db03806fd79b07a",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/mcp_capture.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/mcp_capture.py",
+      "source_sha256": "828dc6f29b8228c9fe696a7999e353d3e936bb329d498a7d11b175fe749e24f5",
+      "source_tracked": true,
+      "destination_sha256": "28332c1532cbbc5912d4b7a4a74b8a52773184f02dcd60e27c9612808a16ccbd",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/cli.py",
+      "source_sha256": "c2cd6105a45d7ce342063ec2be0b556eec6b0057e458d95644818adcec421e26",
+      "source_tracked": true,
+      "destination_sha256": "f1222ea0aa74fe3c056e021395d0a4401096a17d2b43a403b725347e2c4e71a3",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/revert_capabilities.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/revert_capabilities.py",
+      "source_sha256": "54a0081d9b2c3b49322abf6516195394a6578c043608969417a971b03b19721a",
+      "source_tracked": true,
+      "destination_sha256": "e337b63c05eddf62d711215d3c9571f440e06326495c030dc019f1c15b1252c3",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/org_sequence.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/org_sequence.py",
+      "source_sha256": "19c3e91915f8e9f8d5632e666ad4cc0716a98b93914d7ae2f59f2e281c3caf34",
+      "source_tracked": true,
+      "destination_sha256": "5c892dedbe127166c7e851135840b59d61731f3e9afdbf5ec96953881f02134d",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/package_install.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/package_install.py",
+      "source_sha256": "998566e6fe499cb3962b067c0979fbef1d20b44b0585bf69f04e89127d3714bf",
+      "source_tracked": true,
+      "destination_sha256": "998566e6fe499cb3962b067c0979fbef1d20b44b0585bf69f04e89127d3714bf",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_upsert.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_upsert.py",
+      "source_sha256": "75386581e0b3426dbc8f0da6c2a191933c2eac2efaff6b4f280fe8a4e85d6f01",
+      "source_tracked": true,
+      "destination_sha256": "f91e36cdb033344863a26737e00f56827ac7047d6852539f9bace0a9821f8e91",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/apex_run.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/apex_run.py",
+      "source_sha256": "0d9092505d222052b957709b4094b89c14ebdf2077b1776bfd4a7bff2405af31",
+      "source_tracked": true,
+      "destination_sha256": "ddb74a824c2977fbd9a6a7099c8186d6f6094ef1140bcaad5ed59e653178e8c2",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/deploy.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/deploy.py",
+      "source_sha256": "47bade899a92565ce12a2af9eaaefac4de44b3123d7e2bbb4b140ac31460ced9",
+      "source_tracked": true,
+      "destination_sha256": "21969b0b9ab6ce2452ec23ff45a2618d3bea4db06a1571e96dd9ecd10520ee00",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/package_uninstall.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/package_uninstall.py",
+      "source_sha256": "72e75de6adb82b62c89092050d1673de81ea9d88525d7ec02d0a08b8fdbbbe70",
+      "source_tracked": true,
+      "destination_sha256": "72e75de6adb82b62c89092050d1673de81ea9d88525d7ec02d0a08b8fdbbbe70",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/deploy_resume.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/deploy_resume.py",
+      "source_sha256": "a358b1b3469fbdef890fd11e0081746b0cda4809815efd0b18ab754733960161",
+      "source_tracked": true,
+      "destination_sha256": "a358b1b3469fbdef890fd11e0081746b0cda4809815efd0b18ab754733960161",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/_common.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/_common.py",
+      "source_sha256": "3cce54873ffdd043fe0fd87f4d892e75375e1cfd6872ee63660cbbb1b67b751b",
+      "source_tracked": true,
+      "destination_sha256": "f2ed1a6b0f587c8721eda44411cc3839b9e6faa3f52d4284644b7c7e313f9c0c",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_bulk_upsert.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_upsert.py",
+      "source_sha256": "fdcc02f8ed1e04d456a6999b882d3379fd037de0f71cb42f9e809e13be514926",
+      "source_tracked": true,
+      "destination_sha256": "381ceb3b6132dbfa0ad405c685d97b786eb5031f35521c54a65983959f801f0b",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_undelete.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_undelete.py",
+      "source_sha256": "cfa7a9ce34f614fc90cb948d7340be2a581bc7e8a50253997bc636b2ded385de",
+      "source_tracked": true,
+      "destination_sha256": "cac32203d81c9303710290aec64e902236ac74c836c4a609c995456b28f38dca",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/org_assign_permset.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permset.py",
+      "source_sha256": "6af95d8dfc50358bad566ab981ca8d6b9bf8e25be3df2be51d8137307950ab98",
+      "source_tracked": true,
+      "destination_sha256": "a0b4097b29a4d22e8ec4c5f54473c42a6b0de179ca35272b9f00bc9d9420c3fd",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_bulk_import.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_import.py",
+      "source_sha256": "cb528c8703cc9f0cbba0bfc56a9bb235ccb6ecc1097739f3dba80b252d5af3fe",
+      "source_tracked": true,
+      "destination_sha256": "69e1943df37bc850aba264f5be328bccd635e51ddb4176954879b281e841b340",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_bulk_update.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_update.py",
+      "source_sha256": "554ca9553aed70d3fed647f8f7833bb6b5c81d883bbf5ac42a5483977d68a3a3",
+      "source_tracked": true,
+      "destination_sha256": "31f84045b2941b49d5d55ce0dcbedaab9455cd7c848adb796f5b5e8b0ca02971",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_bulk_delete.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_delete.py",
+      "source_sha256": "b99726470cc1bed00d942fedfa64ec445034f116f0b9dc88275f383c1db01b12",
+      "source_tracked": true,
+      "destination_sha256": "227a739b8da3d5b77c2944801cdca1555491f99c13e8cfc5fdc9b90eb74de80e",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/deploy_abort.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/deploy_abort.py",
+      "source_sha256": "9711290d8df0c5f0e110ad8277ded628f70e82ac8f1b829654fdaefbefd19a73",
+      "source_tracked": true,
+      "destination_sha256": "9711290d8df0c5f0e110ad8277ded628f70e82ac8f1b829654fdaefbefd19a73",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/deploy_quick.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/deploy_quick.py",
+      "source_sha256": "2aa16f52373df2b2c0f308bc573ed6d1b79ba03580519509dd1926aa4ac57e83",
+      "source_tracked": true,
+      "destination_sha256": "2aa16f52373df2b2c0f308bc573ed6d1b79ba03580519509dd1926aa4ac57e83",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_create.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_create.py",
+      "source_sha256": "9f4be6e37f2305c8d1c966418449a08e3b21d3952e9077a2c3eebeade6db6557",
+      "source_tracked": true,
+      "destination_sha256": "b6bf4044d4261e687582b9994a8d9253691c2553a76fc8e37a1425d580d45d9a",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_delete.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_delete.py",
+      "source_sha256": "abb4a5b6e8769c00332e2e6b75a49cf096d11c7a9c5411144336c7f505c180aa",
+      "source_tracked": true,
+      "destination_sha256": "abb4a5b6e8769c00332e2e6b75a49cf096d11c7a9c5411144336c7f505c180aa",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/org_assign_permsetlicense.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permsetlicense.py",
+      "source_sha256": "e753ebf09e20917ddf7bd9f3cf80c799274a45e1ad2e26c33d9e9cb8e1818c76",
+      "source_tracked": true,
+      "destination_sha256": "e753ebf09e20917ddf7bd9f3cf80c799274a45e1ad2e26c33d9e9cb8e1818c76",
+      "adapted": false
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_update.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_update.py",
+      "source_sha256": "0df2fbfd0d7a199b34d940a40d0c1ce6d20419678a019bd9788220a984db96d5",
+      "source_tracked": true,
+      "destination_sha256": "672c04ccd08df8a79f44d6147ba20fe8d9431e12c9af5d5bc099b42e2434db54",
+      "adapted": true
+    },
+    {
+      "path": "packages/revert/jsc_revert/wrappers/data_import.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/revert/jsc_revert/wrappers/data_import.py",
+      "source_sha256": "30df6a293183366f83509519d713a9f1531397db04a71e120e87c89854851d06",
+      "source_tracked": true,
+      "destination_sha256": "1944386c122f612846468d71befe7ecaa14024dee0d42a817b39e97e6efa624b",
+      "adapted": true
+    },
+    {
+      "path": "packages/debug_log_analyzer/tests/test_parsers.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/debug_log_analyzer/tests/test_parsers.py",
+      "source_sha256": "299bb3254a61d7af165e8cbcd1f5753a2b9cbdffe26b47b23fdb4791564e0323",
+      "source_tracked": true,
+      "destination_sha256": "299bb3254a61d7af165e8cbcd1f5753a2b9cbdffe26b47b23fdb4791564e0323",
+      "adapted": false
+    },
+    {
+      "path": "packages/debug_log_analyzer/tests/test_code_analyzer.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/debug_log_analyzer/tests/test_code_analyzer.py",
+      "source_sha256": "15c63d022c0012d3ae5c5fb8f472575593a158709f1eaaeaa9d611aacad5210c",
+      "source_tracked": true,
+      "destination_sha256": "15c63d022c0012d3ae5c5fb8f472575593a158709f1eaaeaa9d611aacad5210c",
+      "adapted": false
+    },
+    {
+      "path": "packages/debug_log_analyzer/jsc_loganalyzer/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/__init__.py",
+      "source_sha256": "fd3723c901c547f0a4a09a38abefb71b904b48a8b6b57b54e4420c2df8f54f58",
+      "source_tracked": true,
+      "destination_sha256": "fd3723c901c547f0a4a09a38abefb71b904b48a8b6b57b54e4420c2df8f54f58",
+      "adapted": false
+    },
+    {
+      "path": "packages/debug_log_analyzer/jsc_loganalyzer/parsers.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/parsers.py",
+      "source_sha256": "1bebad6428a31266b521af0cdb5cc0ed51f8773e70bb360a320088163821bcc3",
+      "source_tracked": true,
+      "destination_sha256": "1bebad6428a31266b521af0cdb5cc0ed51f8773e70bb360a320088163821bcc3",
+      "adapted": false
+    },
+    {
+      "path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
+      "source_sha256": "9e4f018f0645b45951bb8339c7069fd49c308f1242b3958b8313b6adf5a6856e",
+      "source_tracked": true,
+      "destination_sha256": "e893f2a07a04d7041b50aee37d3a42117226c065803101c6619931cda651a5b0",
+      "adapted": true
+    },
+    {
+      "path": "packages/debug_log_analyzer/jsc_loganalyzer/code_analyzer.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/code_analyzer.py",
+      "source_sha256": "7c7b580ac21280df04cf34c93a318c8881a32ff34322537544a9395d70d991ec",
+      "source_tracked": true,
+      "destination_sha256": "7c7b580ac21280df04cf34c93a318c8881a32ff34322537544a9395d70d991ec",
+      "adapted": false
+    },
+    {
+      "path": "packages/debug_log_analyzer/jsc_loganalyzer/score.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/score.py",
+      "source_sha256": "0cfca320ff0096425ea8f1a2dcf5c833666785eef4d7e801832c10501cedd8e4",
+      "source_tracked": true,
+      "destination_sha256": "0cfca320ff0096425ea8f1a2dcf5c833666785eef4d7e801832c10501cedd8e4",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/conftest.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/conftest.py",
+      "source_sha256": "6138cc44d565adacaeadba92970574bb96638348076732939861e3c7ff45d037",
+      "source_tracked": true,
+      "destination_sha256": "6138cc44d565adacaeadba92970574bb96638348076732939861e3c7ff45d037",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/test_scrubber.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/test_scrubber.py",
+      "source_sha256": "5ba8c4e611c36dd4df662d19e37d90dd0e3603c750734547124412dd7bdf4c45",
+      "source_tracked": true,
+      "destination_sha256": "5ba8c4e611c36dd4df662d19e37d90dd0e3603c750734547124412dd7bdf4c45",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/test_ranker.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/test_ranker.py",
+      "source_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
+      "source_tracked": true,
+      "destination_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/test_injector.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/test_injector.py",
+      "source_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
+      "source_tracked": true,
+      "destination_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/test_storage.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/test_storage.py",
+      "source_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
+      "source_tracked": true,
+      "destination_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/test_capture.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/test_capture.py",
+      "source_sha256": "b949eb1c10fc233640684bd4e932f8b0c33ed62287a6e26127a0b596dbdab41c",
+      "source_tracked": true,
+      "destination_sha256": "2235804371d764a559c6757066f273ffcbf86566ad0ca9f5b07000c9e2871758",
+      "adapted": true
+    },
+    {
+      "path": "packages/memory/tests/test_index.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/test_index.py",
+      "source_sha256": "d6aec1c1d3b565a38c3486bdfcf6730c5d5b5d2bf9b49803bc4f87223c738132",
+      "source_tracked": true,
+      "destination_sha256": "320303e70baace0cb2de13266bb73154f394878de3e3fce4c6cf5b0cb5c5cc15",
+      "adapted": true
+    },
+    {
+      "path": "packages/memory/tests/test_spool.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/test_spool.py",
+      "source_sha256": "2929d9c0ef196e823af91c3abf75599769164480119bda1c32f5c390fcac366b",
+      "source_tracked": true,
+      "destination_sha256": "59ec7d1700a7166030718ebb1135a9f803261255b88800cf84db2ca23778c1a4",
+      "adapted": true
+    },
+    {
+      "path": "packages/memory/jsc_memory/index.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/index.py",
+      "source_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
+      "source_tracked": true,
+      "destination_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/jsc_memory/spool.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/spool.py",
+      "source_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
+      "source_tracked": true,
+      "destination_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/jsc_memory/scrubber.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/scrubber.py",
+      "source_sha256": "50867444b425b53bfc7209596b267bd842d094a28f814791ed68d6b44f5f4283",
+      "source_tracked": true,
+      "destination_sha256": "50867444b425b53bfc7209596b267bd842d094a28f814791ed68d6b44f5f4283",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/jsc_memory/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/__init__.py",
+      "source_sha256": "b879d0aac327e28b7f9ddfa3f1705902421def0fe5652febca1e239746e20bde",
+      "source_tracked": true,
+      "destination_sha256": "b879d0aac327e28b7f9ddfa3f1705902421def0fe5652febca1e239746e20bde",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/jsc_memory/injector.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/injector.py",
+      "source_sha256": "9fa7188913da15edd38b49e2340281e173277a99d5f56f03ad84c317676987f4",
+      "source_tracked": true,
+      "destination_sha256": "bd133e43c153afe4997920e105f3c5617ad15161f3ce5e3cba04cd573e972aa8",
+      "adapted": true
+    },
+    {
+      "path": "packages/memory/jsc_memory/capture.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/capture.py",
+      "source_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
+      "source_tracked": true,
+      "destination_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/jsc_memory/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/cli.py",
+      "source_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
+      "source_tracked": true,
+      "destination_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/jsc_memory/storage.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/storage.py",
+      "source_sha256": "6a815a6a996f2d1359c3ba8dbab6a2aa04d9fb3ab70a510feb7c6c3115e9c1a9",
+      "source_tracked": true,
+      "destination_sha256": "80f6f004642b055fc42952c8abe8c232496a01887ae020e0bcf7f9a2508dd8ff",
+      "adapted": true
+    },
+    {
+      "path": "packages/memory/jsc_memory/ranker.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/jsc_memory/ranker.py",
+      "source_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
+      "source_tracked": true,
+      "destination_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
+      "adapted": false
+    },
+    {
+      "path": "packages/memory/tests/fixtures/pii_shapes.yaml",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/memory/tests/fixtures/pii_shapes.yaml",
+      "source_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
+      "source_tracked": true,
+      "destination_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/matrix.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/matrix.py",
+      "source_sha256": "5ee5e491f99e98316ac492800e8225cbb3e9ef45bd1ddd886efa5604a24360d4",
+      "source_tracked": true,
+      "destination_sha256": "d41e521903af2aadde8c0991e13b099f08a3fa719daa9149575c0a09e3143126",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/auth.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
+      "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
+      "source_tracked": true,
+      "destination_sha256": "b944b77796f22f6be686a180b2f62c4a4754ee1c2f0520964eb2e190fe976aa6",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/runner.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/runner.py",
+      "source_sha256": "2dd2825125d554bd79dc5d0d623445d98ddac520bf3a7ba10327d55b0392c769",
+      "source_tracked": true,
+      "destination_sha256": "1daac48b6d9a23f6de3fe44d311b85eb49a0e89b5525a38384e18bd8e9d328e4",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/suite.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/suite.py",
+      "source_sha256": "40e81f606e0e88b7862ca72367b2662a192ec9be8a0af567979f1c41893de125",
+      "source_tracked": true,
+      "destination_sha256": "5ead10cb9a4b51ad1bc68ed7fdd32b400093aef475d4e84c984a9f05b273d681",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/vision.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/vision.py",
+      "source_sha256": "60fa4ccb2379b4827eaaa92ea8e6b41ca01e2abbdf2a5f7925c278f31dbfb394",
+      "source_tracked": true,
+      "destination_sha256": "334243acca41d44c944f2655cc46064d4543dfd7fdf59fc881963ee25766c37a",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/manifest.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/manifest.py",
+      "source_sha256": "5d52ad56d5acbf075b8cf8f96b28694253edee4dc33b3867ce048ac0b224fc25",
+      "source_tracked": true,
+      "destination_sha256": "3666ccb90ba430ba18ac5910a91d49cc99cfe998985d6d473909c6a5602efb4e",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/flow_spec.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/flow_spec.py",
+      "source_sha256": "2a98b35da36cbf3d6032f6facaf6b93996d4f0883896e9e317403403152458fb",
+      "source_tracked": true,
+      "destination_sha256": "33b8bf9babce54a6d2f287b562cdf0084ef8db638af4d5d685fd584a1d1b21a3",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
+      "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
+      "source_tracked": true,
+      "destination_sha256": "4054ad2587c1550834505b7870009a353cda33be1ba8612b4d20d6b9b53a4de8",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/cell_runner.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/cell_runner.py",
+      "source_sha256": "801f670c5d603747f0506302c884d20ffa52fd7776fd4dbcad90fe93387114ea",
+      "source_tracked": true,
+      "destination_sha256": "c10d662ca7d205e756ec8c3e1d97f69e7f7f5d496cf708b7d2fd3b352719a1dc",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/preconditions.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/preconditions.py",
+      "source_sha256": "9952746c9a466dd5bfb121cd8ca149bf68c407cd5b8f2aa7004cdefb8316d9d4",
+      "source_tracked": true,
+      "destination_sha256": "b3542be99380f1e7ea7d9c815ecabcb1b25f707076d57b8d5216656d158b2e7b",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
+      "source_sha256": "8e6979337830478d413126b80272eb2ed0ae4a4669952475fa51dfd3d05c48c9",
+      "source_tracked": true,
+      "destination_sha256": "d26ccdfa1b3c5577dab3cd1884473165c2ebeb0b617fc1b683565e12f914de11",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/report.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/report.py",
+      "source_sha256": "32ddc229bdc0e9eb2c7012f734cafe23f8ea10bdcf7da2c3a225f2c5df5511e2",
+      "source_tracked": true,
+      "destination_sha256": "7e213976b9980a6605d390d44b197565734aeb6a49804515d8d2018b354daccc",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/tests/test_flow_spec.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/test_flow_spec.py",
+      "source_sha256": "f37c54ccc71e62a7095d19bcde5461d94259e6c6c1669fb88c12979a50215832",
+      "source_tracked": true,
+      "destination_sha256": "affac588ded57e198fc561ec4ec2433164329997bc70944f1ddef328e8828124",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/tests/test_browser_tests.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/test_browser_tests.py",
+      "source_sha256": "da8109f1107b8d1ccf73bc4de6a7c09c93aa22217a6280a2805c1a10391f2887",
+      "source_tracked": true,
+      "destination_sha256": "0a49b332c699268986bee7bf65108a9f955831eb23ab9a53eeeb1201910aed61",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/tests/test_sf_client.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/test_sf_client.py",
+      "source_sha256": "8a2b0d03026aad7b8f20b09707c821d0d72923c561b55b4c9154f599fe137585",
+      "source_tracked": true,
+      "destination_sha256": "8a2b0d03026aad7b8f20b09707c821d0d72923c561b55b4c9154f599fe137585",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/tests/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/tests/test_matrix.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/test_matrix.py",
+      "source_sha256": "9244ab6248e134e0b63631e98b0bd872b1e06938412b0c41e3ee920fb2f64c5b",
+      "source_tracked": true,
+      "destination_sha256": "86fd0532876c9dfc4a70daf98494d1bb82030b0e819cba10c92c6227f83b3072",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/tests/test_report_scorer.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/test_report_scorer.py",
+      "source_sha256": "df3452cea2535fe79e9fe50539b6045e37362262f693cd487ac2e72eb4364812",
+      "source_tracked": true,
+      "destination_sha256": "ce9ee121c5d3ac31f2034ab06509e8b6ba97efda7092ebfffb77f62a743933ae",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/tests/test_assertions.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/test_assertions.py",
+      "source_sha256": "3df412bd5a04aa60895c6d3cbbb86ecb66e91468293ec41899cf53d4191253d3",
+      "source_tracked": true,
+      "destination_sha256": "3df412bd5a04aa60895c6d3cbbb86ecb66e91468293ec41899cf53d4191253d3",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/tests/test_cell_runner.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/tests/test_cell_runner.py",
+      "source_sha256": "22f2b1b52fd3d422c8dbd27251271727b41183ce36b422a94ced690f87df9f45",
+      "source_tracked": true,
+      "destination_sha256": "8c835b75ac8108254a2080fd4445b0907eebd77f695ce71500128ea64a4ec459",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/vendor/package.json",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/vendor/package.json",
+      "source_sha256": "f7bce13ffd10e4e7dd8bd7c064643531107048757c86ddec7b18eed9d33b7338",
+      "source_tracked": true,
+      "destination_sha256": "f7bce13ffd10e4e7dd8bd7c064643531107048757c86ddec7b18eed9d33b7338",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/provisioning/teardown.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/provisioning/teardown.py",
+      "source_sha256": "967a106e86b8e239d8b8b45e05fa7bbadb4e6af72d9672352966929bfecebb80",
+      "source_tracked": true,
+      "destination_sha256": "967a106e86b8e239d8b8b45e05fa7bbadb4e6af72d9672352966929bfecebb80",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/provisioning/object_registry.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/provisioning/object_registry.py",
+      "source_sha256": "8e4588758e61bcf51e4d9b46db2964bfaf0ccb5d32e26fd7620a6ae73914dc78",
+      "source_tracked": true,
+      "destination_sha256": "e6687b38cf6345ebe1ef39fec80932202bea20086f866ad2a4dc55346d4ea34e",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/provisioning/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/provisioning/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/smoke_login.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/smoke_login.py",
+      "source_sha256": "8c380f4df7cc981accfa0326367fab2a79c84edc32f40009da8eb3c22ddb740a",
+      "source_tracked": true,
+      "destination_sha256": "00dd3221a56f22303add2443f94c9a082b72edc78e96648c3c3e722e5e747d25",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_page.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_page.py",
+      "source_sha256": "9db106e602dc943027e306f7867028608e3cc2989d83784ab6aec3a8de111fb2",
+      "source_tracked": true,
+      "destination_sha256": "09819d1a21262c900837b884246992514762419a559de539166e2ac23b3c2137",
+      "adapted": true
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/assertions/vision_checks.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/assertions/vision_checks.py",
+      "source_sha256": "069263f92c435d63e6c3dea0fb42d2da49800106cfe78a138b96433527368a62",
+      "source_tracked": true,
+      "destination_sha256": "069263f92c435d63e6c3dea0fb42d2da49800106cfe78a138b96433527368a62",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/assertions/soql.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/assertions/soql.py",
+      "source_sha256": "9c6b9d286ee3b5785c6f844c2a354bc7375c1d72225bbaa418c422653f244703",
+      "source_tracked": true,
+      "destination_sha256": "9c6b9d286ee3b5785c6f844c2a354bc7375c1d72225bbaa418c422653f244703",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/assertions/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/assertions/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/combobox.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/combobox.py",
+      "source_sha256": "31178c43915684ce9266e0a8faccae5885ac9b8399410680d5972e5347087926",
+      "source_tracked": true,
+      "destination_sha256": "31178c43915684ce9266e0a8faccae5885ac9b8399410680d5972e5347087926",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/input_field.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/input_field.py",
+      "source_sha256": "9a44e7dc3efffd296673d8f306d914218f10f1ab1ec0fa1ea4acf8b4f3f3f7e2",
+      "source_tracked": true,
+      "destination_sha256": "9a44e7dc3efffd296673d8f306d914218f10f1ab1ec0fa1ea4acf8b4f3f3f7e2",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/__init__.py",
+      "source_sha256": "4bbdefb51f20725fcb982c28454a09dd6d8cee7ccff5626a44c4cfb677b70fa7",
+      "source_tracked": true,
+      "destination_sha256": "4bbdefb51f20725fcb982c28454a09dd6d8cee7ccff5626a44c4cfb677b70fa7",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/button.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/button.py",
+      "source_sha256": "78a1e9fa46ffbf579bf96d47b3f75b3cb913931a94342dbdca20b2b780e089e1",
+      "source_tracked": true,
+      "destination_sha256": "78a1e9fa46ffbf579bf96d47b3f75b3cb913931a94342dbdca20b2b780e089e1",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/toast.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/toast.py",
+      "source_sha256": "8e6bfd0c7f5caf0df69c1c1af18176e85b8b3178e82292f7aa125b1e62680034",
+      "source_tracked": true,
+      "destination_sha256": "8e6bfd0c7f5caf0df69c1c1af18176e85b8b3178e82292f7aa125b1e62680034",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/modal.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/modal.py",
+      "source_sha256": "3bdca4a0799cc3c2f23d05f86a9b6f8c8bc426431f90a5cdb6a3c9dfafb1be3b",
+      "source_tracked": true,
+      "destination_sha256": "3bdca4a0799cc3c2f23d05f86a9b6f8c8bc426431f90a5cdb6a3c9dfafb1be3b",
+      "adapted": false
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/record_form.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/record_form.py",
+      "source_sha256": "4226897103d24165a4f740baeed177513d0c672c8eac0f40995a41bb3e9cf1f8",
+      "source_tracked": true,
+      "destination_sha256": "4226897103d24165a4f740baeed177513d0c672c8eac0f40995a41bb3e9cf1f8",
+      "adapted": false
+    },
+    {
+      "path": "packages/meeting_processor/tests/test_meeting_processor.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/meeting_processor/tests/test_meeting_processor.py",
+      "source_sha256": "53107a85e270eb9f74af35f92626f352e2db8b36311dede73cda8399b8f7f256",
+      "source_tracked": true,
+      "destination_sha256": "938f391ebef9f90d8dc7e9ef17f441a05282a4ef10d1399759636c35811ab6d7",
+      "adapted": true
+    },
+    {
+      "path": "packages/meeting_processor/meeting_processor/correlate.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/meeting_processor/meeting_processor/correlate.py",
+      "source_sha256": "268a2d14605d43f94608ae3d2414473163db60a96d062616c179fbfd23ea6fea",
+      "source_tracked": true,
+      "destination_sha256": "268a2d14605d43f94608ae3d2414473163db60a96d062616c179fbfd23ea6fea",
+      "adapted": false
+    },
+    {
+      "path": "packages/meeting_processor/meeting_processor/parse_transcript.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/meeting_processor/meeting_processor/parse_transcript.py",
+      "source_sha256": "87fc6ee717ac1eced374474f51522a90051a65177a4d21926cf6117c9548dd46",
+      "source_tracked": true,
+      "destination_sha256": "87fc6ee717ac1eced374474f51522a90051a65177a4d21926cf6117c9548dd46",
+      "adapted": false
+    },
+    {
+      "path": "packages/meeting_processor/meeting_processor/extract_frames.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/meeting_processor/meeting_processor/extract_frames.py",
+      "source_sha256": "08b9decdd1eff268646aaf243e8f6daa99929c0217c03e1972c234877fc706fa",
+      "source_tracked": true,
+      "destination_sha256": "08b9decdd1eff268646aaf243e8f6daa99929c0217c03e1972c234877fc706fa",
+      "adapted": false
+    },
+    {
+      "path": "packages/meeting_processor/meeting_processor/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/meeting_processor/meeting_processor/__init__.py",
+      "source_sha256": "8cf95f92078642443aa6d4af53e592a4bb047613108e6923dc38f4b086a50ed7",
+      "source_tracked": true,
+      "destination_sha256": "8cf95f92078642443aa6d4af53e592a4bb047613108e6923dc38f4b086a50ed7",
+      "adapted": false
+    },
+    {
+      "path": "packages/meeting_processor/meeting_processor/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/meeting_processor/meeting_processor/cli.py",
+      "source_sha256": "8b9eda69d758c314886019e2d4773fc2a4ac316cf09e6e27f416e711b465c7dd",
+      "source_tracked": true,
+      "destination_sha256": "5df1d3d7721de51ecac591d9a98acf95c0c1f8c1fb539bd0e913f065569618bb",
+      "adapted": true
+    },
+    {
+      "path": "packages/meeting_processor/meeting_processor/__main__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/meeting_processor/meeting_processor/__main__.py",
+      "source_sha256": "5ddd591269e049d5bf5de23e0e3f6d78cba3b7ab13ec4a53b46c24a2c91eab51",
+      "source_tracked": true,
+      "destination_sha256": "5ddd591269e049d5bf5de23e0e3f6d78cba3b7ab13ec4a53b46c24a2c91eab51",
+      "adapted": false
+    },
+    {
+      "path": "packages/adversarial_probes/tests/test_apex.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/adversarial_probes/tests/test_apex.py",
+      "source_sha256": "aa86d6d1eab3adc0543b1fd741d942d0fd7dd8edfe2fb57490ad738f6b702938",
+      "source_tracked": true,
+      "destination_sha256": "8f3ce3c9c3060557ae5adc8ea303aa4aebe3cb519d369fc7e1d7dd13af1527b0",
+      "adapted": true
+    },
+    {
+      "path": "packages/adversarial_probes/jsc_probes/apex.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/adversarial_probes/jsc_probes/apex.py",
+      "source_sha256": "f4ced273e3193bbada19833b6fa746ec0da91f5ba6e148e617dd90d3fc7055b1",
+      "source_tracked": true,
+      "destination_sha256": "81e5656bb1c45604a9ae47b862627f2f624033656fdcd1c1e6fe785577ba639d",
+      "adapted": true
+    },
+    {
+      "path": "packages/adversarial_probes/jsc_probes/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/adversarial_probes/jsc_probes/__init__.py",
+      "source_sha256": "c27cdb7c745ba40511536014640200ee360a11814accc55e8e174ccbad250cac",
+      "source_tracked": true,
+      "destination_sha256": "c27cdb7c745ba40511536014640200ee360a11814accc55e8e174ccbad250cac",
+      "adapted": false
+    },
+    {
+      "path": "packages/adversarial_probes/jsc_probes/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/adversarial_probes/jsc_probes/cli.py",
+      "source_sha256": "a1b06f634d0a937dcfa1e6125a2df40e4c3ffc7aeb9deaf7da87cae95169a898",
+      "source_tracked": true,
+      "destination_sha256": "eb277d7c820dae56b6e54b8509fbdb2be4302c66bcfb6098d0ab62d0d8164b5b",
+      "adapted": true
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/harness.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/harness.py",
+      "source_sha256": "a5794b54bb021fd20706ccbcef50515fd95e43ea549803025ac0181bed2d5dec",
+      "source_tracked": true,
+      "destination_sha256": "3d447cad14c4ad17b6d7d4352efd35e279749096e4a8ba37d70cea32a39e12e6",
+      "adapted": true
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/__init__.py",
+      "source_sha256": "291a030c12ee3f860a8714a8f2cdb316117bf11f9ed5e948b6573d86c1d95556",
+      "source_tracked": true,
+      "destination_sha256": "fc955a455c6d260be571c357255f09c475a089933cc03f53b1d049448e55a973",
+      "adapted": true
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/cli.py",
+      "source_sha256": "3eb23a1eaa70dc8b5c0460b89b1afceb73b09164a87fb86c4039794838f42b68",
+      "source_tracked": true,
+      "destination_sha256": "3eb23a1eaa70dc8b5c0460b89b1afceb73b09164a87fb86c4039794838f42b68",
+      "adapted": false
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/contracts.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/contracts.py",
+      "source_sha256": "ee3f119cb6149bf0cdca908d8bf7db442d45aea81b44eb950879618671f245d5",
+      "source_tracked": true,
+      "destination_sha256": "1912ecff1c7c6ae0a0a3525765c237a0e9cc7c26aead11b9e7fd869a7e5f7577",
+      "adapted": true
+    },
+    {
+      "path": "packages/ai_prompt_regression/tests/test_ai_prompt_regression.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/ai_prompt_regression/tests/test_ai_prompt_regression.py",
+      "source_sha256": "805f18358e6daad5abb14c32e6f623fbe8e1504afc0c56d14f4a85da0b5aeddd",
+      "source_tracked": true,
+      "destination_sha256": "5088d0beee63eee296ef4a79b6a3e67e5272ef667dca8f01cac9f3fa8baec059",
+      "adapted": true
+    },
+    {
+      "path": "packages/ai_prompt_regression/tests/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/ai_prompt_regression/tests/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_tracked": true,
+      "destination_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "adapted": false
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/spec.json",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/spec.json",
+      "source_sha256": "456e3a857bd2a7086737370806979f847181e475bbcb467bae01bc94be6046b3",
+      "source_tracked": true,
+      "destination_sha256": "1a317dbd59fa959f289da9b2434ab633a916832f7e3a76e5c9eba5f6962d53ab",
+      "adapted": true
+    },
+    {
+      "path": "packages/salesforce_advisory/tests/test_salesforce_advisory.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/tests/test_salesforce_advisory.py",
+      "source_sha256": "f8bc47d793785782758c665ec3b1ce0b1d75fd49e96eed6683fac69b186512b3",
+      "source_tracked": true,
+      "destination_sha256": "d39a746fd471e15cf792b80334811d1346248269e60009311bb2693e2d9d1b14",
+      "adapted": true
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/sf.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/sf.py",
+      "source_sha256": "f75b960146b7640af07f4d3ddb3080ff7213070a4d2c523119fe9d618c830f1c",
+      "source_tracked": true,
+      "destination_sha256": "f75b960146b7640af07f4d3ddb3080ff7213070a4d2c523119fe9d618c830f1c",
+      "adapted": false
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/__init__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/__init__.py",
+      "source_sha256": "d85cff65ff29496a21c998a2f367ba3ffb9ba562e5da6a865964f9f606a6124e",
+      "source_tracked": true,
+      "destination_sha256": "d85cff65ff29496a21c998a2f367ba3ffb9ba562e5da6a865964f9f606a6124e",
+      "adapted": false
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/flow.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/flow.py",
+      "source_sha256": "600661abb1412e4786d3746f574de3f925ab18cf2f9244eb84a0df52b21b7cfd",
+      "source_tracked": true,
+      "destination_sha256": "600661abb1412e4786d3746f574de3f925ab18cf2f9244eb84a0df52b21b7cfd",
+      "adapted": false
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/cli.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
+      "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
+      "source_tracked": true,
+      "destination_sha256": "bafee4e19ad4dd9e532c31bb3a29ed060cc52fbac918c9edae2e0726c3b62208",
+      "adapted": true
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/receipt.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/receipt.py",
+      "source_sha256": "914f03fa15e62f4a8b64ec7f44d3ceb3e0da4e57c663a964c371dadaeb410761",
+      "source_tracked": true,
+      "destination_sha256": "0f2da075d8b28f30e5cc815444641fc86fb4fbbeaec82e5487b157e13b754e81",
+      "adapted": true
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/evidence.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/evidence.py",
+      "source_sha256": "7f6031f90b03e4112f5b9fde26b75e5546dfdb822900bcbad2f99ae10e7054a0",
+      "source_tracked": true,
+      "destination_sha256": "e0d83cae1e2b53173aa35cbc657634007e4e98a84b256549ae41224738f98813",
+      "adapted": true
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/__main__.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/__main__.py",
+      "source_sha256": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+      "source_tracked": true,
+      "destination_sha256": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+      "adapted": false
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/impact.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/impact.py",
+      "source_sha256": "76ceba6323316d5c24ee300cca26e0b8724362c608003addf8bfb3b08c25f5c4",
+      "source_tracked": true,
+      "destination_sha256": "76ceba6323316d5c24ee300cca26e0b8724362c608003addf8bfb3b08c25f5c4",
+      "adapted": false
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/catalogue.py",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/catalogue.py",
+      "source_sha256": "068c452ca10ee11480c0f617d45d7c5de89fd4356ff0bcfc5419eb76e30573a9",
+      "source_tracked": true,
+      "destination_sha256": "068c452ca10ee11480c0f617d45d7c5de89fd4356ff0bcfc5419eb76e30573a9",
+      "adapted": false
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/data/provenance.json",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/data/provenance.json",
+      "source_sha256": "3d2f4d9da6fe038d03b08f0b6df2063451d03c7b95fef4a89f8c79fc2edcfbf0",
+      "source_tracked": true,
+      "destination_sha256": "3d2f4d9da6fe038d03b08f0b6df2063451d03c7b95fef4a89f8c79fc2edcfbf0",
+      "adapted": false
+    },
+    {
+      "path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
+      "source_repository": "justiceserver-workspace",
+      "source_path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
+      "source_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
+      "source_tracked": true,
+      "destination_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
+      "adapted": false
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/input.txt",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "bf320c415b9c786abe36e4a1b835fd4035829690d6b287f4eb30aed520a22998"
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/prompt.txt",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "b7f66f79dfff1559d6f5694dbe22885cb40772d011fd82920e47c1494f2bfe29"
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/config/client-values.yaml",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "fed8e1cd5051e2f9f24b2054c14b05e3af670e451688095163ea449a8e2ed437"
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/config/object-registry.yaml",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "4f353b70e29f9eac73d3f8307ed4f8a667d6d077f2977d5a66399911ea0d1832"
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/diagnostics.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "1a4aa85a4a785943a59c1c841563fc035d7861b699373b522b0a2519aee79d33"
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/provisioning/fixtures.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "506f40088c71267eef097e9fe4800d37aadb1cf6c2a1c22dde34fbd23913cd77"
+    },
+    {
+      "path": "packages/browser_tests/tests/test_coverage_honesty.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "d2fd04e54ada0b2f35be294b2ff85e63447ec10179ddeca6f0f41f1902d82bed"
+    },
+    {
+      "path": "packages/browser_tests/tests/test_release_browser_truth.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "1e980be5fe2ef8407a6f41104b694234989ea7eea2d49d3ae1036bcc75053bfa"
+    },
+    {
+      "path": "packages/jsc_common/jsc_common/workspace.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "bda4613014cd2c6d512d7dac43f7a3366bd085eb7c7a2fb37d50aa6e75c23bac"
+    },
+    {
+      "path": "packages/jsc_common/tests/test_continuation.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "b71ff9298fe7be09cf645f23985346887dbfca654aad7cdcc5205632444486e5"
+    },
+    {
+      "path": "packages/licenses/Apache-2.0.txt",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "3e870d8e269c3970523e34a8678b4b96ce16a31cc1aa3db8f1a590cc4a451013"
+    },
+    {
+      "path": "packages/licenses/NOTICE.txt",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "28fed5f0ec1a6c4b5d748504a581b2d07cf6de5ef2608876801e132a6e24a1d6"
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_manifest_evidence_integration.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "8cb2e75acb9275735e590a9b91a281101c65845092d0aaba32326cf3e541db29"
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_report_completeness.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "a23430e686a0190c0a7ae156b073437663438eef6dd88e12cdbc5a3ba52d7f52"
+    },
+    {
+      "path": "packages/revert/jsc_revert/update_fields.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "f788d1ac847c1cdfa8b5c2f100757a478dd884ad851305db7492dcf9a5f9a51e"
+    },
+    {
+      "path": "packages/revert/tests/test_bulk_capture_and_lease.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "a13d5887cb63f0f6249684289c2629a133e7999a59286a1cdd9fc22a1c1edec0"
+    },
+    {
+      "path": "packages/revert/tests/test_data_create_evidence.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "3db1052d6d149d321614b1fb822a5f15d578cbb68e856fe541c2a290e2da16ed"
+    },
+    {
+      "path": "packages/revert/tests/test_data_update_scope.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "652c1b7c1f4876b00ee4cb6f99c9feef81406321025a68eea72257b90436bd71"
+    },
+    {
+      "path": "packages/revert/tests/test_org_assign_permset.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "23fa6c34f4137e0165bb3d178df1f62e29e32aa3e93a39430865103539ca90ca"
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_meta_api_transport.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "3252a0ba32e46081e9c2271fd6dcb6f77ed597bcf79a7266506a67d2dfc5500e"
+    },
+    {
+      "path": "packages/qa_orchestrator/tests/test_meta_api_job_identity.py",
+      "origin": "authored for Torque continuation public product work",
+      "destination_sha256": "f6aa3efbd1cd250a0a24a2b5f87e2df3c1603cf8567b4ca6c3af746d4008d2dd"
+    }
+  ],
+  "manifest_version": 2,
+  "source_hash_meaning": "SHA-256 of inspected source working-tree bytes; source_commit records the repository HEAD at selection.",
+  "destination_hash_meaning": "SHA-256 of final selected/adapted file bytes, excluding this self-referential manifest.",
+  "new_files": [
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/input.txt",
+      "destination_sha256": "bf320c415b9c786abe36e4a1b835fd4035829690d6b287f4eb30aed520a22998",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/prompt.txt",
+      "destination_sha256": "b7f66f79dfff1559d6f5694dbe22885cb40772d011fd82920e47c1494f2bfe29",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/config/client-values.yaml",
+      "destination_sha256": "fed8e1cd5051e2f9f24b2054c14b05e3af670e451688095163ea449a8e2ed437",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/config/object-registry.yaml",
+      "destination_sha256": "4f353b70e29f9eac73d3f8307ed4f8a667d6d077f2977d5a66399911ea0d1832",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/browser_tests/jsc_browser_tests/provisioning/fixtures.py",
+      "destination_sha256": "506f40088c71267eef097e9fe4800d37aadb1cf6c2a1c22dde34fbd23913cd77",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/browser_tests/tests/test_coverage_honesty.py",
+      "destination_sha256": "d2fd04e54ada0b2f35be294b2ff85e63447ec10179ddeca6f0f41f1902d82bed",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/jsc_common/jsc_common/workspace.py",
+      "destination_sha256": "bda4613014cd2c6d512d7dac43f7a3366bd085eb7c7a2fb37d50aa6e75c23bac",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/jsc_common/tests/test_continuation.py",
+      "destination_sha256": "b71ff9298fe7be09cf645f23985346887dbfca654aad7cdcc5205632444486e5",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/licenses/Apache-2.0.txt",
+      "destination_sha256": "3e870d8e269c3970523e34a8678b4b96ce16a31cc1aa3db8f1a590cc4a451013",
+      "origin": "license text preserved from claudeblazer/LICENSE",
+      "source_repository": "claudeblazer",
+      "source_path": "LICENSE",
+      "source_sha256": "3e870d8e269c3970523e34a8678b4b96ce16a31cc1aa3db8f1a590cc4a451013"
+    },
+    {
+      "path": "packages/licenses/NOTICE.txt",
+      "destination_sha256": "28fed5f0ec1a6c4b5d748504a581b2d07cf6de5ef2608876801e132a6e24a1d6",
+      "origin": "authored for Torque continuation"
+    },
+    {
+      "path": "packages/revert/jsc_revert/update_fields.py",
+      "origin": "authored for Torque continuation live acceptance fixes",
+      "destination_sha256": "f788d1ac847c1cdfa8b5c2f100757a478dd884ad851305db7492dcf9a5f9a51e"
+    },
+    {
+      "path": "packages/revert/tests/test_data_update_scope.py",
+      "origin": "authored for Torque continuation live acceptance fixes",
+      "destination_sha256": "652c1b7c1f4876b00ee4cb6f99c9feef81406321025a68eea72257b90436bd71"
+    },
+    {
+      "path": "packages/revert/tests/test_org_assign_permset.py",
+      "origin": "authored for Torque continuation live acceptance fixes",
+      "destination_sha256": "23fa6c34f4137e0165bb3d178df1f62e29e32aa3e93a39430865103539ca90ca"
+    },
+    {
+      "path": "packages/revert/tests/test_data_create_evidence.py",
+      "origin": "authored for Torque continuation live acceptance fixes",
+      "destination_sha256": "3db1052d6d149d321614b1fb822a5f15d578cbb68e856fe541c2a290e2da16ed"
+    }
+  ],
+  "selection_excludes": [
+    "client documents, managed Salesforce application and org-specific metadata",
+    "domain browser flows, seed records and JusticeServer test-record registry",
+    "org/auth state, actual debug logs, snapshots and meeting artifacts",
+    "global hooks, restrictive command shims and shell installation",
+    "node_modules, caches and egg metadata"
+  ]
+}

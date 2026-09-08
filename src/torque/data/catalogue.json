@@ -1,0 +1,394 @@
+[
+  {
+    "name": "help",
+    "group": "Workspace",
+    "description": "Show the complete command catalogue and choose the workflow for the task.",
+    "kind": "native",
+    "implementation": "torque workflows list",
+    "source_command": "help"
+  },
+  {
+    "name": "status",
+    "group": "Workspace",
+    "description": "Check the selected workspace, installed tools, and requested org connections.",
+    "kind": "guided",
+    "implementation": "workflows/status.md",
+    "source_command": "status"
+  },
+  {
+    "name": "context",
+    "group": "Workspace",
+    "description": "Load the selected client, current task, and relevant saved context.",
+    "kind": "native",
+    "implementation": "torque context",
+    "source_command": null
+  },
+  {
+    "name": "new-client",
+    "group": "Workspace",
+    "description": "Create a private client workspace and establish a useful engagement baseline.",
+    "kind": "guided",
+    "implementation": "workflows/new-client.md",
+    "source_command": "new-client"
+  },
+  {
+    "name": "connect-org",
+    "group": "Workspace",
+    "description": "Connect Salesforce using the existing CLI or available host integration.",
+    "kind": "guided",
+    "implementation": "workflows/connect-org.md",
+    "source_command": "connect-org"
+  },
+  {
+    "name": "diagnose",
+    "group": "Investigate",
+    "description": "Diagnose org, tool, deployment, context or access issues and carry through authorized fixes.",
+    "kind": "guided",
+    "implementation": "workflows/diagnose.md",
+    "source_command": "diagnose"
+  },
+  {
+    "name": "audit-org",
+    "group": "Investigate",
+    "description": "Audit an org across configuration, automation, access, data and operational health.",
+    "kind": "guided",
+    "implementation": "workflows/audit-org.md",
+    "source_command": "audit-org"
+  },
+  {
+    "name": "compare-orgs",
+    "group": "Investigate",
+    "description": "Compare two orgs or an org and baseline to explain meaningful differences.",
+    "kind": "guided",
+    "implementation": "workflows/compare-orgs.md",
+    "source_command": "compare-orgs"
+  },
+  {
+    "name": "field-audit",
+    "group": "Investigate",
+    "description": "Review field metadata, population and dependencies for cleanup or data-quality work.",
+    "kind": "guided",
+    "implementation": "workflows/field-audit.md",
+    "source_command": "field-audit"
+  },
+  {
+    "name": "flow-analyzer",
+    "group": "Investigate",
+    "description": "Explain, review and improve a Flow from its current definition and actual behavior.",
+    "kind": "guided",
+    "implementation": "workflows/flow-analyzer.md",
+    "source_command": "flow-analyzer"
+  },
+  {
+    "name": "preflight-org",
+    "group": "Delivery",
+    "description": "Resolve the intended org and relevant metadata before live work.",
+    "kind": "guided",
+    "implementation": "workflows/preflight-org.md",
+    "source_command": "preflight-org"
+  },
+  {
+    "name": "retrieve-current",
+    "group": "Delivery",
+    "description": "Retrieve current metadata, preserve the baseline and stage an editable proposal.",
+    "kind": "guided",
+    "implementation": "workflows/retrieve-current.md",
+    "source_command": "retrieve-current"
+  },
+  {
+    "name": "prep-changeset",
+    "group": "Delivery",
+    "description": "Prepare a dependency-aware deployment packet from the actual change.",
+    "kind": "guided",
+    "implementation": "workflows/prep-changeset.md",
+    "source_command": "prep-changeset"
+  },
+  {
+    "name": "prep-migration",
+    "group": "Delivery",
+    "description": "Plan and execute scoped data migration with reconciliation and restoration of temporary settings.",
+    "kind": "guided",
+    "implementation": "workflows/prep-migration.md",
+    "source_command": "prep-migration"
+  },
+  {
+    "name": "validate-change",
+    "group": "Delivery",
+    "description": "Validate the exact proposed change with relevant static, deployment and functional checks.",
+    "kind": "guided",
+    "implementation": "workflows/validate-change.md",
+    "source_command": "validate-change"
+  },
+  {
+    "name": "verify-change",
+    "group": "Delivery",
+    "description": "Verify the actual deployed or configured outcome and record remaining uncertainty.",
+    "kind": "guided",
+    "implementation": "workflows/verify-change.md",
+    "source_command": "verify-change"
+  },
+  {
+    "name": "sandbox-refresh",
+    "group": "Delivery",
+    "description": "Reconnect and restore the intended sandbox configuration after an actual refresh.",
+    "kind": "guided",
+    "implementation": "workflows/sandbox-refresh.md",
+    "source_command": "sandbox-refresh"
+  },
+  {
+    "name": "security-review",
+    "group": "Investigate",
+    "description": "Review object, field and record access for the intended users and business process.",
+    "kind": "guided",
+    "implementation": "workflows/security-review.md",
+    "source_command": "security-review"
+  },
+  {
+    "name": "snapshot",
+    "group": "Recovery",
+    "description": "Capture a scoped point-in-time baseline, distinguishing reference evidence from recovery payloads.",
+    "kind": "guided",
+    "implementation": "workflows/snapshot.md",
+    "source_command": "snapshot"
+  },
+  {
+    "name": "undo",
+    "group": "Recovery",
+    "description": "Reverse the specified recent work using actual change evidence and available recovery paths.",
+    "kind": "guided",
+    "implementation": "workflows/undo.md",
+    "source_command": "undo"
+  },
+  {
+    "name": "advisory",
+    "group": "Investigate",
+    "description": "Use platform notes, Flow activation, impact and evidence helpers without changing the org.",
+    "kind": "native",
+    "implementation": "torque advisory",
+    "source_command": "advisory"
+  },
+  {
+    "name": "qa",
+    "group": "QA",
+    "description": "Select and execute useful QA surfaces for the change, with explicit coverage and gaps.",
+    "kind": "native",
+    "implementation": "torque qa run",
+    "source_command": "qa"
+  },
+  {
+    "name": "qa-browser",
+    "group": "QA",
+    "description": "Run a selected browser journey and verify its actual user and side effects.",
+    "kind": "native",
+    "implementation": "torque browser browser",
+    "source_command": "qa-browser"
+  },
+  {
+    "name": "qa-multiprofile",
+    "group": "QA",
+    "description": "Test the selected journey for configured users and compare role-specific behavior.",
+    "kind": "native",
+    "implementation": "torque browser multiprofile",
+    "source_command": "qa-multiprofile"
+  },
+  {
+    "name": "qa-sanitize-replay",
+    "group": "QA",
+    "description": "Scan a replay script for credential patterns and report masked findings.",
+    "kind": "native",
+    "implementation": "torque browser sanitize-replay",
+    "source_command": "qa-sanitize-replay"
+  },
+  {
+    "name": "qa-token-grant",
+    "group": "Compatibility",
+    "description": "Explain or manage an explicitly requested legacy QA skip token.",
+    "kind": "compatibility",
+    "implementation": "torque qa token-grant",
+    "source_command": "qa-token-grant"
+  },
+  {
+    "name": "qa-token-show",
+    "group": "Compatibility",
+    "description": "Inspect an optional legacy QA skip token without affecting ordinary work.",
+    "kind": "compatibility",
+    "implementation": "torque qa token-show",
+    "source_command": "qa-token-show"
+  },
+  {
+    "name": "qa-token-revoke",
+    "group": "Compatibility",
+    "description": "Remove an optional legacy QA skip token when requested.",
+    "kind": "compatibility",
+    "implementation": "torque qa token-revoke",
+    "source_command": "qa-token-revoke"
+  },
+  {
+    "name": "revert-show",
+    "group": "Recovery",
+    "description": "List available operation snapshots and their actual recovery state.",
+    "kind": "native",
+    "implementation": "torque revert revert show",
+    "source_command": "revert-show"
+  },
+  {
+    "name": "revert-preview",
+    "group": "Recovery",
+    "description": "Preview a specific restoration against current state without executing it.",
+    "kind": "native",
+    "implementation": "torque revert revert preview",
+    "source_command": "revert-preview"
+  },
+  {
+    "name": "revert",
+    "group": "Recovery",
+    "description": "Restore a supported captured operation and verify the resulting state.",
+    "kind": "native",
+    "implementation": "torque revert revert exec",
+    "source_command": "revert"
+  },
+  {
+    "name": "revert-discard",
+    "group": "Recovery",
+    "description": "Mark a selected snapshot abandoned while keeping its recovery artifacts.",
+    "kind": "native",
+    "implementation": "torque revert revert discard",
+    "source_command": "revert-discard"
+  },
+  {
+    "name": "lesson",
+    "group": "Learning",
+    "description": "Save a scoped lesson from supplied content or the current session.",
+    "kind": "native",
+    "implementation": "torque lesson capture",
+    "source_command": "lesson"
+  },
+  {
+    "name": "lesson-show",
+    "group": "Learning",
+    "description": "Read relevant saved lessons and distinguish active, pending and archived records.",
+    "kind": "native",
+    "implementation": "torque lesson show",
+    "source_command": "lesson-show"
+  },
+  {
+    "name": "lesson-helpful",
+    "group": "Learning",
+    "description": "Mark a specific saved lesson useful and retain its original evidence scope.",
+    "kind": "native",
+    "implementation": "torque lesson helpful",
+    "source_command": "lesson-helpful"
+  },
+  {
+    "name": "lesson-stale",
+    "group": "Learning",
+    "description": "Mark a specific lesson outdated while preserving its history.",
+    "kind": "native",
+    "implementation": "torque lesson stale",
+    "source_command": "lesson-stale"
+  },
+  {
+    "name": "collect-lessons",
+    "group": "Learning",
+    "description": "Curate selected lessons into reusable knowledge without merging private client facts.",
+    "kind": "guided",
+    "implementation": "workflows/collect-lessons.md",
+    "source_command": "collect-lessons"
+  },
+  {
+    "name": "session-save",
+    "group": "Continuity",
+    "description": "Save a concise factual session delta and artifact references for the next session.",
+    "kind": "native",
+    "implementation": "torque session add",
+    "source_command": null
+  },
+  {
+    "name": "session-resume",
+    "group": "Continuity",
+    "description": "Resume a client task from durable records and fresh operational checks.",
+    "kind": "native",
+    "implementation": "torque session list",
+    "source_command": null
+  },
+  {
+    "name": "export-session",
+    "group": "Continuity",
+    "description": "Export selected session work as an internal record, client update or change log.",
+    "kind": "guided",
+    "implementation": "workflows/export-session.md",
+    "source_command": "export-session"
+  },
+  {
+    "name": "handoff",
+    "group": "Continuity",
+    "description": "Produce a resumable handoff from the client history and current task evidence.",
+    "kind": "native",
+    "implementation": "torque handoff",
+    "source_command": "handoff"
+  },
+  {
+    "name": "discovery",
+    "group": "Discovery",
+    "description": "Carry discovery from stakeholder input to implementable requirements and an agreed next step.",
+    "kind": "guided",
+    "implementation": "workflows/discovery.md",
+    "source_command": null
+  },
+  {
+    "name": "training",
+    "group": "Documentation",
+    "description": "Create a practical end-user or administrator guide for the configured workflow.",
+    "kind": "guided",
+    "implementation": "workflows/training.md",
+    "source_command": "training"
+  },
+  {
+    "name": "release-notes",
+    "group": "Documentation",
+    "description": "Write technical and client-facing release notes from verified change evidence.",
+    "kind": "guided",
+    "implementation": "workflows/release-notes.md",
+    "source_command": "release-notes"
+  },
+  {
+    "name": "process-meeting",
+    "group": "Discovery",
+    "description": "Extract a recording timeline and turn supplied meeting material into decisions and delivery work.",
+    "kind": "native",
+    "implementation": "torque meeting",
+    "source_command": "process-meeting"
+  },
+  {
+    "name": "logs",
+    "group": "Investigate",
+    "description": "Analyze supplied Salesforce debug logs and relate findings to the reported problem.",
+    "kind": "native",
+    "implementation": "torque logs",
+    "source_command": null
+  },
+  {
+    "name": "probes",
+    "group": "QA",
+    "description": "Generate adversarial Apex test scaffolds and guide their validation and execution.",
+    "kind": "native",
+    "implementation": "torque probes",
+    "source_command": null
+  },
+  {
+    "name": "update-torque",
+    "group": "Workspace",
+    "description": "Update the actual Torque installation while preserving private context and local source work.",
+    "kind": "guided",
+    "implementation": "workflows/update-torque.md",
+    "source_command": null
+  },
+  {
+    "name": "update-jsc",
+    "group": "Compatibility",
+    "description": "Continue the old update command name through the Torque update workflow.",
+    "kind": "compatibility",
+    "implementation": "workflows/update-jsc.md",
+    "source_command": "update-jsc"
+  }
+]

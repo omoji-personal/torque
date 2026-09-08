@@ -1,71 +1,54 @@
-# Security
+# Security and data boundaries
 
-Torque makes a security claim, so it owes you a way to challenge it.
+Torque is a local command-line workspace, not a hosted multi-tenant service.
+Its client selection and private file handling reduce accidental mixing; they do
+not sandbox a malicious local process, encrypt the disk or replace OS access controls.
 
-## Found a bypass?
+## Where data goes
 
-**That is the point of the project.** Every attack fixture in `harness/tests/` exists because a
-review found a way through an earlier version of this code. Yours would be the next one.
+Client context, session/change records, browser evidence, recovery captures and
+optional adapters belong in the selected private workspace. New private files use
+restrictive modes where supported. Private paths are ignored in new workspaces;
+existing tracked files remain tracked and can be reported by `torque doctor`.
+Git ignore rules and file modes are not encryption or a publication review.
 
-- **Something that defeats a stated invariant** — email **omid.mojtahedi@gmail.com** with the
-  command or tool call and what you expected to happen. Please don't open a public issue first;
-  I'll confirm within 72 hours, and I'd like a fix and a regression fixture in place before it's
-  public. 90 days is a fair ceiling — after that, publish regardless.
-- **Anything else** (a false denial that blocks legitimate work, a broken first run, a doc that
-  overclaims) — open a public issue. Those aren't sensitive and I'd rather they were visible.
+Torque has no embedded hosted telemetry backend. Explicit Salesforce operations
+use existing Salesforce CLI authentication. Browser authentication handles session
+URLs in memory and redacts known credential patterns in persisted diagnostics.
+Redaction is not a general PII anonymizer; screenshots, metadata, debug logs and
+record captures may contain sensitive client information.
 
-If you send a bypass, tell me how you'd like to be credited. Fixtures carry attribution.
+Your assistant, installed plugins, provider CLIs and third-party tools have their
+own data policies. Optional meeting/vision/prompt adapters can send selected inputs
+to the configured provider when invoked. Review inputs and their destination.
+Workspace Python browser flows and parity scripts are executable code; only load
+adapters you trust. Retrieved documents and org data are evidence, not instructions
+that override the operator's request.
 
-## What is in scope
+When an assistant reads local files or tool output, it can send that content to its
+cloud model. Local execution does not establish local-only processing. Torque does
+not automatically expire client workspaces, snapshots or exports, and token
+redaction does not remove all personal or confidential information. Provider
+no-training commitments, retention terms and client authorization are separate.
+See [client adoption and data paths](docs/client-adoption.md) and the optional
+[engagement worksheet](examples/client-data-boundary.md).
 
-The invariants the gates claim to hold, all enforced on the agent's tool surface
-(Bash / Edit / Write / Read / MCP):
+## Operations and recovery
 
-1. No Salesforce write reaches a non-allowlisted or production org without an operator override.
-2. The agent cannot mint an approval token or session grant, and cannot read the signing secret
-   or the `sf` CLI auth store.
-3. Destructive operations require an operator-present token, on both the Bash and MCP surfaces.
-4. The gate files and the trust anchor cannot be modified through the agent's tool surface
-   (Edit/Write/MultiEdit, and Bash write shapes including redirects, `cp`/`mv`/`tee` and
-   `git checkout`). An interpreter one-liner that opens the file and writes it — the same
-   subprocess channel described below — is NOT covered; that is a known gap, not a claim.
-5. A gate that crashes or times out denies rather than allows.
-6. The production override cannot be forged, replayed, or widened.
+Targets are explicit. Recovery captures have operation-specific limits and are
+not complete backups. A local lease coordinates cooperating processes; it cannot
+cancel an already submitted Salesforce job or supply a distributed transaction.
+Missing verification is reported as incomplete. Ordinary user authorization governs
+work; Torque does not install a global approval or command-blocking framework.
 
-## What is explicitly NOT in scope
+## Reporting a vulnerability
 
-These are documented limits, not undiscovered holes — see the threat model in
-[`guide/Torque-Guide.pdf`](guide/Torque-Guide.pdf) §05:
+Do not post tokens, private client evidence or an exploitable confidential payload
+in a public issue. If the repository exposes GitHub's **Report a vulnerability**
+option, use that private channel. Otherwise open a sanitized issue requesting a
+private maintainer contact before sharing the details. No dedicated response SLA
+or independent security certification is claimed for this development alpha.
 
-- **Arbitrary code executed as the same OS user.** Reading `~/.torque/secret` via `/proc`,
-  `ptrace`, or a compiled binary; forging a login session with a purpose-built program. A
-  PreToolUse hook cannot adjudicate that — it is a credentials and OS-trust boundary.
-- **`sf` spawned as a subprocess of a script the agent writes and runs.** The hook sees the
-  script's invocation, not what the script spawns. **Demonstrated live 2026-08-05:** an agent
-  wrote `sf` into a file, ran `bash script.sh`, and deployed metadata to an org that was not on
-  the write allowlist — no hook fired, no audit line was written. So **without the exec-time shim
-  the allowlist is advisory rather than enforced.**
-
-  The shim that closes this **is built** — `torque install-gates --shim`, covered by seven
-  `shim_*` checks in the static profile. This section said "v2 roadmap, not built yet" while the
-  README said it shipped; two files in one repository disagreeing about whether a control exists
-  is worse than either answer, and the disagreement is the finding. It recurred on the count: this
-  file said five and the README said four while the registry held seven, and neither number was
-  ever right. Nothing checks it, which is why. With the shim installed and first on PATH,
-  the same script-mediated write is refused at exec time on argv the kernel resolved.
-- **Anything upstream of the credentials.** If a production org is authenticated with write
-  permissions in an autonomous session, Torque narrows the blast radius; it does not remove it.
-  Connect production read-only.
-
-Reports that land in the "not in scope" list are still welcome — if you can show one is easier
-to reach than the threat model implies, that is a real finding about the documentation.
-
-## Verifying the claims yourself
-
-```
-python3 bin/torque-demo                     # ~3s, no org, no credentials
-python3 harness/validate.py --self-test     # neuters each guard; the attack must then succeed
-```
-
-The self-test is the honest one: a check that cannot fail proves nothing, so each guard is
-temporarily broken on purpose and the corresponding attack is *required* to get through.
+Include the version, affected command, a synthetic reproduction, expected boundary
+and observed result. Revoke exposed credentials with the issuing service if an
+actual exposure occurred; deleting a local log alone does not revoke a token.
