@@ -57,16 +57,27 @@ def main():
             notes.write("\n" + firm_marker + "\n")
         (private / "clients/alpha/context.md").write_text(alpha_marker + "\n")
         (private / "clients/beta/context.md").write_text(sibling_marker + "\n")
+        proof = private / "clients/alpha/artifacts/proof.txt"
+        proof.write_text("Synthetic observation before the next session")
         call("session", "add", "--workspace", str(private), "--client", "alpha",
-             "--summary", "Synthetic Alpha-only outcome; no org operation was performed.", "--status", "prepared")
+             "--summary", "Synthetic Alpha-only outcome; no org operation was performed.", "--status", "prepared",
+             "--evidence", str(proof))
         call("session", "add", "--workspace", str(private), "--client", "beta",
              "--summary", "Synthetic Beta-private marker", "--status", "incomplete")
         context = call("context", "--workspace", str(private), "--client", "alpha", "--json")
         assert "Alpha-only" in context and "Beta-private" not in context
+        assert json.loads(context)["sessions"][0]["evidence_integrity"] == "matches_reference"
+        proof.write_text("Synthetic observation changed after recording")
         handoff = call("handoff", "--workspace", str(private), "--client", "alpha")
         assert "Alpha-only" in handoff and "Beta-private" not in handoff and "user-reported" in handoff
         assert firm_marker in handoff and alpha_marker in handoff, "Selected client handoff omitted working notes"
         assert sibling_marker not in handoff, "Selected client handoff leaked sibling notes"
+        assert "Evidence integrity: changed" in handoff
+        doctor = json.loads(call("doctor", "--workspace", str(private), "--client", "alpha", "--json"))
+        assert doctor["client"]["evidence_problems"] == 1
+        assert doctor["client"]["sessions_checked"] == 1
+        if options.require_wheel:
+            assert "site-packages" in Path(doctor["installation"]["package"]).parts
         call("lesson", "show", "--workspace", str(private), "--client", "alpha")
         demo = json.loads(call("demo", str(root / "demo"), "--json"))
         assert not demo["org_calls"] and demo["synthetic"]
@@ -101,7 +112,18 @@ def main():
         selected_recipe = call("workflows", "show", "diagnose", "--workspace", str(private))
         assert selected_recipe.strip() == recipe.read_text().strip(), "CLI did not return the preserved local recipe"
         assert "Local synthetic customization." in selected_recipe
-        print(f"Installed CLI verified: nine delegates, six public routes, {len(rows)} recipes, offline demo, private init, two-client/four-change fresh-process continuity, reported failure handoff and customized workspace upgrade.")
+        # A CLI installed outside a checkout must still recognize the destination's identity.
+        checkout = root / "synthetic-torque-source"
+        (checkout / "src/torque").mkdir(parents=True)
+        (checkout / "src/torque/__init__.py").touch()
+        (checkout / "src/torque/workspace.py").touch()
+        (checkout / "pyproject.toml").write_text('[project]\nname = "torque-salesforce"\n')
+        forbidden = checkout / "private"
+        denied = subprocess.run([sys.executable, "-m", "torque", "workspace", "init", str(forbidden),
+                                 "--name", "Synthetic private firm"], cwd=root, env=env,
+                                capture_output=True, text=True, timeout=30)
+        assert denied.returncode == 2 and "source checkout" in denied.stderr and not forbidden.exists()
+        print(f"Installed CLI verified: nine delegates, six public routes, {len(rows)} recipes, offline demo, private init, two-client/four-change fresh-process continuity, evidence drift, complete client doctor, source/private boundary, reported failure handoff and customized workspace upgrade.")
 
 
 if __name__ == "__main__":

@@ -23,7 +23,10 @@ Windows has not been qualified. The demo path must be new and outside the checko
 
 Use the absolute `.venv/bin/torque` path from any working directory, or put that
 installation's `.venv/bin` on the PATH of the process running your assistant.
-Verify `torque --version` inside that assistant's terminal. Activating a virtual
+Verify `torque --version` and `torque doctor` inside that assistant's terminal.
+Doctor shows the loaded package directory; its JSON output also identifies the
+Python executable. This helps distinguish a reviewed installation from an older
+copy elsewhere on PATH. Activating a virtual
 environment in a different shell does not update an already running desktop app.
 Do not copy the executable alone: it points to the installation's interpreter.
 
@@ -65,6 +68,9 @@ browser can launch, authenticate, switch users or exercise the client's workflow
 The doctor command deliberately reports local dependencies separately from live
 verification. It also reports private paths already tracked by Git when inspecting
 a workspace; it does not rewrite Git history or change repository visibility.
+With `--workspace PATH --client NAME`, it also checks that client's saved sessions,
+changes and evidence. Missing or changed evidence is reported for review; local
+dependency readiness does not certify saved claims or live Salesforce behavior.
 
 Install and authenticate [Salesforce CLI](https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference.html)
 using its official instructions. Torque reuses that connection. Record the alias

@@ -25,3 +25,9 @@ When the engagement uses change records, inspect the relevant summary returned b
 `context`, then `torque change show <change-id> --workspace <path> --client <name>`.
 Continue from unresolved criteria and the latest decision; retain failed history.
 A Metadata API success establishes its exact technical scope, not business acceptance.
+
+Session reads recheck referenced evidence against its recorded hash. Changed,
+missing or unavailable evidence stays visible without rewriting the journal.
+Use `torque doctor --workspace <path> --client <name>` when diagnosing saved context;
+it checks all selected-client sessions and changes and identifies the loaded
+installation. An unchanged file hash does not prove the recorded result.

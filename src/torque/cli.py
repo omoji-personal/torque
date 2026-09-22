@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="torque", description="Salesforce consulting workflows and private client context.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
-    work = sub.add_parser("workspace", help="initialize a private employer workspace")
+    work = sub.add_parser("workspace", help="initialize or update a private consulting workspace")
     work_sub = work.add_subparsers(dest="action", required=True)
     init = work_sub.add_parser("init", help="create local files; does not connect an org")
     init.add_argument("path")
@@ -373,6 +373,8 @@ def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
     report = {"python": sys.version.split()[0], "torque_version": __version__,
+              "installation": {"package": str(Path(__file__).resolve().parent),
+                               "python_executable": sys.executable},
               "executables": {name: shutil.which(name) for name in ("sf", "git", "ffmpeg")},
               "optional_modules": {name: importlib.util.find_spec(name) is not None
                                    for name in ("yaml", "playwright", "PIL")},
@@ -383,8 +385,16 @@ def _doctor(args: argparse.Namespace) -> int:
         if args.client:
             client, _, data = ws.load_client(root, args.client)
             # Reading the selected journal also checks its local format, without evaluating claims.
-            entries = ws.list_sessions(root, args.client)
-            report["client"] = {"path": str(client), "name": data["name"], "recent_sessions": len(entries)}
+            entries = ws.list_sessions(root, args.client, limit=None)
+            from .changes import get_change, list_changes
+            changes = [get_change(root, args.client, change["id"])
+                       for change in list_changes(root, args.client)]
+            evidence_problems = sum(entry["evidence_integrity"] in ("missing", "changed", "unavailable")
+                                    for entry in entries)
+            evidence_problems += sum(change["assessment"]["evidence_problems"] for change in changes)
+            report["client"] = {"path": str(client), "name": data["name"],
+                                "recent_sessions": min(len(entries), 20), "sessions_checked": len(entries),
+                                "changes_checked": len(changes), "evidence_problems": evidence_problems}
     requirements = {"workspace": (), "salesforce": ("sf",), "browser": ("sf", "playwright"),
                     "meeting": ("ffmpeg", "PIL")}
     available = {**{name: bool(path) for name, path in report["executables"].items()}, **report["optional_modules"]}
@@ -396,6 +406,10 @@ def _doctor(args: argparse.Namespace) -> int:
     report["requested_capability"] = selected
     report["ready"] = report["capabilities"][selected]["local_dependencies_ready"]
     report["next_actions"] = []
+    if report["client"] and report["client"]["evidence_problems"]:
+        report["next_actions"].append(
+            f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
+            "in this client's handoff before relying on the recorded checks.")
     if not available["sf"]:
         report["next_actions"].append("Install the official Salesforce CLI before live org work; context and the offline demo remain usable.")
     if not available["playwright"]:
@@ -415,6 +429,7 @@ def _doctor(args: argparse.Namespace) -> int:
         _print_json(report)
     else:
         print(f"Torque {__version__}; Python {report['python']}")
+        print(f"Installation: {report['installation']['package']}")
         for name, path in report["executables"].items():
             print(f"{name}: {path or 'not on PATH'}")
         for name, found in report["optional_modules"].items():
@@ -494,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"\n{title}:\n{value}")
                 for change in context.get("changes", []):
                     print(f"\nChange {change['id']}: {change['title']} — {change['outcome']}")
-                    unresolved = [f"{criterion['id']} ({criterion['reported_result']})"
+                    unresolved = [f"{criterion['id']} ({criterion['reported_result'].replace('_', ' ')})"
                                   for criterion in change["criteria"] if criterion["reported_result"] != "pass"]
                     print("Acceptance results are operator-reported; independent business acceptance is not established.")
                     if unresolved:
@@ -502,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif not change["criteria"]:
                         print("No acceptance criteria recorded.")
                     if change["assessment"]["evidence_problems"]:
-                        print(f"Evidence problems: {change['assessment']['evidence_problems']} missing or changed captures.")
+                        print(f"Evidence problems: {change['assessment']['evidence_problems']} missing, changed or unavailable captures.")
                     for decision in change["decisions"]:
                         print(f"Decision (reported): {decision['summary']}")
                     for observation in change["metadata_observations"]:
@@ -515,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
                     print("Full change: " + change["show_command"])
                 for entry in context["sessions"]:
                     print(f"\n{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}")
+                    if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
+                        print(f"Evidence: {entry['evidence_integrity']} since recording.")
         elif parsed.command == "session":
             if parsed.action == "add":
                 entry = ws.add_session(parsed.workspace, parsed.client, parsed.summary, parsed.status, parsed.evidence)
@@ -534,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     for entry in entries:
                         print(f"{entry['id']} [{entry['status']}, user-reported] {entry['summary']}")
+                        if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
+                            print(f"Evidence: {entry['evidence_integrity']} since recording.")
                     if not entries:
                         print("No session entries for this client.")
         elif parsed.command == "handoff":

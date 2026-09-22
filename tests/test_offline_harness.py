@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -99,6 +100,58 @@ def test_nonzero_child_cannot_be_overridden_by_success_banner(harness, monkeypat
     monkeypatch.setattr(subprocess, "run", child)
     assert harness.main() == 1
     assert "FAIL packages/example/tests/test_failed.py" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("arguments,standalone", [
+    (["-q", "--maxfail", "1"], True),
+    (["-q", "-k", "example"], True),
+    (["-q", "tests"], True),
+    (["--pytest-only", "-q", "tests"], False),
+    (["--collect-only", "-q"], False),
+    (["--help"], False),
+])
+def test_only_explicit_selection_skips_executable_suites(harness, monkeypatch, tmp_path, arguments, standalone):
+    _fake_repository(harness, monkeypatch, tmp_path, ["test_measured.py"])
+    monkeypatch.setattr(sys, "argv", ["test-offline.py", *arguments])
+    calls = []
+    def child(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="example self-test PASSED (1 fixtures)\n", stderr="")
+    monkeypatch.setattr(subprocess, "run", child)
+    assert harness.main() == 0
+    assert len(calls) == (2 if standalone else 1)
+    assert "--pytest-only" not in calls[0]
+
+
+def test_runner_and_fresh_children_import_current_source_despite_stale_pythonpath(tmp_path):
+    root = tmp_path / "source"
+    script = root / "scripts/test-offline.py"
+    script.parent.mkdir(parents=True)
+    script.write_bytes((ROOT / "scripts/test-offline.py").read_bytes())
+    for base in (root / "src", root / "packages/example", tmp_path / "stale"):
+        for module in ("torque", "jsc_example"):
+            if base.name != "stale" and ((base.name == "src") != (module == "torque")):
+                continue
+            package = base / module
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text(f'ORIGIN = {str(base)!r}\n')
+    test = root / "tests/test_source.py"
+    test.parent.mkdir()
+    assertions = (
+        "import torque, jsc_example\n"
+        f"assert torque.ORIGIN == {str(root / 'src')!r}\n"
+        f"assert jsc_example.ORIGIN == {str(root / 'packages/example')!r}\n"
+    )
+    test.write_text("def test_actual_source():\n" + "\n".join("    " + line for line in assertions.splitlines()) + "\n")
+    executable = root / "packages/example/tests/test_executable.py"
+    executable.parent.mkdir()
+    executable.write_text(assertions + "print('source self-test PASSED (2 fixtures)')\n")
+    env = dict(os.environ, PYTHONPATH=str(tmp_path / "stale"))
+    run = subprocess.run([sys.executable, str(script), "-q", "--maxfail", "1"],
+                         cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "1 passed" in run.stdout
+    assert "PASS packages/example/tests/test_executable.py" in run.stdout
 
 
 def test_qa_load_timeout_entry_point_exits_incomplete(monkeypatch, capsys):

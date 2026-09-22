@@ -21,6 +21,11 @@ python3 -m venv .venv
 ```
 
 Use a regular install after source changes when validating installed behavior.
+The offline runner selects the current checkout for pytest and child-process
+imports, even if an older Torque package is installed. It runs the standalone
+fixture suites as well. For a focused iteration, use
+`python scripts/test-offline.py --pytest-only tests/test_workspace.py -q`;
+this explicitly omits the standalone suites and is not full qualification.
 Keep conversational recipes under `workflows/`, then run `workflows/sync_adapters.py`
 and `scripts/sync-workflows.py` to refresh adapters and wheel resources. See
 [validation](docs/validation.md) for the clean-wheel check. A source test does not

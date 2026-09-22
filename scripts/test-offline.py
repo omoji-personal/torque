@@ -2,11 +2,19 @@
 """Run offline tests with temporary state and an unavailable external-tool stub."""
 import os
 import ast
+import argparse
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+
+
+def source_paths(root: Path) -> list[Path]:
+    """Use this checkout in pytest and fresh child processes, never a stale install."""
+    packages = sorted(path for path in (root / "packages").glob("*")
+                      if path.is_dir() and any(path.glob("*/__init__.py")))
+    return [root / "src", *packages]
 
 
 def standalone_summary(stdout: str) -> tuple[bool, str]:
@@ -37,6 +45,9 @@ def standalone_summary(stdout: str) -> tuple[bool, str]:
 
 def main():
     root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--pytest-only", action="store_true")
+    options, pytest_args = parser.parse_known_args()
     with tempfile.TemporaryDirectory(prefix="torque-offline-") as temporary:
         scratch = Path(temporary)
         bins = scratch / "bin"
@@ -57,6 +68,7 @@ def main():
                if not key.startswith(("TORQUE_", "JSC_"))}
         env.update({"JSC_ROOT": str(scratch / "client"),
                     "TORQUE_TEST_LIVE_SENTINEL": str(hitfile),
+                    "PYTHONPATH": os.pathsep.join(str(path) for path in source_paths(root)),
                     "PATH": str(bins) + os.pathsep + env.get("PATH", "")})
         # JSC contains pytest tests and standalone fixture harnesses. The latter
         # report failures by process exit and must not be silently just imported.
@@ -71,9 +83,13 @@ def main():
             if not collected:
                 standalone.append(path)
         ignores = [f"--ignore={p.relative_to(root)}" for p in standalone]
-        result = subprocess.run([sys.executable, "-m", "pytest", *ignores, *sys.argv[1:]], cwd=root, env=env)
+        result = subprocess.run([sys.executable, "-m", "pytest", *ignores, *pytest_args], cwd=root, env=env)
         code = result.returncode
-        if not any(not argument.startswith("-") for argument in sys.argv[1:]):
+        # Pytest options such as '--maxfail 1' have non-option operands too.
+        # Only an explicit opt-out or collection/help mode skips executable suites.
+        inspection = any(arg in ("--collect-only", "--co", "--help", "-h", "--version")
+                         for arg in pytest_args)
+        if not options.pytest_only and not inspection:
             for path in standalone:
                 label = str(path.relative_to(root))
                 try:
@@ -93,6 +109,8 @@ def main():
                         code = 1
                     else:
                         print(f"PASS {label}: {summary}")
+        elif options.pytest_only:
+            print("Selected pytest tests only; standalone fixture suites were not run.")
         if hitfile.exists():
             from collections import Counter
             calls = Counter(hitfile.read_text().splitlines())

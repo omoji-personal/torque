@@ -220,8 +220,13 @@ def _events(root: Path, record: dict) -> list[dict]:
                     or not _org(event.get("target_org")) or not isinstance(event.get("job_id"), str)
                     or not event["job_id"].strip()
                     or event.get("result") not in ("pass", "fail", "error", "deferred", "manual_required", "skip_via_token")
-                    or not isinstance(event.get("observation"), dict)):
+                    or not isinstance(event.get("observation"), dict)
+                    or not isinstance(event["observation"].get("metadata", {}), dict)):
                 raise ws.WorkspaceError(f"invalid metadata observation: {path.name}")
+            for components in (event.get("requested_components", []),
+                               event["observation"].get("metadata", {}).get("expected_components", [])):
+                if not isinstance(components, list) or any(not isinstance(c, str) for c in components):
+                    raise ws.WorkspaceError(f"invalid metadata component scope: {path.name}")
         elif event.get("basis") != "operator_reported":
             raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
         events.append(event)
@@ -234,20 +239,21 @@ def _integrity(root: Path, evidence: dict | None) -> str:
     if (not isinstance(evidence, dict) or not isinstance(evidence.get("name"), str)
             or not isinstance(evidence.get("sha256"), str)
             or not re.fullmatch(r"[a-f0-9]{64}", evidence["sha256"])
-            or not isinstance(evidence.get("bytes"), int) or evidence["bytes"] < 0):
+            or type(evidence.get("bytes")) is not int or evidence["bytes"] < 0):
         raise ws.WorkspaceError("invalid evidence reference")
     relative = evidence.get("path")
     if (not isinstance(relative, str) or Path(relative).is_absolute()
             or Path(relative).parts[:1] != ("evidence",) or ".." in Path(relative).parts):
         raise ws.WorkspaceError("invalid evidence path")
     path = ws._inside(root, root / relative)
-    if not path.is_file():
+    try:
+        digest = ws._file_hash(path)
+        size = path.stat().st_size
+    except FileNotFoundError:
         return "missing"
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
-            digest.update(chunk)
-    return "matches_capture" if digest.hexdigest() == evidence.get("sha256") else "changed"
+    except OSError:
+        return "unavailable"
+    return "matches_capture" if digest == evidence["sha256"] and size == evidence["bytes"] else "changed"
 
 
 def get_change(workspace: str | Path, client: str, identifier: str) -> dict:
@@ -270,7 +276,7 @@ def get_change(workspace: str | Path, client: str, identifier: str) -> dict:
                            "reported_pass": sum(c["reported_result"] == "pass" for c in criteria),
                            "reported_fail": sum(c["reported_result"] == "fail" for c in criteria),
                            "not_yet_reported_pass": [c["id"] for c in criteria if c["reported_result"] != "pass"],
-                           "evidence_problems": sum(e.get(key) in ("missing", "changed")
+                           "evidence_problems": sum(e.get(key) in ("missing", "changed", "unavailable")
                                                     for e in events for key in ("evidence_integrity", "manifest_integrity")),
                            "business_acceptance_independently_verified": False},
             "next_steps": [e["summary"] for e in events if e["kind"] == "next_step"]}
@@ -284,8 +290,8 @@ def render_change(workspace: str | Path, client: str, identifier: str) -> str:
     if not item["criteria"]:
         lines.append("No acceptance criteria recorded yet.")
     for criterion in item["criteria"]:
-        lines.append(f"- {criterion['id']}: {criterion['text']} — **{criterion['reported_result']}** (reported)")
-        if criterion["evidence_integrity"] in ("missing", "changed"):
+        lines.append(f"- {criterion['id']}: {criterion['text']} — **{criterion['reported_result'].replace('_', ' ')}** (reported)")
+        if criterion["evidence_integrity"] in ("missing", "changed", "unavailable"):
             lines.append(f"  Evidence: {criterion['evidence_integrity']} since capture.")
     lines += ["", "These acceptance results are operator-reported. Metadata checks below prove only their stated technical scope."]
     for kind, heading in (("decision", "Decisions"), ("metadata_observation", "Metadata observations"),
@@ -301,7 +307,7 @@ def render_change(workspace: str | Path, client: str, identifier: str) -> str:
                 components = event["observation"].get("metadata", {}).get("expected_components") or event.get("requested_components") or []
                 if components:
                     lines += ["  Expected components: " + ", ".join(components)]
-                if event.get("manifest_integrity") in ("missing", "changed"):
+                if event.get("manifest_integrity") in ("missing", "changed", "unavailable"):
                     lines += [f"  Deployment manifest: {event['manifest_integrity']} since capture."]
             elif kind == "check":
                 lines += [f"  {event['criterion']}: {event['result']} (operator-reported)"]

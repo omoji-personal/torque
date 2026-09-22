@@ -17,6 +17,7 @@ from uuid import uuid4
 PROFILES = ("generic", "solution-lead")
 STATUSES = ("prepared", "executed", "verified", "incomplete")
 CONFIG = "workspace.json"
+_SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 
 
 class WorkspaceError(ValueError):
@@ -129,14 +130,17 @@ def _torque_project(path: Path) -> bool:
         return False
 
 
-def _source_checkout() -> Path | None:
-    for ancestor in Path(__file__).resolve().parents:
-        if ((ancestor / ".git").exists()
-                and (ancestor / "src/torque/__init__.py").is_file()
+def _checkout_containing(path: Path) -> Path | None:
+    for ancestor in (path, *path.parents):
+        if ((ancestor / "src/torque/__init__.py").is_file()
                 and (ancestor / "src/torque/workspace.py").is_file()
                 and _torque_project(ancestor / "pyproject.toml")):
             return ancestor
     return None
+
+
+def _source_checkout() -> Path | None:
+    return _checkout_containing(Path(__file__).resolve())
 
 
 def _materialize_workflows(root: Path) -> None:
@@ -174,7 +178,7 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
     source = _source_checkout()
     if source is not None:
         source = source.resolve()
-    if source and (root == source or source in root.parents):
+    if (source and (root == source or source in root.parents)) or _checkout_containing(root):
         raise WorkspaceError("choose a private workspace outside the Torque source checkout")
     if (root / CONFIG).exists():
         raise WorkspaceError(f"workspace already initialized: {root}")
@@ -346,7 +350,7 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
         if clients_dir in path.parents and client not in path.parents:
             raise WorkspaceError("evidence belongs to a different client")
         try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = _file_hash(path)
         except OSError as exc:
             raise WorkspaceError(f"cannot read evidence: {path}") from exc
         evidence_ref = {"path": str(path), "sha256": digest,
@@ -363,6 +367,53 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
     return entry
 
 
+def _file_hash(path: Path) -> str:
+    """Hash large local artifacts without loading the entire file into memory."""
+    digest = hashlib.sha256()
+    # O_NONBLOCK prevents a replaced named pipe from hanging resumption.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("evidence is not a regular file")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+    finally:
+        os.close(fd)
+    return digest.hexdigest()
+
+
+def _session_evidence(client: Path, evidence: object) -> str:
+    if evidence is None:
+        return "not_supplied"
+    if (not isinstance(evidence, dict) or not isinstance(evidence.get("path"), str)
+            or not evidence["path"] or "\0" in evidence["path"]
+            or not Path(evidence["path"]).is_absolute()
+            or not isinstance(evidence.get("sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", evidence["sha256"])
+            or evidence.get("basis") != "file reference recorded; contents not evaluated"):
+        raise WorkspaceError("invalid session evidence reference")
+    path = Path(evidence["path"])
+    try:
+        resolved = path.resolve()
+        if client.parent in resolved.parents and client not in resolved.parents:
+            raise WorkspaceError("session evidence belongs to a different client")
+        if path != resolved:
+            return "unavailable"  # A saved canonical reference now traverses a symlink.
+        return "matches_reference" if _file_hash(path) == evidence["sha256"] else "changed"
+    except FileNotFoundError:
+        return "missing"
+    except (OSError, RuntimeError):
+        return "unavailable"
+
+
+def _session_timestamp(value: object) -> bool:
+    try:
+        return isinstance(value, str) and datetime.fromisoformat(value).utcoffset() is not None
+    except ValueError:
+        return False
+
+
 def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 20) -> list[dict]:
     client, _, config = load_client(workspace, client_name)
     sessions = _inside(client, client / "sessions")
@@ -374,13 +425,18 @@ def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 2
     entries = []
     for path in paths:
         value = _read_json(_inside(client, path))
-        if (value.get("schema") != "torque.session/1" or value.get("client") != config["slug"]
+        if (not _SESSION_ID.fullmatch(path.stem)
+                or value.get("schema") != "torque.session/1" or value.get("client") != config["slug"]
                 or value.get("id") != path.stem or value.get("status") not in STATUSES
                 or value.get("status_basis") != "user_reported"
                 or value.get("independently_verified") is not False
                 or not isinstance(value.get("summary"), str)
-                or not isinstance(value.get("created_at"), str)):
+                or not value["summary"].strip() or not _session_timestamp(value.get("created_at"))):
             raise WorkspaceError(f"invalid session record: {path}")
+        try:
+            value["evidence_integrity"] = _session_evidence(client, value.get("evidence"))
+        except WorkspaceError as exc:
+            raise WorkspaceError(f"{exc}: {path}") from exc
         entries.append(value)
     return entries
 
@@ -475,6 +531,7 @@ def render_handoff(workspace: str | Path, client_name: str) -> str:
         evidence = entry.get("evidence")
         if evidence:
             lines += [f"Evidence reference: {evidence['path']}", f"Recorded SHA-256: {evidence['sha256']}",
+                      f"Evidence integrity: {entry['evidence_integrity'].replace('_', ' ')}",
                       "The reference was hashed when recorded; its content was not assessed."]
         else:
             lines.append("Evidence reference: none supplied.")

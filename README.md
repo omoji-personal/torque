@@ -12,7 +12,7 @@ account and installs no global command interception or approval-token system.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-**Status: 2.0.0a8, development alpha.** The local continuation has not been
+**Status: 2.0.0a9, development alpha.** The local continuation has not been
 published to a package index. Core workspace functions have offline acceptance
 coverage; bounded live operations and experimental capabilities have separate limits in
 [validation](docs/validation.md). No industry-leadership claim is made.
