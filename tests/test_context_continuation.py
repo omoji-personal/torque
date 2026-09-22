@@ -93,7 +93,7 @@ def test_plain_context_exposes_unresolved_criteria_next_steps_and_show_hint(enga
     changes.add_note(root, "Alpha", item["id"], "Investigate failed save", "next_step")
     code, output, error = invoke("context", "--workspace", str(root), "--client", "Alpha")
     assert code == 0 and error == ""
-    assert "AC1 (fail)" in output and "AC2 (not_run)" in output
+    assert "AC1 (fail)" in output and "AC2 (not run)" in output
     assert "Investigate failed save" in output
     assert "Full change: torque change show " + item["id"] in output
     assert "operator-reported" in output and "BETA_PRIVATE" not in output

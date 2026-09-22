@@ -1,131 +1,81 @@
-# Validation through alpha 8 — September 8, 2026
+# Validation through alpha 9 — September 22, 2026
 
-This is a development alpha with a public continuation branch; no PyPI release
-has been published. Alpha 8 binds Metadata API receipts to
-the selected org and accepts equivalent, checksum-validated 15/18-character job
-IDs. Lower-effort agents ran the tests; separate agents audited the changes, and
-the primary agent reviewed the implementation, original results and source hashes.
-[Alpha 7 validation](validation-alpha7.md) retains the previous candidate's record.
+Alpha 9 is a development build with no package-index release. It improves session continuity,
+local diagnostics, source/private separation and the offline verification runner.
+The [alpha 8 record](validation-alpha8.md) retains prior live and remote CI evidence;
+those results do not qualify alpha 9's changed bytes.
 
-## What changed
+## Reproduced problems and repairs
 
-- Metadata reports are fetched directly from the selected org's REST endpoint
-  through Salesforce CLI. The CLI deployment cache cannot choose another org for
-  this request. Existing QA arguments and receipt structure remain available.
-- Both requested and returned deployment IDs are validated before comparison.
-  Canonical 15-character and checksum-verified 18-character forms can identify the
-  same job; raw IDs remain in the receipt. Different jobs and malformed checksums
-  cannot pass by truncation or case folding.
-- CLI and HTTP retrieval success are checked separately from the deployment's
-  outcome. A successfully retrieved failed validation still reports FAIL.
-  Transport failures remain ERROR, with deployment outcome undetermined.
-- HTTP headers, cookies, unrelated transport fields and stderr are excluded from
-  retained deployment evidence. Full normalized deployment results remain private.
-
-The transport uses the documented versioned Metadata REST status endpoint. It
-keeps Salesforce authentication in the existing CLI; no service account, backend
-migration, cache clearing or new approval ceremony is required. The current live
-qualification used Salesforce CLI 2.150.6. [Salesforce deployment status API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_rest_deploy_checkstatus.htm)
-
-## Source regression
-
-| Local runtime | Pytest tests | Subtests | Standalone suite completions | Stubbed Salesforce failure paths |
-| --- | ---: | ---: | ---: | ---: |
-| macOS, Python 3.10.21 | 858 | 154 | 12 | 16 |
-| macOS, Python 3.12.14 | 858 | 154 | 12 | 16 |
-| macOS, Python 3.14.3 | 858 | 154 | 12 | 17 |
-
-All three source runs passed. Actual imports resolved to canonical source;
-427 public source files matched the frozen inventory before and after the matrix.
-The same cases ran on three runtimes; these are not 2,574 different tests.
-Subsequent validation-document updates do not change the tested runtime or tests.
-Five inherited optional source-mirror checks within the QA standalone harness
-remain skipped. No provider call was made by the offline matrix.
-
-Fourteen new test methods cover cached-org false attribution, valid ID forms,
-wrong jobs, invalid checksums, transport failures, nested failed outcomes and
-header exclusion. The current-source counterexample reproduced a false PASS;
-the corrected transport rejects that synthetic cross-org case.
-
-Provenance now covers 180 files and retains inherited source hashes. All 49 recipe
-adapters, 42 original mappings and 64 bundled resources must continue to agree.
-Exact distribution bytes, clean installation, dependency checks and installed CLI
-results belong to the companion candidate verification record. Source tests do
-not qualify an arbitrary rebuilt artifact.
-
-## Completed live Apex qualification
-
-The previously prepared pure-Apex sequence completed in one explicitly authorized
-Salesforce Developer Edition org. These executions used the frozen alpha 7
-candidate; the Apex generator is unchanged in alpha 8.
-
-| Observation | Actual result |
+| Problem reproduced against alpha 8 | Alpha 9 behavior |
 | --- | --- |
-| Deliberately invalid source, check-only | Expected missing-return compiler rejection; no fixture created |
-| Three-class draft, check-only | Compiled; fresh query confirmed no persistent fixture classes |
-| Three-class actual deployment | Successful; exact created IDs and source bodies verified |
-| Unresolved generated draft | 11 exact expected DRAFT assertion failures |
-| Reviewed assertion update | Exactly one test class updated; IDs and other class bodies preserved |
-| Adapted generated tests | The same 11 methods passed |
-| Independent authored contract | Five selected methods passed |
-| Intentional wrong expectation | One exact expected assertion failure |
-| Cleanup validation and deletion | Exactly three owned classes removed; fresh four-name query found none |
+| Session evidence changed after recording without appearing stale in resumed context | Session reads rehash the original file and expose matching, changed, missing or unavailable evidence; recorded history remains intact |
+| Malformed session evidence crashed a handoff with `KeyError`; malformed nested metadata could also crash rendering | Validate local records before rendering, identify the affected record and preserve it for repair |
+| Doctor inspected only recent sessions and omitted change records | Check all selected-client sessions and changes; report evidence problems and identify the loaded package/interpreter |
+| A CLI installed elsewhere allowed private initialization inside a Torque source tree | Inspect destination ancestors for Torque's source identity, including Git worktrees and extracted source distributions |
+| The offline runner could test a stale installed core package | Set the checkout's package roots for pytest and child processes; a fresh-process regression supplies a deliberately stale import path |
+| `--maxfail 1` silently omitted all executable fixture suites | Run those suites unless explicitly opting into `--pytest-only` or inspecting collection/help |
 
-These are 28 method observations across four test jobs: 16 passes and 12 deliberate
-assertion failures. Compiler validation is separate from test execution. The
-fixture code uses no record DML, SOQL, callouts, user creation or permission changes.
-Contract checks include null/empty inputs, Unicode, typed overloads, an instance
-method, Boolean/Decimal behavior, collection boundaries through 251 elements,
-nested collections and input preservation. This does not establish FLS, sharing,
-managed-package behavior or general business acceptance.
+Session references still point to their original files; change checks capture a
+private copy. Hashes establish byte consistency, not the truth of a supplied
+claim. Missing/unavailable evidence leaves resumption usable. Malformed records
+and cross-client references identify a local error without rewriting history.
+Captured evidence checks both length and hash. Large files are hashed in chunks.
 
-Three anticipated provider-shape differences were corrected in the private test
-harness: successful report retrieval of a failed deployment, omission of one final
-source newline, and equivalent 15/18-character test-job IDs. Original failed
-harness attempts and complete results were preserved. Each correction received
-regression tests and independent review; no job was resubmitted. At closure all
-963 sealed inputs remained unchanged, and owned-fixture cleanup was complete.
+Human-readable reports display “not run”; JSON retains `not_run`. The version
+increment and additive diagnostic fields do not migrate private records or change
+org authorization. Updated session recipes can be adopted through the existing
+workspace updater, which preserves customized files.
 
-## Live receipt and host observations
+## Source verification
 
-Read-only alpha 8 source checks against the existing deployment records observed
-PASS for the successful deployment in both valid ID forms, and FAIL for the
-expected failed validation. Each request used the selected org's endpoint and
-HTTP 200 response. No deployment was repeated to obtain these reports. A live
-cross-org negative was not attempted; its counterexample remains an offline test.
+| Local runtime | Pytest tests | Subtests | Completed standalone suites |
+| --- | ---: | ---: | ---: |
+| macOS, Python 3.10.21 | 895 | 154 | 12 |
+| macOS, Python 3.12.14 | 895 | 154 | 12 |
+| macOS, Python 3.14.3 | 895 | 154 | 12 |
 
-A Mac restart restored access to the existing saved Salesforce connection, after
-an earlier Keychain access failure. No Keychain policy, credential backend or org
-authorization was changed. This establishes current access, not a diagnosis of the
-original host failure or proof of future locked-screen/credential-renewal behavior.
+All three runs passed. These are the same tests exercised on three runtimes,
+including 37 added regression cases. The Python 3.10/3.12 runs used fresh
+virtual environments with no installed Torque package; the runner imported the
+current checkout. Salesforce/provider executables were replaced by unavailable
+stubs. The runs handled 16, 16 and 17 stubbed Salesforce failure paths respectively.
+Five inherited optional source-mirror checks inside the QA executable harness
+remain skipped; the suite's measured fixtures completed. No live org/provider
+operation was made by these checks.
+
+The 49 adapters, 64 bundled resources and 180 inherited provenance entries match.
+Python 3.10 syntax and Git whitespace checks pass. Changed product code is in the
+Torque layer; inherited runtime package bytes remain unchanged.
+
+## Package verification
+
+A clean wheel installation must be tested separately from source. The installed
+smoke script runs from a temporary directory with `PYTHONPATH` removed and verifies:
+
+- Nine delegate routes, six public routes, all 49 recipes and the offline demo.
+- Private initialization, two-client/four-change continuation across fresh processes,
+  reported failures, scoped context/handoff and preserved workflow customizations.
+- Session evidence drift, complete selected-client diagnostics and the destination
+  source/private boundary with an externally installed CLI.
+
+Wheel/sdist surface checks reject private/generated content and require packaged
+workflows. The local qualification report retains exact artifact hashes and logs;
+these identify the checked build rather than an arbitrary later rebuild.
 
 ## Remaining evidence
 
-The prior 27-case live matrix remains 23 passed and four blocked non-admin browser
-cases, as recorded in [alpha 6](validation-alpha6.md) and [alpha 5](validation-alpha5.md).
-Those journeys were not repeated here, and no org-wide Login As policy was changed.
+The local qualification above included no new live Salesforce or browser execution,
+remote CI run or publication. Later commit/push and remote CI results are separate
+evidence tied to the exact published commit. Earlier live non-admin browser
+cases remain unqualified for this build. Windows, outside-user onboarding,
+multiple assistant hosts, existing delivery-stack integration and comparative
+benchmarks also remain separate acceptance work. The local fixes do not establish
+production readiness or a universal recovery capability.
 
-GitHub Actions passed all six Ubuntu/macOS jobs on Python 3.10, 3.12 and 3.14
-for commit `6db2af4998461c513c4872874eaa3c68df50eb18`. Each job passed 858 tests,
-154 subtests, 12 standalone suites, distribution checks and the installed-wheel
-smoke checks. These independently built CI artifacts are separate from the local
-candidate's exact bytes. [Verified CI run](https://github.com/omoji-personal/torque/actions/runs/34240338628)
+## Reproduce
 
-Windows remains unqualified. Non-admin browser journeys, outside-user onboarding, complete
-consulting journeys across assistant hosts, existing delivery-stack compatibility
-and comparative benchmarks remain open. Optional provider behavior, accessibility
-and production-scale load remain unqualified. Bulk restore is manual; operation
-captures are not full org backups. No public release or industry-leadership claim
-is established by these local results.
-
-The [product direction](product-direction.md), [benchmark protocol](benchmark-protocol.md)
-and [client adoption guide](client-adoption.md) describe additional evidence.
-They do not impose runtime approval rituals or establish provider/client approval.
-
-## Reproduce local qualification
-
-Use Python 3.10+ with development dependencies. Install current source or select
-its canonical package roots; verify imports if another Torque version is installed.
+Install development dependencies into an isolated environment, then run:
 
 ```sh
 python workflows/sync_adapters.py --check
@@ -140,6 +90,6 @@ work/wheel-venv/bin/python -m pip check
 work/wheel-venv/bin/python scripts/smoke-installed.py --require-wheel
 ```
 
-Use a new output directory for each candidate. Installed qualification runs outside
-the checkout with inherited PYTHONPATH removed. See the [live protocol](live-acceptance.md)
-for separately scoped disposable-org tests.
+Use a fresh output directory to avoid selecting old artifacts. For focused
+iteration, `python scripts/test-offline.py --pytest-only tests/test_record_resilience.py -q`
+explicitly skips the executable suites. It is not a full qualification run.

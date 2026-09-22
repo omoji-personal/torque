@@ -64,6 +64,14 @@ resumption. Notes longer than 65,536 characters retain an explicit truncation no
 are excluded. Use `--output NEW_FILE` to save a new report. Review private
 references before sending a report to a client; saving it does not send anything.
 
+Session evidence is a reference to the original file, while `change check
+--evidence` captures a private copy. Session resumption and handoffs recheck the
+recorded hash and report changed, missing or unavailable files. An unchanged hash
+establishes byte consistency only; the session's result remains user-reported.
+These checks leave the original journal untouched. `torque doctor --workspace
+PATH --client NAME` inspects all of that client's sessions and change records,
+including older entries outside the recent context summary.
+
 Local JSON files live under `clients/CLIENT/changes/CHANGE_ID/`. Each event is
 published atomically as a separate private file, preserving concurrent writers.
 This is local continuity, not a multi-user server or distributed transaction

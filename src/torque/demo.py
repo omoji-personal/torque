@@ -167,7 +167,8 @@ def create_demo(destination: Path) -> dict:
     if not root.parent.is_dir():
         raise ws.WorkspaceError("demo destination parent must already exist")
     source = ws._source_checkout()
-    if source and (root == source.resolve() or source.resolve() in root.parents):
+    if ((source and (root == source.resolve() or source.resolve() in root.parents))
+            or ws._checkout_containing(root)):
         raise ws.WorkspaceError("choose a private demo directory outside the Torque source checkout")
     root.mkdir(mode=0o700)  # Exclusive reservation: never merge into another directory.
     try:

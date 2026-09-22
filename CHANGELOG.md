@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0a9 — unpublished continuity and verification update, 2026-09-22
+
+- Recheck session evidence during resumption and handoff. Missing, changed or
+  unavailable files stay visible while journal history and reported status remain
+  intact; large artifacts are hashed in bounded chunks.
+- Diagnose malformed session references and metadata observations with the affected
+  record instead of crashing during handoff. Check captured byte counts as well
+  as hashes; unavailable captures leave the rest of the handoff usable.
+- Inspect all selected-client sessions and changes in `doctor`, and identify the
+  running installation. Use clearer consulting-workspace and unrun-check wording.
+- Keep private workspace/demo creation outside Torque source even when the CLI is
+  installed elsewhere, including extracted source distributions.
+- Pin offline tests and their child processes to the current checkout. Pytest
+  options with operands no longer silently omit standalone fixture suites;
+  `--pytest-only` explicitly selects a smaller development run.
+- Update packaged session workflows and verify source and clean installed behavior
+  separately. See [current validation](docs/validation.md) for scope and limits.
+
 ## 2.0.0a8 — unpublished receipt correctness update, 2026-09-08
 
 - Fetch deployment receipts from the explicitly selected org through Salesforce
@@ -11,7 +29,7 @@
   exclude HTTP headers, cookies and unrelated transport output from evidence.
 - Complete the prepared live Apex qualification and exact fixture cleanup; add
   14 regression tests and retain current host-access and browser coverage limits
-  in [alpha 8 validation](docs/validation.md).
+  in [alpha 8 validation](docs/validation-alpha8.md).
 
 ## 2.0.0a7 — unpublished practical testing update, 2026-09-07
 

@@ -22,6 +22,9 @@ Supported status values are `prepared`, `executed`, `verified`, `incomplete`.
 Omit `--evidence` when no file exists; never fabricate a path. Inspect `--help` for
 how many evidence arguments the installed version accepts. Save multiple useful
 artifacts through the supported record format rather than guessing extra flags.
+Session evidence references the original file and records its hash; it does not
+copy that file. Keep the artifact at its recorded path. For a captured private
+evidence copy tied to an acceptance criterion, use `torque change check --evidence`.
 
 Append a new session record; do not replace previous history or copy a whole chat
 transcript. Record unattended asynchronous jobs by exact job ID and unresolved
