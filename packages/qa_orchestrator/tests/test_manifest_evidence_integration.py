@@ -50,7 +50,7 @@ def run_artifacts(*, run="new-run", target=TARGET, scope=None, legacy=False,
         {"flow": flow, "profile": profile, "status": "PASS", "steps": [step]}
     ] if cells else []}
     manifest = run_dir / "manifest.json"
-    manifest.write_text(json.dumps(payload))
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
     return manifest, shot, payload
 
 
@@ -114,7 +114,7 @@ def test_new_invalid_run_does_not_fall_back_or_invoke_provider(corruption, monke
         del payload["cells"][0]["profile"]
     elif corruption == "missing_file":
         shot.unlink()
-    manifest.write_text("invalid JSON" if corruption == "json" else json.dumps(payload))
+    manifest.write_text("invalid JSON" if corruption == "json" else json.dumps(payload), encoding="utf-8")
     os.utime(old, (10, 10))
     os.utime(manifest, (20, 20))
     calls = analyze_stub(monkeypatch)
@@ -139,7 +139,7 @@ def test_artifact_scope_escape_is_rejected(tmp_path, monkeypatch, outside):
     else:
         base = Path(os.environ["TORQUE_WORKSPACE"]) / "state" / "qa-tests"
         (base / TARGET).symlink_to(other_manifest.parent, target_is_directory=True)
-    manifest.write_text(json.dumps(payload))
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
     os.utime(other_manifest, (10, 10))
     os.utime(manifest, (20, 20))
     calls = analyze_stub(monkeypatch)
@@ -152,7 +152,7 @@ def test_safe_legacy_manifest_with_explicit_target_and_context(monkeypatch):
     cell = payload.pop("cells")[0]
     cell["steps"] = [{"name": "legacy step", "screenshot": str(shot.relative_to(manifest.parent))}]
     payload["results"] = [cell]
-    manifest.write_text(json.dumps(payload))
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
     calls = analyze_stub(monkeypatch)
     assert dispatcher.dispatch_vision(TARGET, "legacy synthetic change").status == "PASS"
     assert calls[0][0] == shot.resolve()

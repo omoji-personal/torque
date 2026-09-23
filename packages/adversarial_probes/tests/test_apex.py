@@ -102,13 +102,13 @@ class TestMetaApiVersion(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             src = Path(td) / "MyHandler.cls"
-            src.write_text(SAMPLE_CLASS)
+            src.write_text(SAMPLE_CLASS, encoding="utf-8")
             out = write_test_class(src, Path(td))
             meta = out.with_name(out.name + "-meta.xml")
             self.assertTrue(meta.exists(), "meta.xml must be written")
             self.assertIn(
                 f"<apiVersion>{DEFAULT_APEX_API_VERSION}</apiVersion>",
-                meta.read_text(),
+                meta.read_text(encoding="utf-8"),
             )
 
 

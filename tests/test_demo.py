@@ -39,27 +39,27 @@ def test_demo_is_a_private_resumable_workflow_without_external_commands(tmp_path
     for path in root.rglob("*"):
         if path.is_file():
             assert path.stat().st_mode & 0o777 == 0o600
-    assert (root / ".gitignore").read_text().splitlines()[-1] == "*"
+    assert (root / ".gitignore").read_text(encoding="utf-8").splitlines()[-1] == "*"
     context = ws.get_context(root, result["client"])
     assert "AC1" in json.dumps(context) and "fictional" in json.dumps(context)
     sessions = ws.list_sessions(root, result["client"], limit=None)
     assert len(sessions) == 2
     assert {entry["status"] for entry in sessions} == {"prepared", "incomplete"}
     assert all(entry["independently_verified"] is False for entry in sessions)
-    assert Path(result["handoff"]).read_text() == ws.render_handoff(root, result["client"])
-    assert "NOT_RUN" in Path(result["handoff"]).read_text()
+    assert Path(result["handoff"]).read_text(encoding="utf-8") == ws.render_handoff(root, result["client"])
+    assert "NOT_RUN" in Path(result["handoff"]).read_text(encoding="utf-8")
     from torque.changes import get_change
     change = get_change(root, result["client"], result["change_id"])
     assert change["assessment"]["reported_pass"] == 0
     assert change["assessment"]["not_yet_reported_pass"] == ["AC1", "AC2", "AC3"]
-    assert "torque context --workspace . --client synthetic-community-center" in Path(result["start_here"]).read_text()
+    assert "torque context --workspace . --client synthetic-community-center" in Path(result["start_here"]).read_text(encoding="utf-8")
 
 
 def test_starter_and_evidence_connect_to_requirements_without_live_claims(tmp_path, offline):
     result = demo.create_demo(tmp_path / "demo")
     project = Path(result["project"])
-    evidence = json.loads(Path(result["evidence"]).read_text())
-    project_config = json.loads((project / "sfdx-project.json").read_text())
+    evidence = json.loads(Path(result["evidence"]).read_text(encoding="utf-8"))
+    project_config = json.loads((project / "sfdx-project.json").read_text(encoding="utf-8"))
     assert project_config["packageDirectories"] == [{"path": "force-app", "default": True}]
     assert "target-org" not in project_config
     assert len(list(project.rglob("*.xml"))) == 4
@@ -84,14 +84,14 @@ def test_existing_destination_is_untouched(tmp_path, kind, offline):
     other = tmp_path / "other"
     other.mkdir()
     marker = other / "keep.txt"
-    marker.write_text("existing private content")
+    marker.write_text("existing private content", encoding="utf-8")
     if kind == "file":
-        destination.write_text("keep this file")
+        destination.write_text("keep this file", encoding="utf-8")
     elif kind == "empty-directory":
         destination.mkdir()
     elif kind == "nonempty-directory":
         destination.mkdir()
-        (destination / "keep.txt").write_text("keep this directory")
+        (destination / "keep.txt").write_text("keep this directory", encoding="utf-8")
     else:
         destination.symlink_to(other if kind == "symlink" else tmp_path / "missing", target_is_directory=True)
     before = sorted((str(path.relative_to(tmp_path)), path.is_symlink(), path.read_bytes() if path.is_file() and not path.is_symlink() else None) for path in tmp_path.rglob("*"))
@@ -99,20 +99,20 @@ def test_existing_destination_is_untouched(tmp_path, kind, offline):
         demo.create_demo(destination)
     after = sorted((str(path.relative_to(tmp_path)), path.is_symlink(), path.read_bytes() if path.is_file() and not path.is_symlink() else None) for path in tmp_path.rglob("*"))
     assert before == after
-    assert marker.read_text() == "existing private content"
+    assert marker.read_text(encoding="utf-8") == "existing private content"
 
 
 def test_init_failure_removes_only_the_new_destination(tmp_path, monkeypatch, offline):
     marker = tmp_path / "keep.txt"
-    marker.write_text("untouched")
+    marker.write_text("untouched", encoding="utf-8")
     def fail(root, *args):
-        (root / "partial.txt").write_text("interrupted generation")
+        (root / "partial.txt").write_text("interrupted generation", encoding="utf-8")
         raise ws.WorkspaceError("synthetic initialization failure")
     monkeypatch.setattr(ws, "init_workspace", fail)
     with pytest.raises(ws.WorkspaceError, match="synthetic initialization failure"):
         demo.create_demo(tmp_path / "new-demo")
     assert sorted(path.name for path in tmp_path.iterdir()) == ["keep.txt"]
-    assert marker.read_text() == "untouched"
+    assert marker.read_text(encoding="utf-8") == "untouched"
 
 
 def test_late_generation_failure_leaves_no_partial_workspace(tmp_path, monkeypatch, offline):
@@ -159,6 +159,6 @@ def test_demo_ships_breadth_scenarios(tmp_path, offline):
     for name in SCENARIOS:
         folder = client / "examples" / name
         assert (folder / "input.md").is_file() and (folder / "walkthrough.md").is_file()
-        text = (folder / "input.md").read_text()
+        text = (folder / "input.md").read_text(encoding="utf-8")
         assert "SYNTHETIC" in text
     assert sorted(Path(p).name for p in result["examples"]) == sorted(SCENARIOS)

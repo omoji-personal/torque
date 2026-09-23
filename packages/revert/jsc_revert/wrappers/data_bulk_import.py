@@ -75,7 +75,7 @@ def run(args: argparse.Namespace) -> int:
                "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=timeout_s)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         c.bundle.atomic_write_json(ctx.snap_dir / "underlying-command.json",
             {"command": cmd, "exit_code": exit_code, "stdout": stdout, "stderr": stderr})
         sf_json = c.parse_sf_json_safely(stdout)
@@ -139,7 +139,7 @@ def _fetch_bulk_results(target_org: str, job_id: str, out_path: Path) -> bool:
 def _ids_from_success_csv(csv_path: Path) -> list[str]:
     """Extract `id` column from bulk-success CSV."""
     try:
-        with csv_path.open() as f:
+        with csv_path.open(encoding="utf-8") as f:
             reader = csv.DictReader(f)
             return [row.get("sf__Id") or row.get("Id") or row.get("id") for row in reader
                     if (row.get("sf__Id") or row.get("Id") or row.get("id"))]
@@ -149,7 +149,7 @@ def _ids_from_success_csv(csv_path: Path) -> list[str]:
 
 def _csv_row_count(path: Path) -> int:
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             return sum(1 for _ in csv.DictReader(f))
     except OSError:
         return 0

@@ -124,7 +124,7 @@ def load_fixture(fixture_dir: str | Path) -> Fixture:
         if not p.exists():
             raise ValueError(f"fixture missing required file: {p}")
 
-    spec_raw = json.loads(spec_path.read_text())
+    spec_raw = json.loads(spec_path.read_text(encoding="utf-8"))
     if isinstance(spec_raw, dict) and "specs" in spec_raw:
         spec_rows = spec_raw["specs"]
     elif isinstance(spec_raw, list):
@@ -133,8 +133,8 @@ def load_fixture(fixture_dir: str | Path) -> Fixture:
         spec_rows = [spec_raw]
     specs = [parse_target_spec_yaml(row) for row in spec_rows]
 
-    prompt_template = prompt_path.read_text()
-    input_text = input_path.read_text()
+    prompt_template = prompt_path.read_text(encoding="utf-8")
+    input_text = input_path.read_text(encoding="utf-8")
 
     return Fixture(
         name=fd.name,

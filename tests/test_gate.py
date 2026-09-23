@@ -51,7 +51,7 @@ def test_ai_access_action_sets_mode(tmp_path):
     from torque import cli, workspace as ws
     ws.init_workspace(tmp_path / "w", "Example firm", "generic")
     assert cli.main(["workspace", "ai-access", "build-only", "--path", str(tmp_path / "w")]) == 0
-    assert json.loads((tmp_path / "w/workspace.json").read_text())["ai_access"] == "build-only"
+    assert json.loads((tmp_path / "w/workspace.json").read_text(encoding="utf-8"))["ai_access"] == "build-only"
 
 
 # --- Fix round 1: regression tests for review-demonstrated bypasses ---
@@ -161,7 +161,7 @@ def test_symlinked_workspace_client_path_is_blocked(tmp_path):
     # for some private deployments of Torque; comparisons must resolve first.
     real = tmp_path / "real-w"
     (real / "clients" / "acme").mkdir(parents=True)
-    (real / "clients" / "acme" / "context.md").write_text("secret")
+    (real / "clients" / "acme" / "context.md").write_text("secret", encoding="utf-8")
     link = tmp_path / "link-w"
     link.symlink_to(real)
     allowed, reason = gate.decide(
@@ -194,7 +194,7 @@ def test_main_fails_closed_on_missing_tool_name(tmp_path):
 
 def test_main_fails_closed_on_non_dict_tool_input(tmp_path):
     (tmp_path / "workspace.json").write_text(json.dumps(
-        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "build-only"}))
+        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "build-only"}), encoding="utf-8")
     payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": "oops"})
     result = _run_gate(payload)
     assert result.returncode == 2 and result.stderr.strip()
@@ -203,7 +203,7 @@ def test_main_fails_closed_on_non_dict_tool_input(tmp_path):
 def test_main_treats_unreadable_workspace_json_as_build_only(tmp_path):
     config = tmp_path / "workspace.json"
     config.write_text(json.dumps(
-        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "full"}))
+        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "full"}), encoding="utf-8")
     config.chmod(0o000)
     try:
         payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
@@ -215,7 +215,7 @@ def test_main_treats_unreadable_workspace_json_as_build_only(tmp_path):
 
 
 def test_main_treats_malformed_workspace_json_as_build_only(tmp_path):
-    (tmp_path / "workspace.json").write_text("{not valid json")
+    (tmp_path / "workspace.json").write_text("{not valid json", encoding="utf-8")
     payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
     result = _run_gate(payload)
@@ -224,7 +224,7 @@ def test_main_treats_malformed_workspace_json_as_build_only(tmp_path):
 
 def test_main_fails_closed_on_typo_ai_access_value(tmp_path):
     (tmp_path / "workspace.json").write_text(json.dumps(
-        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "Build-Only"}))
+        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "Build-Only"}), encoding="utf-8")
     payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
     result = _run_gate(payload)
@@ -239,7 +239,7 @@ def test_main_allows_ordinary_work_with_no_workspace_json_anywhere(tmp_path):
 
 def test_main_full_mode_allows_org_calls(tmp_path):
     (tmp_path / "workspace.json").write_text(json.dumps(
-        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "full"}))
+        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "full"}), encoding="utf-8")
     payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
     result = _run_gate(payload)
@@ -248,7 +248,7 @@ def test_main_full_mode_allows_org_calls(tmp_path):
 
 def test_main_build_only_allows_ordinary_command(tmp_path):
     (tmp_path / "workspace.json").write_text(json.dumps(
-        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "build-only"}))
+        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "build-only"}), encoding="utf-8")
     payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "git status"}})
     result = _run_gate(payload)
     assert result.returncode == 0
@@ -374,7 +374,7 @@ def test_main_treats_missing_ai_access_key_as_full(tmp_path):
     # not build-only, so an unwired workspace never silently gates org work.
     (tmp_path / "clients").mkdir()
     (tmp_path / "workspace.json").write_text(json.dumps(
-        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic"}))
+        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic"}), encoding="utf-8")
     payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "sf org list"}})
     result = _run_gate(payload)
     assert result.returncode == 0
@@ -391,7 +391,7 @@ def test_main_fails_closed_when_workspace_json_is_deleted_but_marker_remains(tmp
     workspace.mkdir(parents=True)
     (workspace / "clients").mkdir()
     (workspace / ".torque").mkdir()
-    (workspace / ".torque" / "templates.json").write_text("{}")
+    (workspace / ".torque" / "templates.json").write_text("{}", encoding="utf-8")
     payload = json.dumps({"cwd": str(workspace), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
     result = _run_gate(payload, home=home)
@@ -437,7 +437,7 @@ def test_main_never_treats_home_itself_or_above_as_a_workspace(tmp_path):
     home = tmp_path / "home"
     (home / "clients").mkdir(parents=True)
     (home / ".torque").mkdir()
-    (home / ".torque" / "templates.json").write_text("{}")
+    (home / ".torque" / "templates.json").write_text("{}", encoding="utf-8")
     payload = json.dumps({"cwd": str(home), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
     result = _run_gate(payload, home=home)

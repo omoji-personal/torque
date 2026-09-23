@@ -101,7 +101,7 @@ def run(args: argparse.Namespace) -> int:
             cmd.append("--hard-delete")
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=timeout_s)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         c.bundle.atomic_write_json(ctx.snap_dir / "underlying-command.json",
             {"command": cmd, "exit_code": exit_code, "stdout": stdout, "stderr": stderr})
         sf_json = c.parse_sf_json_safely(stdout)
@@ -125,7 +125,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _ids_from_csv(path: Path) -> list[str]:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     reader = csv.DictReader(io.StringIO(text))
     ids: list[str] = []
     for row in reader:

@@ -66,7 +66,7 @@ def test_partial_error_fetches_exact_job_without_resubmitting(tmp_path, monkeypa
     assert len(calls) == 1
     assert calls[0][0] == ['sf', 'data', 'bulk', 'results', '--target-org', 'synthetic', '--job-id', BULK, '--json']
     assert calls[0][1]['cwd'] == str(tmp_path)
-    artifact = json.loads((tmp_path/'bulk-result-observation.json').read_text())
+    artifact = json.loads((tmp_path/'bulk-result-observation.json').read_text(encoding="utf-8"))
     assert json.loads(artifact['stdout']) == report
     assert (tmp_path/'bulk-result-observation.json').stat().st_mode & 0o777 == 0o600
 
@@ -99,9 +99,9 @@ def test_poll_partial_is_terminal_without_becoming_completed(tmp_path, monkeypat
     monkeypatch.setattr(poll, '_update_snapshot_manifest', lambda entry, status: updates.append(status))
     poll.enqueue('snapshot', 'org', 'synthetic', 'data_bulk_update', BULK, ['sf'], queue_dir=tmp_path)
     path = tmp_path/'queue.jsonl'
-    entry = json.loads(path.read_text())
+    entry = json.loads(path.read_text(encoding="utf-8"))
     entry['next_poll_at'] = '2000-01-01T00:00:00Z'
-    path.write_text(json.dumps(entry)+'\n')
+    path.write_text(json.dumps(entry)+'\n', encoding="utf-8")
     stats = poll.poll_once(tmp_path)
     assert stats['partial'] == 1 and stats['completed'] == 0
     assert updates == ['applied_partial']
@@ -110,7 +110,7 @@ def test_poll_partial_is_terminal_without_becoming_completed(tmp_path, monkeypat
 
 def test_success_csv_uses_current_salesforce_header(tmp_path):
     path = tmp_path/'success.csv'
-    path.write_text('sf__Id,sf__Created,Name\n001000000000001AAA,true,Synthetic\n')
+    path.write_text('sf__Id,sf__Created,Name\n001000000000001AAA,true,Synthetic\n', encoding="utf-8")
     assert _ids_from_success_csv(path) == ['001000000000001AAA']
 
 
@@ -165,7 +165,7 @@ def test_poll_timeout_retains_both_streams_without_false_completion(tmp_path,mon
     monkeypatch.setattr(subprocess,'run',lambda *a,**k: (_ for _ in ()).throw(error))
     entry=dict(org_id_short='x',alias='x',snapshot_id='x',operation_type='data_bulk_update',job_id=BULK,sf_report_command=['sf'])
     assert poll._poll_one(entry)=='pending'
-    artifact=json.loads(next(tmp_path.glob('poll-*.json')).read_text())
+    artifact=json.loads(next(tmp_path.glob('poll-*.json')).read_text(encoding="utf-8"))
     assert artifact['stdout']=='partial-output' and artifact['stderr']=='original-error'
 
 
@@ -198,7 +198,7 @@ def test_missing_or_malformed_csv_locator_is_not_captured(tmp_path,monkeypatch,m
 def test_results_locator_cannot_copy_an_unrelated_private_file(tmp_path,monkeypatch,module_name):
     import importlib
     module=importlib.import_module('jsc_revert.wrappers.'+module_name)
-    private=tmp_path/'private';private.mkdir();outside=tmp_path/'unrelated.txt';outside.write_text('unrelated')
+    private=tmp_path/'private';private.mkdir();outside=tmp_path/'unrelated.txt';outside.write_text('unrelated', encoding="utf-8")
     data={'result':{'successFilePath':str(outside)}}
     monkeypatch.setattr(module.c,'run_sf_subprocess',lambda *a,**k:(0,json.dumps(data),''))
     assert module._fetch_bulk_results('synthetic',BULK,private/'success.csv') is False

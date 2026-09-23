@@ -354,7 +354,7 @@ def run_pre_snapshot_retrieve(
     try:
         (stage / "sfdx-project.json").write_text(json.dumps(
             {"packageDirectories": [{"path": "force-app", "default": True}],
-             "namespace": ""}))
+             "namespace": ""}), encoding="utf-8")
         # The declared packageDirectories path must EXIST, not merely be named:
         # sf raises MissingPackageDirectoryError otherwise. Found the hard way —
         # the first version of this fix wrote the json without the directory and
@@ -379,7 +379,7 @@ def run_pre_snapshot_retrieve(
                 "error": "subprocess.TimeoutExpired",
                 "stdout": e.stdout.decode() if e.stdout else "",
                 "stderr": e.stderr.decode() if e.stderr else "",
-            }, indent=2))
+            }, indent=2), encoding="utf-8")
             raise
 
         # Move the retrieved tree into the snapshot store BEFORE classification,
@@ -395,7 +395,7 @@ def run_pre_snapshot_retrieve(
         shutil.rmtree(stage, ignore_errors=True)
 
     # Persist raw output regardless of exit
-    raw_json_path.write_text(proc.stdout or "")
+    raw_json_path.write_text(proc.stdout or "", encoding="utf-8")
 
     try:
         data = json.loads(proc.stdout)

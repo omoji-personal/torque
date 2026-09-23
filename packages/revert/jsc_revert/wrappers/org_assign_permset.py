@@ -105,7 +105,7 @@ def run(args: argparse.Namespace) -> int:
             cmd.extend(["--on-behalf-of", on_behalf_of])
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=60)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
 
         evidence = _assignment_result(stdout)
         ctx.manifest["payload"].update(evidence)

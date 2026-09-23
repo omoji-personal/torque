@@ -164,7 +164,7 @@ def main() -> int:
         captured = []
         for name, content in contents.items():
             path = mb / "classes" / name
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
             captured.append({"type": "ApexClass", "fullName": "Foo",
                              "before_state": "present", "filePath": str(path),
                              "before_checksum": hashlib.sha256(path.read_bytes()).hexdigest()})

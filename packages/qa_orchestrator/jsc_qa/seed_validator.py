@@ -106,7 +106,7 @@ def load_seed(path: Path) -> dict:
                 f"Refusing to read another user's seed."
             )
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise SeedValidationError(f"seed file is not valid JSON: {e}")
     return data

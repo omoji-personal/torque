@@ -94,14 +94,14 @@ await page.set_cookie({"name": "sid", "value": "Cookie: sid=secrettoken123"})
     with tempfile.TemporaryDirectory() as tmpd:
         # Clean script
         clean_path = Path(tmpd) / "clean.py"
-        clean_path.write_text("await page.goto(get_admin_url(target_org))")
+        clean_path.write_text("await page.goto(get_admin_url(target_org))", encoding="utf-8")
         code, out, err = _run_cli(["sanitize-replay", str(clean_path)])
         check("F-CLI-3 clean script → exit 0", code == 0)
         check("F-CLI-3b stdout says CLEAN", "CLEAN" in out)
 
         # Bad script
         bad_path = Path(tmpd) / "bad.py"
-        bad_path.write_text("await page.goto('https://x/secur/frontdoor.jsp?sid=BADTOKEN')")
+        bad_path.write_text("await page.goto('https://x/secur/frontdoor.jsp?sid=BADTOKEN')", encoding="utf-8")
         code, out, err = _run_cli(["sanitize-replay", str(bad_path)])
         check("F-CLI-4 bad script → exit 2 (REJECTED)", code == 2)
         check("F-CLI-4b stdout says REJECTED", "REJECTED" in out)
@@ -383,7 +383,7 @@ await page.set_cookie({"name": "sid", "value": "Cookie: sid=secrettoken123"})
     bad_files: list[str] = []
     for src_path in pkg_root.rglob("*.py"):
         try:
-            tree = _ast.parse(src_path.read_text(), filename=str(src_path))
+            tree = _ast.parse(src_path.read_text(encoding="utf-8"), filename=str(src_path))
         except SyntaxError:
             continue
         for node in _ast.walk(tree):
@@ -417,7 +417,7 @@ await page.set_cookie({"name": "sid", "value": "Cookie: sid=secrettoken123"})
     check("F-LP-9 FIDELITY_LAYER_2_FALLBACK constant exported",
           hasattr(lp, "FIDELITY_LAYER_2_FALLBACK")
           and lp.FIDELITY_LAYER_2_FALLBACK == "LAYER_2_FALLBACK")
-    full_src = Path(lp.__file__).read_text()
+    full_src = Path(lp.__file__).read_text(encoding="utf-8")
     # All 5 fallback methods should reference the fallback constant
     fallback_methods = [
         "click_subtab", "fill_text", "click_button",
@@ -464,7 +464,7 @@ await page.set_cookie({"name": "sid", "value": "Cookie: sid=secrettoken123"})
     )
     for module_name in ("combobox", "button", "input_field", "modal", "toast", "record_form"):
         mod_path = components_dir / f"{module_name}.py"
-        src = mod_path.read_text()
+        src = mod_path.read_text(encoding="utf-8")
         check(f"F-LC-3-{module_name} cites upstream UTAM JSON in docstring",
               ".utam.json" in src and "salesforce-pageobjects" in src)
         check(f"F-LC-3b-{module_name} cites SALESFORCE_PAGEOBJECTS version",

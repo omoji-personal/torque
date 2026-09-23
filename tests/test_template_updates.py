@@ -16,7 +16,7 @@ SECOND_SKILL = ".agents/skills/review/SKILL.md"
 def put(root, relative, text):
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -48,7 +48,7 @@ def baseline(environment):
 
 
 def manifest(root):
-    return json.loads((root / updates.MANIFEST).read_text())
+    return json.loads((root / updates.MANIFEST).read_text(encoding="utf-8"))
 
 
 def test_initial_record_only_adopts_matching_materialized_defaults(environment):
@@ -72,10 +72,10 @@ def test_update_defaults_add_assets_and_keep_retired_files(environment, monkeypa
     monkeypatch.setattr(updates, "__version__", "test-v2")
     result = updates.update_templates(root)
     assert result["counts"] == {"update": 1, "add": 1, "retired": 2}
-    assert (root / ALPHA).read_text() == "alpha v2\n"
-    assert (root / ".claude/commands/new.md").read_text() == "new default\n"
-    assert (root / SKILL).read_text() == "review v1\n"
-    assert (root / SECOND_SKILL).read_text() == "review v1\n"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "alpha v2\n"
+    assert (root / ".claude/commands/new.md").read_text(encoding="utf-8") == "new default\n"
+    assert (root / SKILL).read_text(encoding="utf-8") == "review v1\n"
+    assert (root / SECOND_SKILL).read_text(encoding="utf-8") == "review v1\n"
     entry = manifest(root)["files"][ALPHA]
     assert entry == {"sha256": hashlib.sha256(b"alpha v2\n").hexdigest(), "version": "test-v2"}
     assert manifest(root)["files"][SKILL]["version"] == "test-v1"
@@ -88,7 +88,7 @@ def test_local_edit_keeps_baseline_and_reports_merge_suggestion(environment):
     put(root, ALPHA, "private local change")
     put(package, "data/commands/alpha.md", "new packaged change")
     result = updates.update_templates(root)
-    assert (root / ALPHA).read_text() == "private local change"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "private local change"
     assert manifest(root)["files"][ALPHA] == old
     conflict = next(row for row in result["conflicts"] if row["path"] == ALPHA)
     assert conflict["reason"] == "modified_local" and conflict["suggestion"]
@@ -104,8 +104,8 @@ def test_legacy_adopts_matches_adds_missing_and_never_claims_different_local(env
     assert result["counts"] == {"add": 1, "preserve": 1, "adopt": 1}
     assert ALPHA not in manifest(root)["files"]
     assert set(manifest(root)["files"]) == {SKILL, SECOND_SKILL}
-    assert extra.read_text() == "private local workflow"
-    assert (root / ALPHA).read_text() == "unknown legacy customization"
+    assert extra.read_text(encoding="utf-8") == "private local workflow"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "unknown legacy customization"
 
 
 @pytest.mark.parametrize("managed", [False, True])
@@ -133,7 +133,7 @@ def test_interrupted_manifest_commit_reconciles_on_retry(environment, monkeypatc
     monkeypatch.setattr(updates, "_publish", interrupt)
     with pytest.raises(OSError, match="interruption"):
         updates.update_templates(root)
-    assert (root / ALPHA).read_text() == "new default"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "new default"
     assert (root / updates.MANIFEST).read_bytes() == old_manifest
     monkeypatch.setattr(updates, "_publish", original)
     result = updates.update_templates(root)
@@ -150,7 +150,7 @@ def test_atomic_publish_failure_leaves_old_file_manifest_and_no_temp(environment
     monkeypatch.setattr(updates.os, "replace", interrupt)
     with pytest.raises(OSError, match="interruption"):
         updates.update_templates(root)
-    assert (root / ALPHA).read_text() == "alpha v1\n"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "alpha v1\n"
     assert (root / updates.MANIFEST).read_bytes() == old
     assert not list(root.rglob(".torque-update-*"))
 
@@ -183,7 +183,7 @@ def test_new_local_file_created_during_update_is_not_overwritten_or_tracked(envi
         return original(fd, path, contents, expected)
     monkeypatch.setattr(updates, "_publish", race)
     result = updates.update_templates(root)
-    assert (root / ALPHA).read_text() == "new local file written concurrently"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "new local file written concurrently"
     assert ALPHA not in manifest(root)["files"]
     assert any(item["reason"] == "changed_during_update" for item in result["conflicts"])
 
@@ -199,7 +199,7 @@ def test_edit_between_plan_and_write_is_preserved(environment, monkeypatch):
         return original(fd, path, contents, expected)
     monkeypatch.setattr(updates, "_publish", race)
     updates.update_templates(root)
-    assert (root / ALPHA).read_text() == "local edit while update was planning"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "local edit while update was planning"
     assert manifest(root)["files"][ALPHA] == old
 
 
@@ -212,7 +212,7 @@ def test_new_file_appearing_at_atomic_publication_is_preserved(environment, monk
         return original(source, destination, **kwargs)
     monkeypatch.setattr(updates.os, "link", race)
     report = updates.update_templates(root)
-    assert (root / ALPHA).read_text() == "local file appeared after comparison"
+    assert (root / ALPHA).read_text(encoding="utf-8") == "local file appeared after comparison"
     assert ALPHA not in manifest(root)["files"]
     assert any(row["path"] == ALPHA and row["reason"] == "changed_during_update"
                for row in report["conflicts"])

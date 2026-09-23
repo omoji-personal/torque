@@ -99,7 +99,7 @@ def _try_read_lock(lock_path: Path) -> LockReadResult:
     if not lock_path.exists():
         return LockReadResult(LockReadStatus.NOT_PRESENT, None)
     try:
-        content = lock_path.read_text()
+        content = lock_path.read_text(encoding="utf-8")
     except OSError:
         return LockReadResult(LockReadStatus.MALFORMED, None)
     if not content.strip():

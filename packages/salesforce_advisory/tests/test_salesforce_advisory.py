@@ -381,7 +381,7 @@ def test_runtime_package_has_no_filesystem_write_calls():
 def test_advisory_remains_model_and_hook_independent():
     root = Path(cli.__file__).parent
     for path in root.glob("*.py"):
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         imported = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
         assert not any(name.startswith(("anthropic", "openai", "packages.hooks")) for name in imported)
 

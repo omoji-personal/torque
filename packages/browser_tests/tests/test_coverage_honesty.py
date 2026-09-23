@@ -33,8 +33,8 @@ def test_missing_or_failed_cleanup_is_explicit_incomplete(tmp_path,registry):
     config={"sf":Client(),"target_org":"sample-sandbox","org_info":SimpleNamespace(detected_org_type="sandbox"),"flows":[Flow()],"cell_executor":execute,"preflight":preflight,"run_dir":str(tmp_path),"manifest_path":str(tmp_path/"manifest.json"),"audit_log":str(tmp_path/"audit.log")}
     if registry:
         path=tmp_path/"registry.yaml"
-        path.write_text("objects:\n  Account:\n    test_record_carrier: true\n")
+        path.write_text("objects:\n  Account:\n    test_record_carrier: true\n", encoding="utf-8")
         config["registry_path"]=path
     assert asyncio.run(run_suite(config))==4
-    report=json.loads((tmp_path/"manifest.json").read_text())
+    report=json.loads((tmp_path/"manifest.json").read_text(encoding="utf-8"))
     assert report["cleanup_status"]==("UNKNOWN" if registry else "NOT_CHECKED")

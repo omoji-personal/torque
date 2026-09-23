@@ -142,7 +142,7 @@ def run(args: argparse.Namespace) -> int:
         raw_path = ctx.snap_dir / "underlying-result.json"
         c.bundle.atomic_write_json(ctx.snap_dir / "underlying-command.json",
             {"command": sf_cmd, "exit_code": exit_code, "stdout": stdout, "stderr": stderr})
-        raw_path.write_text(stdout)
+        raw_path.write_text(stdout, encoding="utf-8")
         sf_json = c.parse_sf_json_safely(stdout)
         from ..job_outcomes import deploy_outcome
         snapshot_status, deploy_id = deploy_outcome(sf_json, exit_code)

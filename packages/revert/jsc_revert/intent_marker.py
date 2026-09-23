@@ -195,6 +195,6 @@ def show(target_path: Path | None = None) -> dict | None:
     if target_path is None:
         target_path = _token_path()
     try:
-        return json.loads(target_path.read_text())
+        return json.loads(target_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None

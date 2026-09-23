@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         since_iso = _default_since_iso()
 
     if args.log_file:
-        log_texts = [Path(args.log_file).read_text(errors="replace")]
+        log_texts = [Path(args.log_file).read_text(errors="replace", encoding="utf-8")]
     elif args.target_org:
         if since_iso is not None:
             log_texts = fetch_recent_logs(args.target_org, since_iso, args.limit)

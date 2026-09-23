@@ -40,8 +40,8 @@ def run_create(tmp_path, monkeypatch):
         paths = list(client.rglob("manifest.json"))
         assert len(paths) == 1
         path = paths[0]
-        saved = json.loads(path.read_text())
-        assert (path.parent / "underlying-result.json").read_text() == create_raw
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        assert (path.parent / "underlying-result.json").read_text(encoding="utf-8") == create_raw
         assert len([cmd for cmd in calls if cmd[:4] == ["sf", "data", "create", "record"]]) == 1
         assert releases == [True]
         return code, saved, calls, path

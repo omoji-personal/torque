@@ -9,7 +9,7 @@ def _spool_events(session_id, events):
     """Helper: write events to spool."""
     storage.ensure_dirs()
     sp = spool.spool_path_for_session(session_id)
-    with open(sp, "w") as f:
+    with open(sp, "w", encoding="utf-8") as f:
         for e in events:
             f.write(json.dumps(e) + "\n")
 

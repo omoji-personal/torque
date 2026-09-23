@@ -134,7 +134,7 @@ def invoke(argv):
 
 def make_source(tmp_path):
     target = tmp_path / "Example.cls"
-    target.write_text(source("public static String f(String x){return x;}"))
+    target.write_text(source("public static String f(String x){return x;}"), encoding="utf-8")
     return target
 
 
@@ -143,19 +143,19 @@ def test_rerun_preserves_each_edited_file_and_no_half_pair(tmp_path, conflict):
     target = make_source(tmp_path)
     out = tmp_path / "output"
     out.mkdir()
-    (out / conflict).write_text("retained business edit")
+    (out / conflict).write_text("retained business edit", encoding="utf-8")
     assert invoke(["--target-class", str(target), "--output", str(out)]) == 2
     assert {p.name for p in out.iterdir()} == {conflict}
-    assert (out / conflict).read_text() == "retained business edit"
+    assert (out / conflict).read_text(encoding="utf-8") == "retained business edit"
 
 
 def test_force_is_explicit_and_no_hidden_files_remain(tmp_path):
     target = make_source(tmp_path)
     out = tmp_path / "output"
     generated = write_test_class(target, out)
-    generated.write_text("retained business edit")
+    generated.write_text("retained business edit", encoding="utf-8")
     assert invoke(["--target-class", str(target), "--output", str(out), "--force"]) == 0
-    assert "EDITABLE DRAFT" in generated.read_text()
+    assert "EDITABLE DRAFT" in generated.read_text(encoding="utf-8")
     assert len(list(out.iterdir())) == 2
 
 
@@ -163,13 +163,13 @@ def test_force_is_explicit_and_no_hidden_files_remain(tmp_path):
 def test_output_symlink_never_overwrites_target(tmp_path, force):
     target = make_source(tmp_path)
     retained = tmp_path / "retained.txt"
-    retained.write_text("do not overwrite")
+    retained.write_text("do not overwrite", encoding="utf-8")
     output = tmp_path / "out"
     output.mkdir()
     (output / "ExampleAdversarialTest.cls").symlink_to(retained)
     with pytest.raises(ValueError, match="regular file"):
         write_test_class(target, output, force=force)
-    assert retained.read_text() == "do not overwrite"
+    assert retained.read_text(encoding="utf-8") == "do not overwrite"
 
 
 def test_second_publish_race_rolls_back_only_first_created_file(tmp_path):
@@ -179,32 +179,32 @@ def test_second_publish_race_rolls_back_only_first_created_file(tmp_path):
     original = os.link
     def racing_link(src, dst):
         if str(dst).endswith("-meta.xml"):
-            Path(dst).write_text("concurrent user metadata")
+            Path(dst).write_text("concurrent user metadata", encoding="utf-8")
         return original(src, dst)
     with patch("jsc_probes.cli.os.link", racing_link), pytest.raises(FileExistsError):
         write_test_class(target, out)
     assert not (out / "ExampleAdversarialTest.cls").exists()
-    assert (out / "ExampleAdversarialTest.cls-meta.xml").read_text() == "concurrent user metadata"
+    assert (out / "ExampleAdversarialTest.cls-meta.xml").read_text(encoding="utf-8") == "concurrent user metadata"
     assert len(list(out.iterdir())) == 1
 
 
 def test_names_do_not_define_test_status(tmp_path):
     target = tmp_path / "TestimonialService.cls"
-    target.write_text("public class TestimonialService { public void f(){} }")
+    target.write_text("public class TestimonialService { public void f(){} }", encoding="utf-8")
     assert invoke(["--target-class", str(target), "--output", str(tmp_path / "out")]) == 0
     actual = tmp_path / "ExampleSpec.cls"
-    actual.write_text("@isTest private class ExampleSpec {}")
+    actual.write_text("@isTest private class ExampleSpec {}", encoding="utf-8")
     assert invoke(["--target-class", str(actual), "--output", str(tmp_path / "tests")]) == 2
     assert not (tmp_path / "tests").exists()
 
 
 def test_source_api_version_and_explicit_override(tmp_path):
     target = make_source(tmp_path)
-    target.with_name(target.name + "-meta.xml").write_text('<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>65.0</apiVersion><status>Active</status></ApexClass>')
+    target.with_name(target.name + "-meta.xml").write_text('<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>65.0</apiVersion><status>Active</status></ApexClass>', encoding="utf-8")
     out = write_test_class(target, tmp_path / "v65")
-    assert "<apiVersion>65.0</apiVersion>" in out.with_name(out.name + "-meta.xml").read_text()
+    assert "<apiVersion>65.0</apiVersion>" in out.with_name(out.name + "-meta.xml").read_text(encoding="utf-8")
     out = write_test_class(target, tmp_path / "v66", api_version="66.0")
-    assert "<apiVersion>66.0</apiVersion>" in out.with_name(out.name + "-meta.xml").read_text()
+    assert "<apiVersion>66.0</apiVersion>" in out.with_name(out.name + "-meta.xml").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("version", ["0.0", "NaN", "<tag/>", "61", "-1.0"])
@@ -217,7 +217,7 @@ def test_invalid_api_version_no_output(tmp_path, version):
 
 def test_malformed_metadata_no_output(tmp_path):
     target = make_source(tmp_path)
-    target.with_name(target.name + "-meta.xml").write_text('<bad>')
+    target.with_name(target.name + "-meta.xml").write_text('<bad>', encoding="utf-8")
     assert invoke(["--target-class", str(target), "--output", str(tmp_path / "output")]) == 2
     assert not (tmp_path / "output").exists()
 
@@ -232,13 +232,13 @@ def test_long_names_stay_readable_distinct_and_consistent(tmp_path):
     generated = []
     for name in names:
         target = tmp_path / f"{name}.cls"
-        target.write_text(f"public class {name} {{ public static String f(String x){{return x;}} }}")
+        target.write_text(f"public class {name} {{ public static String f(String x){{return x;}} }}", encoding="utf-8")
         out = write_test_class(target, tmp_path / "out")
         assert out.stem == generated_name(name)
         assert len(out.stem) <= 40
         assert out.stem.startswith("Consulting") and out.stem.endswith("AdversarialTest")
-        assert f"private class {out.stem}" in out.read_text()
-        assert f"{name}.f((String)null)" in out.read_text()
+        assert f"private class {out.stem}" in out.read_text(encoding="utf-8")
+        assert f"{name}.f((String)null)" in out.read_text(encoding="utf-8")
         assert out.with_name(out.name + "-meta.xml").is_file()
         generated.append(out.stem)
     assert generated[0] != generated[1]

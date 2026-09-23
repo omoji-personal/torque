@@ -7,7 +7,7 @@ from pathlib import Path
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    manifest = json.loads((root / "packages/provenance.json").read_text())
+    manifest = json.loads((root / "packages/provenance.json").read_text(encoding="utf-8"))
     problems = []
     seen = set()
     for entry in manifest["files"]:

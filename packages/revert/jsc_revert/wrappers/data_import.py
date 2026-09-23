@@ -36,8 +36,8 @@ def run(args: argparse.Namespace) -> int:
         # Pre: capture plan contents for forensics (no live query — import is creates)
         t0 = time.monotonic()
         plan_path = Path(args.plan)
-        plan_text = plan_path.read_text() if plan_path.exists() else ""
-        (ctx.snap_dir / "import_plan.json").write_text(plan_text)
+        plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
+        (ctx.snap_dir / "import_plan.json").write_text(plan_text, encoding="utf-8")
         ctx.manifest["payload"] = {
             "plan_path": str(plan_path),
             "plan_size_bytes": len(plan_text),
@@ -61,7 +61,7 @@ def run(args: argparse.Namespace) -> int:
                "--plan", str(plan_path), "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=600)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
 
         snapshot_status = "complete" if exit_code == 0 else "failed"
         ctx.manifest["snapshot_status"] = snapshot_status
