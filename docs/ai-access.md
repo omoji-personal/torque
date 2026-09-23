@@ -50,7 +50,18 @@ workspace there is no `workspace.json` to scope it, so it would run against ever
   "hooks": [{"type": "command", "command": "python -m torque.gate"}]}]}}
 ```
 
-It reads the tool-call JSON on stdin, exits 0 to allow, exits 2 to block.
+It reads the tool-call JSON on stdin, exits 0 to allow, exits 2 to block. Any other exit code means
+the gate itself did not run (for example the `python` on the hook's PATH does not have Torque
+installed), and Claude Code treats that as a non-blocking error, so nothing is blocked. Use an
+interpreter that has Torque installed; on Windows always use the venv's `python.exe` by absolute
+forward-slash path (see the Windows section of `installation.md`). Verify once with build-only mode
+set, from the workspace directory, substituting the exact hook command:
+
+```sh
+echo '{"tool_name":"Read","tool_input":{"file_path":"clients/example/notes.md"},"cwd":"."}' | python -m torque.gate; echo "exit=$?"
+```
+
+Expect the refusal message and `exit=2`.
 
 ## What it cannot stop
 
