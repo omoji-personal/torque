@@ -3,9 +3,10 @@ from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import io
 import json
-import multiprocessing
 import os
 from pathlib import Path
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -57,25 +58,34 @@ def test_failed_new_client_leaves_no_occupied_slug_and_retry_works(firm, monkeyp
     assert config['slug'] == 'new-client' and (created / 'context.md').is_file()
 
 
-def _exit_during_client_creation(root):
-    original = ws._write_json
-    def crash(path, data):
-        if path.name == 'client.json': os._exit(86)
-        return original(path, data)
-    ws._write_json = crash
-    ws.add_client(root, 'Interrupted')
+_EXIT_DURING_CLIENT_CREATION_SCRIPT = """
+import os, sys
+sys.path.insert(0, {src!r})
+from torque import workspace as ws
+original = ws._write_json
+def crash(path, data):
+    if path.name == 'client.json':
+        os._exit(86)
+    return original(path, data)
+ws._write_json = crash
+ws.add_client({root!r}, 'Interrupted')
+"""
 
 
 def test_process_termination_leaves_only_staging_and_releases_creation_lock(firm):
     root, _, _ = firm
-    # Windows has no fork(); _exit_during_client_creation installs its patch
-    # inside the child itself, so it needs no state inherited from the parent
-    # and spawn works identically there.
-    mp_start_method = 'fork' if os.name != 'nt' else 'spawn'
-    process = multiprocessing.get_context(mp_start_method).Process(target=_exit_during_client_creation, args=(root,))
-    process.start(); process.join(10)
-    if process.is_alive(): process.kill(); process.join(); pytest.fail('Synthetic child did not finish')
-    assert process.exitcode == 86
+    # A real child process, not multiprocessing.Process: 'fork' does not exist
+    # on Windows, and 'spawn' there re-imports this test module by pickled
+    # reference, which is fragile under pytest's own sys.path/import setup.
+    # A plain interpreter subprocess with an inline script sidesteps that
+    # entirely and behaves identically on every platform.
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    script = _EXIT_DURING_CLIENT_CREATION_SCRIPT.format(src=src, root=str(root))
+    try:
+        result = subprocess.run([sys.executable, "-c", script], timeout=10)
+    except subprocess.TimeoutExpired:
+        pytest.fail('Synthetic child did not finish')
+    assert result.returncode == 86
     assert not (root / 'clients/interrupted').exists()
     abandoned = set((root / '.torque/client-staging').iterdir())
     assert len(abandoned) == 1

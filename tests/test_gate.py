@@ -344,7 +344,13 @@ def test_recursive_search_tools_scoped_outside_clients_still_allowed(command, la
 
 
 def test_home_and_tilde_expand_before_path_resolution(monkeypatch):
-    monkeypatch.setenv("HOME", str(W))
+    # W = Path("/w") is drive-relative on Windows (str(W) == "\\w"), which
+    # pathlib does NOT consider is_absolute(); _resolve() then joins it onto
+    # cwd instead of treating it as rooted, unlike a real Windows HOME (always
+    # drive-qualified, e.g. C:\Users\...). Match gate.py's own realpath so the
+    # HOME value here resolves onto the actual current drive, same as W does.
+    home_value = str(W) if os.name != "nt" else os.path.realpath(str(W))
+    monkeypatch.setenv("HOME", home_value)
     for command in ("cat ~/clients/acme/x.md", "cat $HOME/clients/acme/x.md", "cat ${HOME}/clients/acme/x.md"):
         allowed, reason = gate.decide("Bash", {"command": command}, W, "build-only")
         assert not allowed and reason, command

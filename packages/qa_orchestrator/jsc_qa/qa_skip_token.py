@@ -18,6 +18,8 @@ from pathlib import Path
 
 if os.name != "nt":
     import pwd
+else:
+    import msvcrt
 
 
 DEFAULT_TOKEN_PATH = None  # legacy helper, never consulted by normal operations
@@ -247,14 +249,34 @@ def validate_for_skip(
     # honoring the module's "Single-use atomic consume" contract (mirrors the
     # revert-token precedent). (Audit 2026-05-30 COR-3.)
     # NOTE: JSC_QA_SKIP_TOKEN_PATH should be a local filesystem — os.rename
-    # atomicity is not guaranteed on NFS/SMB/some FUSE mounts.
+    # atomicity is not guaranteed on NFS/SMB/some FUSE mounts. On Windows an
+    # explicit exclusive lock makes the same single-use contract hold
+    # regardless of exactly how NTFS orders N racing renames of one source.
     sentinel = path.with_name(f"{path.name}.consumed.{os.getpid()}.{time.monotonic_ns()}")
-    try:
-        os.rename(str(path), str(sentinel))
-    except FileNotFoundError:
-        return False, "token already consumed"
-    except OSError as e:
-        return False, f"could not consume token: {e}"
+    if os.name == "nt":
+        lock_path = path.with_name(path.name + ".consume-lock")
+        lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            msvcrt.locking(lock_fd, msvcrt.LK_LOCK, 1)
+            try:
+                os.rename(str(path), str(sentinel))
+            except FileNotFoundError:
+                return False, "token already consumed"
+            except OSError as e:
+                return False, f"could not consume token: {e}"
+        finally:
+            try:
+                msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            os.close(lock_fd)
+    else:
+        try:
+            os.rename(str(path), str(sentinel))
+        except FileNotFoundError:
+            return False, "token already consumed"
+        except OSError as e:
+            return False, f"could not consume token: {e}"
     try:
         sentinel.unlink()
     except OSError:
