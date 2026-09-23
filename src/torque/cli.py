@@ -65,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("path")
     upgrade.add_argument("--check", action="store_true", help="show available updates without writing")
     upgrade.add_argument("--json", action="store_true")
+    ai_access = work_sub.add_parser("ai-access", help="set the de-identified mode; the owner runs this, not an AI session")
+    ai_access.add_argument("mode", choices=ws.AI_ACCESS_MODES)
+    ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
+    ai_access.add_argument("--json", action="store_true")
     demo = sub.add_parser("demo", help="create an offline synthetic consulting workspace; no org needed")
     demo.add_argument("path")
     demo.add_argument("--json", action="store_true")
@@ -469,6 +473,9 @@ def main(argv: list[str] | None = None) -> int:
             if parsed.action == "init":
                 path = ws.init_workspace(parsed.path, parsed.name, parsed.profile)
                 _print_json({"workspace": str(path), "org_calls": False}) if parsed.json else print(path)
+            elif parsed.action == "ai-access":
+                root = ws.set_ai_access(parsed.path, parsed.mode)
+                _print_json({"workspace": str(root), "ai_access": parsed.mode}) if parsed.json else print(parsed.mode)
             else:
                 from .template_updates import update_templates
                 report = update_templates(Path(parsed.path), check=parsed.check)
