@@ -6,8 +6,8 @@ documentation, session continuity and lessons. It is not limited to advisory
 reports. A request to investigate and fix an issue should continue through the
 authorized change and verification using the tools available in the user's environment.
 
-All **42 source command names** are retained. Seven additional names make discovery,
-portable context and session resumption explicit. The complete machine-readable
+All **42 source command names** are retained. Eleven additional names make discovery,
+portable context, session resumption and four delivery recipes explicit. The complete machine-readable
 index is `workflows/catalogue.json`; `torque workflows list` displays it and
 `torque workflows show <name>` displays a recipe.
 
@@ -84,7 +84,8 @@ The conversational recipes remain neutral about which model the user normally ru
 | Continuity and documents | export-session, handoff, process-meeting, release-notes, training | Turn work and meetings into durable records, clear requirements, maintainable handoffs and audience-appropriate documents. |
 
 Added names: **context, discovery, session-save, session-resume, logs, probes,
-update-torque**. The catalogue is the complete list used by runtime discovery and
+update-torque, triage-alert, gift-payments, grants-outbound-funds,
+requirements-to-build**. The catalogue is the complete list used by runtime discovery and
 packaging, rather than a second manually maintained executable registry.
 
 ## Preserved behavior and deliberate corrections

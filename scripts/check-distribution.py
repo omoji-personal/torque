@@ -6,6 +6,8 @@ from pathlib import Path
 import zipfile
 import tarfile
 
+from legacy_commands import check_source_commands
+
 REQUIRED = {
     "torque/cli.py", "torque/workspace.py", "torque/data/catalogue.json",
     "torque/changes.py", "torque/demo.py", "torque/template_updates.py",
@@ -34,19 +36,7 @@ def main():
         rows = data if isinstance(data, list) else data.get("workflows", data.get("commands", []))
         if not rows:
             raise SystemExit("Empty workflow catalogue")
-        # The source_command surface grows as new Torque commands are added (JSC
-        # legacy mappings plus native additions like the T4 demo-breadth recipes), so
-        # pinning an exact total needs a manual bump on every legitimate catalogue
-        # change. Guard the real regression instead: every mapped source_command is
-        # present and distinct, so no two catalogue entries silently collide on the
-        # same legacy/CLI alias.
-        mapped = [row["source_command"] for row in rows if row.get("source_command")]
-        if not mapped:
-            raise SystemExit("No source_command mappings found in the packaged catalogue")
-        source_commands = set(mapped)
-        if len(mapped) != len(source_commands):
-            duplicates = sorted({name for name in source_commands if mapped.count(name) > 1})
-            raise SystemExit(f"Duplicate source_command mappings in the catalogue: {duplicates}")
+        source_commands = check_source_commands(rows)
         for row in rows:
             if f"torque/data/commands/{row['name']}.md" not in names:
                 raise SystemExit(f"Missing packaged recipe: {row['name']}")
@@ -56,7 +46,7 @@ def main():
         if home_paths:
             raise SystemExit(f"Developer-local absolute paths in wheel: {home_paths}")
         print(f"Wheel surface verified: {len(names)} entries, {len(rows)} recipes, "
-              f"{len(source_commands)} distinct source_command mappings.")
+              f"{len(source_commands)} legacy JSC command mappings.")
     if args.sdist:
         with tarfile.open(args.sdist) as archive:
             paths = [Path(member.name) for member in archive.getmembers()]
