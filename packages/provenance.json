@@ -701,7 +701,7 @@
       "source_path": "packages/memory/tests/test_capture.py",
       "source_sha256": "b949eb1c10fc233640684bd4e932f8b0c33ed62287a6e26127a0b596dbdab41c",
       "source_tracked": true,
-      "destination_sha256": "8d80feb753313122ce6d5b43ce6c55bb5d17116d600393ace7f0e715eed01f06",
+      "destination_sha256": "036584cc7cda32d5854a7a769695f8bf18ce14f01f197f9843b088e563bd2592",
       "adapted": true
     },
     {
@@ -773,8 +773,8 @@
       "source_path": "packages/memory/jsc_memory/capture.py",
       "source_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
       "source_tracked": true,
-      "destination_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
-      "adapted": false
+      "destination_sha256": "e58ca75e1c54e31e88e79f40000a12c80738c5a71d4565abb7301198f99fc3de",
+      "adapted": true
     },
     {
       "path": "packages/memory/jsc_memory/cli.py",
@@ -791,7 +791,7 @@
       "source_path": "packages/memory/jsc_memory/storage.py",
       "source_sha256": "6a815a6a996f2d1359c3ba8dbab6a2aa04d9fb3ab70a510feb7c6c3115e9c1a9",
       "source_tracked": true,
-      "destination_sha256": "7bc6e72380b8e16743a21fc4c015e3345811e1e481da9cc6966246fbf244fc09",
+      "destination_sha256": "5447571bd2ca190971f26d2fd5b4176c09ea96d2892ba97768a6041a5df962c5",
       "adapted": true
     },
     {
