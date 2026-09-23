@@ -148,3 +148,17 @@ def test_two_creators_do_not_merge_or_remove_each_others_workspace(tmp_path, off
     assert sum(result is not None for result in results) == 1
     assert (target / "START-HERE.md").is_file()
     assert len(ws.list_sessions(target, demo.CLIENT, limit=None)) == 2
+
+
+SCENARIOS = ["alert-triage", "gift-payments", "grants-outbound-funds", "requirements-to-build"]
+
+
+def test_demo_ships_breadth_scenarios(tmp_path, offline):
+    result = demo.create_demo(tmp_path / "d")
+    client = Path(result["client_root"])
+    for name in SCENARIOS:
+        folder = client / "examples" / name
+        assert (folder / "input.md").is_file() and (folder / "walkthrough.md").is_file()
+        text = (folder / "input.md").read_text()
+        assert "SYNTHETIC" in text
+    assert sorted(Path(p).name for p in result["examples"]) == sorted(SCENARIOS)
