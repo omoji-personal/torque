@@ -35,7 +35,7 @@
   remove firm-specific prose from tracked source; add a hygiene test that
   fails if any tracked text file names a firm again.
 
-1048 offline tests pass (154 subtests).
+1123 offline tests pass (154 subtests).
 
 ## 2.0.0a9 — unpublished continuity and verification update, 2026-09-22
 
