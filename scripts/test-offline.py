@@ -62,7 +62,7 @@ def main():
                 "print(json.dumps({'status':1,'name':'OfflineBackendUnavailable',"
                 "'message':'The offline fixture backend is unavailable; no live call was made.'}))\n"
                 "raise SystemExit(1)\n"
-            )
+            , encoding="utf-8")
             path.chmod(0o755)
             if os.name == "nt":
                 # subprocess.run([tool, ...]) with shell=False (the pattern used
@@ -81,7 +81,7 @@ def main():
                     "\"message\": \"The offline fixture backend is unavailable; "
                     "no live call was made.\"}\r\n"
                     "exit /b 1\r\n"
-                )
+                , encoding="utf-8")
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("TORQUE_", "JSC_"))}
         env.update({"JSC_ROOT": str(scratch / "client"),
@@ -92,7 +92,7 @@ def main():
         # report failures by process exit and must not be silently just imported.
         standalone = []
         for path in sorted((root / "packages").glob("*/tests/test*.py")):
-            tree = ast.parse(path.read_text())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             collected = any((isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_"))
                             or (isinstance(n, ast.ClassDef) and (n.name.startswith("Test") or any(
                                 (isinstance(base, ast.Attribute) and base.attr == "TestCase")
@@ -131,7 +131,7 @@ def main():
             print("Selected pytest tests only; standalone fixture suites were not run.")
         if hitfile.exists():
             from collections import Counter
-            calls = Counter(hitfile.read_text().splitlines())
+            calls = Counter(hitfile.read_text(encoding="utf-8").splitlines())
             print(f"Failure-path requests handled by the unavailable offline stub: {dict(calls)}. No live tool was invoked.")
         return code
 

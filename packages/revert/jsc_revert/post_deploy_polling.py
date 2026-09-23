@@ -112,7 +112,7 @@ def enqueue(snapshot_id: str, org_id_short: str, alias: str,
         "status": "pending",
     }
     with _queue_lock(qd):
-        with queue_file.open("a") as f:
+        with queue_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     return entry["queue_entry_id"]
 
@@ -226,7 +226,7 @@ def _load_entries(queue_file: Path) -> list[dict]:
     entries = []
     if not queue_file.exists():
         return entries
-    with queue_file.open() as f:
+    with queue_file.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -240,7 +240,7 @@ def _load_entries(queue_file: Path) -> list[dict]:
 
 def _rewrite_queue(queue_file: Path, entries: list[dict]):
     tmp = queue_file.with_suffix(".jsonl.tmp")
-    with tmp.open("w") as f:
+    with tmp.open("w", encoding="utf-8") as f:
         for e in entries:
             f.write(json.dumps(e) + "\n")
     tmp.replace(queue_file)

@@ -64,7 +64,7 @@ def read_events(session_id: str) -> list[dict]:
         return []
     out = []
     try:
-        with open(spool_path) as f:
+        with open(spool_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

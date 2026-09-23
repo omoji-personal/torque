@@ -45,7 +45,7 @@ def _make_lock_file(lock_path: Path, **state_overrides) -> None:
     }
     state.update(state_overrides)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text(json.dumps(state))
+    lock_path.write_text(json.dumps(state), encoding="utf-8")
 
 
 def _iso(dt: datetime) -> str:
@@ -95,7 +95,7 @@ def main() -> int:  # noqa: C901
 
         # ── F-OS-4: empty lockfile + mtime > HARD_ABSOLUTE → stealable ────
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path.write_text("")
+        lock_path.write_text("", encoding="utf-8")
         old_mtime = time.time() - org_sequence.LOCK_HARD_ABSOLUTE_THRESHOLD_SECONDS - 60
         os.utime(lock_path, (old_mtime, old_mtime))
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-5", "deploy_metadata")
@@ -103,7 +103,7 @@ def main() -> int:  # noqa: C901
         org_sequence.release("00DPP0000004XYZ", "sf-test", state["owner_token"])
 
         # ── F-OS-5: malformed lockfile + mtime > HARD_ABSOLUTE → stealable ──
-        lock_path.write_text("{garbage not json")
+        lock_path.write_text("{garbage not json", encoding="utf-8")
         old_mtime = time.time() - org_sequence.LOCK_HARD_ABSOLUTE_THRESHOLD_SECONDS - 60
         os.utime(lock_path, (old_mtime, old_mtime))
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-6", "deploy_metadata")
@@ -119,7 +119,7 @@ def main() -> int:  # noqa: C901
             "owner_token": "tok", "owner_pid": "not-an-int", "owner_hostname": "h",
             "heartbeat_at_iso": None, "acquired_at_iso": "2020-01-01T00:00:00+00:00",
             "snapshot_id": "old", "operation_type": "deploy_metadata",
-        }))
+        }), encoding="utf-8")
         old_mtime = time.time() - org_sequence.LOCK_HARD_ABSOLUTE_THRESHOLD_SECONDS - 60
         os.utime(lock_path, (old_mtime, old_mtime))
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-6b", "deploy_metadata")
@@ -127,7 +127,7 @@ def main() -> int:  # noqa: C901
         org_sequence.release("00DPP0000004XYZ", "sf-test", state["owner_token"])
 
         # ── F-OS-6: empty lockfile FRESH mtime → NOT stealable ────────────
-        lock_path.write_text("")
+        lock_path.write_text("", encoding="utf-8")
         # mtime = now (fresh)
         try:
             org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-7", "deploy_metadata")
@@ -208,7 +208,7 @@ def main() -> int:  # noqa: C901
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-12", "deploy_metadata")
         time.sleep(0.05)
         org_sequence.heartbeat("00DPP0000004XYZ", "sf-test", state["owner_token"])
-        new_state = json.loads((Path(tmpd) / "00DPP0000004XYZ-sf-test" / ".org_lock.json").read_text())
+        new_state = json.loads((Path(tmpd) / "00DPP0000004XYZ-sf-test" / ".org_lock.json").read_text(encoding="utf-8"))
         check("F-OS-11 heartbeat updates heartbeat_at_iso",
               new_state["heartbeat_at_iso"] >= state["heartbeat_at_iso"])
 

@@ -16,7 +16,7 @@ def test_sequential_clients_resolve_storage_at_call_time(tmp_path, monkeypatch):
     monkeypatch.setenv("JSC_MEMORY_DIR", str(tmp_path / "stale-client"))
     stale = tmp_path / "old-repo/local/lessons"
     stale.mkdir(parents=True)
-    (stale / "lessons.md").write_text("Private stale client context must never be selected")
+    (stale / "lessons.md").write_text("Private stale client context must never be selected", encoding="utf-8")
     monkeypatch.chdir(tmp_path / "old-repo")
     paths=[]
     for client in ("alpha", "beta"):
@@ -99,7 +99,7 @@ def test_generic_router_data_is_inside_importable_package():
 def test_explicit_client_browser_flow_preserves_execution_surface(tmp_path,monkeypatch):
     from jsc_browser_tests.suite import discover_flows
     path=tmp_path/"example.py"
-    path.write_text('from jsc_browser_tests.runner import BaseFlow, Variation\nfrom jsc_browser_tests.flow_spec import FlowSpec\nclass Example(BaseFlow):\n    name="example_flow"\n    spec=FlowSpec(name="example_flow",workflow="E1",writes=False,variations=[Variation("happy")])\nFLOW=Example()\n')
+    path.write_text('from jsc_browser_tests.runner import BaseFlow, Variation\nfrom jsc_browser_tests.flow_spec import FlowSpec\nclass Example(BaseFlow):\n    name="example_flow"\n    spec=FlowSpec(name="example_flow",workflow="E1",writes=False,variations=[Variation("happy")])\nFLOW=Example()\n', encoding="utf-8")
     monkeypatch.setenv("TORQUE_BROWSER_FLOWS",str(path))
     assert {f.spec.name for f in discover_flows()}=={"smoke_login","example_flow"}
     monkeypatch.setenv("TORQUE_BROWSER_FLOWS",str(tmp_path/"missing.py"))
@@ -158,7 +158,7 @@ def test_lock_audit_remains_client_private_and_omits_prior_tokens(tmp_path,monke
     from jsc_revert.org_sequence import _audit_steal,LockReadResult,LockReadStatus
     monkeypatch.setenv('TORQUE_WORKSPACE',str(tmp_path))
     _audit_steal(tmp_path/'state/revert/synthetic-org/.org_lock.json',LockReadResult(LockReadStatus.VALID,{'owner_token':'SYNTHETIC_SECRET'}))
-    text=(tmp_path/'state/audit-logs/revert-lock-events.jsonl').read_text()
+    text=(tmp_path/'state/audit-logs/revert-lock-events.jsonl').read_text(encoding="utf-8")
     assert 'revert_lock_steal' in text
     assert 'SYNTHETIC_SECRET' not in text
 

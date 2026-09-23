@@ -27,7 +27,7 @@ class ObjectEntry:
 
 def load_registry(path: Path | None = None) -> dict[str, ObjectEntry]:
     selected = path or (Path(os.environ["TORQUE_BROWSER_REGISTRY"]) if os.environ.get("TORQUE_BROWSER_REGISTRY") else _REGISTRY_PATH)
-    data = yaml.safe_load(selected.read_text()) or {}
+    data = yaml.safe_load(selected.read_text(encoding="utf-8")) or {}
     out = {}
     for api, row in (data.get("objects") or {}).items():
         out[api] = ObjectEntry(

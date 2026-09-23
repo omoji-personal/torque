@@ -47,7 +47,7 @@ def load_router(path: Path | None = None) -> dict[str, Any]:
     p = path or (Path(os.environ["TORQUE_QA_ROUTER"]) if os.environ.get("TORQUE_QA_ROUTER") else DEFAULT_ROUTER_PATH)
     if not p.exists():
         raise FileNotFoundError(f"qa-router.yaml not found at {p}")
-    with open(p) as f:
+    with open(p, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     _validate(data)
     return data

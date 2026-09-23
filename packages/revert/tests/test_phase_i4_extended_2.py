@@ -343,7 +343,7 @@ def main() -> int:
                 result = pdp._poll_one(entry)
             observations = entry.get("observation_paths", [])
             check(f"F-PDP-EVIDENCE {entry['operation_type']} stores the report before classifying",
-                  bool(observations) and json.loads(Path(observations[0]).read_text())["stdout"] == payload)
+                  bool(observations) and json.loads(Path(observations[0]).read_text(encoding="utf-8"))["stdout"] == payload)
             return result
 
     missing = _make_entry("deploy_metadata", '{"result":{"status":"Succeeded"}}')
@@ -415,7 +415,7 @@ def main() -> int:
             },
             "revert_capabilities": {"automatic_revertible": False},
         }
-        (snap_dir / "manifest.json").write_text(json.dumps(manifest))
+        (snap_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         # Enqueue
         queue_dir = full_root / "_polling_queue"
         qe_id = pdp.enqueue(
@@ -429,9 +429,9 @@ def main() -> int:
         )
         # Backdate next_poll_at so poll_once actually polls (not defers).
         queue_file = queue_dir / "queue.jsonl"
-        entries_raw = [json.loads(l) for l in queue_file.read_text().splitlines() if l.strip()]
+        entries_raw = [json.loads(l) for l in queue_file.read_text(encoding="utf-8").splitlines() if l.strip()]
         entries_raw[-1]["next_poll_at"] = "2020-01-01T00:00:00Z"
-        queue_file.write_text("\n".join(json.dumps(e) for e in entries_raw) + "\n")
+        queue_file.write_text("\n".join(json.dumps(e) for e in entries_raw) + "\n", encoding="utf-8")
         # Monkeypatch the manifest module's snapshot resolver + save to use our
         # temp tree (skip envelope validation — we're testing the polling flow,
         # not the manifest schema validator).
@@ -443,7 +443,7 @@ def main() -> int:
             snap_dir, dict(manifest_state["m"]))
         def fake_save(d, m):
             manifest_state["m"] = dict(m)
-            (snap_dir / "manifest.json").write_text(json.dumps(m))
+            (snap_dir / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
         mf.save = fake_save
         try:
             stats = pdp.poll_once(queue_dir)
@@ -508,7 +508,7 @@ def main() -> int:
     # successFilePath. Wrapper should read it and write the target out_path.
     tmpdir = Path(tempfile.mkdtemp())
     src_csv = tmpdir / "src-success.csv"
-    src_csv.write_text("sf__Id,Ext__c,sf__Created\n001000000000001AAA,A,true\n")
+    src_csv.write_text("sf__Id,Ext__c,sf__Created\n001000000000001AAA,A,true\n", encoding="utf-8")
     saved_run2 = dbu.c.run_sf_subprocess
     try:
         dbu.c.run_sf_subprocess = lambda cmd, timeout_seconds=120, cwd=None: (
@@ -516,7 +516,7 @@ def main() -> int:
         out = tmpdir / "out-success.csv"
         ok = dbu._fetch_bulk_results("fake", "750000000000001AAA", out)
         check("F-BU-RES-1 _fetch_bulk_results reads successFilePath + copies",
-              ok and out.exists() and out.read_text() == src_csv.read_text())
+              ok and out.exists() and out.read_text(encoding="utf-8") == src_csv.read_text(encoding="utf-8"))
         # Old shape: filesWritten — should NOT be picked up
         dbu.c.run_sf_subprocess = lambda cmd, timeout_seconds=120, cwd=None: (
             0, json.dumps({"result": {"filesWritten": [str(src_csv)]}}), "")

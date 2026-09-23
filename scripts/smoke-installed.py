@@ -54,18 +54,18 @@ def main():
         assert (private / "AGENTS.md").is_file()
         assert len(list((private / ".claude/commands").glob("*.md"))) == len(rows)
         assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 3
-        assert "Salesforce Solution Lead" in (private / "profile.md").read_text()
+        assert "Salesforce Solution Lead" in (private / "profile.md").read_text(encoding="utf-8")
         for client in ("alpha", "beta"):
             call("client", "add", client, "--workspace", str(private), "--org", f"synthetic-{client}")
         firm_marker = "SYNTHETIC_FIRM_NOTE_SMOKE"
         alpha_marker = "SYNTHETIC_ALPHA_NOTE_SMOKE"
         sibling_marker = "SYNTHETIC_BETA_NOTE_SMOKE"
-        with (private / "profile.md").open("a") as notes:
+        with (private / "profile.md").open("a", encoding="utf-8") as notes:
             notes.write("\n" + firm_marker + "\n")
-        (private / "clients/alpha/context.md").write_text(alpha_marker + "\n")
-        (private / "clients/beta/context.md").write_text(sibling_marker + "\n")
+        (private / "clients/alpha/context.md").write_text(alpha_marker + "\n", encoding="utf-8")
+        (private / "clients/beta/context.md").write_text(sibling_marker + "\n", encoding="utf-8")
         proof = private / "clients/alpha/artifacts/proof.txt"
-        proof.write_text("Synthetic observation before the next session")
+        proof.write_text("Synthetic observation before the next session", encoding="utf-8")
         call("session", "add", "--workspace", str(private), "--client", "alpha",
              "--summary", "Synthetic Alpha-only outcome; no org operation was performed.", "--status", "prepared",
              "--evidence", str(proof))
@@ -74,7 +74,7 @@ def main():
         context = call("context", "--workspace", str(private), "--client", "alpha", "--json")
         assert "Alpha-only" in context and "Beta-private" not in context
         assert json.loads(context)["sessions"][0]["evidence_integrity"] == "matches_reference"
-        proof.write_text("Synthetic observation changed after recording")
+        proof.write_text("Synthetic observation changed after recording", encoding="utf-8")
         handoff = call("handoff", "--workspace", str(private), "--client", "alpha")
         assert "Alpha-only" in handoff and "Beta-private" not in handoff and "user-reported" in handoff
         assert firm_marker in handoff and alpha_marker in handoff, "Selected client handoff omitted working notes"
@@ -111,20 +111,20 @@ def main():
         report = call("change", "handoff", ids['alpha', 1], "--workspace", str(private), "--client", "alpha")
         assert "Synthetic fixture reports save failure" in report and "alpha-private-next-step-1" in report
         recipe = private / ".claude/commands/diagnose.md"
-        recipe.write_text(recipe.read_text() + "\nLocal synthetic customization.\n")
+        recipe.write_text(recipe.read_text(encoding="utf-8") + "\nLocal synthetic customization.\n", encoding="utf-8")
         preview = json.loads(call("workspace", "upgrade", str(private), "--check", "--json"))
         assert preview["check"] and preview["conflicts"]
         call("workspace", "upgrade", str(private), "--json")
-        assert "Local synthetic customization." in recipe.read_text()
+        assert "Local synthetic customization." in recipe.read_text(encoding="utf-8")
         selected_recipe = call("workflows", "show", "diagnose", "--workspace", str(private))
-        assert selected_recipe.strip() == recipe.read_text().strip(), "CLI did not return the preserved local recipe"
+        assert selected_recipe.strip() == recipe.read_text(encoding="utf-8").strip(), "CLI did not return the preserved local recipe"
         assert "Local synthetic customization." in selected_recipe
         # A CLI installed outside a checkout must still recognize the destination's identity.
         checkout = root / "synthetic-torque-source"
         (checkout / "src/torque").mkdir(parents=True)
         (checkout / "src/torque/__init__.py").touch()
         (checkout / "src/torque/workspace.py").touch()
-        (checkout / "pyproject.toml").write_text('[project]\nname = "torque-salesforce"\n')
+        (checkout / "pyproject.toml").write_text('[project]\nname = "torque-salesforce"\n', encoding="utf-8")
         forbidden = checkout / "private"
         denied = subprocess.run([sys.executable, "-m", "torque", "workspace", "init", str(forbidden),
                                  "--name", "Synthetic private firm"], cwd=root, env=env,

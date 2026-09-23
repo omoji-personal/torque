@@ -461,7 +461,7 @@ def _evidence(client: Path) -> dict:
     ET_ns = {"m": "http://soap.sforce.com/2006/04/metadata"}
     field_path = project / f"force-app/main/default/objects/{OBJECT}/fields/{FIELD}.field-meta.xml"
     allowed = {item.text for item in ET.parse(field_path).findall(".//m:value/m:fullName", ET_ns)}
-    sample = json.loads((client / "artifacts/sample-requests.json").read_text())
+    sample = json.loads((client / "artifacts/sample-requests.json").read_text(encoding="utf-8"))
     if not all(row[FIELD] in allowed for row in sample["requests"]):
         raise ws.WorkspaceError("synthetic demo values do not match the prepared picklist")
     return {

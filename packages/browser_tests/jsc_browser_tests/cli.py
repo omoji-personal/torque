@@ -101,7 +101,7 @@ def cmd_sanitize_replay(args: argparse.Namespace) -> int:
     if not p.exists():
         print(f"error: file not found: {p}", file=sys.stderr)
         return 1
-    content = p.read_text()
+    content = p.read_text(encoding="utf-8")
     violations = auth.scan_replay_script(content)
     if violations:
         print(f"REJECTED: {p} contains {len(violations)} forbidden pattern(s):")

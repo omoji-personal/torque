@@ -155,7 +155,7 @@ def read_index_top(deadline_ts: Optional[float] = None) -> Optional[dict]:
             return None  # corrupt or runaway
         if deadline_ts is not None and time.monotonic() > deadline_ts:
             return None
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         if deadline_ts is not None and time.monotonic() > deadline_ts:
             return None
         data = json.loads(text)

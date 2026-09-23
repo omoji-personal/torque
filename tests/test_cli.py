@@ -55,8 +55,8 @@ class CliTests(unittest.TestCase):
         destination = self.alpha / "artifacts" / "handoff.md"
         code, _, _ = self.run_cli("handoff", *self.context_args(), "--output", str(destination))
         self.assertEqual(code, 0)
-        self.assertIn("Prepared a field change", destination.read_text())
-        self.assertIn("user-reported", destination.read_text())
+        self.assertIn("Prepared a field change", destination.read_text(encoding="utf-8"))
+        self.assertIn("user-reported", destination.read_text(encoding="utf-8"))
         code, _, _ = self.run_cli("handoff", *self.context_args(), "--output", str(destination))
         self.assertEqual(code, 2)
 
@@ -113,8 +113,8 @@ class CliTests(unittest.TestCase):
 
     def test_selected_client_adapter_files_follow_ported_package_contracts(self):
         config = self.alpha / "config"
-        (config / "test-users.json").write_text("{}")
-        (config / "object-registry.yaml").write_text("objects: {}")
+        (config / "test-users.json").write_text("{}", encoding="utf-8")
+        (config / "object-registry.yaml").write_text("objects: {}", encoding="utf-8")
         (config / "browser-flows").mkdir()
         (config / "ai-fixtures").mkdir()
         os.environ["TORQUE_TEST_USERS"] = "/stale/other-client.json"
@@ -149,8 +149,8 @@ class CliTests(unittest.TestCase):
 
     def test_parity_adapter_is_explicit_client_local_and_does_not_reuse_previous_scope(self):
         config = self.alpha / "config"
-        (config / "parity.py").write_text("# synthetic fixture; never executed")
-        (config / "parity.json").write_text(json.dumps({"script": "parity.py", "baseline_org": "alpha-baseline"}))
+        (config / "parity.py").write_text("# synthetic fixture; never executed", encoding="utf-8")
+        (config / "parity.json").write_text(json.dumps({"script": "parity.py", "baseline_org": "alpha-baseline"}), encoding="utf-8")
         os.environ["TORQUE_PARITY_SCRIPT"] = "/stale/other-client.py"
         os.environ["TORQUE_BASELINE_ORG"] = "stale-baseline"
         seen = []
@@ -160,7 +160,7 @@ class CliTests(unittest.TestCase):
         with patch.object(cli.importlib, "import_module", return_value=types.SimpleNamespace(main=delegate)):
             self.assertEqual(self.run_cli("qa", "run", "synthetic", "--org", "explicit", *self.context_args())[0], 0)
             self.assertEqual(self.run_cli("qa", "run", "synthetic", "--org", "explicit", *self.context_args("Beta"))[0], 0)
-            (config / "parity.json").write_text(json.dumps({"script": "../context.md", "baseline_org": "alpha-baseline"}))
+            (config / "parity.json").write_text(json.dumps({"script": "../context.md", "baseline_org": "alpha-baseline"}), encoding="utf-8")
             self.assertEqual(self.run_cli("qa", "run", "synthetic", "--org", "explicit", *self.context_args())[0], 2)
         self.assertEqual(seen, [(str(config / "parity.py"), "alpha-baseline"), (None, None)])
         self.assertEqual(os.environ["TORQUE_PARITY_SCRIPT"], "/stale/other-client.py")
@@ -270,7 +270,7 @@ class CliTests(unittest.TestCase):
         target = self.alpha / "artifacts" / "change.json"
         code, output, _ = self.run_cli("change", "handoff", identifier, *self.context_args(), "--json", "--output", str(target))
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output), json.loads(target.read_text()))
+        self.assertEqual(json.loads(output), json.loads(target.read_text(encoding="utf-8")))
         self.assertFalse(json.loads(output)["assessment"]["business_acceptance_independently_verified"])
         self.assertEqual(self.run_cli("change", "show", identifier, *self.context_args("Beta"))[0], 2)
 

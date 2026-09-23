@@ -261,7 +261,7 @@ def stage_source_project(source_dirs: list[str]) -> tuple[str, list[str]]:
     stage = pathlib.Path(tempfile.mkdtemp(prefix="jsc-deploy-stage-")).resolve()
     (stage / "sfdx-project.json").write_text(json.dumps(
         {"packageDirectories": [{"path": "force-app", "default": True}],
-         "namespace": ""}))
+         "namespace": ""}), encoding="utf-8")
     pkg = stage / "force-app"
     pkg.mkdir(parents=True, exist_ok=True)   # must EXIST, not just be declared
     try:

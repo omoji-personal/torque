@@ -43,7 +43,7 @@ def write(path, cells, score, audit_entries, audit_log=None, extra=None) -> dict
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     manifest = redact(manifest)
-    p.write_text(json.dumps(manifest, indent=2))
+    p.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     p.chmod(0o600)
     _append_audit(audit_entries, Path(audit_log) if audit_log else state_dir("audit-logs") / "browser-suite.log")
     return manifest

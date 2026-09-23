@@ -136,7 +136,7 @@ def revoke(target_path: Path | None = None) -> bool:
 def show(target_path: Path | None = None) -> dict | None:
     target_path = target_path or _token_path()
     try:
-        return json.loads(target_path.read_text())
+        return json.loads(target_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
@@ -169,7 +169,7 @@ def validate_for_skip(
             return False, f"token file owned by uid {st.st_uid}, current uid is {os.getuid()}"
 
     try:
-        token = json.loads(path.read_text())
+        token = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         return False, f"unreadable or malformed token: {e}"
 

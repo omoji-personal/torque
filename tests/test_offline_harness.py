@@ -49,7 +49,7 @@ def _fake_repository(harness, monkeypatch, tmp_path, names):
     for name in names:
         path = root / "packages/example/tests" / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("def main():\n    return 0\n")
+        path.write_text("def main():\n    return 0\n", encoding="utf-8")
     monkeypatch.setattr(harness, "__file__", str(root / "scripts/test-offline.py"))
     monkeypatch.setattr(sys, "argv", ["test-offline.py", "-q"])
 
@@ -134,7 +134,7 @@ def test_runner_and_fresh_children_import_current_source_despite_stale_pythonpat
                 continue
             package = base / module
             package.mkdir(parents=True)
-            (package / "__init__.py").write_text(f'ORIGIN = {str(base)!r}\n')
+            (package / "__init__.py").write_text(f'ORIGIN = {str(base)!r}\n', encoding="utf-8")
     test = root / "tests/test_source.py"
     test.parent.mkdir()
     assertions = (
@@ -142,10 +142,10 @@ def test_runner_and_fresh_children_import_current_source_despite_stale_pythonpat
         f"assert torque.ORIGIN == {str(root / 'src')!r}\n"
         f"assert jsc_example.ORIGIN == {str(root / 'packages/example')!r}\n"
     )
-    test.write_text("def test_actual_source():\n" + "\n".join("    " + line for line in assertions.splitlines()) + "\n")
+    test.write_text("def test_actual_source():\n" + "\n".join("    " + line for line in assertions.splitlines()) + "\n", encoding="utf-8")
     executable = root / "packages/example/tests/test_executable.py"
     executable.parent.mkdir()
-    executable.write_text(assertions + "print('source self-test PASSED (2 fixtures)')\n")
+    executable.write_text(assertions + "print('source self-test PASSED (2 fixtures)')\n", encoding="utf-8")
     env = dict(os.environ, PYTHONPATH=str(tmp_path / "stale"))
     run = subprocess.run([sys.executable, str(script), "-q", "--maxfail", "1"],
                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
@@ -171,7 +171,7 @@ def test_qa_load_timeout_entry_point_exits_incomplete(monkeypatch, capsys):
 
     # Execute the actual checked-in __main__ exception handling, without running
     # the large legacy suite or a real subprocess just to simulate machine load.
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     entry = next(node for node in reversed(tree.body)
                  if isinstance(node, ast.If) and "__name__" in ast.unparse(node.test))
     namespace = {**vars(qa), "__name__": "__main__", "main": decline}

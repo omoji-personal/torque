@@ -22,7 +22,7 @@ def run(args: argparse.Namespace) -> int:
     if not apex_path.exists():
         print(f"error: apex file not found: {apex_path}", file=sys.stderr)
         return c.EXIT_PRESNAP_FAILED_PROD
-    apex_code = apex_path.read_text()
+    apex_code = apex_path.read_text(encoding="utf-8")
 
     wrapper_command = f"jsc apex run -o {args.target_org} -f {args.apex_file}"
     if args.touches: wrapper_command += f" --touches {args.touches}"
@@ -77,7 +77,7 @@ def run(args: argparse.Namespace) -> int:
                 return c.EXIT_PRESNAP_FAILED_PROD
 
         # Persist apex source for forensics
-        (ctx.snap_dir / "apex_input.apex").write_text(apex_code)
+        (ctx.snap_dir / "apex_input.apex").write_text(apex_code, encoding="utf-8")
 
         # ── Phase 1: pre-state per declared touched objects ────────────────
         t0 = time.monotonic()
@@ -107,7 +107,7 @@ def run(args: argparse.Namespace) -> int:
             ctx.manifest["payload"]["anonymous_id"] = r.get("id")
             ctx.manifest["payload"]["debug_log_id"] = r.get("logs", "")[:64]  # truncate
 
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         snapshot_status = "complete" if exit_code == 0 else "failed"
         ctx.manifest["snapshot_status"] = snapshot_status
         ctx.update_phase("underlying_command",

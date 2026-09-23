@@ -155,7 +155,7 @@ def list_review_pending() -> list[Lesson]:
     out = []
     for p in sorted(review_queue_dir().glob("*.json")):
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
             out.append(Lesson.from_dict(data))
         except Exception:
             continue
@@ -171,7 +171,7 @@ def list_active() -> list[Lesson]:
     if not sidecar.exists():
         return []
     try:
-        data = json.loads(sidecar.read_text())
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
         return [Lesson.from_dict(d) for d in data]
     except Exception:
         return []
@@ -197,7 +197,7 @@ def find_lesson(lesson_id: str) -> Optional[tuple[Lesson, str]]:
             return l, "active"
     for p in sorted(archive_dir().glob("*.json")):
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
             l = Lesson.from_dict(data)
             if l.id == lesson_id or l.id.startswith(lesson_id):
                 return l, "archive"

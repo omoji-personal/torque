@@ -85,7 +85,7 @@ def write_capture_inventory(root: Path) -> None:
             files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     target = root / INVENTORY_FILE
     _no_symlink_path(target)
-    target.write_text(json.dumps({"schema": 1, "algorithm": "sha256", "files": files}, indent=2) + "\n")
+    target.write_text(json.dumps({"schema": 1, "algorithm": "sha256", "files": files}, indent=2) + "\n", encoding="utf-8")
     target.chmod(0o600)
 
 
@@ -95,7 +95,7 @@ def _file_index(payload: dict, root: Path) -> dict[Path, str]:
     if inventory.exists():
         _contained_file(inventory, root)
         try:
-            record = json.loads(inventory.read_text())
+            record = json.loads(inventory.read_text(encoding="utf-8"))
             assert record["schema"] == 1 and record["algorithm"] == "sha256" and isinstance(record["files"], dict)
             for name, checksum in record["files"].items():
                 relative = Path(name)

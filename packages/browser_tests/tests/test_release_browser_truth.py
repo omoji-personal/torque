@@ -203,9 +203,9 @@ def test_preflight_failure_never_executes_cells(tmp_path, raise_error):
         "preflight": preflight, "cell_executor": execute}))
     assert code != 0
     execute.assert_not_awaited()
-    payload = json.loads(path.read_text())
+    payload = json.loads(path.read_text(encoding="utf-8"))
     assert all(c["status"] == "INCOMPLETE" for c in payload["cells"])
-    assert SID not in path.read_text()
+    assert SID not in path.read_text(encoding="utf-8")
 
 
 def test_live_preflight_missing_seed_does_not_open_browser(monkeypatch):
@@ -244,7 +244,7 @@ def test_short_cli_routes_apply_suite_completion_rules(tmp_path, monkeypatch, ca
     if case == "cleanup": assert code == 4
     manifests = list(tmp_path.rglob("manifest.json"))
     assert len(manifests) == 1
-    assert SID not in manifests[0].read_text() + output.getvalue()
+    assert SID not in manifests[0].read_text(encoding="utf-8") + output.getvalue()
 
 
 def test_target_org_and_flow_labels_cannot_escape_artifact_directory(tmp_path, monkeypatch):
