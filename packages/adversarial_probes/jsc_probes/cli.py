@@ -24,7 +24,6 @@ DEFAULT_APEX_API_VERSION = "61.0"
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="jsc-probes",
         description="Generate editable Apex null/empty test drafts. Draft assertions intentionally fail until replaced with business expectations; nothing is compiled or executed.",
     )
     grp = parser.add_mutually_exclusive_group(required=True)

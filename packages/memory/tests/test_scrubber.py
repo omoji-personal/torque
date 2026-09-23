@@ -11,7 +11,7 @@ FIXTURES_PATH = Path(__file__).parent / "fixtures" / "pii_shapes.yaml"
 
 @pytest.fixture(scope="module")
 def fixtures_data():
-    return yaml.safe_load(FIXTURES_PATH.read_text())
+    return yaml.safe_load(FIXTURES_PATH.read_text(encoding="utf-8"))
 
 
 def test_fixtures_load(fixtures_data):

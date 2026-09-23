@@ -119,7 +119,7 @@ def main() -> int:  # noqa: C901
         # Pre-create the Account file so the present check works
         account_path = Path(tmpd) / "force-app" / "main" / "default" / "objects" / "Account" / "Account.object-meta.xml"
         account_path.parent.mkdir(parents=True, exist_ok=True)
-        account_path.write_text("<?xml version='1.0'?><CustomObject></CustomObject>")
+        account_path.write_text("<?xml version='1.0'?><CustomObject></CustomObject>", encoding="utf-8")
         result = classify_retrieve_result(sf_collision, Path(tmpd))
 
     check("F-SP-5a substring-collision: 2 classifications", len(result) == 2)
@@ -198,7 +198,7 @@ def main() -> int:  # noqa: C901
     with tempfile.TemporaryDirectory() as tmpd:
         bar_path = Path(tmpd) / "force-app" / "main" / "default" / "classes" / "Bar.cls"
         bar_path.parent.mkdir(parents=True, exist_ok=True)
-        bar_path.write_text("// Bar")
+        bar_path.write_text("// Bar", encoding="utf-8")
         result = classify_retrieve_result(sf_mixed, Path(tmpd))
     by_name = {c.fullName: c for c in result}
     check("F-SP-8a Bar (existing) → present", by_name["Bar"].state == "present")
@@ -250,7 +250,7 @@ def main() -> int:  # noqa: C901
         for _t, _n, rel in cases:
             p = root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("x")
+            p.write_text("x", encoding="utf-8")
         unresolved = [f"{t}:{n}" for t, n, rel in cases
                       if _derive_metadata_path(t, n, Path(td)) != root / rel]
         check(f"F-SP-11 all {len(cases)} path conventions resolve"

@@ -16,7 +16,7 @@ from jsc_revert.wrappers import _common, deploy
 def capture(root, relative, kind, name, content=None):
     path = root / "metadata-before" / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content or f'<{kind} xmlns="http://soap.sforce.com/2006/04/metadata"><label>Before</label></{kind}>')
+    path.write_text(content or f'<{kind} xmlns="http://soap.sforce.com/2006/04/metadata"><label>Before</label></{kind}>', encoding="utf-8")
     return {"type": kind, "fullName": name, "before_state": "present",
             "filePath": str(path), "before_checksum": hashlib.sha256(path.read_bytes()).hexdigest()}
 
@@ -46,7 +46,7 @@ def test_exact_field_plan_excludes_parent_and_sibling_and_stages_only_field(tmp_
     stage, args = _common.stage_source_project(selected)
     try:
         assert args == ["force-app"]
-        assert sorted(str(p.relative_to(Path(stage)/"force-app")) for p in (Path(stage)/"force-app").rglob("*") if p.is_file()) == ["objects/Request__c/fields/Note__c.field-meta.xml"]
+        assert sorted(p.relative_to(Path(stage)/"force-app").as_posix() for p in (Path(stage)/"force-app").rglob("*") if p.is_file()) == ["objects/Request__c/fields/Note__c.field-meta.xml"]
         assert {p: p.read_bytes() for p in before} == before
     finally:
         shutil.rmtree(stage)
@@ -69,7 +69,7 @@ def test_original_wildcard_scopes_are_retained(tmp_path, selector, expected):
 def test_apex_body_and_meta_companion_survive_but_neighbor_does_not(tmp_path):
     record = capture(tmp_path, "classes/Example.cls", "ApexClass", "Example", "public class Example {}")
     companion = Path(record["filePath"] + "-meta.xml")
-    companion.write_text('<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>67.0</apiVersion></ApexClass>')
+    companion.write_text('<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>67.0</apiVersion></ApexClass>', encoding="utf-8")
     capture(tmp_path, "classes/Neighbor.cls", "ApexClass", "Neighbor", "public class Neighbor {}")
     scope.write_capture_inventory(tmp_path / "metadata-before")
     files = scope.recovery_files(snapshot([record], ["ApexClass:Example"])["payload"], tmp_path)
@@ -79,7 +79,7 @@ def test_apex_body_and_meta_companion_survive_but_neighbor_does_not(tmp_path):
 def test_selected_lwc_bundle_preserves_html_js_css_without_neighbor(tmp_path):
     record = capture(tmp_path, "lwc/example/example.js-meta.xml", "LightningComponentBundle", "example")
     for name in ["example.html", "example.js", "example.css"]:
-        Path(record["filePath"]).with_name(name).write_text("synthetic")
+        Path(record["filePath"]).with_name(name).write_text("synthetic", encoding="utf-8")
     capture(tmp_path, "lwc/neighbor/neighbor.js-meta.xml", "LightningComponentBundle", "neighbor")
     scope.write_capture_inventory(tmp_path / "metadata-before")
     files = scope.recovery_files(snapshot([record], ["LightningComponentBundle:example"])["payload"], tmp_path)
@@ -90,7 +90,7 @@ def test_expanded_static_resource_keeps_only_selected_resource_contents(tmp_path
     record = capture(tmp_path, "staticresources/example.resource-meta.xml", "StaticResource", "example")
     folder = Path(record["filePath"]).parent / "example" / "nested"
     folder.mkdir(parents=True)
-    (folder / "style.css").write_text("body{}")
+    (folder / "style.css").write_text("body{}", encoding="utf-8")
     capture(tmp_path, "staticresources/neighbor.resource-meta.xml", "StaticResource", "neighbor")
     scope.write_capture_inventory(tmp_path / "metadata-before")
     files = scope.recovery_files(snapshot([record], ["StaticResource:example"])["payload"], tmp_path)
@@ -103,7 +103,7 @@ def test_incomplete_or_unsafe_capture_never_becomes_broad_restore(tmp_path, corr
     record = manifest["payload"]["files"][0]
     path = Path(record["filePath"])
     if corruption == "missing": path.unlink()
-    elif corruption == "changed": path.write_text("changed")
+    elif corruption == "changed": path.write_text("changed", encoding="utf-8")
     elif corruption == "outside":
         outside = tmp_path / "outside.field-meta.xml"
         outside.write_bytes(path.read_bytes())
@@ -171,11 +171,11 @@ def test_legacy_unindexed_companion_is_not_assumed_to_be_original(tmp_path):
 def test_bundle_cannot_import_unrecorded_or_changed_companion(tmp_path, change):
     record = capture(tmp_path, "lwc/example/example.js-meta.xml", "LightningComponentBundle", "example")
     js = Path(record["filePath"]).with_name("example.js")
-    js.write_text("original")
+    js.write_text("original", encoding="utf-8")
     scope.write_capture_inventory(tmp_path / "metadata-before")
-    if change == "add": js.with_name("uncaptured.js").write_text("new")
+    if change == "add": js.with_name("uncaptured.js").write_text("new", encoding="utf-8")
     elif change == "remove": js.unlink()
-    else: js.write_text("modified")
+    else: js.write_text("modified", encoding="utf-8")
     assert planner.build_revert_command(snapshot([record], ["LightningComponentBundle:example"]), tmp_path) is None
 
 
@@ -201,13 +201,13 @@ def test_retrieve_records_inventory_for_companion_not_listed_by_cli(tmp_path, mo
     def retrieve(command, **kwargs):
         base = Path(kwargs["cwd"]) / "retrieved" / "classes"
         base.mkdir(parents=True)
-        body = base / "Example.cls"; body.write_text("public class Example {}")
-        (base / "Example.cls-meta.xml").write_text("<ApexClass/>")
+        body = base / "Example.cls"; body.write_text("public class Example {}", encoding="utf-8")
+        (base / "Example.cls-meta.xml").write_text("<ApexClass/>", encoding="utf-8")
         result = {"status": 0, "result": {"status": "Succeeded", "files": [{"type": "ApexClass", "fullName": "Example", "state": "Changed", "filePath": str(body)}]}}
         return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
     monkeypatch.setattr(snapshot_pre.subprocess, "run", retrieve)
     captured = snapshot_pre.run_pre_snapshot_retrieve(["ApexClass:Example"], "synthetic", tmp_path / "metadata-before")
-    inventory = json.loads((tmp_path / "metadata-before" / scope.INVENTORY_FILE).read_text())
+    inventory = json.loads((tmp_path / "metadata-before" / scope.INVENTORY_FILE).read_text(encoding="utf-8"))
     assert set(inventory["files"]) == {"classes/Example.cls", "classes/Example.cls-meta.xml"}
     record = captured.files[0]
     payload = snapshot([{"type": record.type, "fullName": record.fullName, "before_state": record.state, "filePath": record.file_path, "before_checksum": record.checksum}], ["ApexClass:Example"])
@@ -243,9 +243,9 @@ def test_wrapper_recovery_uses_only_scoped_source_even_inside_unrelated_project(
         def update_phase(self, *args, **kwargs): pass
     def invoke(command, timeout_seconds, cwd):
         project = Path(cwd)
-        observed["paths"] = sorted(str(p.relative_to(project/"force-app")) for p in (project/"force-app").rglob("*") if p.is_file())
+        observed["paths"] = sorted(p.relative_to(project/"force-app").as_posix() for p in (project/"force-app").rglob("*") if p.is_file())
         observed["command"] = command
-        assert json.loads((project/"sfdx-project.json").read_text())["packageDirectories"][0]["path"] == "force-app"
+        assert json.loads((project/"sfdx-project.json").read_text(encoding="utf-8"))["packageDirectories"][0]["path"] == "force-app"
         return 0, json.dumps({"status": 0, "result": {"id": "0Af000000000001AAA", "status": "Succeeded", "done": True, "success": True}}), ""
     monkeypatch.setattr(_common, "WrapperContext", Context)
     monkeypatch.setattr(_common, "in_sfdx_project", lambda: inside_project)

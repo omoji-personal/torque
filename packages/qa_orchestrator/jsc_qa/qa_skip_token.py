@@ -12,10 +12,14 @@ from jsc_common.workspace import state_dir
 
 import json
 import os
-import pwd
 import time
 from datetime import datetime
 from pathlib import Path
+
+if os.name != "nt":
+    import pwd
+else:
+    import msvcrt
 
 
 DEFAULT_TOKEN_PATH = None  # legacy helper, never consulted by normal operations
@@ -33,6 +37,10 @@ MAX_TTL_BY_OP_TYPE = {
 
 
 def _current_user_name() -> str:
+    """Windows has neither getuid() nor pwd; USERNAME is the best available
+    signal there (see jsc_revert.intent_marker._current_user_name)."""
+    if os.name == "nt":
+        return os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
     return pwd.getpwuid(os.getuid()).pw_name
 
 
@@ -130,7 +138,7 @@ def revoke(target_path: Path | None = None) -> bool:
 def show(target_path: Path | None = None) -> dict | None:
     target_path = target_path or _token_path()
     try:
-        return json.loads(target_path.read_text())
+        return json.loads(target_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
@@ -155,13 +163,15 @@ def validate_for_skip(
         st = path.stat()
     except OSError:
         return False, "cannot stat token file"
-    if (st.st_mode & 0o777) != 0o600:
-        return False, f"token file mode is {oct(st.st_mode & 0o777)}, required 0o600"
-    if st.st_uid != os.getuid():
-        return False, f"token file owned by uid {st.st_uid}, current uid is {os.getuid()}"
+    # Windows has no POSIX mode bits or getuid(); this hardening is POSIX-only.
+    if os.name != "nt":
+        if (st.st_mode & 0o777) != 0o600:
+            return False, f"token file mode is {oct(st.st_mode & 0o777)}, required 0o600"
+        if st.st_uid != os.getuid():
+            return False, f"token file owned by uid {st.st_uid}, current uid is {os.getuid()}"
 
     try:
-        token = json.loads(path.read_text())
+        token = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         return False, f"unreadable or malformed token: {e}"
 
@@ -239,14 +249,34 @@ def validate_for_skip(
     # honoring the module's "Single-use atomic consume" contract (mirrors the
     # revert-token precedent). (Audit 2026-05-30 COR-3.)
     # NOTE: JSC_QA_SKIP_TOKEN_PATH should be a local filesystem — os.rename
-    # atomicity is not guaranteed on NFS/SMB/some FUSE mounts.
+    # atomicity is not guaranteed on NFS/SMB/some FUSE mounts. On Windows an
+    # explicit exclusive lock makes the same single-use contract hold
+    # regardless of exactly how NTFS orders N racing renames of one source.
     sentinel = path.with_name(f"{path.name}.consumed.{os.getpid()}.{time.monotonic_ns()}")
-    try:
-        os.rename(str(path), str(sentinel))
-    except FileNotFoundError:
-        return False, "token already consumed"
-    except OSError as e:
-        return False, f"could not consume token: {e}"
+    if os.name == "nt":
+        lock_path = path.with_name(path.name + ".consume-lock")
+        lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            msvcrt.locking(lock_fd, msvcrt.LK_LOCK, 1)
+            try:
+                os.rename(str(path), str(sentinel))
+            except FileNotFoundError:
+                return False, "token already consumed"
+            except OSError as e:
+                return False, f"could not consume token: {e}"
+        finally:
+            try:
+                msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            os.close(lock_fd)
+    else:
+        try:
+            os.rename(str(path), str(sentinel))
+        except FileNotFoundError:
+            return False, "token already consumed"
+        except OSError as e:
+            return False, f"could not consume token: {e}"
     try:
         sentinel.unlink()
     except OSError:

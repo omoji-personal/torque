@@ -46,13 +46,13 @@ def test_retrieve_stages_a_project_and_uses_a_relative_output_dir(tmp_path, monk
         # Inspect the staged project HERE — run_pre_snapshot_retrieve removes it
         # in a finally block, so it is gone by the time the test body resumes.
         stage = Path(cwd)
-        seen["project_json"] = json.loads((stage / "sfdx-project.json").read_text())
+        seen["project_json"] = json.loads((stage / "sfdx-project.json").read_text(encoding="utf-8"))
         seen["pkg_dir_exists"] = (
             stage / seen["project_json"]["packageDirectories"][0]["path"]).is_dir()
         # sf writes into <cwd>/retrieved; emulate that so the move has input.
         out = Path(cwd) / "retrieved" / "labels"
         out.mkdir(parents=True, exist_ok=True)
-        (out / "CustomLabels.labels-meta.xml").write_text("<x/>")
+        (out / "CustomLabels.labels-meta.xml").write_text("<x/>", encoding="utf-8")
         payload = {"status": 0, "result": {"status": "Succeeded", "files": [
             {"type": "CustomLabels", "fullName": "CustomLabels", "state": "Changed",
              "filePath": str(out / "CustomLabels.labels-meta.xml")}]}}
@@ -100,7 +100,7 @@ def test_absolute_staging_paths_are_repointed_so_files_classify_present(tmp_path
     def fake_run(cmd, capture_output=True, text=True, timeout=None, cwd=None):
         out = Path(cwd) / "retrieved" / "labels"
         out.mkdir(parents=True, exist_ok=True)
-        (out / "CustomLabels.labels-meta.xml").write_text("<value>ORIGINAL</value>")
+        (out / "CustomLabels.labels-meta.xml").write_text("<value>ORIGINAL</value>", encoding="utf-8")
         payload = {"status": 0, "result": {"status": "Succeeded", "files": [
             {"type": "CustomLabels", "fullName": "CustomLabels", "state": "Changed",
              "filePath": str(out / "CustomLabels.labels-meta.xml")}]}}
@@ -134,7 +134,7 @@ def test_jsc_bin_is_absolute_when_the_console_script_exists():
 # ── defect 4: a deploy outside a project must be staged ──────────────────
 def test_in_sfdx_project_detects_both_ways(tmp_path):
     assert not c.in_sfdx_project(str(tmp_path))
-    (tmp_path / "sfdx-project.json").write_text("{}")
+    (tmp_path / "sfdx-project.json").write_text("{}", encoding="utf-8")
     assert c.in_sfdx_project(str(tmp_path))
     nested = tmp_path / "a" / "b"
     nested.mkdir(parents=True)
@@ -183,8 +183,8 @@ def test_non_metadata_selector_still_gets_the_selector_advice():
 def test_stage_source_project_copies_content_and_drops_forensics(tmp_path):
     src = tmp_path / "metadata-before"
     (src / "labels").mkdir(parents=True)
-    (src / "labels" / "CustomLabels.labels-meta.xml").write_text("<value>ORIGINAL</value>")
-    (src / ".retrieve-result.json").write_text("{}")
+    (src / "labels" / "CustomLabels.labels-meta.xml").write_text("<value>ORIGINAL</value>", encoding="utf-8")
+    (src / ".retrieve-result.json").write_text("{}", encoding="utf-8")
 
     stage, selectors = c.stage_source_project([str(src)])
     stage_p = Path(stage)
@@ -193,7 +193,7 @@ def test_stage_source_project_copies_content_and_drops_forensics(tmp_path):
         assert (stage_p / "sfdx-project.json").is_file()
         landed = stage_p / "force-app" / "labels" / "CustomLabels.labels-meta.xml"
         assert landed.is_file(), "retrieved metadata must reach the staged package dir"
-        assert "ORIGINAL" in landed.read_text()
+        assert "ORIGINAL" in landed.read_text(encoding="utf-8")
         assert not (stage_p / "force-app" / ".retrieve-result.json").exists(), (
             "the raw retrieve result is forensics, not deployable source")
     finally:

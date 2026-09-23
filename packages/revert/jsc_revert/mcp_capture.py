@@ -120,9 +120,9 @@ def handle_apex_run_pre(payload: dict) -> dict:
             "touch_method": "declared" if payload.get("touched_objects") else "unknown",
         },
     }
-    (snap_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (snap_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     # Also persist apex source for forensic recovery
-    (snap_dir / "apex_input.apex").write_text(apex_code)
+    (snap_dir / "apex_input.apex").write_text(apex_code, encoding="utf-8")
     return {"snapshot_id": snapshot_id, "status": "pre_only", "manifest_dir": str(snap_dir)}
 
 
@@ -138,7 +138,7 @@ def handle_apex_run_post(payload: dict) -> dict:
     if not manifest_path.exists():
         raise FileNotFoundError(f"no pre-manifest at {manifest_path}; cannot finalize")
 
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["snapshot_status"] = "complete"
     manifest["phase"] = "complete"
     manifest["finalized_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -147,7 +147,7 @@ def handle_apex_run_post(payload: dict) -> dict:
         "compiled": payload.get("result", {}).get("compiled"),
         "exception_message": payload.get("result", {}).get("exceptionMessage"),
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return {"snapshot_id": snapshot_id, "status": "complete", "manifest_dir": str(snap_dir)}
 
 
@@ -184,18 +184,18 @@ def handle_apex_run_failed(payload: dict) -> dict:
                            "integration bug — caller passed unknown/stale snapshot_id",
             },
         }
-        manifest_path.write_text(json.dumps(orphan, indent=2))
+        manifest_path.write_text(json.dumps(orphan, indent=2), encoding="utf-8")
         raise FileNotFoundError(
             f"apex_run_failed: no pre-manifest for snapshot_id={snapshot_id!r}. "
             f"Orphan failure manifest persisted at {manifest_path} for forensics. "
             f"Caller likely passed a wrong/stale snapshot_id."
         )
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["snapshot_status"] = "failed"
     manifest["phase"] = "failed"
     manifest["failed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     manifest["payload"]["error_message"] = payload.get("error", "")
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return {"snapshot_id": snapshot_id, "status": "failed", "manifest_dir": str(snap_dir)}
 
 
@@ -222,7 +222,7 @@ def handle_deploy_pre(payload: dict) -> dict:
             },
         },
     }
-    (snap_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (snap_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return {"snapshot_id": snapshot_id, "status": "pre_only", "manifest_dir": str(snap_dir)}
 
 
@@ -235,13 +235,13 @@ def handle_deploy_post(payload: dict) -> dict:
     manifest_path = snap_dir / "manifest.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"no pre-manifest at {manifest_path}")
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["snapshot_status"] = "complete"
     manifest["phase"] = "complete"
     manifest["finalized_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     manifest["payload"]["deploy_id"] = payload.get("deploy_id")
     manifest["payload"]["deploy_status_code"] = payload.get("status")
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return {"snapshot_id": snapshot_id, "status": "complete", "manifest_dir": str(snap_dir)}
 
 
@@ -268,17 +268,17 @@ def handle_deploy_failed(payload: dict) -> dict:
                            "integration bug — caller passed unknown/stale snapshot_id",
             },
         }
-        manifest_path.write_text(json.dumps(orphan, indent=2))
+        manifest_path.write_text(json.dumps(orphan, indent=2), encoding="utf-8")
         raise FileNotFoundError(
             f"deploy_failed: no pre-manifest for snapshot_id={snapshot_id!r}. "
             f"Orphan failure manifest persisted at {manifest_path} for forensics."
         )
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["snapshot_status"] = "failed"
     manifest["phase"] = "failed"
     manifest["failed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     manifest["payload"]["error_message"] = payload.get("error", "")
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return {"snapshot_id": snapshot_id, "status": "failed", "manifest_dir": str(snap_dir)}
 
 

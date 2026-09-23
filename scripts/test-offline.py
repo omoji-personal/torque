@@ -62,19 +62,44 @@ def main():
                 "print(json.dumps({'status':1,'name':'OfflineBackendUnavailable',"
                 "'message':'The offline fixture backend is unavailable; no live call was made.'}))\n"
                 "raise SystemExit(1)\n"
-            )
+            , encoding="utf-8")
             path.chmod(0o755)
+            if os.name == "nt":
+                # subprocess.run([tool, ...]) with shell=False (the pattern used
+                # throughout this codebase) resolves a bare name against PATH by
+                # appending only .exe; it never tries PATHEXT's other extensions.
+                # A .cmd sibling still helps any caller that resolves via
+                # shutil.which() (which does honor PATHEXT) or names the tool
+                # with its extension explicitly. Code that calls the bare name
+                # directly already treats FileNotFoundError as "tool not
+                # installed" (see get_sf_cli_version, _sf_result), so an
+                # unresolved bare call still fails closed the same way.
+                (bins / f"{tool}.cmd").write_text(
+                    "@echo off\r\n"
+                    f"echo {tool}>>\"%TORQUE_TEST_LIVE_SENTINEL%\"\r\n"
+                    "echo {\"status\": 1, \"name\": \"OfflineBackendUnavailable\", "
+                    "\"message\": \"The offline fixture backend is unavailable; "
+                    "no live call was made.\"}\r\n"
+                    "exit /b 1\r\n"
+                , encoding="utf-8")
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("TORQUE_", "JSC_"))}
         env.update({"JSC_ROOT": str(scratch / "client"),
                     "TORQUE_TEST_LIVE_SENTINEL": str(hitfile),
                     "PYTHONPATH": os.pathsep.join(str(path) for path in source_paths(root)),
-                    "PATH": str(bins) + os.pathsep + env.get("PATH", "")})
+                    "PATH": str(bins) + os.pathsep + env.get("PATH", ""),
+                    # The standalone harnesses below print fixture labels containing
+                    # non-ASCII characters (e.g. "->" as U+2192). With stdout piped
+                    # (capture_output=True) rather than a real console, Windows
+                    # defaults Python's stdout/stderr encoding to the system
+                    # codepage (e.g. cp1252), which can't encode them and raises
+                    # UnicodeEncodeError. Force UTF-8 regardless of platform/locale.
+                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
         # JSC contains pytest tests and standalone fixture harnesses. The latter
         # report failures by process exit and must not be silently just imported.
         standalone = []
         for path in sorted((root / "packages").glob("*/tests/test*.py")):
-            tree = ast.parse(path.read_text())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             collected = any((isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_"))
                             or (isinstance(n, ast.ClassDef) and (n.name.startswith("Test") or any(
                                 (isinstance(base, ast.Attribute) and base.attr == "TestCase")
@@ -82,7 +107,7 @@ def main():
                                 for base in n.bases))) for n in tree.body)
             if not collected:
                 standalone.append(path)
-        ignores = [f"--ignore={p.relative_to(root)}" for p in standalone]
+        ignores = [f"--ignore={p.relative_to(root).as_posix()}" for p in standalone]
         result = subprocess.run([sys.executable, "-m", "pytest", *ignores, *pytest_args], cwd=root, env=env)
         code = result.returncode
         # Pytest options such as '--maxfail 1' have non-option operands too.
@@ -91,7 +116,9 @@ def main():
                          for arg in pytest_args)
         if not options.pytest_only and not inspection:
             for path in standalone:
-                label = str(path.relative_to(root))
+                # Forward slashes regardless of platform: this label is printed and
+                # also matched by tests against a fixed reference string.
+                label = path.relative_to(root).as_posix()
                 try:
                     run = subprocess.run([sys.executable, str(path)], cwd=root, env=env,
                                          capture_output=True, text=True, timeout=180)
@@ -113,7 +140,7 @@ def main():
             print("Selected pytest tests only; standalone fixture suites were not run.")
         if hitfile.exists():
             from collections import Counter
-            calls = Counter(hitfile.read_text().splitlines())
+            calls = Counter(hitfile.read_text(encoding="utf-8").splitlines())
             print(f"Failure-path requests handled by the unavailable offline stub: {dict(calls)}. No live tool was invoked.")
         return code
 

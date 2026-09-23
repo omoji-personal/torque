@@ -1,5 +1,6 @@
 """Synthetic client isolation and honest journal behavior; no Salesforce processes."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -21,15 +22,16 @@ class WorkspaceTests(unittest.TestCase):
     def test_init_creates_private_conversational_workspace_without_overwriting(self):
         self.assertTrue((self.root / "AGENTS.md").is_file())
         self.assertTrue((self.root / "CLAUDE.md").is_file())
-        self.assertIn("torque workflows", (self.root / "AGENTS.md").read_text())
-        self.assertIn("solution-lead", (self.root / "profile.md").read_text())
-        self.assertIn("Salesforce Solution Lead", (self.root / "profile.md").read_text())
-        self.assertIn("discovery", json.loads((self.root / "workspace.json").read_text())["delivery_focus"])
+        self.assertIn("torque workflows", (self.root / "AGENTS.md").read_text(encoding="utf-8"))
+        self.assertIn("solution-lead", (self.root / "profile.md").read_text(encoding="utf-8"))
+        self.assertIn("Salesforce Solution Lead", (self.root / "profile.md").read_text(encoding="utf-8"))
+        self.assertIn("discovery", json.loads((self.root / "workspace.json").read_text(encoding="utf-8"))["delivery_focus"])
         original = (self.root / "workspace.json").read_bytes()
         with self.assertRaises(ws.WorkspaceError):
             ws.init_workspace(self.root, "Other")
         self.assertEqual(original, (self.root / "workspace.json").read_bytes())
-        self.assertEqual((self.root / "workspace.json").stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # POSIX only; Windows has no equivalent mode bits.
+            self.assertEqual((self.root / "workspace.json").stat().st_mode & 0o777, 0o600)
 
     def test_rejects_source_checkout_without_creating_files(self):
         path = Path(self.temp.name) / "source" / "private"
@@ -42,23 +44,23 @@ class WorkspaceTests(unittest.TestCase):
         package = Path(self.temp.name) / "package"
         command = package / "data" / "commands" / "diagnose.md"
         command.parent.mkdir(parents=True)
-        command.write_text("Packaged diagnostic recipe")
+        command.write_text("Packaged diagnostic recipe", encoding="utf-8")
         skill = package / "data" / "skills" / "context" / "SKILL.md"
         skill.parent.mkdir(parents=True)
-        skill.write_text("Packaged context skill")
+        skill.write_text("Packaged context skill", encoding="utf-8")
         target = Path(self.temp.name) / "another-firm"
         local = target / ".claude" / "commands" / "diagnose.md"
         local.parent.mkdir(parents=True)
-        local.write_text("Local edited recipe")
+        local.write_text("Local edited recipe", encoding="utf-8")
         with patch.object(ws.resources, "files", return_value=package):
             ws.init_workspace(target, "Another")
-        self.assertEqual(local.read_text(), "Local edited recipe")
-        self.assertEqual((target / ".claude/skills/context/SKILL.md").read_text(), "Packaged context skill")
-        self.assertEqual((target / ".agents/skills/context/SKILL.md").read_text(), "Packaged context skill")
+        self.assertEqual(local.read_text(encoding="utf-8"), "Local edited recipe")
+        self.assertEqual((target / ".claude/skills/context/SKILL.md").read_text(encoding="utf-8"), "Packaged context skill")
+        self.assertEqual((target / ".agents/skills/context/SKILL.md").read_text(encoding="utf-8"), "Packaged context skill")
 
     def test_context_reads_only_selected_client_notes_and_recent_journal(self):
-        (self.alpha / "context" / "decision.md").write_text("Alpha decision")
-        (self.beta / "context.md").write_text("Private beta detail")
+        (self.alpha / "context" / "decision.md").write_text("Alpha decision", encoding="utf-8")
+        (self.beta / "context.md").write_text("Private beta detail", encoding="utf-8")
         ws.add_session(self.root, "Alpha Client", "Alpha work")
         ws.add_session(self.root, "Beta", "Unrelated beta work")
         value = ws.get_context(self.root, "alpha-client")
@@ -92,7 +94,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_reported_verified_is_not_independent_verification(self):
         evidence = self.alpha / "artifacts" / "check.txt"
-        evidence.write_text("Synthetic observation")
+        evidence.write_text("Synthetic observation", encoding="utf-8")
         entry = ws.add_session(self.root, "alpha-client", "Owner reports checked", "verified", evidence)
         self.assertEqual(entry["status"], "verified")
         self.assertEqual(entry["status_basis"], "user_reported")
@@ -118,8 +120,9 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(len({e["id"] for e in written}), 16)
         self.assertEqual(len(entries), 16)
         for path in (self.alpha / "sessions").glob("*.json"):
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(json.loads(path.read_text())["id"], path.stem)
+            if os.name != "nt":  # POSIX only; Windows has no equivalent mode bits.
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["id"], path.stem)
         self.assertEqual(list((self.alpha / "sessions").glob(".torque-*")), [])
 
     def test_atomic_publish_never_overwrites_existing_evidence(self):
@@ -127,14 +130,14 @@ class WorkspaceTests(unittest.TestCase):
         ws.atomic_write_new(path, "original")
         with self.assertRaises(ws.WorkspaceError):
             ws.atomic_write_new(path, "replacement")
-        self.assertEqual(path.read_text(), "original")
+        self.assertEqual(path.read_text(encoding="utf-8"), "original")
         self.assertEqual(list(path.parent.glob(".torque-*")), [])
 
     def test_tampered_wrong_client_journal_is_rejected(self):
         entry = ws.add_session(self.root, "alpha-client", "Work")
         path = self.alpha / "sessions" / f"{entry['id']}.json"
         entry["client"] = "beta"
-        path.write_text(json.dumps(entry))
+        path.write_text(json.dumps(entry), encoding="utf-8")
         with self.assertRaises(ws.WorkspaceError):
             ws.list_sessions(self.root, "alpha-client")
 
@@ -152,11 +155,11 @@ def test_existing_gitignore_does_not_leave_new_private_paths_stageable(tmp_path)
     import subprocess
     root = tmp_path / 'existing'
     root.mkdir()
-    (root / '.gitignore').write_text('node_modules/\n')
+    (root / '.gitignore').write_text('node_modules/\n', encoding="utf-8")
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
     ws.init_workspace(root, 'Private firm')
     ws.add_client(root, 'Alpha')
-    rules = (root / '.gitignore').read_text()
+    rules = (root / '.gitignore').read_text(encoding="utf-8")
     assert 'node_modules/' in rules
     checked = subprocess.run(['git','check-ignore','workspace.json','profile.md','clients/alpha/context.md'],
                              cwd=root, capture_output=True, text=True, check=True)

@@ -16,7 +16,7 @@ def engagement(tmp_path):
     alpha = ws.add_client(root, "Alpha")
     beta = ws.add_client(root, "Beta")
     evidence = alpha / "artifacts/proof.txt"
-    evidence.write_text("Original synthetic observation")
+    evidence.write_text("Original synthetic observation", encoding="utf-8")
     entry = ws.add_session(root, "Alpha", "Reported completion", "verified", evidence)
     return root, alpha, beta, evidence, entry
 
@@ -30,10 +30,12 @@ def invoke(root, *args):
 
 @pytest.mark.parametrize("state", ["matches_reference", "changed", "missing", "unavailable"])
 def test_session_evidence_is_rechecked_without_rewriting_history(engagement, state):
+    if state == "unavailable" and os.name == "nt":
+        pytest.skip("os.mkfifo is POSIX only; Windows has no named-pipe-as-regular-file case to simulate")
     root, alpha, _, evidence, entry = engagement
     recorded = (alpha / "sessions" / f"{entry['id']}.json").read_bytes()
     if state == "changed":
-        evidence.write_text("A later observation")
+        evidence.write_text("A later observation", encoding="utf-8")
     elif state == "missing":
         evidence.unlink()
     elif state == "unavailable":
@@ -58,12 +60,12 @@ def test_malformed_session_evidence_is_actionable_and_never_creates_a_handoff(en
     root, alpha, _, _, entry = engagement
     entry["evidence"] = evidence
     path = alpha / "sessions" / f"{entry['id']}.json"
-    path.write_text(json.dumps(entry))
+    path.write_text(json.dumps(entry), encoding="utf-8")
     destination = alpha / "artifacts/handoff.md"
     code, output, error = invoke(root, "handoff", "--output", str(destination))
     assert code == 2 and output == "" and "invalid session evidence" in error
     assert entry["id"] in error and not destination.exists()
-    assert json.loads(path.read_text()) == entry
+    assert json.loads(path.read_text(encoding="utf-8")) == entry
 
 
 @pytest.mark.parametrize("field,value", [("created_at", "not-a-date"), ("created_at", "2026-09-22"),
@@ -71,7 +73,7 @@ def test_malformed_session_evidence_is_actionable_and_never_creates_a_handoff(en
 def test_malformed_session_fields_do_not_break_the_cli(engagement, field, value):
     root, alpha, _, _, entry = engagement
     entry[field] = value
-    (alpha / "sessions" / f"{entry['id']}.json").write_text(json.dumps(entry))
+    (alpha / "sessions" / f"{entry['id']}.json").write_text(json.dumps(entry), encoding="utf-8")
     code, output, error = invoke(root, "context")
     assert code == 2 and output == "" and "invalid session record" in error
 
@@ -104,7 +106,7 @@ def test_doctor_checks_old_sessions_and_changes_and_identifies_installation(enga
         ws.add_session(root, "Alpha", f"Later synthetic session {number}")
     change = changes.create_change(root, "Alpha", "Synthetic change", "Visible outcome", ["Save"])
     proof = root / "proof.txt"
-    proof.write_text("Synthetic change observation")
+    proof.write_text("Synthetic change observation", encoding="utf-8")
     event = changes.add_check(root, "Alpha", change["id"], "AC1", "pass", "Reported pass", proof)
     change_root, _ = changes.load_change(root, "Alpha", change["id"])
     (change_root / event["evidence"]["path"]).unlink()
@@ -127,11 +129,11 @@ def test_external_install_keeps_private_work_out_of_source(engagement, tmp_path,
     (source / "src/torque").mkdir(parents=True)
     (source / "src/torque/__init__.py").touch()
     (source / "src/torque/workspace.py").touch()
-    (source / "pyproject.toml").write_text('[project]\nname = "torque-salesforce"\n')
+    (source / "pyproject.toml").write_text('[project]\nname = "torque-salesforce"\n', encoding="utf-8")
     if kind == "git":
         (source / ".git").mkdir()
     elif kind == "worktree":
-        (source / ".git").write_text("gitdir: /synthetic/worktree")
+        (source / ".git").write_text("gitdir: /synthetic/worktree", encoding="utf-8")
     monkeypatch.setattr(ws, "__file__", str(tmp_path / "external/site-packages/torque/workspace.py"))
     destination = source / "private"
     if command == "init":
@@ -154,7 +156,7 @@ def test_malformed_metadata_details_are_diagnosed_before_handoff(engagement, mon
     event = changes.verify_deploy(root, "Alpha", change["id"], "synthetic-dev", "synthetic-job")
     event["observation"]["metadata"] = metadata
     change_root, _ = changes.load_change(root, "Alpha", change["id"])
-    (change_root / "events" / f"{event['id']}.json").write_text(json.dumps(event))
+    (change_root / "events" / f"{event['id']}.json").write_text(json.dumps(event), encoding="utf-8")
     code, output, error = invoke(root, "handoff")
     assert code == 2 and output == "" and "invalid metadata" in error
 
@@ -165,12 +167,14 @@ def test_capture_length_is_part_of_evidence_integrity(engagement):
     event = changes.add_check(root, "Alpha", change["id"], "AC1", "pass", "Reported pass", proof)
     event["evidence"]["bytes"] += 1
     change_root, _ = changes.load_change(root, "Alpha", change["id"])
-    (change_root / "events" / f"{event['id']}.json").write_text(json.dumps(event))
+    (change_root / "events" / f"{event['id']}.json").write_text(json.dumps(event), encoding="utf-8")
     assert changes.get_change(root, "Alpha", change["id"])["assessment"]["evidence_problems"] == 1
 
 
 @pytest.mark.parametrize("condition", ["unreadable", "pipe"])
 def test_unavailable_captured_evidence_keeps_handoff_usable(engagement, monkeypatch, condition):
+    if condition == "pipe" and os.name == "nt":
+        pytest.skip("os.mkfifo is POSIX only; Windows has no named-pipe-as-regular-file case to simulate")
     root, _, _, proof, _ = engagement
     change = changes.create_change(root, "Alpha", "Synthetic change", "Outcome", ["Save"])
     event = changes.add_check(root, "Alpha", change["id"], "AC1", "pass", "Reported pass", proof)

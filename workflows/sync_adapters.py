@@ -13,23 +13,23 @@ def main():
     args = parser.parse_args()
     directory = Path(__file__).resolve().parent
     root = directory.parent
-    records = json.loads((directory / 'catalogue.json').read_text())
+    records = json.loads((directory / 'catalogue.json').read_text(encoding="utf-8"))
     destination = root / '.claude' / 'commands'
     if not args.check:
         destination.mkdir(parents=True, exist_ok=True)
     mismatches = []
     for record in records:
-        body = (directory / f"{record['name']}.md").read_text()
+        body = (directory / f"{record['name']}.md").read_text(encoding="utf-8")
         expected = ('---\ndescription: ' + json.dumps(record['description'])
                     + '\n---\n\n' + body + '\n**Conversation input:** $ARGUMENTS\n'
                     + 'Use supplied context and existing authorization. Ask only for consequential missing information. '
                       'Keep work and evidence in the selected private client workspace.\n')
         path = destination / f"{record['name']}.md"
         if args.check:
-            if not path.is_file() or path.read_text() != expected:
+            if not path.is_file() or path.read_text(encoding="utf-8") != expected:
                 mismatches.append(path.name)
         else:
-            path.write_text(expected)
+            path.write_text(expected, encoding="utf-8")
     if mismatches:
         print('Adapters differ: ' + ', '.join(mismatches))
         return 1

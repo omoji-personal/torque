@@ -124,9 +124,10 @@ def main() -> int:  # noqa: C901
         check("F-IM-13 revert mint returns target_path", path == token_path)
         check("F-IM-13b revert token file exists", token_path.exists())
 
-        # File mode is 0o600
+        # File mode is 0o600 (POSIX only; Windows has no equivalent mode bits)
         st = token_path.stat()
-        check("F-IM-13c revert token mode is 0o600", (st.st_mode & 0o777) == 0o600)
+        check("F-IM-13c revert token mode is 0o600",
+              os.name == "nt" or (st.st_mode & 0o777) == 0o600)
 
         # Show
         token = show(token_path)

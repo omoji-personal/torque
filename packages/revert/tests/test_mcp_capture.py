@@ -84,7 +84,7 @@ def main() -> int:  # noqa: C901
                 assert "snapshot_id" in pre
                 assert pre["status"] == "pre_only"
                 assert Path(pre["manifest_dir"]).exists()
-                manifest = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text())
+                manifest = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text(encoding="utf-8"))
                 assert manifest["operation_type"] == "apex_run"
                 assert manifest["snapshot_status"] == "pre_only"
                 assert manifest["payload"]["target_org"] == "sample-prod"
@@ -104,7 +104,7 @@ def main() -> int:  # noqa: C901
                     post = json.loads(out)
                     assert post["snapshot_id"] == pre["snapshot_id"]
                     assert post["status"] == "complete"
-                    finalized = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text())
+                    finalized = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text(encoding="utf-8"))
                     assert finalized["snapshot_status"] == "complete"
                     assert finalized["payload"]["result_summary"]["success"] is True
                     tests.append(("F-MC-2b apex_run_post finalizes snapshot to complete", True))
@@ -124,7 +124,7 @@ def main() -> int:  # noqa: C901
             "error": "FIELD_INTEGRITY_EXCEPTION: governor limit",
         }, env)
         if code == 0:
-            failed_manifest = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text())
+            failed_manifest = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text(encoding="utf-8"))
             if (failed_manifest["snapshot_status"] == "failed"
                 and "FIELD_INTEGRITY_EXCEPTION" in failed_manifest["payload"]["error_message"]):
                 tests.append(("F-MC-3 apex_run_failed marks snapshot failed + preserves error", True))
@@ -148,7 +148,7 @@ def main() -> int:  # noqa: C901
             "status": "Succeeded",
         }, env)
         if code == 0:
-            m = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text())
+            m = json.loads((Path(pre["manifest_dir"]) / "manifest.json").read_text(encoding="utf-8"))
             if m["snapshot_status"] == "complete" and m["payload"]["deploy_id"] == "0AfPP00000123456":
                 tests.append(("F-MC-4 deploy round-trip pre→post", True))
             else:

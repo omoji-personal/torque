@@ -267,7 +267,7 @@ def _get_org_id_18(target_org: str) -> str | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="jsc-qa", description="JSC QA Orchestrator")
+    p = argparse.ArgumentParser(description="Torque QA Orchestrator")
     sub = p.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run QA per the change-type router matrix")

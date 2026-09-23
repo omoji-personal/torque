@@ -18,7 +18,6 @@ from .correlate import correlate
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="meeting-processor",
         description="Adaptive frame extraction from meeting recordings with transcript correlation.",
     )
     parser.add_argument("--video", required=True, help="Path to video file")
@@ -194,8 +193,8 @@ def main(argv: list[str] | None = None) -> int:
     timeline_path = output_dir / "timeline.json"
     meta_path = output_dir / "meta.json"
 
-    timeline_path.write_text(json.dumps(timeline, indent=2, ensure_ascii=False))
-    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+    timeline_path.write_text(json.dumps(timeline, indent=2, ensure_ascii=False), encoding="utf-8")
+    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"\nOutput written to {output_dir}/")
     print(f"  timeline.json  ({len(result.frames)} frames, {len(transcript_segments)} segments)")

@@ -75,7 +75,7 @@ def run(args: argparse.Namespace) -> int:
                "--values", args.values, "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
 
         parsed = c.parse_sf_json_safely(stdout)
         envelope = parsed if isinstance(parsed, dict) else {}
@@ -135,7 +135,7 @@ def _get_record(target_org: str, sobject: str, record_id: str, *, evidence_dir: 
            "--target-org", target_org, "--sobject", sobject, "--record-id", record_id, "--json"]
     code, stdout, _ = c.run_sf_subprocess(cmd, timeout_seconds=30)
     if evidence_dir is not None:
-        (evidence_dir / "post-create-result.json").write_text(stdout)
+        (evidence_dir / "post-create-result.json").write_text(stdout, encoding="utf-8")
     if code != 0:
         return None
     try:

@@ -72,7 +72,7 @@ def run(args: argparse.Namespace) -> int:
                "--wait", str(wait_min), "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=timeout_s)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         sf_json = c.parse_sf_json_safely(stdout)
         if sf_json:
             ctx.manifest["payload"]["deploy_id"] = sf_json.get("result", {}).get("id")

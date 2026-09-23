@@ -17,9 +17,10 @@ python3 -m venv .venv
 .venv/bin/torque demo ../torque-demo
 ```
 
-Python 3.10+ is required. The core dependency is PyYAML. macOS and Linux are the
-target platforms; see the validation record for combinations actually exercised.
-Windows has not been qualified. The demo path must be new and outside the checkout.
+Python 3.10+ is required. The core dependency is PyYAML. macOS, Linux, and Windows
+are all exercised by the CI matrix (`.github/workflows/validate.yml`); see the
+[alpha 10 validation record](validation-alpha10.md) for the combinations actually
+run and what Windows does not yet cover. The demo path must be new and outside the checkout.
 
 Use the absolute `.venv/bin/torque` path from any working directory, or put that
 installation's `.venv/bin` on the PATH of the process running your assistant.
@@ -44,6 +45,55 @@ Open a new terminal or restart the assistant if needed, then verify
 `torque --version`. If Torque was previously installed, inspect `pipx list` before
 replacing it. A wheel can be used instead of `.`. No administrator pip install is
 necessary.
+
+## Windows
+
+From PowerShell:
+
+```powershell
+winget install --scope user Python.Python.3.12
+winget install --scope user Git.Git
+```
+
+`--scope user` avoids an administrator prompt and keeps the install out of Program
+Files. Open a new terminal afterward so the updated PATH takes effect, then from the
+Torque source directory:
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\pip install -e .
+.venv\Scripts\torque doctor
+.venv\Scripts\torque demo C:\Work\torque-demo
+```
+
+The demo path must be new and outside the checkout, same as on macOS/Linux. Put
+`.venv\Scripts` on PATH, or use the absolute path, the same way `.venv/bin` is used
+above.
+
+The de-identified-mode hook (see `ai-access.md`) goes in the workspace's own
+`.claude/settings.json`, never a user-level settings file. On Windows, do not use a
+bare `python` in the hook command: it often resolves to the Microsoft Store alias or
+to an interpreter without Torque installed. The hook then fails with an exit code
+other than 2, and Claude Code treats that as a non-blocking error, so the tool runs
+and build-only mode is silently off. Always point the hook at the venv interpreter by
+absolute path, written with forward slashes so it survives Git Bash (which Claude Code
+uses for hooks when installed) as well as cmd:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*",
+  "hooks": [{"type": "command", "command": "C:/Work/torque/.venv/Scripts/python.exe -m torque.gate"}]}]}}
+```
+
+Check it once after wiring, with build-only mode set, from Git Bash in the workspace
+directory, using the exact command from the hook:
+
+```sh
+echo '{"tool_name":"Read","tool_input":{"file_path":"clients/example/notes.md"},"cwd":"."}' | C:/Work/torque/.venv/Scripts/python.exe -m torque.gate; echo "exit=$?"
+```
+
+It must print `De-identified mode: client context stays out of the AI session.` and
+`exit=2`. Any exit other than 0 or 2 (for example `No module named torque`, exit 1)
+means the gate is not running and nothing is being blocked; fix the interpreter path.
 
 ## Optional capabilities
 

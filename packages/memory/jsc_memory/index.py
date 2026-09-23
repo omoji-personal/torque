@@ -9,7 +9,6 @@ Atomic write via temp + os.replace + fcntl.flock for concurrent safety.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import pathlib
@@ -24,13 +23,31 @@ INDEX_MAX_BYTES = 256 * 1024  # 256KB
 INDEX_TOP_MAX_BYTES = 50 * 1024  # 50KB
 INDEX_TOP_MAX_LESSONS = 50
 
+# Windows has no fcntl; msvcrt.locking() is the closest advisory-lock analog.
+if os.name == "nt":
+    import msvcrt
+
+    def _lock_exclusive(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+
+    def _unlock(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_exclusive(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
 
 def _write_atomic(path: pathlib.Path, content: str) -> None:
     """Atomic write via temp + os.replace (same dir for atomicity)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(content)
         os.replace(tmp_path, path)
     except Exception:
@@ -54,7 +71,7 @@ def rebuild_index() -> None:
     lock_fd = None
     try:
         lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _lock_exclusive(lock_fd)
 
         # Walk all lesson files
         all_lessons = storage.list_review_pending() + storage.list_active()
@@ -119,7 +136,7 @@ def rebuild_index() -> None:
     finally:
         if lock_fd is not None:
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                _unlock(lock_fd)
                 os.close(lock_fd)
             except OSError:
                 pass
@@ -138,7 +155,7 @@ def read_index_top(deadline_ts: Optional[float] = None) -> Optional[dict]:
             return None  # corrupt or runaway
         if deadline_ts is not None and time.monotonic() > deadline_ts:
             return None
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         if deadline_ts is not None and time.monotonic() > deadline_ts:
             return None
         data = json.loads(text)

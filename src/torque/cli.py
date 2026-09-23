@@ -65,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("path")
     upgrade.add_argument("--check", action="store_true", help="show available updates without writing")
     upgrade.add_argument("--json", action="store_true")
+    ai_access = work_sub.add_parser("ai-access", help="set the de-identified mode; the owner runs this, not an AI session")
+    ai_access.add_argument("mode", choices=ws.AI_ACCESS_MODES)
+    ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
+    ai_access.add_argument("--json", action="store_true")
     demo = sub.add_parser("demo", help="create an offline synthetic consulting workspace; no org needed")
     demo.add_argument("path")
     demo.add_argument("--json", action="store_true")
@@ -176,7 +180,7 @@ def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None
 
 
 @contextmanager
-def delegated_context(path: Path | None, route: str, argv: list[str]):
+def delegated_context(path: Path | None, route: str, argv: list[str], display: str | None = None):
     previous_argv = sys.argv
     changes: dict[str, str | None] = {}
     if path is not None:
@@ -212,7 +216,7 @@ def delegated_context(path: Path | None, route: str, argv: list[str]):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-        sys.argv = [f"torque {route}", *argv]
+        sys.argv = [display or f"torque {route}", *argv]
         yield
     finally:
         sys.argv = previous_argv
@@ -223,7 +227,7 @@ def delegated_context(path: Path | None, route: str, argv: list[str]):
                 os.environ[key] = value
 
 
-def _dispatch(route: str, argv: list[str]) -> int:
+def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
     args, root_arg, client_name = _context_options(argv)
     flags = args[:args.index("--")] if "--" in args else args
     help_only = not args or any(x in ("-h", "--help", "--version") for x in flags)
@@ -255,7 +259,7 @@ def _dispatch(route: str, argv: list[str]) -> int:
         output = scope / "artifacts" / "meetings" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         ws._inside(scope, output)
         args += ["--output", str(output)]
-    with delegated_context(scope, route, args):
+    with delegated_context(scope, route, args, display):
         try:
             module = importlib.import_module(DELEGATES[route])
         except ModuleNotFoundError as exc:
@@ -445,6 +449,46 @@ def _doctor(args: argparse.Namespace) -> int:
     return 0 if report["ready"] else 3
 
 
+def _recover_text(text: str) -> str:
+    """Rewrite the delegate's `revert <show|preview|exec|discard>` grammar into the
+    public `torque recover <show|preview|run|discard>` grammar, keeping argparse's
+    usage continuation lines aligned under the shorter prog."""
+    out: list[str] = []
+    indent_shift = 0
+    for line in text.split("\n"):
+        for old, new in (("torque recover revert exec", "torque recover run"),
+                         ("torque recover revert", "torque recover")):
+            if old in line:
+                if line.startswith("usage: "):
+                    indent_shift = len(old) - len(new)
+                line = line.replace(old, new)
+                break
+        else:
+            if indent_shift and line.startswith(" " * (len("usage: ") + indent_shift)):
+                line = line[indent_shift:]
+            elif not line.strip():
+                indent_shift = 0
+        line = line.replace("{show,preview,exec,discard}", "{show,preview,run,discard}")
+        line = line.replace("'exec'", "'run'")
+        line = re.sub(r"^(\s+)exec(\s{2,})", lambda m: f"{m.group(1)}run {m.group(2)}", line)
+        out.append(line)
+    return "\n".join(out)
+
+
+@contextmanager
+def _recover_grammar():
+    original = argparse.ArgumentParser._print_message
+
+    def _print_message(self, message, file=None):
+        return original(self, _recover_text(message) if message else message, file)
+
+    argparse.ArgumentParser._print_message = _print_message
+    try:
+        yield
+    finally:
+        argparse.ArgumentParser._print_message = original
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -453,7 +497,14 @@ def main(argv: list[str] | None = None) -> int:
             rest = args[1:]
             if args[0] == "recover" and rest[:1] == ["run"]:
                 rest = ["exec", *rest[1:]]
-            return _dispatch(delegate, [*prefix, *rest])
+            # The delegate's own subcommand name becomes the next argparse prog
+            # token automatically; only rename the prog here when the public
+            # route name differs from that underlying subcommand (e.g. recover/revert).
+            display = "torque" if prefix[:1] == [args[0]] else f"torque {args[0]}"
+            if args[0] == "recover":
+                with _recover_grammar():
+                    return _dispatch(delegate, [*prefix, *rest], display=display)
+            return _dispatch(delegate, [*prefix, *rest], display=display)
         if args and args[0] in DELEGATES:
             return _dispatch(args[0], args[1:])
         parser = build_parser()
@@ -465,6 +516,9 @@ def main(argv: list[str] | None = None) -> int:
             if parsed.action == "init":
                 path = ws.init_workspace(parsed.path, parsed.name, parsed.profile)
                 _print_json({"workspace": str(path), "org_calls": False}) if parsed.json else print(path)
+            elif parsed.action == "ai-access":
+                root = ws.set_ai_access(parsed.path, parsed.mode)
+                _print_json({"workspace": str(root), "ai_access": parsed.mode}) if parsed.json else print(parsed.mode)
             else:
                 from .template_updates import update_templates
                 report = update_templates(Path(parsed.path), check=parsed.check)

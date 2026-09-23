@@ -155,14 +155,14 @@ def run_code_analyzer(workspace: str | None, output_file: str) -> dict:
             f"(exit {proc.returncode}). stderr: {(proc.stderr or '').strip()[-400:]}"
         )
     try:
-        return json.loads(out_path.read_text())
+        return json.loads(out_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"could not parse Code Analyzer JSON at {output_file}: {exc}")
 
 
 def load_report(json_input: str) -> dict:
     """Load a captured v5 Code Analyzer JSON report from a file (offline path)."""
-    return json.loads(Path(json_input).read_text())
+    return json.loads(Path(json_input).read_text(encoding="utf-8"))
 
 
 def render_report(findings: list[Finding], report: dict) -> str:
@@ -214,9 +214,8 @@ def has_blocking(findings: list[Finding]) -> bool:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="jsc-code-analyzer",
         description="Wrapper around Salesforce Code Analyzer v5: shells "
-                    "`sf code-analyzer run`, maps violations into JSC "
+                    "`sf code-analyzer run`, maps violations into Torque "
                     "Finding/score shape, exits non-zero on P0/P1.",
     )
     parser.add_argument(

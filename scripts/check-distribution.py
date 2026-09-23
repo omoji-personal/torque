@@ -6,6 +6,8 @@ from pathlib import Path
 import zipfile
 import tarfile
 
+from legacy_commands import check_source_commands
+
 REQUIRED = {
     "torque/cli.py", "torque/workspace.py", "torque/data/catalogue.json",
     "torque/changes.py", "torque/demo.py", "torque/template_updates.py",
@@ -34,9 +36,7 @@ def main():
         rows = data if isinstance(data, list) else data.get("workflows", data.get("commands", []))
         if not rows:
             raise SystemExit("Empty workflow catalogue")
-        source_commands = {row["source_command"] for row in rows if row.get("source_command")}
-        if len(source_commands) != 42:
-            raise SystemExit(f"Expected 42 JSC command mappings, found {len(source_commands)}")
+        source_commands = check_source_commands(rows)
         for row in rows:
             if f"torque/data/commands/{row['name']}.md" not in names:
                 raise SystemExit(f"Missing packaged recipe: {row['name']}")
@@ -45,7 +45,8 @@ def main():
                       and home_prefix in archive.read(n)]
         if home_paths:
             raise SystemExit(f"Developer-local absolute paths in wheel: {home_paths}")
-        print(f"Wheel surface verified: {len(names)} entries, {len(rows)} recipes, 42 JSC mappings.")
+        print(f"Wheel surface verified: {len(names)} entries, {len(rows)} recipes, "
+              f"{len(source_commands)} legacy JSC command mappings.")
     if args.sdist:
         with tarfile.open(args.sdist) as archive:
             paths = [Path(member.name) for member in archive.getmembers()]

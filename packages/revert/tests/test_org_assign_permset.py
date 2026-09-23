@@ -54,14 +54,14 @@ def test_assignment_response_saved_without_shape_crash(tmp_path, monkeypatch, ca
     assert wrapper.run(args) == expected_exit
     paths = list(client.rglob("manifest.json"))
     assert len(paths) == 1
-    saved = json.loads(paths[0].read_text())
+    saved = json.loads(paths[0].read_text(encoding="utf-8"))
     assert saved["payload"]["created_psa_ids"] == expected_ids
     assert saved["payload"]["psa_id_capture_status"] == capture
     assert saved["snapshot_status"] == status
     assert saved["phases"]["underlying_command"]["exit_code"] == exit_code
     assert saved["phases"]["post_finalize"]["status"] == ("complete" if capture == "captured" else "partial")
     assert saved["revert_capabilities"]["automatic_revertible"] is False
-    assert (paths[0].parent / "underlying-result.json").read_text() == raw
+    assert (paths[0].parent / "underlying-result.json").read_text(encoding="utf-8") == raw
     assert len(commands) == 1 and commands[0][-2:] == ["--on-behalf-of", "synthetic-user"]
     assert released == [True]
     assert ("capture is incomplete" in capsys.readouterr().err) == (capture != "captured")

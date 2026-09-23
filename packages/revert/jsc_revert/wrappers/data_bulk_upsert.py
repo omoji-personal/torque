@@ -95,7 +95,7 @@ def run(args: argparse.Namespace) -> int:
                "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=timeout_s)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         c.bundle.atomic_write_json(ctx.snap_dir / "underlying-command.json",
             {"command": cmd, "exit_code": exit_code, "stdout": stdout, "stderr": stderr})
         sf_json = c.parse_sf_json_safely(stdout)
@@ -159,7 +159,7 @@ def _fetch_bulk_results(target_org: str, job_id: str, out_path: Path) -> bool:
 
 
 def _parse_bulk_csv_ext_id(path: Path, ext_field: str) -> tuple[list[str], list[str]]:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     reader = csv.DictReader(io.StringIO(text))
     fields = list(reader.fieldnames or [])
     vals: list[str] = []
@@ -203,7 +203,7 @@ def _query_by_ext_ids_tagged(target_org: str, sobject: str, ext_field: str,
         all_records.extend(chunk_records)
     if not all_records:
         return ("no_match", 0)
-    with out_path.open("w", newline="") as f:
+    with out_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in all_records:

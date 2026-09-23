@@ -47,13 +47,14 @@ def test_custom_fields_and_exact_types_survive_bounded_capture(tmp_path, monkeyp
     assert delete._query_all_fields('synthetic-org', 'Account', [r['Id'] for r in records], path, capture=capture) == 3
     assert capture['complete'] is True
     assert set(capture['fields_captured']) == set(records[0])
-    assert json.loads(path.with_suffix('.json').read_text())['records'] == records
-    with path.open() as stream:
+    assert json.loads(path.with_suffix('.json').read_text(encoding="utf-8"))['records'] == records
+    with path.open(encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
     assert rows[2]['Important__c'] == 'private custom 3'
     assert len(calls) == 7  # describe + two record chunks times three field chunks
     assert all('FIELDS(STANDARD)' not in ' '.join(call) for call in calls)
-    assert path.stat().st_mode & 0o777 == 0o600
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize('omit', ['Important__c', 'Id'])
@@ -83,7 +84,7 @@ def test_binary_reference_cannot_masquerade_as_saved_binary_content(tmp_path, mo
 def test_default_bulk_delete_reaches_dml_with_a_maintained_lease(tmp_path, monkeypatch):
     records, calls = fixture_records(), []
     input_path = tmp_path/'input.csv'
-    input_path.write_text('Id\n' + '\n'.join(r['Id'] for r in records) + '\n')
+    input_path.write_text('Id\n' + '\n'.join(r['Id'] for r in records) + '\n', encoding="utf-8")
     monkeypatch.setenv('TORQUE_WORKSPACE', str(tmp_path/'client'))
     monkeypatch.delenv('JSC_REVERT_LONG_OP_OK', raising=False)
     monkeypatch.setattr(org_detect, 'resolve_org', lambda *a, **k: org())
@@ -101,7 +102,7 @@ def test_default_bulk_delete_reaches_dml_with_a_maintained_lease(tmp_path, monke
     monkeypatch.setattr(common.subprocess, 'run', run)
     args = build_parser().parse_args(['data','bulk','delete','-o','synthetic-org','--sobject','Account','--file',str(input_path)])
     assert delete.run(args) == 0
-    manifest = json.loads(next((tmp_path/'client').rglob('manifest.json')).read_text())
+    manifest = json.loads(next((tmp_path/'client').rglob('manifest.json')).read_text(encoding="utf-8"))
     assert manifest['payload']['field_capture']['complete'] is True
     assert manifest['payload']['before_json']
     assert common._ACTIVE_WRAPPER.get() is None
@@ -137,7 +138,7 @@ def test_owner_loss_does_not_execute_next_command_or_replace_new_owners_lock(tmp
     ctx = common.WrapperContext(operation_type='data_bulk_delete', target_org='synthetic-org', wrapper_command='synthetic')
     ctx.org = org()
     assert ctx.acquire_org_lock() == 0
-    state = json.loads(ctx._lock_path.read_text())
+    state = json.loads(ctx._lock_path.read_text(encoding="utf-8"))
     state['owner_token'] = 'other-owner'
     bundle.atomic_write_json(ctx._lock_path, state)
     monkeypatch.setattr(common.subprocess, 'run', lambda *a, **k: pytest.fail('must not execute'))
@@ -147,7 +148,7 @@ def test_owner_loss_does_not_execute_next_command_or_replace_new_owners_lock(tmp
     finally:
         with pytest.raises(org_sequence.LockOwnershipError):
             ctx.release_lock()
-    assert json.loads(ctx._lock_path.read_text())['owner_token'] == 'other-owner'
+    assert json.loads(ctx._lock_path.read_text(encoding="utf-8"))['owner_token'] == 'other-owner'
     assert common._ACTIVE_WRAPPER.get() is None
 
 
@@ -175,7 +176,7 @@ def test_owner_loss_after_a_submitted_command_preserves_result_and_partial_statu
     monkeypatch.setattr(common.mf, 'get_sf_cli_version', lambda: 'synthetic')
     ctx.init_snapshot_dir()
     def run(*args, **kwargs):
-        state = json.loads(ctx._lock_path.read_text())
+        state = json.loads(ctx._lock_path.read_text(encoding="utf-8"))
         state['owner_token'] = 'other-owner'
         bundle.atomic_write_json(ctx._lock_path, state)
         return SimpleNamespace(returncode=0, stdout='synthetic submitted result', stderr='')
@@ -186,5 +187,5 @@ def test_owner_loss_after_a_submitted_command_preserves_result_and_partial_statu
     finally:
         with pytest.raises(org_sequence.LockOwnershipError):
             ctx.release_lock()
-    assert json.loads((ctx.snap_dir/'manifest.json').read_text())['snapshot_status'] == 'partial'
-    assert json.loads((ctx.snap_dir/'lease-lost-result.json').read_text())['stdout'] == 'synthetic submitted result'
+    assert json.loads((ctx.snap_dir/'manifest.json').read_text(encoding="utf-8"))['snapshot_status'] == 'partial'
+    assert json.loads((ctx.snap_dir/'lease-lost-result.json').read_text(encoding="utf-8"))['stdout'] == 'synthetic submitted result'

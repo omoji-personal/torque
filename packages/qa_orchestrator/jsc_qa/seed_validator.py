@@ -93,18 +93,20 @@ def load_seed(path: Path) -> dict:
             f"  Schema example in design-v4.md Closure 3."
         )
     st = path.stat()
-    if (st.st_mode & 0o777) != 0o600:
-        raise SeedValidationError(
-            f"seed file mode is {oct(st.st_mode & 0o777)}, required 0o600. "
-            f"Run: chmod 600 {path}"
-        )
-    if st.st_uid != os.getuid():
-        raise SeedValidationError(
-            f"seed file owned by uid {st.st_uid}, current uid is {os.getuid()}. "
-            f"Refusing to read another user's seed."
-        )
+    # Windows has no POSIX mode bits or getuid(); this hardening is POSIX-only.
+    if os.name != "nt":
+        if (st.st_mode & 0o777) != 0o600:
+            raise SeedValidationError(
+                f"seed file mode is {oct(st.st_mode & 0o777)}, required 0o600. "
+                f"Run: chmod 600 {path}"
+            )
+        if st.st_uid != os.getuid():
+            raise SeedValidationError(
+                f"seed file owned by uid {st.st_uid}, current uid is {os.getuid()}. "
+                f"Refusing to read another user's seed."
+            )
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise SeedValidationError(f"seed file is not valid JSON: {e}")
     return data

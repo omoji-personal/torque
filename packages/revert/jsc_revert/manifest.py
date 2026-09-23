@@ -150,7 +150,7 @@ def save(snapshot_dir: Path, manifest: dict) -> Path:
 def load(snapshot_dir: Path) -> dict:
     """Load manifest from <snapshot_dir>/manifest.json. Validates schema."""
     path = snapshot_dir / "manifest.json"
-    manifest = json.loads(path.read_text())
+    manifest = json.loads(path.read_text(encoding="utf-8"))
     validate_envelope(manifest)
     return manifest
 

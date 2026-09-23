@@ -14,10 +14,10 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolated_memory_dir(tmp_path, monkeypatch):
-    """Each test gets its own JSC_MEMORY_DIR."""
+    """Each test gets its own JSC_MEMORY_DIR.
+
+    No reload needed: storage.memory_root() reads JSC_MEMORY_DIR from
+    os.environ on every call, so monkeypatch.setenv() alone takes effect.
+    """
     monkeypatch.setenv("JSC_MEMORY_DIR", str(tmp_path))
-    # Force re-import of storage to pick up env override
-    import importlib
-    import jsc_memory.storage as _s
-    importlib.reload(_s)
     return tmp_path
