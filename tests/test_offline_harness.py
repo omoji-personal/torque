@@ -162,7 +162,9 @@ def test_qa_load_timeout_entry_point_exits_incomplete(monkeypatch, capsys):
         raise subprocess.TimeoutExpired(args[0], 30)
 
     monkeypatch.setattr(subprocess, "run", timed_out)
-    monkeypatch.setattr(qa.os, "getloadavg", lambda: (20, 20, 20))
+    # os.getloadavg does not exist on Windows at all; raising=False lets the
+    # monkeypatch add it for the duration of this test regardless of platform.
+    monkeypatch.setattr(qa.os, "getloadavg", lambda: (20, 20, 20), raising=False)
     with pytest.raises(qa.CliTooSlow):
         qa._run_cli(["--help"])
 

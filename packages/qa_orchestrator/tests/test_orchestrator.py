@@ -57,8 +57,10 @@ def _run_cli(args: list[str], env_overrides: dict | None = None) -> tuple[int, s
         )
     except subprocess.TimeoutExpired:
         try:
+            # os.getloadavg does not exist on Windows at all (AttributeError,
+            # not OSError); there is no equivalent load signal to fall back to.
             load = os.getloadavg()[0]
-        except OSError:
+        except (OSError, AttributeError):
             load = 0.0
         if load > _LOAD_CEILING:
             raise CliTooSlow(

@@ -128,7 +128,7 @@ def _read_at(parent_fd, name: str) -> bytes | None:
     if _WINDOWS:
         target = parent_fd / name
         if target.is_symlink():
-            raise ws.WorkspaceError(f"workflow path is not a regular file: {name}")
+            raise ws.WorkspaceError(f"workflow path must use real directories and regular files, not symlinks: {name}")
         if not target.exists():
             return None
         if not target.is_file():
@@ -164,19 +164,22 @@ def _locked(root_fd, check: bool):
             lock_path = fd / "templates.lock"
             try:
                 if check:
-                    handle = open(lock_path, "rb")
+                    lock_fd = os.open(lock_path, os.O_RDONLY)
                 else:
                     try:
-                        handle = open(lock_path, "xb")
+                        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
                     except FileExistsError:
-                        handle = open(lock_path, "r+b")
+                        lock_fd = os.open(lock_path, os.O_RDWR)
+                handle = os.fdopen(lock_fd, "r+b" if not check else "rb")
             except FileNotFoundError:
                 if check:
                     yield
                     return
                 raise ws.WorkspaceError("template lock disappeared during update; rerun after local filesystem changes finish") from None
             try:
-                if lock_path.is_symlink() or not lock_path.is_file():
+                if lock_path.is_symlink():
+                    raise ws.WorkspaceError("template lock must use a real regular file, not a symlink")
+                if not lock_path.is_file():
                     raise ws.WorkspaceError("template lock is not a regular file")
                 msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
                 yield
@@ -241,7 +244,8 @@ def _publish(root_fd, path: str, contents: bytes, expected: bytes | None) -> boo
             target = fd / name
             temp_path = fd / temporary
             try:
-                with open(temp_path, "xb") as stream:
+                temp_fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(temp_fd, "wb") as stream:
                     stream.write(contents)
                     stream.flush()
                     os.fsync(stream.fileno())

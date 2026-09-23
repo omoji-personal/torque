@@ -48,7 +48,11 @@ def _expand_home(raw: str) -> str:
     home = os.environ.get("HOME") or os.path.expanduser("~")
     if raw == "~" or raw.startswith("~/"):
         raw = home + raw[1:]
-    return _HOME_TOKEN_RE.sub(home, raw)
+    # A callable replacement is used literally; a string replacement is parsed
+    # as a regex template, where backslashes are special (\1, \g<...>). A
+    # Windows HOME is full of backslashes, so re.sub(pattern, home, raw) would
+    # raise "bad escape" there.
+    return _HOME_TOKEN_RE.sub(lambda _m: home, raw)
 
 
 def _expand_home_in_command(command: str) -> str:
@@ -57,7 +61,7 @@ def _expand_home_in_command(command: str) -> str:
     splitter also splits on bare { and } (for brace-grouping), which would
     otherwise tear a ${HOME} reference apart before it could be recognized."""
     home = os.environ.get("HOME") or os.path.expanduser("~")
-    return _HOME_TOKEN_RE.sub(home, command)
+    return _HOME_TOKEN_RE.sub(lambda _m: home, command)
 
 
 def _resolve(base: Path, raw: str) -> Path:

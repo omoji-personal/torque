@@ -53,7 +53,8 @@ def test_custom_fields_and_exact_types_survive_bounded_capture(tmp_path, monkeyp
     assert rows[2]['Important__c'] == 'private custom 3'
     assert len(calls) == 7  # describe + two record chunks times three field chunks
     assert all('FIELDS(STANDARD)' not in ' '.join(call) for call in calls)
-    assert path.stat().st_mode & 0o777 == 0o600
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize('omit', ['Important__c', 'Id'])

@@ -34,11 +34,13 @@ def test_demo_is_a_private_resumable_workflow_without_external_commands(tmp_path
     assert not (tmp_path / "unrelated-private-client").exists()
     _, firm, config = ws.load_client(root, result["client"])
     assert firm["profile"] == "generic" and config["org"] is None
-    assert root.stat().st_mode & 0o777 == 0o700
-    assert client.stat().st_mode & 0o777 == 0o700
-    for path in root.rglob("*"):
-        if path.is_file():
-            assert path.stat().st_mode & 0o777 == 0o600
+    # POSIX only; Windows has no equivalent mode bits.
+    if os.name != "nt":
+        assert root.stat().st_mode & 0o777 == 0o700
+        assert client.stat().st_mode & 0o777 == 0o700
+        for path in root.rglob("*"):
+            if path.is_file():
+                assert path.stat().st_mode & 0o777 == 0o600
     assert (root / ".gitignore").read_text(encoding="utf-8").splitlines()[-1] == "*"
     context = ws.get_context(root, result["client"])
     assert "AC1" in json.dumps(context) and "fictional" in json.dumps(context)

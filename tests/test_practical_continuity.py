@@ -68,7 +68,11 @@ def _exit_during_client_creation(root):
 
 def test_process_termination_leaves_only_staging_and_releases_creation_lock(firm):
     root, _, _ = firm
-    process = multiprocessing.get_context('fork').Process(target=_exit_during_client_creation, args=(root,))
+    # Windows has no fork(); _exit_during_client_creation installs its patch
+    # inside the child itself, so it needs no state inherited from the parent
+    # and spawn works identically there.
+    mp_start_method = 'fork' if os.name != 'nt' else 'spawn'
+    process = multiprocessing.get_context(mp_start_method).Process(target=_exit_during_client_creation, args=(root,))
     process.start(); process.join(10)
     if process.is_alive(): process.kill(); process.join(); pytest.fail('Synthetic child did not finish')
     assert process.exitcode == 86

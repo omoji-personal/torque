@@ -100,7 +100,7 @@ def main():
                                 for base in n.bases))) for n in tree.body)
             if not collected:
                 standalone.append(path)
-        ignores = [f"--ignore={p.relative_to(root)}" for p in standalone]
+        ignores = [f"--ignore={p.relative_to(root).as_posix()}" for p in standalone]
         result = subprocess.run([sys.executable, "-m", "pytest", *ignores, *pytest_args], cwd=root, env=env)
         code = result.returncode
         # Pytest options such as '--maxfail 1' have non-option operands too.
@@ -109,7 +109,9 @@ def main():
                          for arg in pytest_args)
         if not options.pytest_only and not inspection:
             for path in standalone:
-                label = str(path.relative_to(root))
+                # Forward slashes regardless of platform: this label is printed and
+                # also matched by tests against a fixed reference string.
+                label = path.relative_to(root).as_posix()
                 try:
                     run = subprocess.run([sys.executable, str(path)], cwd=root, env=env,
                                          capture_output=True, text=True, timeout=180)

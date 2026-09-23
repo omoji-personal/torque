@@ -1,5 +1,6 @@
 """Synthetic client isolation and honest journal behavior; no Salesforce processes."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,7 +30,8 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaises(ws.WorkspaceError):
             ws.init_workspace(self.root, "Other")
         self.assertEqual(original, (self.root / "workspace.json").read_bytes())
-        self.assertEqual((self.root / "workspace.json").stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # POSIX only; Windows has no equivalent mode bits.
+            self.assertEqual((self.root / "workspace.json").stat().st_mode & 0o777, 0o600)
 
     def test_rejects_source_checkout_without_creating_files(self):
         path = Path(self.temp.name) / "source" / "private"
@@ -118,7 +120,8 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(len({e["id"] for e in written}), 16)
         self.assertEqual(len(entries), 16)
         for path in (self.alpha / "sessions").glob("*.json"):
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            if os.name != "nt":  # POSIX only; Windows has no equivalent mode bits.
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["id"], path.stem)
         self.assertEqual(list((self.alpha / "sessions").glob(".torque-*")), [])
 

@@ -25,10 +25,14 @@ def _make_lesson(suffix="abc") -> storage.Lesson:
 
 def test_ensure_dirs_mode_0700(isolated_memory_dir):
     """Memory tree dirs must be 0o700 — operator-private (audit 2026-06-13).
-    ensure_dirs also tightens a pre-existing looser dir."""
+    ensure_dirs also tightens a pre-existing looser dir. POSIX only: Windows
+    has no equivalent mode bits."""
     import os
     import stat
     storage.ensure_dirs()
+    if os.name == "nt":
+        assert storage.memory_root().is_dir()
+        return
     for d in (storage.spool_dir(), storage.review_queue_dir(), storage.archive_dir(),
               storage._lessons_dir(), storage.memory_root()):
         assert stat.S_IMODE(os.stat(d).st_mode) == 0o700, f"{d} not 0o700"

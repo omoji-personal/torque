@@ -1,5 +1,6 @@
 """Real private-file continuity and bounded metadata observations, never live calls."""
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
@@ -91,7 +92,8 @@ def test_concurrent_event_writers_preserve_every_decision(firm):
     data = changes.get_change(firm, 'Alpha', item['id'])
     assert len(data['events']) == len({e['id'] for e in data['events']}) == 16
     root, _ = changes.load_change(firm, 'Alpha', item['id'])
-    assert all(p.stat().st_mode & 0o777 == 0o600 for p in (root / 'events').glob('*.json'))
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or all(p.stat().st_mode & 0o777 == 0o600 for p in (root / 'events').glob('*.json'))
 
 
 def test_live_deploy_observation_keeps_exact_scope_and_cannot_pass_business_criteria(firm):

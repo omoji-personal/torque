@@ -201,6 +201,9 @@ def test_main_fails_closed_on_non_dict_tool_input(tmp_path):
 
 
 def test_main_treats_unreadable_workspace_json_as_build_only(tmp_path):
+    if os.name == "nt":
+        pytest.skip("chmod(0o000) does not deny the owner read access on Windows; "
+                    "there is no POSIX-permission equivalent to simulate there")
     config = tmp_path / "workspace.json"
     config.write_text(json.dumps(
         {"schema": "torque.workspace/1", "name": "Example", "profile": "generic", "ai_access": "full"}), encoding="utf-8")
