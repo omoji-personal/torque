@@ -1,6 +1,7 @@
 """Synthetic package/workspace upgrades; no processes, auth or network."""
 import hashlib
 import json
+import os
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,7 +17,11 @@ SECOND_SKILL = ".agents/skills/review/SKILL.md"
 def put(root, relative, text):
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    # newline="\n": callers write "\n"-only fixture content meant to
+    # byte-match _bundled()'s LF-normalized output; without this, Windows
+    # would translate it to \r\n, breaking every "matches the packaged
+    # default" comparison in this file.
+    path.write_text(text, encoding="utf-8", newline="\n")
     return path
 
 
@@ -61,7 +66,8 @@ def test_initial_record_only_adopts_matching_materialized_defaults(environment):
     assert ALPHA not in manifest(root)["files"]
     assert set(manifest(root)["files"]) == {SKILL, SECOND_SKILL}
     assert report["conflicts"][0]["reason"] == "unmanaged_local"
-    assert (root / updates.MANIFEST).stat().st_mode & 0o777 == 0o600
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or (root / updates.MANIFEST).stat().st_mode & 0o777 == 0o600
 
 
 def test_update_defaults_add_assets_and_keep_retired_files(environment, monkeypatch):
@@ -79,7 +85,8 @@ def test_update_defaults_add_assets_and_keep_retired_files(environment, monkeypa
     entry = manifest(root)["files"][ALPHA]
     assert entry == {"sha256": hashlib.sha256(b"alpha v2\n").hexdigest(), "version": "test-v2"}
     assert manifest(root)["files"][SKILL]["version"] == "test-v1"
-    assert (root / ALPHA).stat().st_mode & 0o777 == 0o600
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or (root / ALPHA).stat().st_mode & 0o777 == 0o600
 
 
 def test_local_edit_keeps_baseline_and_reports_merge_suggestion(environment):
