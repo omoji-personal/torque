@@ -12,8 +12,16 @@ not a sandbox, with two values:
 - Any `sf`/`sfdx` call carrying an org flag (`-o`, `--target-org`, `--from-org`, `-u`,
   `--targetusername`, `--target-dev-hub`, `-v`) anywhere, even behind a wrapper, env var, `npx`, or
   subshell. Without one: only local generators, `--version`, `--help`, `version`, `help`, `plugins`.
-- Any `torque` subcommand, including via `python -m torque`, other than `demo`, `workflows`,
-  `doctor`, `--version`, or `--help`.
+- Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
+  other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`.
+- Torque's other installed scripts (`jsc`, `jsc-qa`, `jsc-advisory`, `jsc-memory`,
+  `jsc-loganalyzer`, `jsc-probes`, `jsc-browser-tests`, `meeting-processor`,
+  `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):
+  anything other than `--help`, `-h`, or `--version`. These are the legacy entry points the
+  `torque data`, `deploy`, `org`, `qa`, and similar routes forward to.
+- MCP tool calls whose server or tool name indicates Salesforce access: a name containing
+  `salesforce`, `sfdx`, `sf_`, `_sf`, `soql`, `sosl`, `sobject`, or `apex`, or a server or tool
+  named `sf`. Other MCP tools (GitHub, mail, a filesystem server) are allowed.
 - Reading, writing, editing, or recursively searching into `clients/` (absolute, relative, `..`,
   `~`/`$HOME`, symlinked), a `Grep`/`Glob` rooted at or above it or naming it, and `grep -r`, `rg`,
   `ag`, `ack`, `find`, `fd`, `tree`, `ls -R` (default target: cwd).
@@ -46,7 +54,7 @@ Put this in the workspace's own `.claude/settings.json`, never a user-level sett
 workspace there is no `workspace.json` to scope it, so it would run against every project on the machine.
 
 ```json
-{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob",
+{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*",
   "hooks": [{"type": "command", "command": "python -m torque.gate"}]}]}}
 ```
 
@@ -68,3 +76,18 @@ Expect the refusal message and `exit=2`.
 These are pattern matches on recognized tool calls, not a sandbox: a command built at run time, an
 arbitrary script the assistant writes and runs, a network tool reaching the org or a client system
 directly, or a host without this hook can all get through. Pair it with real access controls.
+
+Specifically not covered:
+
+- MCP tools are gated by name only, and only when the matcher includes `mcp__.*`. A Salesforce MCP
+  server whose server and tool names carry none of the markers above, or any MCP server that reads
+  files (it can read `clients/`), is not blocked. Disable Salesforce and filesystem MCP servers in
+  a build-only workspace; do not rely on the name check.
+- Any tool outside the matcher, including tools a host adds later.
+- `git grep`, `tar` or `cp -r` of the whole workspace, a glob such as `c*/`, and `$PWD/.claude`.
+- The `-c` code of `python -c`, and any script file the assistant runs.
+
+It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
+`Clients__c`) from the workspace root, `echo clients`, Bash reads under `.claude/`, and a command
+that merely mentions a script name as an argument (`rg jsc-qa`). Run those from `project/` or
+yourself.

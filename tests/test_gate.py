@@ -482,3 +482,146 @@ def test_posix_home_with_backslash_fails_closed(monkeypatch):
     with pytest.raises(ValueError):
         gate._expand_home_in_command("cat $HOME/clients/a.md")
     assert gate._expand_home_in_command("ls project") == "ls project"
+
+
+# --- Final review C1: Torque's own installed scripts and python -m forms ---
+# Every console script the distribution installs must be classified in
+# gate.CONSOLE_SCRIPTS, and every delegate (legacy jsc*) script is held to
+# help/version only. "acme" and "prod" are neutral placeholders.
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def _pyproject_scripts() -> dict[str, str]:
+    """[project.scripts] from pyproject.toml, parsed without tomllib (3.10)."""
+    text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    section = text.split("[project.scripts]", 1)[1].split("\n[", 1)[0]
+    scripts = {}
+    for line in section.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            name, target = (part.strip().strip('"') for part in line.split("=", 1))
+            scripts[name] = target
+    return scripts
+
+
+def test_every_installed_console_script_is_classified():
+    scripts = _pyproject_scripts()
+    assert scripts, "no [project.scripts] found"
+    assert set(scripts) == set(gate.CONSOLE_SCRIPTS), (
+        "classify every [project.scripts] entry in gate.CONSOLE_SCRIPTS")
+    for name, target in scripts.items():
+        module = target.split(":", 1)[0]
+        if gate.CONSOLE_SCRIPTS[name] == "torque":
+            assert module in gate.TORQUE_MAIN_MODULES
+        else:
+            assert gate.CONSOLE_SCRIPTS[name] == "delegate"
+            assert gate.DELEGATE_MODULE_RE.match(module), module
+
+
+def test_every_cli_delegate_module_is_guarded():
+    from torque import cli
+    for module in cli.DELEGATES.values():
+        assert gate.DELEGATE_MODULE_RE.match(module), module
+
+
+DELEGATE_SCRIPTS = sorted(n for n, kind in gate.CONSOLE_SCRIPTS.items() if kind == "delegate")
+
+
+@pytest.mark.parametrize("name", DELEGATE_SCRIPTS)
+def test_delegate_script_blocks_in_build_only(name):
+    for cmd in (f"{name} run --target-org prod", f"{name} data update --workspace . --client acme",
+                name, f"/w/.venv/bin/{name} show", f"{name}.exe run", f"uv run {name} run"):
+        allowed, reason = gate.decide("Bash", {"command": cmd}, W, "build-only")
+        assert not allowed and reason, cmd
+    assert gate.decide("Bash", {"command": f"{name} run --target-org prod"}, W, "full")[0]
+
+
+@pytest.mark.parametrize("name", DELEGATE_SCRIPTS)
+def test_delegate_script_help_and_version_allowed(name):
+    for cmd in (f"{name} --help", f"{name} -h", f"{name} --version"):
+        assert gate.decide("Bash", {"command": cmd}, W, "build-only") == (True, ""), cmd
+
+
+C1_BLOCK = [
+    "jsc deploy start --target-org prod",
+    "jsc data query 'select Id from Account' --target-org prod",
+    "jsc data update --workspace . --client acme",
+    "jsc-qa run --target-org prod",
+    "jsc-memory search foo",
+    "python -m jsc_revert.cli data query",
+    "python -m jsc_revert data query",
+    "python3 -mjsc_qa.cli run",
+    "python -m jsc_memory.cli search foo",
+    "python -m meeting_processor process notes.md",
+    "python -m jsc_common.anything",
+    "python -mtorque data update",
+    "python -mtorque.cli context --workspace . --client acme",
+    "python -Im torque data update",
+    "python -Imtorque data update",
+    "python -W ignore -m torque data update",
+    "py -3 -m torque context --workspace . --client acme",
+    "py -m jsc_revert.cli deploy start",
+    "python -m torque.workspace",
+    "torque doctor --workspace . --client acme",
+    "torque doctor --client=acme",
+    "python -m torque doctor --client acme",
+]
+C1_ALLOW = [
+    "python -m torque demo /tmp/d",
+    "python -mtorque --version",
+    "python -m jsc_revert.cli --help",
+    "python -m pytest -q",
+    "python scripts/build.py",
+    "torque doctor",
+    "torque doctor --workspace .",
+]
+
+
+@pytest.mark.parametrize("cmd", C1_BLOCK)
+def test_c1_forms_block_in_build_only(cmd):
+    allowed, reason = gate.decide("Bash", {"command": cmd}, W, "build-only")
+    assert not allowed and reason, cmd
+
+
+@pytest.mark.parametrize("cmd", C1_ALLOW)
+def test_c1_neighbours_stay_allowed(cmd):
+    assert gate.decide("Bash", {"command": cmd}, W, "build-only") == (True, ""), cmd
+
+
+# --- Final review I1: MCP tools ---
+
+MCP_BLOCK = [
+    "mcp__salesforce__run_soql_query",
+    "mcp__Salesforce_DX__deploy_metadata",
+    "mcp__sf__list_all_orgs",
+    "mcp__sf-client__query",
+    "mcp__sfdx__retrieve_metadata",
+    "mcp__tools__sf_query",
+    "mcp__tools__run_soql",
+    "mcp__tools__describe_sobject",
+    "mcp__tools__run_apex_test",
+]
+MCP_ALLOW = [
+    "mcp__github__list_issues",
+    "mcp__claude_ai_Gmail__search_threads",
+    "mcp__plugin_docs__authenticate",
+    "mcp__filesystem__read_file",
+]
+
+
+@pytest.mark.parametrize("tool", MCP_BLOCK)
+def test_salesforce_mcp_tools_block_in_build_only(tool):
+    allowed, reason = gate.decide(tool, {}, W, "build-only")
+    assert not allowed and "MCP" in reason
+    assert gate.decide(tool, {}, W, "full")[0]
+
+
+@pytest.mark.parametrize("tool", MCP_ALLOW)
+def test_unrelated_mcp_tools_allowed(tool):
+    assert gate.decide(tool, {}, W, "build-only") == (True, "")
+
+
+def test_documented_matcher_includes_mcp():
+    for doc in ("docs/ai-access.md", "docs/installation.md"):
+        assert "|mcp__.*" in (REPO / doc).read_text(encoding="utf-8"), doc
