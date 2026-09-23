@@ -57,8 +57,10 @@ def _run_cli(args: list[str], env_overrides: dict | None = None) -> tuple[int, s
         )
     except subprocess.TimeoutExpired:
         try:
+            # os.getloadavg does not exist on Windows at all (AttributeError,
+            # not OSError); there is no equivalent load signal to fall back to.
             load = os.getloadavg()[0]
-        except OSError:
+        except (OSError, AttributeError):
             load = 0.0
         if load > _LOAD_CEILING:
             raise CliTooSlow(
@@ -194,7 +196,8 @@ def main() -> int:
         )
         check("F-TK-1 token minted", path == token_path and token_path.exists())
         st = token_path.stat()
-        check("F-TK-1b mode is 0o600", (st.st_mode & 0o777) == 0o600)
+        # POSIX only; Windows has no equivalent mode bits.
+        check("F-TK-1b mode is 0o600", os.name == "nt" or (st.st_mode & 0o777) == 0o600)
 
         # Show
         token = qa_skip_token.show(token_path)
@@ -271,7 +274,7 @@ def main() -> int:
                 },
             },
         }
-        seed_path.write_text(json.dumps(good_seed))
+        seed_path.write_text(json.dumps(good_seed), encoding="utf-8")
         os.chmod(seed_path, 0o600)
         loaded = seed_validator.load_seed(seed_path)
         check("F-SD-1 valid seed loads", loaded["alias"] == "sf-test")
@@ -281,7 +284,7 @@ def main() -> int:
         # Forbidden field detection
         bad_seed = dict(good_seed)
         bad_seed["users"]["admin"]["password"] = "secretpass"
-        seed_path.write_text(json.dumps(bad_seed))
+        seed_path.write_text(json.dumps(bad_seed), encoding="utf-8")
         os.chmod(seed_path, 0o600)
         try:
             loaded = seed_validator.load_seed(seed_path)
@@ -292,13 +295,17 @@ def main() -> int:
 
         # Bad mode
         good_seed_path = Path(tmpd) / "good-seed.json"
-        good_seed_path.write_text(json.dumps(good_seed))
+        good_seed_path.write_text(json.dumps(good_seed), encoding="utf-8")
         os.chmod(good_seed_path, 0o644)  # too permissive
-        try:
-            seed_validator.load_seed(good_seed_path)
-            check("F-SD-3 bad mode raises", False)
-        except seed_validator.SeedValidationError as e:
-            check("F-SD-3 bad mode raises", "0o644" in str(e) or "mode" in str(e))
+        if os.name == "nt":
+            # Windows has no POSIX mode bits; this hardening is not enforced there.
+            check("F-SD-3 bad mode raises (not applicable on Windows)", True)
+        else:
+            try:
+                seed_validator.load_seed(good_seed_path)
+                check("F-SD-3 bad mode raises", False)
+            except seed_validator.SeedValidationError as e:
+                check("F-SD-3 bad mode raises", "0o644" in str(e) or "mode" in str(e))
 
     # ── DISPATCHER (smoke — invokes shouldn't crash; expect MANUAL_REQUIRED for stubs) ──
     # Funct-Pl: with no-match description, returns MANUAL_REQUIRED with available_flows listed
@@ -321,7 +328,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as flow_dir:
         nested = Path(flow_dir) / "nested" / "example.py"
         nested.parent.mkdir()
-        nested.write_text("from copy import deepcopy\nfrom jsc_browser_tests.library.smoke_login import FLOW as SMOKE\nclass Example: pass\nFLOW = Example()\nFLOW.spec = deepcopy(SMOKE.spec)\nFLOW.spec.name = 'synthetic_external_flow'\n")
+        nested.write_text("from copy import deepcopy\nfrom jsc_browser_tests.library.smoke_login import FLOW as SMOKE\nclass Example: pass\nFLOW = Example()\nFLOW.spec = deepcopy(SMOKE.spec)\nFLOW.spec.name = 'synthetic_external_flow'\n", encoding="utf-8")
         with patch.dict(os.environ, {"TORQUE_BROWSER_FLOWS": flow_dir}):
             from jsc_browser_tests.suite import discover_flows
             names = {flow.spec.name for flow in discover_flows()}
@@ -577,7 +584,7 @@ def main() -> int:
     # F-DP-18: explicitly selected local output is usable without legacy shields.
     with tempfile.TemporaryDirectory() as scratch:
         source = Path(scratch) / "Example.cls"
-        source.write_text("public class Example { public static void run() {} }")
+        source.write_text("public class Example { public static void run() {} }", encoding="utf-8")
         codebase_target = Path(scratch) / "codebase" / "drafts"
         _os3.environ["JSC_QA_ADV_PROBE_OUT"] = str(codebase_target)
         try:
@@ -606,10 +613,10 @@ def main() -> int:
             (scratch_p / "b").mkdir()
             (scratch_p / "a" / "Foo.cls").write_text(
                 "public class Foo { public static void alpha(String s) {} }"
-            )
+            , encoding="utf-8")
             (scratch_p / "b" / "Foo.cls").write_text(
                 "public class Foo { public static void beta(String s) {} }"
-            )
+            , encoding="utf-8")
             with tempfile.TemporaryDirectory() as out:
                 _os3.environ["JSC_QA_ADV_PROBE_OUT"] = out
                 try:
@@ -620,7 +627,7 @@ def main() -> int:
                     check("F-DP-20 same-stem .cls → both probed without collision",
                           len(generated) == 2)
                     if len(generated) == 2:
-                        contents = [g.read_text() for g in generated]
+                        contents = [g.read_text(encoding="utf-8") for g in generated]
                         # Each generated test should reference its OWN source's method
                         has_alpha = any("alpha(" in c for c in contents)
                         has_beta = any("beta(" in c for c in contents)

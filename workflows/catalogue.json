@@ -48,6 +48,14 @@
     "source_command": "diagnose"
   },
   {
+    "name": "triage-alert",
+    "group": "Support",
+    "description": "Turn a Salesforce flow or Apex error notification into cause, fix and verification.",
+    "kind": "guided",
+    "implementation": "workflows/triage-alert.md",
+    "source_command": null
+  },
+  {
     "name": "audit-org",
     "group": "Investigate",
     "description": "Audit an org across configuration, automation, access, data and operational health.",
@@ -102,6 +110,22 @@
     "kind": "guided",
     "implementation": "workflows/prep-changeset.md",
     "source_command": "prep-changeset"
+  },
+  {
+    "name": "gift-payments",
+    "group": "Delivery",
+    "description": "Design a record-triggered flow that keeps NPSP payments and gift batches in sync.",
+    "kind": "guided",
+    "implementation": "workflows/gift-payments.md",
+    "source_command": null
+  },
+  {
+    "name": "grants-outbound-funds",
+    "group": "Delivery",
+    "description": "Build the automation that turns an approved Outbound Funds funding request into award records.",
+    "kind": "guided",
+    "implementation": "workflows/grants-outbound-funds.md",
+    "source_command": null
   },
   {
     "name": "prep-migration",
@@ -333,6 +357,14 @@
     "description": "Carry discovery from stakeholder input to implementable requirements and an agreed next step.",
     "kind": "guided",
     "implementation": "workflows/discovery.md",
+    "source_command": null
+  },
+  {
+    "name": "requirements-to-build",
+    "group": "Discovery",
+    "description": "Turn a stakeholder requirements note into user stories, a metadata list, a test script and open questions.",
+    "kind": "guided",
+    "implementation": "workflows/requirements-to-build.md",
     "source_command": null
   },
   {

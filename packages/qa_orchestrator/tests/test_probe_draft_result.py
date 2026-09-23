@@ -16,7 +16,7 @@ def setup_probe(tmp_path, monkeypatch):
     monkeypatch.delenv("JSC_QA_ADV_PROBE_MAX_FILES", raising=False)
     monkeypatch.delenv("JSC_QA_ADV_PROBE_BUDGET_S", raising=False)
     source = tmp_path / "Example.cls"
-    source.write_text("public class Example { public static String echo(String value){return value;} }")
+    source.write_text("public class Example { public static String echo(String value){return value;} }", encoding="utf-8")
     calls = []
     def local_only(argv, **kwargs):
         assert argv[:3] == [sys.executable, "-m", "jsc_probes.cli"]
@@ -34,7 +34,7 @@ def test_generated_draft_cannot_make_qa_pass(setup_probe):
     assert report.result_exit_code([result]) == 3
     assert {key: result.metadata[key] for key in ("generated", "compiled", "executed")} == {"generated": True, "compiled": False, "executed": False}
     assert result.metadata["generated_count"] == result.metadata["identified_count"] == 1
-    draft = Path(result.metadata["generated_files"][0]).read_text()
+    draft = Path(result.metadata["generated_files"][0]).read_text(encoding="utf-8")
     assert "Example.echo((String)null)" in draft
     assert "System.assert(false, 'DRAFT:" in draft
 
@@ -42,7 +42,7 @@ def test_generated_draft_cannot_make_qa_pass(setup_probe):
 def test_truncated_drafts_remain_incomplete(setup_probe, monkeypatch):
     source, calls = setup_probe
     second = source.with_name("Second.cls")
-    second.write_text("public class Second { public static void run(){} }")
+    second.write_text("public class Second { public static void run(){} }", encoding="utf-8")
     monkeypatch.setenv("JSC_QA_ADV_PROBE_MAX_FILES", "1")
     result = dispatcher.dispatch_adv_probe("unresolved-synthetic-org", f"{source} {second}")
     assert len(calls) == 1
@@ -65,7 +65,7 @@ def test_missing_metadata_is_an_error(setup_probe, monkeypatch):
     source, _ = setup_probe
     def missing_companion(argv, **kwargs):
         output = Path(argv[-1])
-        (output / "ExampleAdversarialTest.cls").write_text("synthetic incomplete output")
+        (output / "ExampleAdversarialTest.cls").write_text("synthetic incomplete output", encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
     monkeypatch.setattr(dispatcher.subprocess, "run", missing_companion)
     assert dispatcher.dispatch_adv_probe("unresolved-synthetic-org", str(source)).status == "ERROR"
@@ -75,11 +75,11 @@ def test_edited_draft_survives_repeated_dispatch(setup_probe):
     source, _ = setup_probe
     first = dispatcher.dispatch_adv_probe("unresolved-synthetic-org", str(source))
     draft = Path(first.metadata["generated_files"][0])
-    draft.write_text("retained business expectations")
+    draft.write_text("retained business expectations", encoding="utf-8")
     second = dispatcher.dispatch_adv_probe("unresolved-synthetic-org", str(source))
     assert second.status == "FAIL"
     assert second.metadata["generated"] is False
-    assert draft.read_text() == "retained business expectations"
+    assert draft.read_text(encoding="utf-8") == "retained business expectations"
 
 
 def test_no_sources_never_becomes_passing_qa(setup_probe):

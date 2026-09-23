@@ -122,7 +122,7 @@ def test_run_suite_produces_manifest_and_exit_zero():
     ec = asyncio.run(run_suite(config))
     assert os.path.exists(mpath)
     assert ec == 0
-    m = json.loads(open(mpath).read())
+    m = json.loads(open(mpath, encoding="utf-8").read())
     assert "score" in m and "cells" in m and len(m["cells"]) >= 2
 
 def test_run_suite_blocks_on_failed_write_gate():
@@ -165,7 +165,7 @@ def test_run_suite_runs_preflight_and_records_it():
         "cell_executor": fake_exec, "preflight": fake_pre,
         "seed": {"users": {"standard": {"user_id": "005x"}}}}))
     assert ran.get("yes") is True
-    m = json.loads(open(mpath).read())
+    m = json.loads(open(mpath, encoding="utf-8").read())
     assert m["preflight"] == {"standard": "PASS"}
 
 def test_run_suite_detects_leak_survivor_exit_4():
@@ -181,7 +181,7 @@ def test_run_suite_detects_leak_survivor_exit_4():
         return {}
     d = tempfile.mkdtemp(prefix="jsc-leak-")
     registry_path = Path(d) / "registry.yaml"
-    registry_path.write_text("objects:\n  Demo__Intake__c:\n    test_record_carrier: true\n")
+    registry_path.write_text("objects:\n  Demo__Intake__c:\n    test_record_carrier: true\n", encoding="utf-8")
     sf = FakeSfClient(query_results={
         "SELECT COUNT(Id) c FROM Demo__Intake__c WHERE Name LIKE 'TEST-leak1-%'": [{"c": 1}]})
     class _O:

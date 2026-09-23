@@ -16,6 +16,7 @@ from jsc_common.workspace import state_dir
 import json
 import os
 import pathlib
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -140,10 +141,15 @@ class Lesson:
         )
 
 
+def _file_id(lesson_id: str) -> str:
+    """12-char id prefix made safe for filenames on every OS (Windows rejects <>:"|?* etc.)."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", lesson_id[:12]) or "lesson"
+
+
 def write_review_candidate(lesson: Lesson) -> pathlib.Path:
     """Write a Lesson to L1 review queue. Returns the path."""
     ensure_dirs()
-    fname = f"{lesson.captured_at}-{lesson.id[:12]}.json"
+    fname = f"{lesson.captured_at}-{_file_id(lesson.id)}.json"
     p = review_queue_dir() / fname
     _atomic_write(p, json.dumps(lesson.to_dict(), indent=2))
     return p
@@ -155,7 +161,7 @@ def list_review_pending() -> list[Lesson]:
     out = []
     for p in sorted(review_queue_dir().glob("*.json")):
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
             out.append(Lesson.from_dict(data))
         except Exception:
             continue
@@ -171,7 +177,7 @@ def list_active() -> list[Lesson]:
     if not sidecar.exists():
         return []
     try:
-        data = json.loads(sidecar.read_text())
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
         return [Lesson.from_dict(d) for d in data]
     except Exception:
         return []
@@ -197,7 +203,7 @@ def find_lesson(lesson_id: str) -> Optional[tuple[Lesson, str]]:
             return l, "active"
     for p in sorted(archive_dir().glob("*.json")):
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
             l = Lesson.from_dict(data)
             if l.id == lesson_id or l.id.startswith(lesson_id):
                 return l, "archive"
@@ -220,7 +226,7 @@ def promote_to_active(lesson_id: str) -> Optional[Lesson]:
             active.append(l)
             write_active(active)
             # Remove from review queue
-            for p in review_queue_dir().glob(f"*-{l.id[:12]}.json"):
+            for p in review_queue_dir().glob(f"*-{_file_id(l.id)}.json"):
                 p.unlink()
             return l
     # Maybe it's already active — boost score
@@ -243,11 +249,11 @@ def mark_stale(lesson_id: str) -> Optional[Lesson]:
             if l.stale_count >= 2:
                 l.state = "archive"
                 _archive_lesson(l)
-                for p in review_queue_dir().glob(f"*-{l.id[:12]}.json"):
+                for p in review_queue_dir().glob(f"*-{_file_id(l.id)}.json"):
                     p.unlink()
             else:
                 # rewrite the file with updated count
-                for p in review_queue_dir().glob(f"*-{l.id[:12]}.json"):
+                for p in review_queue_dir().glob(f"*-{_file_id(l.id)}.json"):
                     _atomic_write(p, json.dumps(l.to_dict(), indent=2))
             return l
     active = list_active()
@@ -265,7 +271,7 @@ def mark_stale(lesson_id: str) -> Optional[Lesson]:
 
 def _archive_lesson(lesson: Lesson) -> pathlib.Path:
     ensure_dirs()
-    fname = f"{lesson.captured_at}-{lesson.id[:12]}.json"
+    fname = f"{lesson.captured_at}-{_file_id(lesson.id)}.json"
     p = archive_dir() / fname
     _atomic_write(p, json.dumps(lesson.to_dict(), indent=2))
     return p
@@ -286,7 +292,7 @@ def _atomic_write(path: pathlib.Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(content)
         os.replace(tmp_path, path)
     except Exception:

@@ -121,7 +121,7 @@ def main() -> int:
         "Foo.cls-meta.xml": '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata"><apiVersion>67.0</apiVersion><status>Active</status></ApexClass>',
     }.items():
         path = capture_root / name
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
         capture_files.append({"type": "ApexClass", "fullName": "Foo",
                               "before_state": "present", "filePath": str(path),
                               "before_checksum": hashlib.sha256(path.read_bytes()).hexdigest()})

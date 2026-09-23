@@ -121,7 +121,7 @@ def main() -> int:  # noqa: C901
             org_root = Path(tmpd) / "00DPP0000004XYZ-sf-undelete-test"
             manifests = list(org_root.glob("*/manifest.json"))
             check("F-DU-3 exactly one snapshot bundle written", len(manifests) == 1)
-            m = json.loads(manifests[0].read_text())
+            m = json.loads(manifests[0].read_text(encoding="utf-8"))
 
             # (c) op_type + delete_mode soft + linked parent.
             check("F-DU-3a manifest operation_type == revert (invoked as revert)",
@@ -145,7 +145,7 @@ def main() -> int:  # noqa: C901
             snap_dir = manifests[0].parent
             apex_file = snap_dir / "undelete_input.apex"
             check("F-DU-4 undelete Apex persisted in bundle", apex_file.exists())
-            apex = apex_file.read_text()
+            apex = apex_file.read_text(encoding="utf-8")
             check("F-DU-4b persisted Apex has ALL ROWS inside brackets",
                   "ALL ROWS]" in apex and "[SELECT Id FROM Contact WHERE Id = :rid ALL ROWS]" in apex)
             check("F-DU-4c persisted Apex binds id via :rid (not interpolated in SOQL)",
@@ -175,7 +175,7 @@ def main() -> int:  # noqa: C901
             common.run_sf_subprocess = fake_run_sf_subprocess
             data_undelete.run(ns2)
             org_root = Path(tmpd) / "00DPP0000004XYZ-sf-undelete-test"
-            m = json.loads(next(org_root.glob("*/manifest.json")).read_text())
+            m = json.loads(next(org_root.glob("*/manifest.json")).read_text(encoding="utf-8"))
             check("F-DU-5b non-revert manifest op_type == data_undelete",
                   m["operation_type"] == "data_undelete")
             check("F-DU-5c non-revert delete_mode still 'soft'",

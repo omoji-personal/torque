@@ -69,7 +69,6 @@ def cmd_check_env(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="jsc-ai-prompt-regression",
         description="Replay AI prompts + validate JSON output against JsonExtractor schema",
     )
     sub = parser.add_subparsers(dest="cmd")

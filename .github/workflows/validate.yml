@@ -5,10 +5,17 @@ permissions:
 jobs:
   offline:
     runs-on: ${{ matrix.os }}
+    # Windows runners default the `run:` shell to pwsh, which does not glob
+    # `dist/*.whl`-style arguments to external commands the way bash does.
+    # Bash is present on windows-latest (Git for Windows) and keeps every
+    # step's shell semantics identical across the matrix.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ['3.10', '3.12', '3.14']
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -25,9 +32,13 @@ jobs:
       - name: Verify the installed wheel outside the source checkout
         run: |
           python -m venv work/wheel-venv
-          work/wheel-venv/bin/python -m pip install dist/*.whl
-          work/wheel-venv/bin/python -m pip check
-          work/wheel-venv/bin/python scripts/smoke-installed.py --require-wheel
+          venv_python=work/wheel-venv/bin/python
+          if [ -f work/wheel-venv/Scripts/python.exe ]; then
+            venv_python=work/wheel-venv/Scripts/python.exe
+          fi
+          "$venv_python" -m pip install dist/*.whl
+          "$venv_python" -m pip check
+          "$venv_python" scripts/smoke-installed.py --require-wheel
       - name: Keep reviewed candidate artifacts
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

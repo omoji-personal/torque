@@ -37,7 +37,6 @@ _DATETIME_LITERAL = re.compile(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="jsc-loganalyzer",
         description="Closed-loop debug-log analyzer with 0–100 health score.",
     )
     parser.add_argument("--log-file", help="Local path to a debug log to analyze")
@@ -140,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         since_iso = _default_since_iso()
 
     if args.log_file:
-        log_texts = [Path(args.log_file).read_text(errors="replace")]
+        log_texts = [Path(args.log_file).read_text(errors="replace", encoding="utf-8")]
     elif args.target_org:
         if since_iso is not None:
             log_texts = fetch_recent_logs(args.target_org, since_iso, args.limit)

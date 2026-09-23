@@ -101,7 +101,7 @@ def cmd_sanitize_replay(args: argparse.Namespace) -> int:
     if not p.exists():
         print(f"error: file not found: {p}", file=sys.stderr)
         return 1
-    content = p.read_text()
+    content = p.read_text(encoding="utf-8")
     violations = auth.scan_replay_script(content)
     if violations:
         print(f"REJECTED: {p} contains {len(violations)} forbidden pattern(s):")
@@ -269,7 +269,7 @@ def cmd_suite_selftest(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="jsc-browser-tests")
+    p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="command", required=True)
 
     b = sub.add_parser("browser", help="single-profile (admin) browser walkthrough")

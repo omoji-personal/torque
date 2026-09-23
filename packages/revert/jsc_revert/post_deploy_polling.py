@@ -33,7 +33,6 @@ from __future__ import annotations
 from jsc_common.workspace import state_dir
 
 import argparse
-import fcntl
 import json
 import os
 import signal
@@ -42,6 +41,24 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+# Windows has no fcntl; msvcrt.locking() is the closest advisory-lock analog.
+if os.name == "nt":
+    import msvcrt
+
+    def _lock_exclusive(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+
+    def _unlock(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_exclusive(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 from . import bundle, manifest as mf
 from .job_outcomes import bulk_outcome, deploy_outcome
@@ -95,7 +112,7 @@ def enqueue(snapshot_id: str, org_id_short: str, alias: str,
         "status": "pending",
     }
     with _queue_lock(qd):
-        with queue_file.open("a") as f:
+        with queue_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     return entry["queue_entry_id"]
 
@@ -196,11 +213,11 @@ def _queue_lock(queue_dir: Path):
             self.fd = None
         def __enter__(self):
             self.fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
-            fcntl.flock(self.fd, fcntl.LOCK_EX)
+            _lock_exclusive(self.fd)
             return self
         def __exit__(self, *a):
             if self.fd is not None:
-                fcntl.flock(self.fd, fcntl.LOCK_UN)
+                _unlock(self.fd)
                 os.close(self.fd)
     return _LockCtx(lock_path)
 
@@ -209,7 +226,7 @@ def _load_entries(queue_file: Path) -> list[dict]:
     entries = []
     if not queue_file.exists():
         return entries
-    with queue_file.open() as f:
+    with queue_file.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -223,7 +240,7 @@ def _load_entries(queue_file: Path) -> list[dict]:
 
 def _rewrite_queue(queue_file: Path, entries: list[dict]):
     tmp = queue_file.with_suffix(".jsonl.tmp")
-    with tmp.open("w") as f:
+    with tmp.open("w", encoding="utf-8") as f:
         for e in entries:
             f.write(json.dumps(e) + "\n")
     tmp.replace(queue_file)
@@ -346,7 +363,7 @@ def _update_snapshot_manifest(entry: dict, final_status: str):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jsc post-deploy",
+    parser = argparse.ArgumentParser(
         description="Background polling for async sf operations (Phase I.4-extended-2)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

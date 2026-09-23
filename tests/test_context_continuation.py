@@ -42,7 +42,7 @@ def observe(root, identifier, summary="Exact synthetic deployment observed"):
 def test_context_retains_reported_failures_decisions_and_observed_scope_without_raw_contents(engagement):
     root, alpha, beta, item = engagement
     proof = alpha / "artifacts/operator.txt"
-    proof.write_text("OPERATOR_EVIDENCE_CONTENT_SENTINEL")
+    proof.write_text("OPERATOR_EVIDENCE_CONTENT_SENTINEL", encoding="utf-8")
     changes.add_check(root, "Alpha", item["id"], "AC1", "pass", "Human reports selection", proof)
     changes.add_check(root, "Alpha", item["id"], "AC2", "fail", "Human reports failed save")
     changes.add_note(root, "Alpha", item["id"], "Keep it optional", "decision")
@@ -132,7 +132,7 @@ def test_explicit_new_exports_work_in_selected_client_firm_and_outside(engagemen
         command.append("--json")
     code, stdout, error = invoke(*command)
     assert code == 0 and error == ""
-    assert "ALPHA_EXPORT_SENTINEL" in output.read_text()
+    assert "ALPHA_EXPORT_SENTINEL" in output.read_text(encoding="utf-8")
     before = output.read_bytes()
     assert invoke(*command)[0] == 2
     assert output.read_bytes() == before
@@ -141,9 +141,9 @@ def test_explicit_new_exports_work_in_selected_client_firm_and_outside(engagemen
 def project_layout(root, pyproject):
     root.mkdir()
     (root / "src/torque").mkdir(parents=True)
-    (root / "src/torque/__init__.py").write_text("")
-    (root / "src/torque/workspace.py").write_text("# synthetic source layout")
-    (root / "pyproject.toml").write_text(pyproject)
+    (root / "src/torque/__init__.py").write_text("", encoding="utf-8")
+    (root / "src/torque/workspace.py").write_text("# synthetic source layout", encoding="utf-8")
+    (root / "pyproject.toml").write_text(pyproject, encoding="utf-8")
 
 
 def test_wheel_in_unrelated_private_git_venv_does_not_block_private_workspace(tmp_path, monkeypatch):
@@ -161,7 +161,7 @@ def test_actual_torque_checkout_with_git_directory_or_worktree_marker_is_still_p
     project = tmp_path / "torque-source"
     project_layout(project, '[project]\nname = "torque-salesforce" # packaged project identity\n')
     if worktree:
-        (project / ".git").write_text("gitdir: /synthetic/worktree")
+        (project / ".git").write_text("gitdir: /synthetic/worktree", encoding="utf-8")
     else:
         (project / ".git").mkdir()
     monkeypatch.setattr(ws, "__file__", str(project / ".venv/lib/python3.10/site-packages/torque/workspace.py"))
@@ -173,7 +173,7 @@ def test_actual_torque_checkout_with_git_directory_or_worktree_marker_is_still_p
 
 def test_project_name_inside_multiline_value_is_not_a_torque_project(tmp_path):
     path = tmp_path / "pyproject.toml"
-    path.write_text('[project]\nreadme = """\nname = "torque-salesforce"\n"""\nname = "consulting-tools"\n')
+    path.write_text('[project]\nreadme = """\nname = "torque-salesforce"\n"""\nname = "consulting-tools"\n', encoding="utf-8")
     assert ws._torque_project(path) is False
 
 
@@ -186,9 +186,9 @@ def test_python_310_project_identity_fallback_uses_only_explicit_project_name(tm
         return original(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", without_tomllib)
     path = tmp_path / "pyproject.toml"
-    path.write_text('[project]\nname = "torque-salesforce" # comment\n[tool.other]\nname = "unrelated"\n')
+    path.write_text('[project]\nname = "torque-salesforce" # comment\n[tool.other]\nname = "unrelated"\n', encoding="utf-8")
     assert ws._torque_project(path) is True
-    path.write_text('[project]\nname = "consulting-tools"\n[tool.other]\nname = "torque-salesforce"\n')
+    path.write_text('[project]\nname = "consulting-tools"\n[tool.other]\nname = "torque-salesforce"\n', encoding="utf-8")
     assert ws._torque_project(path) is False
-    path.write_text('[project]\nreadme = """\nname = "torque-salesforce"\n"""\nname = "consulting-tools"\n')
+    path.write_text('[project]\nreadme = """\nname = "torque-salesforce"\n"""\nname = "consulting-tools"\n', encoding="utf-8")
     assert ws._torque_project(path) is False

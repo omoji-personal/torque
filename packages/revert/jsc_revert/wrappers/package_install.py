@@ -60,7 +60,7 @@ def run(args: argparse.Namespace) -> int:
                "--no-prompt", "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=timeout_s)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
 
         # Codex-R2-P1-01: parse request status from JSON; IN_PROGRESS/UNKNOWN → pending → enqueue
         request_id = None

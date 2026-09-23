@@ -54,7 +54,7 @@ def run(args: argparse.Namespace) -> int:
                "--wait", str(wait_min), "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=timeout_s)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         sf_json = c.parse_sf_json_safely(stdout)
         snap_status, wrapper_exit = c.classify_deploy_status(sf_json, exit_code)
         ctx.manifest["snapshot_status"] = snap_status

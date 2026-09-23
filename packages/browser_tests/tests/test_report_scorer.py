@@ -60,13 +60,14 @@ def test_manifest_round_trips_and_audit_is_bounded():
           "secret": "DO_NOT_LOG"}],
         audit_log=alog,
     )
-    back = json.loads(open(mpath).read())
+    back = json.loads(open(mpath, encoding="utf-8").read())
     assert back["score"]["score"] == 100
     assert back["cells"][0]["test_record_ids"] == ["001TEST"]
-    line = open(alog).read()
+    line = open(alog, encoding="utf-8").read()
     assert "DO_NOT_LOG" not in line and "secret" not in line   # PII/unknown fields dropped
     assert "PASS" in line                                       # bounded fields kept
-    assert oct(os.stat(alog).st_mode)[-3:] == "600"            # operator-private
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or oct(os.stat(alog).st_mode)[-3:] == "600"  # operator-private
 
 def main() -> int:
     failures = 0

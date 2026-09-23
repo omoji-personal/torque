@@ -72,7 +72,7 @@ def run(args: argparse.Namespace) -> int:
                "--values", args.values, "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
 
         snapshot_status = "complete" if exit_code == 0 else "failed"
         ctx.manifest["snapshot_status"] = snapshot_status

@@ -1,5 +1,8 @@
 # Validation through alpha 9 — September 22, 2026
 
+Alpha 10 has its own record: [validation for alpha 10](validation-alpha10.md). It covers
+Windows CI, de-identified mode and the Windows limits that remain.
+
 Alpha 9 is a development build with no package-index release. It improves session continuity,
 local diagnostics, source/private separation and the offline verification runner.
 The [alpha 8 record](validation-alpha8.md) retains prior live and remote CI evidence;
@@ -68,7 +71,8 @@ these identify the checked build rather than an arbitrary later rebuild.
 The local qualification above included no new live Salesforce or browser execution,
 remote CI run or publication. Later commit/push and remote CI results are separate
 evidence tied to the exact published commit. Earlier live non-admin browser
-cases remain unqualified for this build. Windows, outside-user onboarding,
+cases remain unqualified for this build. Windows (offline, demo and gate paths
+CI-tested from alpha 10; live Salesforce routes unqualified), outside-user onboarding,
 multiple assistant hosts, existing delivery-stack integration and comparative
 benchmarks also remain separate acceptance work. The local fixes do not establish
 production readiness or a universal recovery capability.

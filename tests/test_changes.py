@@ -1,5 +1,6 @@
 """Real private-file continuity and bounded metadata observations, never live calls."""
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
@@ -27,7 +28,7 @@ def test_handoff_continues_selected_business_context_and_retains_failed_history(
     alpha, beta = create(firm), create(firm, 'Beta')
     changes.add_note(firm, 'Beta', beta['id'], 'BETA_PRIVATE_SENTINEL')
     changes.add_note(firm, 'Alpha', alpha['id'], 'Keep field optional', 'decision')
-    proof = tmp_path / 'observed.txt'; proof.write_text('Alpha-only observation')
+    proof = tmp_path / 'observed.txt'; proof.write_text('Alpha-only observation', encoding="utf-8")
     changes.add_check(firm, 'Alpha', alpha['id'], 'AC1', 'fail', 'Value did not persist', proof)
     changes.add_check(firm, 'Alpha', alpha['id'], 'AC1', 'pass', 'Reported recheck persisted value', proof)
     changes.add_note(firm, 'Alpha', alpha['id'], 'Run negative permission case', 'next_step')
@@ -44,14 +45,14 @@ def test_handoff_continues_selected_business_context_and_retains_failed_history(
 
 def test_evidence_is_captured_then_changed_or_missing_copy_is_visible(firm, tmp_path):
     item = create(firm)
-    original = tmp_path / 'proof.txt'; original.write_text('Captured once')
+    original = tmp_path / 'proof.txt'; original.write_text('Captured once', encoding="utf-8")
     event = changes.add_check(firm, 'Alpha', item['id'], 'AC1', 'pass', 'Human reports success', original)
     root, _ = changes.load_change(firm, 'Alpha', item['id'])
     copied = root / event['evidence']['path']
-    assert copied.read_text() == 'Captured once'
-    original.write_text('Changed at original source')
+    assert copied.read_text(encoding="utf-8") == 'Captured once'
+    original.write_text('Changed at original source', encoding="utf-8")
     assert changes.get_change(firm, 'Alpha', item['id'])['events'][0]['evidence_integrity'] == 'matches_capture'
-    copied.write_text('Tampered copied evidence')
+    copied.write_text('Tampered copied evidence', encoding="utf-8")
     data = changes.get_change(firm, 'Alpha', item['id'])
     assert data['events'][0]['evidence_integrity'] == 'changed'
     assert data['assessment']['evidence_problems'] == 1
@@ -91,7 +92,8 @@ def test_concurrent_event_writers_preserve_every_decision(firm):
     data = changes.get_change(firm, 'Alpha', item['id'])
     assert len(data['events']) == len({e['id'] for e in data['events']}) == 16
     root, _ = changes.load_change(firm, 'Alpha', item['id'])
-    assert all(p.stat().st_mode & 0o777 == 0o600 for p in (root / 'events').glob('*.json'))
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or all(p.stat().st_mode & 0o777 == 0o600 for p in (root / 'events').glob('*.json'))
 
 
 def test_live_deploy_observation_keeps_exact_scope_and_cannot_pass_business_criteria(firm):
@@ -126,11 +128,11 @@ def test_tampered_event_or_evidence_path_is_rejected(firm):
     root, _ = changes.load_change(firm, 'Alpha', item['id'])
     path = root / 'events' / (event['id'] + '.json')
     event['evidence'] = {'path': '../../beta/context.md', 'sha256': 'made-up'}
-    path.write_text(json.dumps(event))
+    path.write_text(json.dumps(event), encoding="utf-8")
     with pytest.raises(ws.WorkspaceError):
         changes.get_change(firm, 'Alpha', item['id'])
     event['evidence'] = None; event['basis'] = 'independently_verified'
-    path.write_text(json.dumps(event))
+    path.write_text(json.dumps(event), encoding="utf-8")
     with pytest.raises(ws.WorkspaceError):
         changes.get_change(firm, 'Alpha', item['id'])
 
@@ -141,19 +143,19 @@ def test_malformed_record_is_an_actionable_error_instead_of_a_traceback(firm, fi
     item = create(firm)
     root, _ = changes.load_change(firm, 'Alpha', item['id'])
     item[field] = value
-    (root / 'change.json').write_text(json.dumps(item))
+    (root / 'change.json').write_text(json.dumps(item), encoding="utf-8")
     with pytest.raises(ws.WorkspaceError, match='invalid change'):
         changes.list_changes(firm, 'Alpha')
 
 
 def test_handoff_reports_manifest_drift_and_exact_component_scope(firm, tmp_path):
     item = create(firm)
-    manifest = tmp_path / 'package.xml'; manifest.write_text('<Package/>')
+    manifest = tmp_path / 'package.xml'; manifest.write_text('<Package/>', encoding="utf-8")
     component = 'CustomField:Account.Contact_Preference__c'
     with patch('jsc_qa.dispatcher.dispatch_meta_api', return_value=DispatchResult('MetaAPI', 'PASS', 'Exact job succeeded')):
         event = changes.verify_deploy(firm, 'Alpha', item['id'], 'dev', '0Af000000000001AAA', [component], manifest)
     root, _ = changes.load_change(firm, 'Alpha', item['id'])
-    (root / event['manifest']['path']).write_text('changed after observation')
+    (root / event['manifest']['path']).write_text('changed after observation', encoding="utf-8")
     data = changes.get_change(firm, 'Alpha', item['id'])
     assert data['assessment']['evidence_problems'] == 1
     report = changes.render_change(firm, 'Alpha', item['id'])

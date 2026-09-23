@@ -9,7 +9,7 @@ def _spool_events(session_id, events):
     """Helper: write events to spool."""
     storage.ensure_dirs()
     sp = spool.spool_path_for_session(session_id)
-    with open(sp, "w") as f:
+    with open(sp, "w", encoding="utf-8") as f:
         for e in events:
             f.write(json.dumps(e) + "\n")
 
@@ -118,3 +118,28 @@ def test_synthesize_orphan(isolated_memory_dir):
     spool_path = spool.spool_path_for_session("orphan-1")
     written, _ = capture.synthesize_orphan(spool_path)
     assert written == 1
+
+
+def test_hex_id_resembling_sf_id_survives_scrub(isolated_memory_dir, monkeypatch):
+    """Regression: a generated id like "a1b2..." matches the Salesforce-id
+    pattern; the scrubber used to rewrite it to "<sf_id>", an illegal Windows
+    filename, so ~6% of candidates were silently lost on Windows CI."""
+    monkeypatch.setattr(capture, "_hash_id", lambda _s: "a1b2c3d4e5f60718")
+    _spool_events("s-sfid", [
+        {"ts": 1000.0, "tool": "Bash", "event_type": "tool_failure", "exit": 1,
+         "input_hash": "x", "input": "git push", "stderr_first_line": "error: nothing"},
+    ])
+    written, _ = capture.synthesize_session("s-sfid")
+    assert written == 1
+    pending = storage.list_review_pending()
+    assert [l.id for l in pending] == ["a1b2c3d4e5f60718"]
+    names = [p.name for p in storage.review_queue_dir().glob("*.json")]
+    assert all(set(n) <= set("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-.") for n in names), names
+
+
+def test_review_filename_is_portable(isolated_memory_dir):
+    lesson = storage.Lesson(id="<sf_id>:x", title="t", short="s", full_text="f",
+                            confidence="LOW", trigger="tool_error", captured_at=1,
+                            last_seen=1, state="review_pending")
+    p = storage.write_review_candidate(lesson)
+    assert not set(p.name) & set('<>:"|?*\\/')

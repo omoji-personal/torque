@@ -227,6 +227,6 @@ async def run_suite(config) -> int:
                               "cleanup_status": cleanup_status, "cleanup_detail": cleanup_detail})
     md_path = config.get("report_md_path")
     if md_path:
-        Path(md_path).write_text(report.render_md(results, score) + f"\nCleanup: {cleanup_status}. {cleanup_detail}\n")
+        Path(md_path).write_text(report.render_md(results, score) + f"\nCleanup: {cleanup_status}. {cleanup_detail}\n", encoding="utf-8")
 
     return report.exit_code(score, write_gate_ok=write_gate_ok, teardown_leak=teardown_leak)

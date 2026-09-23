@@ -18,7 +18,7 @@ def test_rebuild_creates_index(isolated_memory_dir):
     index.rebuild_index()
     assert storage.index_path().exists()
     assert storage.index_top_path().exists()
-    data = json.loads(storage.index_top_path().read_text())
+    data = json.loads(storage.index_top_path().read_text(encoding="utf-8"))
     assert "lessons" in data
     assert len(data["lessons"]) == 1
 
@@ -78,6 +78,6 @@ def test_concurrent_rebuild_no_corruption(isolated_memory_dir):
                 proc.wait(timeout=5)
 
     # Index should still be valid JSON with all 5 lessons
-    data = json.loads(storage.index_top_path().read_text())
+    data = json.loads(storage.index_top_path().read_text(encoding="utf-8"))
     assert "lessons" in data
     assert len(data["lessons"]) == 5

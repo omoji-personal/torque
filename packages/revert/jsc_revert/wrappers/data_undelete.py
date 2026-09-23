@@ -98,7 +98,7 @@ def run(args: argparse.Namespace) -> int:
         # ── Pre-snapshot ──────────────────────────────────────────────────
         # Build the (validated) undelete Apex now; persist it for forensics.
         apex_code = build_undelete_apex(args.sobject, args.record_id)
-        (ctx.snap_dir / "undelete_input.apex").write_text(apex_code)
+        (ctx.snap_dir / "undelete_input.apex").write_text(apex_code, encoding="utf-8")
 
         ctx.manifest["payload"] = {
             "object_api_name": args.sobject,
@@ -122,7 +122,7 @@ def run(args: argparse.Namespace) -> int:
                "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=120)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout)
+        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
 
         sf_json = c.parse_sf_json_safely(stdout)
         compiled_ok = True

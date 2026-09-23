@@ -99,7 +99,7 @@ def test_wrapper_persists_requested_fields_but_preserves_full_forensic_capture(t
         def set_revert_capabilities(self):
             self.manifest["revert_capabilities"] = rc.compute_revertibility(self.manifest["operation_type"], self.manifest["payload"])
         def update_phase(self, *args, **kwargs): pass
-        def save(self): (tmp_path / "manifest.json").write_text(json.dumps(self.manifest))
+        def save(self): (tmp_path / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
         def release_lock(self): seen.append("released")
     reads = iter([before, after])
     monkeypatch.setattr(update.c, "WrapperContext", Context)
@@ -111,7 +111,7 @@ def test_wrapper_persists_requested_fields_but_preserves_full_forensic_capture(t
     monkeypatch.setattr(update.c, "run_sf_subprocess", fake_sf)
     args = Namespace(target_org="explicit-target", sobject="Account", record_id="001000000000001AAA", values=values)
     assert update.run(args) == 0
-    persisted = json.loads((tmp_path / "manifest.json").read_text())
+    persisted = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert persisted["payload"]["fields_updated"] == ["Name"]
     assert persisted["payload"]["before_row"] == before
     assert persisted["payload"]["after_row"] == after

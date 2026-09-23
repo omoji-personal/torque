@@ -87,7 +87,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
         lessons = []
         for p in sorted(storage.archive_dir().glob("*.json")):
             try:
-                lessons.append(storage.Lesson.from_dict(json.loads(p.read_text())))
+                lessons.append(storage.Lesson.from_dict(json.loads(p.read_text(encoding="utf-8"))))
             except Exception:
                 continue
         lessons.sort(key=lambda l: -l.captured_at)
@@ -109,7 +109,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="jsc_memory lesson management CLI")
+    parser = argparse.ArgumentParser(description="Torque lesson management CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_capture = sub.add_parser("capture", help="Explicit lesson capture")

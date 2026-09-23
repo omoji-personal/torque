@@ -3,9 +3,10 @@ from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import io
 import json
-import multiprocessing
 import os
 from pathlib import Path
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -57,21 +58,34 @@ def test_failed_new_client_leaves_no_occupied_slug_and_retry_works(firm, monkeyp
     assert config['slug'] == 'new-client' and (created / 'context.md').is_file()
 
 
-def _exit_during_client_creation(root):
-    original = ws._write_json
-    def crash(path, data):
-        if path.name == 'client.json': os._exit(86)
-        return original(path, data)
-    ws._write_json = crash
-    ws.add_client(root, 'Interrupted')
+_EXIT_DURING_CLIENT_CREATION_SCRIPT = """
+import os, sys
+sys.path.insert(0, {src!r})
+from torque import workspace as ws
+original = ws._write_json
+def crash(path, data):
+    if path.name == 'client.json':
+        os._exit(86)
+    return original(path, data)
+ws._write_json = crash
+ws.add_client({root!r}, 'Interrupted')
+"""
 
 
 def test_process_termination_leaves_only_staging_and_releases_creation_lock(firm):
     root, _, _ = firm
-    process = multiprocessing.get_context('fork').Process(target=_exit_during_client_creation, args=(root,))
-    process.start(); process.join(10)
-    if process.is_alive(): process.kill(); process.join(); pytest.fail('Synthetic child did not finish')
-    assert process.exitcode == 86
+    # A real child process, not multiprocessing.Process: 'fork' does not exist
+    # on Windows, and 'spawn' there re-imports this test module by pickled
+    # reference, which is fragile under pytest's own sys.path/import setup.
+    # A plain interpreter subprocess with an inline script sidesteps that
+    # entirely and behaves identically on every platform.
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    script = _EXIT_DURING_CLIENT_CREATION_SCRIPT.format(src=src, root=str(root))
+    try:
+        result = subprocess.run([sys.executable, "-c", script], timeout=10)
+    except subprocess.TimeoutExpired:
+        pytest.fail('Synthetic child did not finish')
+    assert result.returncode == 86
     assert not (root / 'clients/interrupted').exists()
     abandoned = set((root / '.torque/client-staging').iterdir())
     assert len(abandoned) == 1
@@ -81,7 +95,7 @@ def test_process_termination_leaves_only_staging_and_releases_creation_lock(firm
 
 def test_existing_client_content_is_never_replaced(firm):
     root, alpha, _ = firm
-    sentinel = alpha / 'artifacts/working.txt'; sentinel.write_text('SYNTHETIC_EXISTING_WORK')
+    sentinel = alpha / 'artifacts/working.txt'; sentinel.write_text('SYNTHETIC_EXISTING_WORK', encoding="utf-8")
     before = {p: p.read_bytes() for p in alpha.rglob('*') if p.is_file()}
     assert invoke('client', 'add', 'ALPHA', '--workspace', str(root))[0] == 2
     assert all(p.read_bytes() == value for p, value in before.items())
@@ -124,17 +138,17 @@ def test_client_discovery_never_sees_staging_with_published_config(firm, monkeyp
 
 def test_handoff_includes_same_bounded_notes_as_context_without_sibling_data(firm):
     root, alpha, beta = firm
-    (root / 'profile.md').write_text('SYNTHETIC_FIRM_CONVENTION')
-    (alpha / 'context.md').write_text('SYNTHETIC_ALPHA_SCOPE')
-    (alpha / 'context/decision.md').write_text('SYNTHETIC_ALPHA_DECISION')
-    (alpha / 'context/long.md').write_text('A' * 65536 + 'SYNTHETIC_TRUNCATED_TAIL')
-    (beta / 'context.md').write_text('SYNTHETIC_BETA_PRIVATE')
+    (root / 'profile.md').write_text('SYNTHETIC_FIRM_CONVENTION', encoding="utf-8")
+    (alpha / 'context.md').write_text('SYNTHETIC_ALPHA_SCOPE', encoding="utf-8")
+    (alpha / 'context/decision.md').write_text('SYNTHETIC_ALPHA_DECISION', encoding="utf-8")
+    (alpha / 'context/long.md').write_text('A' * 65536 + 'SYNTHETIC_TRUNCATED_TAIL', encoding="utf-8")
+    (beta / 'context.md').write_text('SYNTHETIC_BETA_PRIVATE', encoding="utf-8")
     ws.add_session(root, 'Alpha', 'SYNTHETIC_JOURNAL', 'incomplete')
     item = changes.create_change(root, 'Alpha', 'Synthetic change', 'SYNTHETIC_CHANGE_OUTCOME', ['Save'])
     changes.add_check(root, 'Alpha', item['id'], 'AC1', 'fail', 'SYNTHETIC_REPORTED_FAILURE')
     target = alpha / 'artifacts/handoff.md'
     assert invoke('handoff', '--workspace', str(root), '--client', 'Alpha', '--output', str(target))[0] == 0
-    body = target.read_text()
+    body = target.read_text(encoding="utf-8")
     for text in ws.get_context(root, 'Alpha')['notes'].values(): assert text.rstrip() in body
     assert '[truncated at 65,536 characters]' in body and 'SYNTHETIC_TRUNCATED_TAIL' not in body
     assert 'SYNTHETIC_BETA_PRIVATE' not in body
@@ -145,8 +159,8 @@ def test_multibyte_context_and_handoff_use_character_limit_without_sibling_data(
     root, alpha, beta = firm
     contents = '界' * 65536
     marker = '[truncated at 65,536 characters]'
-    (alpha / 'context/multibyte.md').write_text(contents + 'SYNTHETIC_MULTIBYTE_TAIL')
-    (beta / 'context.md').write_text('SYNTHETIC_BETA_PRIVATE')
+    (alpha / 'context/multibyte.md').write_text(contents + 'SYNTHETIC_MULTIBYTE_TAIL', encoding="utf-8")
+    (beta / 'context.md').write_text('SYNTHETIC_BETA_PRIVATE', encoding="utf-8")
     notes = ws.get_context(root, 'Alpha')['notes']
     assert notes['Client context: multibyte.md'] == contents + '\n' + marker
     assert len(contents.encode('utf-8')) > 65536
@@ -158,7 +172,7 @@ def test_multibyte_context_and_handoff_use_character_limit_without_sibling_data(
 
 def test_handoff_rejects_notes_symlink_before_export(firm):
     root, alpha, beta = firm
-    (beta / 'context.md').write_text('SYNTHETIC_BETA_SECRET')
+    (beta / 'context.md').write_text('SYNTHETIC_BETA_SECRET', encoding="utf-8")
     (alpha / 'context.md').unlink()
     (alpha / 'context.md').symlink_to(beta / 'context.md')
     target = alpha / 'artifacts/handoff.md'
@@ -176,12 +190,12 @@ def test_handoff_allows_missing_optional_notes(firm):
 
 def test_workflow_show_prefers_preserved_customization_in_selected_workspace(firm):
     root, _, _ = firm
-    local = root / '.claude/commands/qa.md'; local.write_text('SYNTHETIC_FIRM_QA_CUSTOMIZATION')
+    local = root / '.claude/commands/qa.md'; local.write_text('SYNTHETIC_FIRM_QA_CUSTOMIZATION', encoding="utf-8")
     report = updates.update_templates(root)
     assert next(a for a in report['actions'] if a['path'] == '.claude/commands/qa.md')['action'] == 'preserve'
     code, output, error = invoke('workflows', 'show', 'qa', '--workspace', str(root))
-    assert code == 0 and error == '' and output.strip() == local.read_text()
-    assert 'torque workflows show NAME --workspace .' in (root / 'AGENTS.md').read_text()
+    assert code == 0 and error == '' and output.strip() == local.read_text(encoding="utf-8")
+    assert 'torque workflows show NAME --workspace .' in (root / 'AGENTS.md').read_text(encoding="utf-8")
 
 
 def test_workflow_show_missing_local_recipe_uses_packaged_fallback(firm):
@@ -194,7 +208,7 @@ def test_workflow_show_missing_local_recipe_uses_packaged_fallback(firm):
 
 def test_unselected_workflow_show_does_not_infer_workspace_from_cwd(firm, monkeypatch):
     root, _, _ = firm
-    local = root / '.claude/commands/qa.md'; local.write_text('SYNTHETIC_CUSTOM_LOCAL')
+    local = root / '.claude/commands/qa.md'; local.write_text('SYNTHETIC_CUSTOM_LOCAL', encoding="utf-8")
     monkeypatch.chdir(root)
     code, output, _ = invoke('workflows', 'show', 'qa')
     assert code == 0 and 'SYNTHETIC_CUSTOM_LOCAL' not in output
@@ -203,7 +217,7 @@ def test_unselected_workflow_show_does_not_infer_workspace_from_cwd(firm, monkey
 @pytest.mark.parametrize('client_scope', [False, True])
 def test_workflow_show_honors_existing_explicit_environment_scope(firm, monkeypatch, client_scope):
     root, alpha, _ = firm
-    (root / '.claude/commands/qa.md').write_text('SYNTHETIC_SELECTED_ENV_RECIPE')
+    (root / '.claude/commands/qa.md').write_text('SYNTHETIC_SELECTED_ENV_RECIPE', encoding="utf-8")
     monkeypatch.setenv('TORQUE_WORKSPACE', str(alpha if client_scope else root))
     assert invoke('workflows', 'show', 'qa')[1].strip() == 'SYNTHETIC_SELECTED_ENV_RECIPE'
 
@@ -211,8 +225,8 @@ def test_workflow_show_honors_existing_explicit_environment_scope(firm, monkeypa
 def test_explicit_workflow_workspace_wins_over_inherited_selection(firm, tmp_path, monkeypatch):
     root, _, _ = firm
     other = ws.init_workspace(tmp_path / 'other', 'Other synthetic firm')
-    (other / '.claude/commands/qa.md').write_text('SYNTHETIC_OTHER_FIRM')
-    (root / '.claude/commands/qa.md').write_text('SYNTHETIC_SELECTED_FIRM')
+    (other / '.claude/commands/qa.md').write_text('SYNTHETIC_OTHER_FIRM', encoding="utf-8")
+    (root / '.claude/commands/qa.md').write_text('SYNTHETIC_SELECTED_FIRM', encoding="utf-8")
     monkeypatch.setenv('TORQUE_WORKSPACE', str(other))
     code, output, _ = invoke('workflows', 'show', 'qa', '--workspace', str(root))
     assert code == 0 and output.strip() == 'SYNTHETIC_SELECTED_FIRM'
@@ -232,7 +246,7 @@ def test_invalid_selected_workspace_does_not_silently_use_packaged_recipe(tmp_pa
 
 def test_workflow_symlink_does_not_read_other_workspace(firm, tmp_path):
     root, _, _ = firm
-    other = tmp_path / 'private.txt'; other.write_text('SYNTHETIC_OTHER_PRIVATE')
+    other = tmp_path / 'private.txt'; other.write_text('SYNTHETIC_OTHER_PRIVATE', encoding="utf-8")
     recipe = root / '.claude/commands/qa.md'; recipe.unlink(); recipe.symlink_to(other)
     code, output, error = invoke('workflows', 'show', 'qa', '--workspace', str(root))
     assert code == 2 and 'symlink' in error and 'SYNTHETIC_OTHER_PRIVATE' not in output + error
@@ -240,5 +254,36 @@ def test_workflow_symlink_does_not_read_other_workspace(firm, tmp_path):
 
 def test_empty_local_workflow_is_not_replaced_by_packaged_fallback(firm):
     root, _, _ = firm
-    (root / '.claude/commands/qa.md').write_text('')
+    (root / '.claude/commands/qa.md').write_text('', encoding="utf-8")
     assert invoke('workflows', 'show', 'qa', '--workspace', str(root)) == (0, '\n', '')
+
+
+def _legacy_module():
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "scripts" / "legacy_commands.py"
+    spec = importlib.util.spec_from_file_location("legacy_commands", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_catalogues_map_exactly_the_42_legacy_commands():
+    legacy = _legacy_module()
+    root = Path(__file__).resolve().parents[1]
+    assert len(legacy.legacy_commands()) == 42
+    for path in ("workflows/catalogue.json", "src/torque/data/catalogue.json"):
+        rows = json.loads((root / path).read_text(encoding="utf-8"))
+        assert legacy.check_source_commands(rows) == legacy.legacy_commands()
+        for name in ("triage-alert", "gift-payments", "grants-outbound-funds", "requirements-to-build"):
+            assert next(r for r in rows if r["name"] == name)["source_command"] is None, (path, name)
+
+
+def test_legacy_mapping_check_fails_on_drop_or_invention():
+    legacy = _legacy_module()
+    rows = json.loads((Path(__file__).resolve().parents[1] / "workflows/catalogue.json").read_text(encoding="utf-8"))
+    dropped = [dict(r, source_command=None) if r["name"] == "diagnose" else r for r in rows]
+    with pytest.raises(SystemExit):
+        legacy.check_source_commands(dropped)
+    invented = [dict(r, source_command=r["name"]) if r["name"] == "discovery" else r for r in rows]
+    with pytest.raises(SystemExit):
+        legacy.check_source_commands(invented)
