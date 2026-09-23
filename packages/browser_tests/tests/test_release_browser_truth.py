@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import io
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -40,7 +41,7 @@ def prohibit_live_io(monkeypatch):
         # async/await code doing no real I/O) uses socketpair(). Block real
         # external hosts; let Python's own loopback plumbing through.
         host = address[0] if isinstance(address, tuple) else None
-        if host in ("127.0.0.1", "::1", "localhost"):
+        if os.name == "nt" and host in ("127.0.0.1", "::1", "localhost"):
             return real_connect(self, address, *a, **kw)
         raise AssertionError("Offline regression attempted external I/O")
 

@@ -70,13 +70,30 @@ The demo path must be new and outside the checkout, same as on macOS/Linux. Put
 `.venv\Scripts` on PATH, or use the absolute path, the same way `.venv/bin` is used
 above.
 
-The de-identified-mode hook (see `ai-access.md`) is set up the same way on Windows: it
-goes in the workspace's own `.claude/settings.json`, never a user-level settings file.
-Its command, `python -m torque.gate`, needs a `python` resolvable on PATH when the hook
-runs. Claude Code on Windows runs hook commands through Git Bash when one is installed
-(the `winget install Git.Git` above provides it); without Git Bash on PATH, point the
-hook command at the venv's `python.exe` directly, for example
-`C:\path\to\.venv\Scripts\python.exe -m torque.gate`.
+The de-identified-mode hook (see `ai-access.md`) goes in the workspace's own
+`.claude/settings.json`, never a user-level settings file. On Windows, do not use a
+bare `python` in the hook command: it often resolves to the Microsoft Store alias or
+to an interpreter without Torque installed. The hook then fails with an exit code
+other than 2, and Claude Code treats that as a non-blocking error, so the tool runs
+and build-only mode is silently off. Always point the hook at the venv interpreter by
+absolute path, written with forward slashes so it survives Git Bash (which Claude Code
+uses for hooks when installed) as well as cmd:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob",
+  "hooks": [{"type": "command", "command": "C:/Work/torque/.venv/Scripts/python.exe -m torque.gate"}]}]}}
+```
+
+Check it once after wiring, with build-only mode set, from Git Bash in the workspace
+directory, using the exact command from the hook:
+
+```sh
+echo '{"tool_name":"Read","tool_input":{"file_path":"clients/example/notes.md"},"cwd":"."}' | C:/Work/torque/.venv/Scripts/python.exe -m torque.gate; echo "exit=$?"
+```
+
+It must print `De-identified mode: client context stays out of the AI session.` and
+`exit=2`. Any exit other than 0 or 2 (for example `No module named torque`, exit 1)
+means the gate is not running and nothing is being blocked; fix the interpreter path.
 
 ## Optional capabilities
 

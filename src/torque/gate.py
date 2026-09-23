@@ -53,7 +53,9 @@ def _home_value() -> str:
     valid POSIX-shell syntax without changing what path it names.
     """
     home = os.environ.get("HOME") or os.path.expanduser("~")
-    return home.replace("\\", "/")
+    # Only on Windows: on POSIX a backslash is a legal filename character, and
+    # rewriting it would silently name a different path.
+    return home.replace("\\", "/") if os.name == "nt" else home
 
 
 def _expand_home(raw: str) -> str:
@@ -74,7 +76,15 @@ def _expand_home_in_command(command: str) -> str:
     into segments. This must happen before _segments() runs: the segment
     splitter also splits on bare { and } (for brace-grouping), which would
     otherwise tear a ${HOME} reference apart before it could be recognized."""
-    return _HOME_TOKEN_RE.sub(lambda _m: _home_value(), command)
+    if not _HOME_TOKEN_RE.search(command):
+        return command
+    home = _home_value()
+    if "\\" in home:
+        # POSIX only (Windows HOME was normalized above): a literal backslash
+        # would be eaten by shlex after splicing and name a different path.
+        # Fail closed rather than evaluate the wrong path.
+        raise ValueError("HOME contains a backslash; cannot evaluate $HOME safely")
+    return _HOME_TOKEN_RE.sub(lambda _m: home, command)
 
 
 def _resolve(base: Path, raw: str) -> Path:

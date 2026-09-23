@@ -34,7 +34,7 @@ def offline_scope(tmp_path, monkeypatch):
         # self-pipe) is emulated with a real loopback TCP connection, unlike
         # POSIX's true AF_UNIX syscall. Allow loopback; block real hosts.
         host = address[0] if isinstance(address, tuple) else None
-        if host in ("127.0.0.1", "::1", "localhost"):
+        if os.name == "nt" and host in ("127.0.0.1", "::1", "localhost"):
             return real_connect(self, address, *a, **kw)
         raise AssertionError("External process/network I/O is forbidden in these tests")
 

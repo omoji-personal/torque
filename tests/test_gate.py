@@ -464,3 +464,21 @@ def test_main_allows_ordinary_work_with_no_workspace_marker_at_all(tmp_path):
                           "tool_input": {"command": "sf org display --target-org prod"}})
     result = _run_gate(payload, home=home)
     assert result.returncode == 0
+
+
+def test_windows_home_is_spliced_with_forward_slashes(monkeypatch):
+    # Runs on any OS: simulate a Windows HOME. Backslashes would otherwise be
+    # eaten by shlex and "C:\Users\x/clients" would become "C:Usersx/clients".
+    monkeypatch.setattr(gate.os, "name", "nt")
+    monkeypatch.setenv("HOME", "C:\\Users\\x")
+    assert gate._expand_home_in_command("cat $HOME/clients/a.md") == "cat C:/Users/x/clients/a.md"
+    assert gate._expand_home_in_command("cat ${HOME}/clients/a.md") == "cat C:/Users/x/clients/a.md"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: a backslash is a legal filename character there")
+def test_posix_home_with_backslash_fails_closed(monkeypatch):
+    monkeypatch.setenv("HOME", "/tmp/x\\y")
+    assert gate._home_value() == "/tmp/x\\y"
+    with pytest.raises(ValueError):
+        gate._expand_home_in_command("cat $HOME/clients/a.md")
+    assert gate._expand_home_in_command("ls project") == "ls project"
