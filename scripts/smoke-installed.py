@@ -43,7 +43,7 @@ def main():
             assert call("workflows", "show", row["name"]).strip(), row
 
         private = root / "firm"
-        call("workspace", "init", str(private), "--name", "Synthetic consulting firm", "--profile", "backoffice-thinking")
+        call("workspace", "init", str(private), "--name", "Synthetic consulting firm", "--profile", "solution-lead")
         assert (private / "AGENTS.md").is_file()
         assert len(list((private / ".claude/commands").glob("*.md"))) == len(rows)
         assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 3

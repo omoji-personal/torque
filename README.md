@@ -9,8 +9,8 @@ author has used in daily consulting for over six months.
 
 Use your existing Salesforce tools and assistant. Torque requires no service
 account and installs no global command interception or approval-token system.
-BackOffice Thinking is an optional private workspace profile; the product works
-with any firm or independent consultant.
+`solution-lead` is an optional workspace profile for a consultant who leads
+delivery across several clients; the product works with any firm or independent consultant.
 
 **Status: 2.0.0a9, development alpha.** The local continuation has not been
 published to a package index. Core workspace functions have offline acceptance

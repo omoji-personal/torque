@@ -54,7 +54,7 @@ assertion, not silently promoted to observed evidence.
 ## Firm and client context
 
 Use one workspace per firm and one client directory per engagement. The
-BackOffice Thinking profile is an editable starting point for discovery,
+`solution-lead` profile is an editable starting point for discovery,
 solution design, configuration, testing, support, and handoffs. It does not
 claim to encode their actual policies or imply employer approval of this tool.
 

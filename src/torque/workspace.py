@@ -14,7 +14,7 @@ import tempfile
 from datetime import datetime, timezone
 from uuid import uuid4
 
-PROFILES = ("generic", "backoffice-thinking")
+PROFILES = ("generic", "solution-lead")
 STATUSES = ("prepared", "executed", "verified", "incomplete")
 CONFIG = "workspace.json"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
@@ -190,7 +190,7 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
     firm = {"schema": "torque.workspace/1", "name": name.strip(),
             "profile": profile, "created_at": _now()}
     focus_notes = ""
-    if profile == "backoffice-thinking":
+    if profile == "solution-lead":
         firm["role"] = "Salesforce Solution Lead"
         firm["delivery_focus"] = ["discovery", "business analysis", "solution design and configuration",
                                   "QA and UAT", "support", "training", "small project coordination"]

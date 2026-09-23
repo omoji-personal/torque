@@ -49,7 +49,7 @@ Three connected areas are worth owning:
 2. **Business acceptance that survives handoff:** connect the requested behavior to source changes and actual observations by the intended user, including negative cases, partial results and recovery limits. Combine this into a short client explanation and a technical continuation record.
 3. **Practitioner-maintained reusable journeys:** turn lessons from daily delivery into tested, approachable examples that use current platform tools. The strength is the observed quality of the assembled experience and its maintenance, not the number of prompts or wrappers.
 
-These are contestable advantages, not a moat. Competitors can expand into them. Durable credibility comes from independent use, reproducible examples, precise documentation and a track record of fixes. Preserve the broad daily-use framework while making the common path simpler. BackOffice Thinking can be one private application of the generic framework; it should not define public schemas or become a prerequisite for publishing.
+These are contestable advantages, not a moat. Competitors can expand into them. Durable credibility comes from independent use, reproducible examples, precise documentation and a track record of fixes. Preserve the broad daily-use framework while making the common path simpler. A firm's own workspace can be one private application of the generic framework; it should not define public schemas or become a prerequisite for publishing.
 
 ## Highest-value public user journey
 

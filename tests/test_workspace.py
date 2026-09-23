@@ -14,7 +14,7 @@ class WorkspaceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "firm"
-        ws.init_workspace(self.root, "Example firm", "backoffice-thinking")
+        ws.init_workspace(self.root, "Example firm", "solution-lead")
         self.alpha = ws.add_client(self.root, "Alpha Client", "alpha-sandbox")
         self.beta = ws.add_client(self.root, "Beta", "beta-sandbox")
 
@@ -22,7 +22,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertTrue((self.root / "AGENTS.md").is_file())
         self.assertTrue((self.root / "CLAUDE.md").is_file())
         self.assertIn("torque workflows", (self.root / "AGENTS.md").read_text())
-        self.assertIn("backoffice-thinking", (self.root / "profile.md").read_text())
+        self.assertIn("solution-lead", (self.root / "profile.md").read_text())
         self.assertIn("Salesforce Solution Lead", (self.root / "profile.md").read_text())
         self.assertIn("discovery", json.loads((self.root / "workspace.json").read_text())["delivery_focus"])
         original = (self.root / "workspace.json").read_bytes()
