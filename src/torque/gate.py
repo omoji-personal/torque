@@ -42,10 +42,24 @@ _SPLIT_RE = re.compile(r"&&|\|\||;|\||\n|&|\(|\)|\{|\}|`")
 NARROW_PATH_HINT = " Pass a narrower path, such as project/ or src/, instead of the workspace root."
 
 
+def _home_value() -> str:
+    """The actual HOME, in forward-slash form.
+
+    The substituted value is spliced into a Bash command string that later
+    goes through shlex.split(..., posix=True), where backslash is an escape
+    character: "C:\\w/clients" splits as ["C:w/clients"], silently eating the
+    separator between the drive and the rest of the path. Windows itself
+    accepts forward slashes in paths, so normalizing here keeps the result
+    valid POSIX-shell syntax without changing what path it names.
+    """
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    return home.replace("\\", "/")
+
+
 def _expand_home(raw: str) -> str:
     """Expand a leading ~ and any $HOME/${HOME} the same way a shell would, using
     the actual HOME so a real symlinked or nonstandard home still resolves."""
-    home = os.environ.get("HOME") or os.path.expanduser("~")
+    home = _home_value()
     if raw == "~" or raw.startswith("~/"):
         raw = home + raw[1:]
     # A callable replacement is used literally; a string replacement is parsed
@@ -60,8 +74,7 @@ def _expand_home_in_command(command: str) -> str:
     into segments. This must happen before _segments() runs: the segment
     splitter also splits on bare { and } (for brace-grouping), which would
     otherwise tear a ${HOME} reference apart before it could be recognized."""
-    home = os.environ.get("HOME") or os.path.expanduser("~")
-    return _HOME_TOKEN_RE.sub(lambda _m: home, command)
+    return _HOME_TOKEN_RE.sub(lambda _m: _home_value(), command)
 
 
 def _resolve(base: Path, raw: str) -> Path:
