@@ -17,6 +17,9 @@ from . import storage
 
 STOP_SYNTHESIS_BUDGET_SECONDS = 10
 
+# Generated hex digests: never PII, never scrubbed.
+_STRUCTURAL_KEYS = ("id", "signature_hash")
+
 # Trigger -> confidence label
 TRIGGER_CONFIDENCE = {
     "explicit_lesson": "HIGHEST",
@@ -304,6 +307,13 @@ def synthesize_session(session_id: str) -> tuple[int, Optional[str]]:
             scrubbed, drop_reason = scrubber.scrub_candidate(candidate)
             if drop_reason:
                 continue
+            # id and signature_hash are our own sha256 hex digests, not captured
+            # content. The value scrubber can mistake them for Salesforce ids
+            # (e.g. any 16-hex id starting with "a") and rewrite them to
+            # "<sf_id>", which corrupts the id and, on Windows, makes the L1
+            # filename illegal so the write fails and is silently skipped.
+            for key in _STRUCTURAL_KEYS:
+                scrubbed[key] = candidate[key]
             lesson = storage.Lesson.from_dict(scrubbed)
             storage.write_review_candidate(lesson)
             written += 1
