@@ -15,11 +15,14 @@ delivery across several clients; the product works with any firm or independent 
 **Status: 2.0.0a10, development alpha.** The local continuation has not been
 published to a package index. Core workspace functions have offline acceptance
 coverage; bounded live operations and experimental capabilities have separate limits in
-[validation](docs/validation.md). No industry-leadership claim is made.
+[validation](docs/validation.md); the [alpha 10 record](docs/validation-alpha10.md) covers
+this build. No industry-leadership claim is made.
 
 ## Try a complete example without an org
 
-From a checkout, use Python 3.10+ on macOS or Linux:
+From a checkout, use Python 3.10+ on macOS, Linux or Windows. CI runs all three on
+Python 3.10, 3.12 and 3.14. On Windows, use `.venv\Scripts\` in place of `.venv/bin/`
+and see the [Windows installation steps](docs/installation.md#windows).
 
 ```sh
 python3 -m venv .venv
@@ -69,12 +72,16 @@ maintain it during work. There is no mandatory lifecycle or form to complete.
 
 | Work | Interface |
 | --- | --- |
-| Discovery, architecture, Flow review, migration planning, training, release notes | 49 conversational recipes, including all 42 original JSC command mappings |
+| Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original JSC command mappings |
 | Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs |
 | Org and metadata investigation | `torque advisory`; use current official Salesforce CLI, skills and MCP tools alongside it |
 | Deploy, data operations and scoped recovery | `torque deploy`, `torque data`, `torque org`, `torque recover` |
 | QA, debug logs, browser flows, lessons and probes | `torque qa`, `logs`, `browser`, `lesson`, `probes`; coverage and limits depend on the configured adapter |
 | Meeting preparation and prompt contracts | Optional `torque meeting` and `ai-regression`; live model-provider behavior remains experimental |
+
+A firm with an AI-use policy can set a workspace to build-only: a Claude Code hook then
+keeps the assistant away from client orgs and client context, best-effort and not a
+sandbox. See [de-identified mode](docs/ai-access.md) for what it does and does not cover.
 
 Run `torque --help`, `torque workflows list`, or a route's `--help`. Stateful
 operations accept `--workspace PATH --client NAME` and retain their explicit org
