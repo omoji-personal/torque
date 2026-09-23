@@ -317,7 +317,9 @@ def main() -> int:
                   "0HU000000000001AAA" if op_type.startswith("package") else "0Af000000000001AAA")
         return {
             "operation_type": op_type,
-            "sf_report_command": ["printf", "%s", json_payload],
+            # printf is POSIX only; this stands in for the real sf CLI, so any
+            # portable command that writes json_payload to stdout will do.
+            "sf_report_command": [sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1])", json_payload],
             "queue_entry_id": "test", "snapshot_id": "test",
             "org_id_short": "00D000000000001", "alias": "sf-test", "job_id": job_id,
         }
@@ -424,7 +426,8 @@ def main() -> int:
             alias="sf-uninstall-test",
             operation_type="package_uninstall",
             job_id="0HU000000000001AAA",
-            sf_report_command=["printf", "%s", '{"result":{"id":"0HU000000000001AAA","Status":"Success"}}'],
+            sf_report_command=[sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1])",
+                               '{"result":{"id":"0HU000000000001AAA","Status":"Success"}}'],
             queue_dir=queue_dir,
         )
         # Backdate next_poll_at so poll_once actually polls (not defers).
