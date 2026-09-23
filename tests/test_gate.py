@@ -171,10 +171,12 @@ def test_symlinked_workspace_client_path_is_blocked(tmp_path):
 
 # --- main(): fail-closed behaviour ---
 
-def _run_gate(payload):
+def _run_gate(payload, home=None):
     env = dict(os.environ)
     src = str(Path(__file__).resolve().parents[1] / "src")
     env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+    if home is not None:
+        env["HOME"] = str(home)
     return subprocess.run([sys.executable, "-m", "torque.gate"], input=payload,
                           capture_output=True, text=True, env=env)
 
@@ -380,29 +382,76 @@ def test_main_treats_missing_ai_access_key_as_full(tmp_path):
 
 def test_main_fails_closed_when_workspace_json_is_deleted_but_marker_remains(tmp_path):
     # C3: rm workspace.json (or rm *.json) must not silently fall back to full
-    # just because clients/ (a workspace marker) is still present.
-    (tmp_path / "clients").mkdir()
-    payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
+    # just because clients/ is still present. A real marker requires BOTH
+    # clients/ AND .torque/templates.json (what `torque workspace init`
+    # writes) so this uses a fake home outside tmp_path, per fix round 3.
+    home = tmp_path / "home"
+    home.mkdir()
+    workspace = tmp_path / "elsewhere" / "w"
+    workspace.mkdir(parents=True)
+    (workspace / "clients").mkdir()
+    (workspace / ".torque").mkdir()
+    (workspace / ".torque" / "templates.json").write_text("{}")
+    payload = json.dumps({"cwd": str(workspace), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
-    result = _run_gate(payload)
+    result = _run_gate(payload, home=home)
     assert result.returncode == 2 and result.stderr.strip()
     # Build-only's own allowances still work under this fail-closed default.
-    ok = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "git status"}})
-    assert _run_gate(ok).returncode == 0
+    ok = json.dumps({"cwd": str(workspace), "tool_name": "Bash", "tool_input": {"command": "git status"}})
+    assert _run_gate(ok, home=home).returncode == 0
 
 
-def test_main_fails_closed_with_torque_marker_and_no_workspace_json(tmp_path):
-    (tmp_path / ".torque").mkdir()
-    payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
+def test_main_allows_ordinary_work_under_a_bare_torque_dir_in_home(tmp_path):
+    # Fix round 3: older torque tooling can leave a bare .torque/ directly
+    # under $HOME (prod-sessions, tokens, maintainer.grant, etc.), with no
+    # templates.json and no clients/. That alone must never make every
+    # project under home look like a workspace with a deleted config.
+    home = tmp_path / "home"
+    (home / ".torque").mkdir(parents=True)
+    (home / ".torque" / "prod-sessions").mkdir()
+    project = home / "Desktop" / "some-project"
+    project.mkdir(parents=True)
+    for command in ("sf org list", "torque context --workspace . --client acme"):
+        payload = json.dumps({"cwd": str(project), "tool_name": "Bash", "tool_input": {"command": command}})
+        result = _run_gate(payload, home=home)
+        assert result.returncode == 0, f"{command!r} should be allowed: {result.stderr}"
+
+
+def test_main_allows_a_plain_repo_with_only_clients_directory(tmp_path):
+    # A bare clients/ folder alone (any plain repo can have one; it is not
+    # exclusive to Torque) must not fail closed without .torque/templates.json.
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "elsewhere" / "repo"
+    repo.mkdir(parents=True)
+    (repo / "clients").mkdir()
+    payload = json.dumps({"cwd": str(repo), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
-    result = _run_gate(payload)
-    assert result.returncode == 2 and result.stderr.strip()
+    result = _run_gate(payload, home=home)
+    assert result.returncode == 0
+
+
+def test_main_never_treats_home_itself_or_above_as_a_workspace(tmp_path):
+    # Even a fully-formed marker directly at $HOME must not count: the search
+    # stops before home (exclusive), never checking home or its ancestors.
+    home = tmp_path / "home"
+    (home / "clients").mkdir(parents=True)
+    (home / ".torque").mkdir()
+    (home / ".torque" / "templates.json").write_text("{}")
+    payload = json.dumps({"cwd": str(home), "tool_name": "Bash",
+                          "tool_input": {"command": "sf org display --target-org prod"}})
+    result = _run_gate(payload, home=home)
+    assert result.returncode == 0
 
 
 def test_main_allows_ordinary_work_with_no_workspace_marker_at_all(tmp_path):
-    # No workspace.json AND no clients/ or .torque/ marker: genuinely outside
-    # any Torque workspace, so this stays full, matching round 1's behavior.
-    payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
+    # No workspace.json AND no real clients/+.torque/templates.json marker:
+    # genuinely outside any Torque workspace, so this stays full.
+    home = tmp_path / "home"
+    home.mkdir()
+    project = tmp_path / "elsewhere" / "project"
+    project.mkdir(parents=True)
+    payload = json.dumps({"cwd": str(project), "tool_name": "Bash",
                           "tool_input": {"command": "sf org display --target-org prod"}})
-    result = _run_gate(payload)
+    result = _run_gate(payload, home=home)
     assert result.returncode == 0

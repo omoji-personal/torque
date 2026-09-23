@@ -331,13 +331,33 @@ def _resolve_ai_access(value: object) -> str:
     return "build-only"
 
 
+def _home_dir() -> Path:
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    return Path(os.path.realpath(home))
+
+
+def _is_workspace_marker(folder: Path) -> bool:
+    """True only for a real Torque workspace root: both clients/ and the
+    .torque/templates.json manifest that `torque workspace init` writes. A
+    bare clients/ (any plain repo can have one) or a bare .torque/ (older
+    torque tooling keeps unrelated state there, e.g. under $HOME) must not,
+    on their own, make a folder look like a workspace with a missing config."""
+    return (folder / "clients").is_dir() and (folder / ".torque" / "templates.json").is_file()
+
+
 def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
     """Walk up from start for the nearest workspace.json. Returns (folder, mode,
     mode_known). mode_known is False when a workspace.json was found but could
-    not be read or parsed as a JSON object, or when a Torque workspace marker
-    (clients/ or .torque/) exists with no readable workspace.json alongside it;
-    callers must treat that as build-only."""
+    not be read or parsed as a JSON object, or when a real workspace marker
+    (_is_workspace_marker) exists with no readable workspace.json alongside it;
+    callers must treat that as build-only. The search stops before the user's
+    home directory (exclusive): home itself, and anything above it, is never
+    treated as or searched for a workspace, since unrelated per-user state
+    (e.g. an older torque tooling directory) can live directly under home."""
+    home = _cf(str(_home_dir()))
     for folder in [start, *start.parents]:
+        if _cf(str(folder)) == home:
+            break
         config = folder / "workspace.json"
         if config.is_file():
             try:
@@ -347,10 +367,10 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
             except (OSError, ValueError):
                 return folder, "build-only", False
             return folder, _resolve_ai_access(data.get("ai_access")), True
-        if (folder / "clients").is_dir() or (folder / ".torque").is_dir():
-            # A workspace marker with no readable workspace.json alongside it:
-            # the config may have been removed. Fail closed rather than
-            # treating this folder as "no workspace here, keep looking up."
+        if _is_workspace_marker(folder):
+            # A real workspace marker with no readable workspace.json
+            # alongside it: the config may have been removed. Fail closed
+            # rather than treating this folder as "no workspace here."
             return folder, "build-only", False
     return start, "full", True
 
