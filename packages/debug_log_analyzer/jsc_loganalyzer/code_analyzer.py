@@ -214,9 +214,8 @@ def has_blocking(findings: list[Finding]) -> bool:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="jsc-code-analyzer",
         description="Wrapper around Salesforce Code Analyzer v5: shells "
-                    "`sf code-analyzer run`, maps violations into JSC "
+                    "`sf code-analyzer run`, maps violations into Torque "
                     "Finding/score shape, exits non-zero on P0/P1.",
     )
     parser.add_argument(

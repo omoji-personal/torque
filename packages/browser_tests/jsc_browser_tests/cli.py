@@ -269,7 +269,7 @@ def cmd_suite_selftest(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="jsc-browser-tests")
+    p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="command", required=True)
 
     b = sub.add_parser("browser", help="single-profile (admin) browser walkthrough")

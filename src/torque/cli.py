@@ -176,7 +176,7 @@ def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None
 
 
 @contextmanager
-def delegated_context(path: Path | None, route: str, argv: list[str]):
+def delegated_context(path: Path | None, route: str, argv: list[str], display: str | None = None):
     previous_argv = sys.argv
     changes: dict[str, str | None] = {}
     if path is not None:
@@ -212,7 +212,7 @@ def delegated_context(path: Path | None, route: str, argv: list[str]):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-        sys.argv = [f"torque {route}", *argv]
+        sys.argv = [display or f"torque {route}", *argv]
         yield
     finally:
         sys.argv = previous_argv
@@ -223,7 +223,7 @@ def delegated_context(path: Path | None, route: str, argv: list[str]):
                 os.environ[key] = value
 
 
-def _dispatch(route: str, argv: list[str]) -> int:
+def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
     args, root_arg, client_name = _context_options(argv)
     flags = args[:args.index("--")] if "--" in args else args
     help_only = not args or any(x in ("-h", "--help", "--version") for x in flags)
@@ -255,7 +255,7 @@ def _dispatch(route: str, argv: list[str]) -> int:
         output = scope / "artifacts" / "meetings" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         ws._inside(scope, output)
         args += ["--output", str(output)]
-    with delegated_context(scope, route, args):
+    with delegated_context(scope, route, args, display):
         try:
             module = importlib.import_module(DELEGATES[route])
         except ModuleNotFoundError as exc:
@@ -453,7 +453,11 @@ def main(argv: list[str] | None = None) -> int:
             rest = args[1:]
             if args[0] == "recover" and rest[:1] == ["run"]:
                 rest = ["exec", *rest[1:]]
-            return _dispatch(delegate, [*prefix, *rest])
+            # The delegate's own subcommand name becomes the next argparse prog
+            # token automatically; only rename the prog here when the public
+            # route name differs from that underlying subcommand (e.g. recover/revert).
+            display = "torque" if prefix[:1] == [args[0]] else f"torque {args[0]}"
+            return _dispatch(delegate, [*prefix, *rest], display=display)
         if args and args[0] in DELEGATES:
             return _dispatch(args[0], args[1:])
         parser = build_parser()

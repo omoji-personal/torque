@@ -37,7 +37,6 @@ _DATETIME_LITERAL = re.compile(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="jsc-loganalyzer",
         description="Closed-loop debug-log analyzer with 0–100 health score.",
     )
     parser.add_argument("--log-file", help="Local path to a debug log to analyze")

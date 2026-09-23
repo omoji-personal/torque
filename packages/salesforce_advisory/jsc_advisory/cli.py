@@ -51,7 +51,6 @@ def _add_evidence_args(parser: argparse.ArgumentParser, *, field_required: bool)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="jsc-advisory",
         description=(
             "Read-only Salesforce knowledge, impact, and evidence. No subcommand authorizes, "
             "denies, or executes a change."

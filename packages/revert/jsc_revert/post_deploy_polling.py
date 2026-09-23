@@ -346,7 +346,7 @@ def _update_snapshot_manifest(entry: dict, final_status: str):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jsc post-deploy",
+    parser = argparse.ArgumentParser(
         description="Background polling for async sf operations (Phase I.4-extended-2)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
