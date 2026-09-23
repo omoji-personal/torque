@@ -53,6 +53,31 @@ JSC_WRAPPER_CMDLINE_MARKER = "jsc_revert"
 WRAPPER_CMDLINE_MARKERS = (JSC_WRAPPER_CMDLINE_MARKER, "torque.cli", "/torque", "/jsc")
 
 
+def _win_pid_alive(pid: int) -> bool | None:
+    """Windows liveness check via OpenProcess (no subprocess, no dependency).
+
+    Returns True if a process with this pid exists and could be opened, None
+    if OpenProcess confirms no such process exists (ERROR_INVALID_PARAMETER),
+    or False for anything else (including access denied) - identity can't be
+    confirmed either way. False, not a guessed True/None, is deliberate:
+    stealing a lock from a still-live operation is the unsafe direction to
+    be wrong in, so an unrecognized failure must not read as "dead."
+    """
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    ERROR_INVALID_PARAMETER = 87  # OpenProcess: no process with this pid
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if handle:
+        kernel32.CloseHandle(handle)
+        return True
+    # ctypes.GetLastError() calls the real Win32 GetLastError() directly; it
+    # works regardless of whether this DLL was loaded with use_last_error=True
+    # (windll.kernel32 is not), unlike ctypes.get_last_error().
+    return None if ctypes.GetLastError() == ERROR_INVALID_PARAMETER else False
+
+
 class LockReadStatus(Enum):
     VALID = "VALID"
     EMPTY = "EMPTY"
@@ -142,15 +167,33 @@ def _check_pid_is_jsc_wrapper(pid: int) -> PidStatus:
         UNKNOWN: pid is alive but cmdline inspection failed (PermissionError,
                  timeout, etc.) — caller should treat as live
     """
-    # First: liveness check (kill -0)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return PidStatus.NOT_WRAPPER  # process is dead
-    except PermissionError:
-        return PidStatus.UNKNOWN  # exists, but identity cannot be established
+    # First: liveness check (kill -0). os.kill(pid, 0) is POSIX only: signal 0
+    # on Windows raises OSError [WinError 87] "The parameter is incorrect"
+    # rather than performing a liveness-only check.
+    if sys.platform == "win32":
+        alive = _win_pid_alive(pid)
+        if alive is None:
+            return PidStatus.NOT_WRAPPER  # process is dead
+        if not alive:
+            return PidStatus.UNKNOWN  # exists, but identity cannot be established
+    else:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return PidStatus.NOT_WRAPPER  # process is dead
+        except PermissionError:
+            return PidStatus.UNKNOWN  # exists, but identity cannot be established
 
     # Second: cmdline inspection. Method depends on OS.
+    if sys.platform == "win32":
+        # No dependency-free, fast equivalent of reading /proc/{pid}/cmdline
+        # or `ps -p <pid> -o command=` on Windows (WMIC is deprecated and
+        # PowerShell's Get-CimInstance is slow enough to undermine the point
+        # of a lock-staleness check). Never guess: the same UNKNOWN outcome
+        # already used for PermissionError/timeout elsewhere in this
+        # function is the safe default here too, and the caller already
+        # treats it as "still live."
+        return PidStatus.UNKNOWN
     if sys.platform == "linux":
         cmdline_path = Path(f"/proc/{pid}/cmdline")
         try:
