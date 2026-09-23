@@ -647,8 +647,8 @@
       "source_path": "packages/memory/tests/conftest.py",
       "source_sha256": "6138cc44d565adacaeadba92970574bb96638348076732939861e3c7ff45d037",
       "source_tracked": true,
-      "destination_sha256": "6138cc44d565adacaeadba92970574bb96638348076732939861e3c7ff45d037",
-      "adapted": false
+      "destination_sha256": "7692c905b5f30a4930371d9eb559711ececde29905d6e7802d454c02ba6341b9",
+      "adapted": true
     },
     {
       "path": "packages/memory/tests/test_scrubber.py",
