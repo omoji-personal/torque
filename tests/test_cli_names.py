@@ -13,7 +13,7 @@ def test_public_route_help_names_torque(route):
     assert "jsc" not in text.lower()
 
 
-@pytest.mark.parametrize("route", ["qa", "logs", "probes", "advisory"])
+@pytest.mark.parametrize("route", ["qa", "logs", "probes", "advisory", "meeting", "lesson"])
 def test_delegate_help_names_torque(route):
     out = io.StringIO()
     with contextlib.redirect_stdout(out), pytest.raises(SystemExit):
