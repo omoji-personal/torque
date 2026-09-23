@@ -66,7 +66,8 @@ def test_manifest_round_trips_and_audit_is_bounded():
     line = open(alog, encoding="utf-8").read()
     assert "DO_NOT_LOG" not in line and "secret" not in line   # PII/unknown fields dropped
     assert "PASS" in line                                       # bounded fields kept
-    assert oct(os.stat(alog).st_mode)[-3:] == "600"            # operator-private
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or oct(os.stat(alog).st_mode)[-3:] == "600"  # operator-private
 
 def main() -> int:
     failures = 0

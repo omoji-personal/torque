@@ -45,10 +45,12 @@ def append_event(session_id: str, event: dict) -> None:
         # 2026-06-09 LESSON-1; plain open() previously left it at the umask default).
         fd = os.open(str(spool_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         try:
-            try:
-                os.fchmod(fd, 0o600)
-            except OSError:
-                pass
+            # os.fchmod does not exist on Windows; mode bits are POSIX-only there anyway.
+            if os.name != "nt":
+                try:
+                    os.fchmod(fd, 0o600)
+                except OSError:
+                    pass
             os.write(fd, line.encode("utf-8"))
         finally:
             os.close(fd)

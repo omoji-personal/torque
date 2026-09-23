@@ -70,7 +70,11 @@ def atomic_write_new(path: Path, text: str) -> None:
         raise WorkspaceError(f"output directory does not exist: {path.parent}")
     fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        # newline="\n": text is always \n-separated Python-source content;
+        # without this, Windows would translate it to \r\n on write, and a
+        # later byte-exact comparison against LF-only bundled content (see
+        # template_updates.py) would see every materialized file as changed.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
@@ -86,7 +90,7 @@ def _atomic_replace_text(path: Path, text: str) -> None:
     """Replace an explicitly managed private file without exposing a partial write."""
     fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())

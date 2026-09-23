@@ -21,7 +21,12 @@ def test_append_creates_spool(isolated_memory_dir):
 
 def test_append_creates_spool_mode_0600(isolated_memory_dir):
     """Spool must be 0o600 — it transiently holds raw Bash commands before the
-    Stop hook scrubs them into L1 candidates (audit 2026-06-09 LESSON-1)."""
+    Stop hook scrubs them into L1 candidates (audit 2026-06-09 LESSON-1).
+    POSIX only: Windows has no equivalent mode bits or fchmod."""
+    if os.name == "nt":
+        spool.append_event("session-mode", {"ts": 1.0, "tool": "Bash", "input": "echo secret"})
+        assert spool.spool_path_for_session("session-mode").exists()
+        return
     import stat
     spool.append_event("session-mode", {"ts": 1.0, "tool": "Bash", "input": "echo secret"})
     spool_path = spool.spool_path_for_session("session-mode")

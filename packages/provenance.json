@@ -71,7 +71,7 @@
       "source_path": "packages/qa_orchestrator/tests/test_orchestrator.py",
       "source_sha256": "03a5f343d93100a3d73c891f41bb20e6dd9059da9c638c68265669e20bea0177",
       "source_tracked": true,
-      "destination_sha256": "795a0b26db00df05038aec5454fd830f81e7b06722058e2a75f102669c93794f",
+      "destination_sha256": "b80ca10f77484de4e4ac331c97dcf5d95080927c2e7a02a5dde644aa8db4cb4c",
       "adapted": true
     },
     {
@@ -386,7 +386,7 @@
       "source_path": "packages/revert/jsc_revert/org_sequence.py",
       "source_sha256": "19c3e91915f8e9f8d5632e666ad4cc0716a98b93914d7ae2f59f2e281c3caf34",
       "source_tracked": true,
-      "destination_sha256": "4910255e94a5669fa69fdfe546a49f6bc385c1a0ee121fa3da2027208acf7ecb",
+      "destination_sha256": "cb7212b368d099a9fad716dfc4eaea3b4af7879f42cfe1329d8ae96bed981a1c",
       "adapted": true
     },
     {
@@ -692,8 +692,8 @@
       "source_path": "packages/memory/tests/test_storage.py",
       "source_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
       "source_tracked": true,
-      "destination_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
-      "adapted": false
+      "destination_sha256": "e06fe609f7e83c3b734a2e27bd4947afb8900be19c46810ce9e3a0d4a705c041",
+      "adapted": true
     },
     {
       "path": "packages/memory/tests/test_capture.py",
@@ -719,7 +719,7 @@
       "source_path": "packages/memory/tests/test_spool.py",
       "source_sha256": "2929d9c0ef196e823af91c3abf75599769164480119bda1c32f5c390fcac366b",
       "source_tracked": true,
-      "destination_sha256": "4eb2ccd9f54469380d256c59d5a37aeee6f245a9dccfbc770461d5bcc5693994",
+      "destination_sha256": "1af585a9158556f68347ebeb9e9d5a36991f0d34a29902c71cf479af4177e163",
       "adapted": true
     },
     {
@@ -728,7 +728,7 @@
       "source_path": "packages/memory/jsc_memory/index.py",
       "source_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
       "source_tracked": true,
-      "destination_sha256": "886f6c5bafc1129c71ab7f301ecfcf269eb8aeaef682a9f945cb4bb02c1e87d8",
+      "destination_sha256": "a5fc69fb4c660f15868a852416ba36643457c14ff175c5ad821dfd01bb6e4b1a",
       "adapted": true
     },
     {
@@ -737,7 +737,7 @@
       "source_path": "packages/memory/jsc_memory/spool.py",
       "source_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
       "source_tracked": true,
-      "destination_sha256": "5377f9d451e7c6ffe8e4c2adac7cc79b28b83b81f92c1ec9bbfa8f5e8645f258",
+      "destination_sha256": "546d623aaae986b8f3293e8a6b33426c6e00121c13ff828c479ba9a5366379af",
       "adapted": true
     },
     {
@@ -791,7 +791,7 @@
       "source_path": "packages/memory/jsc_memory/storage.py",
       "source_sha256": "6a815a6a996f2d1359c3ba8dbab6a2aa04d9fb3ab70a510feb7c6c3115e9c1a9",
       "source_tracked": true,
-      "destination_sha256": "81cbb75a904ebf7ed5f3621463077862b112a01861edb312591415e53f3a96cd",
+      "destination_sha256": "7bc6e72380b8e16743a21fc4c015e3345811e1e481da9cc6966246fbf244fc09",
       "adapted": true
     },
     {
@@ -989,7 +989,7 @@
       "source_path": "packages/browser_tests/tests/test_report_scorer.py",
       "source_sha256": "df3452cea2535fe79e9fe50539b6045e37362262f693cd487ac2e72eb4364812",
       "source_tracked": true,
-      "destination_sha256": "ac2435700c1d5b0e9994718b9d52fa44d40450b3c0c07531748833aadb8db036",
+      "destination_sha256": "f1b89e9c5c66d357183b9c43c581021ecefffb01e614643dec64e982f1bc1134",
       "adapted": true
     },
     {
@@ -1471,7 +1471,7 @@
     {
       "path": "packages/browser_tests/tests/test_release_browser_truth.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "a66cba7d5d2be0b410459e2e5acb8789bb686e9fba3a61a8fec39364196ee4df"
+      "destination_sha256": "ab195851e637eea557206ae49b09604f6747bfebeba722843933cd5881633a2c"
     },
     {
       "path": "packages/jsc_common/jsc_common/workspace.py",
@@ -1496,7 +1496,7 @@
     {
       "path": "packages/qa_orchestrator/tests/test_manifest_evidence_integration.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "7a99dde0c8b0778fb39c454b5eb9f4b7b67fb7b0886c24e2a6743ffabcddf9c7"
+      "destination_sha256": "8e5973092690f378210487fbe92fee2f163d6ab22354bd0361e7eaa9d97cc9f6"
     },
     {
       "path": "packages/qa_orchestrator/tests/test_report_completeness.py",
@@ -1511,7 +1511,7 @@
     {
       "path": "packages/revert/tests/test_bulk_capture_and_lease.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "19fad8d8c63cab803951575e028e58fc13fd704f9d7ccb0e5912d5a0a847f2d8"
+      "destination_sha256": "e2816825edf5a688182f18e05e1dde4a08a398bd193b363894258d935f240651"
     },
     {
       "path": "packages/revert/tests/test_data_create_evidence.py",

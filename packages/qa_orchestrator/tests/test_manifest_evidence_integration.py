@@ -25,9 +25,22 @@ JOB = "0AfVs000001ojZFKAY"
 def offline_scope(tmp_path, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("External process/network I/O is forbidden in these tests")
+
+    real_connect = socket.socket.connect
+
+    def guarded_connect(self, address, *a, **kw):
+        # See packages/browser_tests/tests/test_release_browser_truth.py: on
+        # Windows, socket.socketpair() (used internally by asyncio's wakeup
+        # self-pipe) is emulated with a real loopback TCP connection, unlike
+        # POSIX's true AF_UNIX syscall. Allow loopback; block real hosts.
+        host = address[0] if isinstance(address, tuple) else None
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return real_connect(self, address, *a, **kw)
+        raise AssertionError("External process/network I/O is forbidden in these tests")
+
     monkeypatch.setattr(subprocess, "run", forbidden)
     monkeypatch.setattr(subprocess, "Popen", forbidden)
-    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
     monkeypatch.setenv("TORQUE_WORKSPACE", str(tmp_path / "clients" / "selected"))
     monkeypatch.delenv("JSC_ROOT", raising=False)
     monkeypatch.setattr(dispatcher, "_is_production_alias", lambda target: False)

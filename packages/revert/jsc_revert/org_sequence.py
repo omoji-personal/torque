@@ -379,7 +379,7 @@ def _audit_steal(lock_path: Path, read_result: LockReadResult) -> None:
         audit_dir.mkdir(parents=True, exist_ok=True)
         record = {"event": "revert_lock_steal", "at": _iso_now(), "lock_name": lock_path.name, "org_directory": lock_path.parent.name, "prior_status": read_result.status.value}
         fd = os.open(audit_dir / "revert-lock-events.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "w") as output:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output:
             output.write(json.dumps(record, sort_keys=True) + "\n")
     except (OSError, ValueError):
         print("warning: stale-lock audit could not be recorded in the selected client workspace", file=sys.stderr)

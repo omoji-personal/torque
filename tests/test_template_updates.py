@@ -207,7 +207,10 @@ def test_new_file_appearing_at_atomic_publication_is_preserved(environment, monk
     root, package = environment
     original = updates.os.link
     def race(source, destination, **kwargs):
-        if destination == "alpha.md":
+        # POSIX passes the bare dir_fd-relative name ("alpha.md"); Windows
+        # (no dir_fd) passes the full Path. Compare basenames so this
+        # fires identically on either platform.
+        if Path(destination).name == "alpha.md":
             put(root, ALPHA, "local file appeared after comparison")
         return original(source, destination, **kwargs)
     monkeypatch.setattr(updates.os, "link", race)

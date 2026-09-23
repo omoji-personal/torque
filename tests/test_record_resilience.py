@@ -30,6 +30,8 @@ def invoke(root, *args):
 
 @pytest.mark.parametrize("state", ["matches_reference", "changed", "missing", "unavailable"])
 def test_session_evidence_is_rechecked_without_rewriting_history(engagement, state):
+    if state == "unavailable" and os.name == "nt":
+        pytest.skip("os.mkfifo is POSIX only; Windows has no named-pipe-as-regular-file case to simulate")
     root, alpha, _, evidence, entry = engagement
     recorded = (alpha / "sessions" / f"{entry['id']}.json").read_bytes()
     if state == "changed":
@@ -171,6 +173,8 @@ def test_capture_length_is_part_of_evidence_integrity(engagement):
 
 @pytest.mark.parametrize("condition", ["unreadable", "pipe"])
 def test_unavailable_captured_evidence_keeps_handoff_usable(engagement, monkeypatch, condition):
+    if condition == "pipe" and os.name == "nt":
+        pytest.skip("os.mkfifo is POSIX only; Windows has no named-pipe-as-regular-file case to simulate")
     root, _, _, proof, _ = engagement
     change = changes.create_change(root, "Alpha", "Synthetic change", "Outcome", ["Save"])
     event = changes.add_check(root, "Alpha", change["id"], "AC1", "pass", "Reported pass", proof)

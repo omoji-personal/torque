@@ -29,9 +29,24 @@ SECRET_ERROR = f"Page.goto: timed out navigating https://example.invalid/secur/f
 def prohibit_live_io(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("Offline regression attempted external I/O")
+
+    real_connect = socket.socket.connect
+
+    def guarded_connect(self, address, *a, **kw):
+        # socket.socketpair() is a true AF_UNIX syscall on POSIX, never going
+        # through socket.connect(). On Windows it has no AF_UNIX equivalent,
+        # so Python emulates it with a real loopback TCP connection - and
+        # asyncio's own internal wakeup self-pipe (created even for pure
+        # async/await code doing no real I/O) uses socketpair(). Block real
+        # external hosts; let Python's own loopback plumbing through.
+        host = address[0] if isinstance(address, tuple) else None
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return real_connect(self, address, *a, **kw)
+        raise AssertionError("Offline regression attempted external I/O")
+
     monkeypatch.setattr(subprocess, "run", forbidden)
     monkeypatch.setattr(subprocess, "Popen", forbidden)
-    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
 
 
 class Flow(runner.BaseFlow):

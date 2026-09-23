@@ -46,7 +46,7 @@ def test_exact_field_plan_excludes_parent_and_sibling_and_stages_only_field(tmp_
     stage, args = _common.stage_source_project(selected)
     try:
         assert args == ["force-app"]
-        assert sorted(str(p.relative_to(Path(stage)/"force-app")) for p in (Path(stage)/"force-app").rglob("*") if p.is_file()) == ["objects/Request__c/fields/Note__c.field-meta.xml"]
+        assert sorted(p.relative_to(Path(stage)/"force-app").as_posix() for p in (Path(stage)/"force-app").rglob("*") if p.is_file()) == ["objects/Request__c/fields/Note__c.field-meta.xml"]
         assert {p: p.read_bytes() for p in before} == before
     finally:
         shutil.rmtree(stage)
@@ -243,7 +243,7 @@ def test_wrapper_recovery_uses_only_scoped_source_even_inside_unrelated_project(
         def update_phase(self, *args, **kwargs): pass
     def invoke(command, timeout_seconds, cwd):
         project = Path(cwd)
-        observed["paths"] = sorted(str(p.relative_to(project/"force-app")) for p in (project/"force-app").rglob("*") if p.is_file())
+        observed["paths"] = sorted(p.relative_to(project/"force-app").as_posix() for p in (project/"force-app").rglob("*") if p.is_file())
         observed["command"] = command
         assert json.loads((project/"sfdx-project.json").read_text(encoding="utf-8"))["packageDirectories"][0]["path"] == "force-app"
         return 0, json.dumps({"status": 0, "result": {"id": "0Af000000000001AAA", "status": "Succeeded", "done": True, "success": True}}), ""

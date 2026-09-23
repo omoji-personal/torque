@@ -1,5 +1,6 @@
 """Real CLI envelope contracts and adversarial missing-evidence regressions."""
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -68,7 +69,8 @@ def test_partial_error_fetches_exact_job_without_resubmitting(tmp_path, monkeypa
     assert calls[0][1]['cwd'] == str(tmp_path)
     artifact = json.loads((tmp_path/'bulk-result-observation.json').read_text(encoding="utf-8"))
     assert json.loads(artifact['stdout']) == report
-    assert (tmp_path/'bulk-result-observation.json').stat().st_mode & 0o777 == 0o600
+    # POSIX only; Windows has no equivalent mode bits.
+    assert os.name == "nt" or (tmp_path/'bulk-result-observation.json').stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize('failed,expected', [(0, 'complete'), (1, 'applied_partial'), (3, 'failed')])
