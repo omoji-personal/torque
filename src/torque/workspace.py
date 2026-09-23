@@ -16,6 +16,7 @@ from uuid import uuid4
 
 PROFILES = ("generic", "solution-lead")
 STATUSES = ("prepared", "executed", "verified", "incomplete")
+AI_ACCESS_MODES = ("full", "build-only")
 CONFIG = "workspace.json"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 
@@ -260,6 +261,18 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
         raise WorkspaceError(f"invalid workspace configuration: {root / CONFIG}")
     _inside(root, root / "clients")
     return root, config
+
+
+def set_ai_access(workspace: str | Path, mode: str) -> Path:
+    """Set the workspace ai_access mode. Only the owner calls this; an AI session
+    running in build-only mode has its own edits to workspace.json blocked by the gate."""
+    if mode not in AI_ACCESS_MODES:
+        raise WorkspaceError(f"unknown ai_access mode: {mode}")
+    root, config = load_workspace(workspace)
+    config["ai_access"] = mode
+    config["ai_access_changed_at"] = _now()
+    _atomic_replace_text(_inside(root, root / CONFIG), json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    return root
 
 
 @contextmanager
