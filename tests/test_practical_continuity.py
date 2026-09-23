@@ -256,3 +256,34 @@ def test_empty_local_workflow_is_not_replaced_by_packaged_fallback(firm):
     root, _, _ = firm
     (root / '.claude/commands/qa.md').write_text('', encoding="utf-8")
     assert invoke('workflows', 'show', 'qa', '--workspace', str(root)) == (0, '\n', '')
+
+
+def _legacy_module():
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "scripts" / "legacy_commands.py"
+    spec = importlib.util.spec_from_file_location("legacy_commands", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_catalogues_map_exactly_the_42_legacy_commands():
+    legacy = _legacy_module()
+    root = Path(__file__).resolve().parents[1]
+    assert len(legacy.legacy_commands()) == 42
+    for path in ("workflows/catalogue.json", "src/torque/data/catalogue.json"):
+        rows = json.loads((root / path).read_text(encoding="utf-8"))
+        assert legacy.check_source_commands(rows) == legacy.legacy_commands()
+        for name in ("triage-alert", "gift-payments", "grants-outbound-funds", "requirements-to-build"):
+            assert next(r for r in rows if r["name"] == name)["source_command"] is None, (path, name)
+
+
+def test_legacy_mapping_check_fails_on_drop_or_invention():
+    legacy = _legacy_module()
+    rows = json.loads((Path(__file__).resolve().parents[1] / "workflows/catalogue.json").read_text(encoding="utf-8"))
+    dropped = [dict(r, source_command=None) if r["name"] == "diagnose" else r for r in rows]
+    with pytest.raises(SystemExit):
+        legacy.check_source_commands(dropped)
+    invented = [dict(r, source_command=r["name"]) if r["name"] == "discovery" else r for r in rows]
+    with pytest.raises(SystemExit):
+        legacy.check_source_commands(invented)

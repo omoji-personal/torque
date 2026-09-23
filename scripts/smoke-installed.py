@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 
+from legacy_commands import check_source_commands
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -38,14 +40,7 @@ def main():
         call("doctor")
         catalogue = json.loads(call("workflows", "list", "--json"))
         rows = catalogue if isinstance(catalogue, list) else catalogue["workflows"]
-        # The source_command surface grows as new commands are added; pinning an
-        # exact total needs a manual bump on every legitimate catalogue change.
-        # Guard the real regression instead: every mapped source_command is present
-        # and distinct, so no two catalogue entries collide on the same alias.
-        mapped = [row["source_command"] for row in rows if row.get("source_command")]
-        assert mapped, "No source_command mappings found in the installed catalogue"
-        assert len(mapped) == len(set(mapped)), \
-            f"Duplicate source_command mappings: {sorted(n for n in set(mapped) if mapped.count(n) > 1)}"
+        check_source_commands(rows)
         for row in rows:
             assert call("workflows", "show", row["name"]).strip(), row
 
