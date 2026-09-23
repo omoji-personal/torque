@@ -17,9 +17,10 @@ python3 -m venv .venv
 .venv/bin/torque demo ../torque-demo
 ```
 
-Python 3.10+ is required. The core dependency is PyYAML. macOS and Linux are the
-target platforms; see the validation record for combinations actually exercised.
-Windows has not been qualified. The demo path must be new and outside the checkout.
+Python 3.10+ is required. The core dependency is PyYAML. macOS, Linux, and Windows
+are all exercised by the CI matrix (`.github/workflows/validate.yml`); see the
+validation record for the specific combinations actually run, including any
+Windows laptop check. The demo path must be new and outside the checkout.
 
 Use the absolute `.venv/bin/torque` path from any working directory, or put that
 installation's `.venv/bin` on the PATH of the process running your assistant.
@@ -44,6 +45,38 @@ Open a new terminal or restart the assistant if needed, then verify
 `torque --version`. If Torque was previously installed, inspect `pipx list` before
 replacing it. A wheel can be used instead of `.`. No administrator pip install is
 necessary.
+
+## Windows
+
+From PowerShell:
+
+```powershell
+winget install --scope user Python.Python.3.12
+winget install --scope user Git.Git
+```
+
+`--scope user` avoids an administrator prompt and keeps the install out of Program
+Files. Open a new terminal afterward so the updated PATH takes effect, then from the
+Torque source directory:
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\pip install -e .
+.venv\Scripts\torque doctor
+.venv\Scripts\torque demo C:\Work\torque-demo
+```
+
+The demo path must be new and outside the checkout, same as on macOS/Linux. Put
+`.venv\Scripts` on PATH, or use the absolute path, the same way `.venv/bin` is used
+above.
+
+The de-identified-mode hook (see `ai-access.md`) is set up the same way on Windows: it
+goes in the workspace's own `.claude/settings.json`, never a user-level settings file.
+Its command, `python -m torque.gate`, needs a `python` resolvable on PATH when the hook
+runs. Claude Code on Windows runs hook commands through Git Bash when one is installed
+(the `winget install Git.Git` above provides it); without Git Bash on PATH, point the
+hook command at the venv's `python.exe` directly, for example
+`C:\path\to\.venv\Scripts\python.exe -m torque.gate`.
 
 ## Optional capabilities
 

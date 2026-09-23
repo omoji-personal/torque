@@ -8,7 +8,6 @@ with an atomic os.rename claim; exactly one caller wins. These tests lock that i
 """
 import json
 import os
-import pwd
 import threading
 import time
 import tempfile
@@ -27,7 +26,7 @@ def _mint_valid_token(tmpdir):
         org_id_18=org,
         skip_target=target,
         reason="TEST-0001: regression for single-use atomic consume",
-        operator=pwd.getpwuid(os.getuid()).pw_name,
+        operator=qa_skip_token._current_user_name(),
         target_path=path,
     )
     os.chmod(path, 0o600)
@@ -84,7 +83,7 @@ def _write_token(path, **overrides):
         "reason": "TEST-0001: forged-token regression",
         "issued_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now)),
         "expiry_iso": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now + 600)),
-        "operator": pwd.getpwuid(os.getuid()).pw_name,
+        "operator": qa_skip_token._current_user_name(),
     }
     tok.update(overrides)
     fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)

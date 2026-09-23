@@ -278,10 +278,29 @@ def set_ai_access(workspace: str | Path, mode: str) -> Path:
 @contextmanager
 def _client_creation_lock(root: Path):
     """Serialize complete client publication; an interrupted attempt holds no slug."""
-    import fcntl
     private = _inside(root, root / ".torque")
     private.mkdir(mode=0o700, exist_ok=True)
     path = _inside(root, private / "client-creation.lock")
+    if os.name == "nt":
+        # Windows has neither O_NOFOLLOW/O_NONBLOCK nor fcntl; best-effort
+        # symlink check plus msvcrt advisory locking replaces them.
+        import msvcrt
+        if path.is_symlink():
+            raise WorkspaceError("client creation lock must be a regular file")
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise WorkspaceError("client creation lock must be a regular file")
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            yield
+        finally:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+            os.close(fd)
+        return
+    import fcntl
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -383,8 +402,15 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
 def _file_hash(path: Path) -> str:
     """Hash large local artifacts without loading the entire file into memory."""
     digest = hashlib.sha256()
-    # O_NONBLOCK prevents a replaced named pipe from hanging resumption.
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    if os.name == "nt":
+        # Windows has neither O_NOFOLLOW nor O_NONBLOCK; best-effort symlink
+        # check first, then rely on the S_ISREG check below.
+        if path.is_symlink():
+            raise OSError("evidence is not a regular file")
+        fd = os.open(path, os.O_RDONLY)
+    else:
+        # O_NONBLOCK prevents a replaced named pipe from hanging resumption.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise OSError("evidence is not a regular file")

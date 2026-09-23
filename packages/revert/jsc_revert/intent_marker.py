@@ -14,10 +14,12 @@ from jsc_common.workspace import state_dir
 import hashlib
 import json
 import os
-import pwd
 import re
 import time
 from pathlib import Path
+
+if os.name != "nt":
+    import pwd
 
 from . import bundle
 
@@ -41,7 +43,14 @@ _AD_HOC_PATTERN = re.compile(r"^ad-hoc:\s*(\S.*)$")
 
 
 def _current_user_name() -> str:
-    """Kernel-derived username; NOT spoofable via USER env var."""
+    """Kernel-derived username; NOT spoofable via USER env var.
+
+    Windows has neither getuid() nor pwd; USERNAME is the best available
+    signal there (Windows' security model does not offer a POSIX-equivalent
+    tamper-resistant lookup without pywin32).
+    """
+    if os.name == "nt":
+        return os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
     return pwd.getpwuid(os.getuid()).pw_name
 
 

@@ -12,10 +12,12 @@ from jsc_common.workspace import state_dir
 
 import json
 import os
-import pwd
 import time
 from datetime import datetime
 from pathlib import Path
+
+if os.name != "nt":
+    import pwd
 
 
 DEFAULT_TOKEN_PATH = None  # legacy helper, never consulted by normal operations
@@ -33,6 +35,10 @@ MAX_TTL_BY_OP_TYPE = {
 
 
 def _current_user_name() -> str:
+    """Windows has neither getuid() nor pwd; USERNAME is the best available
+    signal there (see jsc_revert.intent_marker._current_user_name)."""
+    if os.name == "nt":
+        return os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
     return pwd.getpwuid(os.getuid()).pw_name
 
 
@@ -155,10 +161,12 @@ def validate_for_skip(
         st = path.stat()
     except OSError:
         return False, "cannot stat token file"
-    if (st.st_mode & 0o777) != 0o600:
-        return False, f"token file mode is {oct(st.st_mode & 0o777)}, required 0o600"
-    if st.st_uid != os.getuid():
-        return False, f"token file owned by uid {st.st_uid}, current uid is {os.getuid()}"
+    # Windows has no POSIX mode bits or getuid(); this hardening is POSIX-only.
+    if os.name != "nt":
+        if (st.st_mode & 0o777) != 0o600:
+            return False, f"token file mode is {oct(st.st_mode & 0o777)}, required 0o600"
+        if st.st_uid != os.getuid():
+            return False, f"token file owned by uid {st.st_uid}, current uid is {os.getuid()}"
 
     try:
         token = json.loads(path.read_text())
