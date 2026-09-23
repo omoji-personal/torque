@@ -18,7 +18,6 @@ from .correlate import correlate
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="meeting-processor",
         description="Adaptive frame extraction from meeting recordings with transcript correlation.",
     )
     parser.add_argument("--video", required=True, help="Path to video file")

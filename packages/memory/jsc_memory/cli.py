@@ -109,7 +109,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="jsc_memory lesson management CLI")
+    parser = argparse.ArgumentParser(description="Torque lesson management CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_capture = sub.add_parser("capture", help="Explicit lesson capture")
