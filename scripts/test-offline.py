@@ -64,6 +64,24 @@ def main():
                 "raise SystemExit(1)\n"
             )
             path.chmod(0o755)
+            if os.name == "nt":
+                # subprocess.run([tool, ...]) with shell=False (the pattern used
+                # throughout this codebase) resolves a bare name against PATH by
+                # appending only .exe; it never tries PATHEXT's other extensions.
+                # A .cmd sibling still helps any caller that resolves via
+                # shutil.which() (which does honor PATHEXT) or names the tool
+                # with its extension explicitly. Code that calls the bare name
+                # directly already treats FileNotFoundError as "tool not
+                # installed" (see get_sf_cli_version, _sf_result), so an
+                # unresolved bare call still fails closed the same way.
+                (bins / f"{tool}.cmd").write_text(
+                    "@echo off\r\n"
+                    f"echo {tool}>>\"%TORQUE_TEST_LIVE_SENTINEL%\"\r\n"
+                    "echo {\"status\": 1, \"name\": \"OfflineBackendUnavailable\", "
+                    "\"message\": \"The offline fixture backend is unavailable; "
+                    "no live call was made.\"}\r\n"
+                    "exit /b 1\r\n"
+                )
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("TORQUE_", "JSC_"))}
         env.update({"JSC_ROOT": str(scratch / "client"),

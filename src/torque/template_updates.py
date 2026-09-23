@@ -8,7 +8,6 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import contextmanager
 import errno
-import fcntl
 import hashlib
 from importlib import resources
 import json
@@ -26,8 +25,19 @@ _SCHEMA = "torque.templates/1"
 _GROUPS = (("commands", ".claude/commands"), ("rules", ".claude/rules"),
            ("skills", ".claude/skills"), ("agents", ".claude/agents"),
            ("skills", ".agents/skills"))
-_NOFOLLOW = os.O_NOFOLLOW
-_DIRECTORY = os.O_DIRECTORY
+
+# Windows lacks the openat()/linkat()/unlinkat() family Python exposes as the
+# dir_fd parameter, and the O_DIRECTORY/O_NOFOLLOW flags do not exist there.
+# The directory-fd-relative implementation below is POSIX only; on Windows a
+# best-effort path-based implementation with explicit symlink rejection is
+# used instead (a small TOCTOU window replaces the POSIX openat containment).
+_WINDOWS = os.name == "nt"
+if _WINDOWS:
+    import msvcrt
+else:
+    import fcntl
+    _NOFOLLOW = os.O_NOFOLLOW
+    _DIRECTORY = os.O_DIRECTORY
 
 
 def _hash(contents: bytes) -> str:
@@ -65,7 +75,29 @@ def _unsafe(path: str, exc: OSError) -> None:
 
 
 @contextmanager
-def _parent(root_fd: int, path: str, create: bool = False):
+def _parent(root_fd, path: str, create: bool = False):
+    if _WINDOWS:
+        # root_fd is the workspace root Path (see _open_root). Walk it
+        # component by component, refusing any symlinked directory.
+        current = root_fd
+        for part in path.split("/")[:-1]:
+            current = current / part
+            if current.is_symlink():
+                raise ws.WorkspaceError(f"workflow path must use real directories and regular files, not symlinks: {path}")
+            if not current.exists():
+                if not create:
+                    yield None
+                    return
+                try:
+                    current.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass
+                if current.is_symlink():
+                    raise ws.WorkspaceError(f"workflow path must use real directories and regular files, not symlinks: {path}")
+            elif not current.is_dir():
+                raise ws.WorkspaceError(f"workflow path must use real directories and regular files, not symlinks: {path}")
+        yield current
+        return
     fd = os.dup(root_fd)
     try:
         for part in path.split("/")[:-1]:
@@ -92,7 +124,16 @@ def _parent(root_fd: int, path: str, create: bool = False):
         os.close(fd)
 
 
-def _read_at(parent_fd: int, name: str) -> bytes | None:
+def _read_at(parent_fd, name: str) -> bytes | None:
+    if _WINDOWS:
+        target = parent_fd / name
+        if target.is_symlink():
+            raise ws.WorkspaceError(f"workflow path is not a regular file: {name}")
+        if not target.exists():
+            return None
+        if not target.is_file():
+            raise ws.WorkspaceError(f"workflow path is not a regular file: {name}")
+        return target.read_bytes()
     try:
         fd = os.open(name, os.O_RDONLY | _NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
     except FileNotFoundError:
@@ -114,10 +155,37 @@ def _read(root_fd: int, path: str) -> bytes | None:
 
 
 @contextmanager
-def _locked(root_fd: int, check: bool):
+def _locked(root_fd, check: bool):
     with _parent(root_fd, ".torque/templates.lock", create=not check) as fd:
         if fd is None:
             yield
+            return
+        if _WINDOWS:
+            lock_path = fd / "templates.lock"
+            try:
+                if check:
+                    handle = open(lock_path, "rb")
+                else:
+                    try:
+                        handle = open(lock_path, "xb")
+                    except FileExistsError:
+                        handle = open(lock_path, "r+b")
+            except FileNotFoundError:
+                if check:
+                    yield
+                    return
+                raise ws.WorkspaceError("template lock disappeared during update; rerun after local filesystem changes finish") from None
+            try:
+                if lock_path.is_symlink() or not lock_path.is_file():
+                    raise ws.WorkspaceError("template lock is not a regular file")
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                yield
+            finally:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+                handle.close()
             return
         flags = (os.O_RDONLY if check else os.O_RDWR) | _NOFOLLOW | os.O_NONBLOCK
         try:
@@ -164,11 +232,34 @@ def _load_manifest(raw: bytes | None) -> dict:
         raise ws.WorkspaceError("invalid .torque/templates.json; preserve it and repair the manifest before updating") from exc
 
 
-def _publish(root_fd: int, path: str, contents: bytes, expected: bytes | None) -> bool:
+def _publish(root_fd, path: str, contents: bytes, expected: bytes | None) -> bool:
     """Return False if local bytes appeared/changed before publication; never replace new files."""
     with _parent(root_fd, path, create=True) as fd:
         name = path.split("/")[-1]
         temporary = ".torque-update-" + uuid4().hex
+        if _WINDOWS:
+            target = fd / name
+            temp_path = fd / temporary
+            try:
+                with open(temp_path, "xb") as stream:
+                    stream.write(contents)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                if _read_at(fd, name) != expected:
+                    return False
+                if expected is None:
+                    try:
+                        os.link(temp_path, target)
+                    except FileExistsError:
+                        return False
+                else:
+                    os.replace(temp_path, target)
+                return True
+            finally:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
         stream_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600, dir_fd=fd)
         try:
             with os.fdopen(stream_fd, "wb") as stream:
@@ -193,13 +284,26 @@ def _publish(root_fd: int, path: str, contents: bytes, expected: bytes | None) -
                 pass
 
 
+def _open_root(root: Path):
+    """Return an opaque container handle for `root`: a dir fd on POSIX, the
+    Path itself on Windows (which has no dir_fd-relative open)."""
+    if _WINDOWS:
+        return root
+    return os.open(root, os.O_RDONLY | _DIRECTORY | _NOFOLLOW)
+
+
+def _close_root(handle) -> None:
+    if not _WINDOWS:
+        os.close(handle)
+
+
 def _run(workspace: Path, *, check: bool, initial: bool = False) -> dict:
     # Reject a symlink at the user-supplied root before load_workspace resolves it.
     if Path(workspace).expanduser().is_symlink():
         raise ws.WorkspaceError("workspace root must not be a symlink")
     root, _ = ws.load_workspace(workspace)
     bundle = _bundled()  # Read the whole installed bundle before any mutation.
-    root_fd = os.open(root, os.O_RDONLY | _DIRECTORY | _NOFOLLOW)
+    root_fd = _open_root(root)
     try:
         with _locked(root_fd, check):
             raw_manifest = _read(root_fd, MANIFEST)
@@ -250,7 +354,7 @@ def _run(workspace: Path, *, check: bool, initial: bool = False) -> dict:
                     "counts": dict(Counter(item["action"] for item in actions)),
                     "conflicts": [item for item in actions if item["action"] == "preserve" and item.get("reason") != "missing"]}
     finally:
-        os.close(root_fd)
+        _close_root(root_fd)
 
 
 def record_initial_templates(root: Path) -> dict:

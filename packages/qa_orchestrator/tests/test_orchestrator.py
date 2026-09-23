@@ -194,7 +194,8 @@ def main() -> int:
         )
         check("F-TK-1 token minted", path == token_path and token_path.exists())
         st = token_path.stat()
-        check("F-TK-1b mode is 0o600", (st.st_mode & 0o777) == 0o600)
+        # POSIX only; Windows has no equivalent mode bits.
+        check("F-TK-1b mode is 0o600", os.name == "nt" or (st.st_mode & 0o777) == 0o600)
 
         # Show
         token = qa_skip_token.show(token_path)
@@ -294,11 +295,15 @@ def main() -> int:
         good_seed_path = Path(tmpd) / "good-seed.json"
         good_seed_path.write_text(json.dumps(good_seed))
         os.chmod(good_seed_path, 0o644)  # too permissive
-        try:
-            seed_validator.load_seed(good_seed_path)
-            check("F-SD-3 bad mode raises", False)
-        except seed_validator.SeedValidationError as e:
-            check("F-SD-3 bad mode raises", "0o644" in str(e) or "mode" in str(e))
+        if os.name == "nt":
+            # Windows has no POSIX mode bits; this hardening is not enforced there.
+            check("F-SD-3 bad mode raises (not applicable on Windows)", True)
+        else:
+            try:
+                seed_validator.load_seed(good_seed_path)
+                check("F-SD-3 bad mode raises", False)
+            except seed_validator.SeedValidationError as e:
+                check("F-SD-3 bad mode raises", "0o644" in str(e) or "mode" in str(e))
 
     # ── DISPATCHER (smoke — invokes shouldn't crash; expect MANUAL_REQUIRED for stubs) ──
     # Funct-Pl: with no-match description, returns MANUAL_REQUIRED with available_flows listed

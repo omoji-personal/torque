@@ -33,7 +33,6 @@ from __future__ import annotations
 from jsc_common.workspace import state_dir
 
 import argparse
-import fcntl
 import json
 import os
 import signal
@@ -42,6 +41,24 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+# Windows has no fcntl; msvcrt.locking() is the closest advisory-lock analog.
+if os.name == "nt":
+    import msvcrt
+
+    def _lock_exclusive(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+
+    def _unlock(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_exclusive(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 from . import bundle, manifest as mf
 from .job_outcomes import bulk_outcome, deploy_outcome
@@ -196,11 +213,11 @@ def _queue_lock(queue_dir: Path):
             self.fd = None
         def __enter__(self):
             self.fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
-            fcntl.flock(self.fd, fcntl.LOCK_EX)
+            _lock_exclusive(self.fd)
             return self
         def __exit__(self, *a):
             if self.fd is not None:
-                fcntl.flock(self.fd, fcntl.LOCK_UN)
+                _unlock(self.fd)
                 os.close(self.fd)
     return _LockCtx(lock_path)
 
