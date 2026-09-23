@@ -306,7 +306,7 @@ if __name__ == "__main__":
 def test_public_delivery_routes_preserve_native_target_and_private_scope(tmp_path):
     from unittest.mock import patch
     seen = []
-    with patch.object(cli, '_dispatch', side_effect=lambda route, args: seen.append((route, args)) or 0):
+    with patch.object(cli, '_dispatch', side_effect=lambda route, args, display=None: seen.append((route, args)) or 0):
         assert cli.main(['deploy','--target-org','explicit','--workspace','private','--client','alpha']) == 0
         assert cli.main(['data','update','--target-org','explicit']) == 0
         assert cli.main(['recover','run','snapshot','--org','explicit']) == 0

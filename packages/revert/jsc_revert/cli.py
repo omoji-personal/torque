@@ -261,7 +261,7 @@ def _add_revert_chain_args(p: argparse.ArgumentParser, default_operation_type: s
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="jsc", description="Torque compatibility wrapper for snapshot-aware sf operations")
+    p = argparse.ArgumentParser(description="Torque compatibility wrapper for snapshot-aware sf operations")
     sub = p.add_subparsers(dest="command", required=True)
 
     # ── revert-token group ────────────────────────────────────────────────
@@ -485,7 +485,7 @@ def build_parser() -> argparse.ArgumentParser:
     rv_preview.add_argument("--org", required=True)
     rv_preview.set_defaults(func=cmd_revert_preview)
 
-    rv_exec = rv_sub.add_parser("exec", help="execute revert (or use 'jsc revert' shorthand)")
+    rv_exec = rv_sub.add_parser("exec", help="execute revert (or use 'torque recover' shorthand)")
     rv_exec.add_argument("snapshot_id")
     rv_exec.add_argument("--org", required=True)
     rv_exec.add_argument("--force", action="store_true",
