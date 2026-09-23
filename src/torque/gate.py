@@ -21,6 +21,39 @@ SF_LOCAL = {("project", "generate"), ("lightning", "generate"), ("apex", "genera
 ORG_FLAGS = {"-o", "--target-org", "--from-org", "-u", "--targetusername",
              "--target-dev-hub", "-v"}
 TORQUE_ALLOWED = {"demo", "workflows", "doctor", "--version", "--help", "-h"}
+# Every console script this distribution installs ([project.scripts] in
+# pyproject.toml), classified. "torque" is checked against TORQUE_ALLOWED. Every
+# other script is a legacy delegate (the same code `torque data/deploy/org/qa/...`
+# forwards to) that reaches an org or client state, so only its help and version
+# forms are allowed. tests/test_gate.py fails when pyproject gains a script that
+# is not classified here.
+CONSOLE_SCRIPTS = {
+    "torque": "torque",
+    "jsc": "delegate",
+    "jsc-advisory": "delegate",
+    "jsc-qa": "delegate",
+    "jsc-browser-tests": "delegate",
+    "jsc-memory": "delegate",
+    "jsc-loganalyzer": "delegate",
+    "jsc-probes": "delegate",
+    "meeting-processor": "delegate",
+    "jsc-ai-prompt-regression": "delegate",
+}
+DELEGATE_ALLOWED = {"--help", "-h", "--version"}
+# Top-level packages behind the delegate scripts (and their shared library).
+# `python -m` on any module under one of them is treated as a delegate call.
+DELEGATE_MODULE_RE = re.compile(r"^(jsc_[A-Za-z0-9_]+|meeting_processor)(\.|$)")
+# `python -m torque` / `python -m torque.cli` follow TORQUE_ALLOWED; the hook
+# module itself is harmless; any other torque submodule run as a script is blocked.
+TORQUE_MAIN_MODULES = {"torque", "torque.cli"}
+TORQUE_HARMLESS_MODULES = {"torque.gate"}
+# A group of CPython single-letter flags that take no argument, ending in -m,
+# with the module either joined (-mtorque, -Imtorque) or as the next token.
+_PY_M_FLAG_RE = re.compile(r"^-[bBdEhiIOPqsSuvx]*m(.*)$")
+_PY_ARG_FLAGS = {"-W", "-X", "--check-hash-based-pycs"}
+# MCP tool names ("mcp__<server>__<tool>") that indicate Salesforce org access.
+_MCP_SF_SUBSTRINGS = ("salesforce", "sfdx", "sf_", "_sf", "soql", "sosl", "sobject", "apex")
+_MCP_SF_TOKEN_RE = re.compile(r"(^|[_\-.])sf([_\-.]|$)")
 PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path",
               "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 SHELL_HEADS = {"bash", "sh", "zsh"}
@@ -31,7 +64,7 @@ GREP_HEADS = {"grep", "egrep", "fgrep"}
 # search pattern, not a path. find/tree/ls take PATH[...] directly.
 PATTERN_FIRST_HEADS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd"}
 DESTRUCTIVE_VERBS = {"rm", "mv", "cp", "truncate", "shred", "unlink", "rmdir"}
-PY_LAUNCHER_RE = re.compile(r"^python[23]?(\.\d+)?$")
+PY_LAUNCHER_RE = re.compile(r"^(python[23]?(\.\d+)?|pythonw|py)$")
 SETTINGS_RE = re.compile(r"(^|[/\\])\.claude[/\\]settings[^/\\]*\.json$", re.IGNORECASE)
 _GREP_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*[rR][a-zA-Z]*$")
 _LS_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*R[a-zA-Z]*$")
@@ -219,6 +252,49 @@ def _glob_targets_root(tok: str, workspace: Path, cwd: Path) -> bool:
     return _cf(str(parent)) == _cf(str(workspace))
 
 
+def _python_module(rest: list[str]) -> tuple[str | None, int]:
+    """For the arguments after a python launcher, return (module, index of the
+    first argument after the module) when the call is `python ... -m MODULE`,
+    including the joined `-mMODULE` and grouped `-Im MODULE` forms. Returns
+    (None, -1) for a script path, -c code, or no -m at all."""
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if tok in _PY_ARG_FLAGS:
+            j += 2
+            continue
+        m = _PY_M_FLAG_RE.match(tok)
+        if m:
+            if m.group(1):
+                return m.group(1), j + 1
+            if j + 1 < len(rest):
+                return rest[j + 1], j + 2
+            return None, -1
+        if tok == "-c" or not tok.startswith("-"):
+            return None, -1
+        j += 1
+    return None, -1
+
+
+def _torque_reason(args: list[str]) -> str:
+    """The torque allowlist, shared by the console script and `python -m torque`."""
+    sub = args[0] if args else None
+    if sub is not None and sub not in TORQUE_ALLOWED:
+        return f"torque {sub} reads client context or an org"
+    if sub == "doctor" and any(t.split("=", 1)[0] == "--client" for t in args[1:]):
+        return "torque doctor --client reads client context"
+    return ""
+
+
+def _delegate_reason(name: str, args: list[str]) -> str:
+    """A legacy delegate script or module: only help and version forms pass."""
+    sub = args[0] if args else None
+    if sub in DELEGATE_ALLOWED:
+        return ""
+    shown = f"{name} {sub}" if sub else name
+    return f"{shown} can reach a Salesforce org or client context"
+
+
 def _segments(command: str):
     for part in _SPLIT_RE.split(command):
         part = part.strip()
@@ -250,15 +326,23 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
             if not _sf_local_ok(rest):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
-        elif _basename(tok) == "torque":
-            sub = toks[i + 1] if i + 1 < n else None
-            if sub is not None and sub not in TORQUE_ALLOWED:
-                return f"torque {sub} reads client context or an org"
-        elif (PY_LAUNCHER_RE.match(_basename(tok)) and i + 2 < n
-              and toks[i + 1] == "-m" and toks[i + 2] in ("torque", "torque.cli")):
-            sub = toks[i + 3] if i + 3 < n else None
-            if sub is not None and sub not in TORQUE_ALLOWED:
-                return f"torque {sub} reads client context or an org"
+        elif _basename(tok) in CONSOLE_SCRIPTS:
+            name = _basename(tok)
+            reason = _torque_reason(rest) if CONSOLE_SCRIPTS[name] == "torque" else _delegate_reason(name, rest)
+            if reason:
+                return reason
+        elif PY_LAUNCHER_RE.match(_basename(tok)) and _python_module(rest)[0]:
+            module, after = _python_module(rest)
+            args = rest[after:]
+            reason = ""
+            if module in TORQUE_MAIN_MODULES:
+                reason = _torque_reason(args)
+            elif DELEGATE_MODULE_RE.match(module):
+                reason = _delegate_reason(f"python -m {module}", args)
+            elif (module == "torque" or module.startswith("torque.")) and module not in TORQUE_HARMLESS_MODULES:
+                reason = f"python -m {module} is not an allowed torque entry point"
+            if reason:
+                return reason
         elif _is_recursive_search(tok, rest):
             if _recursive_search_reaches(_basename(tok), rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
@@ -315,6 +399,15 @@ def _direct_substitutions(command: str) -> list[str]:
     return found
 
 
+def _mcp_reaches_salesforce(tool_name: str) -> bool:
+    """True when an MCP tool name (mcp__<server>__<tool>) indicates Salesforce
+    org access, by its server or tool name. Unrelated MCP tools pass."""
+    name = tool_name.casefold()
+    if any(part in name for part in _MCP_SF_SUBSTRINGS):
+        return True
+    return any(_MCP_SF_TOKEN_RE.search(part) for part in name.split("__")[1:])
+
+
 def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
            cwd: Path | None = None) -> tuple[bool, str]:
     if mode != "build-only":
@@ -323,6 +416,11 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
     clients = Path(os.path.realpath(str(workspace / "clients")))
     claude_dir = Path(os.path.realpath(str(workspace / ".claude")))
+    if tool_name.startswith("mcp__"):
+        if _mcp_reaches_salesforce(tool_name):
+            return False, ("De-identified mode: this MCP tool looks like Salesforce org access. "
+                           "Disable Salesforce MCP servers in a build-only workspace.")
+        return True, ""
     if tool_name == "Bash":
         reason = _scan_bash(str(tool_input.get("command", "")), clients, claude_dir, workspace, cwd)
         if reason:

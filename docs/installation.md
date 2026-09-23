@@ -80,7 +80,7 @@ absolute path, written with forward slashes so it survives Git Bash (which Claud
 uses for hooks when installed) as well as cmd:
 
 ```json
-{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob",
+{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*",
   "hooks": [{"type": "command", "command": "C:/Work/torque/.venv/Scripts/python.exe -m torque.gate"}]}]}}
 ```
 
