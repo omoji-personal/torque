@@ -449,6 +449,46 @@ def _doctor(args: argparse.Namespace) -> int:
     return 0 if report["ready"] else 3
 
 
+def _recover_text(text: str) -> str:
+    """Rewrite the delegate's `revert <show|preview|exec|discard>` grammar into the
+    public `torque recover <show|preview|run|discard>` grammar, keeping argparse's
+    usage continuation lines aligned under the shorter prog."""
+    out: list[str] = []
+    indent_shift = 0
+    for line in text.split("\n"):
+        for old, new in (("torque recover revert exec", "torque recover run"),
+                         ("torque recover revert", "torque recover")):
+            if old in line:
+                if line.startswith("usage: "):
+                    indent_shift = len(old) - len(new)
+                line = line.replace(old, new)
+                break
+        else:
+            if indent_shift and line.startswith(" " * (len("usage: ") + indent_shift)):
+                line = line[indent_shift:]
+            elif not line.strip():
+                indent_shift = 0
+        line = line.replace("{show,preview,exec,discard}", "{show,preview,run,discard}")
+        line = line.replace("'exec'", "'run'")
+        line = re.sub(r"^(\s+)exec(\s{2,})", lambda m: f"{m.group(1)}run {m.group(2)}", line)
+        out.append(line)
+    return "\n".join(out)
+
+
+@contextmanager
+def _recover_grammar():
+    original = argparse.ArgumentParser._print_message
+
+    def _print_message(self, message, file=None):
+        return original(self, _recover_text(message) if message else message, file)
+
+    argparse.ArgumentParser._print_message = _print_message
+    try:
+        yield
+    finally:
+        argparse.ArgumentParser._print_message = original
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -461,6 +501,9 @@ def main(argv: list[str] | None = None) -> int:
             # token automatically; only rename the prog here when the public
             # route name differs from that underlying subcommand (e.g. recover/revert).
             display = "torque" if prefix[:1] == [args[0]] else f"torque {args[0]}"
+            if args[0] == "recover":
+                with _recover_grammar():
+                    return _dispatch(delegate, [*prefix, *rest], display=display)
             return _dispatch(delegate, [*prefix, *rest], display=display)
         if args and args[0] in DELEGATES:
             return _dispatch(args[0], args[1:])
