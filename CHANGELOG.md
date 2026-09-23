@@ -8,9 +8,11 @@
 - Add a de-identified mode: `torque workspace ai-access build-only` plus a
   Claude Code PreToolUse hook (`python -m torque.gate`) that blocks Salesforce
   org access, client context and workspace-mode tampering while the mode is on.
-  The gate resolves paths, unwraps shell wrappers and quoting, and fails closed
-  on anything it cannot parse; it is a best-effort assistant guard, not a
-  sandbox. See [de-identified mode](docs/ai-access.md).
+  The gate resolves paths, unwraps shell wrappers and quoting, also covers
+  Torque's own legacy scripts (`jsc`, `jsc-qa` and the rest), `python -m` forms
+  and MCP tools whose names indicate Salesforce access, and fails closed on
+  evaluation errors and unreadable configuration; it is a best-effort assistant
+  guard, not a sandbox. See [de-identified mode](docs/ai-access.md).
 - Ship four synthetic offline demo scenarios with matching workflow recipes:
   alert triage, gift and payments, Outbound Funds grants, and requirements to
   build. Each scenario is clearly marked synthetic and ships under the demo
@@ -22,8 +24,11 @@
   files, a stale-lock race during concurrent single-use consume, non-atomic
   rename behavior, and a memory-package privacy filter that corrupted
   generated lesson ids before they reached disk.
-- Derive distribution and smoke-check counts from the packaged catalogue
-  instead of a hardcoded figure, so they stay correct as the catalogue grows.
+- The distribution and smoke checks compare the catalogue's legacy mappings to
+  the 42 retained command names in `docs/workflow-continuity.md`; the four new
+  recipes carry a null `source_command`, as the catalogue contract requires.
+- `torque recover --help` shows the public `recover <show|preview|run|discard>`
+  grammar instead of the underlying `revert ... exec` names.
 - Fix a provenance-check encoding gap by making every read/write in the
   release scripts explicit UTF-8.
 - Rename the optional delivery-focus workspace profile to `solution-lead` and

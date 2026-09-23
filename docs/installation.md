@@ -19,8 +19,8 @@ python3 -m venv .venv
 
 Python 3.10+ is required. The core dependency is PyYAML. macOS, Linux, and Windows
 are all exercised by the CI matrix (`.github/workflows/validate.yml`); see the
-validation record for the specific combinations actually run, including any
-Windows laptop check. The demo path must be new and outside the checkout.
+[alpha 10 validation record](validation-alpha10.md) for the combinations actually
+run and what Windows does not yet cover. The demo path must be new and outside the checkout.
 
 Use the absolute `.venv/bin/torque` path from any working directory, or put that
 installation's `.venv/bin` on the PATH of the process running your assistant.
