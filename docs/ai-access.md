@@ -1,35 +1,36 @@
 # De-identified mode
 
 `ai_access` is a workspace setting for a firm with an AI-use policy. It lets an
-AI coding session run inside a Torque workspace while keeping it away from
-client orgs and client context. It is a best-effort guard for an assistant
-following normal tool use, not a sandbox, and has two values:
+AI session run inside a Torque workspace while keeping it away from client
+orgs and client context. A best-effort guard, not a sandbox, with two values:
 
-- `full` (default): unrestricted, same as today.
-- `build-only`: blocks org access, client context, and self-disabling.
+- `full` (default, including when the key is absent): unrestricted.
+- `build-only`: blocks org access, client context, and known ways to turn
+  the mode off, heuristically.
 
 ## What build-only blocks
 
 - Any `sf`/`sfdx` invocation carrying an org flag (`-o`, `--target-org`,
-  `--from-org`, `-u`, `--targetusername`, `--target-dev-hub`, `-v`) anywhere on
-  the line, even behind a wrapper, an env-var prefix, `npx`, or a subshell.
-  Without one, only local generators, `--version`, `--help`, bare `version`,
-  `help`, or `plugins` are allowed.
+  `--from-org`, `-u`, `--targetusername`, `--target-dev-hub`, `-v`) anywhere,
+  even behind a wrapper, an env-var prefix, `npx`, or a subshell. Without
+  one, only local generators, `--version`, `--help`, `version`, `help`, or
+  `plugins` are allowed.
 - Any `torque` subcommand, including via `python -m torque`, other than
   `demo`, `workflows`, `doctor`, `--version`, or `--help`.
-- Reading, writing, or editing anything resolving into `clients/`: absolute,
-  relative, `..`, or symlinked. A `Grep`/`Glob` with no `path`, or a pattern
-  naming `clients`, counts too when the working directory is at or inside it.
-- Any command or edit targeting `workspace.json` or `.claude/settings*.json`,
-  via `sed`, redirection, `mv`, `rm`, `cp`, `tee`, or a script. The session
-  cannot turn the mode off or remove the hook that enforces it.
-- A missing/unreadable `workspace.json`, malformed hook input, or any other
-  evaluation failure: fails closed, blocking the call.
+- Reading, writing, editing, or recursively searching into `clients/`
+  (absolute, relative, `..`, `~`/`$HOME`, symlinked); a `Grep`/`Glob` rooted
+  at or above it or naming it; `grep -r`, `rg`, `ag`, `ack`, `find`, `fd`,
+  `tree`, `ls -R` (default target: cwd).
+- A command or edit aimed at `workspace.json`, `.claude/settings*.json`, or
+  the `.claude` directory, and a destructive command (`rm`, `mv`, `cp`,
+  `truncate`, a redirect) using a glob at the workspace root.
+- A workspace marker (`clients/`/`.torque/`) with no readable `workspace.json`,
+  or any other evaluation failure: fails closed.
 
 ## What it allows
 
-Local generators, git, tests, editing non-client source such as `project/`
-metadata, and the packaged conversational workflows.
+Local generators, git, tests, non-client source edits (`project/`), and the
+packaged conversational workflows.
 
 ## Setting the mode
 
@@ -48,12 +49,11 @@ torque workspace ai-access full --path /path/to/workspace
   "hooks": [{"type": "command", "command": "python -m torque.gate"}]}]}}
 ```
 
-The hook reads the tool-call JSON on stdin, exits 0 to allow, and exits 2 with
-a reason on stderr to block.
+It reads the tool-call JSON on stdin, exits 0 to allow, exits 2 to block.
 
 ## What it cannot stop
 
-A script the assistant writes and runs that builds a command at run time, a
-network tool reaching the org or a client system directly, or a host that
-does not wire up this hook. Pair it with real access controls for anything
-that must be enforced, not discouraged.
+These are pattern matches on recognized tool calls, not a sandbox: a command
+built at run time, an arbitrary script the assistant writes and runs, a
+network tool reaching the org or a client system directly, or a host without
+this hook can all get through. Pair it with real access controls.
