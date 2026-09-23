@@ -386,7 +386,7 @@
       "source_path": "packages/revert/jsc_revert/org_sequence.py",
       "source_sha256": "19c3e91915f8e9f8d5632e666ad4cc0716a98b93914d7ae2f59f2e281c3caf34",
       "source_tracked": true,
-      "destination_sha256": "cb7212b368d099a9fad716dfc4eaea3b4af7879f42cfe1329d8ae96bed981a1c",
+      "destination_sha256": "241c10400d22078cd564fb86a22cfeccfc65a4096702980a50ad28879365a1fa",
       "adapted": true
     },
     {

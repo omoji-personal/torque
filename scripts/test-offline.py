@@ -87,7 +87,14 @@ def main():
         env.update({"JSC_ROOT": str(scratch / "client"),
                     "TORQUE_TEST_LIVE_SENTINEL": str(hitfile),
                     "PYTHONPATH": os.pathsep.join(str(path) for path in source_paths(root)),
-                    "PATH": str(bins) + os.pathsep + env.get("PATH", "")})
+                    "PATH": str(bins) + os.pathsep + env.get("PATH", ""),
+                    # The standalone harnesses below print fixture labels containing
+                    # non-ASCII characters (e.g. "->" as U+2192). With stdout piped
+                    # (capture_output=True) rather than a real console, Windows
+                    # defaults Python's stdout/stderr encoding to the system
+                    # codepage (e.g. cp1252), which can't encode them and raises
+                    # UnicodeEncodeError. Force UTF-8 regardless of platform/locale.
+                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
         # JSC contains pytest tests and standalone fixture harnesses. The latter
         # report failures by process exit and must not be silently just imported.
         standalone = []
