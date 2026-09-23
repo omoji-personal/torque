@@ -250,3 +250,159 @@ def test_main_build_only_allows_ordinary_command(tmp_path):
     payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "git status"}})
     result = _run_gate(payload)
     assert result.returncode == 0
+
+
+# --- Fix round 2: regression tests for the re-review's open findings ---
+# task-T3-rereview-1.md (52606aa..12f9be0): C1 part (b) (Grep/Glob search-root
+# and Bash recursive-search bypasses), C3 (.claude directory removal and a
+# workspace-root glob deletion of workspace.json), and a new Important (a
+# missing ai_access key must mean full, not build-only).
+
+WRAPPER_NO_ORG_FLAG_BLOCK = [
+    # Every case here blocks purely via the torque-subcommand rule (no org
+    # flag anywhere), so it only passes if wrapper/position handling still
+    # finds the "torque" token; it cannot pass through the org-flag route.
+    ("FOO=1 torque context --workspace . --client acme", "leading env-var assignment"),
+    ("npx torque context --workspace . --client acme", "npx wrapper"),
+    ("time torque context --workspace . --client acme", "time wrapper"),
+    ("env torque context --workspace . --client acme", "env wrapper"),
+    ("command torque context --workspace . --client acme", "command wrapper"),
+    ("sudo torque context --workspace . --client acme", "sudo wrapper"),
+    ("xargs torque context --workspace . --client acme", "xargs wrapper"),
+    ("nice torque context --workspace . --client acme", "nice wrapper"),
+    ("(torque context --workspace . --client acme)", "subshell grouping"),
+    ("{ torque context --workspace . --client acme; }", "brace grouping"),
+    ("echo $(torque context --workspace . --client acme)", "$(...) substitution"),
+    ("echo `torque context --workspace . --client acme`", "backtick substitution"),
+    ('bash -c "torque context --workspace . --client acme"', "bash -c string argument"),
+]
+
+
+@pytest.mark.parametrize("command,label", WRAPPER_NO_ORG_FLAG_BLOCK,
+                         ids=[label for _, label in WRAPPER_NO_ORG_FLAG_BLOCK])
+def test_wrapper_handling_blocks_without_relying_on_an_org_flag(command, label):
+    allowed, reason = gate.decide("Bash", {"command": command}, W, "build-only")
+    assert not allowed and reason, f"{label!r} should be blocked without an org flag: {command!r}"
+
+
+GREP_GLOB_SEARCH_ROOT_BLOCK = [
+    ("Grep", {"pattern": "x", "path": "/w"}, "Grep rooted at the workspace root"),
+    ("Grep", {"pattern": "x", "path": "."}, "Grep rooted at '.' (cwd)"),
+    ("Glob", {"pattern": "**/*.md", "path": "/w"}, "Glob rooted at the workspace root"),
+    ("Grep", {"pattern": "x", "path": "/w", "glob": "clients/**"}, "Grep glob field naming clients"),
+]
+
+
+@pytest.mark.parametrize("tool,inp,label", GREP_GLOB_SEARCH_ROOT_BLOCK,
+                         ids=[label for _, _, label in GREP_GLOB_SEARCH_ROOT_BLOCK])
+def test_grep_glob_search_root_reaching_clients_is_blocked(tool, inp, label):
+    allowed, reason = gate.decide(tool, inp, W, "build-only")
+    assert not allowed and reason, label
+    assert "narrower path" in reason
+
+
+def test_grep_glob_scoped_to_a_subdirectory_still_allowed():
+    # The search-root hardening must not nuke ordinary scoped search.
+    assert gate.decide("Grep", {"pattern": "x", "path": "/w/project"}, W, "build-only") == (True, "")
+    assert gate.decide("Glob", {"pattern": "*.md", "path": "/w/project"}, W, "build-only") == (True, "")
+
+
+RECURSIVE_TOOL_BLOCK = [
+    ("grep -r foo .", "grep -r defaulting to '.'"),
+    ("grep -R foo clients", "grep -R with an explicit clients arg"),
+    ("rg foo", "rg with no path (defaults to cwd)"),
+    ("ag foo", "ag with no path (defaults to cwd)"),
+    ("find . -name x", "find rooted at '.'"),
+    ("tree", "bare tree (defaults to cwd)"),
+    ("ls -R", "ls -R with no path (defaults to cwd)"),
+]
+
+
+@pytest.mark.parametrize("command,label", RECURSIVE_TOOL_BLOCK, ids=[label for _, label in RECURSIVE_TOOL_BLOCK])
+def test_recursive_search_tools_reaching_clients_are_blocked(command, label):
+    allowed, reason = gate.decide("Bash", {"command": command}, W, "build-only")
+    assert not allowed and reason, label
+
+
+RECURSIVE_TOOL_SCOPED_ALLOW = [
+    ("rg foo project/", "rg scoped to project/"),
+    ("grep -r foo project", "grep -r scoped to a bare directory name"),
+    ("find project -name x", "find scoped to a bare directory name"),
+    ("ls -R project/", "ls -R scoped to project/"),
+]
+
+
+@pytest.mark.parametrize("command,label", RECURSIVE_TOOL_SCOPED_ALLOW,
+                         ids=[label for _, label in RECURSIVE_TOOL_SCOPED_ALLOW])
+def test_recursive_search_tools_scoped_outside_clients_still_allowed(command, label):
+    assert gate.decide("Bash", {"command": command}, W, "build-only") == (True, ""), label
+
+
+def test_home_and_tilde_expand_before_path_resolution(monkeypatch):
+    monkeypatch.setenv("HOME", str(W))
+    for command in ("cat ~/clients/acme/x.md", "cat $HOME/clients/acme/x.md", "cat ${HOME}/clients/acme/x.md"):
+        allowed, reason = gate.decide("Bash", {"command": command}, W, "build-only")
+        assert not allowed and reason, command
+
+
+CLAUDE_DIR_AND_ROOT_GLOB_BLOCK = [
+    ("rm -rf .claude", "rm -rf .claude"),
+    ("mv .claude .claude.bak", "mv .claude aside"),
+    ("mv .claude x", "mv .claude to x"),
+    ("rm *.json", "rm with a bare workspace-root glob"),
+    ("rm works*.json", "rm with a narrower workspace-root glob"),
+]
+
+
+@pytest.mark.parametrize("command,label", CLAUDE_DIR_AND_ROOT_GLOB_BLOCK,
+                         ids=[label for _, label in CLAUDE_DIR_AND_ROOT_GLOB_BLOCK])
+def test_claude_directory_and_root_glob_deletion_are_blocked(command, label):
+    allowed, reason = gate.decide("Bash", {"command": command}, W, "build-only")
+    assert not allowed and reason, label
+
+
+def test_glob_deletion_of_a_subdirectory_still_allowed():
+    # The workspace-root glob rule must not block an ordinary subdirectory clean.
+    assert gate.decide("Bash", {"command": "rm project/tmp/*.log"}, W, "build-only") == (True, "")
+    assert gate.decide("Bash", {"command": "rm -rf node_modules"}, W, "build-only") == (True, "")
+
+
+def test_main_treats_missing_ai_access_key_as_full(tmp_path):
+    # New Important: a missing key must mean full (the documented default),
+    # not build-only, so an unwired workspace never silently gates org work.
+    (tmp_path / "clients").mkdir()
+    (tmp_path / "workspace.json").write_text(json.dumps(
+        {"schema": "torque.workspace/1", "name": "Example", "profile": "generic"}))
+    payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "sf org list"}})
+    result = _run_gate(payload)
+    assert result.returncode == 0
+
+
+def test_main_fails_closed_when_workspace_json_is_deleted_but_marker_remains(tmp_path):
+    # C3: rm workspace.json (or rm *.json) must not silently fall back to full
+    # just because clients/ (a workspace marker) is still present.
+    (tmp_path / "clients").mkdir()
+    payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
+                          "tool_input": {"command": "sf org display --target-org prod"}})
+    result = _run_gate(payload)
+    assert result.returncode == 2 and result.stderr.strip()
+    # Build-only's own allowances still work under this fail-closed default.
+    ok = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "git status"}})
+    assert _run_gate(ok).returncode == 0
+
+
+def test_main_fails_closed_with_torque_marker_and_no_workspace_json(tmp_path):
+    (tmp_path / ".torque").mkdir()
+    payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
+                          "tool_input": {"command": "sf org display --target-org prod"}})
+    result = _run_gate(payload)
+    assert result.returncode == 2 and result.stderr.strip()
+
+
+def test_main_allows_ordinary_work_with_no_workspace_marker_at_all(tmp_path):
+    # No workspace.json AND no clients/ or .torque/ marker: genuinely outside
+    # any Torque workspace, so this stays full, matching round 1's behavior.
+    payload = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash",
+                          "tool_input": {"command": "sf org display --target-org prod"}})
+    result = _run_gate(payload)
+    assert result.returncode == 0
