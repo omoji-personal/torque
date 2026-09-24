@@ -80,13 +80,16 @@ absolute path, written with forward slashes so it survives Git Bash (which Claud
 uses for hooks when installed) as well as cmd:
 
 ```json
-{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*",
-  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
+{"hooks": {"PreToolUse": [{"matcher": ".*",
+  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
 ```
 
 The `sys.excepthook` wrapper makes the hook exit 2 (block) if that interpreter cannot
-import Torque, instead of exit 1, which Claude Code would treat as non-blocking. It
-cannot help if the interpreter path itself is wrong. Check the wiring once after setup,
+import Torque, instead of exit 1, which Claude Code would treat as non-blocking. `-I`
+(isolated mode) keeps the working directory off Python's import path, so a `torque`
+folder written into the workspace cannot replace the gate. The `.*` matcher sends every
+tool call to the gate, which blocks tools it does not recognise. The wrapper cannot
+help if the interpreter path itself is wrong. Check the wiring once after setup,
 and after every update, with build-only mode set:
 
 ```sh
@@ -95,7 +98,9 @@ C:/Work/torque/.venv/Scripts/torque doctor --workspace C:/Work/firm-workspace
 
 It must report `AI access: build-only (hook verified)`. `HOOK NOT IN FORCE` means the
 hook is missing or did not block a synthetic client-path probe; doctor prints the
-command to use and exits 3.
+command to use and exits 3. It also exits 3 when the hook runs without `-I` or its
+matcher is narrower than `.*`. On Windows, doctor runs the probe through Git Bash, as
+Claude Code does, when Git Bash is installed (or named by `CLAUDE_CODE_GIT_BASH_PATH`).
 
 ## Optional capabilities
 

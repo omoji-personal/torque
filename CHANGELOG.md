@@ -3,7 +3,9 @@
 ## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23
 
 A four-model review of alpha 10's de-identified mode found routes an assistant can
-take in ordinary use. This release closes them and states the mode's limits.
+take in ordinary use. This release closes the reported routes and states the
+mode's limits. A security re-review of the first alpha 11 candidate found more;
+the last group of items below closes those.
 
 - Paths after a `cd` or `pushd` earlier in the same command, attached
   redirections (`<file`, `2>file`), `--flag=path` and `NAME=path` values, globs
@@ -34,7 +36,33 @@ take in ordinary use. This release closes them and states the mode's limits.
   org allowlist, no metadata-only mode, an unauthenticated setting, one guarded
   folder, the session running as the user, and no redaction of pasted text.
 
-1276 offline tests pass (154 subtests). See the
+Closed after the security re-review:
+
+- A `cd`, `pushd` or `popd` whose target the gate cannot know (`cd -`, `cd ~-`,
+  `popd`, `cd "$OLDPWD"`, `cd "$(git rev-parse --show-toplevel)"`) no longer
+  narrows the directories a later path is checked from. The rest of the command
+  is checked from every directory seen, the workspace root, the folders between
+  and the root's parents.
+- The hook command runs Python with `-I`, so a `torque/` folder or
+  `sitecustomize.py` written into the workspace cannot replace the gate. Writes
+  of a `torque/` folder, `torque.py`, `.pth` files and `sitecustomize.py` or
+  `usercustomize.py` anywhere in the workspace, and into the hook interpreter's
+  site-packages, binary and virtual environment, are blocked. Doctor exits 3 for
+  a hook without `-I`.
+- Tools other than Bash that run a command string (Claude Code's `Monitor`, a
+  `PowerShell` tool) get the Bash scan, and tools the gate does not recognise are
+  blocked. The documented hook matcher is now `.*`; doctor exits 3 for a
+  narrower one.
+- On Windows, Git Bash drive paths (`/c/...`, `/cygdrive/c/...`) are resolved to
+  their drive, and doctor runs its probe through Git Bash when installed, as
+  Claude Code does.
+- Git's abbreviated long options (`--untr`, `--no-ind`), `git diff --no-index`,
+  `diff -r`, ANSI-C quoting (`$'\x63lients'`), zsh glob groups (`c(l)ients`) and
+  comma-less brace groups are handled. Doctor names a hook that could not load
+  the gate instead of reporting "exit 2", and a glob at the root names the glob
+  in its block message.
+
+1411 offline tests pass (154 subtests). See the
 [alpha 11 validation record](docs/validation-alpha11.md).
 
 ## 2.0.0a10 - unpublished de-identified mode, Windows and demo breadth update, 2026-09-23

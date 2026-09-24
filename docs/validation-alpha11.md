@@ -20,25 +20,45 @@ against a scratch build-only workspace, they found these routes allowed:
 Each has a regression test in `tests/test_gate_alpha11.py`, committed before the fix.
 114 of that file's 153 tests failed against the alpha 10 gate.
 
+A security re-review of that first candidate (the fixes above) then drove the gate
+the same way and found a regression and further routes:
+
+- `cd -`, `cd ~-`, `cd "$OLDPWD"`, `cd "$(git rev-parse --show-toplevel)"` and
+  `popd` before a relative path (the regression: alpha 10 blocked the `cd -` and
+  `popd` forms);
+- a `torque/` folder or `sitecustomize.py` written into the workspace, which the
+  hook's Python imported before the installed gate;
+- Claude Code's `Monitor` tool and a `PowerShell` tool, which run commands the
+  gate did not scan, and any tool name the gate did not recognise;
+- Git Bash drive paths on Windows (`/c/...`), found by reading the code;
+- git's abbreviated flags, `git diff --no-index`, `diff -r`, ANSI-C quoting and
+  zsh glob groups.
+
+Each has a test in the same file, written before its fix; 104 of the new tests
+failed against the first candidate.
+
 ## Results
 
-- **Offline suite (macOS, Python 3.12, local):** 1276 pytest tests and 154 subtests
-  pass, and the 12 standalone fixture suites complete. No live org or provider call.
+- **Offline suite (macOS, Python 3.14.7, local):** 1411 pytest tests and 154
+  subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
+  complete. No live org or provider call.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
   Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull
-  request. The doctor probe tests are skipped on Windows; the gate and shim tests run.
+  request. On Windows the doctor probe tests run the hook through Git Bash, as
+Claude Code does, and the Git Bash drive-path tests run.
 
 ## Review scope
 
-The fixes were written against the consolidated round-1 findings and have not yet
-been re-reviewed. A security re-review is planned before merge. Until then, treat
-the list in [de-identified mode](ai-access.md) as the claim to check.
+The first fixes were written against the consolidated round-1 findings. A security
+re-review then tested them (see above), and this revision fixes what it found. A
+scoped re-review of those fixes is the remaining step before merge. Until it is
+done, treat the list in [de-identified mode](ai-access.md) as the claim to check.
 
 ## Known remaining limits
 
 De-identified mode is pattern matching on recognized tool calls, not a sandbox.
 Not covered: scripts the assistant writes and runs, `python -c` code, commands
-built at run time (`cd "$DIR"`, `eval`), network tools using the user's own
+built at run time (a path from command output, `eval`), network tools using the user's own
 credentials, MCP connectors whose client data is not a path under `clients/`
 (mail, drive, chat), and a session started outside the workspace folder. There is
 no org allowlist and no metadata-only mode: build-only blocks every org, and

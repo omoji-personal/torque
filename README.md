@@ -5,7 +5,7 @@
 Torque gives your conversational coding assistant a private workspace for each
 client: business context, requirements, decisions, implementation workflows,
 observations and a useful handoff. It continues JusticeserverClaude, which its
-author has used in daily consulting for over six months.
+author has used in daily consulting for about six months.
 
 Use your existing Salesforce tools and assistant. Torque requires no service
 account and installs no global command interception or approval-token system.
