@@ -27,6 +27,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import threading
@@ -49,8 +50,83 @@ EXIT_POST_FINALIZE_FAILED = 30
 EXIT_CONCURRENCY_CONFLICT = 40
 EXIT_STALE_REVERT_BLOCKED = 50
 EXIT_TOKEN_INVALID = 60
+EXIT_NOT_APPROVED = 3  # connected mode: no consumed approval for this exact run
 
 _ACTIVE_WRAPPER = ContextVar("torque_active_wrapper", default=None)
+# Set by the revert executor for the wrapper it runs: the approval it verified.
+APPROVED_PARENT_ENV = "TORQUE_APPROVED_PARENT"
+
+
+def _connected_scope():
+    """(workspace, client slug or None) when the selected Torque workspace is in
+    connected mode with approval required, read from its workspace.json; else None."""
+    root = os.environ.get("TORQUE_WORKSPACE")
+    if not root:
+        return None
+    path = Path(root).expanduser()
+    client = None
+    if (path / "client.json").is_file():
+        client, path = path.name, path.parent.parent
+    try:
+        config = json.loads((path / "workspace.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(config, dict) and config.get("ai_access") == "connected" and config.get("approval") == "required":
+        return path, client
+    return None
+
+
+def _invocation() -> tuple[str, list[str]]:
+    """The words this process was started with: the torque command when run
+    through `torque`, else the jsc command line."""
+    try:
+        from torque import cli
+        if cli.INVOCATION is not None:
+            return cli.INVOCATION
+    except ImportError:
+        pass
+    import sys as _sys
+    return "jsc", list(_sys.argv[1:])
+
+
+def _consumed_approval(workspace, client, invocation, org):
+    from torque.approval import consumed_for_wrapper
+    return consumed_for_wrapper(workspace, client, invocation, org)
+
+
+def _parent_approval(workspace, client, approval_id, org):
+    from torque.approval import approved_parent
+    return approved_parent(workspace, client, approval_id, org)
+
+
+def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
+    """(0, approval or None) when this run may proceed, else (EXIT_NOT_APPROVED, None).
+
+    In a connected workspace, a Torque write route runs only when the gate has
+    just consumed an approval for this exact command, and only against the org ID
+    the consultant approved; an alias remapped since the grant is refused here.
+    Dry runs and workspaces not in connected mode are unaffected."""
+    scope = _connected_scope()
+    if scope is None or dry_run:
+        return 0, None
+    workspace, client = scope
+    if client is None:
+        print("error: connected mode: run this with --workspace PATH --client NAME", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    parent = os.environ.get(APPROVED_PARENT_ENV)
+    if parent:
+        record = _parent_approval(workspace, client, parent, target_org)
+    else:
+        record = _consumed_approval(workspace, client, _invocation(), target_org)
+    if record is None:
+        print("error: connected mode: no approval was consumed for this exact command in the last "
+              "two minutes; request one with torque approval request", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    if record.get("org_id_18") != org_id_18:
+        print(f"error: connected mode: {target_org!r} now resolves to {org_id_18}, but the approval is for "
+              f"{record.get('org_id_18')}; nothing was run", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    return 0, record
 
 
 class WrapperContext:
@@ -90,7 +166,9 @@ class WrapperContext:
                   "from org display and the Organization query",
                   file=sys.stderr)
             return EXIT_TOKEN_INVALID
-        return 0
+        rc, _ = connected_approval(self.target_org, self.org.org_id_18,
+                                   dry_run="--dry-run" in str(self.wrapper_command).split())
+        return rc
 
     def acquire_org_lock(self) -> int:
         """Try to acquire per-org lock. Returns 0 or EXIT_CONCURRENCY_CONFLICT."""

@@ -334,3 +334,19 @@ def test_command_words():
     assert approval.command_words("python3 -m torque deploy -o x") == ("torque", ["deploy", "-o", "x"])
     assert approval.command_words("jsc deploy -o x") == ("jsc", ["deploy", "-o", "x"])
     assert approval.command_words("sf project deploy start -o x") is None
+
+
+def test_approved_parent_for_revert_children(setup):
+    root, cid, before, project = setup
+    argv = ["torque", "recover", "run", "snap-1", "--org", "acme-sbx", "--workspace", str(root), "--client", "acme"]
+    req = approval.create_request(root, "Acme", cid, "acme-sbx", argv=argv, resolve=ORGS.get, cwd=project)
+    item = grant(root, req)
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx") is None
+    assert use(root, req, org="acme-sbx")[0]
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx") is None
+    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx")
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx")["id"] == item["id"]
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-prod") is None
+    assert approval.approved_parent(root, "Acme", "../../x", "acme-sbx") is None
+    import time
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", now=time.time() + 3600) is None

@@ -67,6 +67,13 @@ def execute_revert(
         return EXIT_ORG_RESOLUTION_FAILED
     snap = {**snap, "org": {**snap["org"], "alias": target_org}}
 
+    # Connected mode: this run needs the approval the gate just consumed for it, for
+    # this org ID; the wrapper it starts is told which approval that was.
+    from .wrappers._common import APPROVED_PARENT_ENV, connected_approval
+    approved_rc, approved = connected_approval(target_org, org.org_id_18)
+    if approved_rc:
+        return approved_rc
+
     # Refuse non-revertible operations unless force-acked.
     # Re-derived, NOT read from the manifest: this is the gate that decides
     # whether a revert actually runs, so a stale stored `true` from a snapshot
@@ -125,8 +132,13 @@ def execute_revert(
     # capture stdout/stderr; apply a generous timeout for revert operations.
     REVERT_TIMEOUT_S = int(os.environ.get("JSC_REVERT_EXECUTE_TIMEOUT_S", "1800"))
     try:
+        child_env = dict(os.environ)
+        child_env.pop(APPROVED_PARENT_ENV, None)
+        if approved is not None:
+            child_env[APPROVED_PARENT_ENV] = approved["id"]
         proc = subprocess.run(
             revert_cmd,
+            env=child_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

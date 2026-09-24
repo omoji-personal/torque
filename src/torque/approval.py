@@ -724,6 +724,29 @@ def consumed_for_wrapper(workspace, client, invocation: tuple[str, list[str]], o
     return None
 
 
+PARENT_WINDOW = 1800
+
+
+def approved_parent(workspace, client, approval_id, org_alias, *, window=PARENT_WINDOW, now=None) -> dict | None:
+    """For a wrapper the revert executor starts: the approval its parent run verified
+    (consumed and matched by consumed_for_wrapper) in the last `window` seconds."""
+    now = now if now is not None else time.time()
+    if not _valid_id(approval_id, "apr-"):
+        return None
+    dirs = _dirs(workspace, client)
+    marker = dirs["consumed"] / approval_id
+    path = dirs["granted"] / f"{approval_id}.json"
+    try:
+        used = json.loads(marker.read_text(encoding="utf-8"))
+        record = json.loads(path.read_text(encoding="utf-8"))
+        started = _epoch(used["wrapper"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if record.get("org_alias") != org_alias or now - started > window:
+        return None
+    return record
+
+
 def list_approvals(workspace, client) -> list[dict]:
     dirs = _dirs(workspace, client)
     out = []
