@@ -252,7 +252,10 @@ class CliTests(unittest.TestCase):
         with patch.object(cli.subprocess, "run", return_value=CompletedProcess([], 0, "clients/alpha/client.json\n", "")) as process:
             code, output, _ = self.run_cli("doctor", *self.context_args(), "--json")
         self.assertEqual(code, 0)
-        self.assertEqual(process.call_args.args[0][:2], ["git", "ls-files"])
+        command = process.call_args.args[0]
+        self.assertEqual(command[0], "git")
+        self.assertIn("ls-files", command)
+        self.assertIn("core.fsmonitor=false", command)
         data = json.loads(output)
         self.assertEqual(data["git_tracking"]["tracked_private_paths"], ["clients/alpha/client.json"])
         self.assertTrue(any("already tracked" in line for line in data["next_actions"]))
