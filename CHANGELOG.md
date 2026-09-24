@@ -1,6 +1,64 @@
 # Changelog
 
-## 2.0.0a12 - unpublished build-only mode follow-up, 2026-09-23
+## 2.0.0a13 - build-only mode follow-up, 2026-09-24 (tagged; not published to a package index)
+
+A later review round found ordinary shell routes around build-only mode that the
+documentation implied were covered. This release closes them and brings the alpha
+12 record up to date.
+
+- Making a link that leads out of the tree is blocked: `ln`/`ln -s`, `cp -s`, `mklink` and
+  `New-Item -ItemType SymbolicLink|Junction|HardLink` whose target resolves to `clients/`,
+  into it, to the workspace root or to any folder above it. A path that names a link is
+  still resolved.
+- `torque doctor` scans the workspace once (outside `clients/`, skipping `node_modules` and
+  `.git`, up to 200,000 entries) for links that resolve to `clients/` or above it, and
+  reports them, or an incomplete scan, as not ready. The gate does no filesystem walk per
+  call; a link that already exists and a recursive tool that follows links are listed as a
+  limit.
+- A word longer than any file name (a long commit message, a long `echo` chain) is no
+  longer read as a path that fails the whole call closed.
+- The hook examples set `"timeout": 600`, and the documentation says a timed-out hook lets
+  the call proceed. `torque doctor` warns when the hook entry has no timeout or a larger
+  one.
+- Each gate call has a 5-second time budget for path resolution, glob expansion and its
+  git queries, and a budget of 10,000 glob matches (each distinct pattern counted once);
+  past either it blocks with a message saying so, rather than letting the host's hook
+  timeout allow the call. A watchdog in the hook process enforces the time budget even
+  inside a step that does not check it, and exits 2.
+- `unzip` option clusters are read like getopt: `-od..` and `-qod ..` name the extraction
+  folder.
+- Doctor's link scan follows a link to a folder outside the workspace, so a link that
+  reaches `clients/` through an outside folder is reported.
+- A path or search root holding an unresolved `$` expansion, including one set earlier
+  in the same command (`R=..; rg x $R`, `"${PWD%/project}"`), is read as each folder up
+  to the workspace root, the rule `cd "$DIR"` already followed.
+- A `cd` inside `if`, `then`, `else`, `elif`, `while`, `until` or `for ... do`, or in an
+  `if` condition, changes the directory later paths are checked from.
+- `grep -d recurse`, `--directories=recurse` and abbreviations such as `--recur` count as
+  recursive searches.
+- `git status --ignored` and `git ls-files -o`/`-i`/`--others`/`--ignored` are blocked
+  when their scope reaches `clients/`.
+- A `Glob` pattern that is absolute or climbs with `..` is read as rooted where it leads.
+- Short-option clusters are parsed per tool: digits (`zip -9r`, `grep -r2`) may appear
+  anywhere, and an option that takes a value ends the cluster (`grep -rA2`), so these
+  still count as recursive.
+- `torque doctor`, the gate's own description and the alpha 12 record state the final
+  rule while client files are tracked or staged: only `git status` without
+  `-v`/`--verbose` and `git rm --cached` of paths under `clients/` pass.
+- Patches and archives that could write outside `project/` are blocked: `git apply`
+  outside `project/` (unless `--directory` keeps it there), `git am` unless the
+  repository's top is inside `project/`, `patch` outside `project/` or from a pipe, a
+  patch file naming an absolute path or `..`, and `tar`/`bsdtar`/`unzip`/`ditto -x`
+  extraction at or above the workspace root, into `clients/`, or with absolute or
+  rewritten member names.
+- The 2.0.0a12 and 2.0.0a13 headings say "tagged; not published to a package index"
+  rather than "unpublished".
+- The alpha 12 validation record's "Review scope" now records its scoped security
+  re-review, the three spot-checks and the final re-run at d3b0891.
+- [Build-only mode](docs/ai-access.md) lists the new checks, the new over-blocks and
+  what a variable can still hide.
+
+## 2.0.0a12 - build-only mode follow-up, 2026-09-23 (tagged; not published to a package index)
 
 A spot-check of alpha 11's host-tool change and a further review round found
 routes around the mode alpha 11 called de-identified mode. This release closes
