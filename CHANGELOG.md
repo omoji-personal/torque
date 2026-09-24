@@ -21,8 +21,10 @@ the last group of items below closes those.
 - An explicit `null` or empty `ai_access` now means build-only. Every build-only
   workspace from the session's directory upward applies, so a nested
   `workspace.json` cannot downgrade the workspace above it.
-- The session can no longer edit the installed Torque package or uninstall,
-  reinstall or downgrade Torque with `pip`, `uv` or `pipx`.
+- Edits to the installed Torque package by the file tools or a Bash command that
+  names it, and `pip`, `uv` or `pipx` commands that name Torque (uninstall,
+  reinstall, downgrade), are blocked. Scripts and unnamed installs
+  (`pip install -r`) are not; see the limits in the docs.
 - New fail-closed hook command: it exits 2 (block) instead of 1 when the hook's
   interpreter cannot import Torque. `torque doctor --workspace` now reports the
   mode, runs the wired hook on a synthetic probe in build-only mode, and exits 3
@@ -56,13 +58,24 @@ Closed after the security re-review:
 - On Windows, Git Bash drive paths (`/c/...`, `/cygdrive/c/...`) are resolved to
   their drive, and doctor runs its probe through Git Bash when installed, as
   Claude Code does.
+- The session's project directory (`CLAUDE_PROJECT_DIR`) and every path a call
+  names now also select the governing workspace, so `cd ..` out of the workspace
+  no longer ends its gating.
+- Redirections glued to a word (`cat<file`), search options with values
+  (`rg -g '*.md'`, `grep -r -A 2`), `git grep -- PATTERN`, `command cd`,
+  `time cd`, `env -C DIR`, `sf project convert` rooted at or above `clients/`
+  (or with no root), and curl's `@file` forms are handled.
+- Deleting, moving or recreating the environment that holds the gate
+  (`rm -rf .venv`, `python -m venv --clear`) is blocked. Doctor reads matchers
+  as regular expressions, fails when `disableAllHooks` switches hooks off, and
+  says its probe ran the hook command, not the host.
 - Git's abbreviated long options (`--untr`, `--no-ind`), `git diff --no-index`,
   `diff -r`, ANSI-C quoting (`$'\x63lients'`), zsh glob groups (`c(l)ients`) and
   comma-less brace groups are handled. Doctor names a hook that could not load
   the gate instead of reporting "exit 2", and a glob at the root names the glob
   in its block message.
 
-1411 offline tests pass (154 subtests). See the
+1482 offline tests pass (154 subtests). See the
 [alpha 11 validation record](docs/validation-alpha11.md).
 
 ## 2.0.0a10 - unpublished de-identified mode, Windows and demo breadth update, 2026-09-23
