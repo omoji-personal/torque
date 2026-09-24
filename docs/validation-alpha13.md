@@ -147,6 +147,15 @@ block. A final check through the real hook confirmed the 24-level glob now block
 in about 5 seconds with exit 2 while `git status` still passes; the glob cap is covered
 by its tests.
 
+A third spot-check, of the released build (773f786), found one more gap: one
+regular-expression call holds the GIL, so the watchdog cannot interrupt it. The
+brace-expansion pattern took time that grew with the square of a command's length,
+and no length was limited: a 120,000-character command held the hook for 83.5
+seconds, and a longer one could outrun the host's hook timeout, which lets the call
+run. This gap is closed in alpha 14: the gate blocks any command or argument it parses
+longer than 20,000 characters before any pattern runs, and brace expansion takes
+linear time. See the [alpha 14 record](validation-alpha14.md).
+
 ## Known remaining limits
 
 Build-only mode is pattern matching on recognized tool calls, not a sandbox.
@@ -163,4 +172,6 @@ command output (`cat "$(...)/clients/..."`) is still a command built at run time
 an archive member that is a link a later member writes through is left to the
 extractor, and extractors other than `tar`, `bsdtar`, `unzip` and `ditto -x` are not
 parsed. A hook that times out lets the call proceed; the gate's own 5-second budget,
-enforced by a watchdog in the hook process, blocks first. See [build-only mode](ai-access.md) for the full list.
+enforced by a watchdog in the hook process, blocks first. (The long-command gap the
+third spot-check found, where one pattern held the gate past its watchdog, is closed
+in alpha 14.) See [build-only mode](ai-access.md) for the full list.
