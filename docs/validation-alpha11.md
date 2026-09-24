@@ -52,7 +52,7 @@ a test written first (60 failed before the fix):
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 1482 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 1488 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and

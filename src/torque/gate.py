@@ -71,15 +71,16 @@ _MCP_SF_SUBSTRINGS = ("salesforce", "sfdx", "sf_", "_sf", "soql", "sosl", "sobje
 _MCP_SF_TOKEN_RE = re.compile(r"(^|[_\-.])sf([_\-.]|$)")
 PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path",
               "MultiEdit": "file_path", "NotebookEdit": "notebook_path", "NotebookRead": "notebook_path",
-              "LS": "path"}
-READ_TOOLS = {"Read", "NotebookRead", "LS"}
+              "LS": "path", "LSP": "filePath"}
+READ_TOOLS = {"Read", "NotebookRead", "LS", "LSP"}
 # Tools that name no path and run no command, allowed as they are. Any other tool
 # that carries a `command` string (Monitor, PowerShell, ...) is scanned like Bash,
 # and a tool this list and the checks below do not recognise is blocked.
 SAFE_TOOLS = {"TodoWrite", "TodoRead", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
               "Task", "Agent", "TaskOutput", "TaskStop", "BashOutput", "KillShell", "KillBash",
               "WebSearch", "WebFetch", "ExitPlanMode", "EnterPlanMode", "AskUserQuestion",
-              "Skill", "SlashCommand", "ToolSearch", "ListMcpResourcesTool"}
+              "Skill", "SlashCommand", "ToolSearch", "ListMcpResourcesTool", "SendMessage",
+              "EnterWorktree", "ExitWorktree"}
 # Tools whose string arguments are checked like an MCP tool's.
 MCP_LIKE_TOOLS = {"ReadMcpResourceTool"}
 SHELL_HEADS = {"bash", "sh", "zsh"}
@@ -1176,7 +1177,10 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
         raw_path = tool_input.get("path")
         root = _resolve(cwd, str(raw_path)) if raw_path else cwd
         if _reaches(root, clients):
-            return False, "De-identified mode: client context stays out of the AI session." + NARROW_PATH_HINT
+            hint = NARROW_PATH_HINT if raw_path else (
+                f" With no path, {tool_name} searches the current directory, which contains clients/. "
+                "Pass a path, such as project/ or src/.")
+            return False, "De-identified mode: client context stays out of the AI session." + hint
         pattern = str(tool_input.get("pattern") or "")
         glob_field = str(tool_input.get("glob") or "")
         mentions_clients = "clients" in pattern.casefold() or "clients" in glob_field.casefold()

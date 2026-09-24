@@ -75,11 +75,12 @@ guard on recognized tool calls, not a sandbox. It has two values:
   same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
   for PowerShell syntax.
 - Tools the gate does not recognise. Besides Bash, the file tools (`Read`, `Edit`, `Write`,
-  `MultiEdit`, `NotebookEdit`, `NotebookRead`, `LS`), `Grep`, `Glob`, MCP tools and command
+  `MultiEdit`, `NotebookEdit`, `NotebookRead`, `LS`, `LSP`), `Grep`, `Glob`, MCP tools and command
   tools, only these pass unchecked: `TodoWrite`, `TodoRead`, `TaskCreate`, `TaskUpdate`,
   `TaskList`, `TaskGet`, `Task`, `Agent`, `TaskOutput`, `TaskStop`, `BashOutput`, `KillShell`,
   `KillBash`, `WebSearch`, `WebFetch`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`,
-  `Skill`, `SlashCommand`, `ToolSearch` and `ListMcpResourcesTool`. `ReadMcpResourceTool` is
+  `Skill`, `SlashCommand`, `ToolSearch`, `ListMcpResourcesTool`, `SendMessage`, `EnterWorktree`
+  and `ExitWorktree`. `LSP` is checked like `Read` on its `filePath`. `ReadMcpResourceTool` is
   checked like an MCP tool. Every other tool is blocked, including tools a host adds later.
 - A Bash command aimed at `workspace.json`, `.claude/settings*.json`, or the `.claude` directory
   (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on `workspace.json` and

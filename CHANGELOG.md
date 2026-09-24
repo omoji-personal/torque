@@ -75,7 +75,7 @@ Closed after the security re-review:
   the gate instead of reporting "exit 2", and a glob at the root names the glob
   in its block message.
 
-1482 offline tests pass (154 subtests). See the
+1488 offline tests pass (154 subtests). See the
 [alpha 11 validation record](docs/validation-alpha11.md).
 
 ## 2.0.0a10 - unpublished de-identified mode, Windows and demo breadth update, 2026-09-23
