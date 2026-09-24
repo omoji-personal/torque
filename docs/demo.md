@@ -47,6 +47,19 @@ Salesforce records, job IDs, screenshots or verified-session entries. The native
 journal contains only `prepared` and `incomplete` entries, and the handoff is
 rendered from that journal.
 
+The client also gets four scripted examples under
+`clients/synthetic-community-center/examples/`. Each folder holds an invented
+`input.md` (marked `SYNTHETIC EXAMPLE`) and a `walkthrough.md` that applies one
+workflow recipe to it. The walkthroughs are prepared text, not live agent output,
+and every conclusion in them is labelled as proposed until checked in a real org.
+
+| Folder | Workflow | Input |
+| --- | --- | --- |
+| `alert-triage` | `/triage-alert` | A flow fault notification. The walkthrough reaches a likely cause to confirm, a proposed fix, a retest plan and a draft client note that is sent only once the cause is confirmed. |
+| `gift-payments` | `/gift-payments` | A request to stamp a processed date on payments from a closed gift batch. The walkthrough gives a flow design, bulk-safety notes, a three-case test plan and a rollback. |
+| `grants-outbound-funds` | `/grants-outbound-funds` | A request to create award records when a funding request is approved. The walkthrough covers the objects, fields not writable on insert, a flow outline, test data and acceptance criteria. |
+| `requirements-to-build` | `/requirements-to-build` | A stakeholder note about volunteer shift sign-ups. The walkthrough turns it into user stories, acceptance criteria, a proposed metadata list, a test script and open questions. |
+
 Continue by editing the sample requirement or recording a local decision:
 
 ```sh
