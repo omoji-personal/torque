@@ -11,6 +11,12 @@ from torque.presence import Presence
 YES = lambda: Presence(True, "")
 
 
+@pytest.fixture(autouse=True)
+def private_home(tmp_path, monkeypatch):
+    # Doctor reads the user's own settings file; keep the real one out of these tests.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+
 def make(tmp_path, settings, hook=True):
     root = ws.init_workspace(tmp_path / "w", "Firm")
     ws.set_ai_access(root, "connected", approval="required", presence=YES)
@@ -25,7 +31,12 @@ def make(tmp_path, settings, hook=True):
 
 
 def fake_probe(event):
-    return (0, '{"hookSpecificOutput": {"permissionDecision": "ask"}}') if "python3" in json.dumps(event) else (2, "")
+    text = json.dumps(event)
+    if "python3" in text and "bypassPermissions" not in text:
+        return 0, '{"hookSpecificOutput": {"permissionDecision": "ask"}}'
+    if event.get("tool_use_id") == "doctor-bound_read":
+        return 0, ""
+    return 2, ""
 
 
 def test_missing_rules_not_ready(tmp_path):
@@ -94,3 +105,18 @@ def test_doctor_cli_reports_connected(tmp_path, monkeypatch, capsys):
     code = cli.main(["doctor", "--workspace", str(root)])
     out = capsys.readouterr().out
     assert code == 3 and "AI access: connected" in out and "Probe org_write" in out
+
+
+def test_real_hook_bound_probes(tmp_path, monkeypatch):
+    Org = namedtuple("Org", "org_id_18 detected_org_type")
+    root = make(tmp_path, {"permissions": permissions.generate()})
+    ws.add_client(root, "Acme")
+    letter = tmp_path / "a.pdf"
+    letter.write_bytes(b"x")
+    monkeypatch.setattr("jsc_revert.intent_marker._current_user_name", lambda: "consultant")
+    consent.record_consent(root, "Acme", "2026-09-30", letter, ["metadata"], ["acme-sbx"], ["C"], presence=YES,
+                           resolve={"acme-sbx": Org("00D000000000001AAA", "sandbox")}.get)
+    consent.sign_off(root, "Acme", "Reviewer", presence=YES)
+    report = dc.report(root, "Acme")
+    got = {p["route"]: (p["expected"], p["got"]) for p in report["probes"]}
+    assert "bound_read" in got and all(expected == seen for expected, seen in got.values()), got

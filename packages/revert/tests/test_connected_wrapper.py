@@ -72,7 +72,7 @@ def test_firm_root_without_client_is_refused(connected, monkeypatch):
 def test_revert_child_uses_the_parent_approval(connected, monkeypatch):
     monkeypatch.setenv(c.APPROVED_PARENT_ENV, "apr-000000000001")
     monkeypatch.setattr(c, "_consumed_approval", lambda *a: None)
-    monkeypatch.setattr(c, "_parent_approval", lambda w, cl, ident, org: {"org_id_18": "00D000000000002AAA"}
+    monkeypatch.setattr(c, "_parent_approval", lambda w, cl, ident, org, invocation: {"org_id_18": "00D000000000002AAA"}
                         if ident == "apr-000000000001" else None)
     assert ctx().resolve_org() == 0
     monkeypatch.setattr(c, "_parent_approval", lambda *a: None)

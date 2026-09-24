@@ -57,22 +57,52 @@ _ACTIVE_WRAPPER = ContextVar("torque_active_wrapper", default=None)
 APPROVED_PARENT_ENV = "TORQUE_APPROVED_PARENT"
 
 
-def _connected_scope():
-    """(workspace, client slug or None) when the selected Torque workspace is in
-    connected mode with approval required, read from its workspace.json; else None."""
-    root = os.environ.get("TORQUE_WORKSPACE")
-    if not root:
+class IndeterminateScope(Exception):
+    """The workspace's mode could not be read, so connected mode cannot be ruled out."""
+
+
+def _config_mode(path: Path):
+    """The workspace.json at path: None when absent, else its parsed object;
+    IndeterminateScope when present but unreadable or malformed."""
+    config_path = path / "workspace.json"
+    if not config_path.exists():
         return None
-    path = Path(root).expanduser()
-    client = None
-    if (path / "client.json").is_file():
-        client, path = path.name, path.parent.parent
     try:
-        config = json.loads((path / "workspace.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise IndeterminateScope(f"{config_path} cannot be read ({exc})") from exc
+    if not isinstance(config, dict):
+        raise IndeterminateScope(f"{config_path} is not a JSON object")
+    return config
+
+
+def _is_connected(config) -> bool:
+    return isinstance(config, dict) and config.get("ai_access") == "connected" and config.get("approval") == "required"
+
+
+def _connected_scope():
+    """(workspace, client slug or None) when this run is in a connected workspace:
+    the one TORQUE_WORKSPACE selects, or one at or above the working folder (with the
+    client from TORQUE_CLIENT). None when neither is connected. Raises
+    IndeterminateScope when the selected workspace's configuration cannot be read."""
+    root = os.environ.get("TORQUE_WORKSPACE")
+    if root:
+        path = Path(root).expanduser()
+        client = None
+        if (path / "client.json").is_file():
+            client, path = path.name, path.parent.parent
+        if _is_connected(_config_mode(path)):
+            return path, client
+    try:
+        from torque import gate
+        chain = gate._workspace_chain(Path(os.path.realpath(os.getcwd())))
+    except ImportError:
         return None
-    if isinstance(config, dict) and config.get("ai_access") == "connected" and config.get("approval") == "required":
-        return path, client
+    except OSError as exc:
+        raise IndeterminateScope(f"the working folder's workspace cannot be read ({exc})") from exc
+    for folder, mode, _known in chain:
+        if mode == "connected":
+            return folder, os.environ.get("TORQUE_CLIENT") or None
     return None
 
 
@@ -94,9 +124,31 @@ def _consumed_approval(workspace, client, invocation, org):
     return consumed_for_wrapper(workspace, client, invocation, org)
 
 
-def _parent_approval(workspace, client, approval_id, org):
+def _parent_approval(workspace, client, approval_id, org, invocation):
     from torque.approval import approved_parent
-    return approved_parent(workspace, client, approval_id, org)
+    return approved_parent(workspace, client, approval_id, org, invocation)
+
+
+def _release(workspace, client, invocation, org):
+    from torque.approval import release_for_retry
+    return release_for_retry(workspace, client, invocation, org)
+
+
+def release_after_resolution_failure(target_org: str) -> None:
+    """Nothing ran because the org could not be resolved: in a connected workspace,
+    return the approval the gate consumed for this command so it can be retried."""
+    try:
+        scope = _connected_scope()
+    except IndeterminateScope:
+        return
+    if scope is None or scope[1] is None or os.environ.get(APPROVED_PARENT_ENV):
+        return
+    try:
+        if _release(scope[0], scope[1], _invocation(), target_org):
+            print("connected mode: the approval was not used and can be used again for the same command",
+                  file=sys.stderr)
+    except (OSError, ValueError):
+        pass
 
 
 def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
@@ -106,8 +158,14 @@ def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
     just consumed an approval for this exact command, and only against the org ID
     the consultant approved; an alias remapped since the grant is refused here.
     Dry runs and workspaces not in connected mode are unaffected."""
-    scope = _connected_scope()
-    if scope is None or dry_run:
+    if dry_run:
+        return 0, None
+    try:
+        scope = _connected_scope()
+    except IndeterminateScope as exc:
+        print(f"error: connected mode cannot be ruled out: {exc}; nothing was run", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    if scope is None:
         return 0, None
     workspace, client = scope
     if client is None:
@@ -115,7 +173,7 @@ def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
         return EXIT_NOT_APPROVED, None
     parent = os.environ.get(APPROVED_PARENT_ENV)
     if parent:
-        record = _parent_approval(workspace, client, parent, target_org)
+        record = _parent_approval(workspace, client, parent, target_org, _invocation())
     else:
         record = _consumed_approval(workspace, client, _invocation(), target_org)
     if record is None:
@@ -126,7 +184,7 @@ def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
         print(f"error: connected mode: {target_org!r} now resolves to {org_id_18}, but the approval is for "
               f"{record.get('org_id_18')}; nothing was run", file=sys.stderr)
         return EXIT_NOT_APPROVED, None
-    return 0, record
+    return 0, {**record, "_scope": (workspace, client)}
 
 
 class WrapperContext:
@@ -165,6 +223,7 @@ class WrapperContext:
             print(f"error: cannot verify explicit org {self.target_org!r} "
                   "from org display and the Organization query",
                   file=sys.stderr)
+            release_after_resolution_failure(self.target_org)
             return EXIT_TOKEN_INVALID
         rc, _ = connected_approval(self.target_org, self.org.org_id_18,
                                    dry_run="--dry-run" in str(self.wrapper_command).split())

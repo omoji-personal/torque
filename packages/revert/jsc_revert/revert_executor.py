@@ -53,6 +53,8 @@ def execute_revert(
     org = org_detect.resolve_org(target_org)
     if org is None:
         print(f"error: cannot resolve org {target_org!r}", file=sys.stderr)
+        from .wrappers._common import release_after_resolution_failure
+        release_after_resolution_failure(target_org)
         return EXIT_ORG_RESOLUTION_FAILED
 
     try:
@@ -119,6 +121,12 @@ def execute_revert(
     # the deploy wrapper pre-includes them so the append stays idempotent
     # (audit 2026-06-09 REVERT-1 — data update/create/delete previously rejected them).
     revert_cmd = _append_forensic_chain(revert_cmd, snapshot_id, reason)
+    if approved is not None:
+        # Name the one wrapper command this approval covers; the child accepts only it.
+        from torque.approval import authorize_child
+        prefix = len(revert_planner._jsc_command())
+        workspace_root, client_slug = approved["_scope"]
+        authorize_child(workspace_root, client_slug, approved["id"], revert_cmd[prefix:])
 
     print(f"\nExecuting revert: {' '.join(revert_cmd)}\n", file=sys.stderr)
 

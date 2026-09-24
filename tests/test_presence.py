@@ -32,8 +32,8 @@ def test_refuses_agent_environment(name):
     assert not result.ok and "agent" in result.reason
 
 
-def test_empty_agent_variable_is_not_a_marker():
-    assert check(env={"CLAUDECODE": ""}).ok
+def test_empty_agent_variable_is_still_a_marker():
+    assert not check(env={"CLAUDECODE": ""}).ok
 
 
 @pytest.mark.skipif(os.name == "nt", reason="ancestry is checked on macOS and Linux")

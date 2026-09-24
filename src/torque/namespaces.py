@@ -28,9 +28,9 @@ def _manifest_members(path: Path) -> list[str]:
 def find_namespaces(argv: list[str], cwd: Path, extra: tuple[str, ...] = ()) -> list[str]:
     """Sorted managed namespace prefixes named by the command or its manifest."""
     managed = {n.casefold() for n in (*DEFAULT_MANAGED, *extra) if isinstance(n, str)}
+    from . import argv_flags
     texts = list(argv)
-    for i, tok in enumerate(argv[:-1]):
-        if tok in MANIFEST_FLAGS:
-            texts += _manifest_members(Path(cwd) / argv[i + 1])
+    for value in argv_flags.values(argv, MANIFEST_FLAGS):
+        texts += _manifest_members(Path(cwd) / value)
     found = {m.group(1) for text in texts for m in _PREFIX.finditer(text)}
     return sorted(n for n in found if n.casefold() in managed)

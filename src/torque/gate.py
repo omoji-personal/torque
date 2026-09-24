@@ -2831,6 +2831,51 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     return gated
 
 
+def _in_workspace(path: Path) -> bool:
+    """path lies under a Torque workspace's clients/ folder."""
+    for folder in path.parents:
+        if folder.name == "clients":
+            try:
+                return bool(_workspace_chain(folder.parent)) and _workspace_chain(folder.parent)[0][0] == folder.parent
+            except OSError:
+                return True
+    return False
+
+
+def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
+    """In a workspace with no build-only or connected mode, the consent, consent
+    evidence and approval records of a Torque workspace, and the approval key, are
+    still kept from recognized tools: a record changed while the gate is otherwise
+    off would be trusted when the owner turns connected mode on."""
+    raw = json.dumps(tool_input, ensure_ascii=False).casefold()
+    if "consent" not in raw and "approval" not in raw:
+        return ""
+    try:
+        return _approval_file_targets_reason(tool_name, tool_input, cwd)
+    except Exception:  # A best-effort guard in full mode: it never blocks by failing.
+        return ""
+
+
+def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
+    targets: list[Path] = []
+    key = PATH_TOOLS.get(tool_name)
+    if key and tool_name not in READ_TOOLS and isinstance(tool_input.get(key), str) and tool_input[key]:
+        targets.append(_resolve(cwd, tool_input[key]))
+    for text in _command_strings(tool_input) if not key else []:
+        if len(text) > MAX_INPUT_CHARS:
+            continue
+        for toks, _ in _segments_with_separators(_expand_home_in_command(text)):
+            for tok in toks:
+                paths, _ = _token_paths(tok, cwd)
+                targets += paths
+    for target in targets:
+        text = target.as_posix()
+        if APPROVAL_KEY_RE.search(text) or (APPROVAL_FILE_RE.search(text) and _in_workspace(target)):
+            return ("Torque: a client's consent and approval records and the approval key are changed only "
+                    "by the consultant's torque commands, in every mode.")
+    return ""
+
+
 def _connected_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     """Connected workspaces that apply to a call, found the same way as build-only
     ones: at or above the event's cwd, the session's project directory, and any
@@ -2889,6 +2934,9 @@ def _main() -> int:
                 if not allowed:
                     break
             connected = _connected_workspaces(cwd, tool_input) if allowed and not gated else []
+            if allowed and not gated and not connected:
+                reason = _approval_file_reason(str(event.get("tool_name", "")), tool_input, cwd)
+                allowed = not reason
             if connected:
                 # Imported only here: a workspace without connected mode never loads it.
                 from .gate_connected import ask_json, decide_connected

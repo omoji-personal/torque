@@ -42,7 +42,10 @@ def test_launch_binds_client_in_environment(connected, tmp_path, monkeypatch):
         # setenv first so teardown restores the original state after launch() sets it.
         monkeypatch.setenv(key, "placeholder")
         monkeypatch.delenv(key)
-    monkeypatch.setattr("torque.consent.load_consent", lambda w, c: {"status": "active", "reviewer": {"name": "R"},
+    monkeypatch.setattr("torque.consent.load_consent", lambda w, c: {"schema": "torque.consent/1", "client": "acme",
+                                                                     "status": "active",
+                                                                     "reviewer": {"name": "R", "signed_off_at":
+                                                                                  "2026-09-30T10:00:00+00:00"},
                                                                      "data_allowed": ["metadata"],
                                                                      "approved_orgs": [{"alias": "a", "kind": "sandbox",
                                                                                         "org_id_18": "x"}]})
@@ -77,6 +80,7 @@ def test_require_exit_codes(connected, monkeypatch, capsys):
 def test_ai_access_connected_parses(tmp_path, monkeypatch):
     root = ws.init_workspace(tmp_path / "w", "Firm")
     monkeypatch.setattr("torque.presence.operator_present", lambda *a, **k: Presence(True, ""))
+    monkeypatch.setattr("torque.presence.confirm_code", lambda *a, **k: True)
     assert cli.main(["workspace", "ai-access", "connected", "--approval", "required", "--path", str(root)]) == 0
     assert json.loads((root / "workspace.json").read_text(encoding="utf-8"))["approval"] == "required"
 
@@ -90,6 +94,7 @@ def test_ai_access_connected_refused_from_agent(tmp_path, capsys):
 def test_consent_and_request_through_the_cli(connected, tmp_path, monkeypatch, capsys):
     Org = namedtuple("Org", "org_id_18 detected_org_type")
     monkeypatch.setattr("torque.presence.operator_present", lambda *a, **k: Presence(True, ""))
+    monkeypatch.setattr("torque.presence.confirm_code", lambda *a, **k: True)
     monkeypatch.setattr("jsc_revert.org_detect.resolve_org",
                         lambda alias, **k: Org("00D000000000001AAA", "sandbox") if alias == "acme-sbx" else None)
     monkeypatch.setattr("jsc_revert.intent_marker._current_user_name", lambda: "consultant")
@@ -105,6 +110,7 @@ def test_consent_and_request_through_the_cli(connected, tmp_path, monkeypatch, c
     from torque import changes
     cid = changes.create_change(connected, "Acme", "Fix", "Works", [], "acme-sbx")["id"]
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "x.apex").write_text("System.debug(1);", encoding="utf-8")
     assert cli.main(["approval", "request", *base, "--change", cid, "--org", "acme-sbx", "--",
                      "sf", "apex", "run", "-f", "x.apex", "-o", "acme-sbx"]) == 0
     out = capsys.readouterr().out

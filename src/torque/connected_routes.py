@@ -50,6 +50,8 @@ SF_ASK = {("org", "login"), ("org", "logout"), ("org", "open"), ("plugins", "ins
           ("plugins", "update"), ("plugins", "uninstall"), ("plugins", "reset"), ("update",)}
 # Changing an alias or the default org would move an approved command to another org.
 SF_ADMIN = {("alias", "set"), ("alias", "unset"), ("config", "set"), ("config", "unset")}
+SFDX_RECORD_READS = {"force:data:soql:query"}
+SFDX_LOG_READS = {"force:apex:log:get", "force:apex:log:list"}
 SFDX_READ = {"force:data:soql:query", "force:source:retrieve", "force:mdapi:retrieve", "force:org:display",
              "force:org:list", "force:schema:sobject:describe", "force:schema:sobject:list",
              "force:apex:log:get", "force:apex:log:list"}
@@ -113,6 +115,9 @@ MCP_WRITE_WORDS = {"deploy", "create", "update", "upsert", "delete", "insert", "
                    "push", "apply", "revert", "undelete", "cancel", "abort", "grant", "revoke", "enable",
                    "disable", "schedule", "commit", "modify", "edit", "rename", "add", "upload", "send", "login",
                    "logout", "open"}
+MCP_RECORD_WORDS = {"query", "soql", "sosl", "search", "record", "records", "row", "rows", "data", "export",
+                    "sobject", "sobjects", "rest", "api", "request", "graphql", "composite", "report", "reports",
+                    "dashboard", "file", "files", "attachment", "content"}
 MCP_READ_WORDS = {"query", "soql", "sosl", "describe", "list", "get", "retrieve", "search", "display", "read",
                   "show", "find", "fetch", "count", "inspect", "view", "status", "info", "explain", "analyze",
                   "resume", "report", "limits", "whoami"}
@@ -243,7 +248,9 @@ def _sf(rest: list[str], detail: str) -> Route:
         return Route("local", None, detail) if not orgs else Route("org_write", org, detail)
     if ":" in topic[0]:
         if topic[0] in SFDX_READ:
-            return Route("read" if org else "no_org", org, detail)
+            data = ("records" if topic[0] in SFDX_RECORD_READS else "debug_logs" if topic[0] in SFDX_LOG_READS
+                    else None)
+            return Route("read" if org else "no_org", org, detail, data=data)
         return Route("org_write" if org else "no_org", org, detail)
     if _match(topic, SF_ADMIN):
         return Route("admin", org, detail)
@@ -256,10 +263,11 @@ def _sf(rest: list[str], detail: str) -> Route:
     if topic[:3] == ("api", "request", "rest"):
         methods = _flag_values(rest, {"-X", "--method"})
         # A custom Apex REST endpoint can change data on any method; a request file sets its own method.
-        custom = any("apexrest" in w.casefold() for w in rest)
+        custom = any("apexrest" in w.casefold() or "executeanonymous" in w.casefold() for w in rest)
         kind = "read" if (all(m.upper() == "GET" for m in methods) and not custom
                           and not _flag_values(rest, {"--body", "-b", "--file", "-f"})) else "org_write"
-        return Route(kind if org else "no_org", org, detail)
+        path = topic[3] if len(topic) > 3 else ""
+        return Route(kind if org else "no_org", org, detail, data=rest_data_class(path) if kind == "read" else None)
     if topic[:3] == ("project", "deploy", "start") and "--dry-run" in rest:
         return Route("check_only" if org else "no_org", org, detail)
     if topic[:2] == ("org", "display") and "--verbose" in rest:
@@ -272,6 +280,24 @@ def _sf(rest: list[str], detail: str) -> Route:
             return Route("read" if org else "local", org, detail)
         return Route("read" if org else "no_org", org, detail, data=data)
     return Route("org_write" if org else "no_org", org, detail)
+
+
+# REST paths that return schema or org information, not record data. Anything
+# else under the API (sobject rows, query, search, composite, UI API, Connect) is
+# record data; Apex logs are debug logs.
+_REST_METADATA = re.compile(
+    r"^/services/data/?(v[\d.]+/?)?$|/sobjects/?$|/sobjects/[^/?]+/describe|/describe/?$|"
+    r"/limits/?$|/tooling/(sobjects|query)", re.IGNORECASE)
+
+
+def rest_data_class(path: str) -> str | None:
+    """The consent class a REST GET reads: debug_logs, None (schema) or records."""
+    text = (path or "").split("?", 1)[0] if "/tooling/query" not in (path or "") else (path or "")
+    if "apexlog" in (path or "").casefold():
+        return "debug_logs"
+    if _REST_METADATA.search(text):
+        return None
+    return "records"
 
 
 def _strip_context(rest: list[str]) -> tuple[list[str], str | None]:
@@ -311,6 +337,9 @@ def _torque(rest: list[str], detail: str) -> Route:
             records = any(t.split("=", 1)[0] == "--capture-before-record" for t in rest)
             return Route("read" if org else "no_org", org, detail, client, data="records" if records else None)
         return Route("local", None, detail, client)
+    if head == "client" and sub == "list":
+        # Lists every client's name and org: one client per session, so refused.
+        return Route("local", None, detail, "*")
     if head == "client" and sub == "consent":
         third = rest[2] if len(rest) > 2 else ""
         return Route("local" if third == "show" else "admin", None, detail, client)
@@ -419,7 +448,9 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head in SHELLS:
         inner = g._shell_c_strings(words)
         if inner:
-            return [r for text in inner for r in classify_bash(text, depth + 1)]
+            # A shell running a string is still an interpreter the host must ask about;
+            # the calls inside it are classified too.
+            return [Route("unverifiable", None, detail), *[r for text in inner for r in classify_bash(text, depth + 1)]]
         if rest[:1] in (["--version"], ["--help"]):
             return [Route("local", None, detail)]
         return [Route("unverifiable", None, detail)]
@@ -517,8 +548,9 @@ def classify_mcp(tool_name: str, tool_input: dict) -> Route:
         org = mcp_org(tool_input)
         if words & MCP_WRITE_WORDS or not words & MCP_READ_WORDS:
             return Route("org_write" if org else "no_org", org, tool_name)
-        return Route("read" if org else "no_org", org, tool_name,
-                     data="records" if words & {"query", "soql", "sosl", "search"} else None)
+        data = ("debug_logs" if words & {"log", "logs", "debug"} else
+                "records" if words & MCP_RECORD_WORDS else None)
+        return Route("read" if org else "no_org", org, tool_name, data=data)
     return Route("local", None, tool_name)
 
 

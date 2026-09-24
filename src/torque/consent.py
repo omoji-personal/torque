@@ -21,12 +21,20 @@ STATUSES = ("pending", "active", "suspended")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 
 
-def _require_operator(presence) -> None:
+def _require_operator(presence, confirm=None) -> None:
+    """A person at a real terminal outside the session, who types back a code (the
+    code is skipped only when a caller injects its own presence check)."""
+    injected = presence is not None
     if presence is None:
         from .presence import operator_present as presence
     check = presence()
     if not check.ok:
         raise ws.WorkspaceError(f"consent is recorded by the consultant at a real terminal: {check.reason}")
+    if confirm is not None or not injected:
+        if confirm is None:
+            from .presence import confirm_code as confirm
+        if not confirm():
+            raise ws.WorkspaceError("the confirmation code did not match; nothing was changed")
 
 
 def _path(workspace, client) -> tuple[Path, Path]:
@@ -83,7 +91,11 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
         info = resolve(alias)
         if info is None:
             raise ws.WorkspaceError(f"could not resolve org alias {alias!r}; authenticate it first")
-        approved.append({"alias": alias, "org_id_18": info.org_id_18, "kind": info.detected_org_type})
+        entry = {"alias": alias, "org_id_18": info.org_id_18, "kind": info.detected_org_type}
+        instance = getattr(info, "instance_url", None)
+        if isinstance(instance, str) and instance:
+            entry["instance_url"] = instance
+        approved.append(entry)
     folder, path = _path(workspace, client)
     source = Path(evidence).expanduser().resolve()
     if not source.is_file():
@@ -143,15 +155,30 @@ def _orgs(consent: dict | None) -> list[dict]:
             and isinstance(o.get("org_id_18"), str) and isinstance(o.get("kind"), str)]
 
 
-def consent_problems(consent: dict | None) -> list[str]:
-    """Why this record does not permit org access; empty when it does."""
+def _signed_off(reviewer) -> bool:
+    if not isinstance(reviewer, dict) or not isinstance(reviewer.get("name"), str) or not reviewer["name"].strip():
+        return False
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(reviewer.get("signed_off_at"))).utcoffset() is not None
+    except ValueError:
+        return False
+
+
+def consent_problems(consent: dict | None, client: str | None = None) -> list[str]:
+    """Why this record does not permit org access; empty when it does. With `client`
+    (a slug), the record must be that client's."""
     if consent is None:
         return ["no consent record"]
     problems = []
+    if consent.get("schema") != SCHEMA:
+        problems.append("the consent record has an unknown schema")
+    if client is not None and consent.get("client") != client:
+        problems.append("the consent record belongs to another client")
     status = consent.get("status")
     if status == "suspended":
         problems.append("consent is suspended")
-    if not isinstance(consent.get("reviewer"), dict) or not consent["reviewer"].get("name"):
+    if not _signed_off(consent.get("reviewer")):
         problems.append("no second-reviewer sign-off")
     elif status != "active" and status != "suspended":
         problems.append(f"consent status is {status!r}")

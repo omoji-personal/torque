@@ -269,6 +269,11 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
     return root, config
 
 
+def _owner_uid_supported() -> bool:
+    """Tier 2 checks file ownership by numeric uid, which Windows does not have."""
+    return hasattr(os, "getuid")
+
+
 def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
                   verify: str | None = None, approver_uid: int | None = None, presence=None) -> Path:
     """Set the workspace ai_access mode. Only the owner calls this; an AI session
@@ -284,15 +289,22 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
         verify = verify or "hmac"
         if verify not in APPROVAL_VERIFY:
             raise WorkspaceError(f"unknown approval verification: {verify}")
+        if verify == "owner-uid" and not _owner_uid_supported():
+            raise WorkspaceError("owner-uid (tier 2) approvals are not supported on this platform; use hmac")
         if verify == "owner-uid" and (type(approver_uid) is not int or approver_uid < 0):
             raise WorkspaceError("owner-uid verification needs --approver-uid, the approver account's numeric uid")
         if verify == "hmac" and approver_uid is not None:
             raise WorkspaceError("--approver-uid applies only to owner-uid verification")
+        injected = presence is not None
         if presence is None:
             from .presence import operator_present as presence
         check = presence()
         if not check.ok:
             raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
+        if not injected:
+            from .presence import confirm_code
+            if not confirm_code():
+                raise WorkspaceError("the confirmation code did not match; nothing was changed")
     root, config = load_workspace(workspace)
     config["ai_access"] = mode
     for key in ("approval", "approval_verify", "approver_uid"):

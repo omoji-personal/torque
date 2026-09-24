@@ -61,7 +61,7 @@ def operator_present(env=None, stdin=None, stdout=None, ancestors=None) -> Prese
         terminal = False
     if not terminal:
         return Presence(False, "this needs a real terminal; run it yourself, not through the AI session")
-    found = [name for name in AGENT_ENV if env.get(name)]
+    found = [name for name in AGENT_ENV if name in env]
     if found:
         return Presence(False, f"this looks like an agent session ({', '.join(found)} is set)")
     if os.name != "nt":

@@ -17,13 +17,14 @@ sandbox. The limits are listed below.
 | Route | Examples | Decision |
 |---|---|---|
 | Local work | editors, `git`, `torque change`, `torque approval request/status/list/log` | allowed |
-| Reads of the bound client's approved orgs | `sf data query -o acme-prod`, `sf project retrieve start`, Salesforce MCP query and describe tools | allowed when the consent covers the org and the data class (record data, debug logs) |
+| Reads of the bound client's approved orgs | `sf data query -o acme-prod`, `sf project retrieve start`, Salesforce MCP query, get and describe tools, `sf api request rest` GET | allowed when the consent covers the org and the data class. Record data (queries, searches, exports, record gets, REST record and query paths, the same reads in legacy `sfdx` and MCP form) needs `records`; Apex logs need `debug_logs`; a REST path Torque cannot place counts as record data |
 | Check-only | `sf project deploy validate`, `--dry-run`, `sf apex run test` | allowed and logged in `clients/<slug>/approvals/activity.jsonl` |
 | Org writes | any other `sf`/`sfdx` command with an org flag, `sf api request` other than a plain GET, `torque deploy/data/org/recover`, `jsc` write verbs, Salesforce MCP tools that are not clearly reads | allowed once, by consuming a matching approval |
-| Browser changes | clicks, typing and scripts in browser MCP servers; `torque browser`/`qa` with an org | allowed inside a granted browser window |
-| Programs the gate cannot check | `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | the host asks the consultant when the session's permission mode is `default`, `acceptEdits` or `plan` (or the host sends none); refused in any other mode (`bypassPermissions`, `auto`, `dontAsk`, or one this version does not know) |
-| Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, desktop control (computer use) | refused |
-| Out of scope | another client's folder or `--client`, an org not in the consent, an `sf` call without an explicit org | refused |
+| Browser changes | clicks, typing and scripts in browser MCP servers; `torque browser`/`qa` with an org | allowed inside a granted browser window for the org the browser is in (see below) |
+| Programs the gate cannot check | `python x.py`, `node`, `bash script.sh`, `sh -c '...'`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | the host asks the consultant when the session's permission mode is `default`, `acceptEdits` or `plan` (or the host sends none) |
+| Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
+| Out of scope | another client's folder or `--client`, `torque client list`, an org not in the consent (whatever the route), an `sf` call without an explicit org | refused |
+| Prompts skipped | any org write, browser change or unchecked program while the session's permission mode is not `default`, `acceptEdits` or `plan` (`bypassPermissions`, `auto`, `dontAsk`, or a mode this version does not know) | refused, even with an approval, which stays unused |
 
 A session that was not started with `torque launch` has no client binding: every org,
 client and browser route is refused.
@@ -33,9 +34,12 @@ client and browser route is refused.
 The workspace owner runs every step, in their own terminal (not through the AI session).
 Steps marked "present" check that a person is at a real terminal outside the session.
 
+Each "present" step also prints a six-character code the owner types back.
+
 1. Set the mode (present):
    `torque workspace ai-access connected --approval required --path W`
-   (tier 2: add `--verify owner-uid --approver-uid UID`, see below). This also copies the
+   (tier 2: add `--verify owner-uid --approver-uid UID`, see below; not available on
+   Windows). This also copies the
    rule file `production-approval.md` into `W/.claude/rules/`; leaving connected mode
    removes it.
 2. Write the host permission rules (present):
@@ -45,20 +49,26 @@ Steps marked "present" check that a person is at a real terminal outside the ses
    adds no `allow` rule and removes allow rules for those routes. `--write` omitted prints
    the rules.
 3. Wire the gate hook exactly as for build-only mode ([hook setup](ai-access.md#wiring-the-claude-code-hook)):
-   the `-I` command, matcher `".*"`, `"timeout": 600`.
+   the fail-closed `-I` command, matcher `".*"`, `"timeout": 600`.
 4. Record the client's written agreement (present):
    `torque client consent record --workspace W --client Acme --agreed-on 2026-09-30 --evidence agreement.pdf --data metadata --data records --org acme-sbx --org acme-prod --suspend-contact "Named person"`.
    Torque keeps a copy of the agreement with its hash and resolves each org live, recording
-   its 18-character ID and whether it is production.
+   its 18-character ID, whether it is production, and its My Domain address (browser
+   windows are bound to it; re-record a consent made before 2.0.0a15's review fixes).
 5. Record the second reviewer's sign-off (present):
    `torque client consent sign-off --workspace W --client Acme --reviewer "Reviewer name"`.
    Until then the consent is pending and the gate refuses org access for the client.
    `torque client consent suspend` stops connected work for the client at once.
-6. Check readiness: `torque doctor --workspace W --client Acme --live`. It checks the hook,
-   the permission rules, the approval tier, the consent, that each approved alias still
-   resolves to its recorded org ID, and runs five synthetic calls through the hook (an org
-   write, an unbound read, a script, an approval grant and a browser click), expecting deny,
-   deny, ask, deny and deny. It exits 3 when anything is not ready.
+6. Check readiness: `torque doctor --workspace W --client Acme --live`. It checks the hook
+   (fail-closed form, `-I`, matcher, timeout), the effective permission rules across the
+   user, project and local settings files, the approval tier, the consent, that each
+   approved alias still resolves to its recorded org ID, and runs synthetic calls through the
+   hook: five unbound (an org write, a read, a script, an approval grant and a browser
+   click: deny, deny, ask, deny, deny) and, with `--client`, seven bound to that client (a
+   read of an approved org: allow; an unapproved write, an org outside the consent, the
+   default org and another client: deny; a script: ask; a script with prompts skipped:
+   deny). The hook only decides; nothing it allows is run. It exits 3 when anything is not
+   ready.
 7. Start the session (present): `torque launch --workspace W --client Acme [-- claude options]`.
    It binds the session to the client (`TORQUE_CLIENT`, which the hook inherits and the
    session cannot change) and starts `claude` in the workspace. Use one session per client.
@@ -85,33 +95,59 @@ torque approval grant req-8a1b2c3d4e5f --workspace W --client Acme
 
 The grant re-derives everything from the request's command (the request file is not
 trusted), shows the client, the org alias with its live 18-character ID and kind, the
-exact command, the working folder, the components, the check-only job, the before-state
-and its capture time, managed-package namespaces the command names, and a digest of the
-files it deploys. The consultant types back a six-character code. The approval is valid for
+exact command, the working folder, the components, the check-only job with its result read
+live (`sf project deploy report`), the before-state with how and when it was captured and
+from which org, managed-package namespaces the command names, and a digest of the files it
+deploys. With `--audit-trail FILE` (Setup Audit Trail rows from `sf data query --json`), it
+warns about any Setup change to a listed component after the capture. The consultant types back a six-character code. The approval is valid for
 15 minutes. The session then runs exactly the printed command, from the same folder. The
 gate matches it, checks the approval's signature or owner, recomputes the file digest,
 claims the approval once, logs `approval_consume` with the hook's `session_id` and
 `tool_use_id`, and lets it run. Running it again is refused ("approval already used").
 
 `torque approval log --workspace W --client Acme` lists every request, grant, denial and
-use for the reviewer's sample, with any later deploy observation on the same org.
+use for the reviewer's sample, with the deploy observations recorded later on the same org:
+an observation whose job ID is the approval's validated job is marked linked, any other is
+listed as unlinked.
 
-What an approval binds: the exact command text; the org alias and the org ID resolved at
-grant, which the client's consent must still record for that alias when it is used; the
-client; the change, whose record must still load when it is used; the working folder; the files the command deploys or loads
-(the named files and folders, the manifest, and the project files matching each named
-component; up to 2,000 files or 20 MB, above which the request is refused); a 15-minute
-window (30 for a browser window) with 60 seconds of clock skew; single use. The gate
-decides every other part of a call first and uses the approval only when the whole call is
-allowed, so a call refused for another reason leaves its approval unused.
+What an approval binds: the exact command text (`command_sha256`); the org alias and the
+org ID resolved at grant, which the client's consent must still record for that alias, with
+the consent still active and signed off, when it is used; the client; the change, whose
+record must still load when it is used; the working folder; and the files the command
+deploys or loads. Those are every file and folder any payload flag names (every value of a
+multi-value flag, legacy `sfdx` spellings and comma lists included), the data files a
+`sf data import tree` plan names, the manifest, the project files matching each named
+component, and for an MCP call every file or folder its input names. A named file that does
+not exist, or a link, is refused rather than hashed. A 15-minute window (30 for a browser
+window) with 60 seconds of clock skew; single use. The gate decides every other part of a
+call first and uses the approval only when the whole call is allowed, so a call refused for
+another reason leaves its approval unused.
+
+Above 2,000 files or 20 MB the gate cannot check the files in its time budget. A raw `sf`
+command that large is refused at request; the same deploy through `torque deploy` (or
+`data`, `org`) is accepted, and its wrapper checks the full file digest itself before it
+runs, with no time limit.
+
+Every use is recorded before it is allowed: if the `approval_consume` event or the activity
+log line cannot be written, the call is refused and the approval stays unused. Check-only
+calls and browser actions that cannot be logged are refused too. Events carry the command,
+`command_sha256`, the file digest, the org alias, ID and kind, the approver, the
+before-state or recovery path, the validated job, the window and the hook's `session_id` and
+`tool_use_id`. A manual recovery path is also recorded as a `decision` event.
 
 The grant screen shows every non-printable character (control, escape and bidirectional
 formatting characters) as an escape such as `\x1b`, so what it shows is what will run.
 
 For Torque's own routes (`torque deploy`, `data`, `org`, `recover`), the wrapper checks
-again when it runs: it needs an approval the gate consumed for this exact command in the
-last two minutes, and refuses when the alias now resolves to another org ID than the one
-approved. A revert started by `torque recover` passes its approval to the wrapper it runs.
+again when it runs. It finds connected mode itself (the selected workspace's
+`workspace.json`, or a connected workspace at or above the working folder), and refuses
+when that file cannot be read. It needs an approval the gate consumed for this exact command
+in the last two minutes, verifies that approval again (signature or owner, window, consent,
+change), and refuses when the alias now resolves to another org ID than the one approved.
+If the wrapper cannot resolve the org at all, nothing runs and the approval is returned so
+the same command can be run again inside its window (at most three times, each logged). A
+revert started by `torque recover` names the one wrapper command it starts; that command,
+and only once, runs under the parent's approval.
 Scripts that write call `torque approval require --workspace W --client C --org A -- <command>`
 first (exit 0 uses a matching approval, exit 3 refuses).
 
@@ -122,23 +158,38 @@ path before a grant, for every kind of approval. A browser window cannot have a
 before-state (its actions are not known in advance), so a production browser window needs
 `--manual-recovery`. For a command or MCP call, any of:
 
-- `--before-state DIR`: an earlier retrieve or record export, copied into the change's
-  evidence with a hash per file;
-- `--capture-before-metadata Type:Name` or `--capture-before-record Object:Id`: read now,
-  as its own recorded step (a record capture needs the `records` data class);
+- `--before-state PATH`: an earlier retrieve (a folder) or a record export (a JSON or CSV
+  file), copied into the change's evidence with a hash per file. Its org is not verified,
+  and the grant screen says so;
+- `--capture-before --metadata Type:Name` or `--capture-before --record Object:Id`
+  (also `--capture-before-metadata` / `--capture-before-record`): read now, as its own
+  recorded step, after the org is checked live against the consent; the capture records the
+  org ID it read from (a record capture needs the `records` data class);
 - `--manual-recovery TEXT`: at least 40 characters.
 
-Each component the command names must appear in the before-state, or be declared new at
-grant (`--new-component Type:Name`). A before-state file changed after capture blocks the
+The grant checks a before-state against what the write changes: the components a deploy
+names (`--metadata`, a manifest, or every file under `--source-dir`), or the record a
+single-record update or delete names. Each must have its content in the before-state (the
+source file itself, not only its `-meta.xml`), or be declared new at grant
+(`--new-component Type:Name`). A write whose changes Torque cannot list (anonymous Apex,
+bulk loads, a deploy with no selector) needs a manual recovery path instead. A before-state
+captured from another org, captured after the request, or changed since capture blocks the
 grant. The snapshot a Torque wrapper takes inside the approved write never counts.
 
 ## Browser windows
 
 `torque approval request --browser --minutes 20 --purpose "Add Tier to the Case layout" --org acme-sbx ...`
-asks for a window of up to 30 minutes. Once granted, browser actions (clicks, typing,
-scripts, form input) are allowed for the bound client until it ends; reading and navigating
-pages is always allowed. Clicks cannot be listed in advance, so the window is per client and
-time, not per action. In a production org the request needs `--manual-recovery TEXT`.
+asks for a window of up to 30 minutes for one org. Clicks cannot be listed in advance, so
+the window is per org and time, not per action. In a production org the request needs
+`--manual-recovery TEXT`.
+
+The gate learns which org the browser is in from the browser tools' own navigation: a URL
+in a browser tool's input is matched against the My Domain address the consent recorded for
+each approved org (production, sandbox, developer and Visualforce hosts). Navigating to a
+Salesforce org that is not in the consent is refused; other sites are fine. A browser change
+(click, typing, script, form input) is allowed only when this session's last navigation was
+to an org with a granted window. Selecting or switching tabs forgets the org until the next
+navigation, and a change with no known org is refused.
 
 ## Two approval tiers
 
@@ -152,14 +203,17 @@ time, not per action. In a production org the request needs `--manual-recovery T
 - **Tier 2, `owner-uid` (recommended for stage 2).** The consultant grants from a separate
   OS account (the approver). The gate accepts an approval only when its file is owned by that
   account's uid and not writable by others, which the session's account cannot create. No
-  key is involved. Setup: create the approver account; set the mode with
+  key is involved. The gate also requires `approvals/granted/` to be owned by the approver
+  and writable only by it, and refuses an `approver_uid` that is the session's own account.
+  Tier 2 is not available on Windows (no numeric account IDs); use tier 1 there. Setup:
+  create the approver account; set the mode with
   `--verify owner-uid --approver-uid $(id -u APPROVER)`; install Torque and authenticate the
   Salesforce CLI to the client's orgs in the approver account (the grant resolves orgs
-  itself); give the approver read access to the workspace and write access to
-  `clients/<slug>/approvals/granted/`. On macOS use an inherited ACL, for example
-  `chmod -R +a "APPROVER allow list,search,readattr,readextattr,readsecurity,read,file_inherit,directory_inherit" W`
-  and `chmod +a "APPROVER allow add_file,write,file_inherit" W/clients/acme/approvals/granted`.
-  On Linux use the equivalent `setfacl` entries. The grant is recorded in the change when the
+  itself); give the approver read access to the workspace; and make each client's
+  `approvals/granted/` folder the approver's (`sudo chown APPROVER W/clients/acme/approvals/granted`
+  then `sudo chmod 755` on it). On macOS read access can be an inherited ACL, for example
+  `chmod -R +a "APPROVER allow list,search,readattr,readextattr,readsecurity,read,file_inherit,directory_inherit" W`;
+  on Linux use the equivalent `setfacl` entries. The grant is recorded in the change when the
   approval is used, if the approver cannot write the change record.
 
 ## What it stops
@@ -172,19 +226,28 @@ With the hook in force, on recognized routes:
   stops naming the org ID it was granted for;
 - the session granting its own approval through recognized routes (refused by the gate and
   the permission rules; the grant also needs a real terminal outside the session and a typed code);
-- a write to an org outside the bound client's consent, and reads of another client's folder;
+- a write to an org outside the bound client's consent (whatever route names it), reads of
+  another client's folder, and listing every client (`torque client list`);
+- a browser change in an org without a window for that org, and navigation to a Salesforce
+  org outside the consent;
+- reads of record data or debug logs the consent does not cover, in every recognized form;
 - org access for a client without active, signed-off consent;
 - a production approval of any kind (browser windows included) without an independent
   before-state or a written recovery path;
-- edits to the mode, consent and approval files, the approval key, and the Salesforce CLI's
-  credential, alias and configuration folders and installation;
+- edits to the mode, consent and approval files and reads of the approval key, and the
+  Salesforce CLI's credential, alias and configuration folders and installation. The consent,
+  consent-evidence and approval records of a Torque workspace, and the approval key, are
+  guarded from recognized tools in every mode where the hook runs, `full` included;
+- an approval used with its files changed, and a use that cannot be recorded;
 - changing an alias or the default org with `sf alias set` or `sf config set`;
-- running programs the gate cannot check without the consultant's prompt (refused in every
-  permission mode except `default`, `acceptEdits` and `plan`; doctor checks that bypass mode is
-  disabled). A hook event with no permission mode is treated as prompting, so it asks;
+- org writes, browser changes and programs the gate cannot check while the consultant's
+  prompts are skipped (refused in every permission mode except `default`, `acceptEdits` and
+  `plan`; doctor checks that bypass mode is disabled). A hook event with no permission mode is
+  treated as prompting, so it asks;
 - an `sf` read without an explicit org flag (it would read the default org, which no consent
   names);
-- an alias remapped to another org between grant and a Torque-route run (wrapper check).
+- an alias remapped to another org between grant and a Torque-route run (wrapper check),
+  and a Torque-route run whose connected state cannot be read.
 
 ## What it cannot stop
 
@@ -199,8 +262,9 @@ With the hook in force, on recognized routes:
 - Commands built at run time, programs that run commands through their own options (`tar
   --to-command`, `rsync -e`, `zip -TT`, GNU `sed`'s `e`), and every route
   [build-only mode](ai-access.md#what-it-cannot-stop) lists as unparsed.
-- Actions inside a granted browser window (per window, not per click), and actions a URL
-  triggers during read-only navigation.
+- Actions inside a granted browser window (per window, not per click), actions a URL
+  triggers during read-only navigation, and a click that follows a link from the window's org
+  to another org (the gate sees only navigation made through the browser tools).
 - An alias remapped before a raw `sf` write (doctor `--live` detects it at readiness time).
 - Two tool calls running at the same time: a file edited while an approved deploy starts.
 - The hook not running (missing, disabled, timed out, or a host without hooks).

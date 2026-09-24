@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2469 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2522 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 294 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 347 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -75,9 +75,30 @@ still asks, which the doctor probe and hosts that send no mode rely on); the gat
 approval only after the rest of the call is allowed. The connected-mode page now states
 exactly these rules.
 
+**R2, independent spec-conformance review** (run by the owner's controller on 1e6c8db)
+reported 18 defects (2 critical, 14 important, 2 minor) and rated 36 of 74 requirement rows
+partly met or not met. Its tests are in `tests/test_connected_r2.py`, written failing
+first (50 of 52 failed). The fixes: the file binding follows every payload flag value,
+legacy spellings, tree-import plans and MCP file inputs, and refuses missing files and
+links; a browser window is bound to the org the browser tools last navigated to; record and
+log reads need their class in every recognized form; consent needs a dated sign-off by the
+right client at every use; client listing and out-of-consent orgs on any route are refused;
+skipped prompts refuse writes and browser changes; `sh -c` asks; before-state coverage is
+content-level, covers source folders and checks the capture's org and order; wrappers find
+connected mode themselves, fail closed and verify the approval again; a wrapper that cannot
+resolve the org returns the approval; audit records are mandatory; large payloads use the
+wrapper route; the grant reads the check-only result and compares an attached audit trail;
+typed codes on every owner step; tier 2 is enforced as a separate account and refused on
+Windows; the permission rules and doctor checks are wider. Where the report was not
+followed in full, the private report records why.
+
+Two exceptions to "unchanged" are deliberate and documented in [build-only
+mode](ai-access.md): consent, approval and key files are refused wherever the hook runs,
+`full` mode included, and three alpha 14 record tests were generalized for the new version.
+
 Pending, and run by the owner's controller rather than in this build:
-- **R2, independent security re-review** of the full alpha 15 diff by a different model
-  family, against the "What it stops" list in [connected mode](connected-approval.md).
+- **Re-review of the R2 fixes** by the reviewers, against the "What it stops" list in
+  [connected mode](connected-approval.md).
 - **Live rehearsal** in a disposable Developer Edition org with synthetic data under a
   synthetic client: launch; read; unapproved write denied; request with a captured
   before-state; grant from a separate terminal (tier 2 if a second OS account is available);

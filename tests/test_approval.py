@@ -275,7 +275,8 @@ def test_owner_uid_tier(setup):
     ok, why = use(root, req, config=other)
     assert not ok and "owner" in why
     same = {**CONFIG, "approval_verify": "owner-uid", "approver_uid": os.getuid()}
-    assert use(root, req, config=same)[0]
+    ok, why = use(root, req, config=same)
+    assert not ok and "separate" in why
 
 
 @posix_only
@@ -307,13 +308,14 @@ def test_browser_window(setup):
 
 
 def test_mcp_call(setup):
-    root, cid, _, _ = setup
+    root, cid, _, project = setup
     tool, args = "mcp__salesforce__deploy_metadata", {"usernameOrAlias": "acme-sbx", "sourceDir": "force-app"}
-    req = approval.create_request(root, "Acme", cid, "acme-sbx", mcp=(tool, args), resolve=ORGS.get)
+    req = approval.create_request(root, "Acme", cid, "acme-sbx", mcp=(tool, args), resolve=ORGS.get, cwd=project)
     grant(root, req)
     assert not approval.consume(root, "Acme", approval.call_key_for_mcp(tool, {**args, "x": 1}), "acme-sbx",
-                                config=CONFIG)[0]
-    assert approval.consume(root, "Acme", approval.call_key_for_mcp(tool, args), "acme-sbx", config=CONFIG)[0]
+                                config=CONFIG, cwd=project)[0]
+    assert approval.consume(root, "Acme", approval.call_key_for_mcp(tool, args), "acme-sbx", config=CONFIG,
+                            cwd=project)[0]
 
 
 def test_wrapper_lookup(setup):
@@ -345,8 +347,11 @@ def test_approved_parent_for_revert_children(setup):
     assert use(root, req, org="acme-sbx")[0]
     assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx") is None
     assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx")
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx")["id"] == item["id"]
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-prod") is None
-    assert approval.approved_parent(root, "Acme", "../../x", "acme-sbx") is None
+    child = ("jsc", ["deploy", "-o", "acme-sbx"])
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child) is None
+    approval.authorize_child(root, "Acme", item["id"], child[1])
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-prod", child) is None
+    assert approval.approved_parent(root, "Acme", "../../x", "acme-sbx", child) is None
     import time
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", now=time.time() + 3600) is None
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child, now=time.time() + 3600) is None
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child)["id"] == item["id"]

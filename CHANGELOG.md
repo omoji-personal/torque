@@ -45,6 +45,24 @@ default (`full`) and build-only behavior are unchanged.
   call is allowed; an `sf` read without an org flag (`sf org display`) is refused; a
   production browser window needs a written recovery path; the grant screen escapes
   non-printable characters.
+- After the R2 review: the file binding covers every payload flag value (legacy spellings and
+  comma lists included), a tree-import plan's data files and an MCP call's files, and refuses
+  missing files and links; a browser window is bound to the org the browser navigated to;
+  record and log reads in legacy, REST and MCP form need their consent class; consent needs a
+  dated sign-off by the right client for every use, scripts included; `torque client list`
+  and any route naming an org outside the consent are refused; skipped prompts refuse writes
+  and browser changes too, and `sh -c` asks; a before-state is checked for content-level
+  coverage (source folders included), the org it was captured from and its order, and a
+  capture checks the org first; Torque-route wrappers find connected mode themselves, refuse
+  an unreadable configuration and verify the approval again; an approval is returned after
+  the wrapper could not resolve the org; recording each use is mandatory; large payloads go
+  through the wrapper route; the grant screen reads the check-only result and can compare a
+  Setup Audit Trail export; every owner step asks for a typed code; tier 2 requires a
+  separate account and an approver-owned folder and is refused on Windows; the permission
+  rules cover interpreter families, `torque ai-regression` and the platform's key path, and
+  flag overlapping wildcard allows; doctor reads the user, project and local settings,
+  requires the fail-closed hook and runs bound probes; consent, approval and key files are
+  guarded in every mode where the hook runs.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).

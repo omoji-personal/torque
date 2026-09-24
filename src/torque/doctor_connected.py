@@ -42,7 +42,8 @@ def _hook_probe(root: Path, commands: list[str]):
     from .cli import _hook_shell
 
     def probe(event: dict) -> tuple[int | None, str]:
-        env = {**os.environ, "TORQUE_CLIENT": PROBE_CLIENT}
+        event = dict(event)
+        env = {**os.environ, "TORQUE_CLIENT": event.pop("_torque_client", PROBE_CLIENT)}
         env.pop("CLAUDE_PROJECT_DIR", None)
         worst = (0, "")
         for command in commands:
@@ -65,10 +66,15 @@ def _hook_probe(root: Path, commands: list[str]):
 
 
 def _settings(root: Path) -> dict:
+    """The effective permissions across the user, project and local settings files:
+    lists are combined; for a single value the local file wins over the project file,
+    which wins over the user file (managed settings, if any, are outside this check)."""
     merged: dict = {"permissions": {}}
-    for name in ("settings.json", "settings.local.json"):
+    layers = [Path.home() / ".claude" / "settings.json", root / ".claude" / "settings.json",
+              root / ".claude" / "settings.local.json"]
+    for path in layers:
         try:
-            data = json.loads((root / ".claude" / name).read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         perms = data.get("permissions") if isinstance(data, dict) else None
@@ -77,7 +83,7 @@ def _settings(root: Path) -> dict:
         for key, value in perms.items():
             if isinstance(value, list):
                 merged["permissions"][key] = [*merged["permissions"].get(key, []), *value]
-            elif key not in merged["permissions"] or name == "settings.json":
+            else:
                 merged["permissions"][key] = value
     return merged
 
@@ -116,6 +122,9 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
     if not hook["configured"]:
         problems.append("no torque.gate hook is wired in .claude/settings.json; add it as docs/ai-access.md shows")
     else:
+        if not hook["fail_closed_shim"]:
+            problems.append("the torque.gate hook is not the fail-closed form (it would let calls through if "
+                            "Torque failed to load); use: " + hook["recommended_command"])
         if not hook["isolated"]:
             problems.append("the torque.gate hook runs Python without -I; use: " + hook["recommended_command"])
         if not hook["matcher_covers_tools"]:
@@ -162,12 +171,33 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
                                     f"{org['org_id_18']}")
     probes = []
     runner = probe or (_hook_probe(root, hook["commands"]) if hook["commands"] else None)
-    for route, tool, tool_input, expected in PROBES:
+    cases = [(route, tool, tool_input, expected, None) for route, tool, tool_input, expected in PROBES]
+    if client and client_view is not None and not consent.consent_problems(consent.load_consent(root, client)):
+        # Bound probes, as a session launched for this client would see them. None reaches an org:
+        # the hook decides and exits; nothing it allows is run.
+        slug = ws.slug_for(client)
+        alias = consent.load_consent(root, client)["approved_orgs"][0]["alias"]
+        cases += [
+            ("bound_read", "Bash", {"command": f"sf org display -o {alias}"}, "allow", slug),
+            ("bound_write_unapproved", "Bash",
+             {"command": f"sf project deploy start -m Flow:Doctor_Probe -o {alias}"}, "deny", slug),
+            ("bound_org_outside_consent", "Bash", {"command": "sf org display -o doctor-probe-other"}, "deny", slug),
+            ("bound_default_org", "Bash", {"command": "sf org display"}, "deny", slug),
+            ("bound_other_client", "Bash", {"command": "torque context --workspace . --client doctor-probe-other"},
+             "deny", slug),
+            ("bound_unverifiable", "Bash", {"command": "python3 doctor_probe.py"}, "ask", slug),
+            ("bound_skipped_prompts", "Bash", {"command": "python3 doctor_probe.py"}, "deny", slug),
+        ]
+    for route, tool, tool_input, expected, bound in cases:
         event = {"hook_event_name": "PreToolUse", "cwd": str(root), "session_id": "doctor-probe",
-                 "tool_use_id": f"doctor-{route}", "permission_mode": "default", "tool_name": tool,
-                 "tool_input": tool_input}
+                 "tool_use_id": f"doctor-{route}",
+                 "permission_mode": "bypassPermissions" if route == "bound_skipped_prompts" else "default",
+                 "tool_name": tool, "tool_input": tool_input}
+        if bound:
+            event["_torque_client"] = bound
         got = _outcome(*runner(event)) if runner else "not run"
-        probes.append({"route": route, "event": event, "expected": expected, "got": got})
+        event.pop("_torque_client", None)
+        probes.append({"route": route, "event": event, "expected": expected, "got": got, "bound": bound})
         if got != expected:
             problems.append(f"probe {route}: expected {expected}, got {got}")
     return {"ready": not problems, "problems": problems, "advice": advice, "probes": probes,

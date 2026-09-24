@@ -36,6 +36,12 @@ def register(sub) -> None:
     before.add_argument("--capture-before-record", action="append", metavar="OBJECT:ID",
                         help="read this record now as the before-state (repeatable)")
     before.add_argument("--manual-recovery", help="a written recovery path (at least 40 characters)")
+    before.add_argument("--capture-before", action="store_true",
+                        help="capture the before-state now from --metadata TYPE:NAME or --record OBJECT:ID")
+    request.add_argument("--metadata", action="append", default=[], metavar="TYPE:NAME",
+                         help="with --capture-before: a component to retrieve (repeatable)")
+    request.add_argument("--record", action="append", default=[], metavar="OBJECT:ID",
+                         help="with --capture-before: a record to read (repeatable)")
     request.add_argument("--validated-job", help="ID of the check-only deploy that validated this change")
     request.add_argument("--browser", action="store_true", help="request a browser window instead of a command")
     request.add_argument("--minutes", type=int, default=30, help="browser window length (1 to 30)")
@@ -48,6 +54,8 @@ def register(sub) -> None:
     _client_args(grant)
     grant.add_argument("--new-component", action="append", default=[], metavar="TYPE:NAME",
                        help="a component the deploy creates, so no before-state can hold it")
+    grant.add_argument("--audit-trail", metavar="FILE",
+                       help="Setup Audit Trail rows (sf data query --json output) to compare with the before-state")
     deny = actions.add_parser("deny", help="consultant only, at a real terminal")
     deny.add_argument("request_id")
     _client_args(deny)
@@ -111,11 +119,16 @@ def _print(value) -> None:
 def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None) -> int:
     """Bind a new AI session to one client: the hook process inherits TORQUE_CLIENT
     from this environment, and nothing the session runs can change it."""
+    injected = presence is not None
     if presence is None:
         from .presence import operator_present as presence
     check = presence()
     if not check.ok:
         raise ws.WorkspaceError(f"launch a connected session yourself, at a real terminal: {check.reason}")
+    if not injected:
+        from .presence import confirm_code
+        if not confirm_code():
+            raise ws.WorkspaceError("the confirmation code did not match; nothing was started")
     from . import consent, gate
     root, config = ws.load_workspace(workspace)
     if gate._resolve_ai_access(config.get("ai_access"), config.get("approval")) != "connected":
@@ -134,17 +147,25 @@ def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None)
 def _request(p, tail) -> int:
     from . import approval, before_state, consent
     item = approval._usable_consent(p.workspace, p.client)
-    if consent.approved_org(item, p.org) is None:
-        raise ws.WorkspaceError(f"org {p.org!r} is not in this client's consent")
-    if p.capture_before_record and "records" not in consent.data_allowed(item):
+    metadata = list(p.capture_before_metadata or []) + (list(p.metadata) if p.capture_before else [])
+    records = list(p.capture_before_record or []) + (list(p.record) if p.capture_before else [])
+    if (p.metadata or p.record) and not p.capture_before:
+        raise ws.WorkspaceError("--metadata and --record go with --capture-before")
+    if p.capture_before and not (metadata or records):
+        raise ws.WorkspaceError("--capture-before needs --metadata TYPE:NAME or --record OBJECT:ID")
+    if metadata and records:
+        raise ws.WorkspaceError("capture metadata or records for one request, not both")
+    if records and "records" not in consent.data_allowed(item):
         raise ws.WorkspaceError("this client's consent does not cover record data; use --manual-recovery")
+    # The org is checked live against the consent before anything is read from it.
+    org_id, _ = approval._org_identity(item, p.org, None)
     before = None
     if p.before_state:
         before = before_state.import_before_state(p.workspace, p.client, p.change, Path(p.before_state))
-    elif p.capture_before_metadata:
-        before = before_state.capture_metadata(p.workspace, p.client, p.change, p.org, p.capture_before_metadata)
-    elif p.capture_before_record:
-        before = before_state.capture_records(p.workspace, p.client, p.change, p.org, p.capture_before_record)
+    elif metadata:
+        before = before_state.capture_metadata(p.workspace, p.client, p.change, p.org, metadata, org_id_18=org_id)
+    elif records:
+        before = before_state.capture_records(p.workspace, p.client, p.change, p.org, records, org_id_18=org_id)
     mcp = None
     if p.mcp:
         try:
@@ -175,7 +196,8 @@ def _request(p, tail) -> int:
 
 def _grant(p) -> int:
     from . import approval
-    record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component)
+    record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component,
+                            report=approval.live_deploy_report, audit_trail=p.audit_trail)
     print(f"Granted {record['id']}, valid until {record['expires_at']}.")
     if record["kind"] == "browser":
         print(f"Browser changes in {record['org_alias']} are allowed until then.")

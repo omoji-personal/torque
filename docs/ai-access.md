@@ -13,6 +13,14 @@ guard on recognized tool calls, not a sandbox. It has three values:
 This page describes build-only mode; connected mode keeps every build-only check that is not
 about org access and applies the client-folder checks to other clients' folders.
 
+Two changes in 2.0.0a15 reach beyond connected mode, wherever the gate hook is wired. A
+shell command or a file write that names a client's `consent.json`, `consent-evidence/` or
+`approvals/`, or the approval key (`~/.config/torque/approval.key`), is refused in every
+mode: in build-only mode also outside the governing workspace, and in `full` mode for a
+Torque workspace's records (a record changed while the gate is otherwise off would be
+trusted when the owner turns connected mode on). Everything else `full` mode allows is
+unchanged.
+
 ## Current limits, stated plainly
 
 - **No org allowlist in build-only.** Build-only blocks every Salesforce org, including a

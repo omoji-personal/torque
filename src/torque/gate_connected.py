@@ -12,10 +12,13 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import time
+import urllib.parse
 
 from . import approval, consent, gate, workspace as ws
-from .connected_routes import Route, classify, is_simple
+from .connected_routes import BROWSER_SERVER, Route, classify, is_simple
 
 RANK = {"allow": 0, "ask": 1, "deny": 2}
 PREFIX = "Connected mode: "
@@ -79,7 +82,7 @@ def _protected_roots(env) -> tuple[list[Path], list[Path]]:
     the same name as an approved one could be placed."""
     home = Path(os.path.realpath(str(env.get("HOME") or Path.home())))
     named = [home / ".sf", home / ".sfdx", home / ".local" / "share" / "sf", home / ".config" / "sf",
-             home / ".cache" / "sf"]
+             home / ".cache" / "sf", Path(os.path.realpath(str(approval.key_path())))]
     executable = shutil.which("sf", path=env.get("PATH"))
     if executable:
         real = Path(os.path.realpath(executable))
@@ -100,7 +103,8 @@ def _protected_reason(tool_name: str, tool_input: dict, cwd: Path, env) -> str:
         if isinstance(raw, str) and raw:
             target = gate._resolve(cwd, raw)
             if any(gate._is_within(target, root) for root in named):
-                return "the Salesforce CLI's credentials, aliases, configuration and installation stay out of it"
+                return ("the approval key and the Salesforce CLI's credentials, aliases, configuration and "
+                        "installation stay out of it")
             if tool_name in FILE_WRITE_TOOLS and any(gate._is_within(target, root) for root in writable):
                 return ("writing into a folder on PATH could replace a program an approved command runs; "
                         "the consultant installs programs")
@@ -116,9 +120,75 @@ def _protected_reason(tool_name: str, tool_input: dict, cwd: Path, env) -> str:
     return ""
 
 
+# My Domain host suffixes, with the kind of org they belong to.
+_SF_SUFFIXES = tuple((f".{kind}.{rest}" if kind != "prod" else f".{rest}", kind)
+                     for kind in ("sandbox", "develop", "scratch", "prod")
+                     for rest in ("my.salesforce.com", "lightning.force.com", "my.salesforce-setup.com",
+                                  "vf.force.com", "my.site.com", "file.force.com"))
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+BROWSER_STATE = "browser-state.json"
+
+
+def org_key(url: str) -> tuple[str, str] | None:
+    """(My Domain name, org kind) for a Salesforce org URL or host; None for any
+    other host (including Salesforce sites that are not an org, such as login)."""
+    host = (urllib.parse.urlsplit(url).hostname if "://" in url else url.split("/")[0]) or ""
+    host = host.casefold().rstrip(".")
+    for suffix, kind in _SF_SUFFIXES:
+        if host.endswith(suffix) and len(host) > len(suffix):
+            return host[:-len(suffix)], kind
+    return None
+
+
+def _same_org(found: tuple[str, str], approved: tuple[str, str]) -> bool:
+    """The host belongs to the approved org: same kind, same My Domain name, or that
+    name followed by a Visualforce or package suffix (`acme--c`)."""
+    return found[1] == approved[1] and (found[0] == approved[0] or found[0].startswith(approved[0] + "--"))
+
+
+def browser_org(item: dict | None, url: str) -> tuple[bool, str | None]:
+    """(is a Salesforce org URL, the approved alias it belongs to or None)."""
+    found = org_key(url)
+    if found is None:
+        return False, None
+    for org in consent._orgs(item):
+        approved = org_key(org.get("instance_url") or "")
+        if approved and _same_org(found, approved):
+            return True, org["alias"]
+    return True, None
+
+
+def _state_path(workspace: Path, bound: str) -> Path:
+    return approval._dirs(workspace, bound)["base"] / BROWSER_STATE
+
+
+def _browser_state(workspace: Path, bound: str, session_id) -> str | None:
+    try:
+        data = json.loads(_state_path(workspace, bound).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    entry = data.get(str(session_id)) if isinstance(data, dict) else None
+    return entry.get("org") if isinstance(entry, dict) else None
+
+
+def _set_browser_state(workspace: Path, bound: str, session_id, org: str | None) -> None:
+    path = _state_path(workspace, bound)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data = data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        data = {}
+    data[str(session_id)] = {"org": org, "at": approval._iso(time.time())}
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _route_client(route: Route) -> str | None:
     if route.client is None:
         return None
+    if route.client == "*":
+        return "*"
     try:
         return ws.slug_for(route.client)
     except ws.WorkspaceError:
@@ -150,19 +220,42 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                     "`torque launch --workspace W --client NAME`.")
     config = ws.load_workspace(workspace)[1]
     item = consent.load_consent(workspace, bound) if bound else None
-    problems = consent.consent_problems(item)
+    problems = consent.consent_problems(item, client=bound)
     allowed_data = consent.data_allowed(item)
     command = tool_input.get("command") if isinstance(tool_input.get("command"), str) else ""
     writes = [r for r in routes if r.kind == "org_write"]
     decisions: list[Decision] = []
     pending_write: Route | None = None
     after_allow: list = []
+    skipping = bool(permission_mode) and permission_mode not in PROMPT_MODES
+    browser_tool = tool_name.startswith("mcp__") and bool(BROWSER_SERVER.search(tool_name.split("__")[1]
+                                                                                 if tool_name.count("__") > 1 else ""))
+    if browser_tool:
+        urls = [u for v in gate._string_values(tool_input) for u in _URL_RE.findall(v)]
+        for url in urls:
+            is_org, alias = browser_org(item, url)
+            if is_org and (alias is None or not bound):
+                decisions.append(_deny(f"{url.split('?')[0]} is a Salesforce org that is not in "
+                                       f"{bound or 'a bound client'}'s consent."))
+        if bound and urls:
+            last = browser_org(item, urls[-1])[1]
+            after_allow.append(lambda org=last: _set_browser_state(workspace, bound, session_id, org))
+        elif bound and set(re.split(r"[^a-z]+", tool_name.split("__")[-1].casefold())) & {"select", "switch"}:
+            after_allow.append(lambda: _set_browser_state(workspace, bound, session_id, None))
     for route in routes:
         client = _route_client(route)
         if not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
             decisions.append(unbound)
         elif client not in (None, bound):
             decisions.append(_deny(f"this session is bound to {bound}; it cannot act for {route.client}."))
+        elif route.kind not in ("local", "admin") and route.org is not None and problems:
+            decisions.append(_deny(f"{bound}'s consent is not usable: " + "; ".join(problems) + "."))
+        elif route.kind not in ("local", "admin") and route.org is not None \
+                and consent.approved_org(item, route.org) is None:
+            decisions.append(_deny(f"org {route.org!r} is not in {bound}'s consent."))
+        elif skipping and route.kind in ("unverifiable", "org_write", "browser_write"):
+            decisions.append(_deny(f"`{route.detail}` needs the consultant, and this session skips prompts "
+                                   f"({permission_mode}). Use the default, acceptEdits or plan mode."))
         elif route.kind == "local":
             decisions.append(Decision("allow", ""))
         elif route.kind == "admin":
@@ -173,10 +266,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         elif route.kind == "unverifiable":
             text = (f"the gate cannot check what `{route.detail}` does. Read it (and any script it runs) "
                     "before allowing it; it must not write to an org without an approval.")
-            if permission_mode and permission_mode not in PROMPT_MODES:
-                decisions.append(_deny(text + f" Refused because this session skips prompts ({permission_mode})."))
-            else:
-                decisions.append(Decision("ask", PREFIX + text))
+            decisions.append(Decision("ask", PREFIX + text))
         elif problems:
             decisions.append(_deny(f"{bound}'s consent is not usable: " + "; ".join(problems) + "."))
         elif route.org is not None and consent.approved_org(item, route.org) is None:
@@ -193,15 +283,20 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                                            "session_id": session_id, "tool_use_id": tool_use_id}))
                 decisions.append(Decision("allow", ""))
         elif route.kind == "browser_write":
-            orgs = [route.org] if route.org else [o["alias"] for o in item.get("approved_orgs", [])]
-            window = next((w for w in (approval.find_browser_approval(workspace, bound, org, config=config)
-                                       for org in orgs) if w), None)
+            # The window must be for the org the browser is in: named by the route, or
+            # the org of this session's last navigation through the browser tools.
+            org = route.org or _browser_state(workspace, bound, session_id)
+            window = approval.find_browser_approval(workspace, bound, org, config=config) if org else None
             if window:
                 after_allow.append(lambda win=window: approval.note_browser_use(
                     workspace, bound, win, tool_name=tool_name, session_id=session_id, tool_use_id=tool_use_id))
                 decisions.append(Decision("allow", ""))
+            elif not org:
+                decisions.append(_deny("the gate does not know which org this browser tab is in. Navigate to the "
+                                       "org with the browser tool first (its URL names the org); a browser change "
+                                       "needs a window granted for that org."))
             else:
-                decisions.append(_deny("browser changes need a browser window: "
+                decisions.append(_deny(f"browser changes in {org} need a browser window for {org}: "
                                        "`torque approval request --browser --purpose TEXT ...`, "
                                        "then the consultant grants it. Reading pages is fine."))
         elif route.kind == "org_write":
@@ -227,6 +322,9 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         if not used:
             return _deny(f"{why}. Ask for it with `torque approval request ... -- <this exact command>`, "
                          "then stop until the consultant grants it.")
-    for record in after_allow:
-        record()
+    try:
+        for record in after_allow:
+            record()
+    except (OSError, ws.WorkspaceError) as exc:
+        return _deny(f"the action could not be recorded ({exc}); it was refused.")
     return worst

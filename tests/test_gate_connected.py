@@ -12,9 +12,9 @@ from torque import approval, before_state, changes, consent, gate, gate_connecte
 from torque import connected_routes as cr
 from torque.presence import Presence
 
-Org = namedtuple("Org", "org_id_18 detected_org_type is_production")
-ORGS = {"acme-prod": Org("00D000000000002AAA", "production", True),
-        "acme-sbx": Org("00D000000000001AAA", "sandbox", False)}
+Org = namedtuple("Org", "org_id_18 detected_org_type is_production instance_url", defaults=(None,))
+ORGS = {"acme-prod": Org("00D000000000002AAA", "production", True, "https://acme.my.salesforce.com"),
+        "acme-sbx": Org("00D000000000001AAA", "sandbox", False, "https://acme--sbx.sandbox.my.salesforce.com")}
 YES = lambda: Presence(True, "")
 WRITE = "sf project deploy start -m Flow:Case_Escalation -o acme-prod"
 
@@ -151,6 +151,9 @@ def test_browser_interaction_needs_window(w, tmp_path):
     req = approval.create_request(w, "Acme", cid, "acme-sbx", browser_minutes=10,
                                   purpose="Add the Tier field to the Case layout", resolve=ORGS.get)
     approval.grant(w, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(), resolve=ORGS.get)
+    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click"}).action == "deny"
+    assert run(w, "mcp__claude-in-chrome__navigate",
+               {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/home"}).action == "allow"
     assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click"}).action == "allow"
     assert run(w, "mcp__claude-in-chrome__form_input", {}).action == "allow"
     assert run(w, "mcp__computer-use__type", {"text": "x"}).action == "deny"

@@ -6,7 +6,9 @@ gate enforces its own checks as well (docs/connected-approval.md)."""
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import re
 
 from . import workspace as ws
 
@@ -18,14 +20,20 @@ SF_WRITE_PREFIXES = (
     "sfdx",
 )
 TORQUE_WRITE_PREFIXES = ("torque deploy", "torque data", "torque org", "torque recover", "torque revert",
-                         "torque browser", "torque qa", "torque probes", "jsc")
+                         "torque browser", "torque qa", "torque probes", "torque ai-regression", "jsc")
 INTERPRETERS = ("python", "python3", "py", "node", "deno", "bun", "ruby", "perl", "php", "bash", "sh", "zsh",
                 "pwsh", "osascript", "npx", "npm", "pnpm", "yarn", "make", "curl", "wget", "xargs", "eval",
                 "source", "claude")
+# Interpreter and runner families, any version or variant (python3.12, nodejs, pip3).
+INTERPRETER_FAMILIES = ("python", "py", "pypy", "node", "deno", "bun", "ruby", "perl", "php", "pwsh",
+                        "powershell", "pip", "pipx", "uv", "npx", "npm", "pnpm", "yarn", "make", "gmake",
+                        "bash", "zsh", "dash", "ksh", "fish", "osascript", "expect", "tmux", "screen", "script",
+                        "sudo", "ssh", "docker", "podman", "claude", "cci", "cumulusci")
 BROWSER_SERVERS = ("mcp__claude-in-chrome", "mcp__chrome-devtools", "mcp__playwright", "mcp__computer-use")
 ASK_RULES = tuple([f"Bash({p}:*)" for p in (*SF_WRITE_PREFIXES, *TORQUE_WRITE_PREFIXES, *INTERPRETERS)]
-                  + list(BROWSER_SERVERS))
-DENY_RULES = (
+                  + [f"Bash({family}*)" for family in INTERPRETER_FAMILIES]
+                  + ["Bash(sh *)", "Bash(env *)", "Bash(exec *)"] + list(BROWSER_SERVERS))
+FIXED_DENY_RULES = (
     "Bash(torque approval grant:*)", "Bash(torque approval deny:*)",
     "Bash(torque approval permissions *--write*)",
     "Bash(torque client consent record:*)", "Bash(torque client consent sign-off:*)",
@@ -38,42 +46,76 @@ DENY_RULES = (
     "Edit(~/.local/share/sf/**)", "Edit(~/.claude/settings*.json)",
 )
 BYPASS_KEY = "disableBypassPermissionsMode"
+SKIPPING_MODES = ("bypassPermissions", "auto", "dontAsk")
+
+
+def _absolute_rule_path(path: Path) -> str:
+    """A path in Claude Code's absolute rule form: //path, with Windows drives as //c/..."""
+    text = path.as_posix()
+    match = re.match(r"^([A-Za-z]):/(.*)$", text)
+    if match:
+        return f"//{match.group(1).lower()}/{match.group(2)}"
+    return "/" + text if text.startswith("/") else "//" + text
+
+
+def deny_rules() -> tuple[str, ...]:
+    """The fixed rules plus the approval key at its real location on this platform."""
+    from .approval import key_path
+    key = _absolute_rule_path(key_path())
+    return FIXED_DENY_RULES + (f"Read({key})", f"Edit({key})")
+
+
+DENY_RULES = FIXED_DENY_RULES
 
 
 def generate() -> dict:
     """The `permissions` object for WORKSPACE/.claude/settings.json. Adds no allow rule."""
-    return {"ask": list(ASK_RULES), "deny": list(DENY_RULES), BYPASS_KEY: "disable"}
+    return {"ask": list(ASK_RULES), "deny": list(dict.fromkeys(deny_rules())), BYPASS_KEY: "disable"}
 
 
-def _prefix(rule: str) -> tuple[str, str] | None:
-    """(tool, command prefix) of a Bash rule, without its wildcard."""
+def _body(rule: str) -> tuple[str, str] | None:
     if not rule.endswith(")") or "(" not in rule:
         return None
     tool, body = rule[:-1].split("(", 1)
-    for suffix in (":*", " *", "*"):
-        if body.endswith(suffix):
-            body = body[:-len(suffix)]
-            break
-    return tool, body.strip()
+    return tool, body
+
+
+def _pattern(body: str) -> re.Pattern:
+    """A rule body as a regular expression: `*` matches anything, and a final `:*`
+    means the prefix alone or followed by a space and anything."""
+    prefix_form = body.endswith(":*")
+    text = body[:-2] if prefix_form else body
+    regex = ".*".join(re.escape(part) for part in text.split("*"))
+    return re.compile(regex + ("( .*)?" if prefix_form else ""), re.DOTALL)
+
+
+def _samples(body: str) -> list[str]:
+    base = body[:-2] if body.endswith(":*") else body
+    base = base.replace("*", "")
+    return [base.strip(), base.strip() + " x", base + "3 x"]
 
 
 def _covered(rule: str) -> bool:
-    """True when an allow rule names a route the generated rules ask about or deny."""
-    if rule in ASK_RULES or rule in DENY_RULES:
+    """True when an allow rule could match a route the generated rules ask about or
+    deny. Wildcards are read conservatively: any overlap counts."""
+    if rule in ASK_RULES or rule in deny_rules():
         return True
-    if any(rule == server or rule.startswith(server + "__") for server in BROWSER_SERVERS):
+    if rule in ("Bash", "Bash(*)") or rule == "mcp__*":
         return True
-    mine = _prefix(rule)
+    if any(rule == server or rule.startswith(server + "__") or rule.startswith(server + "*")
+           for server in BROWSER_SERVERS):
+        return True
+    mine = _body(rule)
     if mine is None:
-        return rule in ("Bash", "Bash(*)")
+        return False
     tool, body = mine
-    if tool == "Bash" and body in ("", "*"):
-        return True
-    for generated in ASK_RULES + DENY_RULES:
-        theirs = _prefix(generated)
-        if theirs and theirs[0] == tool and "*" not in theirs[1] and (
-                body == theirs[1] or body.startswith(theirs[1] + " ") or theirs[1].startswith(body + " ")
-                or theirs[1] == body):
+    for generated in ASK_RULES + deny_rules():
+        theirs = _body(generated)
+        if not theirs or theirs[0] != tool:
+            continue
+        if any(_pattern(body).fullmatch(sample) for sample in _samples(theirs[1])):
+            return True
+        if any(_pattern(theirs[1]).fullmatch(sample) for sample in _samples(body)):
             return True
     return False
 
@@ -89,15 +131,15 @@ def merge(settings: dict, generated: dict) -> dict:
     allow = perms.get("allow") if isinstance(perms.get("allow"), list) else []
     perms["allow"] = [r for r in allow if not (isinstance(r, str) and _covered(r))]
     perms[BYPASS_KEY] = generated[BYPASS_KEY]
-    if perms.get("defaultMode") in ("bypassPermissions", "auto", "dontAsk"):
+    if perms.get("defaultMode") in SKIPPING_MODES:
         perms.pop("defaultMode")
     out["permissions"] = perms
     return out
 
 
 def drift(settings: dict, generated: dict) -> list[str]:
-    """Readiness problems: missing generated rules, allow rules for their routes
-    (the ask still wins, but the allow shows an intent to skip it), bypass mode."""
+    """Readiness problems: missing generated rules, allow rules that overlap their
+    routes (the ask still wins, but the allow shows an intent to skip it), bypass mode."""
     perms = settings.get("permissions") if isinstance(settings.get("permissions"), dict) else {}
     ask = perms.get("ask") if isinstance(perms.get("ask"), list) else []
     deny = perms.get("deny") if isinstance(perms.get("deny"), list) else []
@@ -108,7 +150,7 @@ def drift(settings: dict, generated: dict) -> list[str]:
                  if isinstance(r, str) and _covered(r)]
     if perms.get(BYPASS_KEY) != "disable":
         problems.append("bypass permissions mode is not disabled (permissions.disableBypassPermissionsMode)")
-    if perms.get("defaultMode") in ("bypassPermissions", "auto", "dontAsk"):
+    if perms.get("defaultMode") in SKIPPING_MODES:
         problems.append(f"defaultMode is {perms['defaultMode']}, which skips the consultant's prompts")
     return problems
 
@@ -118,13 +160,19 @@ def settings_path(workspace) -> Path:
     return ws._inside(root, root / ".claude" / "settings.json")
 
 
-def write_settings(workspace, presence=None) -> Path:
+def write_settings(workspace, presence=None, confirm=None) -> Path:
     """Merge the generated rules into WORKSPACE/.claude/settings.json (owner only)."""
+    injected = presence is not None
     if presence is None:
         from .presence import operator_present as presence
     check = presence()
     if not check.ok:
         raise ws.WorkspaceError(f"the owner writes permission rules at a real terminal: {check.reason}")
+    if confirm is not None or not injected:
+        if confirm is None:
+            from .presence import confirm_code as confirm
+        if not confirm():
+            raise ws.WorkspaceError("the confirmation code did not match; nothing was written")
     path = settings_path(workspace)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     current = ws._read_json(path) if path.exists() else {}

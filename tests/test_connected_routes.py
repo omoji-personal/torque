@@ -72,7 +72,7 @@ B = lambda cmd: K("Bash", {"command": cmd})
     ("pytest -q", [("unverifiable", None)]),
     ("npm run build", [("unverifiable", None)]),
     ("cci task run deploy --org prod", [("unverifiable", None)]),
-    ("bash -c 'sf apex run -f x -o acme-prod'", [("org_write", "acme-prod")]),
+    ("bash -c 'sf apex run -f x -o acme-prod'", [("unverifiable", None), ("org_write", "acme-prod")]),
     ("bash deploy.sh", [("unverifiable", None)]),
     ("echo 'sf apex run -o acme-prod' | bash", [("local", None), ("unverifiable", None)]),
     ("curl -X POST https://acme.my.salesforce.com/services/data", [("unverifiable", None)]),
