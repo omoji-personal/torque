@@ -16,6 +16,7 @@ import sys
 import subprocess
 
 from . import __version__
+from . import cli_approval
 from . import workspace as ws
 
 DELEGATES = {
@@ -98,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     clients = client_sub.add_parser("list")
     clients.add_argument("--workspace", required=True)
     clients.add_argument("--json", action="store_true")
+    cli_approval.register_consent(client_sub)
     context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
     _client_args(context)
     context.add_argument("--json", action="store_true")
@@ -156,6 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
     workflows.add_argument("name", nargs="?")
     workflows.add_argument("--json", action="store_true")
     workflows.add_argument("--workspace", help="prefer a selected workspace local recipe; otherwise show the packaged reference")
+    cli_approval.register(sub)
     for route in PUBLIC_ROUTES:
         sub.add_parser(route, add_help=False, help=f"{route} operations with selected-client evidence; use {route} --help")
     for route in DELEGATES:
@@ -795,8 +798,15 @@ def _recover_grammar():
         argparse.ArgumentParser._print_message = original
 
 
+# The words this process was invoked with, for a connected-mode wrapper to find
+# the approval the gate consumed for this exact command.
+INVOCATION: tuple[str, list[str]] | None = None
+
+
 def main(argv: list[str] | None = None) -> int:
+    global INVOCATION
     args = list(sys.argv[1:] if argv is None else argv)
+    INVOCATION = ("torque", list(args))
     try:
         if args and args[0] in PUBLIC_ROUTES:
             delegate, prefix = PUBLIC_ROUTES[args[0]]
@@ -813,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
             return _dispatch(delegate, [*prefix, *rest], display=display)
         if args and args[0] in DELEGATES:
             return _dispatch(args[0], args[1:])
+        args, tail = cli_approval.split_tail(args)
         parser = build_parser()
         parsed = parser.parse_args(args)
         if parsed.command is None:
@@ -847,7 +858,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Synthetic demo ready: {result['workspace']}")
                 print(f"Start here: {result['start_here']}")
                 print("No Salesforce org, browser, model or paid account was used.")
+        elif parsed.command in ("approval", "launch"):
+            return cli_approval.run(parsed, tail)
         elif parsed.command == "client":
+            if parsed.action == "consent":
+                return cli_approval.run_consent(parsed)
             if parsed.action == "add":
                 path = ws.add_client(parsed.workspace, parsed.name, parsed.org)
                 _print_json({"client_root": str(path), "org_calls": False}) if parsed.json else print(path)
