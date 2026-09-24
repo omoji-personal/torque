@@ -15,6 +15,7 @@ YES = lambda: Presence(True, "")
 def private_home(tmp_path, monkeypatch):
     # Doctor reads the user's own settings file; keep the real one out of these tests.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
 
 
 def make(tmp_path, settings, hook=True):

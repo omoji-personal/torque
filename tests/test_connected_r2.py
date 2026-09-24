@@ -474,6 +474,7 @@ def test_d12_doctor_reads_user_and_local_settings(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Path.home() on Windows
     from torque import doctor_connected as dc
     root = make_doctor_workspace(tmp_path)
     assert dc.report(root, None, probe=ok_probe)["ready"]

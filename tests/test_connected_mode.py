@@ -41,6 +41,7 @@ def test_set_connected_needs_approval_required(tmp_path):
     assert data["approval_verify"] == "hmac"
 
 
+@pytest.mark.skipif(not hasattr(__import__("os"), "getuid"), reason="tier 2 needs numeric uids (POSIX)")
 def test_set_connected_owner_uid_tier(tmp_path):
     root = ws.init_workspace(tmp_path / "w", "Example firm")
     with pytest.raises(ws.WorkspaceError, match="approver"):
