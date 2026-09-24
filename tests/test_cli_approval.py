@@ -39,7 +39,9 @@ def test_launch_refuses_outside_connected_mode(tmp_path):
 def test_launch_binds_client_in_environment(connected, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     for key in ("TORQUE_CLIENT", "TORQUE_WORKSPACE"):
-        monkeypatch.delenv(key, raising=False)
+        # setenv first so teardown restores the original state after launch() sets it.
+        monkeypatch.setenv(key, "placeholder")
+        monkeypatch.delenv(key)
     monkeypatch.setattr("torque.consent.load_consent", lambda w, c: {"status": "active", "reviewer": {"name": "R"},
                                                                      "data_allowed": ["metadata"],
                                                                      "approved_orgs": [{"alias": "a", "kind": "sandbox",
