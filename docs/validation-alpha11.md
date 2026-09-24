@@ -62,11 +62,21 @@ Claude Code does, and the Git Bash drive-path tests run.
 
 ## Review scope
 
-The first fixes were written against the consolidated round-1 findings. A security
-re-review and a second review round then tested them (see above), and this
-revision fixes the routes they reported. A scoped re-review of those fixes is the
-remaining step before merge. Until it is
-done, treat the list in [de-identified mode](ai-access.md) as the claim to check.
+The first fixes were written against the consolidated round-1 findings. Alpha 11
+then had a security review of that first candidate and two re-reviews of the fixes
+that followed (the second review round above, then a scoped re-review of that
+revision). The scoped re-review asked for one change: the gate blocked host tools a
+build session uses. That change (commit add6fa5: `SendMessage`, `EnterWorktree` and
+`ExitWorktree` allowed, `LSP` checked on its `filePath`) was merged with its own
+tests and then spot-checked.
+
+The spot-check found three gaps in that change: `EnterWorktree` could enter a folder
+outside `.claude/worktrees/`, and the worktree copies it creates could hold
+`clients/` files the gate did not guard; `LSP` operations such as `workspaceSymbol`
+answer from the language server's whole index, which covers `clients/`; and
+`SendMessage` can reach a peer session that is not gated. The gaps are fixed in
+alpha 12, the last by documenting it as a limit, as the spot-check recommended. See
+the [alpha 12 record](validation-alpha12.md).
 
 ## Known remaining limits
 

@@ -31,3 +31,13 @@ Keep the requirements, the proposed metadata and the accepted decisions distinct
 When scope is agreed, hand off to `/prep-changeset` and `/validate-change` rather
 than treating this recipe as a second implementation path. Save the requirements
 and open questions to the client session.
+
+## In build-only mode
+
+When the workspace's `ai_access` is `build-only`, the agent cannot reach an org or read
+`clients/`. It works only from material the consultant supplies with names, IDs and values
+removed, for example a redacted stakeholder note. Every step above that needs the live org, a
+record or the client session becomes an explicit hand-off: the agent says what the
+consultant should check, run or record, and marks each conclusion that depends on it as
+unconfirmed. Here, resolving the open questions with the stakeholder, checking existing
+metadata, and saving the requirements to the client session are hand-offs.

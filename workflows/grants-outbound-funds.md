@@ -43,3 +43,13 @@ Object and field names above match Outbound Funds Module as described in vendor
 documentation; verify the installed package version and exact API names in the
 client's org before deploying. Save the design and open questions to the client
 session.
+
+## In build-only mode
+
+When the workspace's `ai_access` is `build-only`, the agent cannot reach an org or read
+`clients/`. It works only from material the consultant supplies with names, IDs and values
+removed, for example the redacted object and field list from the installed package. Every step above that needs the live org, a
+record or the client session becomes an explicit hand-off: the agent says what the
+consultant should check, run or record, and marks each conclusion that depends on it as
+unconfirmed. Here, verifying the package version and API names, running the tests in an
+org, and saving the design to the client session are hand-offs.

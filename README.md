@@ -8,14 +8,16 @@ observations and a useful handoff. It continues JusticeserverClaude, which its
 author has used in daily consulting for about six months.
 
 Use your existing Salesforce tools and assistant. Torque requires no service
-account and installs no global command interception or approval-token system.
+account and installs no global command interception or approval-token system. The
+catalogue's `qa-token-*` entries only manage legacy QA skip records kept for compatibility;
+no workflow depends on them.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-**Status: 2.0.0a11, development alpha.** The local continuation has not been
+**Status: 2.0.0a12, development alpha.** The local continuation has not been
 published to a package index. Core workspace functions have offline acceptance
 coverage; bounded live operations and experimental capabilities have separate limits in
-[validation](docs/validation.md); the [alpha 11 record](docs/validation-alpha11.md) covers
+[validation](docs/validation.md); the [alpha 12 record](docs/validation-alpha12.md) covers
 this build. No industry-leadership claim is made.
 
 ## Try a complete example without an org
@@ -81,7 +83,7 @@ maintain it during work. There is no mandatory lifecycle or form to complete.
 
 A firm with an AI-use policy can set a workspace to build-only: a Claude Code hook then
 keeps the assistant away from client orgs and client context, best-effort and not a
-sandbox. See [de-identified mode](docs/ai-access.md) for what it does and does not cover.
+sandbox. See [build-only mode](docs/ai-access.md) for what it does and does not cover.
 
 Run `torque --help`, `torque workflows list`, or a route's `--help`. Stateful
 operations accept `--workspace PATH --client NAME` and retain their explicit org
