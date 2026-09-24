@@ -473,6 +473,125 @@ def test_r4_07_alpha12_record_has_no_status_and_log_rule():
     assert "only `git status` and `git log` pass" not in text
 
 
+# --- R4-06: patches and archive extraction outside project/ ---
+
+GOOD_PATCH = """diff --git a/src/a.py b/src/a.py
+--- a/src/a.py
++++ b/src/a.py
+@@ -1 +1 @@
+-x = 1
++x = 2
+"""
+BAD_PATCH = GOOD_PATCH.replace("a/src/a.py", "a/../workspace.json").replace("b/src/a.py", "b/../workspace.json")
+ABS_PATCH = GOOD_PATCH.replace("a/src/a.py", "/etc/x").replace("b/src/a.py", "/etc/x")
+
+
+@pytest.fixture
+def wsp(wsg):
+    """The git workspace with patches in project/: one confined, two that climb or are absolute."""
+    (wsg / "project" / "good.patch").write_text(GOOD_PATCH, encoding="utf-8")
+    (wsg / "project" / "bad.patch").write_text(BAD_PATCH, encoding="utf-8")
+    (wsg / "project" / "abs.patch").write_text(ABS_PATCH, encoding="utf-8")
+    return wsg
+
+
+APPLY_BLOCK = [
+    ("git apply /tmp/flip.patch", ""),
+    ("git apply --index project/good.patch", ""),
+    ("git apply project/good.patch", ""),
+    ("git am /tmp/flip.mbox", ""),
+    ("git am /tmp/flip.mbox", "project"),
+    ("git am --continue", "project"),
+    ("git -c core.quotepath=false am good.patch", "project"),
+    ("git apply bad.patch", "project"),
+    ("git apply abs.patch", "project"),
+    ("git apply --unsafe-paths good.patch", "project"),
+    ("git apply --directory=.. good.patch", "project"),
+    ("git apply --directory=/tmp good.patch", "project"),
+    ("git apply --directory=. project/good.patch", ""),
+    ("patch -p1 < project/good.patch", ""),
+    ("patch -p1 -i project/good.patch", ""),
+    ("patch -d .. -p1 < good.patch", "project"),
+    ("patch --directory=.. -p1 -i good.patch", "project"),
+    ("cat good.patch | patch -p1", "project"),
+    ("patch -p1 < bad.patch", "project"),
+    ("patch -p1 -i abs.patch", "project"),
+    ("patch -p1 <<'EOF'", "project"),
+    ("tar -xf a.tar", ""),
+    ("tar xf a.tar", ""),
+    ("tar -xzf a.tgz -C ..", "project"),
+    ("tar -C .. -xf a.tar", "project"),
+    ("tar --extract -f a.tar", ""),
+    ("bsdtar -xf a.tar", ""),
+    ("tar -xPf a.tar", "project"),
+    ("tar --absolute-names -xf a.tar", "project"),
+    ("tar -xf a.tar --transform=s,^,../,", "project"),
+    ("unzip a.zip", ""),
+    ("unzip a.zip -d ..", "project"),
+    ("unzip -d.. a.zip", "project"),
+    ("unzip -: a.zip", "project"),
+    ("ditto -x -k a.zip ..", "project"),
+]
+APPLY_ALLOW = [
+    ("git apply good.patch", "project"),
+    ("git apply --index good.patch", "project"),
+    ("git apply -R good.patch", "project"),
+    ("git apply --check project/good.patch", ""),
+    ("git apply --stat project/good.patch", ""),
+    ("git diff | git apply -R", "project"),
+    ("git apply --directory=project project/good.patch", ""),
+    ("git am --abort", ""),
+    ("git am --show-current-patch", "project"),
+    ("patch -p1 < good.patch", "project"),
+    ("patch -p1 -i good.patch", "project"),
+    ("patch --dry-run -p1 -i project/good.patch", ""),
+    ("tar -xf a.tar", "project"),
+    ("tar -xzf a.tgz -C src", "project"),
+    ("tar -xf a.tar -C project", ""),
+    ("tar -tf a.tar", ""),
+    ("tar -czf out.tgz project", ""),
+    ("unzip a.zip", "project"),
+    ("unzip a.zip -d project/out", ""),
+    ("unzip -l a.zip", ""),
+    ("ditto -x -k a.zip out", "project"),
+]
+
+
+@pytest.mark.parametrize("command,sub", APPLY_BLOCK)
+def test_r4_06_patch_and_extract_outside_project_blocked(wsp, command, sub):
+    assert _bash_blocked(command, wsp, wsp / sub if sub else wsp), (command, sub)
+
+
+@pytest.mark.parametrize("command,sub", APPLY_ALLOW)
+def test_r4_06_patch_and_extract_inside_project_allowed(wsp, command, sub):
+    assert _bash_allowed(command, wsp, wsp / sub if sub else wsp), (command, sub)
+
+
+def test_r4_06_git_am_allowed_when_project_is_its_own_repository(ws):
+    project = ws / "project"
+    _git(project, "init", "-q")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", "init")
+    (project / "good.patch").write_text(GOOD_PATCH, encoding="utf-8")
+    assert _bash_allowed("git am good.patch", ws, project)
+    assert _bash_blocked("git am good.patch", ws, ws)
+
+
+# --- R4-10 and Kimi R4-07: stale strings ---
+
+def test_r4_10_gate_docstring_names_the_final_rule():
+    import inspect
+    doc = inspect.getdoc(gate._git_stage_reason)
+    assert "status and log" not in doc and "git rm --cached" in doc
+
+
+@pytest.mark.parametrize("version", ["2.0.0a12", "2.0.0a13"])
+def test_kimi_r4_07_changelog_says_tagged_not_unpublished(version):
+    text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    heading = next(line for line in text.splitlines() if line.startswith(f"## {version} "))
+    assert "unpublished" not in heading and "not published to a package index" in heading, heading
+
+
 # --- Ordinary build session: nothing new blocks it ---
 
 ORDINARY_PROJECT = [
