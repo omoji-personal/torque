@@ -36,3 +36,13 @@ need a one-time backfill separate from the ongoing automation.
 Mark the batch-template assumption in step 2 as a proposal until confirmed against
 the client's actual configuration. Save the design and open questions to the client
 session.
+
+## In build-only mode
+
+When the workspace's `ai_access` is `build-only`, the agent cannot reach an org or read
+`clients/`. It works only from material the consultant supplies with names, IDs and values
+removed, for example the redacted batch template settings or payment field list. Every step above that needs the live org, a
+record or the client session becomes an explicit hand-off: the agent says what the
+consultant should check, run or record, and marks each conclusion that depends on it as
+unconfirmed. Here, confirming the batch template's behaviour, running the test plan in an
+org, and saving the design to the client session are hand-offs.

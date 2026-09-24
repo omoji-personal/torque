@@ -1,4 +1,4 @@
-# De-identified mode
+# Build-only mode
 
 `ai_access` is a workspace setting for a firm with an AI-use policy: it lets an AI session run in a
 Torque workspace while keeping it away from client orgs and client context. It is a best-effort
@@ -25,8 +25,9 @@ guard on recognized tool calls, not a sandbox. It has two values:
   CLI authorization, a token file, a browser session) is reachable by a script the session writes
   and runs. The guard does not inspect scripts. Run a build-only session in an account that holds
   no client-org authorizations.
-- **Nothing is de-identified.** The mode blocks paths and commands; it does not remove names, IDs
-  or values from text pasted into the session. Redact alerts and notes before pasting them.
+- **Nothing is redacted.** Build-only mode redacts nothing: it blocks paths and commands, and
+  removing client details (names, IDs, values) from text pasted into the session is the user's
+  job. Redact alerts and notes before pasting them.
 
 ## What build-only blocks
 
@@ -39,17 +40,22 @@ guard on recognized tool calls, not a sandbox. It has two values:
   convert uses `--manifest`/`--metadata`), `--version`, `--help`, `version`, `help`, `plugins`. `code-analyzer`'s `-o` and `-v`
   short flags read as org flags; use `--output-file` and `--view`.
 - Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
-  other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`.
+  other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`. The
+  `torque` command rejects abbreviated options, and the gate also blocks abbreviations of
+  `--client` (`--clie`), which an older install would accept.
 - Torque's other installed scripts (`jsc`, `jsc-qa`, `jsc-advisory`, `jsc-memory`,
   `jsc-loganalyzer`, `jsc-probes`, `jsc-browser-tests`, `meeting-processor`,
   `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):
   anything other than `--help`, `-h`, or `--version`.
 - MCP tools whose server or tool name indicates Salesforce access (a name containing `salesforce`,
   `sfdx`, `sf_`, `_sf`, `soql`, `sosl`, `sobject`, or `apex`, or a server or tool named `sf`), and
-  any MCP call with a string argument (at any depth, `file://` URIs included) that resolves into
+  any MCP call with a string argument (at any depth) that resolves into
   `clients/`, `workspace.json`, `.claude/`, or the installed Torque package. A tree-walking MCP
   tool (a name containing `tree`, `search`, `find`, `grep`, `glob`, or `walk`) rooted at or above
-  `clients/` is blocked too.
+  `clients/` is blocked too. A `file:` URI is parsed as a URI: `file:///p`, `file://localhost/p`
+  and `file:/p` all name `/p`, with `%` escapes decoded. An MCP tool that runs a command (a
+  `command`, `cmd` or `script` argument at any depth) gets the Bash scan below on that string
+  first, so a shell or process server cannot run what Bash may not.
 - Reading, writing, editing, or recursively searching into `clients/`, through: absolute,
   relative, `..`, `~`, `$HOME`, `$PWD` and symlinked paths, and on Windows Git Bash drive paths
   (`/c/...`, `/cygdrive/c/...`); paths relative to a `cd`, `pushd` or `popd` earlier in the same
@@ -65,14 +71,19 @@ guard on recognized tool calls, not a sandbox. It has two values:
   qualifiers (`c(l)ients`, `notes(.)`) and comma-less brace groups (`c{l..l}ients`), each read as
   a wildcard; `**` treated as a recursive search from its fixed prefix; `grep -r`, `rg`, `ag`,
   `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current directory; option values
-  such as `-g '*.md'` or `-A 2` are not mistaken for the pattern or a path); `git grep
+  such as `-g '*.md'`, `-A 2` or `-A2` are not mistaken for the pattern or a path, a pattern given
+  with `-e`, `-f`, `-eERROR`, `-rneERROR` or grep's `--regexp` and its abbreviations such as
+  `--reg=` is not mistaken for a path, and modes with no pattern, rg's `--files` and ack's `-f`, read
+  every word as a path); `git grep
   --untracked` or `--no-index`, `git diff --no-index` and `diff -r`, rooted at or above
-  `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar`, and
-  `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing `clients/`; and a
+  `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar` (following
+  its `-C DIR`, `-CDIR` and `--directory` changes in order, and blocking a directory known only at
+  run time), and `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing
+  `clients/`; and a
   `Grep`/`Glob` rooted at or above `clients/` or naming it.
 - Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
-  tool's shell, and a `PowerShell` tool (or any other tool with a `command` argument) gets the
-  same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
+  tool's shell, and a `PowerShell` tool (or any other tool with a `command`, `cmd` or `script`
+  argument) gets the same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
   for PowerShell syntax.
 - Tools the gate does not recognise. Besides Bash, the file tools (`Read`, `Edit`, `Write`,
   `MultiEdit`, `NotebookEdit`, `NotebookRead`, `LS`, `LSP`), `Grep`, `Glob`, MCP tools and command
@@ -86,7 +97,7 @@ guard on recognized tool calls, not a sandbox. It has two values:
   (`workspaceSymbol`, `findReferences`, `goToImplementation`, the call hierarchy, and any
   operation the gate does not know) answer from the language server's whole index, which is
   rooted at the workspace and covers `clients/`. The three allowed operations need a `filePath`;
-  a `file://` URI is read as its path (host dropped, `%` escapes decoded), and every string
+  a `file:` URI is read as its path (host dropped, `%` escapes decoded), and every string
   argument is checked like an MCP tool's, so none may name `clients/`, `.claude/` or the Torque
   installation.
 - `EnterWorktree` into anything but a worktree under `.claude/worktrees/`, or into a worktree's
@@ -169,7 +180,7 @@ the interpreter it runs under, as `ai_access.hook.recommended_command` in `--jso
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
+  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
 ```
 
 The hook reads the tool-call JSON on stdin and exits 0 to allow or 2 to block. Claude Code treats
@@ -234,6 +245,9 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   replaces Torque without naming it on the command line.
 - Copy or archive tools other than `tar`, `zip`, `cp`, `scp` and `rsync` with a recursive flag
   (for example `7z`, `ditto`, `robocopy`) run over the workspace.
+- An MCP tool that runs code from an argument other than `command`, `cmd` or `script` (for
+  example an `args` list or a `code` string). Only those three are scanned as commands; disable
+  shell and process MCP servers in a build-only workspace.
 - `SendMessage`. It passes unchecked. Within the session it reaches subagents and teammates whose
   own tool calls are gated, but a message to a peer session that is not gated can ask it to read
   `clients/` and reply. `ListAgents` is blocked, and the gate cannot tell a subagent from a peer.

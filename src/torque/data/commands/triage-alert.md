@@ -39,5 +39,16 @@ starting point, not the whole evidence; confirm the live version still matches i
 Report observed cause versus remaining hypotheses; do not describe a fix as verified
 before it has actually been retested. Save the outcome to the client session.
 
+## In build-only mode
+
+When the workspace's `ai_access` is `build-only`, the agent cannot reach an org or read
+`clients/`. It works only from material the consultant supplies with names, IDs and values
+removed, for example a redacted flow definition or the error text. Every step above that needs the live org, a
+record or the client session becomes an explicit hand-off: the agent says what the
+consultant should check, run or record, and marks each conclusion that depends on it as
+unconfirmed. Here, confirming the active version, reading the triggering record and its
+variable values, retesting, and saving the outcome to the client session are
+hand-offs; the client note stays a draft for the consultant.
+
 **Conversation input:** $ARGUMENTS
 Use supplied context and existing authorization. Ask only for consequential missing information. Keep work and evidence in the selected private client workspace.

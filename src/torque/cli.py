@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("path")
     upgrade.add_argument("--check", action="store_true", help="show available updates without writing")
     upgrade.add_argument("--json", action="store_true")
-    ai_access = work_sub.add_parser("ai-access", help="set the de-identified mode; the owner runs this, not an AI session")
+    ai_access = work_sub.add_parser("ai-access", help="set build-only mode; the owner runs this, not an AI session")
     ai_access.add_argument("mode", choices=ws.AI_ACCESS_MODES)
     ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
     ai_access.add_argument("--json", action="store_true")
@@ -472,7 +472,7 @@ def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, s
 
 
 def _gate_hook_report(root: Path) -> dict:
-    """Inspect the workspace's own Claude Code hook for de-identified mode and,
+    """Inspect the workspace's own Claude Code hook for build-only mode and,
     in build-only mode, run it once on a synthetic client-path Read to prove it
     blocks. Makes no org call and reads no client file."""
     from . import gate
@@ -637,7 +637,7 @@ def _doctor(args: argparse.Namespace) -> int:
                          "not tested" if ok else "HOOK NOT IN FORCE")
                 print(f"AI access: build-only ({state})")
             else:
-                print("AI access: full (de-identified mode off)")
+                print("AI access: full (build-only mode off)")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")

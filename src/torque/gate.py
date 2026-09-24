@@ -1,4 +1,4 @@
-"""De-identified mode: keep an AI session away from client orgs and client context.
+"""Build-only mode: keep an AI session away from client orgs and client context.
 
 This is a best-effort guard for an assistant following normal tool use. It scans
 recognized tool calls (a Claude Code PreToolUse hook) for shapes that would reach a
@@ -1177,7 +1177,7 @@ def _token_reason(tok: str, clients: Path, claude_dir: Path, workspace: Path, cw
         return "this command reaches client context"
     paths, _ = _token_paths(tok, cwd)
     if any(_in_interpreter(p, write) for p in paths):
-        return "this command targets the Python installation that runs the de-identified mode hook"
+        return "this command targets the Python installation that runs build-only mode hook"
     if write and any(_is_shadow_path(p, workspace) for p in paths):
         return ("this command writes a torque package, torque.py, a .pth file or a "
                 "sitecustomize/usercustomize module, which could replace the hook's gate")
@@ -1449,26 +1449,26 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
         for text in _command_strings(tool_input):
             reason = _scan_bash(text, clients, claude_dir, workspace, cwd)
             if reason:
-                return False, f"De-identified mode: {reason}. Run it yourself outside the AI session."
+                return False, f"Build-only mode: {reason}. Run it yourself outside the AI session."
     if tool_name.startswith("mcp__"):
         if _mcp_reaches_salesforce(tool_name):
-            return False, ("De-identified mode: this MCP tool looks like Salesforce org access. "
+            return False, ("Build-only mode: this MCP tool looks like Salesforce org access. "
                            "Disable Salesforce MCP servers in a build-only workspace.")
         reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, workspace, cwd)
         if reason:
-            return False, f"De-identified mode: {reason}."
+            return False, f"Build-only mode: {reason}."
         return True, ""
     if tool_name == "LSP":
         reason = _lsp_reason(tool_input, clients, claude_dir, workspace, cwd)
         if reason:
-            return False, f"De-identified mode: {reason}."
+            return False, f"Build-only mode: {reason}."
         return True, ""
     if tool_name == "EnterWorktree":
         # A worktree copy's own pass has nothing to add: entering is checked
         # against the workspace that holds .claude/worktrees/.
         reason = "" if copy else _enter_worktree_reason(tool_input, workspace, cwd)
         if reason:
-            return False, f"De-identified mode: {reason}."
+            return False, f"Build-only mode: {reason}."
         return True, ""
     command = tool_input.get("command")
     if tool_name not in SAFE_TOOLS and tool_name != "Bash" and not isinstance(command, str):
@@ -1482,7 +1482,7 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
             text = text.replace("\\", "/")
         reason = _scan_bash(text, clients, claude_dir, workspace, cwd)
         if reason:
-            return False, f"De-identified mode: {reason}. Run it yourself outside the AI session."
+            return False, f"Build-only mode: {reason}. Run it yourself outside the AI session."
         return True, ""
     if tool_name in ("Grep", "Glob"):
         raw_path = tool_input.get("path")
@@ -1491,12 +1491,12 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
             hint = NARROW_PATH_HINT if raw_path else (
                 f" With no path, {tool_name} searches the current directory, which contains clients/. "
                 "Pass a path, such as project/ or src/.")
-            return False, "De-identified mode: client context stays out of the AI session." + hint
+            return False, "Build-only mode: client context stays out of the AI session." + hint
         pattern = str(tool_input.get("pattern") or "")
         glob_field = str(tool_input.get("glob") or "")
         mentions_clients = "clients" in pattern.casefold() or "clients" in glob_field.casefold()
         if mentions_clients and _reaches(cwd, clients):
-            return False, "De-identified mode: client context stays out of the AI session." + NARROW_PATH_HINT
+            return False, "Build-only mode: client context stays out of the AI session." + NARROW_PATH_HINT
         return True, ""
     key = PATH_TOOLS.get(tool_name)
     if key:
@@ -1505,15 +1505,15 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
         target = _resolve(cwd, str(tool_input[key]))
         write = tool_name not in READ_TOOLS
         if _is_within(target, clients):
-            return False, "De-identified mode: client context stays out of the AI session."
+            return False, "Build-only mode: client context stays out of the AI session."
         if write and _targets_guarded_file(target.as_posix()):
-            return False, "De-identified mode: only the owner changes workspace.json or the hook configuration."
+            return False, "Build-only mode: only the owner changes workspace.json or the hook configuration."
         if write and (_is_within(target, _package_dir())
                       or _TORQUE_INSTALL_RE.search(target.as_posix())):
-            return False, ("De-identified mode: the installed Torque package enforces this mode; "
+            return False, ("Build-only mode: the installed Torque package enforces this mode; "
                            "only the owner changes it.")
         if write and (_in_interpreter(target, True) or _is_shadow_path(target, workspace)):
-            return False, ("De-identified mode: this file could replace the gate at the hook's "
+            return False, ("Build-only mode: this file could replace the gate at the hook's "
                            "Python startup (a torque package, torque.py, a .pth file, "
                            "sitecustomize/usercustomize, or the hook's Python installation); "
                            "only the owner changes it.")
@@ -1523,9 +1523,9 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
     if tool_name in MCP_LIKE_TOOLS:
         reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, workspace, cwd)
         if reason:
-            return False, f"De-identified mode: {reason}."
+            return False, f"Build-only mode: {reason}."
         return True, ""
-    return False, (f"De-identified mode: {tool_name or 'this tool'} is not a tool this mode recognises, "
+    return False, (f"Build-only mode: {tool_name or 'this tool'} is not a tool this mode recognises, "
                    "so it is blocked. Use Bash, Read, Edit, Write, Grep or Glob, or ask the workspace "
                    "owner to run it.")
 
@@ -1741,7 +1741,7 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
 # hook_command runs it with -I (isolated mode, Python 3.4+): the working
 # directory, PYTHONPATH and the user site directory stay off sys.path, so a
 # torque/ folder or sitecustomize.py planted in the workspace is never imported.
-HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate "
+HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate "
                   "could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',"
                   "file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())")
 
@@ -1824,7 +1824,7 @@ def main() -> int:
         # decide() only does real work in build-only mode (it returns immediately
         # otherwise), a failure here is only reachable when the mode could be
         # build-only, so this fails closed rather than letting the tool run.
-        print(f"De-identified mode: could not safely evaluate this call ({exc}); blocking to fail closed.",
+        print(f"Build-only mode: could not safely evaluate this call ({exc}); blocking to fail closed.",
               file=sys.stderr)
         return 2
     if not allowed:

@@ -1,9 +1,14 @@
 # Changelog
 
-## 2.0.0a12 - unpublished de-identified mode follow-up, 2026-09-23
+## 2.0.0a12 - unpublished build-only mode follow-up, 2026-09-23
 
-A spot-check of alpha 11's host-tool change and a review of git working-tree
-commands found routes around de-identified mode. This release closes them.
+A spot-check of alpha 11's host-tool change and a further review round found
+routes around the mode alpha 11 called de-identified mode. This release closes
+them and renames the mode.
+
+- The mode is now called build-only mode in the documentation, the CLI and the
+  gate's messages, matching its `build-only` setting. It redacts nothing; the
+  documentation says so. `ai_access` and its values are unchanged.
 
 - `EnterWorktree` may only enter a worktree under `.claude/worktrees/`, never its
   `clients/`. Creating a new worktree (`name`, or no arguments) is blocked when
@@ -20,12 +25,27 @@ commands found routes around de-identified mode. This release closes them.
   `--include-untracked` or `--all`, are blocked at or above `clients/`,
   `.claude/` or the hook's environment, as are `git stash show -u` and a stash's
   untracked parent (`stash^3`).
-- [De-identified mode](docs/ai-access.md) lists `SendMessage` to a peer session,
+- MCP tools that run a command (a `command`, `cmd` or `script` argument) get the
+  Bash scan, as do other tools with a `cmd` or `script` string.
+- Search parsing reads attached patterns (`-eERROR`, `grep -rneERROR`), grep's
+  `--regexp` abbreviations and modes without a pattern (`rg --files`, `ack -f`),
+  so a following `..` is read as a path. `tar` follows its `-C` and
+  `--directory` changes in order.
+- `file:` URIs are parsed as URIs, so `file://localhost/...` and `file:/...`
+  name the path they point to.
+- The `torque` command rejects abbreviated options, and the gate blocks
+  abbreviations of `torque doctor --client` (`--clie`).
+- The four playbooks the demo uses have an "In build-only mode" section: the
+  agent works from material the consultant supplies with names, IDs and values
+  removed, and every live-org, record or client-session step is a hand-off.
+- The README says the `qa-token-*` catalogue entries manage legacy QA skip
+  records only.
+- [Build-only mode](docs/ai-access.md) lists `SendMessage` to a peer session,
   what a language server returns, and the remaining git routes as limits.
 - The alpha 11 validation record's "Review scope" now records its security
   review, two re-reviews and the spot-check.
 
-1606 offline tests pass (154 subtests). See the
+1701 offline tests pass (154 subtests). See the
 [alpha 12 validation record](docs/validation-alpha12.md).
 
 ## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23
