@@ -373,8 +373,56 @@ def _change(args: argparse.Namespace) -> int:
     return 3 if action == "verify-deploy" and result.get("result") != "pass" else 0
 
 
-# The gate blocks tools it does not recognise, so the hook must see every tool call.
-_HOOK_FULL_MATCHERS = ("", "*", ".*")
+# The gate blocks tools it does not recognise, so the hook must see every tool
+# call. A matcher is a regular expression over the tool name ("" and "*" match
+# all); it covers the tools when it matches each of these, including a made-up
+# name standing for tools a host adds later.
+_HOOK_COVERAGE_PROBES = ("Bash", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "NotebookRead", "LS",
+                         "Grep", "Glob", "Monitor", "PowerShell", "WebFetch", "Task", "mcp__server__tool",
+                         "FutureTool")
+
+
+def _matcher_covers(matchers: list[str]) -> bool:
+    """True when the union of the hook entries' matchers matches every probe name."""
+    def matches(matcher: str, name: str) -> bool:
+        if matcher.strip() in ("", "*"):
+            return True
+        try:
+            return re.fullmatch(matcher, name) is not None
+        except re.error:
+            return False
+    return bool(matchers) and all(any(matches(m, name) for m in matchers) for name in _HOOK_COVERAGE_PROBES)
+
+
+def _hook_settings_layers(root: Path) -> list[Path]:
+    """Claude Code settings files that can switch the workspace's hooks off:
+    the workspace's own, the user's, and the managed (administrator) file."""
+    layers = [root / ".claude" / "settings.json", root / ".claude" / "settings.local.json",
+              Path.home() / ".claude" / "settings.json"]
+    if sys.platform == "darwin":
+        layers.append(Path("/Library/Application Support/ClaudeCode/managed-settings.json"))
+    elif os.name == "nt":
+        layers.append(Path(os.environ.get("ProgramData") or "C:/ProgramData") / "ClaudeCode" / "managed-settings.json")
+    else:
+        layers.append(Path("/etc/claude-code/managed-settings.json"))
+    return layers
+
+
+def _hooks_disabled_by(root: Path) -> list[str]:
+    found = []
+    layers = _hook_settings_layers(root)
+    for path in layers:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("disableAllHooks") is True:
+            found.append(f"{path} (disableAllHooks)")
+        if path == layers[-1] and data.get("allowManagedHooksOnly") is True:
+            found.append(f"{path} (allowManagedHooksOnly)")
+    return found
 # The interpreter path, then an option group containing I (isolated mode).
 _HOOK_ISOLATED_RE = re.compile(r'^\s*(?:"[^"]*"|\S+)\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*I[A-Za-z]*\s')
 
@@ -420,8 +468,10 @@ def _gate_hook_report(root: Path) -> dict:
     mode_root, mode, known = gate._workspace_mode(root)
     python = sys.executable.replace("\\", "/")
     hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False,
-                  "fail_closed_shim": False, "isolated": False, "verified": None, "probe_exit": None,
+                  "fail_closed_shim": False, "isolated": False, "disabled_by": [], "verified": None,
+                  "probe_exit": None,
                   "probe_error": "", "recommended_command": gate.hook_command(python)}
+    matchers: list[str] = []
     for name in ("settings.json", "settings.local.json"):
         path = root / ".claude" / name
         try:
@@ -439,8 +489,9 @@ def _gate_hook_report(root: Path) -> dict:
                 if "torque.gate" in command:
                     hook["commands"].append(command)
                     hook["configured"] = True
-                    if matcher.strip() in _HOOK_FULL_MATCHERS:
-                        hook["matcher_covers_tools"] = True
+                    matchers.append(matcher)
+    hook["matcher_covers_tools"] = _matcher_covers(matchers)
+    hook["disabled_by"] = _hooks_disabled_by(root)
     hook["fail_closed_shim"] = bool(hook["commands"]) and all("sys.excepthook" in c for c in hook["commands"])
     hook["isolated"] = bool(hook["commands"]) and all(_HOOK_ISOLATED_RE.match(c) for c in hook["commands"])
     if mode == "build-only":
@@ -526,6 +577,11 @@ def _doctor(args: argparse.Namespace) -> int:
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
+        if hook["disabled_by"]:
+            report["ready"] = False
+            report["next_actions"].append(
+                "Claude Code will not run this workspace's hook: " + "; ".join(hook["disabled_by"])
+                + ". Remove disableAllHooks (or allowManagedHooksOnly) so the torque.gate hook runs.")
         if hook["configured"] and not hook["matcher_covers_tools"]:
             report["ready"] = False
             report["next_actions"].append(
@@ -564,7 +620,10 @@ def _doctor(args: argparse.Namespace) -> int:
             print(f"Workspace: {report['workspace']['name']}")
             access = report["ai_access"]
             if access["mode"] == "build-only":
-                state = "hook verified" if access["hook"]["verified"] else "HOOK NOT IN FORCE"
+                h = access["hook"]
+                ok = h["verified"] and h["isolated"] and h["matcher_covers_tools"] and not h["disabled_by"]
+                state = ("hook command blocked a standalone probe; settings checked, host enforcement "
+                         "not tested" if ok else "HOOK NOT IN FORCE")
                 print(f"AI access: build-only ({state})")
             else:
                 print("AI access: full (de-identified mode off)")

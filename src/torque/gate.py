@@ -27,7 +27,12 @@ SF_LOCAL = {("project", "generate"), ("lightning", "generate"), ("apex", "genera
 # With no such flag the root is the current directory. The roots must not reach
 # clients/.
 SF_TREE_READERS = {("code-analyzer", "run"): {"--workspace", "-w", "--target", "-t"},
-                   ("code-analyzer", "rules"): {"--workspace", "-w", "--target", "-t"}}
+                   ("code-analyzer", "rules"): {"--workspace", "-w", "--target", "-t"},
+                   ("project", "convert"): {"--root-dir", "-r", "--rootdir", "--source-dir", "-p",
+                                            "--sourcepath", "--metadata-dir"}}
+# Flags that make a tree reader resolve components from the project's package
+# directories (under the current directory), so "." is read too.
+SF_PACKAGE_DIR_FLAGS = {("project", "convert"): {"--manifest", "-x", "--metadata", "-m"}}
 ORG_FLAGS = {"-o", "--target-org", "--from-org", "-u", "--targetusername",
              "--target-dev-hub", "-v"}
 TORQUE_ALLOWED = {"demo", "workflows", "doctor", "--version", "--help", "-h"}
@@ -121,7 +126,7 @@ _TORQUE_INSTALL_RE = re.compile(r"__editable__[^/\\]*torque|torque_salesforce[^/
 # MCP tool names that walk a directory tree from the path they are given.
 _MCP_RECURSIVE_MARKERS = ("tree", "search", "find", "grep", "glob", "walk", "recursive")
 _CD_HEADS = {"cd", "pushd", "popd"}
-_CD_PREFIXES = {"builtin", "command"}
+_CD_PREFIXES = {"builtin", "command", "time", "noglob", "nocorrect"}
 _MAX_CWDS = 32
 # Commands that write, create or replace files, for the checks that only apply
 # to a write (a planted torque package, the hook interpreter's binaries).
@@ -156,10 +161,12 @@ def _home_value() -> str:
     return home.replace("\\", "/") if os.name == "nt" else home
 
 
-def _native_path(raw: str, windows: bool | None = None) -> str:
+def _native_path(raw: str, windows: bool | None = None, drives: str | None = None) -> str:
     """On Windows, turn a Git Bash or Cygwin drive path (/c/Users/..., or
     /cygdrive/c/Users/...) into the C:/Users/... form the filesystem uses. Claude
-    Code runs Bash through Git Bash there, and `pwd` prints the MSYS form."""
+    Code runs Bash through Git Bash there, and `pwd` prints the MSYS form. Like
+    Git Bash, only a drive that exists is mapped (drives: the letters to treat as
+    existing, for tests); otherwise /w stays a rooted path on the current drive."""
     if windows is None:
         windows = os.name == "nt"
     if not windows:
@@ -167,7 +174,11 @@ def _native_path(raw: str, windows: bool | None = None) -> str:
     m = _MSYS_DRIVE_RE.match(raw)
     if not m:
         return raw
-    return f"{m.group(1).upper()}:" + (raw[m.end():] or "/")
+    letter = m.group(1).upper()
+    exists = letter in drives.upper() if drives is not None else os.path.isdir(f"{letter}:/")
+    if not exists:
+        return raw
+    return f"{letter}:" + (raw[m.end():] or "/")
 
 
 def _expand_home(raw: str) -> str:
@@ -323,15 +334,41 @@ def _is_shadow_path(target: Path, workspace: Path) -> bool:
 def _token_operand(tok: str) -> str:
     """The part of a raw Bash token that can name a file: the target of an
     attached redirection (<file, 2>file), the value of --flag=value, or the
-    value of a NAME=value assignment. A bare flag has none."""
+    value of a NAME=value assignment. A bare flag has none, except curl's
+    attached `-d@file`. A leading @ or < on a value (curl's `@file` and
+    `-F name=<file` forms) is dropped, since the rest is read as a file."""
     m = _REDIRECT_RE.match(tok)
     if m:
         return m.group("rest")
     if tok.startswith("-"):
-        return tok.split("=", 1)[1] if "=" in tok else ""
-    if _ASSIGN_RE.match(tok):
-        return tok.split("=", 1)[1]
-    return tok
+        if "=" in tok:
+            value = tok.split("=", 1)[1]
+        elif "@" in tok and not tok.startswith("--"):
+            value = tok.split("@", 1)[1]
+        else:
+            return ""
+    elif _ASSIGN_RE.match(tok):
+        value = tok.split("=", 1)[1]
+    else:
+        value = tok
+    return value[1:] if value[:1] in ("@", "<") and len(value) > 1 else value
+
+
+def _split_attached_redirections(toks: list[str]) -> list[str]:
+    """Split a redirection glued to the word before it (cat<file, x>>file) into
+    the word and the redirection, as the shell does. Quotes are already gone, so
+    a quoted < or > is split too, which only adds words to check."""
+    out: list[str] = []
+    for tok in toks:
+        if _REDIRECT_RE.match(tok) or "=" in tok.split("<", 1)[0].split(">", 1)[0]:
+            out.append(tok)
+            continue
+        m = re.search(r"(?:\d+|&)?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)", tok)
+        if m and m.start() > 0 and m.end() < len(tok):
+            out.extend([tok[:m.start()], tok[m.start():]])
+        else:
+            out.append(tok)
+    return out
 
 
 def _glob_fixed_prefix(pattern: str) -> str:
@@ -441,10 +478,75 @@ def _recursive_search_targets(head: str, rest: list[str]) -> list[str]:
     can tell from its usual grammar. grep/rg/ag/ack/fd take PATTERN [PATH...], so
     their first non-flag argument is the search pattern, not a path; find/tree/ls
     take PATH[...] directly, so every non-flag argument is a candidate path."""
-    non_flags = [t for t in rest if not t.startswith("-")]
-    if head in PATTERN_FIRST_HEADS and non_flags:
+    value_flags = _SEARCH_VALUE_FLAGS.get(head, set())
+    pattern_flags = _SEARCH_PATTERN_FLAGS.get(head, set())
+    root_flags = _SEARCH_ROOT_FLAGS.get(head, set())
+    non_flags: list[str] = []
+    roots: list[str] = []
+    explicit_pattern = False
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        name = tok.split("=", 1)[0]
+        if tok == "--":
+            non_flags.extend(rest[j + 1:])
+            break
+        if name in root_flags:
+            if "=" in tok:
+                roots.append(tok.split("=", 1)[1])
+            elif j + 1 < len(rest):
+                roots.append(rest[j + 1])
+                j += 1
+        elif name in pattern_flags:
+            explicit_pattern = True
+            j += 0 if "=" in tok else 1
+        elif name in value_flags:
+            j += 0 if "=" in tok else 1
+        elif tok.startswith("-") and len(tok) > 2 and not tok.startswith("--") and tok[-1] in "ef" \
+                and head in PATTERN_FIRST_HEADS:
+            # A short-option group ending in -e/-f (grep -rne PATTERN): the next word is the pattern.
+            explicit_pattern = True
+            j += 1
+        elif not tok.startswith("-"):
+            non_flags.append(tok)
+        j += 1
+    if head in PATTERN_FIRST_HEADS and non_flags and not explicit_pattern:
         non_flags = non_flags[1:]
-    return non_flags
+    return roots + non_flags
+
+
+# Options that take a value, per search tool, so the value is not read as the
+# pattern or a path. Pattern options (-e, -f) mean every other word is a path.
+_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "-m", "-d", "-D", "--after-context", "--before-context", "--context",
+                     "--max-count", "--directories", "--devices", "--include", "--exclude", "--exclude-dir",
+                     "--exclude-from", "--label", "--binary-files", "--color", "--colour", "--group-separator"}
+_SEARCH_VALUE_FLAGS = {
+    "grep": _GREP_VALUE_FLAGS, "egrep": _GREP_VALUE_FLAGS, "fgrep": _GREP_VALUE_FLAGS,
+    "rg": {"-A", "-B", "-C", "-m", "-g", "-t", "-T", "-E", "-M", "-d", "-j", "-r", "--after-context",
+           "--before-context", "--context", "--max-count", "--glob", "--iglob", "--type", "--type-not",
+           "--type-add", "--type-clear", "--encoding", "--max-columns", "--max-depth", "--maxdepth",
+           "--max-filesize", "--threads", "--replace", "--pre", "--pre-glob", "--sort", "--sortr",
+           "--colors", "--color", "--context-separator", "--field-match-separator",
+           "--field-context-separator", "--path-separator", "--ignore-file", "--dfa-size-limit",
+           "--regex-size-limit", "--engine", "--hostname-bin", "--hyperlink-format", "--generate"},
+    "ag": {"-A", "-B", "-C", "-m", "-G", "-g", "-p", "--after", "--before", "--context", "--max-count",
+           "--file-search-regex", "--ignore", "--ignore-dir", "--depth", "--pager", "--path-to-ignore",
+           "--workers", "--color-line-number", "--color-match", "--color-path"},
+    "ack": {"-A", "-B", "-C", "-m", "-g", "--after-context", "--before-context", "--context", "--max-count",
+            "--type", "--type-set", "--type-add", "--type-del", "--ignore-dir", "--noignore-dir",
+            "--ignore-file", "--output", "--pager", "--color-filename", "--color-match", "--color-lineno"},
+    "fd": {"-e", "-t", "-E", "-d", "-S", "-j", "-x", "-X", "-c", "-o", "--extension", "--type", "--exclude",
+           "--max-depth", "--min-depth", "--exact-depth", "--size", "--threads", "--exec", "--exec-batch",
+           "--color", "--owner", "--changed-within", "--changed-before", "--ignore-file", "--max-results",
+           "--path-separator", "--batch-size", "--format"},
+}
+_SEARCH_PATTERN_FLAGS = {
+    "grep": {"-e", "-f", "--regexp", "--file"}, "egrep": {"-e", "-f", "--regexp", "--file"},
+    "fgrep": {"-e", "-f", "--regexp", "--file"}, "rg": {"-e", "-f", "--regexp", "--file"},
+    "ack": {"--match"},
+}
+# Options naming a directory to search, as a root.
+_SEARCH_ROOT_FLAGS = {"fd": {"--search-path", "--base-directory"}}
 
 
 def _recursive_search_reaches(head: str, rest: list[str], clients: Path, cwd: Path) -> bool:
@@ -478,13 +580,16 @@ def _flag_values(args: list[str], flags: set[str]) -> list[str] | None:
 
 
 def _sf_tree_reader_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
-    """A local sf command that reads a directory tree (code-analyzer) must not
-    be rooted at or above clients/. Its root defaults to the current directory."""
+    """A local sf command that reads a directory tree (code-analyzer, project
+    convert) must not be rooted at or above clients/. Its root defaults to the
+    current directory."""
     head2 = tuple(t for t in rest[:2] if not t.startswith("-"))
     flags = SF_TREE_READERS.get(head2[:2])
     if flags is None:
         return False
     roots = _flag_values(rest, flags) or ["."]
+    if _flag_values(rest, SF_PACKAGE_DIR_FLAGS.get(head2[:2], set())) is not None:
+        roots.append(".")
     return any(_root_reaches(raw, clients, cwd) for raw in roots)
 
 
@@ -533,27 +638,32 @@ def _git_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
         return any(_root_reaches(raw, clients, base) for raw in paths)
     if not any(_reads_untracked(t) for t in args):
         return False
-    if "--" in args:
-        paths = list(args[args.index("--") + 1:])
+    # `--` ends the options. Without -e/-f, the pattern is the first word, before
+    # or (git grep -- PATTERN) just after it; every other word is a path.
+    pre, post = (args[:args.index("--")], args[args.index("--") + 1:]) if "--" in args else (args, [])
+    non_flags: list[str] = []
+    explicit_pattern = False
+    k = 0
+    while k < len(pre):
+        tok = pre[k]
+        if tok in _GIT_GREP_PATTERN_FLAGS:
+            explicit_pattern = True
+            k += 2
+            continue
+        if tok in _GIT_GREP_VALUE_FLAGS:
+            k += 2
+            continue
+        if tok.startswith(("--regexp=", "--file=")) or re.match(r"^-[ef].", tok):
+            explicit_pattern = True
+        elif not tok.startswith("-"):
+            non_flags.append(tok)
+        k += 1
+    if explicit_pattern:
+        paths = non_flags + post
+    elif non_flags:
+        paths = non_flags[1:] + post
     else:
-        non_flags: list[str] = []
-        explicit_pattern = False
-        k = 0
-        while k < len(args):
-            tok = args[k]
-            if tok in _GIT_GREP_PATTERN_FLAGS:
-                explicit_pattern = True
-                k += 2
-                continue
-            if tok in _GIT_GREP_VALUE_FLAGS:
-                k += 2
-                continue
-            if tok.startswith(("--regexp=", "--file=")) or re.match(r"^-[ef].", tok):
-                explicit_pattern = True
-            elif not tok.startswith("-"):
-                non_flags.append(tok)
-            k += 1
-        paths = non_flags if explicit_pattern else non_flags[1:]
+        paths = post[1:]
     return any(_root_reaches(raw, clients, base) for raw in (paths or ["."]))
 
 
@@ -639,7 +749,7 @@ def _segments(command: str):
         except ValueError:
             toks = part.split()
         if toks:
-            yield toks
+            yield _split_attached_redirections(toks)
 
 
 def _without_redirections(toks: list[str]) -> list[str]:
@@ -710,6 +820,25 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         elif _is_recursive_search(tok, rest):
             if _recursive_search_reaches(_basename(tok), rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
+    chdir = _env_chdir(toks)
+    if chdir is not None:
+        # env -C DIR / --chdir=DIR runs the rest of the command in DIR.
+        target, rest_toks = chdir
+        if not target or "$" in target or "`" in target:
+            bases = _widened_cwds([cwd], [cwd], workspace)
+        else:
+            bases = [cwd, *_next_cwds([cwd], target)]
+        for base in dict.fromkeys(bases):
+            reason = _block_command(rest_toks, clients, claude_dir, workspace, base)
+            if reason:
+                return reason
+        return ""
+    for tok in _removal_operands(words):
+        paths, _ = _token_paths(tok, cwd)
+        if paths:
+            if any(_holds_gate(p) for p in paths):
+                return ("this command would remove or replace the environment that holds the Torque gate "
+                        "or the hook's Python")
     writes = (any(_basename(t) in _WRITE_VERBS for t in words)
               or any(re.match(r"^(\d+|&)?>", t) for t in toks))
     head_index = toks.index(words[0]) if words else -1
@@ -721,6 +850,59 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                         "configuration or the Torque installation." + NARROW_PATH_HINT)
             return reason
     return ""
+
+
+def _env_chdir(toks: list[str]) -> tuple[str, list[str]] | None:
+    """For `env ... -C DIR` / `--chdir DIR` / `--chdir=DIR`, the directory and
+    the tokens with the option removed (DIR stays, as an ordinary word)."""
+    for i, tok in enumerate(toks):
+        if _basename(tok) != "env":
+            continue
+        j = i + 1
+        while j < len(toks) and (toks[j].startswith("-") or _ASSIGN_RE.match(toks[j])):
+            opt = toks[j]
+            if opt in ("-C", "--chdir"):
+                target = toks[j + 1] if j + 1 < len(toks) else ""
+                return target, toks[:j] + toks[j + 1:]
+            if opt.startswith("--chdir="):
+                return opt.split("=", 1)[1], toks[:j] + [opt.split("=", 1)[1]] + toks[j + 1:]
+            if opt.startswith("-C") and not opt.startswith("--"):
+                return opt[2:], toks[:j] + [opt[2:]] + toks[j + 1:]
+            j += 1
+    return None
+
+
+# Commands that delete, move away, lock or recreate what their arguments name.
+_REMOVE_VERBS = {"rm", "rmdir", "unlink", "shred", "truncate", "mv", "chmod", "chown", "virtualenv"}
+
+
+def _removal_operands(words: list[str]) -> list[str]:
+    """The words a removing command acts on (for mv, its sources): rm, rmdir,
+    unlink, shred, truncate, mv, chmod, chown, find -delete/-exec, and
+    recreating a virtual environment (python -m venv, virtualenv, uv venv)."""
+    for i, tok in enumerate(words):
+        name = _basename(tok)
+        args = [t for t in words[i + 1:] if not t.startswith("-")]
+        if name == "mv":
+            return args[:-1]
+        if name in _REMOVE_VERBS:
+            return args
+        if name == "find" and any(t in ("-delete", "-exec", "-execdir") for t in words[i + 1:]):
+            return args
+        if name == "uv" and "venv" in words[i + 1:]:
+            return args
+        if PY_LAUNCHER_RE.match(name):
+            module, after = _python_module(words[i + 1:])
+            if module in ("venv", "virtualenv"):
+                return [t for t in words[i + 1 + after:] if not t.startswith("-")]
+    return []
+
+
+def _holds_gate(path: Path) -> bool:
+    """True when path is the installed torque package, the hook interpreter's
+    site-packages, scripts folder or binary, or a folder containing any of them."""
+    always, writes = _interpreter_paths()
+    return any(_is_within(protected, path) for protected in (_package_dir(), *always, *writes))
 
 
 def _token_reason(tok: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path, write: bool) -> str:
@@ -772,7 +954,7 @@ def _segments_with_separators(command: str) -> list[tuple[list[str], str]]:
                 # string. Keep the words, without their stray quote marks.
                 toks = [t.strip("'\"") for t in text.split()]
                 toks = [t for t in toks if t]
-        out.append((toks, sep))
+        out.append((_split_attached_redirections(toks), sep))
     return out
 
 
@@ -1158,6 +1340,54 @@ def hook_command(python: str) -> str:
     return f'"{python}" -I -c "{HOOK_SHIM_CODE}"'
 
 
+def _touched_paths(tool_input: dict, cwd: Path) -> list[Path]:
+    """Paths a tool call names, resolved from cwd: every string argument as a
+    path, and every word of a string that looks like a command."""
+    out: list[Path] = []
+    for raw in itertools.islice(_string_values(tool_input), 64):
+        if not raw or "\x00" in raw or len(raw) > 20000:
+            continue
+        words = [raw[len("file://"):] if raw.casefold().startswith("file://") else raw]
+        if any(c in raw for c in " \t\n;&|<>"):
+            try:
+                expanded = _expand_braces(_decode_ansi_c(_expand_home_in_command(raw)))
+            except ValueError:
+                expanded = raw
+            words += [_token_operand(t) for toks, _ in _segments_with_separators(expanded) for t in toks]
+        for word in words[:512]:
+            if not word or "\n" in word or len(word) > 4096:
+                continue
+            try:
+                out.append(_resolve(cwd, word))
+            except (OSError, ValueError):
+                continue
+    return list(dict.fromkeys(out))
+
+
+def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
+    """Every build-only workspace that applies to a call: those at or above the
+    event's cwd, those at or above the session's project directory
+    (CLAUDE_PROJECT_DIR, which Claude Code sets for hooks, so leaving the
+    workspace with `cd ..` does not end the session's gating), and those at or
+    above any path the call names."""
+    starts = [cwd]
+    project = os.environ.get("CLAUDE_PROJECT_DIR")
+    if project:
+        starts.append(Path(os.path.realpath(project)))
+    starts += _touched_paths(tool_input, cwd)
+    gated: list[Path] = []
+    checked: set[str] = set()
+    for start in starts:
+        key = _cf(str(start))
+        if key in checked:
+            continue
+        checked.add(key)
+        for folder, mode, _ in _workspace_chain(start):
+            if mode == "build-only" and folder not in gated:
+                gated.append(folder)
+    return gated
+
+
 def main() -> int:
     try:
         event = json.loads(sys.stdin.read())
@@ -1166,12 +1396,12 @@ def main() -> int:
         if "tool_name" not in event:
             raise ValueError("hook input has no tool_name")
         cwd = Path(os.path.realpath(str(event.get("cwd") or ".")))
-        gated = [folder for folder, mode, _ in _workspace_chain(cwd) if mode == "build-only"]
         tool_input = event.get("tool_input")
         if tool_input is None:
             tool_input = {}
         if not isinstance(tool_input, dict):
             raise ValueError("tool_input must be an object")
+        gated = _gated_workspaces(cwd, tool_input)
         allowed, reason = True, ""
         # Every build-only workspace from cwd upward applies; the strictest wins.
         for root in gated:
