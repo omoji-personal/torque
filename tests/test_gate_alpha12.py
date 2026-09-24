@@ -613,3 +613,17 @@ def test_round3_docs_name_the_new_checks():
 def test_readme_explains_the_legacy_qa_token_entries():
     text = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
     assert "qa-token-" in text and "legacy" in text
+
+
+# --- CI finding: a recursive root at the filesystem root ---
+
+@pytest.mark.parametrize("command", ["grep -r secret /", "rg secret /", "tar -cf - -C / .", "find / -name notes.md",
+                                     "cd / && rg secret"])
+def test_filesystem_root_reaches_clients(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws / "project"), command
+
+
+def test_reaches_and_within_handle_a_root_path():
+    root = Path(os.path.abspath(os.sep))
+    assert gate._reaches(root, root / "w" / "clients")
+    assert gate._is_within(root / "w", root)
