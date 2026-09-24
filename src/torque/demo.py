@@ -210,12 +210,16 @@ interview log shows the Assignment element executing before Update Records.
 
 ## 7. What to tell the client
 
-Cause: the automation that stamps a payment's processed date was updating the
-record before it computed the date, specifically on payments created by the nightly
-batch import. Scope: 3 payments in the last 24 hours; check the full fault log for
-the true count before closing this out. Fix: reorder the flow. Past payments created
-during the faulted window still have no processed date and need a one-time review;
-the fix does not retroactively repair them.
+Draft, to send only after the likely cause is confirmed on the flow canvas. If the
+canvas shows something else, rewrite this note from what it shows.
+
+Likely cause, to confirm: the automation that stamps a payment's processed date
+appears to update the record before it computes the date, and only on payments
+created by the nightly batch import. Scope: 3 payments in the last 24 hours; check
+the full fault log for the true count before closing this out. Planned fix, once
+confirmed: reorder the flow. Past payments created during the faulted window still
+have no processed date and need a one-time review; the fix does not retroactively
+repair them.
 
 Proposed, not verified: the element-order explanation in steps 4 and 5. Confirming
 it requires opening the actual flow version 6 canvas, which this synthetic
