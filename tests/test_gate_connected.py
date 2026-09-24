@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+import shutil
+
 from torque import approval, before_state, changes, consent, gate, gate_connected as gc, workspace as ws
+from torque import connected_routes as cr
 from torque.presence import Presence
 
 Org = namedtuple("Org", "org_id_18 detected_org_type is_production")
@@ -214,3 +217,103 @@ def test_salesforce_cli_state_and_path_folders_are_protected(w, tmp_path):
     assert run(w, "Write", {"file_path": str(bin_dir / "sf"), "content": "#!/bin/sh"}, env=env).action == "deny"
     assert run(w, "Read", {"file_path": str(bin_dir / "sf")}, env=env).action == "allow"
     assert run(w, "Write", {"file_path": str(w / "project" / "notes.md"), "content": "x"}, env=env).action == "allow"
+
+
+# --- R1 review invariants (fix round 1) ---
+
+
+# Invariant 1: single use (control: must pass)
+def test_inv1_second_use_refused(w, tmp_path):
+    grant_write(w, tmp_path)
+    assert run(w, "Bash", {"command": WRITE}).action == "allow"
+    assert run(w, "Bash", {"command": WRITE}).action == "deny"
+
+
+# Invariant 2: the change record is part of the binding
+def test_inv2_change_record_gone_invalidates_approval(w, tmp_path):
+    cid = grant_write(w, tmp_path)
+    root = changes.get_change(w, "Acme", cid)["change_root"]
+    shutil.rmtree(root)
+    assert run(w, "Bash", {"command": WRITE}).action == "deny"
+
+
+# Invariant 2: the org ID bound at grant must still be the one the consent names
+def test_inv2_consent_org_id_changed_after_grant_invalidates(w, tmp_path):
+    grant_write(w, tmp_path)
+    moved = {**ORGS, "acme-prod": Org("00D000000000009AAA", "production", True)}
+    letter = tmp_path / "c.pdf"
+    letter.write_bytes(b"x")
+    consent.record_consent(w, "Acme", "2026-09-30", letter, ["metadata", "records"], ["acme-prod", "acme-sbx"],
+                           ["C"], presence=YES, resolve=moved.get)
+    consent.sign_off(w, "Acme", "Reviewer", presence=YES)
+    assert run(w, "Bash", {"command": WRITE}).action == "deny"
+
+
+# Invariant 4: an org read on the default org still needs usable consent
+def test_inv4_default_org_display_needs_consent(w):
+    consent.suspend(w, "Acme", presence=YES)
+    assert run(w, "Bash", {"command": "sf org display"}).action != "allow"
+
+
+# Invariant 6: a production browser window is a production write
+def test_inv6_production_browser_window_needs_before_state_or_recovery(w):
+    cid = changes.create_change(w, "Acme", "Layout", "Tier on Case", [], "acme-prod")["id"]
+    req = approval.create_request(w, "Acme", cid, "acme-prod", browser_minutes=10,
+                                  purpose="Add the Tier field to the Case layout", resolve=ORGS.get)
+    with pytest.raises(Exception):
+        approval.grant(w, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(),
+                       resolve=ORGS.get)
+
+
+# Invariant 7: the grant screen shows the command as it will run, with no terminal control bytes
+def test_inv7_grant_screen_escapes_control_characters(w):
+    cid = changes.create_change(w, "Acme", "Data", "Fix name", [], "acme-sbx")["id"]
+    argv = ["sf", "data", "update", "record", "-s", "Account", "-i", "001000000000001",
+            "-v", "Name=A\x1b[2K\rName=B", "-o", "acme-sbx"]
+    req = approval.create_request(w, "Acme", cid, "acme-sbx", argv=argv, resolve=ORGS.get, cwd=w)
+    out = io.StringIO()
+    approval.grant(w, "Acme", req["id"], presence=YES, confirm=lambda: True, out=out, resolve=ORGS.get)
+    screen = out.getvalue()
+    assert not any(ord(c) < 32 and c != "\n" for c in screen), repr(screen)
+
+
+# Invariant 8: an unknown permission mode is not treated as one that prompts
+def test_inv8_unknown_permission_mode_fails_closed(w):
+    assert run(w, "Bash", {"command": "python3 tools/fix.py"}, mode="someFutureMode").action == "deny"
+
+
+# Note: approval consumed before the other routes of the same call are decided.
+def test_note_granted_call_has_exactly_one_route():
+    # Grant requires exactly one route, and classification is deterministic, so a call
+    # matching an approval cannot carry a second, denying route today.
+    assert len(cr.classify("Bash", {"command": WRITE})) == 1
+
+
+def test_note_approval_not_burned_when_call_is_denied(w, tmp_path, monkeypatch):
+    grant_write(w, tmp_path)
+    real = gc.classify
+    monkeypatch.setattr(gc, "classify", lambda n, i: [*real(n, i), cr.Route("admin", None, "x")])
+    assert run(w, "Bash", {"command": WRITE}).action == "deny"
+    monkeypatch.setattr(gc, "classify", real)
+    assert run(w, "Bash", {"command": WRITE}).action == "allow"
+
+
+def test_missing_permission_mode_still_asks_and_known_prompt_modes_ask(w):
+    for mode in (None, "default", "acceptEdits", "plan"):
+        assert run(w, "Bash", {"command": "python3 tools/fix.py"}, mode=mode).action == "ask", mode
+    assert run(w, "Bash", {"command": "python3 tools/fix.py"}, mode="").action == "ask"
+
+
+def test_production_browser_window_with_recovery_path_is_granted(w):
+    cid = changes.create_change(w, "Acme", "Layout", "Tier on Case", [], "acme-prod")["id"]
+    req = approval.create_request(w, "Acme", cid, "acme-prod", browser_minutes=10,
+                                  purpose="Add the Tier field to the Case layout", resolve=ORGS.get,
+                                  manual_recovery="Remove the Tier field from the Case layout in Setup again.")
+    item = approval.grant(w, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(),
+                          resolve=ORGS.get)
+    assert item["manual_recovery"].startswith("Remove")
+
+
+def test_default_org_display_is_no_org_and_named_display_is_a_read(w):
+    assert run(w, "Bash", {"command": "sf org display"}).action == "deny"
+    assert run(w, "Bash", {"command": "sf org display -o acme-prod"}).action == "allow"

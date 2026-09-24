@@ -36,6 +36,8 @@ B = lambda cmd: K("Bash", {"command": cmd})
     ("sf --version", [("local", None)]),
     ("sf", [("local", None)]),
     ("sf org list", [("local", None)]),
+    ("sf org display", [("no_org", None)]),
+    ("sf data query -q x", [("no_org", None)]),
     ("sf org login web -a new", [("unverifiable", None)]),
     ("sf plugins install something", [("unverifiable", None)]),
     ("sf alias set acme-prod=other@example.com", [("admin", None)]),
