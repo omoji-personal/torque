@@ -675,7 +675,7 @@ TAR_HEADS = {"tar", "bsdtar", "gtar", "gnutar"}
 _TAR_MODE_RE = re.compile(r"^[A-Za-z]*[ctxruAd][A-Za-z]*$")
 
 
-def _tar_operands(args: list[str], cwd: Path) -> list[tuple[str, Path]] | None:
+def _tar_operands(args: list[str], cwd: Path, dirs: list[Path] | None = None) -> list[tuple[str, Path]] | None:
     """tar's operands, each with the directory it is read from. -C DIR, -CDIR and
     --directory=DIR apply, in order, to the operands after them; each one is
     relative to the one before. None when a directory is only known at run time."""
@@ -728,6 +728,8 @@ def _tar_operands(args: list[str], cwd: Path) -> list[tuple[str, Path]] | None:
                     base = _resolve(base, value)
                 except (OSError, ValueError):
                     return None
+                if dirs is not None:
+                    dirs.append(base)
             else:
                 out.append((value, base))
         j += 1
@@ -1125,7 +1127,8 @@ def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Pat
     """Client files enter git through `git add`/`git stage`, `git update-index
     --add` and `git hash-object -w`. Each is blocked when its paths reach
     clients/, .claude/ or the hook's environment. And while client files are in
-    the index, every git command but status and log (without patches) is blocked."""
+    the index (or git cannot say), every git command is blocked except git status
+    without -v/--verbose and git rm --cached of paths under clients/."""
     try:
         base, trees, sub, args = _git_parse(rest, cwd)
     except (OSError, ValueError):
@@ -1360,6 +1363,252 @@ def _git_listing_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
     return False
 
 
+PATCH_REASON = ("applying a patch outside project/ (git apply, git am, patch), or one whose paths climb out "
+                "with .. or are absolute, could overwrite workspace.json, the hook configuration or client "
+                "files. Run it from project/ with a patch file whose paths stay inside it")
+EXTRACT_REASON = ("extracting an archive at or above the workspace root, into clients/, or with absolute or "
+                  "rewritten member names could overwrite workspace.json, the hook configuration or client "
+                  "files. Extract into project/ or a folder under it")
+# The most of a patch file the gate reads to check its paths.
+_PATCH_READ_LIMIT = 5_000_000
+
+
+def _patch_file_safe(raw: str, cwd: Path) -> bool:
+    """True when a patch file can be read and every path it names is relative
+    and has no `..` segment (/dev/null aside)."""
+    try:
+        path = _resolve(cwd, raw)
+        if path.stat().st_size > _PATCH_READ_LIMIT:
+            return False
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return False
+    names: list[str] = []
+    for line in text.splitlines():
+        if line.startswith(("--- ", "+++ ")):
+            names.append(line[4:].split("\t", 1)[0].strip())
+        elif line.startswith("diff --git "):
+            names += line[len("diff --git "):].split()
+        elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ", "Index: ")):
+            names.append(line.split(" ", 2)[-1].strip())
+    for name in names:
+        name = name.strip('"')
+        if name == "/dev/null":
+            continue
+        if name.startswith(("/", "\\", "~")) or re.match(r"^[A-Za-z]:", name):
+            return False
+        if ".." in re.split(r"[/\\]", name):
+            return False
+    return True
+
+
+def _git_patch_reason(rest: list[str], workspace: Path, cwd: Path) -> str:
+    """git apply and git am write the files a patch names. git apply run inside
+    project/ changes only paths under the current directory and rejects `..`
+    and absolute paths; git am applies from the repository's top. So git apply
+    must run inside project/ (or at the root with a --directory inside project/),
+    and git am needs a repository whose top is inside project/. A named patch
+    file must name no absolute path and no `..`; --unsafe-paths is blocked."""
+    try:
+        base, trees, sub, args = _git_parse(rest, cwd)
+    except (OSError, ValueError):
+        return PATCH_REASON if any(t in ("apply", "am") for t in rest) else ""
+    if sub not in ("apply", "am"):
+        return ""
+    project = Path(os.path.realpath(str(workspace / "project")))
+    if sub == "am":
+        if args and all(t in ("--abort", "--quit", "--show-current-patch") or t.startswith("--show-current-patch=")
+                        for t in args):
+            return ""
+        top = _git_toplevel(base)
+        if top is None or not _is_within(top, project) or trees:
+            return PATCH_REASON
+        files = [t for t in args if not t.startswith("-")]
+        return "" if all(_patch_file_safe(f, base) for f in files if os.path.isfile(_resolve(base, f))) else PATCH_REASON
+    options = args[:args.index("--")] if "--" in args else args
+    names = [t.split("=", 1)[0] for t in options if t.startswith("--")]
+    if any(_is_long_flag(n, "--unsafe-paths", 4) for n in names):
+        return PATCH_REASON
+    writes = (any(_is_long_flag(n, "--apply", 4) or _is_long_flag(n, "--index", 4) or _is_long_flag(n, "--cached", 4)
+                  for n in names)
+              or not any(_is_long_flag(n, flag, 4) for n in names for flag in ("--check", "--stat", "--numstat",
+                                                                                  "--summary")))
+    if not writes:
+        return ""
+    directory = None
+    files: list[str] = []
+    j = 0
+    while j < len(args):
+        tok = args[j]
+        name, eq, value = tok.partition("=")
+        if tok == "--":
+            files += args[j + 1:]
+            break
+        if tok.startswith("--") and _is_long_flag(name, "--directory", 5):
+            directory = value if eq else (args[j + 1] if j + 1 < len(args) else "")
+            j += 0 if eq else 1
+        elif tok.startswith("--") and not eq and name in ("--exclude", "--include", "--whitespace",
+                                                          "--build-fake-ancestor"):
+            j += 1
+        elif tok in ("-p", "-C"):
+            j += 1
+        elif not tok.startswith("-"):
+            files.append(tok)
+        j += 1
+    if directory is not None:
+        if not directory or directory.startswith(("/", "\\", "~")) or re.match(r"^[A-Za-z]:", directory) \
+                or ".." in re.split(r"[/\\]", directory) or _PARAM_RE.search(directory):
+            return PATCH_REASON
+        try:
+            confined = _is_within(_resolve(base, directory), project)
+        except (OSError, ValueError):
+            return PATCH_REASON
+    else:
+        confined = _is_within(base, project)
+    if not confined or trees:
+        return PATCH_REASON
+    if any(f != "-" and not _patch_file_safe(f, base) for f in files):
+        return PATCH_REASON
+    return ""
+
+
+def _patch_reason(toks: list[str], words: list[str], index: int, workspace: Path, cwd: Path) -> str:
+    """`patch` writes the files its patch names, relative to its directory
+    (-d/--directory, else the current one). It must run inside project/, and
+    its patch must come from a file the gate can read (-i, --input, a `<` file
+    or the second operand) whose paths are relative with no `..`. A dry run
+    writes nothing."""
+    rest = words[index + 1:]
+    if any(t in ("--dry-run", "-C", "--check") for t in rest):
+        return ""
+    directory = None
+    source = None
+    operands: list[str] = []
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        name, eq, value = tok.partition("=")
+        if tok == "--":
+            operands += rest[j + 1:]
+            break
+        if tok.startswith("--"):
+            if name in ("--directory", "--input"):
+                val = value if eq else (rest[j + 1] if j + 1 < len(rest) else "")
+                j += 0 if eq else 1
+                if name == "--directory":
+                    directory = val
+                else:
+                    source = val
+            elif not eq and name in ("--strip", "--output", "--reject-file", "--backup", "--prefix", "--suffix",
+                                     "--basename-prefix", "--fuzz", "--version-control", "--ifdef", "--quoting-style",
+                                     "--get", "--reject-format", "--read-only"):
+                j += 1
+        elif tok.startswith("-") and len(tok) > 1:
+            letter = tok[1]
+            if letter in "dioprBDFVYzg":
+                val = tok[2:] or (rest[j + 1] if j + 1 < len(rest) else "")
+                if not tok[2:]:
+                    j += 1
+                if letter == "d":
+                    directory = val
+                elif letter == "i":
+                    source = val
+        else:
+            operands.append(tok)
+        j += 1
+    if source is None and len(operands) >= 2:
+        source = operands[1]
+    if source is None:
+        for k, tok in enumerate(toks):
+            m = _REDIRECT_RE.match(tok)
+            if m and tok.lstrip("0123456789").startswith("<") and not tok.lstrip("0123456789").startswith(("<<", "<&", "<>")):
+                source = m.group("rest") or (toks[k + 1] if k + 1 < len(toks) else "")
+    if not source or source == "-":
+        return PATCH_REASON
+    project = Path(os.path.realpath(str(workspace / "project")))
+    try:
+        base = _resolve(cwd, directory) if directory else cwd
+    except (OSError, ValueError):
+        return PATCH_REASON
+    if (directory and _PARAM_RE.search(directory)) or not _is_within(base, project):
+        return PATCH_REASON
+    return "" if _patch_file_safe(source, cwd) else PATCH_REASON
+
+
+def _tar_extracts(rest: list[str]) -> bool:
+    if rest and not rest[0].startswith("-") and _TAR_MODE_RE.match(rest[0]) and "x" in rest[0]:
+        return True
+    for tok in rest:
+        if tok == "--":
+            break
+        if tok.startswith("--"):
+            name = tok.split("=", 1)[0]
+            if _is_long_flag(name, "--extract", 5) or _is_long_flag(name, "--get", 4):
+                return True
+        elif _short_flag_has(tok, "x", "".join(sorted(_TAR_VALUE_LETTERS))):
+            return True
+    return False
+
+
+def _tar_extract_reason(head: str, rest: list[str], clients: Path, cwd: Path) -> str:
+    """tar/bsdtar extraction writes under the current directory and each -C
+    directory. Blocked when one of those is the workspace root, above it or in
+    clients/, and for absolute member names (-P) or rewritten names
+    (--transform, -s)."""
+    if not _tar_extracts(rest):
+        return ""
+    for tok in rest:
+        if tok == "--":
+            break
+        name = tok.split("=", 1)[0]
+        if tok.startswith("--"):
+            if (_is_long_flag(name, "--absolute-names", 4) or _is_long_flag(name, "--transform", 4)
+                    or _is_long_flag(name, "--xform", 3)):
+                return EXTRACT_REASON
+        elif _short_flag_has(tok, "Ps" if head == "bsdtar" else "P", "".join(sorted(_TAR_VALUE_LETTERS))):
+            return EXTRACT_REASON
+    if rest and not rest[0].startswith("-") and _TAR_MODE_RE.match(rest[0]) and "P" in rest[0]:
+        return EXTRACT_REASON
+    dirs: list[Path] = []
+    operands = _tar_operands(rest, cwd, dirs)
+    if operands is None:
+        return EXTRACT_REASON
+    # Members extract into the directory in effect: the current one when no -C
+    # is given, or when words besides the archive come before the first -C.
+    if not dirs or sum(1 for _, base in operands if base == cwd) > 1:
+        dirs.append(cwd)
+    return EXTRACT_REASON if any(_reaches(d, clients) for d in dirs) else ""
+
+
+def _unzip_reason(rest: list[str], clients: Path, cwd: Path) -> str:
+    """unzip writes under -d DIR, else the current directory. Listing, testing and
+    printing modes (-l, -t, -p, -c, -Z) write nothing; -: keeps `..` in names."""
+    if any(t == "-:" or (t.startswith("-") and not t.startswith("--") and ":" in t) for t in rest):
+        return EXTRACT_REASON
+    if any(t.startswith("-") and not t.startswith("--") and re.search(r"[ltpcZ]", t.split("d", 1)[0][1:])
+           for t in rest if t not in ("-d",)):
+        return ""
+    target = "."
+    for j, tok in enumerate(rest):
+        if tok == "-d":
+            target = rest[j + 1] if j + 1 < len(rest) else ""
+        elif tok.startswith("-d") and len(tok) > 2:
+            target = tok[2:]
+    if not target:
+        return EXTRACT_REASON
+    return EXTRACT_REASON if _root_reaches(target, clients, cwd) else ""
+
+
+def _ditto_reason(rest: list[str], clients: Path, cwd: Path) -> str:
+    """ditto -x extracts an archive into its last operand."""
+    if not any(_short_flag_has(t, "x") for t in rest):
+        return ""
+    operands = [t for t in rest if not t.startswith("-")]
+    if len(operands) < 2:
+        return EXTRACT_REASON
+    return EXTRACT_REASON if _root_reaches(operands[-1], clients, cwd) else ""
+
+
 def _installer_reason(name: str, args: list[str]) -> str:
     """pip / uv / pipx changing an installed Torque (or every tool at once)."""
     if any(t in _INSTALL_ALL_VERBS for t in args):
@@ -1497,6 +1746,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             return GIT_WIPE_REASON
         elif _basename(tok) == "git" and _git_listing_reaches(rest, clients, cwd):
             return GIT_LISTING_REASON
+        elif _basename(tok) == "git" and _git_patch_reason(rest, workspace, cwd):
+            return PATCH_REASON
         elif _basename(tok) == "git" and _git_stage_reason(rest, clients, claude_dir, cwd):
             return _git_stage_reason(rest, clients, claude_dir, cwd)
         elif _INSTALLER_RE.match(_basename(tok)):
@@ -1525,7 +1776,22 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         elif _basename(tok) == "ln":
             if _ln_reaches(rest, clients, cwd):
                 return LN_REASON
+        elif _basename(tok) == "patch":
+            reason = _patch_reason(toks, words, i, workspace, cwd)
+            if reason:
+                return reason
+        elif _basename(tok) == "unzip":
+            reason = _unzip_reason(rest, clients, cwd)
+            if reason:
+                return reason
+        elif _basename(tok) == "ditto":
+            reason = _ditto_reason(rest, clients, cwd)
+            if reason:
+                return reason
         elif _basename(tok) in TAR_HEADS:
+            reason = _tar_extract_reason(_basename(tok), rest, clients, cwd)
+            if reason:
+                return reason
             operands = _tar_operands(rest, cwd)
             if operands is None or any(_root_reaches(raw, clients, base) for raw, base in operands):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
