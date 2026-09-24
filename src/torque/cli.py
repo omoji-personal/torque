@@ -521,6 +521,53 @@ def _gate_hook_report(root: Path) -> dict:
     return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook}
 
 
+# The most entries doctor's link scan reads before it stops and reports an
+# incomplete scan.
+LINK_SCAN_LIMIT = 200_000
+_LINK_SCAN_SKIP = {"node_modules", ".git"}
+
+
+def _links_out(root: Path) -> dict:
+    """Symbolic links (and Windows junctions) in the workspace, outside clients/
+    and skipping node_modules and .git folders, that resolve to clients/, into it,
+    to the workspace root or to a folder above it. A recursive tool that follows
+    links (rg -L, grep -R, find -L, macOS cp -r, ...) would read clients/ through
+    one. Run once by doctor; the gate itself does not walk the tree."""
+    from . import gate
+    root = Path(os.path.realpath(str(root)))
+    clients = Path(os.path.realpath(str(root / "clients")))
+    found: list[str] = []
+    budget = LINK_SCAN_LIMIT
+    complete = True
+    for folder, dirs, files in os.walk(root):
+        here = Path(folder)
+        keep = []
+        for name in dirs:
+            path = here / name
+            if name in _LINK_SCAN_SKIP or (here == root and name == "clients"):
+                continue
+            if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+                files.append(name)
+                continue
+            keep.append(name)
+        dirs[:] = keep
+        for name in files:
+            budget -= 1
+            if budget < 0:
+                complete = False
+                break
+            path = here / name
+            if not path.is_symlink():
+                continue
+            real = Path(os.path.realpath(str(path)))
+            if gate._reaches(real, clients):
+                found.append(path.relative_to(root).as_posix())
+        if not complete:
+            break
+        budget -= len(dirs)
+    return {"found": sorted(found), "complete": complete}
+
+
 def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
@@ -590,6 +637,20 @@ def _doctor(args: argparse.Namespace) -> int:
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
+        links = _links_out(Path(root))
+        access["links_out"] = links
+        if links["found"]:
+            report["ready"] = False
+            shown = ", ".join(links["found"][:10]) + (" ..." if len(links["found"]) > 10 else "")
+            report["next_actions"].append(
+                f"{len(links['found'])} link(s) in the workspace lead to clients/ or above it: {shown}. A recursive "
+                "tool that follows links (rg -L, grep -R, find -L, macOS cp -r and others) would read client "
+                "files through them, and the gate does not walk the tree. Remove or repoint them.")
+        elif not links["complete"]:
+            report["ready"] = False
+            report["next_actions"].append(
+                f"The link scan stopped after {LINK_SCAN_LIMIT} entries (node_modules and .git are skipped), so "
+                "links that lead to clients/ or above it may remain. Check large folders for such links.")
         from . import gate
         count = gate.clients_index_count(root)
         access["clients_in_git"] = "unknown" if count is None else count

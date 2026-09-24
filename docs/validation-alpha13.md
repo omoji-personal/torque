@@ -51,51 +51,75 @@ findings, 14 failed before their fix; the 9 that passed are the `project/`-confi
 equivalents that must stay allowed. Of the 60 tests for the third review's findings,
 39 failed before their fix; the 21 that passed are the confined cases (`git apply`
 and `patch` from `project/`, extraction into `project/`, `--check`, `--stat`,
-`--dry-run`, listings).
+`--dry-run`, listings). After the re-review below, the tests of the per-call link walk
+were replaced by tests of the rulings: no tree walk per call, the link-making rule,
+the doctor scan, over-long words and the hook timeout. 31 of them failed before the
+change.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.13.15, local):** 2130 pytest tests and 154
+- **Offline suite (macOS, Python 3.13.15, local):** 2090 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
-- **Hook probe:** 92 hook events were piped through the real hook command (`python -I -c
+- **Hook probe:** 98 hook events were piped through the real hook command (`python -I -c
   ...`) with `CLAUDE_PROJECT_DIR` set, against scratch workspaces made with `torque
   workspace init` and `ai-access build-only`: one without git holding `project/up ->
-  ..`, and one with git at the root and `/clients/` ignored. Every route above exits 2.
-  An ordinary session exits 0 from `project/` and from the root: `git status`, `diff`,
-  `log`, `add`, `pytest`, `rg` and `grep -r` (also `rg -L` and `grep -R` over a project
-  whose links stay inside it), `find -L`, `tar` and `zip` of `project/`, `cp -rL` and
-  `rsync -aL` of `src/`, `ln -s` to a file in `project/`, a `for` loop over `"$f"`,
-  `grep -rA2` and `zip -9r` of `src/`, `if cd src; then ...; fi`, `git status --ignored
-  .` and `git ls-files -o` in `project/`, `git apply` of a confined patch, `--check`,
-  `patch --dry-run`, extraction into `src/`, `unzip -l`, and `Glob`, `Grep` and `Read`
-  in `project/`. The patch that sets `ai_access` to `full` exits 2 through `git apply`
-  at the root, `git am` from `project/` and `patch -p1 <`.
+  ..`, and one with git at the root and `/clients/` ignored. Every route above exits 2,
+  except a recursive tool following the existing link (`rg -L`, `grep -R`, `find -L`,
+  `zip -r` and the rest), which exits 0 as documented; `torque doctor` on that workspace
+  reports `project/up` and is not ready. Naming the link (`rg SECRET up`), making a link
+  with `ln -s ..`, `mklink /D` or `New-Item`, and the patch that sets `ai_access` to
+  `full` (through `git apply` at the root, `git am` from `project/` and `patch -p1 <`)
+  exit 2. An ordinary session exits 0 from `project/` and from the root: `git status`,
+  `diff`, `log`, `add`, a 400-character `git commit -m`, a 30-command `echo` chain,
+  `pytest`, `rg` and `grep -r`, `tar` and `zip` of `project/`, `ln -s` to a file in
+  `project/`, a `for` loop over `"$f"`, `grep -rA2` and `zip -9r` of `src/`, `if cd src;
+  then ...; fi`, `git status --ignored .` and `git ls-files -o` in `project/`, `git
+  apply` of a confined patch, `--check`, `patch --dry-run`, extraction into `src/`,
+  `unzip -l`, and `Glob`, `Grep` and `Read` in `project/`.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
   Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull
-  request. The first run failed one test on Windows: a `find` expression word (`'*.md'`)
-  was walked as a path, and Windows rejects `*` in a path with an error the walk treated
-  as a reason to block. The walk now skips words that are not folders, with a test.
+  request. An earlier head's first run failed one test on Windows, in the per-call link walk
+  that the re-review below led to removing.
 
 ## Review scope
 
-The fixes follow the review round's suggested fixes. At the time of writing they
-have not been re-reviewed independently. Until they are, treat the list in
-[build-only mode](ai-access.md) as the claim to check.
+The first fixes (through a356093) followed the review round's suggested fixes: the
+gate walked each search root of a link-following tool, up to 20,000 entries and 64
+levels, and blocked when a link led to `clients/` or above it. A security re-review
+of a356093 returned "fix first". It found N1, N4, N5 and the option-cluster and doctor
+fixes addressed. N3 was not: the named cases blocked, but close variants still read
+`clients/` for real (macOS `cp -r`, which follows links; BSD grep `-S`; zsh's `***/`;
+ripgrep's configuration file; a link made, moved or unlocked earlier in the same
+command). The walk could also be slowed past the hook's timeout, and a timed-out hook
+lets the call run. It over-blocked ordinary work in any project with a real
+`node_modules`. Separately, a word longer than a file name, such as a long commit
+message, failed every call closed; that predates alpha 13.
+
+The owner's rulings: remove the per-call walk; block making a link that leads out of
+the tree (`ln`, `cp -s`, `mklink`, `New-Item`) and keep resolving a path that names a
+link; add a one-time `torque doctor` scan that reports such links as not ready; treat
+an over-long word as not a path; keep the gate free of filesystem walks and document
+the hook timeout; and list the remaining link variants as limits, since the real
+control is an agent account that holds no client files. Those changes were made with
+tests written first. Patch and archive checks from a third review of the same release
+(da4e9a5 to f2c1c18) landed while the re-review ran, so it did not cover them. A
+spot-check of the rulings and those checks is to follow; this section records its
+result when it is done.
 
 ## Known remaining limits
 
 Build-only mode is pattern matching on recognized tool calls, not a sandbox.
-Beyond the limits in the alpha 12 record: a variable is read as a folder from the
-current directory up to the workspace root, so one whose value spells part of a name
-(`X=cli; cat ../${X}ents/...`) is not caught; a path from command output
-(`cat "$(...)/clients/..."`) is still a command built at run time; the link walk stops
-at 20,000 entries or 64 levels and blocks the command past either, so a following
-tool over a very large tree is blocked; a link made by a route the gate does not
-parse (a script, `cp -s`, a Windows junction made with `mklink`) is caught when a
-path names it or a following tool walks into it, not when it is made; and the host's
-own `Grep` and `Glob` tools are not walked for links, since whether they follow links
-was not tested. A patch `git apply` reads from standard input inside `project/` is left
-to git's own path checks, an archive member that is a link a later member writes
-through is left to the extractor, and extractors other than `tar`, `bsdtar`, `unzip`
-and `ditto -x` are not parsed. See [build-only mode](ai-access.md) for the full list.
+Beyond the limits in the alpha 12 record: a link that already leads to `clients/` or
+above it, or one made in the same command by a route the link rule does not see (`mv`
+or `cp -P` of a link, a script, an archive, `git checkout`), can be followed by a
+recursive tool (`rg -L`, `grep -R`, macOS `cp -r`, zsh `***/`, ripgrep configured to
+follow). The gate does not walk the tree on each call; `torque doctor` finds such links
+once, outside `clients/`, `node_modules` and `.git`, up to 200,000 entries. A variable
+is read as a folder from the current directory up to the workspace root, so one whose
+value spells part of a name (`X=cli; cat ../${X}ents/...`) is not caught; a path from
+command output (`cat "$(...)/clients/..."`) is still a command built at run time. A patch
+`git apply` reads from standard input inside `project/` is left to git's own path checks,
+an archive member that is a link a later member writes through is left to the
+extractor, and extractors other than `tar`, `bsdtar`, `unzip` and `ditto -x` are not
+parsed. A hook that times out lets the call proceed. See [build-only mode](ai-access.md) for the full list.

@@ -91,16 +91,13 @@ guard on recognized tool calls, not a sandbox. It has two values:
   `clients/`; and a
   `Grep`/`Glob` rooted at or above `clients/` or naming it, and a `Glob` whose pattern is
   absolute or climbs with `..` (`../**/*.md`), read as rooted where it leads.
-- Symbolic links out of the tree. `ln` and `ln -s` whose target resolves to `clients/`, into it,
-  to the workspace root or to any folder above it (a relative symbolic target is read from the
-  folder the link is made in). And recursive tools in a mode that follows links: `rg -L` or
-  `--follow`, `find -L`, `-follow` or `-H`, `grep -R` or `--dereference-recursive`, `tar -h` or
-  `--dereference` (and bsdtar's `-L`), `cp -rL`, `rsync -L`, `--copy-links`, `-k` or
-  `--copy-unsafe-links`, `zip -r` without `-y`, `fd -L`, `ls -RL`, `tree -l`, `ag -f`,
-  `ack --follow`, `scp -r` and `diff -r`. The gate walks each search root, following links as
-  the tool would, and blocks the command when a link leads to `clients/`, into it or to a
-  folder above it. The walk stops at 20,000 entries or 64 levels, and past either the command
-  is blocked. The same tools without a follow option skip or store links, and pass.
+- Making a link that leads out of the tree: `ln` and `ln -s`, `cp -s`, cmd's `mklink` (`/D`,
+  `/J`, `/H`) and PowerShell's `New-Item -ItemType SymbolicLink`, `Junction` or `HardLink`, when
+  the target resolves to `clients/`, into it, to the workspace root or to any folder above it
+  (a relative symbolic target is read from the folder the link is made in). A path that names
+  an existing link is resolved like any other, so `rg foo up` or `cat up/clients/...` through a
+  link `up -> ..` is blocked. The gate does not walk the tree on each call for links a
+  recursive tool could follow; `torque doctor` looks for them once (see below).
 - Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
   tool's shell, and a `PowerShell` tool (or any other tool with a `command`, `cmd` or `script`
   argument) gets the same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
@@ -233,9 +230,14 @@ machine. Replace `/path/to/venv/bin/python` with the absolute path of an interpr
 installed (forward slashes on Windows). `torque doctor --workspace .` prints this exact command for
 the interpreter it runs under, as `ai_access.hook.recommended_command` in `--json` output.
 
+Claude Code gives a command hook 600 seconds by default, and a timed-out hook lets the call
+proceed, as if it were allowed. Set `"timeout": 600` on the hook entry, as below, and do not
+lower it. The gate does no filesystem walk per call and normally answers in well under a
+second; its own git queries stop after 15 seconds each.
+
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
+  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
 ```
 
 The hook reads the tool-call JSON on stdin and exits 0 to allow or 2 to block. Claude Code treats
@@ -277,9 +279,18 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   directory up to the workspace root, not as any text), a path from command output such as
   `$(... | base64 -d)`, or from `eval`, the code of `python -c`, any script file the
   assistant writes and runs, and a heredoc fed to an interpreter.
-- Links followed by the host's own `Grep` or `Glob` tools. The gate walks a search root for
-  links only for the Bash tools named above; whether those host tools follow links was not
-  tested.
+- A link that already leads out of the tree, followed by a recursive tool. `rg -L`, `find -L`,
+  `grep -R` (GNU grep; BSD grep with `-S`), `tar -h`, `cp -r` on macOS (where `-r` follows
+  links), `cp -rL`, `rsync -L`, `zip -r` without `-y`, zsh's `***/` glob, ripgrep with
+  `--follow` in its configuration file, and the host's own `Grep` and `Glob` if they follow
+  links, all read through such a link without naming it. The gate does not walk the tree on
+  each call: a walk can be made slow enough to time the hook out, which lets the call run. This
+  covers a link the consultant supplies with a project, and one made in the same command by a
+  route the link rule does not see (`mv` or `cp -P` of a link, a script, an archive, `git
+  checkout`, a link whose folder is only created later). Run `torque doctor` after adding
+  material to `project/`: it scans the workspace once (outside `clients/`, skipping
+  `node_modules` and `.git`, up to 200,000 entries) and reports every link that resolves to
+  `clients/` or above it as not ready, or says the scan stopped at its limit.
 - A network tool (`curl`, a language HTTP client) reaching an org or a client system directly
   with credentials the user holds.
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
@@ -345,9 +356,7 @@ gate also checks the directory before it; use `cd project && rg foo`); a recursi
 a `cd` the gate cannot resolve (`cd "$DIR" && rg foo` is checked from the workspace root too; use
 a literal path); a recursive search, archive or git pathspec whose path holds a variable
 (`rg foo "$DIR"`, `git add "$f"`), which is read as the workspace root; `git status --ignored`
-from `project/` with no pathspec, which covers the whole repository; a tool in a following
-mode (`rg -L`, `grep -R`, `zip -r` without `-y`, `find -L`) over a tree larger than the walk's
-limits; `git apply` at the workspace root without `--directory` inside `project/`, `git am`
+from `project/` with no pathspec, which covers the whole repository; `git apply` at the workspace root without `--directory` inside `project/`, `git am`
 when the repository's top is the workspace root, and `patch` fed from a pipe
 (`git diff | patch -p1`; use `git apply` or a patch file); extracting an archive at the
 workspace root; Bash reads under `.claude/` or of the installed Torque package; writing any
