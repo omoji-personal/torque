@@ -297,17 +297,19 @@ def test_d2_torque_browser_session_installs_the_guard(monkeypatch):
             return Page()
 
     class Browser:
-        async def new_context(self):
+        async def new_context(self, **options):
             return Context()
 
     class Chromium:
-        async def launch(self, headless=True):
+        async def launch(self, headless=True, **options):
+            events.append(("launch", options))
             return Browser()
 
     admin = SimpleNamespace(target_org="acme-sbx", frontdoor_url="https://acme--sbx.sandbox.my.salesforce.com/x",
                             instance_url="https://acme--sbx.sandbox.my.salesforce.com")
     asyncio.run(auth.open_session(SimpleNamespace(chromium=Chromium()), admin))
-    assert events[0] == ("route", "**/*") and events[1][0] == "goto"
+    assert events[0][0] == "launch" and "--no-proxy-server" in events[0][1]["args"]
+    assert events[1] == ("route", "**/*") and events[2][0] == "goto"
     monkeypatch.setattr(bg, "connected_guard", lambda target: (_ for _ in ()).throw(bg.GuardRefused("no window")))
     with pytest.raises(auth.AuthError, match="no window"):
         asyncio.run(auth.open_session(SimpleNamespace(chromium=Chromium()), admin))

@@ -264,3 +264,26 @@ def test_n5_execution_must_use_the_approved_snapshot_and_operation(tmp_path):
     assert "operation" in approval.recovery_problem(approved, snap, ["deploy", "-o", "acme-sbx", "--metadata",
                                                                      "ApexClass:B"])
     assert approval.recovery_problem({"recovery_snapshot": None}, snap, plan)
+
+
+def test_n5_executor_refuses_a_replaced_snapshot_directory(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from jsc_revert import revert_executor as ex
+    from jsc_revert.wrappers import _common
+    approved_dir, later_dir = tmp_path / "20260924-aaaa", tmp_path / "20260925-aaaa"
+    approved_dir.mkdir()
+    later_dir.mkdir()
+    snap = {"org": {"org_id_18": "00D000000000001AAA", "alias": "acme-sbx"}, "operation_type": "data_create",
+            "snapshot_id": "0123456789abcdef"}
+    monkeypatch.setattr(ex.org_detect, "resolve_org", lambda alias: SimpleNamespace(
+        org_id_short="00D000000000001", org_id_18="00D000000000001AAA", alias=alias))
+    monkeypatch.setattr(ex.mf, "load_by_id", lambda *a: (later_dir, snap))
+    monkeypatch.setattr(ex.revert_capabilities, "effective_capabilities", lambda s: {})
+    monkeypatch.setattr(ex.revert_planner, "build_revert_command", lambda s, d: ["jsc", "data", "delete", "-o",
+                                                                               "acme-sbx", "--record-id", "001B"])
+    approved = {"id": "apr-000000000001", "recovery_snapshot": "0123456789abcdef",
+                "recovery_snapshot_dir": os.path.realpath(approved_dir),
+                "recovery_plan": ["data", "delete", "-o", "acme-sbx", "--record-id", "001A"], "_scope": (tmp_path, "acme")}
+    monkeypatch.setattr(_common, "connected_approval", lambda org, org_id: (0, approved))
+    monkeypatch.setattr(ex.subprocess, "run", lambda *a, **k: pytest.fail("the recovery must not run"))
+    assert ex.execute_revert("0123456789abcdef", "acme-sbx") == ex.EXIT_ORG_RESOLUTION_FAILED

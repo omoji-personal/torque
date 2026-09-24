@@ -85,6 +85,12 @@ default (`full`) and build-only behavior are unchanged.
   bind their snapshot and show the recovery command; destructive manifests are bound as
   files and their deletions checked against the before-state without needing local source;
   the full-mode guard follows `cd` within a command.
+- After the final recheck: Torque's browser is launched so other orgs' hosts do not
+  resolve (redirect hops included), without a proxy or service workers, and an attached
+  operator browser is refused in connected mode; the session stops, closing its pages and
+  context, when its window ends or the consent is suspended; a recovery approval binds the
+  snapshot folder and the exact operation, read with the recovery's own parser, and the run
+  must match them.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).

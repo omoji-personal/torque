@@ -451,19 +451,44 @@ def _derive(req: dict, extra_namespaces=()) -> dict:
 
 
 def recovery_snapshot_id(command: str) -> str | None:
-    """The snapshot a recovery command (torque recover exec|run ID, jsc revert exec ID) restores."""
+    """The snapshot a recovery command restores, read with the recovery's own argument
+    parser after Torque's --workspace/--client are taken out (so options may come
+    anywhere). None for a command that is not a recovery. Raises for a recovery
+    command the parser does not accept, so it can never pass unbound."""
     words = command_words(command)
     if not words:
         return None
     head, rest = words
-    rest = [w for w in rest if not w.startswith("-")]
-    if head == "torque" and rest[:1] == ["recover"] and rest[1:2] in (["exec"], ["run"]) and len(rest) > 2:
-        return rest[2]
-    if head == "torque" and rest[:3] == ["revert", "revert", "exec"] and len(rest) > 3:
-        return rest[3]
-    if head == "jsc" and rest[:2] == ["revert", "exec"] and len(rest) > 2:
-        return rest[2]
-    return None
+    if head == "torque":
+        from .cli import _context_options
+        try:
+            rest, _, _ = _context_options(list(rest))
+        except ws.WorkspaceError as exc:
+            raise ws.WorkspaceError(f"this recovery command cannot be read: {exc}") from exc
+        if rest[:1] == ["recover"]:
+            tail = rest[1:]
+            if tail[:1] == ["run"]:
+                tail = ["exec", *tail[1:]]
+            jsc_args = ["revert", *tail]
+        elif rest[:1] == ["revert"]:
+            jsc_args = rest[1:]
+        else:
+            return None
+    else:
+        jsc_args = list(rest)
+    if jsc_args[:1] != ["revert"]:
+        return None
+    from jsc_revert.cli import build_parser
+    import contextlib
+    import io as _io
+    try:
+        with contextlib.redirect_stderr(_io.StringIO()), contextlib.redirect_stdout(_io.StringIO()):
+            args = build_parser().parse_args(jsc_args)
+    except SystemExit:
+        raise ws.WorkspaceError("this recovery command cannot be read by the recovery's own parser") from None
+    if getattr(args, "revert_action", None) != "exec":
+        return None
+    return args.snapshot_id
 
 
 def _recovery_snapshot(workspace, client, snapshot_id: str, org_alias: str, org_id: str) -> tuple[Path, list[str]]:
@@ -480,7 +505,8 @@ def _recovery_snapshot(workspace, client, snapshot_id: str, org_alias: str, org_
             raise ws.WorkspaceError(f"cannot find recovery snapshot {snapshot_id} for {org_alias}: {exc}") from exc
         if str(snap.get("org", {}).get("org_id_18", ""))[:15] != org_id[:15]:
             raise ws.WorkspaceError("the recovery snapshot belongs to another org")
-        plan = revert_planner.build_revert_command({**snap, "org": {**snap["org"], "alias": org_alias}}, snap_dir)
+        plan = recovery_operation(revert_planner.build_revert_command(
+            {**snap, "org": {**snap["org"], "alias": org_alias}}, snap_dir))
     finally:
         if previous is None:
             os.environ.pop("TORQUE_WORKSPACE", None)
@@ -495,7 +521,7 @@ def _bind_recovery(derived: dict, workspace, client, org_alias: str, org_id: str
     snapshot after the grant then refuses the approval."""
     snapshot_id = recovery_snapshot_id(derived["command"]) if derived.get("payload_argv") else None
     if snapshot_id is None:
-        return derived
+        return {**derived, "recovery_snapshot": None, "recovery_snapshot_dir": None, "recovery_plan": None}
     snap_dir, plan = _recovery_snapshot(workspace, client, snapshot_id, org_alias, org_id)
     payload_argv = [*derived["payload_argv"], "--recovery-snapshot", str(snap_dir)]
     cwd = Path(str(derived["cwd"]))
@@ -505,7 +531,37 @@ def _bind_recovery(derived: dict, workspace, client, org_alias: str, org_id: str
     digest, count = payload_digest(payload_argv, cwd, capped=False)
     return {**derived, "payload_argv": payload_argv, "payload_digest": digest, "payload_files": count,
             "payload_check": "gate" if payload_digest(payload_argv, cwd)[0] else "wrapper",
-            "recovery_snapshot": snapshot_id, "recovery_plan": plan}
+            "recovery_snapshot": snapshot_id, "recovery_snapshot_dir": os.path.realpath(str(snap_dir)),
+            "recovery_plan": plan}
+
+
+def recovery_operation(command) -> list[str]:
+    """A recovery command without the way this interpreter starts the wrapper (`jsc` or
+    `python -m jsc_revert.cli`), so a grant and a run from different installs agree."""
+    if not command:
+        return []
+    from jsc_revert import revert_planner
+    prefix = revert_planner._jsc_command()
+    command = list(command)
+    if command[:len(prefix)] == prefix:
+        return command[len(prefix):]
+    for i, word in enumerate(command[:3]):
+        if word == "jsc_revert.cli" or word.endswith(("/jsc", "\\jsc", "jsc.exe")) or word == "jsc":
+            return command[i + 1:]
+    return command
+
+
+def recovery_problem(approved: dict, snapshot_dir, plan: list[str]) -> str:
+    """Why a recovery run may not use this approval: it must restore the approved
+    snapshot, from the approved folder, with exactly the approved operation."""
+    if not approved.get("recovery_snapshot") or not approved.get("recovery_snapshot_dir"):
+        return "this approval does not name a recovery snapshot"
+    if os.path.realpath(str(snapshot_dir)) != approved["recovery_snapshot_dir"]:
+        return (f"the recovery would load snapshot files from {snapshot_dir}, not the approved "
+                f"{approved['recovery_snapshot_dir']}")
+    if recovery_operation(plan) != list(approved.get("recovery_plan") or []):
+        return "the recovery operation differs from the approved one"
+    return ""
 
 
 def _extra_namespaces(workspace) -> tuple[str, ...]:
@@ -761,6 +817,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
               "manual_recovery": recovery, "validated_job": req.get("validated_job"),
               "new_components": new_components, "namespaces": derived["namespaces"],
               "recovery_snapshot": derived.get("recovery_snapshot"), "recovery_plan": derived.get("recovery_plan"),
+              "recovery_snapshot_dir": derived.get("recovery_snapshot_dir"),
               "approver": _user(), "approver_uid": os.getuid() if hasattr(os, "getuid") else None,
               "granted_at": _iso(t), "expires_at": _iso(t + ttl), "single_use": kind != "browser"}
     verify = config.get("approval_verify", "hmac")

@@ -296,7 +296,7 @@
       "source_path": "packages/revert/jsc_revert/revert_executor.py",
       "source_sha256": "8d2a28bef1758779a50eeef4af4c88f86e8676a2f474a2104d2c98b79ba6de0f",
       "source_tracked": true,
-      "destination_sha256": "4c5029bf59e38d9b867782338799f59bf8d46177b6e4cbe67d3e33f249436816",
+      "destination_sha256": "cd24a74b454d0f218e1c621db0cddaa3596cd03015d457cea82a8c6e69027a6e",
       "adapted": true
     },
     {
@@ -836,7 +836,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "f2cb76b28a29734756b1e6dd6ff2cf586ec689e3a86f68e4d23db0518e5dd7b5",
+      "destination_sha256": "9b1184aa0a742630a7da6fc8069ec6861463813eb8a88a807233abcc9e6f94c4",
       "adapted": true
     },
     {

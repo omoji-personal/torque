@@ -77,6 +77,9 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
             guard = connected_guard(admin_auth.target_org)
         except GuardRefused as exc:
             raise AuthError(f"connected mode: {exc}") from None
+    if guard is not None and cdp_endpoint:
+        raise AuthError("connected mode: an attached (CDP) browser cannot be guarded; Torque launches its own "
+                        "browser, whose requests it checks before they are sent")
     if cdp_endpoint:
         try:
             browser = await pw.chromium.connect_over_cdp(cdp_endpoint)
@@ -98,8 +101,12 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
             raise AuthError(f"CDP session setup failed ({type(exc).__name__}); check the selected browser's authentication") from None
 
     try:
-        browser = await pw.chromium.launch(headless=not headed)
-        context = await browser.new_context()
+        launch_options, context_options = {}, {}
+        if guard is not None:
+            from torque.browser_guard import launch_options as guarded_options
+            launch_options, context_options = guarded_options(guard)
+        browser = await pw.chromium.launch(headless=not headed, **launch_options)
+        context = await browser.new_context(**context_options)
         if guard is not None:
             from torque.browser_guard import install
             await install(context, guard)

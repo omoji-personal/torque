@@ -120,6 +120,14 @@ def execute_revert(
     # All snapshot-creating wrappers now accept these (cli._add_revert_chain_args);
     # the deploy wrapper pre-includes them so the append stays idempotent
     # (audit 2026-06-09 REVERT-1 — data update/create/delete previously rejected them).
+    if approved is not None:
+        # Connected mode: the run must restore the approved snapshot, from the approved
+        # folder, with exactly the operation the consultant saw at grant.
+        from torque.approval import recovery_problem
+        problem = recovery_problem(approved, snap_dir, revert_cmd)
+        if problem:
+            print(f"error: connected mode: {problem}; nothing was run", file=sys.stderr)
+            return EXIT_ORG_RESOLUTION_FAILED
     revert_cmd = _append_forensic_chain(revert_cmd, snapshot_id, reason)
     if approved is not None:
         # Name the one wrapper command this approval covers; the child accepts only it.

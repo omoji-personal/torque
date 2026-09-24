@@ -156,9 +156,12 @@ when the alias now resolves to another org ID than the one approved. The claim i
 two runs racing for one approval get it once. If the wrapper cannot resolve the org at all,
 nothing runs and the approval is returned so the same command can be run again inside its
 window (at most three times, each logged). A recovery approval (`torque recover exec|run
-SNAPSHOT`, `jsc revert exec`) binds every file of that snapshot, its manifest and captured
-before-state, and the grant screen shows the command the recovery will run; a snapshot
-changed after the grant refuses the approval. A revert started by `torque recover` names the
+SNAPSHOT`, `jsc revert exec`, in any argument order) is read with the recovery's own
+parser and binds that snapshot's folder, every file in it, and the exact recovery operation
+it will run, which the grant screen shows. A recovery command the parser cannot read is
+refused. At run time the recovery must load the approved folder and derive the same
+operation; a changed snapshot, a newer folder with the same snapshot ID, or a different
+operation is refused before anything runs. A revert started by `torque recover` names the
 one wrapper command it starts; that command runs once under the parent's approval, and if
 it cannot resolve the org, the parent's approval is returned the same way.
 Scripts that write call `torque approval require --workspace W --client C --org A -- <command>`
@@ -215,8 +218,16 @@ Domain address (recorded with the consent). While it runs, every request the bro
 including each navigation, redirect, frame and background call, is checked before it is
 sent: a request to another Salesforce org is refused, and so is any request that would
 change something (anything but GET, HEAD or OPTIONS) on a Salesforce host that is not the
-approved org. The org is therefore checked on the page's actual origin, after redirects,
-not on the address the session asked for.
+approved org. Redirects are covered below the page too: Torque launches the browser with
+host-resolver rules that leave every Salesforce domain unresolvable except the approved
+org's own hosts (and the shared login and static hosts), with no proxy and with service
+workers blocked, so a redirect hop to another org fails before any request is sent. An
+attached operator browser (`TORQUE_BROWSER_CDP`) cannot be set up this way and is refused
+in connected mode.
+
+The session lives only as long as its authorization: when the window ends, or the consent
+is suspended or no longer usable, or the window is withdrawn, Torque refuses the next
+request, closes every page and the browser context, and the run stops.
 
 ## Two approval tiers
 

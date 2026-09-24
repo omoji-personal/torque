@@ -10,7 +10,9 @@ My Domain host and refused when it goes to another Salesforce org, or when it
 would change anything on a Salesforce host that is not the approved org."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+import time
 import urllib.parse
 
 from . import approval, consent, workspace as ws
@@ -30,6 +32,62 @@ class Guard:
     org_id_18: str
     host_key: tuple[str, str]
     refused: list[str] = field(default_factory=list)
+    # The window's end, and a check that the window and the client's consent still hold.
+    expires_at: float | None = None
+    recheck: object = None
+    recheck_every: float = 1.0
+    stopped: bool = False
+    _last_check: float = 0.0
+    _last_ok: bool = True
+
+    def authorized(self, now: float | None = None) -> bool:
+        """The session may still act: not stopped, inside its window, and (checked
+        at most every recheck_every seconds) its window and consent still hold."""
+        now = time.time() if now is None else now
+        if self.stopped or (self.expires_at is not None and now > self.expires_at):
+            return False
+        if self.recheck is not None and now - self._last_check >= self.recheck_every:
+            try:
+                self._last_ok = bool(self.recheck())
+            except Exception:
+                self._last_ok = False
+            self._last_check = now
+        return self._last_ok
+
+
+# Salesforce domains no request may reach except the approved org's own hosts (and a
+# few shared, non-org hosts). Used as Chromium host-resolver rules, so a redirect hop,
+# a service worker or any other request to another org cannot even resolve its name.
+BLOCKED_DOMAINS = ("salesforce.com", "force.com", "salesforce-setup.com", "site.com", "visualforce.com",
+                   "cloudforce.com", "database.com", "salesforce-sites.com", "documentforce.com",
+                   "salesforce-experience.com", "lightning.com", "sfdc.net")
+SHARED_HOSTS = ("static.lightning.force.com", "login.salesforce.com", "test.salesforce.com")
+ORG_HOST_FORMS = ("{p}{k}.my.salesforce.com", "{p}{k}.lightning.force.com", "{p}{k}.my.salesforce-setup.com",
+                  "{p}{k}.my.site.com", "{p}{k}.file.force.com", "{p}--*{k}.vf.force.com",
+                  "{p}--*{k}.file.force.com", "{p}--*{k}.my.site.com", "{p}{k}.my.salesforce-sites.com",
+                  "{p}--*{k}.documentforce.com")
+
+
+def org_hosts(guard: Guard) -> list[str]:
+    prefix, kind = guard.host_key
+    k = "" if kind == "prod" else f".{kind}"
+    return [form.format(p=prefix, k=k) for form in ORG_HOST_FORMS]
+
+
+def resolver_rules(guard: Guard, approved_target: str | None = None) -> str:
+    """Chromium --host-resolver-rules: every Salesforce domain unresolvable except the
+    approved org's hosts. approved_target maps those hosts somewhere (tests only)."""
+    approved = [f"MAP {h} {approved_target}" if approved_target else f"EXCLUDE {h}" for h in org_hosts(guard)]
+    shared = [f"EXCLUDE {h}" for h in SHARED_HOSTS]
+    blocked = [rule for domain in BLOCKED_DOMAINS for rule in (f"MAP *.{domain} ~NOTFOUND", f"MAP {domain} ~NOTFOUND")]
+    return ", ".join(approved + shared + blocked)
+
+
+def launch_options(guard: Guard, approved_target: str | None = None) -> tuple[dict, dict]:
+    """(browser launch options, browser context options) for a guarded session: the
+    resolver rules, no proxy (a proxy would resolve names itself), no service workers."""
+    return ({"args": [f"--host-resolver-rules={resolver_rules(guard, approved_target)}", "--no-proxy-server"]},
+            {"service_workers": "block"})
 
 
 def request_allowed(guard: Guard, url: str, method: str) -> bool:
@@ -80,15 +138,58 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
     host_key = org_key(entry.get("instance_url") or "") or org_key(getattr(info, "instance_url", "") or "")
     if host_key is None:
         raise GuardRefused(f"the My Domain address of {target_org} is not known; record the consent again")
-    return Guard(org_alias=target_org, org_id_18=info.org_id_18, host_key=host_key)
+
+    def recheck() -> bool:
+        """The same window is still valid and the consent still usable for this org."""
+        current = approval.find_browser_approval(workspace, client, target_org, config=config)
+        item_now = consent.load_consent(workspace, client)
+        entry_now = consent.approved_org(item_now, target_org)
+        return bool(current and current.get("id") == window.get("id")
+                    and not consent.consent_problems(item_now, client=ws.slug_for(client))
+                    and entry_now and entry_now.get("org_id_18") == info.org_id_18)
+    return Guard(org_alias=target_org, org_id_18=info.org_id_18, host_key=host_key,
+                 expires_at=approval._epoch(window["expires_at"]), recheck=recheck)
+
+
+async def _stop(context, guard: Guard) -> None:
+    """End the session: close every page and the browser context."""
+    guard.stopped = True
+    for page in list(getattr(context, "pages", []) or []):
+        try:
+            await page.close()
+        except Exception:
+            pass
+    try:
+        await context.close()
+    except Exception:
+        pass
 
 
 async def install(context, guard: Guard) -> None:
-    """Check every request of a Playwright browser context against the guard."""
+    """Check every request of a Playwright browser context against the guard, and stop
+    the session (close its pages and context, refuse every further request) when the
+    window ends or the consent or window no longer holds."""
     async def handle(route, request):
+        if not guard.authorized():
+            guard.refused.append(f"{request.method} {request.url.split('?')[0]} (session stopped)")
+            already = guard.stopped
+            guard.stopped = True
+            await route.abort("blockedbyclient")
+            if not already:
+                asyncio.ensure_future(_stop(context, guard))
+            return
         if request_allowed(guard, request.url, request.method):
             await route.continue_()
         else:
             guard.refused.append(f"{request.method} {request.url.split('?')[0]}")
             await route.abort("blockedbyclient")
     await context.route("**/*", handle)
+
+    async def watch():
+        while not guard.stopped:
+            remaining = (guard.expires_at - time.time()) if guard.expires_at is not None else 5.0
+            await asyncio.sleep(max(0.0, min(5.0, remaining + 0.01)))
+            if not guard.authorized():
+                await _stop(context, guard)
+                return
+    guard._watch = asyncio.ensure_future(watch())

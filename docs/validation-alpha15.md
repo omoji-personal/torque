@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2572 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2583 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 397 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 408 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -112,6 +112,16 @@ coverage needs every file the recovery restores; recovery approvals bind their s
 destructive deploys bind their manifests and check deletions against the before-state; the
 full-mode guard follows directory changes. Tests: `tests/test_connected_r4.py`, written
 first (17 of 22 failed before the fix; the other 5 are controls that must keep passing; a 23rd checks that the browser session installs the guard).
+
+**Final recheck** (on f324da6): three Critical items, each with tests written first in
+`tests/test_connected_r5.py`. Torque's browser now resolves only the approved org's hosts
+among Salesforce domains, so a redirect hop to another org is never sent; a test drives a
+real Chromium against a local server and confirms that another org's host receives no
+request, including through a 307 POST redirect (the test skips where Playwright or a
+Chromium build is not installed, as in CI). The browser session stops at the end of its
+window or on consent suspension. A recovery approval binds the snapshot folder and the
+exact operation, and the executor refuses a mismatch. The full-mode guard's handling of
+`cd` failure branches and subshells is deferred to a follow-up release.
 
 Two exceptions to "unchanged" are deliberate and documented in [build-only
 mode](ai-access.md): consent, approval and key files are refused wherever the hook runs,
