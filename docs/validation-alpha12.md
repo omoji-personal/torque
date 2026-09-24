@@ -58,7 +58,17 @@ files that `git diff --cached` then printed. The fix blocks client files where t
 enter git (`git add`, `git stage`, `git update-index --add`, `git hash-object -w`)
 rather than listing every command that can print them; while client files are in the
 index, only `git status` and `git log` pass and doctor fails. A stash of client files
-the owner made stays readable and is listed as a limit. It also found
+the owner made stays readable and is listed as a limit.
+
+A spot-check of that fix found more ways in and out: a file value attached to
+`-F` (`git commit -Fclients/...`), git's own programs run by path
+(`$(git --exec-path)/git-add`), `git status -v` and further `git log` options
+printing staged content, a git error or timeout, or a redirected repository, making
+the index check pass, and doctor counting a failed check as zero. Each has a test
+written first. While client files are tracked, only `git status` and
+`git rm --cached` of `clients/` now pass. Remaining ways for git to read data it
+already holds are listed as limits rather than chased further: the review's
+control is an agent account that holds no client material. It also found
 that re-entering an existing worktree by path was blocked when the worktree tracks
 `workspace.json`; that works now.
 One alpha 11
@@ -67,7 +77,7 @@ repository now expects a worktree path instead.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.12.14, local):** 1782 pytest tests and 154
+- **Offline suite (macOS, Python 3.12.14, local):** 1827 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** the spot-check's events and the git commands above were replayed

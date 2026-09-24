@@ -471,14 +471,6 @@ def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, s
         return None, ""
 
 
-def _clients_in_git(root: Path) -> int:
-    """How many files under the workspace's clients/ are in Git's index (tracked
-    or staged); 0 outside a repository or without git."""
-    from . import gate
-    if not (root / ".git").exists() and gate._git_toplevel(root) is None:
-        return 0
-    listed = gate._git_output(root, ["ls-files", "--", ":(icase)clients"])
-    return len(listed.splitlines()) if listed else 0
 
 
 def _gate_hook_report(root: Path) -> dict:
@@ -598,8 +590,16 @@ def _doctor(args: argparse.Namespace) -> int:
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
-        access["clients_in_git"] = _clients_in_git(root)
-        if access["clients_in_git"]:
+        from . import gate
+        count = gate.clients_index_count(root)
+        access["clients_in_git"] = "unknown" if count is None else count
+        if count is None:
+            report["ready"] = False
+            report["next_actions"].append(
+                "Torque could not check whether files under clients/ are tracked in Git (git failed, timed out "
+                "or is missing), so the gate blocks git commands other than git status here. Check that git "
+                "works in this workspace.")
+        elif count:
             report["ready"] = False
             report["next_actions"].append(
                 f"{access['clients_in_git']} file(s) under clients/ are tracked in Git or staged. Client files "
@@ -627,10 +627,10 @@ def _doctor(args: argparse.Namespace) -> int:
     if args.workspace:
         private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients"]
         try:
-            tracked = subprocess.run(["git", "ls-files", "--", *private_paths], cwd=root,
-                                     capture_output=True, text=True, timeout=10)
-            report["git_tracking"] = {"checked": tracked.returncode == 0,
-                                      "tracked_private_paths": tracked.stdout.splitlines() if tracked.returncode == 0 else []}
+            from . import gate
+            tracked = gate._git_run(root, ["ls-files", "--", *private_paths])
+            ok = tracked is not None and tracked[0] == 0
+            report["git_tracking"] = {"checked": ok, "tracked_private_paths": tracked[1].splitlines() if ok else []}
             if report["git_tracking"]["tracked_private_paths"]:
                 report["next_actions"].append("Some private paths are already tracked by Git. Ignore rules do not untrack existing files; review their repository visibility.")
         except (FileNotFoundError, subprocess.TimeoutExpired):

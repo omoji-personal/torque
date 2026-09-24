@@ -367,6 +367,12 @@ def _token_operand(tok: str) -> str:
             value = tok.split("=", 1)[1]
         elif "@" in tok and not tok.startswith("--"):
             value = tok.split("@", 1)[1]
+        elif not tok.startswith("--") and re.search(r"[fF]", tok[1:]):
+            # A file value attached to -f or -F in a short-option group (git commit
+            # -Fmsg, -qFmsg, sed/awk/grep -fscript): the rest of the group.
+            value = tok[1 + re.search(r"[fF]", tok[1:]).end():]
+            if not value:
+                return ""
         else:
             return ""
     elif _ASSIGN_RE.match(tok):
@@ -808,15 +814,10 @@ def _git_parse(rest: list[str], cwd: Path) -> tuple[Path, list[Path], str | None
     return base, trees, sub, rest[j + 1:]
 
 
-# While client files are in git's index, only these git commands are allowed.
-_GIT_WHILE_TRACKED = {"status", "log"}
-# log options that print file contents.
-_GIT_LOG_PATCH_RE = re.compile(r"^(-p|-u|--patch.*|--full-diff|-c|--cc|--diff-merges.*|--remerge-diff|"
-                               r"-[a-zA-Z]*[pu][a-zA-Z]*|--textconv|--word-diff.*|--color-words.*|-L.*|--show-signature)$")
 _CLIENT_SPEC = ":(icase)clients"
-GIT_TRACKED_REASON = ("client files are in git's index in this workspace, so git commands other than status and "
-                      "log are blocked. Client files must stay untracked: ask the owner to run "
-                      "git rm -r --cached clients")
+GIT_TRACKED_REASON = ("client files are in git's index in this workspace (or git could not check), so git "
+                      "commands other than git status and git rm --cached of clients/ are blocked. Client "
+                      "files must stay untracked: run git rm -r --cached clients")
 
 
 def _git_add_roots(args: list[str]) -> list[str] | None:
@@ -835,12 +836,10 @@ def _git_add_roots(args: list[str]) -> list[str] | None:
 
 
 def _clients_in_index(workspace: Path) -> bool:
-    """True when git's index for the workspace holds a file under clients/. Outside
-    a repository, or without git, there is none."""
-    if not (workspace / ".git").exists() and _git_toplevel(workspace) is None:
-        return False
-    listed = _git_output(workspace, ["ls-files", "--", _CLIENT_SPEC])
-    return listed is None or bool(listed.strip())
+    """True when git's index for the workspace holds a file under clients/, or when
+    git cannot say. Outside a repository there is none."""
+    count = clients_index_count(workspace)
+    return count is None or count > 0
 
 
 def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Path) -> str:
@@ -878,22 +877,53 @@ def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Pat
             if (paths or cacheinfo) and (bool(trees) or _pathspecs_reach(paths + cacheinfo, base, protected)):
                 return GIT_STAGE_REASON
     if sub is not None and _clients_in_index(clients.parent):
-        if sub not in _GIT_WHILE_TRACKED or (sub == "log" and any(_GIT_LOG_PATCH_RE.match(t) for t in args)):
+        verbose = any(_is_long_flag(t, "--verbose", 5) if t.startswith("--") else _short_flag_has(t, "v", "")
+                      for t in args)
+        if sub != "status" or verbose:
             return GIT_TRACKED_REASON
     return ""
 
 
-def _git_output(base: Path, args: list[str]) -> str | None:
-    """Run a read-only git query in base; None when git fails or is missing. The
-    workspace's own git settings cannot start an fsmonitor command here."""
+# Options for every git query Torque runs itself (the gate and doctor): no pager,
+# no fsmonitor or untracked-cache helper, English messages, no GIT_* overrides.
+GIT_QUERY_OPTIONS = ("--no-pager", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+                     "-c", "core.pager=cat")
+
+
+def _git_run(base: Path, args: list[str]) -> tuple[int, str, str] | None:
+    """Run a read-only git query in base: (exit code, stdout, stderr), or None when
+    git could not run or timed out."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["LC_ALL"] = "C"
     try:
-        done = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(base), *args],
+        done = subprocess.run(["git", *GIT_QUERY_OPTIONS, "-C", str(base), *args],
                               capture_output=True, text=True, timeout=15, env=env,
                               stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
-    return done.stdout if done.returncode == 0 else None
+    return done.returncode, done.stdout, done.stderr
+
+
+def _git_output(base: Path, args: list[str]) -> str | None:
+    """stdout of a read-only git query in base; None when git fails or is missing."""
+    done = _git_run(base, args)
+    return done[1] if done is not None and done[0] == 0 else None
+
+
+def clients_index_count(workspace: Path) -> int | None:
+    """How many files under workspace/clients/ are in git's index: 0 when the
+    workspace is not in a repository, None when git errors, times out or is missing."""
+    if not workspace.is_dir():
+        return 0
+    probe = _git_run(workspace, ["rev-parse", "--is-inside-work-tree"])
+    if probe is None:
+        return None
+    if probe[0] != 0:
+        return 0 if "not a git repository" in probe[2].casefold() else None
+    listed = _git_run(workspace, ["ls-files", "--", _CLIENT_SPEC])
+    if listed is None or listed[0] != 0:
+        return None
+    return len(listed[1].splitlines())
 
 
 def _git_toplevel(base: Path) -> Path | None:
@@ -1130,8 +1160,18 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 return ("this command uses a glob at the workspace root that could remove or "
                         "overwrite workspace.json or the hook configuration")
     words = _without_redirections(toks)
+    if _is_git_rm_cached_of_clients(toks, words, clients, cwd):
+        # The way out of a tracked clients/: it only removes index entries.
+        return ""
     for i, tok in enumerate(words):
         rest = words[i + 1:]
+        if _GIT_CORE_PROGRAM_RE.match(_basename(tok)) and re.search(r"[/\\]", tok):
+            return ("git's own programs (git-add, git-diff, ...) run from the git-core directory skip the "
+                    "checks on git; use git")
+        if _basename(tok) == "git":
+            reason = _git_location_reason(rest, words[:i], workspace, cwd)
+            if reason:
+                return reason
         if _is_sf_token(tok):
             if _has_org_flag(rest):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
@@ -1205,6 +1245,77 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 return (f"the glob {tok} expands to paths that include client context, the hook "
                         "configuration or the Torque installation." + NARROW_PATH_HINT)
             return reason
+    return ""
+
+
+_GIT_CORE_PROGRAM_RE = re.compile(r"^git-[a-z0-9][a-z0-9-]*$")
+_GIT_RM_OPTIONS = {"--cached", "-r", "-q", "--quiet", "-f", "--force", "--ignore-unmatch", "-rf", "-fr", "--"}
+
+
+def _is_git_rm_cached_of_clients(toks: list[str], words: list[str], clients: Path, cwd: Path) -> bool:
+    """`git rm --cached [-r -q -f] PATHS` where every path is under clients/ and
+    nothing else is on the line."""
+    if toks != words or len(words) < 4 or _basename(words[0]) != "git" or words[1] != "rm":
+        return False
+    args = words[2:]
+    options = [t for t in args if t.startswith("-")]
+    paths = [t for t in args if not t.startswith("-")]
+    if "--cached" not in options or not set(options) <= _GIT_RM_OPTIONS or not paths:
+        return False
+    if any(_has_glob_char(p) or p.startswith(":") for p in paths):
+        return False
+    try:
+        return all(_is_within(_resolve(cwd, p), clients) for p in paths)
+    except (OSError, ValueError):
+        return False
+
+
+def _git_location_reason(rest: list[str], before: list[str], workspace: Path, cwd: Path) -> str:
+    """git run against another repository or work tree (-C, --git-dir, --work-tree,
+    -c core.worktree=, GIT_DIR=, GIT_WORK_TREE=) must stay inside project/: the
+    gate's checks read the workspace's own repository."""
+    project = Path(os.path.realpath(str(workspace / "project")))
+    targets: list[tuple[str, Path]] = []
+    for word in before:
+        name, eq, value = word.partition("=")
+        if eq and name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
+            targets.append((value, cwd))
+    base = cwd
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        name, eq, value = tok.partition("=")
+        if tok == "-C" and j + 1 < len(rest):
+            targets.append((rest[j + 1], base))
+            try:
+                base = _resolve(base, rest[j + 1])
+            except (OSError, ValueError):
+                return "git -C with a directory the gate cannot resolve"
+            j += 2
+            continue
+        if name in ("--git-dir", "--work-tree"):
+            if not eq:
+                value = rest[j + 1] if j + 1 < len(rest) else ""
+                j += 1
+            targets.append((value, base))
+        elif tok == "-c" and j + 1 < len(rest):
+            key, _, val = rest[j + 1].partition("=")
+            if key.casefold() == "core.worktree":
+                targets.append((val, base))
+            j += 1
+        elif not tok.startswith("-"):
+            break
+        j += 1
+    for raw, where in targets:
+        if not raw or "$" in raw or "`" in raw:
+            return "git pointed at a repository or work tree the gate cannot resolve"
+        try:
+            target = _resolve(where, raw)
+        except (OSError, ValueError):
+            return "git pointed at a repository or work tree the gate cannot resolve"
+        if not _is_within(target, project):
+            return ("git -C, --git-dir, --work-tree, core.worktree, GIT_DIR and GIT_WORK_TREE must stay inside "
+                    "project/ in this mode. Run git from the directory instead")
     return ""
 
 

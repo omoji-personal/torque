@@ -35,8 +35,12 @@ them and renames the mode.
 - Client files are kept out of git where they would enter it: `git add` or
   `git stage` (forced or not) reaching `clients/`, `.claude/` or the hook's
   environment, `git update-index --add` and `git hash-object -w` on those paths.
-  While any client file is in git's index, only `git status` and `git log` without
-  patches pass, and `torque doctor` reports the tracked files and fails.
+  A file value attached to `-f`/`-F` (`git commit -Fclients/...`) is checked as a
+  path. git's own programs run by path and git pointed outside `project/` (`-C`,
+  `--git-dir`, `--work-tree`, `GIT_DIR`) are blocked. While any client file is in
+  git's index, or git cannot be checked, only `git status` and `git rm --cached`
+  of `clients/` pass, and `torque doctor` reports the count (or "unknown") and
+  fails. Other ways git can read what it already holds are listed as limits.
 - `EnterWorktree` by path into an existing worktree works when the worktree tracks
   `workspace.json`.
 - A recursive search, archive or clean rooted at the filesystem root (`grep -r x /`,
@@ -55,7 +59,7 @@ them and renames the mode.
 - The alpha 11 validation record's "Review scope" now records its security
   review, two re-reviews and the spot-check.
 
-1782 offline tests pass (154 subtests). See the
+1827 offline tests pass (154 subtests). See the
 [alpha 12 validation record](docs/validation-alpha12.md).
 
 ## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23

@@ -121,16 +121,24 @@ guard on recognized tool calls, not a sandbox. It has two values:
   stash's untracked files back (`git stash show -u`, `--only-untracked`, or its third parent,
   `stash^3`, `stash@{0}^3`) is blocked in the same places. A magic pathspec (`:/`) and a
   repository git cannot identify count as reaching them.
-- The ways client files get into git: `git add` or `git stage`, forced or not, whose pathspecs
-  (or `-A`, `--all` or `-u` with none, the whole repository) reach `clients/`, `.claude/` or the
-  hook's environment, and `git update-index --add`/`--force-remove`/`--index-info` and
-  `git hash-object -w` on those paths (or reading paths from standard input). Stage named paths
-  such as `project/`.
-- Client files must stay untracked (Torque ignores `clients/` by default). If they are tracked
-  or staged, low-level git commands can read them, so while any file under `clients/` is in
-  git's index the gate blocks every git command except `git status` and `git log` without a
-  patch option, and `torque doctor` reports it and fails. Ask the owner to run
-  `git rm -r --cached clients`.
+- These routes for client files into git: `git add` or `git stage`, forced or not, whose
+  pathspecs (or `-A`, `--all` or `-u` with none, the whole repository) reach `clients/`,
+  `.claude/` or the hook's environment; `git update-index --add`/`--force-remove`/`--index-info`
+  and `git hash-object -w` on those paths (or reading paths from standard input); and a file
+  value attached to `-f` or `-F` (`git commit -Fclients/...`, `sed -fclients/...`), which is
+  checked as a path like any other. Stage named paths such as `project/`.
+- git pointed at another repository or work tree: `-C`, `--git-dir`, `--work-tree`,
+  `-c core.worktree=`, and `GIT_DIR=`/`GIT_WORK_TREE=` on the same command, unless they stay
+  inside `project/`. git's own programs run by path (`$(git --exec-path)/git-add`,
+  `.../git-core/git-diff`) are blocked too.
+- Client files must stay untracked (Torque ignores `clients/` by default); if they are tracked,
+  low-level git commands can read them and doctor reports it. While any file under `clients/` is
+  in git's index, or when the gate's own git check fails or times out, the gate blocks every git
+  command except `git status` without `-v`/`--verbose` and `git rm --cached` of paths under
+  `clients/`, which is the way out: `git rm -r --cached clients`. `torque doctor` reports the
+  count (or "unknown" when git fails) and is not ready. A workspace that is not in a git
+  repository has nothing to report. Doctor's and the gate's own git queries run with no pager
+  and with fsmonitor and the untracked cache turned off.
 - Changing Torque itself: `Write`/`Edit`/`MultiEdit`/`NotebookEdit` into the installed `torque`
   package directory, any Bash command naming that directory or Torque's install metadata
   (`torque_salesforce-*.dist-info`, `__editable__*torque*`), and `pip`, `python -m pip`, `uv` or
@@ -270,12 +278,16 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - What the host does on `EnterWorktree` beyond the checks above: the gate assumes Claude Code
   creates worktrees under `.claude/worktrees/` and copies only the tracked tree and what
   `.worktreeinclude` names. A `WorktreeCreate` hook that copies more is not inspected.
-- Git routes other than the ones named: an alias (`git -c alias.x=clean x`), a stash's untracked
-  files read by object hash, `git checkout` or `git reset` of tracked files under `.claude/`
-  from history, a work tree set in an earlier command (`export GIT_WORK_TREE=..`), client files
-  already in commit history but no longer in the index (`git show HEAD~3:clients/...`), a stash
-  of client files the owner made (`git log --all -p`, `git show 'stash^@'`),
-  and git plumbing that writes objects (`git hash-object -w`, `git update-index --add`).
+- Git routes other than the ones named. The checks above cover how client files get into git in
+  ordinary use; they do not cover every way git can read data it already holds. Not covered: an
+  alias (`git -c alias.x=clean x`); a stash's untracked files read by object hash; `git
+  checkout` or `git reset` of tracked files under `.claude/` from history; a repository or work
+  tree set in an earlier command (`export GIT_WORK_TREE=..`) or in the repository's own
+  configuration (`core.worktree`, a separate git directory); client files already in commit
+  history but no longer in the index (`git show HEAD~3:clients/...`); a stash of client files
+  the owner made (`git log --all -p`, `git show 'stash^@'`); and git's programs reached by a
+  bare name on `PATH` or a path built at run time other than `$(git --exec-path)`. The real
+  control is an agent account that holds no client material.
 
 It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
 `Clients__c`) from the workspace root; an MCP string argument that is exactly `clients`, or `.`
@@ -292,7 +304,11 @@ from the recognised list above; a command that merely mentions a script name as 
 (`rg jsc-qa`); nearly every Bash command run from inside a worktree under `.claude/worktrees/`
 (its relative paths are under `.claude/`; use absolute paths to `project/` or leave the
 worktree); `EnterWorktree` with a `name` in a workspace that is not a git repository; every git
-command but `status` and `log` while client files are in git's index; `git add .` or `git add -A`
-from the workspace root, even when `clients/` is ignored (stage named paths); `git clean`
-from the workspace root, even when `clients/` is ignored; and `LSP` on a path under `.claude/` or
+command but `git status` and `git rm --cached` of `clients/` while client files are in git's index
+or while the gate's git check fails; `git add .`, `git add -A` or `git add -u` from the
+workspace root, and `git add -A` or `-u` from `project/` (both cover the whole repository), even
+when `clients/` is ignored (stage named paths); `git -C`, `--git-dir` or `--work-tree` pointing
+outside `project/`, including `git -C .` from the workspace root; `git clean` from the workspace
+root, even when `clients/` is ignored; a short-option group containing `f` or `F` whose remaining
+letters happen to name a protected path; and `LSP` on a path under `.claude/` or
 in the Torque installation. Run those from `project/` or yourself.
