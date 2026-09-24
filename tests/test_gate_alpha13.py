@@ -262,6 +262,22 @@ def test_n3_follow_walk_fails_closed_at_the_depth_cap(ws, monkeypatch):
     assert _bash_allowed("find . -name x", ws, ws / "project")
 
 
+def test_n3_follow_walk_skips_words_that_are_not_folders(ws, monkeypatch):
+    """Windows rejects a path holding `*` with a generic OSError, not FileNotFoundError.
+    A find expression word (`-name '*.md'`) must not make the walk fail closed."""
+    real_scandir = os.scandir
+
+    def scandir(path):
+        if "*" in str(path):
+            raise OSError(22, "The filename, directory name, or volume label syntax is incorrect")
+        return real_scandir(path)
+
+    monkeypatch.setattr(gate.os, "scandir", scandir)
+    clients = ws / "clients"
+    assert gate._links_reach([ws / "project" / "*.md", ws / "project"], clients) is False
+    assert _bash_allowed("find . -follow -name '*.md' -exec cat {} +", ws, ws / "project")
+
+
 def test_n3_follow_block_message_names_the_link(ws_up):
     allowed, reason = gate.decide("Bash", {"command": "rg -L SECRET"}, ws_up, "build-only", ws_up / "project")
     assert not allowed and "link" in reason, reason
