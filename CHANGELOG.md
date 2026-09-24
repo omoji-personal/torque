@@ -21,8 +21,10 @@ documentation implied were covered. This release closes them and brings the alph
   the call proceed. `torque doctor` warns when the hook entry has no timeout or a larger
   one.
 - Each gate call has a 5-second time budget for path resolution, glob expansion and its
-  git queries, and a budget of 10,000 glob matches; past either it blocks with a message
-  saying so, rather than letting the host's hook timeout allow the call.
+  git queries, and a budget of 10,000 glob matches (each distinct pattern counted once);
+  past either it blocks with a message saying so, rather than letting the host's hook
+  timeout allow the call. A watchdog in the hook process enforces the time budget even
+  inside a step that does not check it, and exits 2.
 - `unzip` option clusters are read like getopt: `-od..` and `-qod ..` name the extraction
   folder.
 - Doctor's link scan follows a link to a folder outside the workspace, so a link that

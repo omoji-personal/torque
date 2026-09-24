@@ -234,9 +234,12 @@ Claude Code gives a command hook 600 seconds by default, and a timed-out hook le
 proceed, as if it were allowed. Set `"timeout": 600` on the hook entry, as below, and do not
 lower it; doctor warns when the entry has no `timeout` or a larger one. The gate does not
 walk the tree, and each call has its own 5-second budget for everything it reads from the
-disk (path resolution, glob expansion, its git queries) and a budget of 10,000 glob matches.
-Past either the gate blocks the call (exit 2) with a message saying so, long before the
-hook timeout, so a slow or huge glob cannot turn a block into an allow.
+disk (path resolution, glob expansion, its git queries) and a budget of 10,000 glob matches,
+counting each distinct pattern once. Past either the gate blocks the call (exit 2) with a
+message saying so. The time budget is also enforced by a watchdog: if the gate is still
+running half a second after the budget, for example inside a glob that expands through
+links, the hook writes the same message and exits 2. So a slow or huge glob cannot reach
+the hook timeout and turn a block into an allow.
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
