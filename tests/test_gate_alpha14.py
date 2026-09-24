@@ -250,15 +250,15 @@ def test_any_shape_below_the_limit_finishes_inside_the_budget(ws, command):
 
 # --- Records ---
 
-def test_version_is_alpha14():
+def test_version_is_alpha14_or_later():
     import torque
-    assert torque.__version__ == "2.0.0a14"
-    assert 'version = "2.0.0a14"' in (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    assert re.fullmatch(r"2\.0\.0a(\d+)", torque.__version__) and int(torque.__version__[6:]) >= 14
+    assert f'version = "{torque.__version__}"' in (REPO / "pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_changelog_and_record_for_alpha14():
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert changelog.split("\n## ", 2)[1].startswith("2.0.0a14")
+    assert "\n## 2.0.0a14 - " in changelog
     record = (REPO / "docs" / "validation-alpha14.md").read_text(encoding="utf-8")
     assert "Python 3." in record and "## Review scope" in record and "20,000" in record
 
@@ -276,7 +276,8 @@ def test_build_only_docs_state_the_length_limit():
 def test_readme_status_and_neutral_lineage():
     text = (REPO / "README.md").read_text(encoding="utf-8")
     top = text.split("\n## ", 1)[0]
-    assert "2.0.0a14" in top and "development alpha" in top
+    import torque
+    assert torque.__version__ in top and "development alpha" in top
     assert "Justiceserver" not in top and "JusticeServer" not in top
     assert "earlier consulting toolkit" in " ".join(top.split())
 

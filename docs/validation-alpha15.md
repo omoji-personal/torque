@@ -1,0 +1,87 @@
+# Validation for alpha 15: September 24, 2026
+
+Alpha 15 is a development build with no package-index release. It adds opt-in
+[connected mode](connected-approval.md): a third `ai_access` value under which an AI
+session works in one client's approved orgs and makes each org write only by consuming an
+approval the consultant granted for that exact command. A workspace that does not opt in
+behaves as in alpha 14: every existing gate, workspace and CLI test passes, and the only
+edits to existing tests generalize alpha 14's version and changelog checks so they accept a
+later version.
+
+## What was built
+
+New modules under `src/torque/`: `presence` (real terminal, no agent environment, no agent
+ancestor process, typed code), `consent`, `connected_routes` (quote-aware route
+classifier), `namespaces`, `before_state`, `approval`, `gate_connected`, `cli_approval`,
+`permissions`, `doctor_connected`, and the rule file `data/connected/production-approval.md`.
+Changed: `gate.py` (mode chain, an `org_rules` switch and per-folder client guard for the
+path scan, consent and approval files guarded, connected dispatch and `ask` output),
+`workspace.py`, `changes.py` (approval and before-state events), `cli.py`, the revert
+wrappers and revert executor (re-check of the consumed approval and live org ID), and
+`delivery-practice.md` (one line).
+
+The host facts connected mode relies on (hook input keys, the `ask` output, permission rule
+syntax, the agent's environment markers, the Salesforce CLI's read commands) were checked
+against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
+[connected mode](connected-approval.md#host-facts-verified).
+
+## Results
+
+- **Offline suite (macOS, Python 3.14.7, local):** 2455 pytest tests and 154
+  subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
+  runs only where the owner's private list is configured), and the 12 standalone fixture
+  suites complete. That is 280 more tests than alpha 14's 2175. The wheel and source
+  distribution checks and the installed-wheel smoke test pass. No live org or provider call.
+- **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
+  a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
+  answered in 0.06 to 0.07 seconds: a read of an approved org, allowed; a read of an org
+  outside the consent, denied; an unapproved write, denied; a check-only deploy, allowed and
+  logged; `python3 tools/fix.py`, ask (denied in `bypassPermissions`); `torque approval
+  grant`, denied; a read of another client's folder, denied; a write to `consent.json`,
+  denied; a browser click without a window, denied. After a grant, the approved write was
+  allowed once and denied on replay, and the change recorded `before_state`,
+  `approval_request`, `approval_grant` and `approval_consume`. `torque doctor` in that
+  workspace ran its five probes through the hook and got the expected deny, deny, ask,
+  deny and deny.
+- **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
+  Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull request.
+
+These are synthetic, offline checks. No Salesforce org, browser or model provider was
+called.
+
+## Review scope
+
+Done by the implementer while building: a hostile pass over the gate, route classifier,
+approval store and presence check, looking for an unapproved write, a replay, a
+cross-client read or a self-grant through a recognized route. It led to these changes, each
+with a regression test: the approval binds the working folder (the same command run from
+another folder deploys other files); the grant re-derives everything from the request's
+command rather than trusting the request file; `sf alias set` and `sf config set` are
+refused; the Salesforce CLI's credential, alias and configuration folders, its
+installation and writable folders on `PATH` are guarded from the file tools; before-state
+captures count as org reads subject to the consent; a custom Apex REST call or a request
+file counts as a write; desktop-control tools other than screenshots are refused (they could
+type into the consultant's terminal); unknown programs ask rather than pass.
+
+Pending, and run by the owner's controller rather than in this build:
+
+- **R1, hostile QA** on `gate.py`, `gate_connected.py`, `connected_routes.py`,
+  `approval.py` and `presence.py`, each finding with a reproducing hook event.
+- **R2, independent security re-review** of the full alpha 15 diff by a different model
+  family, against the "What it stops" list in [connected mode](connected-approval.md).
+- **Live rehearsal** in a disposable Developer Edition org with synthetic data under a
+  synthetic client: launch; read; unapproved write denied; request with a captured
+  before-state; grant from a separate terminal (tier 2 if a second OS account is available);
+  write allowed once; replay, changed payload and out-of-consent org denied; script asks;
+  browser click denied, then allowed inside a window; `torque recover` preview and run;
+  `approval log`. It needs a developer org the owner supplies. Doctor probes inside a real
+  Claude Code session are part of it.
+- Owner sign-off, then the `v2.0.0a15` tag.
+
+## Known remaining limits
+
+See [what connected mode cannot stop](connected-approval.md#what-it-cannot-stop). In
+short: code the session writes and runs, tier 1 key forgery, actions inside a browser
+window, alias changes before a raw `sf` write between doctor runs, parallel tool calls,
+and a hook that does not run. Tier 2's operating-system setup (a second account with read
+access to the workspace) is documented for macOS ACLs and has not been rehearsed.

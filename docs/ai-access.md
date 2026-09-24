@@ -1,20 +1,27 @@
-# Build-only mode
+# Build-only and connected modes
 
-`ai_access` is a workspace setting for a firm with an AI-use policy: it lets an AI session run in a
-Torque workspace while keeping it away from client orgs and client context. It is a best-effort
-guard on recognized tool calls, not a sandbox. It has two values:
+`ai_access` is a workspace setting for a firm with an AI-use policy: it decides how far an AI
+session in a Torque workspace can reach into client orgs and client context. It is a best-effort
+guard on recognized tool calls, not a sandbox. It has three values:
 
 - `full` (default when the key is absent): the guard is off and every tool call passes.
 - `build-only`: blocks org access, client context, and known ways to turn the mode off.
+- `connected` (with `"approval": "required"`): the session works for one client it was launched
+  for, reads that client's approved orgs, and writes to an org only with a per-write approval
+  the consultant grants from their own terminal. See [connected mode](connected-approval.md).
+
+This page describes build-only mode; connected mode keeps every build-only check that is not
+about org access and applies the client-folder checks to other clients' folders.
 
 ## Current limits, stated plainly
 
-- **No org allowlist.** Build-only blocks every Salesforce org, including a firm-owned developer
-  org with synthetic data. The session can draft metadata, tests and a retest plan locally; a
+- **No org allowlist in build-only.** Build-only blocks every Salesforce org, including a
+  firm-owned developer org with synthetic data (connected mode is the scoped alternative). The session can draft metadata, tests and a retest plan locally; a
   person runs every deploy, test run and query against any org, outside the AI session.
-- **No metadata-only mode.** There are only two modes. Switching to `full` removes the guard
-  entirely: the session can then reach any org the user's Salesforce CLI is authorized for, read
-  and write records, and read `clients/`. A scoped middle mode does not exist yet.
+- **No metadata-only mode.** Switching to `full` removes the guard entirely: the session can then
+  reach any org the user's Salesforce CLI is authorized for, read and write records, and read
+  `clients/`. The scoped middle mode is [connected mode](connected-approval.md): one client, its
+  approved orgs, and an approval for each write.
 - **The setting is not authenticated.** Whoever owns the workspace folder changes it.
   `ai_access_changed_at` records when, in a file that owner can edit. Leadership approval is a
   process around the setting, not something Torque enforces.
@@ -199,10 +206,12 @@ session's gating, and a path inside a build-only workspace is checked from any d
 folder with a `workspace.json`, or with a workspace marker (`clients/` plus `.torque/templates.json`)
 and no readable `workspace.json`, counts. If any of them is build-only, the call is checked against
 each build-only one. A nested `workspace.json` (even `{}` or `"full"`) cannot downgrade a build-only
-workspace above it.
+workspace above it. The strictest mode wins: build-only, then connected, then full.
 
-`ai_access` resolves as: key absent means `full`; exactly `"full"` means full; anything else
-(`null`, `""`, a typo, a different case, a non-string) means build-only. An unreadable or malformed
+`ai_access` resolves as: key absent means `full`; exactly `"full"` means full; exactly
+`"connected"` together with `"approval": "required"` means connected; anything else
+(`null`, `""`, a typo, a different case, a non-string, `"connected"` without required approval)
+means build-only. A Torque older than 2.0.0a15 reads `"connected"` as build-only. An unreadable or malformed
 `workspace.json`, a marker without one, or any evaluation error also means build-only.
 
 ## What it allows
@@ -220,7 +229,11 @@ Only the workspace owner runs this, not the AI session. It writes `ai_access` an
 ```sh
 torque workspace ai-access build-only --path /path/to/workspace
 torque workspace ai-access full --path /path/to/workspace
+torque workspace ai-access connected --approval required --path /path/to/workspace
 ```
+
+Connected mode also needs a person at a real terminal outside the AI session, and has its
+own setup steps: [connected mode](connected-approval.md).
 
 ## Wiring the Claude Code hook
 

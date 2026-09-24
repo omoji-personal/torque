@@ -90,7 +90,7 @@ def _sf_shadowing(env=os.environ) -> list[str]:
     if not real:
         return notes
     real_dir = os.path.realpath(os.path.dirname(real))
-    for entry in (env.get("PATH") or "").split(os.pathsep):
+    for entry in dict.fromkeys((env.get("PATH") or "").split(os.pathsep)):
         if not entry:
             continue
         if os.path.realpath(entry) == real_dir:

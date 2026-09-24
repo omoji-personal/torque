@@ -1,5 +1,48 @@
 # Changelog
 
+## 2.0.0a15 - connected mode with per-write approval, 2026-09-24 (not published to a package index)
+
+An opt-in third `ai_access` mode for stage-2 work: an AI session works in one client's
+orgs, and each org write waits for the consultant's approval of that exact command. The
+default (`full`) and build-only behavior are unchanged.
+
+- `ai_access: "connected"` is valid only with `"approval": "required"`; anything else is
+  build-only, and an older Torque reads it as build-only. The strictest mode wins when
+  workspaces nest: build-only, then connected, then full. `torque workspace ai-access
+  connected --approval required` needs a person at a real terminal outside the session.
+- `torque launch` binds a session to one client. Reads of that client's approved orgs are
+  allowed; check-only deploys and test runs are allowed and logged; other clients' folders,
+  orgs outside the consent and `sf` calls without an explicit org are refused.
+- `torque client consent record|sign-off|suspend|show` keeps the client's written agreement,
+  its approved orgs (with their live 18-character IDs) and data classes, and a second
+  reviewer's sign-off. Org access needs active, signed-off consent.
+- `torque approval request|grant|deny|status|list|log|require`: the session requests an
+  approval for one exact command, MCP call or browser window; the consultant grants it at a
+  real terminal after reading the command, org, components, before-state, namespaces and file
+  digest, and types back a code; the gate consumes it once. It binds the command, the files
+  it deploys, the working folder, the org and its ID, the client, the change and a 15-minute
+  window (30 for a browser window). Every step is a change-record event.
+- Production approvals need an independent before-state (imported, or retrieved or read now
+  as its own step) covering each named component, or a written recovery path.
+- Two approval tiers: tier 1 signs approvals with a key in the consultant's home (a script
+  the session runs can read it and forge an approval, as documented); tier 2, recommended,
+  accepts only approvals owned by a separate approver OS account.
+- Programs the gate cannot check make the host ask the consultant, and are refused when the
+  session skips prompts. Approval administration, `sf alias set`, `sf config set` and desktop
+  control are refused. The Salesforce CLI's credential, alias and configuration folders and
+  its installation are guarded.
+- `torque deploy|data|org|recover` re-check the consumed approval and the live org ID when
+  they run in a connected workspace.
+- `torque approval permissions [--write]` generates Claude Code permission rules (ask on
+  write routes and interpreters, deny approval administration, bypass mode disabled), and
+  `torque doctor` checks them, the hook, the tier and the consent, and runs five synthetic
+  calls through the hook (`--live` also compares each org's ID with the consent).
+- The rule file `production-approval.md` ("propose, show the plan and stop" for production)
+  is copied into a connected workspace; `delivery-practice.md` gains one line pointing to it.
+- Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
+  what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
+  modes; the [alpha 15 record](docs/validation-alpha15.md).
+
 ## 2.0.0a14 - long commands in build-only mode, 2026-09-24 (not published to a package index)
 
 A spot-check of the released alpha 13 found that one regular-expression call could hold

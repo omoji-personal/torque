@@ -54,6 +54,7 @@ Browser flows are executable configuration. Domain implementations, seed users a
 - `advisory evidence --user-id` scopes direct and group assignment queries to a validated Salesforce user ID. Without it, assignment observations explicitly refer to anybody in the org. Neither proves full effective user access. Operator not-applicable declarations do not replace an observed absence or unknown result. Report completeness distinguishes observations from accepted assertions and never means actual user access was technically proven.
 - The replay scanner reports matching rule/count with redacted details and does not echo the matched credential. Lesson scrubbing remains best effort, and raw operational state stays private.
 - Revert execution validates the snapshot org against the current explicit target before building a command, including when `--force` is requested. A stored alias does not override the selected target. Subprocess Python invocations use the running interpreter; fallback execution does not choose an unrelated PATH `jsc` binary.
+- In a [connected](connected-approval.md) workspace (2.0.0a15), the revert wrappers (`wrappers/_common.py`) and revert execution (`revert_executor.py`) run a write only when the gate has just consumed an approval for that exact command, and refuse when the target alias now resolves to another org ID than the approved one. Dry runs and workspaces not in connected mode are unchanged.
 
 ## Packaging contract
 

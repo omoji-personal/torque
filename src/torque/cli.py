@@ -718,8 +718,8 @@ def _doctor(args: argparse.Namespace) -> int:
         access["connected"] = connected
         if not connected["ready"]:
             report["ready"] = False
-        report["next_actions"] += [f"Connected mode: {problem}." for problem in connected["problems"]]
-        report["next_actions"] += [f"Connected mode (advice): {note}." for note in connected["advice"]]
+        report["next_actions"] += [f"Connected mode: {problem.rstrip('.')}." for problem in connected["problems"]]
+        report["next_actions"] += [f"Connected mode (advice): {note.rstrip('.')}." for note in connected["advice"]]
     if report["client"] and report["client"]["evidence_problems"]:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
