@@ -2831,6 +2831,32 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     return gated
 
 
+def _connected_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
+    """Connected workspaces that apply to a call, found the same way as build-only
+    ones: at or above the event's cwd, the session's project directory, and any
+    path the call names."""
+    starts = [cwd]
+    project = os.environ.get("CLAUDE_PROJECT_DIR")
+    if project:
+        starts.append(Path(os.path.realpath(project)))
+    starts += _touched_paths(tool_input, cwd)
+    found: list[Path] = []
+    checked: set[str] = set()
+    for start in starts:
+        key = _cf(str(start))
+        if key in checked:
+            continue
+        checked.add(key)
+        try:
+            chain = _workspace_chain(start)
+        except OSError as exc:
+            if _not_a_path(start, exc):
+                continue
+            raise
+        found += [folder for folder, mode, _ in chain if mode == "connected" and folder not in found]
+    return found
+
+
 def main() -> int:
     # A hard limit on top of the cooperative checks: a daemon timer that blocks the
     # call and ends the process if the gate is still running after its budget.
@@ -2862,6 +2888,20 @@ def _main() -> int:
                 allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, "build-only", cwd)
                 if not allowed:
                     break
+            connected = _connected_workspaces(cwd, tool_input) if allowed and not gated else []
+            if connected:
+                # Imported only here: a workspace without connected mode never loads it.
+                from .gate_connected import ask_json, decide_connected
+                results = [decide_connected(str(event.get("tool_name", "")), tool_input, root, cwd,
+                                            env=os.environ, permission_mode=event.get("permission_mode"),
+                                            session_id=event.get("session_id"),
+                                            tool_use_id=event.get("tool_use_id"))
+                           for root in connected]
+                worst = max(results, key=lambda r: ("allow", "ask", "deny").index(r.action))
+                if worst.action == "ask":
+                    print(ask_json(worst.reason))
+                    return 0
+                allowed, reason = worst.action == "allow", worst.reason
     except BudgetExceeded as exc:
         print(_budget_reason(exc), file=sys.stderr)
         return 2
@@ -2870,8 +2910,8 @@ def _main() -> int:
         # decide() only does real work in build-only mode (it returns immediately
         # otherwise), a failure here is only reachable when the mode could be
         # build-only, so this fails closed rather than letting the tool run.
-        print(f"Build-only mode: could not safely evaluate this call ({exc}); blocking to fail closed.",
-              file=sys.stderr)
+        print(f"Build-only or connected mode: could not safely evaluate this call ({exc}); "
+              "blocking to fail closed.", file=sys.stderr)
         return 2
     if not allowed:
         print(reason, file=sys.stderr)
