@@ -323,13 +323,22 @@ def _with_sep(path: str) -> str:
     return path if path.endswith(("/", "\\")) else path + os.sep
 
 
+# Connected mode's consent and approval records, and the tier 1 approval key.
+APPROVAL_FILE_RE = re.compile(r"(^|[/\\])clients[/\\][^/\\]+[/\\](consent\.json|consent-evidence([/\\]|$)|"
+                              r"approvals([/\\]|$))", re.IGNORECASE)
+APPROVAL_KEY_RE = re.compile(r"(^|[/\\])torque[/\\]approval\.key$", re.IGNORECASE)
+
+
 def _targets_guarded_file(text: str) -> bool:
     """True if text (a raw Bash token, or a resolved path) names workspace.json,
-    a .claude/settings*.json hook config or .worktreeinclude, case-insensitively.
-    Only the owner changes these; an AI session must not be able to switch the
-    mode off, or list clients/ for copying into a new worktree."""
+    a .claude/settings*.json hook config or .worktreeinclude, a client's consent
+    or approval records, or the approval key, case-insensitively. Only the owner
+    changes these; an AI session must not be able to switch the mode off, grant
+    its own approvals, or list clients/ for copying into a new worktree."""
     folded = text.casefold()
     if "workspace.json" in folded or WORKTREE_INCLUDE in folded:
+        return True
+    if APPROVAL_FILE_RE.search(text) or APPROVAL_KEY_RE.search(text):
         return True
     return bool(SETTINGS_RE.search(text))
 
@@ -1712,7 +1721,8 @@ def _without_redirections(toks: list[str]) -> list[str]:
     return words
 
 
-def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: Path, cwd: Path) -> str:
+def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: Path, cwd: Path,
+                   org_rules: bool = True) -> str:
     """Scan every token (not just the head) so a wrapper, an env-var prefix, or a
     grouping construct cannot hide an org call, a client-context command, or a
     self-disable attempt behind it."""
@@ -1736,7 +1746,11 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             reason = _git_location_reason(rest, words[:i], workspace, cwd)
             if reason:
                 return reason
-        if _is_sf_token(tok):
+        if _is_sf_token(tok) and not org_rules:
+            if _sf_tree_reader_reaches(rest, clients, cwd):
+                return (f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} would read client context."
+                        + NARROW_PATH_HINT)
+        elif _is_sf_token(tok):
             if _has_org_flag(rest):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
             if not _sf_local_ok(rest):
@@ -1758,6 +1772,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             reason = _installer_reason(_basename(tok), rest)
             if reason:
                 return reason
+        elif _basename(tok) in CONSOLE_SCRIPTS and not org_rules:
+            continue
         elif _basename(tok) in CONSOLE_SCRIPTS:
             name = _basename(tok)
             reason = _torque_reason(rest) if CONSOLE_SCRIPTS[name] == "torque" else _delegate_reason(name, rest)
@@ -1765,6 +1781,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 return reason
         elif PY_LAUNCHER_RE.match(_basename(tok)) and _python_module(rest)[0]:
             module, after = _python_module(rest)
+            if not org_rules and (module in TORQUE_MAIN_MODULES or DELEGATE_MODULE_RE.match(module)):
+                continue
             args = rest[after:]
             reason = ""
             if module in TORQUE_MAIN_MODULES:
@@ -1818,7 +1836,7 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         else:
             bases = [cwd, *_next_cwds([cwd], target)]
         for base in dict.fromkeys(bases):
-            reason = _block_command(rest_toks, clients, claude_dir, workspace, base)
+            reason = _block_command(rest_toks, clients, claude_dir, workspace, base, org_rules)
             if reason:
                 return reason
         return ""
@@ -1969,7 +1987,7 @@ def _token_reason(tok: str, clients: Path, claude_dir: Path, workspace: Path, cw
     """Why one Bash token is blocked, or "". write is True when the command
     writes files and tok is not the command being run."""
     if _token_names_guarded_file(tok, cwd):
-        return "this command targets workspace.json or the hook configuration"
+        return "this command targets workspace.json, the hook configuration, or consent and approval records"
     if _token_targets_claude_dir(tok, claude_dir, cwd):
         return "this command targets the .claude hook configuration directory"
     if _token_targets_package(tok, cwd):
@@ -2104,7 +2122,7 @@ def _add_cwds(pool: list[Path], extra: list[Path]) -> list[Path]:
 
 
 def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path | list[Path],
-               _depth: int = 0) -> str:
+               _depth: int = 0, org_rules: bool = True) -> str:
     """Check every segment of command, then recurse into $(...) / backtick
     substitutions (already exposed as their own segments by the paren/backtick
     splitter, and re-checked explicitly below for robustness) and into the string
@@ -2146,7 +2164,7 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
         # zsh glob groups and qualifiers (c(l)ients, notes(.)) and comma-less
         # brace groups (c{l..l}ients) may match protected paths: check the
         # command again with each group read as a wildcard.
-        reason = _scan_bash(globbed, clients, claude_dir, workspace, cwd, _depth + 1)
+        reason = _scan_bash(globbed, clients, claude_dir, workspace, cwd, _depth + 1, org_rules)
         if reason:
             return reason
     seen: list[Path] = list(start)
@@ -2154,11 +2172,11 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
     grouped = any(c in command for c in _GROUPING_CHARS)
     for toks, sep in _segments_with_separators(command):
         for here in current:
-            reason = _block_command(toks, clients, claude_dir, workspace, here) if toks else ""
+            reason = _block_command(toks, clients, claude_dir, workspace, here, org_rules) if toks else ""
             if reason:
                 return reason
         for inner in _shell_c_strings(toks):
-            reason = _scan_bash(inner, clients, claude_dir, workspace, list(current), _depth + 1)
+            reason = _scan_bash(inner, clients, claude_dir, workspace, list(current), _depth + 1, org_rules)
             if reason:
                 return reason
         target = _cd_target(toks)
@@ -2185,11 +2203,11 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
     except ValueError:
         whole = []
     for inner in _shell_c_strings(whole):
-        reason = _scan_bash(inner, clients, claude_dir, workspace, list(seen), _depth + 1)
+        reason = _scan_bash(inner, clients, claude_dir, workspace, list(seen), _depth + 1, org_rules)
         if reason:
             return reason
     for nested in _direct_substitutions(command):
-        reason = _scan_bash(nested, clients, claude_dir, workspace, list(seen), _depth + 1)
+        reason = _scan_bash(nested, clients, claude_dir, workspace, list(seen), _depth + 1, org_rules)
         if reason:
             return reason
     return ""
@@ -2340,33 +2358,53 @@ def _start_watchdog() -> threading.Timer:
     return timer
 
 
-def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None) -> tuple[bool, str]:
+def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None,
+            org_rules: bool = True, guarded: list[Path] | None = None) -> tuple[bool, str]:
+    """The build-only checks. With org_rules False (connected mode), org calls and
+    Torque commands pass this scan (connected mode classifies them itself), and
+    `guarded` lists the folders treated as client context (other clients' folders)
+    in place of the whole clients/ folder."""
     workspace = Path(os.path.realpath(str(workspace)))
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
-    allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, copy=False)
+    allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, False, org_rules, guarded)
     if not allowed:
         return allowed, reason
     for copy in _worktree_copies(workspace):
-        allowed, reason = _decide_root(tool_name, tool_input, copy, cwd, copy=True)
+        copies = None if guarded is None else [copy / "clients" / Path(folder).name for folder in guarded]
+        allowed, reason = _decide_root(tool_name, tool_input, copy, cwd, True, org_rules, copies)
         if not allowed:
             return allowed, reason
     return True, ""
 
 
-def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, copy: bool) -> tuple[bool, str]:
+def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, copy: bool,
+                 org_rules: bool = True, guarded: list[Path] | None = None) -> tuple[bool, str]:
+    """_decide_root_for each guarded folder (by default, workspace/clients). An
+    empty list still runs once, against a folder that does not exist, so the
+    integrity checks (settings, gate files, interpreter, unknown tools) apply."""
+    folders = guarded if guarded is not None else [workspace / "clients"]
+    for folder in folders or [workspace / "clients" / ".none"]:
+        clients = Path(os.path.realpath(str(folder)))
+        allowed, reason = _decide_root_for(tool_name, tool_input, workspace, cwd, copy, clients, org_rules)
+        if not allowed:
+            return allowed, reason
+    return True, ""
+
+
+def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, copy: bool, clients: Path,
+                     org_rules: bool = True) -> tuple[bool, str]:
     """decide() for one root: the workspace, or (copy=True) a worktree copy of it
     under .claude/worktrees/, whose clients/ is guarded the same way."""
-    clients = Path(os.path.realpath(str(workspace / "clients")))
     claude_dir = Path(os.path.realpath(str(workspace / ".claude")))
     if tool_name.startswith("mcp__") or tool_name in MCP_LIKE_TOOLS:
         # An MCP tool that runs a command (a shell or process server) gets the
         # Bash scan on its command strings before its path arguments are checked.
         for text in _command_strings(tool_input):
-            reason = _scan_bash(text, clients, claude_dir, workspace, cwd)
+            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules)
             if reason:
                 return False, f"Build-only mode: {reason}. Run it yourself outside the AI session."
     if tool_name.startswith("mcp__"):
-        if _mcp_reaches_salesforce(tool_name):
+        if org_rules and _mcp_reaches_salesforce(tool_name):
             return False, ("Build-only mode: this MCP tool looks like Salesforce org access. "
                            "Disable Salesforce MCP servers in a build-only workspace.")
         reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, workspace, cwd)
@@ -2395,7 +2433,7 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
         text = str(command or "")
         if "powershell" in tool_name.casefold():
             text = text.replace("\\", "/")
-        reason = _scan_bash(text, clients, claude_dir, workspace, cwd)
+        reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules)
         if reason:
             return False, f"Build-only mode: {reason}. Run it yourself outside the AI session."
         return True, ""
@@ -2425,7 +2463,8 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
         if _is_within(target, clients):
             return False, "Build-only mode: client context stays out of the AI session."
         if write and _targets_guarded_file(target.as_posix()):
-            return False, "Build-only mode: only the owner changes workspace.json or the hook configuration."
+            return False, ("Build-only mode: only the owner changes workspace.json, the hook configuration, or a "
+                           "client's consent and approval records.")
         if write and (_is_within(target, _package_dir())
                       or _TORQUE_INSTALL_RE.search(target.as_posix())):
             return False, ("Build-only mode: the installed Torque package enforces this mode; "
