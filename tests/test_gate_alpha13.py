@@ -825,7 +825,9 @@ def test_ai_access_doc_describes_the_new_checks():
     for phrase in ("ln -s", "cp -s", "mklink", "cp -r", "torque doctor", "-d recurse", "git status --ignored",
                    "git ls-files", "unresolved `$`", "`if`", "timed-out hook"):
         assert phrase in text, phrase
-    assert "The walk stops at" not in text and "20,000" not in text
+    # The removed per-call walk stopped at 20,000 entries; alpha 14's 20,000-character
+    # input limit is a different number with the same value.
+    assert "The walk stops at" not in text and "20,000 entries" not in text
 
 
 def test_alpha12_review_scope_is_no_longer_pending():
