@@ -37,9 +37,22 @@ the same way and found a regression and further routes:
 Each has a test in the same file, written before its fix; 104 of the new tests
 failed against the first candidate.
 
+A second review round of that revision found more ordinary routes, each now with
+a test written first (60 failed before the fix):
+
+- leaving the workspace with `cd ..`, after which later calls from the parent
+  folder were not gated at all;
+- redirections glued to a word (`cat<file`), search option values read as the
+  pattern (`rg -g '*.md' secret` searched the whole root), `git grep -- PATTERN`,
+  `time cd` and `env -C DIR`;
+- `rm -rf .venv` and other removals of the environment holding the gate;
+- `sf project convert` rooted at the workspace, and curl's `@file` forms;
+- doctor reporting a verified hook when the matcher missed tools or
+  `disableAllHooks` was set.
+
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 1411 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 1482 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
@@ -50,8 +63,9 @@ Claude Code does, and the Git Bash drive-path tests run.
 ## Review scope
 
 The first fixes were written against the consolidated round-1 findings. A security
-re-review then tested them (see above), and this revision fixes what it found. A
-scoped re-review of those fixes is the remaining step before merge. Until it is
+re-review and a second review round then tested them (see above), and this
+revision fixes the routes they reported. A scoped re-review of those fixes is the
+remaining step before merge. Until it is
 done, treat the list in [de-identified mode](ai-access.md) as the claim to check.
 
 ## Known remaining limits

@@ -34,8 +34,9 @@ guard on recognized tool calls, not a sandbox. It has two values:
   `--targetusername`, `--target-dev-hub`, `-v`) anywhere, even behind a wrapper, env var, `npx`, or
   subshell. Without one, only these pass: local generators (`project generate`, `lightning
   generate`, `apex generate`), `project convert`, `code-analyzer run` and `code-analyzer rules`
-  (their `--workspace`/`--target` roots, default the current directory, must not reach
-  `clients/`), `--version`, `--help`, `version`, `help`, `plugins`. `code-analyzer`'s `-o` and `-v`
+  (their roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
+  `--root-dir`/`--source-dir` for convert, and the current directory when none is given or when
+  convert uses `--manifest`/`--metadata`), `--version`, `--help`, `version`, `help`, `plugins`. `code-analyzer`'s `-o` and `-v`
   short flags read as org flags; use `--output-file` and `--view`.
 - Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
   other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`.
@@ -52,15 +53,19 @@ guard on recognized tool calls, not a sandbox. It has two values:
 - Reading, writing, editing, or recursively searching into `clients/`, through: absolute,
   relative, `..`, `~`, `$HOME`, `$PWD` and symlinked paths, and on Windows Git Bash drive paths
   (`/c/...`, `/cygdrive/c/...`); paths relative to a `cd`, `pushd` or `popd` earlier in the same
-  command (after one whose target the gate cannot know, such as `cd -`, `cd ~-`, `popd`,
+  command, also behind `builtin`, `command` or `time`, and `env -C DIR`/`--chdir` (after one whose
+  target the gate cannot know, such as `cd -`, `cd ~-`, `popd`,
   `cd "$OLDPWD"` or `cd "$(git rev-parse --show-toplevel)"`, the rest of the command is checked
   from every directory seen, the workspace root, the folders between, and the root's parents);
-  redirections (`<file`, `>file`, `2>file`, `&>file`); `--flag=path` and `NAME=path` values;
+  redirections (`<file`, `>file`, `2>file`, `&>file`), also glued to the word before them
+  (`cat<file`); `--flag=path` and `NAME=path` values, and curl's `@file` and `<file` forms
+  (`-d @file`, `-F name=@file`);
   ANSI-C and locale quoting (`$'\x63lients'`, `$"clients"`); globs (`c*/`, `*/acme`,
   `[c]lients`), expanded against the disk; brace expansion (`{clients,x}`); zsh glob groups and
   qualifiers (`c(l)ients`, `notes(.)`) and comma-less brace groups (`c{l..l}ients`), each read as
   a wildcard; `**` treated as a recursive search from its fixed prefix; `grep -r`, `rg`, `ag`,
-  `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current directory); `git grep
+  `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current directory; option values
+  such as `-g '*.md'` or `-A 2` are not mistaken for the pattern or a path); `git grep
   --untracked` or `--no-index`, `git diff --no-index` and `diff -r`, rooted at or above
   `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar`, and
   `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing `clients/`; and a
@@ -94,11 +99,16 @@ guard on recognized tool calls, not a sandbox. It has two values:
   anywhere in the workspace. Any path inside the hook interpreter's site-packages or its
   virtual environment's `pyvenv.cfg` is blocked outright, and writes to the interpreter binary
   and its virtual environment's `bin`/`Scripts` folder are blocked (running them stays
-  allowed).
+  allowed). Deleting, moving, locking (`chmod`, `chown`) or recreating (`python -m venv`,
+  `virtualenv`, `uv venv`) the package, the interpreter's site-packages, scripts folder or binary,
+  or any folder containing them (`rm -rf .venv`) is blocked too.
 
 ## Which workspace governs
 
-The gate walks up from the session's directory to (not including) the user's home directory. Every
+The gate walks up to (not including) the user's home directory from three places: the tool call's
+current directory, the session's project directory (`CLAUDE_PROJECT_DIR`, which Claude Code sets for
+hooks), and every path the call names. So leaving the workspace with `cd ..` does not end the
+session's gating, and a path inside a build-only workspace is checked from any directory. Every
 folder with a `workspace.json`, or with a workspace marker (`clients/` plus `.torque/templates.json`)
 and no readable `workspace.json`, counts. If any of them is build-only, the call is checked against
 each build-only one. A nested `workspace.json` (even `{}` or `"full"`) cannot downgrade a build-only
@@ -159,9 +169,12 @@ torque doctor --workspace /path/to/workspace
 
 In build-only mode doctor runs the configured hook once on a synthetic `clients/` Read (on
 Windows through Git Bash when installed, as Claude Code does) and reports
-`AI access: build-only (hook verified)`, or `HOOK NOT IN FORCE` with the fix. It exits 3 when the
-hook is missing, did not block, could not load the gate, runs without `-I`, or has a matcher
-narrower than `.*`. Run it after setup, after every Torque or Python update, and
+`AI access: build-only (hook command blocked a standalone probe; ...)`, or `HOOK NOT IN FORCE`
+with the fix. It exits 3 when the hook is missing, did not block, could not load the gate, runs
+without `-I`, has matchers that (read as regular expressions over tool names) miss any tool, or is
+switched off by `disableAllHooks` in the workspace, user or managed settings (or by the managed
+`allowManagedHooksOnly`). The probe runs the hook command directly; it shows the command blocks,
+not that the running host calls it. Confirm that once in a real session. Run it after setup, after every Torque or Python update, and
 before each monthly review.
 
 ## What it cannot stop
@@ -176,7 +189,13 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
   database connectors. Disable those connectors for a build-only session.
 - A tool call the hook never sees: a matcher narrower than `.*` (doctor flags it), and a host
-  without this hook.
+  without this hook. A host that does not set `CLAUDE_PROJECT_DIR` loses the session binding: a
+  call from outside the workspace is then gated only when it names a path inside it.
+- A workspace below the current directory that is neither the session's project nor named by a
+  path in the call (for example `rg foo` run from the parent of another workspace).
+- Breaking the hook's environment by a route the checks do not parse, such as a script, or `cp`
+  over its interpreter from a path given at run time. When the interpreter is missing the hook
+  exits 127, which Claude Code does not treat as a block.
 - Replacing the gate by a route the write checks do not parse. A script or `python -c` code the
   assistant runs, `git checkout` or `git apply` of a tracked `torque/` folder, a download tool
   writing a file (`curl -o`), or an archive extracted into the workspace can still create a

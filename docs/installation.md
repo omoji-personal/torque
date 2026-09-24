@@ -96,10 +96,12 @@ and after every update, with build-only mode set:
 C:/Work/torque/.venv/Scripts/torque doctor --workspace C:/Work/firm-workspace
 ```
 
-It must report `AI access: build-only (hook verified)`. `HOOK NOT IN FORCE` means the
-hook is missing or did not block a synthetic client-path probe; doctor prints the
-command to use and exits 3. It also exits 3 when the hook runs without `-I` or its
-matcher is narrower than `.*`. On Windows, doctor runs the probe through Git Bash, as
+It must report `AI access: build-only (hook command blocked a standalone probe; ...)`.
+`HOOK NOT IN FORCE` means the hook is missing or did not block a synthetic client-path
+probe; doctor prints the command to use and exits 3. It also exits 3 when the hook runs
+without `-I`, its matcher is narrower than `.*`, or `disableAllHooks` switches hooks off.
+The probe runs the hook command directly, so also confirm once, in a real session, that
+a `Read` of a `clients/` file is blocked. On Windows, doctor runs the probe through Git Bash, as
 Claude Code does, when Git Bash is installed (or named by `CLAUDE_CODE_GIT_BASH_PATH`).
 
 ## Optional capabilities
