@@ -673,30 +673,48 @@ ADD_BLOCK_ROOT = [
     "git add -f '*'",
     "git add -f :/",
     "git add -f --pathspec-from-file=list.txt",
-]
-ADD_ALLOW_ROOT = [
     "git add .",
     "git add -A",
+    "git add --all",
+    "git add -u .",
+    "git add -u",
+    "git stage .",
+    "git stage -f -A",
+    "git update-index --add clients/acme/notes.md",
+    "git update-index --add --cacheinfo 100644,e69de29bb2d1d6434b8b29ae775ad8c2e48c5391,clients/acme/n.md",
+    "git update-index --add --cacheinfo 100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 clients/acme/n.md",
+    "git update-index --force-remove .claude/settings.json",
+    "git update-index --add --stdin",
+    "git update-index --index-info",
+    "git hash-object -w clients/acme/notes.md",
+    "git hash-object -w --stdin-paths",
+]
+ADD_ALLOW_ROOT = [
     "git add project/README.md",
     "git add -f project/README.md",
-    "git add -u",
-    "git add -f -u",
+    "git stage project",
     "git commit -am wip",
     "git diff --cached",
     "git show :project/README.md",
     "git log -p -3",
     "git stash show -p",
+    "git update-index --refresh",
+    "git update-index --add project/README.md",
+    "git hash-object project/README.md",
+    "git hash-object -w project/README.md",
 ]
 
 
 @pytest.mark.parametrize("command", ADD_BLOCK_ROOT)
-def test_rr_forced_add_reaching_protected_blocked(ws, command):
+def test_rr_add_or_index_write_reaching_protected_blocked(ws, command):
     assert _blocked("Bash", {"command": command}, ws, ws), command
 
 
-def test_rr_forced_add_from_project_blocked(ws):
+def test_rr_add_from_project(ws):
     assert _blocked("Bash", {"command": "git add -f .."}, ws, ws / "project")
+    assert _blocked("Bash", {"command": "git add -A"}, ws, ws / "project")
     assert _allowed("Bash", {"command": "git add -f ."}, ws, ws / "project")
+    assert _allowed("Bash", {"command": "git add ."}, ws, ws / "project")
 
 
 @pytest.mark.parametrize("command", ADD_ALLOW_ROOT)
@@ -704,37 +722,69 @@ def test_rr_ordinary_add_and_reads_allowed(ws, command):
     assert _allowed("Bash", {"command": command}, ws, ws), command
 
 
-def test_rr_plain_add_blocked_when_clients_are_not_ignored(ws):
-    (ws / ".gitignore").write_text("", encoding="utf-8")
-    for command in ("git add .", "git add -A", "git add --all", "cd project && git add -A"):
-        assert _blocked("Bash", {"command": command}, ws, ws), command
-    assert _allowed("Bash", {"command": "git add project"}, ws, ws)
-
-
-READBACK = [
+TRACKED_BLOCK = [
     "git diff --cached",
     "git diff --staged",
+    "git diff",
     "git show :clients/acme/notes.md",
     "git show :0:clients/acme/notes.md",
+    "git show HEAD",
     "git log -p",
     "git log --all -p",
+    "git log --patch -1",
     "git cat-file -p :clients/acme/notes.md",
     "git grep --cached SECRET",
-    "git show 'stash^@'",
+    "git grep x",
+    "git ls-files",
+    "git archive HEAD",
     "git -c stash.showIncludeUntracked=true stash show -p",
+    "cd project && git diff --cached",
+]
+TRACKED_ALLOW = [
+    "git status",
+    "git status --short",
+    "git log --oneline -5",
+    "git log",
 ]
 
 
-@pytest.mark.parametrize("command", READBACK)
-def test_rr_reading_staged_client_files_blocked(ws, command):
+@pytest.mark.parametrize("command", TRACKED_BLOCK)
+def test_rr_git_blocked_while_clients_are_in_the_index(ws, command):
     _git(ws, "add", "-f", "clients/acme/notes.md")
     assert _blocked("Bash", {"command": command}, ws, ws), command
 
 
-@pytest.mark.parametrize("command", READBACK)
-def test_rr_reading_a_stash_of_client_files_blocked(ws, command):
-    _git(ws, "stash", "push", "-a", "-q")
-    assert _blocked("Bash", {"command": command}, ws, ws), command
+@pytest.mark.parametrize("command", TRACKED_ALLOW)
+def test_rr_status_and_log_allowed_while_clients_are_in_the_index(ws, command):
+    _git(ws, "add", "-f", "clients/acme/notes.md")
+    assert _allowed("Bash", {"command": command}, ws, ws), command
+
+
+def test_rr_committed_clients_also_block(ws):
+    _git(ws, "add", "-f", "clients/acme/notes.md")
+    _git(ws, "commit", "-q", "-m", "oops")
+    assert _blocked("Bash", {"command": "git show HEAD"}, ws, ws)
+    assert _allowed("Bash", {"command": "git status"}, ws, ws)
+
+
+def test_rr_doctor_reports_tracked_clients(tmp_path):
+    from torque import cli, workspace as wsmod
+    import contextlib
+    import io
+    root = tmp_path / "w"
+    wsmod.init_workspace(root, "Example firm", "generic")
+    wsmod.set_ai_access(root, "build-only")
+    (root / "clients" / "acme").mkdir(parents=True, exist_ok=True)
+    (root / "clients" / "acme" / "notes.md").write_text("x", encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-f", "clients/acme/notes.md")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["doctor", "--workspace", str(root), "--json"])
+    report = json.loads(out.getvalue())
+    assert code == 3 and report["ready"] is False
+    assert report["ai_access"]["clients_in_git"] == 1
+    assert any("git rm -r --cached clients" in action for action in report["next_actions"])
 
 
 # --- Scoped re-review minors ---
