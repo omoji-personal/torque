@@ -1021,3 +1021,25 @@ def test_doctor_names_a_standalone_probe_not_host_enforcement(tmp_path, capsys):
     cli.main(["doctor", "--workspace", str(root)])
     out = capsys.readouterr().out
     assert "standalone probe" in out
+
+
+# --- Scoped re-review: host tools a normal build session uses ---
+
+@pytest.mark.parametrize("tool,inp", [
+    ("SendMessage", {"to": "agent-1", "message": "continue with project/"}),
+    ("EnterWorktree", {"name": "feature"}),
+    ("ExitWorktree", {}),
+    ("LSP", {"operation": "goToDefinition", "filePath": "/w/project/src/a.ts", "line": 1, "character": 1}),
+])
+def test_rereview_host_tools_allowed(tool, inp):
+    assert gate.decide(tool, inp, W, "build-only") == (True, ""), tool
+
+
+def test_rereview_lsp_on_clients_blocked():
+    assert _blocked("LSP", {"operation": "hover", "filePath": "/w/clients/acme/notes.md", "line": 1, "character": 1})
+    assert _blocked("LSP", {"operation": "hover", "filePath": "clients/acme/x.cls"})
+
+
+def test_glob_without_path_at_root_asks_for_a_path():
+    allowed, reason = gate.decide("Glob", {"pattern": "project/**/*.py"}, W, "build-only")
+    assert not allowed and "Pass a path" in reason, reason
