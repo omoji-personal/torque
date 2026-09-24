@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
+import shutil
 
 from . import approval, consent, gate, workspace as ws
 from .connected_routes import Route, classify, is_simple
@@ -61,6 +63,56 @@ def _guarded(workspace: Path, bound: str | None) -> list[Path]:
         return [clients]
 
 
+FILE_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _protected_roots(env) -> tuple[list[Path], list[Path]]:
+    """(folders no recognized tool may name, extra folders no file tool may write).
+
+    The first holds the Salesforce CLI's credentials, alias and config files and
+    its installation and plugins: changing them would send an approved command
+    to another org or run other code under an approved command's name. The
+    second is every folder on PATH this account can write, where a program of
+    the same name as an approved one could be placed."""
+    home = Path(os.path.realpath(str(env.get("HOME") or Path.home())))
+    named = [home / ".sf", home / ".sfdx", home / ".local" / "share" / "sf", home / ".config" / "sf",
+             home / ".cache" / "sf"]
+    executable = shutil.which("sf", path=env.get("PATH"))
+    if executable:
+        real = Path(os.path.realpath(executable))
+        named.append(real.parent.parent if real.parent.name == "bin" else real.parent)
+    writable = []
+    for entry in (env.get("PATH") or "").split(os.pathsep):
+        if entry and os.path.isdir(entry) and os.access(entry, os.W_OK):
+            writable.append(Path(os.path.realpath(entry)))
+    return named, writable
+
+
+def _protected_reason(tool_name: str, tool_input: dict, cwd: Path, env) -> str:
+    named, writable = _protected_roots(env)
+    targets: list[Path] = []
+    if tool_name in FILE_WRITE_TOOLS or tool_name in gate.READ_TOOLS:
+        key = gate.PATH_TOOLS.get(tool_name, "file_path")
+        raw = tool_input.get(key) or tool_input.get("notebook_path")
+        if isinstance(raw, str) and raw:
+            target = gate._resolve(cwd, raw)
+            if any(gate._is_within(target, root) for root in named):
+                return "the Salesforce CLI's credentials, aliases, configuration and installation stay out of it"
+            if tool_name in FILE_WRITE_TOOLS and any(gate._is_within(target, root) for root in writable):
+                return ("writing into a folder on PATH could replace a program an approved command runs; "
+                        "the consultant installs programs")
+        return ""
+    for text in [tool_input["command"]] if isinstance(tool_input.get("command"), str) else \
+            list(gate._command_strings(tool_input)):
+        for toks, _ in gate._segments_with_separators(gate._expand_home_in_command(text)):
+            for tok in toks:
+                paths, _ = gate._token_paths(tok, cwd)
+                targets += paths
+    if any(gate._is_within(t, root) for t in targets for root in named):
+        return "the Salesforce CLI's credentials, aliases, configuration and installation stay out of it"
+    return ""
+
+
 def _route_client(route: Route) -> str | None:
     if route.client is None:
         return None
@@ -85,6 +137,9 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         if "client context" in text and bound:
             text += f" This session is bound to {bound}; other clients' folders stay out of it."
         return _deny(text)
+    protected = _protected_reason(tool_name, tool_input, Path(cwd), env)
+    if protected:
+        return _deny(protected + ".")
     routes = classify(tool_name, tool_input)
     if all(r.kind == "local" and _route_client(r) in (None, bound) for r in routes):
         return Decision("allow", "")

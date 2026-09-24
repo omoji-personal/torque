@@ -195,3 +195,19 @@ def test_build_only_above_connected_still_blocks(w, tmp_path, monkeypatch, capsy
     (tmp_path / "workspace.json").write_text(json.dumps({"ai_access": "build-only"}), encoding="utf-8")
     code, _, err = _hook(monkeypatch, capsys, event)
     assert code == 2 and "Build-only" in err
+
+
+def test_salesforce_cli_state_and_path_folders_are_protected(w, tmp_path):
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = {"TORQUE_CLIENT": "acme", "HOME": str(home), "PATH": str(bin_dir)}
+    assert run(w, "Edit", {"file_path": str(home / ".sfdx" / "alias.json"), "old_string": "a", "new_string": "b"},
+               env=env).action == "deny"
+    assert run(w, "Read", {"file_path": str(home / ".sf" / "config.json")}, env=env).action == "deny"
+    assert run(w, "Bash", {"command": "cat ~/.sfdx/alias.json"}, env=env).action == "deny"
+    assert run(w, "Bash", {"command": f"cp x {home.as_posix()}/.local/share/sf/node_modules/p/index.js"},
+               env=env).action == "deny"
+    assert run(w, "Write", {"file_path": str(bin_dir / "sf"), "content": "#!/bin/sh"}, env=env).action == "deny"
+    assert run(w, "Read", {"file_path": str(bin_dir / "sf")}, env=env).action == "allow"
+    assert run(w, "Write", {"file_path": str(w / "project" / "notes.md"), "content": "x"}, env=env).action == "allow"

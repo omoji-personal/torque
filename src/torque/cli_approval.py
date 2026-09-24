@@ -132,7 +132,12 @@ def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None)
 
 
 def _request(p, tail) -> int:
-    from . import approval, before_state
+    from . import approval, before_state, consent
+    item = approval._usable_consent(p.workspace, p.client)
+    if consent.approved_org(item, p.org) is None:
+        raise ws.WorkspaceError(f"org {p.org!r} is not in this client's consent")
+    if p.capture_before_record and "records" not in consent.data_allowed(item):
+        raise ws.WorkspaceError("this client's consent does not cover record data; use --manual-recovery")
     before = None
     if p.before_state:
         before = before_state.import_before_state(p.workspace, p.client, p.change, Path(p.before_state))

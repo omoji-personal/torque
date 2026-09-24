@@ -255,8 +255,10 @@ def _sf(rest: list[str], detail: str) -> Route:
         return Route("local", None, detail)
     if topic[:3] == ("api", "request", "rest"):
         methods = _flag_values(rest, {"-X", "--method"})
-        kind = "read" if all(m.upper() == "GET" for m in methods) and not _flag_values(rest, {"--body", "-b"}) \
-            else "org_write"
+        # A custom Apex REST endpoint can change data on any method; a request file sets its own method.
+        custom = any("apexrest" in w.casefold() for w in rest)
+        kind = "read" if (all(m.upper() == "GET" for m in methods) and not custom
+                          and not _flag_values(rest, {"--body", "-b", "--file", "-f"})) else "org_write"
         return Route(kind if org else "no_org", org, detail)
     if topic[:3] == ("project", "deploy", "start") and "--dry-run" in rest:
         return Route("check_only" if org else "no_org", org, detail)
@@ -303,6 +305,11 @@ def _torque(rest: list[str], detail: str) -> Route:
     if head == "approval":
         if sub in ("grant", "deny") or (sub == "permissions" and "--write" in rest):
             return Route("admin", None, detail, client)
+        if sub == "request" and any(t.split("=", 1)[0] in ("--capture-before-record", "--capture-before-metadata")
+                                    for t in rest):
+            # Capturing a before-state reads the org now.
+            records = any(t.split("=", 1)[0] == "--capture-before-record" for t in rest)
+            return Route("read" if org else "no_org", org, detail, client, data="records" if records else None)
         return Route("local", None, detail, client)
     if head == "client" and sub == "consent":
         third = rest[2] if len(rest) > 2 else ""
