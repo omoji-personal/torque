@@ -127,8 +127,21 @@ _GROUPING_CHARS = frozenset("(){}`")
 _REDIRECT_RE = re.compile(r"^(?:\d+|&)?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)(?P<rest>.*)$")
 # NAME=value (a shell assignment, including after export/declare/local).
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-# Brace expansion: prefix{a,b}suffix within one shell word.
-_BRACE_RE = re.compile(r"([^\s{}'\"]*)\{([^{}\s]*,[^{}\s]*)\}([^\s{}'\"]*)")
+# Brace expansion: prefix{a,b}suffix within one shell word. The group is matched
+# on its own, and the prefix and suffix are found by a scan (see _expand_braces), so
+# expansion takes linear time on any input. The group's first part stops at the
+# first comma, which keeps the match itself from backtracking over later commas.
+_BRACE_GROUP_RE = re.compile(r"\{([^{}\s,]*,[^{}\s]*)\}")
+# Characters that end a brace word's prefix or suffix.
+_BRACE_WORD_STOP = frozenset(" \t\n\r\f\v{}'\"")
+# The longest command, or other string the gate parses, that it reads. A longer one
+# is blocked before any pattern runs: one regular-expression call holds the GIL, so
+# the watchdog cannot interrupt it, and some shapes take time that grows with the
+# square of the length.
+MAX_INPUT_CHARS = 20_000
+# Brace expansion can multiply a command's length ({a,b,c,...} after a long prefix);
+# past this many characters the expanded command is blocked too.
+MAX_EXPANDED_CHARS = 4 * MAX_INPUT_CHARS
 _PWD_BRACED_RE = re.compile(r"\$\{PWD\}")
 _PWD_TOKEN_RE = re.compile(r"\$PWD(?![A-Za-z0-9_])")
 _GLOB_LIMIT = 2000
@@ -1976,12 +1989,41 @@ def _expand_braces(command: str) -> str:
     """Expand prefix{a,b}suffix words into separate words, as the shell would,
     before the segment splitter (which also splits on { and }) tears them apart."""
     for _ in range(8):
-        expanded = _BRACE_RE.sub(
-            lambda m: " ".join(m.group(1) + alt + m.group(3) for alt in m.group(2).split(",")), command)
+        expanded = _expand_braces_once(command)
         if expanded == command:
             break
         command = expanded
     return command
+
+
+def _expand_braces_once(command: str) -> str:
+    """One left-to-right pass: each {a,b} group with the run of word characters
+    before it (back to the end of the previous expanded word) and after it. This
+    gives the same result as matching prefix{a,b}suffix with one regular
+    expression, in linear time: each character is scanned a bounded number of times."""
+    out: list[str] = []
+    pos = total = 0
+    size = len(command)
+    for match in _BRACE_GROUP_RE.finditer(command):
+        if match.start() < pos:
+            continue
+        start = match.start()
+        while start > pos and command[start - 1] not in _BRACE_WORD_STOP:
+            start -= 1
+        end = match.end()
+        while end < size and command[end] not in _BRACE_WORD_STOP:
+            end += 1
+        prefix, suffix = command[start:match.start()], command[match.end():end]
+        out.append(command[pos:start])
+        out.append(" ".join(prefix + alt + suffix for alt in match.group(1).split(",")))
+        total += len(out[-2]) + len(out[-1])
+        if total > MAX_EXPANDED_CHARS:
+            raise ValueError(f"brace expansion makes this command longer than {MAX_EXPANDED_CHARS:,} characters")
+        pos = end
+    if not out:
+        return command
+    out.append(command[pos:])
+    return "".join(out)
 
 
 def _segments_with_separators(command: str) -> list[tuple[list[str], str]]:
@@ -2079,13 +2121,19 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
     directory seen, the starting directories and all of their parents."""
     if _depth > 8 or not command:
         return ""
+    if _depth == 0 and len(command) > MAX_INPUT_CHARS:
+        # decide() blocks this first; kept here so no caller parses an over-long command.
+        return _too_long(len(command))
     command = _expand_home_in_command(command)
     command = _decode_ansi_c(command)
     command = _PWD_BRACED_RE.sub("$PWD", command)
     # Any other ${...} (${R}, ${PWD%/project}) is unknown here. Keep it one word,
     # $0, so the splitter below does not cut it at its braces.
     command = _BRACED_PARAM_RE.sub("$0", command)
-    command = _expand_braces(command)
+    try:
+        command = _expand_braces(command)
+    except ValueError as exc:
+        return str(exc)
     start = list(cwd) if isinstance(cwd, list) else [cwd]
     if _STASH_UNTRACKED_REF_RE.search(command) and re.search(r"(?<![A-Za-z0-9_.-])git(?![A-Za-z0-9_-])", command):
         # The segment splitter below cuts stash@{0}^3 at its braces, so a stash's
@@ -2217,11 +2265,39 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
            cwd: Path | None = None) -> tuple[bool, str]:
     if mode != "build-only":
         return True, ""
+    reason = _oversized_reason(tool_name, tool_input)
+    if reason:
+        return False, reason
     with _call_budget():
         try:
             return _decide(tool_name, tool_input, workspace, cwd)
         except BudgetExceeded as exc:
             return False, _budget_reason(exc)
+
+
+def _too_long(length: int) -> str:
+    return (f"this call holds a string of {length:,} characters, longer than the "
+            f"{MAX_INPUT_CHARS:,} characters the gate reads")
+
+
+def _oversized_reason(tool_name: str, tool_input: dict) -> str:
+    """Block, before any pattern runs, a call holding a string the gate would parse
+    that is longer than MAX_INPUT_CHARS: a command, a path, or any argument of a
+    tool whose arguments are all read as possible paths. The contents a file tool
+    writes (Write, Edit, MultiEdit, NotebookEdit) and the arguments of tools that
+    pass unchecked are not parsed, so they are not limited."""
+    if tool_name in SAFE_TOOLS:
+        return ""
+    key = PATH_TOOLS.get(tool_name)
+    if key:
+        values = [tool_input.get(key), *(tool_input.get(k) for k in COMMAND_KEYS)]
+    else:
+        values = itertools.chain(_string_values(tool_input), _command_strings(tool_input))
+    longest = max((len(v) for v in values if isinstance(v, str)), default=0)
+    if longest <= MAX_INPUT_CHARS:
+        return ""
+    return (f"Build-only mode: {_too_long(longest)}; blocking to fail closed. Split the command, "
+            "or put the long text in a file under project/ and pass the file.")
 
 
 class _call_budget:
@@ -2633,7 +2709,7 @@ def _touched_paths(tool_input: dict, cwd: Path) -> list[Path]:
     path, and every word of a string that looks like a command."""
     out: list[Path] = []
     for raw in itertools.islice(_string_values(tool_input), 64):
-        if not raw or "\x00" in raw or len(raw) > 20000:
+        if not raw or "\x00" in raw or len(raw) > MAX_INPUT_CHARS:
             continue
         words = [_uri_path(raw)]
         if any(c in raw for c in " \t\n;&|<>"):

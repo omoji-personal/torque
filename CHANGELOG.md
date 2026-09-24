@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.0.0a14 - long commands in build-only mode, 2026-09-24 (not published to a package index)
+
+A spot-check of the released alpha 13 found that one regular-expression call could hold
+the gate past its watchdog. The watchdog is a thread, and a pattern match does not let
+it run until the match returns. The brace-expansion pattern took time that grew with the
+square of a command's length, and nothing limited that length: a 120,000-character
+command held the hook for 83.5 seconds, and a longer one could outrun the host's hook
+timeout, which lets the call run.
+
+- The gate blocks any command, path or other argument it parses that is longer than
+  20,000 characters (`MAX_INPUT_CHARS`), before any pattern runs, with a message that says
+  so. A 100,000-character command now blocks in well under a second. The contents a file
+  tool writes (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) are not parsed and not limited.
+- Brace expansion (`prefix{a,b}suffix`) takes linear time and gives the same result as
+  before. An expansion that would grow a command past 80,000 characters is blocked.
+- A 5,000-character commit message is still allowed.
+- The README describes Torque in one paragraph, states the status as development alpha
+  2.0.0a14, and names the install-and-demo section as such.
+- [Build-only mode](docs/ai-access.md) states the length limit; the
+  [alpha 13 record](docs/validation-alpha13.md) records the gap and that alpha 14 closes it.
+
 ## 2.0.0a13 - build-only mode follow-up, 2026-09-24 (tagged; not published to a package index)
 
 A later review round found ordinary shell routes around build-only mode that the

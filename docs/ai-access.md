@@ -241,6 +241,16 @@ running half a second after the budget, for example inside a glob that expands t
 links, the hook writes the same message and exits 2. So a slow or huge glob cannot reach
 the hook timeout and turn a block into an allow.
 
+The watchdog is a thread, and one regular-expression call does not let it run until the
+call returns. So the gate reads at most 20,000 characters of any command, path, or
+argument it parses: a longer one is blocked before any pattern runs, with a message
+saying so, and brace expansion that would grow a command past 80,000 characters is
+blocked too. Below the limit, brace expansion takes time in proportion to the
+command's length, and the other patterns finish well inside the time budget. The
+contents a file tool writes (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) are not
+parsed and not limited. Put long text, such as a very long commit message, in a file
+and pass the file (`git commit -F msg.txt`).
+
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
   "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}

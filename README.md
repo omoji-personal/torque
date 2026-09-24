@@ -2,10 +2,11 @@
 
 **Keep Salesforce consulting work easy to resume and hand over.**
 
-Torque gives your conversational coding assistant a private workspace for each
-client: business context, requirements, decisions, implementation workflows,
-observations and a useful handoff. It continues JusticeserverClaude, which its
-author has used in daily consulting for about six months.
+Torque is a Python command-line tool and a set of conversational workflows that
+give your coding assistant a private, local workspace for each Salesforce client:
+business context, requirements, decisions, implementation workflows, observations
+and a handoff another consultant can use. It continues the author's earlier
+consulting toolkit, used in daily work for about six months.
 
 Use your existing Salesforce tools and assistant. Torque requires no service
 account and installs no global command interception or approval-token system. The
@@ -14,13 +15,14 @@ no workflow depends on them.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-**Status: 2.0.0a13, development alpha.** The local continuation has not been
-published to a package index. Core workspace functions have offline acceptance
-coverage; bounded live operations and experimental capabilities have separate limits in
-[validation](docs/validation.md); the [alpha 13 record](docs/validation-alpha13.md) covers
-this build. No industry-leadership claim is made.
+**Status: development alpha, version 2.0.0a14.** It has not been published to a
+package index; install it from a checkout as shown below. Core workspace functions
+have offline acceptance coverage; bounded live operations and experimental
+capabilities have separate limits in [validation](docs/validation.md); the
+[alpha 14 record](docs/validation-alpha14.md) covers this build. No
+industry-leadership claim is made.
 
-## Try a complete example without an org
+## Install and try the offline demo
 
 From a checkout, use Python 3.10+ on macOS, Linux or Windows. CI runs all three on
 Python 3.10, 3.12 and 3.14. On Windows, use `.venv\Scripts\` in place of `.venv/bin/`
