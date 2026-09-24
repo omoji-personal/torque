@@ -224,13 +224,17 @@ org's own exact host names (its My Domain, Lightning, Setup, site and file hosts
 Visualforce hosts for its own and its managed packages' namespaces; no wildcard, so a
 production org's rules never admit one of its sandboxes, or the reverse) and the shared
 login and static hosts, with no proxy and with service
-workers blocked, so a redirect hop to another org fails before any request is sent. An
+workers blocked, so a redirect hop to another org fails before any request is sent. On top
+of that, Torque sends every request itself with redirects turned off and checks each hop
+before following it: the destination and the method it would carry (a 307 or 308 keeps a
+POST). The shared login and static hosts are GET-only, so a redirect that would carry a
+POST to them is refused; any other Salesforce host must be the approved org. Only the final
+response reaches the page. An
 attached operator browser (`TORQUE_BROWSER_CDP`) cannot be set up this way and is refused
 in connected mode.
 
-The session lives only as long as its authorization. Every request that could change
-something (anything but GET, HEAD or OPTIONS) reads the window and the consent again
-first, with no cache; reads use a check at most a second old. When the window ends, or the
+The session lives only as long as its authorization. Every request, reads included,
+reads the window and the consent again first, with no cache. When the window ends, or the
 consent is suspended or no longer usable, or the window is withdrawn, Torque refuses the
 request, closes every page and the browser context, and the run stops.
 

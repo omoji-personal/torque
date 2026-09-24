@@ -48,6 +48,14 @@ def test_d2_exceptions_have_no_wildcards():
 
 
 class Route:
+    # Torque sends each request itself (route.fetch) and fulfills the response.
+    async def fetch(self, **kw):
+        from types import SimpleNamespace
+        return SimpleNamespace(status=200, headers={})
+
+    async def fulfill(self, **kw):
+        self.result = "continue"
+
     result = None
 
     async def continue_(self):

@@ -43,12 +43,11 @@ class Guard:
 
     def authorized(self, now: float | None = None, write: bool = True) -> bool:
         """The session may still act: not stopped, inside its window, and its window and
-        consent still hold. A write-capable request always checks the window and consent
-        again, with no cache; a read uses a check at most recheck_every seconds old."""
+        consent still hold, read again for every request (no cache, reads included)."""
         now = time.time() if now is None else now
         if self.stopped or (self.expires_at is not None and now > self.expires_at):
             return False
-        if self.recheck is not None and (write or now - self._last_check >= self.recheck_every):
+        if self.recheck is not None:
             try:
                 self._last_ok = bool(self.recheck())
             except Exception:
@@ -174,24 +173,73 @@ async def _stop(context, guard: Guard) -> None:
         pass
 
 
+REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+MAX_HOPS = 20
+
+
+def _next_method(status: int, method: str) -> str:
+    """The method a browser uses for the next hop: 307 and 308 keep it; 301, 302 and
+    303 turn anything but GET or HEAD into GET."""
+    if status in (307, 308) or method in ("GET", "HEAD"):
+        return method
+    return "GET"
+
+
 async def install(context, guard: Guard) -> None:
     """Check every request of a Playwright browser context against the guard, and stop
     the session (close its pages and context, refuse every further request) when the
-    window ends or the consent or window no longer holds."""
+    window ends or the consent or window no longer holds.
+
+    Torque sends each request itself with redirects off (route.fetch, max_redirects=0),
+    so every redirect hop is checked, destination and method, before it is sent:
+    Playwright does not call the route handler again for a hop it follows itself."""
+    async def refuse(route, method, url, why=""):
+        guard.refused.append(f"{method} {url.split('?')[0]}{why}")
+        await route.abort("blockedbyclient")
+
     async def handle(route, request):
-        if not guard.authorized(write=(request.method or "").upper() not in SAFE_METHODS):
-            guard.refused.append(f"{request.method} {request.url.split('?')[0]} (session stopped)")
+        method = (request.method or "GET").upper()
+        if not guard.authorized(write=method not in SAFE_METHODS):
             already = guard.stopped
             guard.stopped = True
-            await route.abort("blockedbyclient")
+            await refuse(route, method, request.url, " (session stopped)")
             if not already:
                 asyncio.ensure_future(_stop(context, guard))
             return
-        if request_allowed(guard, request.url, request.method):
-            await route.continue_()
-        else:
-            guard.refused.append(f"{request.method} {request.url.split('?')[0]}")
-            await route.abort("blockedbyclient")
+        if not request_allowed(guard, request.url, method):
+            await refuse(route, method, request.url)
+            return
+        try:
+            navigation = bool(request.is_navigation_request())
+        except Exception:
+            navigation = False
+        url = request.url
+        headers = dict(getattr(request, "headers", None) or {})
+        body = getattr(request, "post_data", None)
+        for _hop in range(MAX_HOPS):
+            response = await route.fetch(url=url, method=method, headers=headers, post_data=body,
+                                         max_redirects=0)
+            location = (response.headers or {}).get("location")
+            if response.status in REDIRECT_STATUSES and location:
+                next_url = urllib.parse.urljoin(url, location)
+                next_method = _next_method(response.status, method)
+                if not request_allowed(guard, next_url, next_method):
+                    await refuse(route, next_method, next_url, " (redirect)")
+                    return
+                if next_method != method:
+                    body = None
+                    headers = {k: v for k, v in headers.items()
+                               if k.casefold() not in ("content-type", "content-length")}
+                url, method = next_url, next_method
+                continue
+            if navigation and url != request.url:
+                # Hand the checked end of the chain to the browser, so the page's address
+                # is the real one; that request comes back through this handler.
+                await route.fulfill(status=302, headers={"location": url})
+            else:
+                await route.fulfill(response=response)
+            return
+        await refuse(route, method, url, " (too many redirects)")
     await context.route("**/*", handle)
 
     async def watch():

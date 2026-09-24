@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2606 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2619 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 431 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 444 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each

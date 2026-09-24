@@ -113,7 +113,8 @@ def test_d2_real_browser_never_reaches_another_org_through_a_redirect(tmp_path):
         async with pw.async_playwright() as p:
             browser = await p.chromium.launch(executable_path=exe, **launch)
             context = await browser.new_context(**context_options)
-            await bg.install(context, guard)
+            # The resolver rules alone: the request guard sends requests itself (route.fetch),
+            # outside Chromium's resolver, and is tested with its own fakes.
             page = await context.new_page()
             await page.goto(base + "/start")
             with pytest.raises(Exception):
@@ -146,6 +147,14 @@ def test_d2_attached_operator_browser_is_refused_in_connected_mode(monkeypatch):
 # N7: the session stops when its window ends or consent is suspended
 
 class FakeRoute:
+    # Torque sends each request itself (route.fetch) and fulfills the response.
+    async def fetch(self, **kw):
+        from types import SimpleNamespace
+        return SimpleNamespace(status=200, headers={})
+
+    async def fulfill(self, **kw):
+        self.result = "continue"
+
     def __init__(self):
         self.result = None
 

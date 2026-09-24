@@ -94,6 +94,10 @@ default (`full`) and build-only behavior are unchanged.
 - After the targeted recheck: the browser's allowed Salesforce hosts are exact names (no
   wildcard that could admit a sandbox or another org), and every write-capable request
   reads the window and consent again, with no cache.
+- After the last targeted recheck: Torque sends each browser request itself with redirects
+  off and checks every hop's destination and method, so a 307 or 308 cannot carry a POST
+  to the shared login hosts or another org; every request, reads included, reads the
+  window and consent again, with no cache.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).
