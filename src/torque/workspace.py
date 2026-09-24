@@ -304,7 +304,26 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
             config["approver_uid"] = approver_uid
     config["ai_access_changed_at"] = _now()
     _atomic_replace_text(_inside(root, root / CONFIG), json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    _connected_rule(root, mode == "connected")
     return root
+
+
+CONNECTED_RULE = "production-approval.md"
+
+
+def _connected_rule(root: Path, present: bool) -> None:
+    """Materialize the "propose, do not act" rule in a connected workspace, and
+    remove it when the workspace leaves connected mode."""
+    target = _inside(root, root / ".claude" / "rules" / CONNECTED_RULE)
+    if not present:
+        target.unlink(missing_ok=True)
+        return
+    text = resources.files("torque").joinpath("data", "connected", CONNECTED_RULE).read_text(encoding="utf-8")
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if target.exists():
+        _atomic_replace_text(target, text)
+    else:
+        atomic_write_new(target, text)
 
 
 @contextmanager
