@@ -7,6 +7,7 @@ a sandbox: a runtime-constructed command, an arbitrary script, a network tool, o
 host that does not wire up the hook can still get through. See docs/ai-access.md.
 """
 from __future__ import annotations
+import codecs
 import glob
 import itertools
 import json
@@ -64,7 +65,18 @@ _PY_ARG_FLAGS = {"-W", "-X", "--check-hash-based-pycs"}
 _MCP_SF_SUBSTRINGS = ("salesforce", "sfdx", "sf_", "_sf", "soql", "sosl", "sobject", "apex")
 _MCP_SF_TOKEN_RE = re.compile(r"(^|[_\-.])sf([_\-.]|$)")
 PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path",
-              "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+              "MultiEdit": "file_path", "NotebookEdit": "notebook_path", "NotebookRead": "notebook_path",
+              "LS": "path"}
+READ_TOOLS = {"Read", "NotebookRead", "LS"}
+# Tools that name no path and run no command, allowed as they are. Any other tool
+# that carries a `command` string (Monitor, PowerShell, ...) is scanned like Bash,
+# and a tool this list and the checks below do not recognise is blocked.
+SAFE_TOOLS = {"TodoWrite", "TodoRead", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+              "Task", "Agent", "TaskOutput", "TaskStop", "BashOutput", "KillShell", "KillBash",
+              "WebSearch", "WebFetch", "ExitPlanMode", "EnterPlanMode", "AskUserQuestion",
+              "Skill", "SlashCommand", "ToolSearch", "ListMcpResourcesTool"}
+# Tools whose string arguments are checked like an MCP tool's.
+MCP_LIKE_TOOLS = {"ReadMcpResourceTool"}
 SHELL_HEADS = {"bash", "sh", "zsh"}
 # Tools that read (and by default enumerate) an entire directory tree.
 ALWAYS_RECURSIVE_HEADS = {"rg", "ag", "ack", "find", "fd", "tree"}
@@ -81,6 +93,7 @@ _LS_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*R[a-zA-Z]*$")
 # (tar always does).
 RECURSIVE_COPY_HEADS = {"cp", "scp", "rsync", "zip"}
 _COPY_RECURSIVE_FLAG_RE = re.compile(r"^--(recursive|archive)$|^-[a-zA-Z]*[rRa][a-zA-Z]*$")
+_DIFF_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*r[a-zA-Z]*$")
 _GLOB_CHARS = frozenset("*?[")
 _HOME_TOKEN_RE = re.compile(r"\$\{HOME\}|\$HOME")
 CASEFOLD_PLATFORMS = ("darwin", "win32")
@@ -107,8 +120,23 @@ _TORQUE_INSTALL_RE = re.compile(r"__editable__[^/\\]*torque|torque_salesforce[^/
                                 re.IGNORECASE)
 # MCP tool names that walk a directory tree from the path they are given.
 _MCP_RECURSIVE_MARKERS = ("tree", "search", "find", "grep", "glob", "walk", "recursive")
-_CD_HEADS = {"cd", "pushd"}
+_CD_HEADS = {"cd", "pushd", "popd"}
+_CD_PREFIXES = {"builtin", "command"}
 _MAX_CWDS = 32
+# Commands that write, create or replace files, for the checks that only apply
+# to a write (a planted torque package, the hook interpreter's binaries).
+_WRITE_VERBS = DESTRUCTIVE_VERBS | {"ln", "tee", "install", "chmod", "chown", "touch", "dd", "patch",
+                                    "mkdir", "rsync", "scp", "tar", "unzip", "ditto", "sed", "perl"}
+# Files an interpreter runs or imports at startup when found next to it or on sys.path.
+_STARTUP_NAMES = {"sitecustomize.py", "usercustomize.py", "torque.py"}
+# Git Bash (MSYS) and Cygwin drive paths: /c/Users/..., /cygdrive/c/Users/...
+_MSYS_DRIVE_RE = re.compile(r"^/(?:cygdrive/)?([A-Za-z])(?=/|$)")
+# ANSI-C quoting ($'\x63') and locale quoting ($"...").
+_ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+# A zsh glob group or qualifier inside a word, c(l)ients or notes(.), and a brace
+# group with no comma, c{l..l}ients. $(...) and ${...} are not groups.
+_WORD_GROUP_RE = re.compile(r"(?<=[^\s$<>=(|&;`'\"])(\([^()\s]*\)|\{[^{}\s,]*\})"
+                            r"|(\([^()\s]*\)|\{[^{}\s,]*\})(?=[^\s)}|&;<>`'\"])")
 NARROW_PATH_HINT = " Pass a narrower path, such as project/ or src/, instead of the workspace root."
 
 
@@ -128,9 +156,24 @@ def _home_value() -> str:
     return home.replace("\\", "/") if os.name == "nt" else home
 
 
+def _native_path(raw: str, windows: bool | None = None) -> str:
+    """On Windows, turn a Git Bash or Cygwin drive path (/c/Users/..., or
+    /cygdrive/c/Users/...) into the C:/Users/... form the filesystem uses. Claude
+    Code runs Bash through Git Bash there, and `pwd` prints the MSYS form."""
+    if windows is None:
+        windows = os.name == "nt"
+    if not windows:
+        return raw
+    m = _MSYS_DRIVE_RE.match(raw)
+    if not m:
+        return raw
+    return f"{m.group(1).upper()}:" + (raw[m.end():] or "/")
+
+
 def _expand_home(raw: str) -> str:
     """Expand a leading ~ and any $HOME/${HOME} the same way a shell would, using
     the actual HOME so a real symlinked or nonstandard home still resolves."""
+    raw = _native_path(raw)
     home = _home_value()
     if raw == "~" or raw.startswith("~/"):
         raw = home + raw[1:]
@@ -225,6 +268,56 @@ def _sf_local_ok(rest: list[str]) -> bool:
 def _package_dir() -> Path:
     """The installed torque package directory (this file's folder), resolved."""
     return Path(os.path.realpath(str(Path(__file__).parent)))
+
+
+@lru_cache(maxsize=1)
+def _interpreter_paths() -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """What this (the hook's) interpreter loads at startup, resolved, as (always
+    guarded, guarded against writes). Always guarded: its site-packages
+    directories, where a .pth file, sitecustomize.py or a torque/ folder would
+    replace the gate, and a virtual environment's pyvenv.cfg. Guarded against
+    writes: the interpreter binary and, in a virtual environment, its scripts
+    directory, which may still be run."""
+    import site
+    import sysconfig
+    always: list[str] = []
+    for key in ("purelib", "platlib"):
+        always.append(sysconfig.get_paths().get(key) or "")
+    try:
+        always.extend(site.getsitepackages())
+    except AttributeError:
+        pass
+    try:
+        always.append(site.getusersitepackages())
+    except AttributeError:
+        pass
+    # site.getsitepackages() also lists the installation prefix itself on
+    # Windows; only the site directories are guarded outright.
+    always = [p for p in always if p and os.path.basename(os.path.normpath(p)).casefold()
+              in ("site-packages", "dist-packages")]
+    writes = [sys.executable]
+    if sys.prefix != sys.base_prefix:
+        always.append(os.path.join(sys.prefix, "pyvenv.cfg"))
+        writes.append(sysconfig.get_paths().get("scripts") or "")
+    resolve = lambda items: tuple(dict.fromkeys(Path(os.path.realpath(p)) for p in items if p))
+    return resolve(always), resolve(writes)
+
+
+def _in_interpreter(target: Path, write: bool) -> bool:
+    always, writes = _interpreter_paths()
+    return any(_is_within(target, p) for p in always) or (write and any(_is_within(target, p) for p in writes))
+
+
+def _is_shadow_path(target: Path, workspace: Path) -> bool:
+    """True for a file that could stand in for Torque or run at interpreter
+    startup, anywhere in the workspace: a torque/ folder or anything in it,
+    torque.py, sitecustomize.py, usercustomize.py or a .pth file."""
+    t, w = _cf(str(target)), _cf(str(workspace))
+    if not t.startswith(w + os.sep):
+        return False
+    parts = re.split(r"[/\\]", t[len(w) + 1:])
+    name = parts[-1]
+    return "torque" in parts or name in _STARTUP_NAMES or name.endswith(".pth")
 
 
 def _token_operand(tok: str) -> str:
@@ -338,6 +431,8 @@ def _is_recursive_search(tok: str, rest: list[str]) -> bool:
         return True
     if head in RECURSIVE_COPY_HEADS:
         return any(_COPY_RECURSIVE_FLAG_RE.match(t) for t in rest)
+    if head == "diff":
+        return any(_DIFF_RECURSIVE_FLAG_RE.match(t) for t in rest)
     return False
 
 
@@ -393,10 +488,23 @@ def _sf_tree_reader_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
     return any(_root_reaches(raw, clients, cwd) for raw in roots)
 
 
-def _git_grep_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
-    """`git grep --untracked` and `git grep --no-index` read files Git does not
-    track, and clients/ is git-ignored, so either form must not be rooted at or
-    above clients/. Plain `git grep` reads tracked files only."""
+def _is_long_flag(tok: str, flag: str, shortest: int) -> bool:
+    """True when tok is flag or an abbreviation git would accept for it (any
+    prefix at least `shortest` characters long; git rejects an ambiguous one)."""
+    name = tok.split("=", 1)[0]
+    return len(name) >= shortest and flag.startswith(name)
+
+
+def _reads_untracked(tok: str) -> bool:
+    return _is_long_flag(tok, "--untracked", 3) or _is_long_flag(tok, "--no-index", 6)
+
+
+def _git_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """`git grep --untracked`, `git grep --no-index` and `git diff --no-index`
+    read files Git does not track, and clients/ is git-ignored, so none of them
+    may be rooted at or above clients/. Git accepts any unambiguous prefix of a
+    long option (--untr, --no-ind), so prefixes count too. Plain `git grep` and
+    `git diff` read tracked content only."""
     base = cwd
     j = 0
     while j < len(rest):
@@ -415,10 +523,15 @@ def _git_grep_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
             j += 1
             continue
         break
-    if j >= len(rest) or rest[j] != "grep":
+    if j >= len(rest) or rest[j] not in ("grep", "diff"):
         return False
-    args = rest[j + 1:]
-    if not any(t in ("--untracked", "--no-index") for t in args):
+    sub, args = rest[j], rest[j + 1:]
+    if sub == "diff":
+        if not any(_is_long_flag(t, "--no-index", 6) for t in args):
+            return False
+        paths = args[args.index("--") + 1:] if "--" in args else [t for t in args if not t.startswith("-")]
+        return any(_root_reaches(raw, clients, base) for raw in paths)
+    if not any(_reads_untracked(t) for t in args):
         return False
     if "--" in args:
         paths = list(args[args.index("--") + 1:])
@@ -569,8 +682,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             if _sf_tree_reader_reaches(rest, clients, cwd):
                 return (f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} would read client context."
                         + NARROW_PATH_HINT)
-        elif _basename(tok) == "git" and _git_grep_reaches(rest, clients, cwd):
-            return "git grep over untracked files can read client context." + NARROW_PATH_HINT
+        elif _basename(tok) == "git" and _git_reaches(rest, clients, cwd):
+            return "git grep or git diff over untracked files can read client context." + NARROW_PATH_HINT
         elif _INSTALLER_RE.match(_basename(tok)):
             reason = _installer_reason(_basename(tok), rest)
             if reason:
@@ -597,15 +710,36 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         elif _is_recursive_search(tok, rest):
             if _recursive_search_reaches(_basename(tok), rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
-    for tok in toks:
-        if _token_names_guarded_file(tok, cwd):
-            return "this command targets workspace.json or the hook configuration"
-        if _token_targets_claude_dir(tok, claude_dir, cwd):
-            return "this command targets the .claude hook configuration directory"
-        if _token_targets_package(tok, cwd):
-            return "this command targets the installed Torque package that enforces this mode"
-        if _token_is_client_path(tok, clients, cwd):
-            return "this command reaches client context"
+    writes = (any(_basename(t) in _WRITE_VERBS for t in words)
+              or any(re.match(r"^(\d+|&)?>", t) for t in toks))
+    head_index = toks.index(words[0]) if words else -1
+    for index, tok in enumerate(toks):
+        reason = _token_reason(tok, clients, claude_dir, workspace, cwd, writes and index != head_index)
+        if reason:
+            if _has_glob_char(_token_operand(tok) or tok):
+                return (f"the glob {tok} expands to paths that include client context, the hook "
+                        "configuration or the Torque installation." + NARROW_PATH_HINT)
+            return reason
+    return ""
+
+
+def _token_reason(tok: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path, write: bool) -> str:
+    """Why one Bash token is blocked, or "". write is True when the command
+    writes files and tok is not the command being run."""
+    if _token_names_guarded_file(tok, cwd):
+        return "this command targets workspace.json or the hook configuration"
+    if _token_targets_claude_dir(tok, claude_dir, cwd):
+        return "this command targets the .claude hook configuration directory"
+    if _token_targets_package(tok, cwd):
+        return "this command targets the installed Torque package that enforces this mode"
+    if _token_is_client_path(tok, clients, cwd):
+        return "this command reaches client context"
+    paths, _ = _token_paths(tok, cwd)
+    if any(_in_interpreter(p, write) for p in paths):
+        return "this command targets the Python installation that runs the de-identified mode hook"
+    if write and any(_is_shadow_path(p, workspace) for p in paths):
+        return ("this command writes a torque package, torque.py, a .pth file or a "
+                "sitecustomize/usercustomize module, which could replace the hook's gate")
     return ""
 
 
@@ -643,20 +777,40 @@ def _segments_with_separators(command: str) -> list[tuple[list[str], str]]:
 
 
 def _cd_target(toks: list[str]) -> str | None:
-    """For a cd/pushd segment, the directory it changes to ("~" for a bare cd);
-    None when the segment is not a directory change or its target is unknown."""
-    if toks and toks[0] == "builtin":
-        toks = toks[1:]
-    if not toks or toks[0] not in _CD_HEADS:
+    """For a cd/pushd/popd segment (also after `builtin`, `command` or NAME=value
+    prefixes), the directory it changes to ("~" for a bare cd), or "" when that
+    directory cannot be known here. None when the segment is not a directory change."""
+    j = 0
+    while j < len(toks) and (toks[j] in _CD_PREFIXES or _ASSIGN_RE.match(toks[j])):
+        j += 1
+    words = _without_redirections(toks[j:])
+    if not words or words[0] not in _CD_HEADS:
         return None
-    args = [t for t in toks[1:] if not (t.startswith("-") and t != "-")]
+    args = [t for t in words[1:] if not (t.startswith("-") and t != "-")]
+    if words[0] == "popd" or (words[0] == "pushd" and not args):
+        # popd, and a bare pushd (which swaps the top two stack entries).
+        return ""
     if not args:
         return "~"
-    if args[0] == "-" or args[0].startswith("+") or "$" in args[0] or "`" in args[0]:
-        # cd -, pushd +N, or a runtime-built target: the directory is unknown,
-        # so later segments keep every directory seen so far.
-        return None
-    return args[0]
+    target = args[0]
+    if target == "-" or target.startswith("+") or "$" in target or "`" in target:
+        # cd -, pushd +N, or a runtime-built target.
+        return ""
+    if target.startswith("~") and not (target == "~" or target.startswith("~/")):
+        # ~- (OLDPWD), ~+ (PWD), ~user and zsh's ~N directory stack entries.
+        return ""
+    return target
+
+
+def _widened_cwds(seen: list[Path], start: list[Path], workspace: Path) -> list[Path]:
+    """Every directory the shell could be in after a cd to an unknown target:
+    each one seen so far, each starting directory and its parents (which include
+    the workspace root and every directory between), and the workspace root's
+    own parents."""
+    out = list(seen)
+    for base in [*start, workspace]:
+        out.extend([base, *base.parents])
+    return list(dict.fromkeys(out))
 
 
 def _next_cwds(cwds: list[Path], target: str) -> list[Path]:
@@ -685,17 +839,29 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
     splitter, and re-checked explicitly below for robustness) and into the string
     argument of bash -c / sh -c / zsh -c.
 
-    A cd or pushd earlier in the command changes the directory later relative
-    paths resolve against. Every segment is checked against each directory it
-    could run in: right after `cd X &&` that is X alone; after any other
-    separator (;, ||, |, &, a newline) the cd may have failed or run in a
+    A cd, pushd or popd earlier in the command changes the directory later
+    relative paths resolve against. Every segment is checked against each
+    directory it could run in: right after `cd X &&` that is X alone; after any
+    other separator (;, ||, |, &, a newline) the cd may have failed or run in a
     subshell, so the earlier directories stay possible too. When the command
-    has grouping ((), {}, backticks), every directory seen stays possible."""
+    has grouping ((), {}, backticks), every directory seen stays possible. After
+    a directory change whose target cannot be known here (cd -, cd ~-, popd,
+    cd "$VAR", cd "$(...)"), the rest of the command is checked from every
+    directory seen, the starting directories and all of their parents."""
     if _depth > 8 or not command:
         return ""
     command = _expand_home_in_command(command)
+    command = _decode_ansi_c(command)
     command = _PWD_BRACED_RE.sub("$PWD", command)
     command = _expand_braces(command)
+    globbed = _WORD_GROUP_RE.sub("*", command)
+    if globbed != command:
+        # zsh glob groups and qualifiers (c(l)ients, notes(.)) and comma-less
+        # brace groups (c{l..l}ients) may match protected paths: check the
+        # command again with each group read as a wildcard.
+        reason = _scan_bash(globbed, clients, claude_dir, workspace, cwd, _depth + 1)
+        if reason:
+            return reason
     start = list(cwd) if isinstance(cwd, list) else [cwd]
     seen: list[Path] = list(start)
     current: list[Path] = list(start)
@@ -710,6 +876,13 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
             if reason:
                 return reason
         target = _cd_target(toks)
+        if target is not None and sep in ("`", "("):
+            # cd `...` or cd $(...): the splitter cut the target off.
+            target = ""
+        if target == "":
+            seen = _widened_cwds(seen, start, workspace)
+            current = list(seen)
+            continue
         moved = _next_cwds(current, target) if target is not None else []
         _add_cwds(seen, moved)
         if moved and sep == "&&" and not grouped:
@@ -737,6 +910,18 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
 
 
 _SHELL_C_FLAG_RE = re.compile(r"^-[a-zA-Z]*c[a-zA-Z]*$")
+
+
+def _decode_ansi_c(command: str) -> str:
+    """Decode bash/zsh ANSI-C quoting ($'\\x63lients' is 'clients') into an
+    ordinary single-quoted word, and drop the $ of locale quoting ($"...")."""
+    def decode(m: re.Match) -> str:
+        try:
+            text = codecs.decode(m.group(1).encode("latin-1", "backslashreplace"), "unicode_escape")
+        except (UnicodeError, ValueError):
+            return m.group(0)
+        return shlex.quote(text)
+    return _ANSI_C_RE.sub(decode, command).replace('$"', '"')
 
 
 def _shell_c_strings(toks: list[str]) -> list[str]:
@@ -789,12 +974,19 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
         if _mcp_reaches_salesforce(tool_name):
             return False, ("De-identified mode: this MCP tool looks like Salesforce org access. "
                            "Disable Salesforce MCP servers in a build-only workspace.")
-        reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, cwd)
+        reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, workspace, cwd)
         if reason:
             return False, f"De-identified mode: {reason}."
         return True, ""
-    if tool_name == "Bash":
-        reason = _scan_bash(str(tool_input.get("command", "")), clients, claude_dir, workspace, cwd)
+    command = tool_input.get("command")
+    if tool_name == "Bash" or (tool_name not in SAFE_TOOLS and isinstance(command, str)):
+        # Bash, and any other tool that runs a command string: Monitor runs in
+        # the Bash tool's shell; PowerShell gets the same best-effort path scan,
+        # with its backslash separators read as slashes.
+        text = str(command or "")
+        if "powershell" in tool_name.casefold():
+            text = text.replace("\\", "/")
+        reason = _scan_bash(text, clients, claude_dir, workspace, cwd)
         if reason:
             return False, f"De-identified mode: {reason}. Run it yourself outside the AI session."
         return True, ""
@@ -810,17 +1002,35 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
             return False, "De-identified mode: client context stays out of the AI session." + NARROW_PATH_HINT
         return True, ""
     key = PATH_TOOLS.get(tool_name)
-    if key and tool_input.get(key):
+    if key:
+        if not tool_input.get(key):
+            return True, ""
         target = _resolve(cwd, str(tool_input[key]))
+        write = tool_name not in READ_TOOLS
         if _is_within(target, clients):
             return False, "De-identified mode: client context stays out of the AI session."
-        if tool_name != "Read" and _targets_guarded_file(target.as_posix()):
+        if write and _targets_guarded_file(target.as_posix()):
             return False, "De-identified mode: only the owner changes workspace.json or the hook configuration."
-        if tool_name != "Read" and (_is_within(target, _package_dir())
-                                    or _TORQUE_INSTALL_RE.search(target.as_posix())):
+        if write and (_is_within(target, _package_dir())
+                      or _TORQUE_INSTALL_RE.search(target.as_posix())):
             return False, ("De-identified mode: the installed Torque package enforces this mode; "
                            "only the owner changes it.")
-    return True, ""
+        if write and (_in_interpreter(target, True) or _is_shadow_path(target, workspace)):
+            return False, ("De-identified mode: this file could replace the gate at the hook's "
+                           "Python startup (a torque package, torque.py, a .pth file, "
+                           "sitecustomize/usercustomize, or the hook's Python installation); "
+                           "only the owner changes it.")
+        return True, ""
+    if tool_name in SAFE_TOOLS:
+        return True, ""
+    if tool_name in MCP_LIKE_TOOLS:
+        reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, workspace, cwd)
+        if reason:
+            return False, f"De-identified mode: {reason}."
+        return True, ""
+    return False, (f"De-identified mode: {tool_name or 'this tool'} is not a tool this mode recognises, "
+                   "so it is blocked. Use Bash, Read, Edit, Write, Grep or Glob, or ask the workspace "
+                   "owner to run it.")
 
 
 def _string_values(value: object, depth: int = 0):
@@ -837,7 +1047,8 @@ def _string_values(value: object, depth: int = 0):
             yield from _string_values(item, depth + 1)
 
 
-def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir: Path, cwd: Path) -> str:
+def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir: Path, workspace: Path,
+                     cwd: Path) -> str:
     """Treat every single-line string argument of an MCP tool as a possible path
     (a file:// URI included). Any that lands in clients/, the hook configuration
     or the installed Torque package is blocked; a tree-walking tool (search,
@@ -857,6 +1068,9 @@ def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir
             return "this MCP tool call names workspace.json or the hook configuration"
         if _is_within(target, _package_dir()) or _TORQUE_INSTALL_RE.search(target.as_posix()):
             return "this MCP tool call names the installed Torque package that enforces this mode"
+        if _in_interpreter(target, True) or _is_shadow_path(target, workspace):
+            return ("this MCP tool call names a file that could replace the gate at the hook's "
+                    "Python startup")
     return ""
 
 
@@ -931,6 +1145,9 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
 # the excepthook exits 2 (block) instead of Python's default exit 1, which
 # Claude Code treats as a non-blocking error. It contains no double quote and no
 # percent sign, so it can be wrapped in double quotes for sh, bash and cmd.
+# hook_command runs it with -I (isolated mode, Python 3.4+): the working
+# directory, PYTHONPATH and the user site directory stay off sys.path, so a
+# torque/ folder or sitecustomize.py planted in the workspace is never imported.
 HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate "
                   "could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',"
                   "file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())")
@@ -938,7 +1155,7 @@ HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('De-identifi
 
 def hook_command(python: str) -> str:
     """The hook command for a given interpreter path (use forward slashes on Windows)."""
-    return f'"{python}" -c "{HOOK_SHIM_CODE}"'
+    return f'"{python}" -I -c "{HOOK_SHIM_CODE}"'
 
 
 def main() -> int:
