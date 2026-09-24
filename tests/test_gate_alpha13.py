@@ -1,8 +1,9 @@
 """Alpha 13: regression tests for the routes a fourth review round found.
 
-N3 covers symlinks: `ln` pointing at or above clients/, and recursive tools in a
-mode that follows links (rg -L, find -L, grep -R, tar -h, cp -rL, rsync -L, zip,
-fd -L, ls -RL, tree -l) walking into a link that leaves the search root. N4 covers
+N3 covers symlinks: making a link (`ln`, `cp -s`, `mklink`, `New-Item`) that points
+at or above clients/ is blocked, a path that names a link is resolved, the gate does
+no filesystem walk per call, and `torque doctor` reports links that lead out of the
+tree. N4 covers
 paths holding an unresolved `$` expansion, a `cd` inside if/then/while/for, and
 grep's `-d recurse`. N5 covers git's ignored-file listings and a Glob pattern
 that climbs with `..`. Each block has an ordinary build-session counterpart that
@@ -89,14 +90,6 @@ def ws_up(ws):
     return ws
 
 
-@pytest.fixture
-def ws_inner(ws):
-    """The workspace with links in project/ that stay inside project/."""
-    _symlink("src", ws / "project" / "lib")
-    _symlink("a.py", ws / "project" / "src" / "b.py", is_dir=False)
-    return ws
-
-
 # --- N3: ln pointing at or above clients/ ---
 
 LN_BLOCK = [
@@ -148,139 +141,128 @@ def test_n3_ln_at_the_root_into_project_allowed(ws):
     assert _bash_allowed("ln -s project/README.md R.md", ws, ws)
 
 
-# --- N3: recursive tools that follow a link out of the search root ---
+# --- N3: links are stopped where they are made; the gate does not walk trees ---
 
-FOLLOW_BLOCK = [
-    "rg -L SECRET",
-    "rg --follow SECRET .",
-    "rg -uuL SECRET",
-    "rg -L --files",
-    "find -L . -name notes.md",
-    "find . -follow -name notes.md",
-    "find . -follow -name '*.md' -exec cat {} +",
-    "find -H . -name notes.md",
-    "grep -R SECRET .",
-    "grep -Rn SECRET",
-    "grep --dereference-recursive SECRET .",
-    "tar -chf - .",
-    "tar --dereference -cf - .",
-    "tar chf - .",
-    "bsdtar -c -L -f - .",
-    "cp -rL . /tmp/x",
-    "cp -RL . /tmp/x",
-    "cp -r -L . /tmp/x",
-    "cp -r --dereference . /tmp/x",
-    "rsync -aL . /tmp/x",
-    "rsync -a --copy-links . /tmp/x",
-    "rsync -ak . /tmp/x",
-    "rsync -a --copy-unsafe-links . /tmp/x",
-    "zip -r o.zip .",
-    "fd -L notes",
-    "fd --follow notes",
-    "ls -RL",
-    "ls -R -L .",
-    "tree -l",
-    "tree -l .",
-    "ag -f SECRET",
-]
-# The same tools without following links: they skip, or store, the link.
-NO_FOLLOW_ALLOW = [
-    "rg SECRET",
-    "rg SECRET .",
-    "grep -r SECRET .",
-    "find . -name notes.md",
-    "tar -cf - .",
-    "cp -r . /tmp/x",
-    "rsync -a . /tmp/x",
-    "zip -ry o.zip .",
-    "zip -r --symlinks o.zip .",
-    "fd notes",
-    "ls -R",
-    "tree",
-    "rg -L SECRET src",
-    "tar -chf - src",
-    "zip -r o.zip src",
+# Recursive tools in a mode that follows links. The gate does not walk their tree
+# (a walk per call can be slowed past the hook timeout and misses links made in the
+# same command); `torque doctor` reports links that lead out of the tree instead.
+FOLLOW_MODES = [
+    "rg -L SECRET", "rg --follow SECRET .", "find -L . -name notes.md", "grep -R SECRET .",
+    "tar -chf - .", "cp -rL . /tmp/x", "cp -r . /tmp/x", "rsync -aL . /tmp/x", "zip -r o.zip .",
+    "fd -L notes", "ls -RL", "tree -l", "grep -rS SECRET .",
 ]
 
 
-@pytest.mark.parametrize("command", FOLLOW_BLOCK)
-def test_n3_follow_mode_through_a_link_to_the_root_blocked(ws_up, command):
-    assert _bash_blocked(command, ws_up, ws_up / "project"), command
+@pytest.mark.parametrize("command", FOLLOW_MODES)
+def test_n3_gate_does_not_walk_the_tree(ws_up, command, monkeypatch):
+    def no_walk(*args, **kwargs):
+        raise AssertionError("the gate walked the filesystem")
 
-
-@pytest.mark.parametrize("command", NO_FOLLOW_ALLOW)
-def test_n3_no_follow_or_narrow_root_allowed_with_the_link_present(ws_up, command):
+    monkeypatch.setattr(gate.os, "scandir", no_walk)
+    monkeypatch.setattr(gate.os, "walk", no_walk)
+    monkeypatch.setattr(gate.os, "listdir", no_walk)
     assert _bash_allowed(command, ws_up, ws_up / "project"), command
 
 
-@pytest.mark.parametrize("command", FOLLOW_BLOCK)
-def test_n3_follow_mode_with_links_inside_project_allowed(ws_inner, command):
-    assert _bash_allowed(command, ws_inner, ws_inner / "project"), command
+@pytest.mark.parametrize("command", ["rg SECRET up", "grep -r SECRET up", "cat up/clients/acme/notes.md",
+                                     "ls up/clients", "tar -cf - up", "rg -L SECRET up"])
+def test_n3_a_path_that_names_a_link_is_still_resolved(ws_up, command):
+    assert _bash_blocked(command, ws_up, ws_up / "project"), command
 
 
-def test_n3_follow_mode_through_a_link_into_clients_blocked(ws):
-    _symlink(str(ws / "clients" / "acme"), ws / "project" / "cl")
-    assert _bash_blocked("rg -L SECRET", ws, ws / "project")
-    assert _bash_blocked("grep -R SECRET .", ws, ws / "project")
+def test_n3_read_through_a_link_is_still_resolved(ws_up):
+    assert _blocked("Read", {"file_path": "up/clients/acme/notes.md"}, ws_up, ws_up / "project")
 
 
-def test_n3_follow_mode_through_a_file_link_into_clients_blocked(ws):
-    _symlink(str(ws / "clients" / "acme" / "notes.md"), ws / "project" / "n.md", is_dir=False)
-    assert _bash_blocked("rg -L SECRET", ws, ws / "project")
-    assert _bash_blocked("zip -r o.zip .", ws, ws / "project")
+LINK_MAKERS_BLOCK = [
+    "cp -s ../clients/acme/notes.md n.md",
+    "cp -rs .. mirror",
+    "cmd //c mklink //D up ..",
+    "cmd /c mklink /D up ..",
+    "cmd /c mklink /J up ../..",
+    "mklink /D up ..",
+    "mklink /H n.md ../clients/acme/notes.md",
+    "New-Item -ItemType SymbolicLink -Path up -Target ..",
+    "New-Item -ItemType Junction -Path up -Value ..",
+    "new-item -type symboliclink -name up -target ..",
+]
+LINK_MAKERS_ALLOW = [
+    "cp -s src/a.py b.py",
+    "cmd /c mklink a_link.py src/a.py",
+    "mklink /D lib src",
+    "New-Item -ItemType SymbolicLink -Path lib -Target src",
+    "New-Item -ItemType Directory -Path out",
+]
 
 
-def test_n3_follow_mode_through_an_outside_folder_that_links_back_blocked(ws, tmp_path):
-    other = tmp_path / "other"
-    other.mkdir()
-    _symlink(str(other), ws / "project" / "ext")
-    assert _bash_allowed("rg -L SECRET", ws, ws / "project")
-    _symlink(str(ws), other / "back")
-    assert _bash_blocked("rg -L SECRET", ws, ws / "project")
+@pytest.mark.parametrize("command", LINK_MAKERS_BLOCK)
+def test_n3_other_link_makers_at_or_above_clients_blocked(ws, command):
+    assert _bash_blocked(command, ws, ws / "project"), command
 
 
-def test_n3_follow_mode_with_a_link_loop_terminates_and_allows(ws):
-    _symlink(".", ws / "project" / "src" / "self")
-    _symlink("..", ws / "project" / "src" / "parent")
-    assert _bash_allowed("rg -L x", ws, ws / "project")
-    assert _bash_allowed("find -L . -name a.py", ws, ws / "project")
+@pytest.mark.parametrize("command", LINK_MAKERS_ALLOW)
+def test_n3_other_link_makers_inside_project_allowed(ws, command):
+    assert _bash_allowed(command, ws, ws / "project"), command
 
 
-def test_n3_follow_walk_fails_closed_at_the_entry_cap(ws, monkeypatch):
+def test_n3_powershell_link_maker_blocked(ws):
+    assert _blocked("PowerShell", {"command": "New-Item -ItemType SymbolicLink -Path up -Target .."},
+                    ws, ws / "project")
+
+
+def _doctor_report(root):
+    import contextlib
+    import io
+    from torque import cli
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["doctor", "--workspace", str(root), "--json"])
+    return code, json.loads(out.getvalue())
+
+
+def _doctor_ws(tmp_path):
+    from torque import workspace as wsmod
+    root = tmp_path / "d"
+    wsmod.init_workspace(root, "Example firm", "generic")
+    wsmod.set_ai_access(root, "build-only")
+    (root / "clients" / "acme").mkdir(parents=True, exist_ok=True)
+    (root / "clients" / "acme" / "notes.md").write_text("x", encoding="utf-8")
+    (root / "project" / "src").mkdir(parents=True, exist_ok=True)
+    return Path(os.path.realpath(str(root)))
+
+
+def test_n3_doctor_reports_links_that_lead_out_of_the_tree(tmp_path):
+    root = _doctor_ws(tmp_path)
+    _symlink("..", root / "project" / "up")
+    _symlink(str(root / "clients" / "acme"), root / "project" / "src" / "cl")
+    code, report = _doctor_report(root)
+    links = report["ai_access"]["links_out"]
+    assert sorted(links["found"]) == ["project/src/cl", "project/up"], links
+    assert report["ready"] is False and code == 3
+    assert any("link" in action and "project/up" in action for action in report["next_actions"])
+
+
+def test_n3_doctor_ignores_links_inside_the_tree_and_skipped_folders(tmp_path):
+    root = _doctor_ws(tmp_path)
+    _symlink("src", root / "project" / "lib")
+    (root / "project" / "node_modules" / ".bin").mkdir(parents=True)
+    _symlink("../../..", root / "project" / "node_modules" / ".bin" / "up")
+    _symlink("..", root / "clients" / "acme" / "up")
+    _, report = _doctor_report(root)
+    links = report["ai_access"]["links_out"]
+    assert links["found"] == [] and links["complete"] is True, links
+    assert not any("link" in action for action in report["next_actions"])
+
+
+def test_n3_doctor_link_scan_stops_at_its_cap_and_says_so(tmp_path, monkeypatch):
+    from torque import cli
+    root = _doctor_ws(tmp_path)
     for n in range(12):
-        (ws / "project" / "src" / f"m{n}.py").write_text("", encoding="utf-8")
-    monkeypatch.setattr(gate, "_FOLLOW_WALK_LIMIT", 5)
-    assert _bash_blocked("rg -L x", ws, ws / "project")
-    assert _bash_allowed("rg x", ws, ws / "project")
-
-
-def test_n3_follow_walk_fails_closed_at_the_depth_cap(ws, monkeypatch):
-    deep = ws / "project" / "d1" / "d2" / "d3" / "d4"
-    deep.mkdir(parents=True)
-    monkeypatch.setattr(gate, "_FOLLOW_WALK_DEPTH", 2)
-    assert _bash_blocked("find -L . -name x", ws, ws / "project")
-    assert _bash_allowed("find . -name x", ws, ws / "project")
-
-
-def test_n3_follow_walk_skips_words_that_are_not_folders(ws, monkeypatch):
-    """Windows rejects a path holding `*` with a generic OSError, not FileNotFoundError.
-    A find expression word (`-name '*.md'`) must not make the walk fail closed."""
-    real_scandir = os.scandir
-
-    def scandir(path):
-        if "*" in str(path):
-            raise OSError(22, "The filename, directory name, or volume label syntax is incorrect")
-        return real_scandir(path)
-
-    monkeypatch.setattr(gate.os, "scandir", scandir)
-    clients = ws / "clients"
-    assert gate._links_reach([ws / "project" / "*.md", ws / "project"], clients) is False
-    assert _bash_allowed("find . -follow -name '*.md' -exec cat {} +", ws, ws / "project")
-
-
-def test_n3_follow_block_message_names_the_link(ws_up):
-    allowed, reason = gate.decide("Bash", {"command": "rg -L SECRET"}, ws_up, "build-only", ws_up / "project")
-    assert not allowed and "link" in reason, reason
+        (root / "project" / "src" / f"m{n}.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli, "LINK_SCAN_LIMIT", 5)
+    code, report = _doctor_report(root)
+    assert report["ai_access"]["links_out"]["complete"] is False
+    assert report["ready"] is False and code == 3
 
 
 # --- N4: unresolved $ expansions, cd inside if/while/for, grep -d recurse ---
@@ -442,11 +424,6 @@ def test_r4_01_confined_clusters_allowed(ws, command):
     assert _bash_allowed(command, ws, ws / "project"), command
 
 
-def test_r4_01_zip_to_stdout_still_walks_its_input_for_links(ws_up):
-    assert _bash_blocked("zip -9r - .", ws_up, ws_up / "project")
-    assert _bash_allowed("zip -9ry - .", ws_up, ws_up / "project")
-
-
 # --- R4-07: doctor and the alpha 12 record state the final tracked-clients rule ---
 
 def test_r4_07_doctor_names_the_final_rule(tmp_path):
@@ -592,6 +569,38 @@ def test_kimi_r4_07_changelog_says_tagged_not_unpublished(version):
     assert "unpublished" not in heading and "not published to a package index" in heading, heading
 
 
+# --- Re-review finding 4: a word longer than the file name limit ---
+
+def _hook(event, project_dir):
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir))
+    env["PYTHONPATH"] = str(REPO / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    import sys
+    return subprocess.run([sys.executable, "-m", "torque.gate"], input=json.dumps(event), capture_output=True,
+                          text=True, env=env)
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m \"" + "word " * 90 + "\"",
+    "git commit -m '" + "x" * 400 + "'",
+    "echo hi;" * 30,
+    " && ".join(f"echo {chr(97 + n % 26)}" for n in range(28)),
+])
+def test_long_words_are_not_paths_and_do_not_fail_closed(wsg, command):
+    result = _hook({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(wsg / "project")}, wsg)
+    assert result.returncode == 0, result.stderr
+
+
+def test_long_word_naming_client_context_still_blocked(wsg):
+    command = "cat ../clients/acme/" + "n" * 300 + ".md; echo " + "x" * 300
+    result = _hook({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(wsg / "project")}, wsg)
+    assert result.returncode == 2 and "client context" in result.stderr, result.stderr
+
+
+def test_installation_docs_state_the_hook_timeout():
+    text = " ".join((REPO / "docs" / "installation.md").read_text(encoding="utf-8").split())
+    assert '"timeout": 600' in text and "timed-out hook" in text and "proceed" in text
+
+
 # --- Ordinary build session: nothing new blocks it ---
 
 ORDINARY_PROJECT = [
@@ -624,9 +633,10 @@ def _doc():
 
 def test_ai_access_doc_describes_the_new_checks():
     text = _doc()
-    for phrase in ("ln -s", "rg -L", "grep -R", "-d recurse", "git status --ignored", "git ls-files",
-                   "unresolved `$`", "`if`"):
+    for phrase in ("ln -s", "cp -s", "mklink", "cp -r", "torque doctor", "-d recurse", "git status --ignored",
+                   "git ls-files", "unresolved `$`", "`if`", "timed-out hook"):
         assert phrase in text, phrase
+    assert "The walk stops at" not in text and "20,000" not in text
 
 
 def test_alpha12_review_scope_is_no_longer_pending():
@@ -639,3 +649,9 @@ def test_alpha12_review_scope_is_no_longer_pending():
 def test_alpha13_record_exists_and_names_its_python():
     text = (REPO / "docs" / "validation-alpha13.md").read_text(encoding="utf-8")
     assert "Python 3." in text and "## Review scope" in text
+
+
+def test_alpha13_review_scope_records_the_re_review():
+    text = (REPO / "docs" / "validation-alpha13.md").read_text(encoding="utf-8")
+    scope = " ".join(text.split("## Review scope", 1)[1].split("##", 1)[0].split())
+    assert "a356093" in scope and "fix first" in scope and "spot-check" in scope
