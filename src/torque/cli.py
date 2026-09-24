@@ -597,14 +597,15 @@ def _doctor(args: argparse.Namespace) -> int:
             report["ready"] = False
             report["next_actions"].append(
                 "Torque could not check whether files under clients/ are tracked in Git (git failed, timed out "
-                "or is missing), so the gate blocks git commands other than git status here. Check that git "
-                "works in this workspace.")
+                "or is missing), so the gate blocks every git command here except git status without "
+                "-v/--verbose and git rm --cached of paths under clients/. Check that git works in this workspace.")
         elif count:
             report["ready"] = False
             report["next_actions"].append(
                 f"{access['clients_in_git']} file(s) under clients/ are tracked in Git or staged. Client files "
-                "must stay untracked: low-level git commands can read them, so the gate blocks git commands "
-                "other than status and log here. Run git rm -r --cached clients and keep clients/ ignored.")
+                "must stay untracked: low-level git commands can read them, so the gate blocks every git "
+                "command here except git status without -v/--verbose and git rm --cached of paths under "
+                "clients/. Run git rm -r --cached clients and keep clients/ ignored.")
         if hook["disabled_by"]:
             report["ready"] = False
             report["next_actions"].append(

@@ -76,7 +76,9 @@ guard on recognized tool calls, not a sandbox. It has two values:
   qualifiers (`c(l)ients`, `notes(.)`) and comma-less brace groups (`c{l..l}ients`), each read as
   a wildcard; `**` treated as a recursive search from its fixed prefix; `grep -r` (also
   `-d recurse`, `--directories=recurse` and abbreviations such as `--recur`), `rg`, `ag`,
-  `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current directory; option values
+  `ack`, `find`, `fd`, `tree`, `ls -R` (short-option clusters may hold digits, as in
+  `grep -rA2`, `grep -r2` or `zip -9r`, and an option that takes a value ends the cluster;
+  default target: the current directory; option values
   such as `-g '*.md'`, `-A 2` or `-A2` are not mistaken for the pattern or a path, a pattern given
   with `-e`, `-f`, `-eERROR`, `-rneERROR` or grep's `--regexp` and its abbreviations such as
   `--reg=` is not mistaken for a path, and modes with no pattern, rg's `--files` and ack's `-f`, read

@@ -27,18 +27,27 @@ It also found that `git status --ignored` and `git ls-files -o -i` list the name
 files under `clients/`, and that a `Glob` pattern starting with `../` was not read as
 climbing out of the current directory.
 
+A second review of the same release found that a short-option cluster holding a
+digit was not read as recursive: `grep -rA2 ERROR ..`, `grep -rnA2 ERROR ..`,
+`zip -9r - ..` and `zip -r9 - ..` were allowed from `project/`. It also found that
+`torque doctor` and an earlier paragraph of the alpha 12 record still said `git log`
+passes while client files are tracked; the final rule allows only `git status`
+without `-v`/`--verbose` and `git rm --cached` of paths under `clients/`.
+
 Each has a regression test in `tests/test_gate_alpha13.py`, committed before the
 fix, next to an ordinary build-session counterpart that must still pass. 94 of that
-file's 208 gate tests failed against the alpha 12 gate; the blocks that already held
-(`ln -s ../clients cl`, for example) and the ordinary cases passed. Three tests of
-the documentation were also written first.
+file's first 208 gate tests failed against the alpha 12 gate; the blocks that already
+held (`ln -s ../clients cl`, for example) and the ordinary cases passed. Three tests of
+the documentation were also written first. Of the 23 tests for the second review's
+findings, 14 failed before their fix; the 9 that passed are the `project/`-confined
+equivalents that must stay allowed.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.13.15, local):** 2046 pytest tests and 154
+- **Offline suite (macOS, Python 3.13.15, local):** 2069 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
-- **Hook probe:** 73 hook events were piped through the real hook command
+- **Hook probe:** 81 hook events were piped through the real hook command
   (`python -I -c ...`) with `CLAUDE_PROJECT_DIR` set, against scratch workspaces made
   with `torque workspace init` and `ai-access build-only`: one without git holding
   `project/up -> ..`, and one with git at the root and `/clients/` ignored. Every route
@@ -46,7 +55,7 @@ the documentation were also written first.
   `git status`, `diff`, `log`, `add`, `pytest`, `rg` and `grep -r` (also `rg -L` and
   `grep -R` over a project whose links stay inside it), `find -L`, `tar` and `zip` of
   `project/`, `cp -rL` and `rsync -aL` of `src/`, `ln -s` to a file in `project/`,
-  a `for` loop over `"$f"`, `if cd src; then ...; fi`, `git status --ignored .` and
+  a `for` loop over `"$f"`, `grep -rA2` and `zip -9r` of `src/`, `if cd src; then ...; fi`, `git status --ignored .` and
   `git ls-files -o` in `project/`, and `Glob`, `Grep` and `Read` in `project/`.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
   Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull
