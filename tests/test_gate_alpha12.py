@@ -365,3 +365,207 @@ def test_n6_git_clean_over_the_hook_environment_blocked():
     holder = Path(torque.__file__).resolve().parent.parent
     for command in (f"git -C '{holder.as_posix()}' clean -fdx", f"git clean -fdx '{holder.as_posix()}'"):
         assert _blocked("Bash", {"command": command}), command
+
+
+# --- Round 3, R3-01: MCP tools that run a command get the Bash scan ---
+
+EXEC_BLOCK = [
+    "cat clients/acme/notes.md",
+    "sf data query --target-org sample --query 'SELECT Id FROM Account'",
+    "cd project && cat ../clients/acme/notes.md",
+    "rg secret",
+    "git clean -fdx",
+]
+EXEC_ALLOW = [
+    "ls project",
+    "git status",
+    "sf project generate --name demo",
+]
+
+
+@pytest.mark.parametrize("command", EXEC_BLOCK)
+@pytest.mark.parametrize("key", ["command", "cmd", "script"])
+def test_r3_01_mcp_command_is_scanned_like_bash(ws, command, key):
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+    assert _blocked("mcp__desktop_commander__start_process", {key: command}, ws, ws), (key, command)
+    assert _blocked("mcp__shell__run", {"input": {key: command}}, ws, ws), (key, command)
+
+
+@pytest.mark.parametrize("command", EXEC_ALLOW)
+def test_r3_01_mcp_command_ordinary_work_allowed(ws, command):
+    assert _allowed("Bash", {"command": command}, ws, ws), command
+    assert _allowed("mcp__desktop_commander__start_process", {"command": command}, ws, ws), command
+
+
+def test_r3_01_other_tools_with_cmd_or_script_are_scanned(ws):
+    assert _blocked("SomeShell", {"cmd": "cat clients/acme/notes.md"}, ws, ws)
+    assert _blocked("SomeShell", {"script": "cat clients/acme/notes.md"}, ws, ws)
+
+
+# --- Round 3, R3-02: search option forms, from a project subdirectory ---
+
+SEARCH_BLOCK = [
+    "rg -uuu -eERROR ..",
+    "grep -R -eERROR ..",
+    "grep -rneERROR ..",
+    "grep -R -fpatterns.txt ..",
+    "grep -R --regexp=ERROR ..",
+    "grep -R --reg=ERROR ..",
+    "grep -R --reg ERROR ..",
+    "rg --files --hidden --no-ignore ..",
+    "rg --files ..",
+    "rg --files",
+    "ack -f ..",
+    "ag -g notes ..",
+    "ack -g notes ..",
+    "rg -A2 ERROR ..",
+    "rg -gnotes.md ERROR ..",
+]
+SEARCH_ALLOW = [
+    "rg -eERROR .",
+    "grep -R -eERROR .",
+    "rg --files",
+    "rg --files --hidden src",
+    "grep -rneERROR src",
+    "ack -f .",
+    "rg -A2 ERROR .",
+]
+
+
+@pytest.mark.parametrize("command", SEARCH_BLOCK)
+def test_r3_02_search_forms_from_project_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws / "project"), command
+
+
+@pytest.mark.parametrize("command", SEARCH_ALLOW)
+def test_r3_02_search_confined_to_project_allowed(ws, command):
+    if command == "rg --files":
+        # From the workspace root, rg --files lists clients/.
+        assert _blocked("Bash", {"command": command}, ws, ws)
+    assert _allowed("Bash", {"command": command}, ws, ws / "project"), command
+
+
+# --- Round 3, R3-03: tar's directory changes ---
+
+TAR_BLOCK = [
+    "tar -C.. -cf - .",
+    "tar -C .. -cf - .",
+    "tar --directory=.. -cf - .",
+    "tar --directory .. -cf - .",
+    "tar -cf - -C .. .",
+    "tar -cf /tmp/x.tar -C /tmp -C .. .",
+    "tar -cf - -C .. clients",
+    "tar -cC .. -f - .",
+    "tar -C \"$HOME/elsewhere\" -C .. -cf - .",
+    "tar -C \"$DIR\" -cf - .",
+]
+TAR_ALLOW = [
+    "tar -cf - .",
+    "tar -C .. -cf - project",
+    "tar -C src -cf - .",
+    "tar --directory=src -czf /tmp/src.tgz .",
+]
+
+
+@pytest.mark.parametrize("command", TAR_BLOCK)
+def test_r3_03_tar_directory_changes_tracked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws / "project"), command
+
+
+@pytest.mark.parametrize("command", TAR_ALLOW)
+def test_r3_03_tar_in_project_allowed(ws, command):
+    assert _allowed("Bash", {"command": command}, ws, ws / "project"), command
+
+
+# --- Round 3, R3-04: git clean over an in-workspace hook environment ---
+
+@pytest.fixture
+def ws_venv(ws, monkeypatch):
+    """The workspace with the hook's interpreter modelled at .venv/."""
+    venv = ws / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "lib" / "site-packages").mkdir(parents=True)
+    (ws / ".gitignore").write_text("/clients/\n/.venv/\n", encoding="utf-8")
+    monkeypatch.setattr(gate, "_interpreter_paths",
+                        lambda: ((venv / "lib" / "site-packages", venv / "pyvenv.cfg"), (venv / "bin" / "python", venv / "bin")))
+    return ws
+
+
+@pytest.mark.parametrize("command", ["git clean -fdx .venv", "git clean -fdx", "git clean -fdX", "git clean -fx .venv/bin",
+                                     "git clean -fdx -- .venv", "git stash -a -- .venv", "rm -rf .venv"])
+def test_r3_04_git_clean_of_the_hook_environment_blocked(ws_venv, command):
+    assert _blocked("Bash", {"command": command}, ws_venv, ws_venv), command
+
+
+@pytest.mark.parametrize("command", ["git clean -n .venv", "git clean -ndx", "git clean -fdx project/build",
+                                     "git clean -fdX project"])
+def test_r3_04_dry_runs_and_build_output_cleans_allowed(ws_venv, command):
+    assert _allowed("Bash", {"command": command}, ws_venv, ws_venv), command
+
+
+# --- Round 3, R3-05: abbreviated options ---
+
+@pytest.mark.parametrize("command", [
+    "torque doctor --workspace . --clie example",
+    "torque doctor --cl example",
+    "torque doctor --clien=example",
+    "python -m torque doctor --clie example",
+])
+def test_r3_05_abbreviated_client_flag_blocked(command):
+    assert _blocked("Bash", {"command": command}), command
+
+
+def test_r3_05_doctor_without_client_allowed():
+    assert _allowed("Bash", {"command": "torque doctor --workspace . --json"})
+
+
+@pytest.mark.parametrize("argv", [
+    ["doctor", "--clie", "example"],
+    ["doctor", "--work", "."],
+    ["context", "--cli", "example"],
+    ["workflows", "list", "--js"],
+])
+def test_r3_05_cli_rejects_abbreviated_options(argv, capsys):
+    from torque import cli
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
+
+
+def test_r3_05_every_torque_parser_disables_abbreviation():
+    import argparse
+    from torque import cli
+    seen = []
+
+    def walk(parser):
+        seen.append(parser)
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for child in action.choices.values():
+                    walk(child)
+    walk(cli.build_parser())
+    assert len(seen) > 10
+    assert all(p.allow_abbrev is False for p in seen), [p.prog for p in seen if p.allow_abbrev]
+
+
+# --- Round 3, NEW-1: file:// URIs with a host ---
+
+@pytest.mark.parametrize("uri", [
+    "file://localhost/w/clients/acme/notes.md",
+    "FILE://LOCALHOST/w/clients/acme/notes.md",
+    "file:/w/clients/acme/notes.md",
+    "file:///w/cl%69ents/acme/notes.md",
+    "file://localhost/w/workspace.json",
+])
+def test_new1_file_uri_with_host_is_parsed(uri):
+    assert _blocked("mcp__filesystem__read_file", {"path": uri}), uri
+    assert _blocked("ReadMcpResourceTool", {"server": "files", "uri": uri}), uri
+    assert _blocked("LSP", {"operation": "hover", "filePath": uri}), uri
+
+
+def test_new1_uri_path_helper():
+    assert gate._uri_path("file://localhost/w/a.py") == "/w/a.py"
+    assert gate._uri_path("file:///C:/w/a.py") == "C:/w/a.py"
+    assert gate._uri_path("file:///w/a%20b.py") == "/w/a b.py"
+    assert gate._uri_path("/w/a.py") == "/w/a.py"
