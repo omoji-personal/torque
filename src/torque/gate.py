@@ -7,17 +7,26 @@ a sandbox: a runtime-constructed command, an arbitrary script, a network tool, o
 host that does not wire up the hook can still get through. See docs/ai-access.md.
 """
 from __future__ import annotations
+import glob
+import itertools
 import json
 import os
 import re
 import shlex
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 # sf/sfdx subcommands (or bare flags) that stay local and never touch an org, as
 # long as no org flag (ORG_FLAGS) also appears anywhere on the line.
 SF_LOCAL = {("project", "generate"), ("lightning", "generate"), ("apex", "generate"),
+            ("project", "convert"), ("code-analyzer", "run"), ("code-analyzer", "rules"),
             ("--version",), ("version",), ("help",), ("plugins",)}
+# Local sf commands that read a directory tree, with the flags naming their roots.
+# With no such flag the root is the current directory. The roots must not reach
+# clients/.
+SF_TREE_READERS = {("code-analyzer", "run"): {"--workspace", "-w", "--target", "-t"},
+                   ("code-analyzer", "rules"): {"--workspace", "-w", "--target", "-t"}}
 ORG_FLAGS = {"-o", "--target-org", "--from-org", "-u", "--targetusername",
              "--target-dev-hub", "-v"}
 TORQUE_ALLOWED = {"demo", "workflows", "doctor", "--version", "--help", "-h"}
@@ -68,10 +77,38 @@ PY_LAUNCHER_RE = re.compile(r"^(python[23]?(\.\d+)?|pythonw|py)$")
 SETTINGS_RE = re.compile(r"(^|[/\\])\.claude[/\\]settings[^/\\]*\.json$", re.IGNORECASE)
 _GREP_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*[rR][a-zA-Z]*$")
 _LS_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*R[a-zA-Z]*$")
+# Copy and archive tools that read a whole directory tree when given a recursive flag
+# (tar always does).
+RECURSIVE_COPY_HEADS = {"cp", "scp", "rsync", "zip"}
+_COPY_RECURSIVE_FLAG_RE = re.compile(r"^--(recursive|archive)$|^-[a-zA-Z]*[rRa][a-zA-Z]*$")
 _GLOB_CHARS = frozenset("*?[")
 _HOME_TOKEN_RE = re.compile(r"\$\{HOME\}|\$HOME")
 CASEFOLD_PLATFORMS = ("darwin", "win32")
 _SPLIT_RE = re.compile(r"&&|\|\||;|\||\n|&|\(|\)|\{|\}|`")
+_SPLIT_KEEP_RE = re.compile(r"(&&|\|\||;|\||\n|&|\(|\)|\{|\}|`)")
+_GROUPING_CHARS = frozenset("(){}`")
+# A shell redirection operator attached to its target: <file, 0<file, >file,
+# 2>>file, &>file, <>file, <<<word.
+_REDIRECT_RE = re.compile(r"^(?:\d+|&)?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)(?P<rest>.*)$")
+# NAME=value (a shell assignment, including after export/declare/local).
+_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# Brace expansion: prefix{a,b}suffix within one shell word.
+_BRACE_RE = re.compile(r"([^\s{}'\"]*)\{([^{}\s]*,[^{}\s]*)\}([^\s{}'\"]*)")
+_PWD_BRACED_RE = re.compile(r"\$\{PWD\}")
+_PWD_TOKEN_RE = re.compile(r"\$PWD(?![A-Za-z0-9_])")
+_GLOB_LIMIT = 2000
+# Package installers, and the verbs that change what is installed.
+_INSTALLER_RE = re.compile(r"^(pip[0-9.]*|pipx|uv)$")
+_INSTALL_VERBS = {"install", "uninstall", "remove", "reinstall", "upgrade", "sync", "add", "inject",
+                  "uninject"}
+_INSTALL_ALL_VERBS = {"reinstall-all", "uninstall-all", "upgrade-all"}
+# Installed-distribution metadata for Torque (dist-info, editable .pth or finder).
+_TORQUE_INSTALL_RE = re.compile(r"__editable__[^/\\]*torque|torque_salesforce[^/\\]*\.(dist-info|egg-info|pth|egg-link)",
+                                re.IGNORECASE)
+# MCP tool names that walk a directory tree from the path they are given.
+_MCP_RECURSIVE_MARKERS = ("tree", "search", "find", "grep", "glob", "walk", "recursive")
+_CD_HEADS = {"cd", "pushd"}
+_MAX_CWDS = 32
 NARROW_PATH_HINT = " Pass a narrower path, such as project/ or src/, instead of the workspace root."
 
 
@@ -125,6 +162,7 @@ def _resolve(base: Path, raw: str) -> Path:
     and '..' the same way the filesystem would, so a symlinked, relative, or
     ~/$HOME-prefixed route into clients/ cannot slip past a raw string comparison."""
     raw = _expand_home(raw)
+    raw = _PWD_TOKEN_RE.sub(lambda _m: str(base), raw)
     target = Path(raw)
     if not target.is_absolute():
         target = base / target
@@ -183,22 +221,109 @@ def _sf_local_ok(rest: list[str]) -> bool:
     return False
 
 
-def _token_is_client_path(tok: str, clients: Path, cwd: Path) -> bool:
-    if not tok or tok.startswith("-"):
-        return False
+@lru_cache(maxsize=1)
+def _package_dir() -> Path:
+    """The installed torque package directory (this file's folder), resolved."""
+    return Path(os.path.realpath(str(Path(__file__).parent)))
+
+
+def _token_operand(tok: str) -> str:
+    """The part of a raw Bash token that can name a file: the target of an
+    attached redirection (<file, 2>file), the value of --flag=value, or the
+    value of a NAME=value assignment. A bare flag has none."""
+    m = _REDIRECT_RE.match(tok)
+    if m:
+        return m.group("rest")
+    if tok.startswith("-"):
+        return tok.split("=", 1)[1] if "=" in tok else ""
+    if _ASSIGN_RE.match(tok):
+        return tok.split("=", 1)[1]
+    return tok
+
+
+def _glob_fixed_prefix(pattern: str) -> str:
+    """The leading path components of pattern that contain no glob character."""
+    parts = re.split(r"[/\\]", pattern)
+    fixed = []
+    for part in parts:
+        if _has_glob_char(part):
+            break
+        fixed.append(part)
+    if not fixed:
+        return "."
+    joined = "/".join(fixed)
+    return joined or "/"
+
+
+def _glob_paths(operand: str, cwd: Path) -> tuple[list[Path], list[Path]]:
+    """Expand a glob operand the way a shell would. Returns (matches, roots):
+    matches are the concrete paths it names; roots are directories a recursive
+    (**) or too-broad-to-list glob could reach below, to be treated like the
+    root of a recursive search."""
+    if not _has_glob_char(operand):
+        return [], []
+    expanded = _PWD_TOKEN_RE.sub(lambda _m: str(cwd), _expand_home(operand))
     try:
-        return _is_within(_resolve(cwd, tok), clients)
+        prefix = _resolve(cwd, _glob_fixed_prefix(expanded))
     except (OSError, ValueError):
+        return [], []
+    if "**" in expanded:
+        # zsh (and bash with globstar) recurse on **: treat it as a recursive
+        # search rooted at the fixed prefix.
+        return [], [prefix]
+    pattern = expanded if os.path.isabs(expanded) else os.path.join(str(cwd), expanded)
+    try:
+        found = list(itertools.islice(glob.iglob(pattern), _GLOB_LIMIT + 1))
+    except (OSError, ValueError, re.error):
+        return [], [prefix]
+    if len(found) > _GLOB_LIMIT:
+        return [], [prefix]
+    return [Path(os.path.realpath(p)) for p in found], []
+
+
+def _token_paths(tok: str, cwd: Path) -> tuple[list[Path], list[Path]]:
+    """Every path a raw Bash token can name from cwd, as (paths, recursive roots)."""
+    operand = _token_operand(tok)
+    if not operand or operand.startswith("-"):
+        return [], []
+    paths: list[Path] = []
+    try:
+        paths.append(_resolve(cwd, operand))
+    except (OSError, ValueError):
+        pass
+    matches, roots = _glob_paths(operand, cwd)
+    return paths + matches, roots
+
+
+def _token_is_client_path(tok: str, clients: Path, cwd: Path) -> bool:
+    if not tok:
         return False
+    paths, roots = _token_paths(tok, cwd)
+    return any(_is_within(p, clients) for p in paths) or any(_reaches(r, clients) for r in roots)
 
 
 def _token_targets_claude_dir(tok: str, claude_dir: Path, cwd: Path) -> bool:
-    if not tok or tok.startswith("-"):
+    if not tok:
         return False
-    try:
-        return _is_within(_resolve(cwd, tok), claude_dir)
-    except (OSError, ValueError):
-        return False
+    paths, roots = _token_paths(tok, cwd)
+    return any(_is_within(p, claude_dir) for p in paths) or any(_reaches(r, claude_dir) for r in roots)
+
+
+def _token_targets_package(tok: str, cwd: Path) -> bool:
+    """True if a Bash token names the installed torque package (or its install
+    metadata), so the session cannot edit or delete the gate itself."""
+    if _TORQUE_INSTALL_RE.search(tok):
+        return True
+    paths, _ = _token_paths(tok, cwd)
+    package = _package_dir()
+    return any(_is_within(p, package) for p in paths)
+
+
+def _token_names_guarded_file(tok: str, cwd: Path) -> bool:
+    if _targets_guarded_file(tok):
+        return True
+    paths, _ = _token_paths(tok, cwd)
+    return any(_targets_guarded_file(p.as_posix()) for p in paths)
 
 
 def _is_recursive_search(tok: str, rest: list[str]) -> bool:
@@ -209,6 +334,10 @@ def _is_recursive_search(tok: str, rest: list[str]) -> bool:
         return any(_GREP_RECURSIVE_FLAG_RE.match(t) for t in rest)
     if head == "ls":
         return any(_LS_RECURSIVE_FLAG_RE.match(t) for t in rest)
+    if head == "tar":
+        return True
+    if head in RECURSIVE_COPY_HEADS:
+        return any(_COPY_RECURSIVE_FLAG_RE.match(t) for t in rest)
     return False
 
 
@@ -227,14 +356,106 @@ def _recursive_search_reaches(head: str, rest: list[str], clients: Path, cwd: Pa
     """A recursive search tool's target defaults to cwd when it names no path
     argument at all (e.g. `rg foo`, bare `tree`)."""
     roots = _recursive_search_targets(head, rest) or ["."]
-    for raw in roots:
-        try:
-            resolved = _resolve(cwd, raw)
-        except (OSError, ValueError):
+    return any(_root_reaches(raw, clients, cwd) for raw in roots)
+
+
+def _root_reaches(raw: str, clients: Path, cwd: Path) -> bool:
+    """True when a recursive operation rooted at raw (a raw token, glob allowed)
+    could reach clients/."""
+    paths, roots = _token_paths(raw, cwd)
+    return any(_reaches(p, clients) for p in paths + roots)
+
+
+def _flag_values(args: list[str], flags: set[str]) -> list[str] | None:
+    """The values given to any of flags (as --flag VALUE or --flag=VALUE), or
+    None when none of them appears."""
+    found: list[str] = []
+    seen = False
+    for j, tok in enumerate(args):
+        name, eq, value = tok.partition("=")
+        if name in flags:
+            seen = True
+            if eq:
+                found.append(value)
+            elif j + 1 < len(args):
+                found.append(args[j + 1])
+    return found if seen else None
+
+
+def _sf_tree_reader_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """A local sf command that reads a directory tree (code-analyzer) must not
+    be rooted at or above clients/. Its root defaults to the current directory."""
+    head2 = tuple(t for t in rest[:2] if not t.startswith("-"))
+    flags = SF_TREE_READERS.get(head2[:2])
+    if flags is None:
+        return False
+    roots = _flag_values(rest, flags) or ["."]
+    return any(_root_reaches(raw, clients, cwd) for raw in roots)
+
+
+def _git_grep_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """`git grep --untracked` and `git grep --no-index` read files Git does not
+    track, and clients/ is git-ignored, so either form must not be rooted at or
+    above clients/. Plain `git grep` reads tracked files only."""
+    base = cwd
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if tok == "-C" and j + 1 < len(rest):
+            try:
+                base = _resolve(base, rest[j + 1])
+            except (OSError, ValueError):
+                return True
+            j += 2
             continue
-        if _reaches(resolved, clients):
-            return True
-    return False
+        if tok in ("-c", "--git-dir", "--work-tree", "--namespace") and j + 1 < len(rest):
+            j += 2
+            continue
+        if tok.startswith("-"):
+            j += 1
+            continue
+        break
+    if j >= len(rest) or rest[j] != "grep":
+        return False
+    args = rest[j + 1:]
+    if not any(t in ("--untracked", "--no-index") for t in args):
+        return False
+    if "--" in args:
+        paths = list(args[args.index("--") + 1:])
+    else:
+        non_flags: list[str] = []
+        explicit_pattern = False
+        k = 0
+        while k < len(args):
+            tok = args[k]
+            if tok in _GIT_GREP_PATTERN_FLAGS:
+                explicit_pattern = True
+                k += 2
+                continue
+            if tok in _GIT_GREP_VALUE_FLAGS:
+                k += 2
+                continue
+            if tok.startswith(("--regexp=", "--file=")) or re.match(r"^-[ef].", tok):
+                explicit_pattern = True
+            elif not tok.startswith("-"):
+                non_flags.append(tok)
+            k += 1
+        paths = non_flags if explicit_pattern else non_flags[1:]
+    return any(_root_reaches(raw, clients, base) for raw in (paths or ["."]))
+
+
+_GIT_GREP_PATTERN_FLAGS = {"-e", "-f", "--regexp", "--file"}
+_GIT_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--after-context", "--before-context", "--context",
+                         "-m", "--max-count", "--max-depth", "--threads", "-O", "--open-files-in-pager"}
+
+
+def _installer_reason(name: str, args: list[str]) -> str:
+    """pip / uv / pipx changing an installed Torque (or every tool at once)."""
+    if any(t in _INSTALL_ALL_VERBS for t in args):
+        return f"{name} {' '.join(args[:2])} can remove or replace the installed Torque gate"
+    if any(t in _INSTALL_VERBS for t in args) and any("torque" in t.casefold() for t in args):
+        return f"{name} {' '.join(args[:2])} can remove or replace the installed Torque gate"
+    return ""
 
 
 def _has_glob_char(tok: str) -> bool:
@@ -308,24 +529,52 @@ def _segments(command: str):
             yield toks
 
 
+def _without_redirections(toks: list[str]) -> list[str]:
+    """The command words, without redirections (<file, 2>/dev/null, > out) so
+    a redirection target is not mistaken for a subcommand or argument. Every
+    original token is still checked as a possible path."""
+    words: list[str] = []
+    skip = False
+    for tok in toks:
+        if skip:
+            skip = False
+            continue
+        m = _REDIRECT_RE.match(tok)
+        if m:
+            skip = not m.group("rest")
+            continue
+        words.append(tok)
+    return words
+
+
 def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: Path, cwd: Path) -> str:
     """Scan every token (not just the head) so a wrapper, an env-var prefix, or a
     grouping construct cannot hide an org call, a client-context command, or a
     self-disable attempt behind it."""
-    n = len(toks)
-    destructive = any(_basename(t) in DESTRUCTIVE_VERBS for t in toks) or any(t in (">", ">>") for t in toks)
+    destructive = (any(_basename(t) in DESTRUCTIVE_VERBS for t in toks)
+                   or any(re.match(r"^(\d+|&)?>", t) for t in toks))
     if destructive:
         for t in toks:
-            if _glob_targets_root(t, workspace, cwd):
+            if _glob_targets_root(_token_operand(t) or t, workspace, cwd):
                 return ("this command uses a glob at the workspace root that could remove or "
                         "overwrite workspace.json or the hook configuration")
-    for i, tok in enumerate(toks):
-        rest = toks[i + 1:]
+    words = _without_redirections(toks)
+    for i, tok in enumerate(words):
+        rest = words[i + 1:]
         if _is_sf_token(tok):
             if _has_org_flag(rest):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
             if not _sf_local_ok(rest):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
+            if _sf_tree_reader_reaches(rest, clients, cwd):
+                return (f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} would read client context."
+                        + NARROW_PATH_HINT)
+        elif _basename(tok) == "git" and _git_grep_reaches(rest, clients, cwd):
+            return "git grep over untracked files can read client context." + NARROW_PATH_HINT
+        elif _INSTALLER_RE.match(_basename(tok)):
+            reason = _installer_reason(_basename(tok), rest)
+            if reason:
+                return reason
         elif _basename(tok) in CONSOLE_SCRIPTS:
             name = _basename(tok)
             reason = _torque_reason(rest) if CONSOLE_SCRIPTS[name] == "torque" else _delegate_reason(name, rest)
@@ -337,6 +586,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             reason = ""
             if module in TORQUE_MAIN_MODULES:
                 reason = _torque_reason(args)
+            elif module == "pip":
+                reason = _installer_reason("python -m pip", args)
             elif DELEGATE_MODULE_RE.match(module):
                 reason = _delegate_reason(f"python -m {module}", args)
             elif (module == "torque" or module.startswith("torque.")) and module not in TORQUE_HARMLESS_MODULES:
@@ -346,37 +597,155 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         elif _is_recursive_search(tok, rest):
             if _recursive_search_reaches(_basename(tok), rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
-        if _targets_guarded_file(tok):
+    for tok in toks:
+        if _token_names_guarded_file(tok, cwd):
             return "this command targets workspace.json or the hook configuration"
         if _token_targets_claude_dir(tok, claude_dir, cwd):
             return "this command targets the .claude hook configuration directory"
+        if _token_targets_package(tok, cwd):
+            return "this command targets the installed Torque package that enforces this mode"
         if _token_is_client_path(tok, clients, cwd):
             return "this command reaches client context"
     return ""
 
 
-def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path, _depth: int = 0) -> str:
+def _expand_braces(command: str) -> str:
+    """Expand prefix{a,b}suffix words into separate words, as the shell would,
+    before the segment splitter (which also splits on { and }) tears them apart."""
+    for _ in range(8):
+        expanded = _BRACE_RE.sub(
+            lambda m: " ".join(m.group(1) + alt + m.group(3) for alt in m.group(2).split(",")), command)
+        if expanded == command:
+            break
+        command = expanded
+    return command
+
+
+def _segments_with_separators(command: str) -> list[tuple[list[str], str]]:
+    """Split command into (tokens, separator that follows) pairs. A segment
+    with no words is kept so its separator still counts."""
+    parts = _SPLIT_KEEP_RE.split(command)
+    out: list[tuple[list[str], str]] = []
+    for idx in range(0, len(parts), 2):
+        text = parts[idx].strip()
+        sep = parts[idx + 1] if idx + 1 < len(parts) else ""
+        toks: list[str] = []
+        if text:
+            try:
+                toks = shlex.split(text, posix=True)
+            except ValueError:
+                # Unbalanced quotes: the naive splitter cut inside a quoted
+                # string. Keep the words, without their stray quote marks.
+                toks = [t.strip("'\"") for t in text.split()]
+                toks = [t for t in toks if t]
+        out.append((toks, sep))
+    return out
+
+
+def _cd_target(toks: list[str]) -> str | None:
+    """For a cd/pushd segment, the directory it changes to ("~" for a bare cd);
+    None when the segment is not a directory change or its target is unknown."""
+    if toks and toks[0] == "builtin":
+        toks = toks[1:]
+    if not toks or toks[0] not in _CD_HEADS:
+        return None
+    args = [t for t in toks[1:] if not (t.startswith("-") and t != "-")]
+    if not args:
+        return "~"
+    if args[0] == "-" or args[0].startswith("+") or "$" in args[0] or "`" in args[0]:
+        # cd -, pushd +N, or a runtime-built target: the directory is unknown,
+        # so later segments keep every directory seen so far.
+        return None
+    return args[0]
+
+
+def _next_cwds(cwds: list[Path], target: str) -> list[Path]:
+    out: list[Path] = []
+    for base in cwds:
+        try:
+            out.append(_resolve(base, target))
+        except (OSError, ValueError):
+            continue
+        matches, _ = _glob_paths(target, base)
+        out.extend(matches)
+    return out
+
+
+def _add_cwds(pool: list[Path], extra: list[Path]) -> list[Path]:
+    for c in extra:
+        if c not in pool and len(pool) < _MAX_CWDS:
+            pool.append(c)
+    return pool
+
+
+def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path | list[Path],
+               _depth: int = 0) -> str:
     """Check every segment of command, then recurse into $(...) / backtick
     substitutions (already exposed as their own segments by the paren/backtick
     splitter, and re-checked explicitly below for robustness) and into the string
-    argument of bash -c / sh -c / zsh -c."""
+    argument of bash -c / sh -c / zsh -c.
+
+    A cd or pushd earlier in the command changes the directory later relative
+    paths resolve against. Every segment is checked against each directory it
+    could run in: right after `cd X &&` that is X alone; after any other
+    separator (;, ||, |, &, a newline) the cd may have failed or run in a
+    subshell, so the earlier directories stay possible too. When the command
+    has grouping ((), {}, backticks), every directory seen stays possible."""
     if _depth > 8 or not command:
         return ""
     command = _expand_home_in_command(command)
-    for toks in _segments(command):
-        reason = _block_command(toks, clients, claude_dir, workspace, cwd)
+    command = _PWD_BRACED_RE.sub("$PWD", command)
+    command = _expand_braces(command)
+    start = list(cwd) if isinstance(cwd, list) else [cwd]
+    seen: list[Path] = list(start)
+    current: list[Path] = list(start)
+    grouped = any(c in command for c in _GROUPING_CHARS)
+    for toks, sep in _segments_with_separators(command):
+        for here in current:
+            reason = _block_command(toks, clients, claude_dir, workspace, here) if toks else ""
+            if reason:
+                return reason
+        for inner in _shell_c_strings(toks):
+            reason = _scan_bash(inner, clients, claude_dir, workspace, list(current), _depth + 1)
+            if reason:
+                return reason
+        target = _cd_target(toks)
+        moved = _next_cwds(current, target) if target is not None else []
+        _add_cwds(seen, moved)
+        if moved and sep == "&&" and not grouped:
+            current = list(dict.fromkeys(moved))[:_MAX_CWDS]
+        elif sep == "&&" and not grouped:
+            pass
+        else:
+            current = list(seen)
+    # The segment splitter above cuts inside quotes, so a quoted `bash -c "..."`
+    # string containing && or ; reaches the loop in pieces. Parse the whole
+    # command once more, quote-aware, and scan each -c string intact.
+    try:
+        whole = shlex.split(command, posix=True)
+    except ValueError:
+        whole = []
+    for inner in _shell_c_strings(whole):
+        reason = _scan_bash(inner, clients, claude_dir, workspace, list(seen), _depth + 1)
         if reason:
             return reason
-        for i in range(len(toks) - 2):
-            if _basename(toks[i]) in SHELL_HEADS and toks[i + 1] == "-c":
-                reason = _scan_bash(toks[i + 2], clients, claude_dir, workspace, cwd, _depth + 1)
-                if reason:
-                    return reason
     for nested in _direct_substitutions(command):
-        reason = _scan_bash(nested, clients, claude_dir, workspace, cwd, _depth + 1)
+        reason = _scan_bash(nested, clients, claude_dir, workspace, list(seen), _depth + 1)
         if reason:
             return reason
     return ""
+
+
+_SHELL_C_FLAG_RE = re.compile(r"^-[a-zA-Z]*c[a-zA-Z]*$")
+
+
+def _shell_c_strings(toks: list[str]) -> list[str]:
+    """The command strings passed to bash/sh/zsh with -c (also -lc, -ec)."""
+    found = []
+    for i in range(len(toks) - 2):
+        if _basename(toks[i]) in SHELL_HEADS and _SHELL_C_FLAG_RE.match(toks[i + 1]):
+            found.append(toks[i + 2])
+    return found
 
 
 def _direct_substitutions(command: str) -> list[str]:
@@ -420,6 +789,9 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
         if _mcp_reaches_salesforce(tool_name):
             return False, ("De-identified mode: this MCP tool looks like Salesforce org access. "
                            "Disable Salesforce MCP servers in a build-only workspace.")
+        reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, cwd)
+        if reason:
+            return False, f"De-identified mode: {reason}."
         return True, ""
     if tool_name == "Bash":
         reason = _scan_bash(str(tool_input.get("command", "")), clients, claude_dir, workspace, cwd)
@@ -444,14 +816,55 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
             return False, "De-identified mode: client context stays out of the AI session."
         if tool_name != "Read" and _targets_guarded_file(target.as_posix()):
             return False, "De-identified mode: only the owner changes workspace.json or the hook configuration."
+        if tool_name != "Read" and (_is_within(target, _package_dir())
+                                    or _TORQUE_INSTALL_RE.search(target.as_posix())):
+            return False, ("De-identified mode: the installed Torque package enforces this mode; "
+                           "only the owner changes it.")
     return True, ""
 
 
+def _string_values(value: object, depth: int = 0):
+    """Every string inside a tool_input (dict values and list items, nested)."""
+    if depth > 8:
+        return
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _string_values(item, depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _string_values(item, depth + 1)
+
+
+def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir: Path, cwd: Path) -> str:
+    """Treat every single-line string argument of an MCP tool as a possible path
+    (a file:// URI included). Any that lands in clients/, the hook configuration
+    or the installed Torque package is blocked; a tree-walking tool (search,
+    tree, find, ...) rooted at or above clients/ is blocked too."""
+    recursive = any(marker in tool_name.casefold() for marker in _MCP_RECURSIVE_MARKERS)
+    for raw in _string_values(tool_input):
+        if not raw or "\n" in raw or len(raw) > 4096:
+            continue
+        candidate = raw[len("file://"):] if raw.casefold().startswith("file://") else raw
+        try:
+            target = _resolve(cwd, candidate)
+        except (OSError, ValueError):
+            continue
+        if _is_within(target, clients) or (recursive and _reaches(target, clients)):
+            return "this MCP tool call names client context. Disable file-reading MCP servers in a build-only workspace"
+        if _targets_guarded_file(target.as_posix()) or _is_within(target, claude_dir):
+            return "this MCP tool call names workspace.json or the hook configuration"
+        if _is_within(target, _package_dir()) or _TORQUE_INSTALL_RE.search(target.as_posix()):
+            return "this MCP tool call names the installed Torque package that enforces this mode"
+    return ""
+
+
 def _resolve_ai_access(value: object) -> str:
-    """A missing key, or an explicit "full", means full, matching the documented
-    default. Only an explicit "build-only" turns the gate on; anything else
-    present (a typo, wrong case, a non-string) fails closed to build-only."""
-    if value is None or value == "full":
+    """Only an explicit "full" means full. Everything else present (null, an
+    empty string, a typo, wrong case, a non-string) fails closed to build-only.
+    A missing key is handled by the caller and means full, the documented default."""
+    if value == "full":
         return "full"
     return "build-only"
 
@@ -470,16 +883,18 @@ def _is_workspace_marker(folder: Path) -> bool:
     return (folder / "clients").is_dir() and (folder / ".torque" / "templates.json").is_file()
 
 
-def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
-    """Walk up from start for the nearest workspace.json. Returns (folder, mode,
-    mode_known). mode_known is False when a workspace.json was found but could
-    not be read or parsed as a JSON object, or when a real workspace marker
-    (_is_workspace_marker) exists with no readable workspace.json alongside it;
-    callers must treat that as build-only. The search stops before the user's
-    home directory (exclusive): home itself, and anything above it, is never
-    treated as or searched for a workspace, since unrelated per-user state
-    (e.g. an older torque tooling directory) can live directly under home."""
+def _workspace_chain(start: Path) -> list[tuple[Path, str, bool]]:
+    """Every workspace from start upward, nearest first, as (folder, mode,
+    mode_known). A folder counts when it has a workspace.json, or a real
+    workspace marker (_is_workspace_marker) without one. mode_known is False
+    when a workspace.json could not be read or parsed as a JSON object, or
+    when the marker has no readable workspace.json alongside it (the config
+    may have been removed); both are build-only. The search stops before the
+    user's home directory (exclusive): home itself, and anything above it, is
+    never treated as or searched for a workspace, since unrelated per-user
+    state (e.g. an older torque tooling directory) can live directly under home."""
     home = _cf(str(_home_dir()))
+    chain: list[tuple[Path, str, bool]] = []
     for folder in [start, *start.parents]:
         if _cf(str(folder)) == home:
             break
@@ -490,14 +905,40 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
                 if not isinstance(data, dict):
                     raise ValueError("workspace.json must be a JSON object")
             except (OSError, ValueError):
-                return folder, "build-only", False
-            return folder, _resolve_ai_access(data.get("ai_access")), True
-        if _is_workspace_marker(folder):
-            # A real workspace marker with no readable workspace.json
-            # alongside it: the config may have been removed. Fail closed
-            # rather than treating this folder as "no workspace here."
-            return folder, "build-only", False
-    return start, "full", True
+                chain.append((folder, "build-only", False))
+                continue
+            mode = _resolve_ai_access(data["ai_access"]) if "ai_access" in data else "full"
+            chain.append((folder, mode, True))
+        elif _is_workspace_marker(folder):
+            chain.append((folder, "build-only", False))
+    return chain
+
+
+def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
+    """The governing workspace for start: the strictest wins. A nested
+    workspace.json (even `{}` or an explicit "full") cannot downgrade a
+    build-only workspace above it. Returns the nearest build-only workspace
+    when there is one, else the nearest workspace, else (start, "full", True)."""
+    chain = _workspace_chain(start)
+    for entry in chain:
+        if entry[1] == "build-only":
+            return entry
+    return chain[0] if chain else (start, "full", True)
+
+
+# The command a Claude Code hook should run. If `torque.gate` cannot be imported
+# by the hook's interpreter (Torque missing, a broken install, an edited gate),
+# the excepthook exits 2 (block) instead of Python's default exit 1, which
+# Claude Code treats as a non-blocking error. It contains no double quote and no
+# percent sign, so it can be wrapped in double quotes for sh, bash and cmd.
+HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate "
+                  "could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',"
+                  "file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())")
+
+
+def hook_command(python: str) -> str:
+    """The hook command for a given interpreter path (use forward slashes on Windows)."""
+    return f'"{python}" -c "{HOOK_SHIM_CODE}"'
 
 
 def main() -> int:
@@ -508,13 +949,18 @@ def main() -> int:
         if "tool_name" not in event:
             raise ValueError("hook input has no tool_name")
         cwd = Path(os.path.realpath(str(event.get("cwd") or ".")))
-        root, mode, _ = _workspace_mode(cwd)
+        gated = [folder for folder, mode, _ in _workspace_chain(cwd) if mode == "build-only"]
         tool_input = event.get("tool_input")
         if tool_input is None:
             tool_input = {}
         if not isinstance(tool_input, dict):
             raise ValueError("tool_input must be an object")
-        allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, mode, cwd)
+        allowed, reason = True, ""
+        # Every build-only workspace from cwd upward applies; the strictest wins.
+        for root in gated:
+            allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, "build-only", cwd)
+            if not allowed:
+                break
     except Exception as exc:
         # Any failure here means this call could not be safely evaluated. Since
         # decide() only does real work in build-only mode (it returns immediately
