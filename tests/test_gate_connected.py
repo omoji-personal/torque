@@ -60,6 +60,9 @@ def test_read_in_scope_allowed_out_of_scope_denied(w):
 def test_unbound_session_denies_org_routes(w):
     assert run(w, "Bash", {"command": "sf data query -q x -o acme-prod"}, env={}).action == "deny"
     assert run(w, "Bash", {"command": "git status"}, env={}).action == "allow"
+    assert run(w, "Bash", {"command": "python3 x.py"}, env={}).action == "ask"
+    assert run(w, "Bash", {"command": "torque approval grant req-000000000001"}, env={}).action == "deny"
+    assert run(w, "Bash", {"command": "torque context --workspace . --client acme"}, env={}).action == "deny"
     assert run(w, "Read", {"file_path": str(w / "clients" / "acme" / "context.md")}, env={}).action == "deny"
     assert run(w, "Bash", {"command": "sf data query -q x -o acme-prod"},
                env={"TORQUE_CLIENT": "missing"}).action == "deny"

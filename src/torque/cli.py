@@ -124,6 +124,8 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--workspace")
     doctor.add_argument("--client")
     doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--live", action="store_true",
+                        help="connected mode: resolve each approved org and compare its ID with the consent")
     doctor.add_argument("--for", dest="capability", choices=("workspace", "salesforce", "browser", "meeting"), default="workspace")
     change = sub.add_parser("change", help="connect requirements, decisions, checks and handoff")
     actions = change.add_subparsers(dest="action", required=True)
@@ -710,6 +712,14 @@ def _doctor(args: argparse.Namespace) -> int:
                 'The hook matcher does not cover every tool call. Set it to ".*": the gate checks '
                 "command-running tools such as Monitor and blocks tools it does not recognise, but only "
                 "for the calls the matcher sends it.")
+    if access and access["mode"] == "connected":
+        from . import doctor_connected
+        connected = doctor_connected.report(Path(root), args.client, live=getattr(args, "live", False))
+        access["connected"] = connected
+        if not connected["ready"]:
+            report["ready"] = False
+        report["next_actions"] += [f"Connected mode: {problem}." for problem in connected["problems"]]
+        report["next_actions"] += [f"Connected mode (advice): {note}." for note in connected["advice"]]
     if report["client"] and report["client"]["evidence_problems"]:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
@@ -747,6 +757,12 @@ def _doctor(args: argparse.Namespace) -> int:
                 state = ("hook command blocked a standalone probe; settings checked, host enforcement "
                          "not tested" if ok else "HOOK NOT IN FORCE")
                 print(f"AI access: build-only ({state})")
+            elif access["mode"] == "connected":
+                connected = access["connected"]
+                state = "ready" if connected["ready"] else "NOT READY"
+                print(f"AI access: connected, approval required ({connected['approval_verify']}; {state})")
+                from . import doctor_connected
+                doctor_connected.print_report(connected)
             else:
                 print("AI access: full (build-only mode off)")
         if report["client"]:

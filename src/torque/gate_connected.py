@@ -143,11 +143,10 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     routes = classify(tool_name, tool_input)
     if all(r.kind == "local" and _route_client(r) in (None, bound) for r in routes):
         return Decision("allow", "")
-    if not bound:
-        return _deny("no client is bound to this session. The consultant starts it with "
-                     "`torque launch --workspace W --client NAME`.")
+    unbound = _deny("no client is bound to this session. The consultant starts it with "
+                    "`torque launch --workspace W --client NAME`.")
     config = ws.load_workspace(workspace)[1]
-    item = consent.load_consent(workspace, bound)
+    item = consent.load_consent(workspace, bound) if bound else None
     problems = consent.consent_problems(item)
     allowed_data = consent.data_allowed(item)
     command = tool_input.get("command") if isinstance(tool_input.get("command"), str) else ""
@@ -155,7 +154,9 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     decisions: list[Decision] = []
     for route in routes:
         client = _route_client(route)
-        if client not in (None, bound):
+        if not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
+            decisions.append(unbound)
+        elif client not in (None, bound):
             decisions.append(_deny(f"this session is bound to {bound}; it cannot act for {route.client}."))
         elif route.kind == "local":
             decisions.append(Decision("allow", ""))
