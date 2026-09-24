@@ -131,7 +131,20 @@ guard on recognized tool calls, not a sandbox. It has two values:
 - A Bash command aimed at `workspace.json`, `.claude/settings*.json`, `.worktreeinclude`, or the
   `.claude` directory (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on
   `workspace.json`, `.claude/settings*.json` and `.worktreeinclude`), and a destructive command
-  (`rm`, `mv`, `cp`, `truncate`, a redirection) using a glob at the workspace root.
+  (`rm`, `mv`, `cp`, `truncate`, a redirection) using a glob at the workspace root. A command
+  is "aimed at" these files when it names them; a patch or archive writes the paths inside it,
+  which the next bullet covers.
+- Patches and archive extraction that could write outside `project/`. `git apply` must run inside
+  `project/` (there git changes only paths under the current directory), or at the root with a
+  `--directory` inside `project/`; `git am` needs a repository whose top is inside `project/`,
+  since it applies from the top; `patch` must run inside `project/` (`-d`/`--directory`
+  included) and read its patch from a file (`-i`, `--input`, `<file` or its second operand), not
+  a pipe or heredoc. A patch file the gate can read must name no absolute path and no `..`, and
+  `git apply --unsafe-paths` is blocked. `--check`, `--stat` and `patch --dry-run` pass
+  anywhere. Extraction by `tar`/`bsdtar` (`x`, `-x`, `--extract`), `unzip` and `ditto -x` is
+  blocked when it writes at or above the workspace root or into `clients/` (the current
+  directory, each `-C`, `unzip -d`, `ditto`'s destination), and for absolute or rewritten
+  member names (`tar -P`, `--transform`, bsdtar `-s`, `unzip -:`).
 - `git clean` without `-n`/`--dry-run`, and `git stash` with `-u`, `--include-untracked`, `-a` or
   `--all`, run at or above `clients/`, `.claude/`, the installed Torque package or the hook's
   Python environment. Either would delete those files or copy them into a stash. `git clean`
@@ -280,9 +293,9 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   over its interpreter from a path given at run time. When the interpreter is missing the hook
   exits 127, which Claude Code does not treat as a block.
 - Replacing the gate by a route the write checks do not parse. A script or `python -c` code the
-  assistant runs, `git checkout` or `git apply` of a tracked `torque/` folder, a download tool
-  writing a file (`curl -o`), or an archive extracted into the workspace can still create a
-  `torque/` folder, `sitecustomize.py` or a `.pth` file. With the documented `-I` hook none of
+  assistant runs, `git checkout` of a tracked `torque/` folder, a patch applied or an archive
+  extracted inside `project/`, or a download tool writing a file (`curl -o`) can still create a
+  `torque/` folder, `sitecustomize.py` or a `.pth` file under `project/`. With the documented `-I` hook none of
   those in the workspace is imported. A hook without `-I` (including `python -m torque.gate`)
   would import them; doctor flags such a hook. A script can also write into the hook
   interpreter's site-packages, its binary or a system site directory it loads, since the gate
@@ -291,7 +304,11 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - `pip install -r` of a requirements file, or `pip install .` from a Torque checkout, that
   replaces Torque without naming it on the command line.
 - Copy or archive tools other than `tar`, `zip`, `cp`, `scp` and `rsync` with a recursive flag
-  (for example `7z`, `ditto`, `robocopy`) run over the workspace.
+  (for example `7z`, `ditto`, `robocopy`) run over the workspace, and extractors other than
+  `tar`, `bsdtar`, `unzip` and `ditto -x` (for example `7z x`, `cpio -i`). A patch that `git
+  apply` reads from standard input inside `project/` is left to git's own path checks, which
+  reject `..` and absolute paths. An archive whose members are links that a later member
+  writes through is left to the extractor's own checks.
 - An MCP tool that runs code from an argument other than `command`, `cmd` or `script` (for
   example an `args` list or a `code` string). Only those three are scanned as commands; disable
   shell and process MCP servers in a build-only workspace.

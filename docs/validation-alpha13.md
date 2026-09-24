@@ -34,29 +34,43 @@ digit was not read as recursive: `grep -rA2 ERROR ..`, `grep -rnA2 ERROR ..`,
 passes while client files are tracked; the final rule allows only `git status`
 without `-v`/`--verbose` and `git rm --cached` of paths under `clients/`.
 
+A third review of the same release found that `git apply` of a patch that sets
+`ai_access` to `full` was allowed and turned the mode off, and that `git am`,
+`patch -p1 <` and archive extraction could likewise write over `workspace.json`, the
+hook configuration or `clients/`. The limits text named only files that replace the
+gate, and contradicted the list of what is blocked. It also found the same stale
+`status and log` wording in the gate's own description, and a changelog that called
+the tagged alpha 12 "unpublished".
+
 Each has a regression test in `tests/test_gate_alpha13.py`, committed before the
 fix, next to an ordinary build-session counterpart that must still pass. 94 of that
 file's first 208 gate tests failed against the alpha 12 gate; the blocks that already
 held (`ln -s ../clients cl`, for example) and the ordinary cases passed. Three tests of
 the documentation were also written first. Of the 23 tests for the second review's
 findings, 14 failed before their fix; the 9 that passed are the `project/`-confined
-equivalents that must stay allowed.
+equivalents that must stay allowed. Of the 60 tests for the third review's findings,
+39 failed before their fix; the 21 that passed are the confined cases (`git apply`
+and `patch` from `project/`, extraction into `project/`, `--check`, `--stat`,
+`--dry-run`, listings).
 
 ## Results
 
-- **Offline suite (macOS, Python 3.13.15, local):** 2070 pytest tests and 154
+- **Offline suite (macOS, Python 3.13.15, local):** 2130 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
-- **Hook probe:** 81 hook events were piped through the real hook command
-  (`python -I -c ...`) with `CLAUDE_PROJECT_DIR` set, against scratch workspaces made
-  with `torque workspace init` and `ai-access build-only`: one without git holding
-  `project/up -> ..`, and one with git at the root and `/clients/` ignored. Every route
-  above exits 2. An ordinary session exits 0 from `project/` and from the root:
-  `git status`, `diff`, `log`, `add`, `pytest`, `rg` and `grep -r` (also `rg -L` and
-  `grep -R` over a project whose links stay inside it), `find -L`, `tar` and `zip` of
-  `project/`, `cp -rL` and `rsync -aL` of `src/`, `ln -s` to a file in `project/`,
-  a `for` loop over `"$f"`, `grep -rA2` and `zip -9r` of `src/`, `if cd src; then ...; fi`, `git status --ignored .` and
-  `git ls-files -o` in `project/`, and `Glob`, `Grep` and `Read` in `project/`.
+- **Hook probe:** 92 hook events were piped through the real hook command (`python -I -c
+  ...`) with `CLAUDE_PROJECT_DIR` set, against scratch workspaces made with `torque
+  workspace init` and `ai-access build-only`: one without git holding `project/up ->
+  ..`, and one with git at the root and `/clients/` ignored. Every route above exits 2.
+  An ordinary session exits 0 from `project/` and from the root: `git status`, `diff`,
+  `log`, `add`, `pytest`, `rg` and `grep -r` (also `rg -L` and `grep -R` over a project
+  whose links stay inside it), `find -L`, `tar` and `zip` of `project/`, `cp -rL` and
+  `rsync -aL` of `src/`, `ln -s` to a file in `project/`, a `for` loop over `"$f"`,
+  `grep -rA2` and `zip -9r` of `src/`, `if cd src; then ...; fi`, `git status --ignored
+  .` and `git ls-files -o` in `project/`, `git apply` of a confined patch, `--check`,
+  `patch --dry-run`, extraction into `src/`, `unzip -l`, and `Glob`, `Grep` and `Read`
+  in `project/`. The patch that sets `ai_access` to `full` exits 2 through `git apply`
+  at the root, `git am` from `project/` and `patch -p1 <`.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
   Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull
   request. The first run failed one test on Windows: a `find` expression word (`'*.md'`)
@@ -81,4 +95,7 @@ tool over a very large tree is blocked; a link made by a route the gate does not
 parse (a script, `cp -s`, a Windows junction made with `mklink`) is caught when a
 path names it or a following tool walks into it, not when it is made; and the host's
 own `Grep` and `Glob` tools are not walked for links, since whether they follow links
-was not tested. See [build-only mode](ai-access.md) for the full list.
+was not tested. A patch `git apply` reads from standard input inside `project/` is left
+to git's own path checks, an archive member that is a link a later member writes
+through is left to the extractor, and extractors other than `tar`, `bsdtar`, `unzip`
+and `ditto -x` are not parsed. See [build-only mode](ai-access.md) for the full list.
