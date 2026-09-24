@@ -141,6 +141,16 @@ _TORQUE_INSTALL_RE = re.compile(r"__editable__[^/\\]*torque|torque_salesforce[^/
 _MCP_RECURSIVE_MARKERS = ("tree", "search", "find", "grep", "glob", "walk", "recursive")
 _CD_HEADS = {"cd", "pushd", "popd"}
 _CD_PREFIXES = {"builtin", "command", "time", "noglob", "nocorrect"}
+# Reserved words that can start a segment holding a cd: if cd ..; then cd ..; do cd ..
+_SHELL_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
+# A parameter expansion the gate cannot know: $NAME, ${...}, $1, $@, and a bare $
+# left where the splitter cut $(...) apart.
+_PARAM_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-]|$)")
+_BRACED_PARAM_RE = re.compile(r"\$\{[^{}]*\}")
+# How far the gate walks a search root looking for links a following tool would
+# take out of it. Past either limit the command is blocked.
+_FOLLOW_WALK_LIMIT = 20000
+_FOLLOW_WALK_DEPTH = 64
 _MAX_CWDS = 32
 # Commands that write, create or replace files, for the checks that only apply
 # to a write (a planted torque package, the hook interpreter's binaries).
@@ -439,24 +449,48 @@ def _glob_paths(operand: str, cwd: Path) -> tuple[list[Path], list[Path]]:
     return [Path(os.path.realpath(p)) for p in found], []
 
 
-def _token_paths(tok: str, cwd: Path) -> tuple[list[Path], list[Path]]:
-    """Every path a raw Bash token can name from cwd, as (paths, recursive roots)."""
+def _dollar_variants(operand: str, cwd: Path, workspace: Path | None) -> list[str]:
+    """operand with every parameter expansion the gate cannot know ($R, ${R%x},
+    $1) replaced by each directory it could stand for: the current directory,
+    the folders between it and the workspace root, and the root itself. So a
+    path or search root built from a variable counts as reaching the workspace
+    root, as a cd to one already does. Without a workspace, operand as it is."""
+    if workspace is None:
+        return [operand]
+    expanded = _PWD_TOKEN_RE.sub(lambda _m: str(cwd), _expand_home(operand))
+    if not _PARAM_RE.search(expanded):
+        return [operand]
+    anchors = [cwd]
+    if _is_within(cwd, workspace):
+        anchors += [p for p in cwd.parents if _is_within(p, workspace)]
+    anchors.append(workspace)
+    return [_PARAM_RE.sub(lambda _m, a=a: a.as_posix(), expanded) for a in dict.fromkeys(anchors)]
+
+
+def _token_paths(tok: str, cwd: Path, workspace: Path | None = None) -> tuple[list[Path], list[Path]]:
+    """Every path a raw Bash token can name from cwd, as (paths, recursive roots).
+    With a workspace, an unknown parameter expansion is read as each directory
+    from cwd up to the workspace root (_dollar_variants)."""
     operand = _token_operand(tok)
     if not operand or operand.startswith("-"):
         return [], []
     paths: list[Path] = []
-    try:
-        paths.append(_resolve(cwd, operand))
-    except (OSError, ValueError):
-        pass
-    matches, roots = _glob_paths(operand, cwd)
-    return paths + matches, roots
+    roots: list[Path] = []
+    for variant in _dollar_variants(operand, cwd, workspace):
+        try:
+            paths.append(_resolve(cwd, variant))
+        except (OSError, ValueError):
+            pass
+        matches, found = _glob_paths(variant, cwd)
+        paths += matches
+        roots += found
+    return paths, roots
 
 
 def _token_is_client_path(tok: str, clients: Path, cwd: Path) -> bool:
     if not tok:
         return False
-    paths, roots = _token_paths(tok, cwd)
+    paths, roots = _token_paths(tok, cwd, clients.parent)
     return any(_is_within(p, clients) for p in paths) or any(_reaches(r, clients) for r in roots)
 
 
@@ -489,7 +523,7 @@ def _is_recursive_search(tok: str, rest: list[str]) -> bool:
     if head in ALWAYS_RECURSIVE_HEADS:
         return True
     if head in GREP_HEADS:
-        return any(_GREP_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return any(_GREP_RECURSIVE_FLAG_RE.match(t) or _grep_long_recursive(t) for t in rest) or _grep_directories_recurse(rest)
     if head == "ls":
         return any(_LS_RECURSIVE_FLAG_RE.match(t) for t in rest)
     if head in TAR_HEADS:
@@ -498,6 +532,41 @@ def _is_recursive_search(tok: str, rest: list[str]) -> bool:
         return any(_COPY_RECURSIVE_FLAG_RE.match(t) for t in rest)
     if head == "diff":
         return any(_DIFF_RECURSIVE_FLAG_RE.match(t) for t in rest)
+    return False
+
+
+def _grep_long_recursive(tok: str) -> bool:
+    """grep's --recursive and --dereference-recursive, and the abbreviations
+    getopt accepts for them (--recur, --deref)."""
+    name = tok.split("=", 1)[0]
+    return name.startswith("--") and (_is_long_flag(name, "--recursive", 5)
+                                       or _is_long_flag(name, "--dereference-recursive", 5))
+
+
+# grep's short options that take a value, other than -d.
+_GREP_VALUE_LETTERS = "ABCmDef"
+
+
+def _grep_directories_recurse(rest: list[str]) -> bool:
+    """grep -d recurse, -drecurse, --directories=recurse (and abbreviations of the
+    option and of `recurse`), which search a tree like -r."""
+    for j, tok in enumerate(rest):
+        if tok == "--":
+            break
+        value = None
+        if tok.startswith("--"):
+            name, eq, val = tok.partition("=")
+            if _is_long_flag(name, "--directories", 4):
+                value = val if eq else (rest[j + 1] if j + 1 < len(rest) else "")
+        elif tok.startswith("-") and len(tok) > 1:
+            for index, letter in enumerate(tok[1:], start=1):
+                if letter in _GREP_VALUE_LETTERS:
+                    break
+                if letter == "d":
+                    value = tok[index + 1:] or (rest[j + 1] if j + 1 < len(rest) else "")
+                    break
+        if value is not None and len(value) >= 3 and "recurse".startswith(value):
+            return True
     return False
 
 
@@ -672,9 +741,212 @@ def _recursive_search_reaches(head: str, rest: list[str], clients: Path, cwd: Pa
 
 def _root_reaches(raw: str, clients: Path, cwd: Path) -> bool:
     """True when a recursive operation rooted at raw (a raw token, glob allowed)
-    could reach clients/."""
-    paths, roots = _token_paths(raw, cwd)
+    could reach clients/. A root built from a variable counts as the workspace root."""
+    paths, roots = _token_paths(raw, cwd, clients.parent)
     return any(_reaches(p, clients) for p in paths + roots)
+
+
+FOLLOW_REASON = ("this command follows symbolic links, and a link under its search root leads to client "
+                 "context or a folder above it (or the tree is too large to check). Drop the follow option "
+                 "(-L, -R, -h, --follow; zip -y stores links) or pass a narrower path, such as src/")
+LN_REASON = ("a link to client context, the workspace root or a folder above it would let a later command "
+             "reach clients/. Link to a path inside project/")
+
+
+def _long_or_group(rest: list[str], longs: tuple[tuple[str, int], ...], letters: str, value_letters: str) -> bool:
+    """True when rest holds one of the long options (name, shortest accepted
+    prefix) or a short-option group with one of letters before any letter that
+    takes a value. Words after `--` are not options."""
+    for tok in rest:
+        if tok == "--":
+            return False
+        if tok.startswith("--"):
+            name = tok.split("=", 1)[0]
+            if any(_is_long_flag(name, flag, shortest) for flag, shortest in longs):
+                return True
+        elif _short_flag_has(tok, letters, value_letters):
+            return True
+    return False
+
+
+def _follows_links(head: str, rest: list[str]) -> bool:
+    """True when a recursive tool runs in a mode that follows symbolic links it
+    finds in the tree (rg -L, find -L/-follow/-H, grep -R, tar -h, cp -rL,
+    rsync -L/-k, zip without -y, fd -L, ls -RL, tree -l, scp -r, diff -r)."""
+    if head == "rg":
+        return _long_or_group(rest, (("--follow", 8),), "L", "ABCmgtTEMdjref")
+    if head == "fd":
+        return _long_or_group(rest, (("--follow", 8),), "L", "etEdSjxXco")
+    if head == "ag":
+        return _long_or_group(rest, (("--follow", 8),), "f", "ABCmGgp")
+    if head == "ack":
+        return "--follow" in rest
+    if head == "find":
+        return any(t in ("-L", "-H", "-follow") for t in rest)
+    if head in GREP_HEADS:
+        return _long_or_group(rest, (("--dereference-recursive", 5),), "R", _GREP_VALUE_LETTERS + "d")
+    if head == "tree":
+        return _long_or_group(rest, (), "l", "LPIoHT")
+    if head == "ls":
+        return _long_or_group(rest, (("--dereference", 5),), "L", "wTI")
+    if head == "cp":
+        return _long_or_group(rest, (("--dereference", 5),), "L", "tS")
+    if head == "scp":
+        return True
+    if head == "rsync":
+        return _long_or_group(rest, (("--copy-links", 7), ("--copy-dirlinks", 7), ("--copy-unsafe-links", 7)),
+                              "Lk", "efBMT")
+    if head == "zip":
+        return not _long_or_group(rest, (("--symlinks", 4),), "y", "bntO")
+    if head == "diff":
+        return "--no-dereference" not in rest
+    if head in TAR_HEADS:
+        if rest and not rest[0].startswith("-") and _TAR_MODE_RE.match(rest[0]) and re.search(r"[hL]", rest[0]):
+            return True
+        if any(t.startswith("--") and _is_long_flag(t.split("=", 1)[0], "--dereference", 5) for t in rest):
+            return True
+        for tok in rest:
+            if tok == "--":
+                break
+            if tok.startswith("-") and not tok.startswith("--"):
+                for letter in tok[1:]:
+                    if letter in "hL":
+                        return True
+                    if letter in _TAR_VALUE_LETTERS:
+                        break
+    return False
+
+
+def _follow_roots(head: str, rest: list[str], cwd: Path, workspace: Path) -> list[Path]:
+    """The directories a following tool starts from: its search roots, without
+    the destination of cp, scp and rsync or the archive zip writes."""
+    raws = _recursive_search_targets(head, rest) or ["."]
+    if head in ("cp", "scp", "rsync") and len(raws) > 1:
+        raws = raws[:-1]
+    elif head == "zip":
+        raws = raws[1:]
+    out: list[Path] = []
+    for raw in raws:
+        paths, roots = _token_paths(raw, cwd, workspace)
+        out += paths + roots
+    return out
+
+
+def _links_reach(starts: list[Path], clients: Path) -> bool:
+    """Walk starts, following symbolic links (and Windows junctions) the way a
+    following tool would, and report True when a link resolves to clients/, into
+    it or to a folder above it. The walk is bounded by _FOLLOW_WALK_LIMIT entries
+    and _FOLLOW_WALK_DEPTH levels; reaching either, or an unexpected error,
+    also gives True (fail closed). A folder the user cannot read is skipped, since
+    the tool cannot read it either."""
+    budget = _FOLLOW_WALK_LIMIT
+    seen: set[str] = set()
+    stack = [(start, 0) for start in dict.fromkeys(starts)]
+    while stack:
+        folder, depth = stack.pop()
+        key = _cf(str(folder))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            entries = os.scandir(folder)
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            continue
+        except OSError:
+            return True
+        try:
+            with entries:
+                for entry in entries:
+                    budget -= 1
+                    if budget < 0:
+                        return True
+                    link = entry.is_symlink() or bool(getattr(entry, "is_junction", lambda: False)())
+                    if link:
+                        real = Path(os.path.realpath(entry.path))
+                        if _reaches(real, clients):
+                            return True
+                        if not real.is_dir():
+                            continue
+                        child = real
+                    elif entry.is_dir(follow_symlinks=False):
+                        child = Path(entry.path)
+                    else:
+                        continue
+                    if depth + 1 > _FOLLOW_WALK_DEPTH:
+                        return True
+                    stack.append((child, depth + 1))
+        except PermissionError:
+            continue
+        except OSError:
+            return True
+    return False
+
+
+def _ln_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """True when `ln` (symbolic or hard) would make a link whose target is
+    clients/, inside it, the workspace root or any folder above it. A relative
+    symbolic target is read from the folder the link is made in; a hard link's,
+    or one made with -r/--relative, from the current directory."""
+    symbolic = relative = False
+    target_dir: str | None = None
+    operands: list[str] = []
+    ended = False
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if ended or not tok.startswith("-") or tok == "-":
+            operands.append(tok)
+        elif tok == "--":
+            ended = True
+        elif tok.startswith("--"):
+            name, eq, value = tok.partition("=")
+            if _is_long_flag(name, "--symbolic", 4):
+                symbolic = True
+            elif _is_long_flag(name, "--relative", 3):
+                relative = True
+            elif _is_long_flag(name, "--target-directory", 3):
+                target_dir = value if eq else (rest[j + 1] if j + 1 < len(rest) else "")
+                j += 0 if eq else 1
+            elif _is_long_flag(name, "--suffix", 4) and not eq:
+                j += 1
+        else:
+            group = tok[1:]
+            for index, letter in enumerate(group):
+                if letter == "s":
+                    symbolic = True
+                elif letter == "r":
+                    relative = True
+                elif letter in "tS":
+                    value = group[index + 1:]
+                    if not value:
+                        value = rest[j + 1] if j + 1 < len(rest) else ""
+                        j += 1
+                    if letter == "t":
+                        target_dir = value
+                    break
+        j += 1
+    if target_dir is not None:
+        targets, link_dir = operands, target_dir
+    elif len(operands) >= 2:
+        targets, last = operands[:-1], operands[-1]
+        try:
+            link_dir = last if os.path.isdir(_resolve(cwd, last)) else (os.path.dirname(last) or ".")
+        except (OSError, ValueError):
+            return True
+    else:
+        targets, link_dir = operands, "."
+    if not targets:
+        return False
+    if symbolic and not relative:
+        if _PARAM_RE.search(link_dir) or "`" in link_dir:
+            return True
+        try:
+            base = _resolve(cwd, link_dir or ".")
+        except (OSError, ValueError):
+            return True
+    else:
+        base = cwd
+    return any(_root_reaches(raw, clients, base) for raw in targets)
 
 
 def _flag_values(args: list[str], flags: set[str]) -> list[str] | None:
@@ -963,7 +1235,7 @@ def _pathspecs_reach(raws: list[str], base: Path, protected: list[Path]) -> bool
     a wildcard across directories, so a pathspec with one is rooted at its fixed
     prefix. A magic pathspec (`:/` is the repository's top) is not interpreted."""
     for raw in raws:
-        if raw.startswith(":"):
+        if raw.startswith(":") or _PARAM_RE.search(raw) or "`" in raw:
             return True
         root = _resolve(base, _glob_fixed_prefix(raw) if _has_glob_char(raw) else raw)
         if any(_reaches(root, p) for p in protected):
@@ -1047,6 +1319,38 @@ def _git_wipe_reaches(rest: list[str], words: list[str], clients: Path, claude_d
     if specs:
         return _pathspecs_reach(specs, base, protected)
     return _toplevel_reaches(base, protected)
+
+
+GIT_LISTING_REASON = ("git status --ignored and git ls-files --others/--ignored list the names of files under "
+                      "client context." + NARROW_PATH_HINT)
+
+
+def _git_listing_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """`git status --ignored` and `git ls-files -o/-i/--others/--ignored` print
+    the names of files git does not track, clients/ among them. Blocked when
+    their scope reaches clients/: status covers the whole repository unless
+    pathspecs narrow it; ls-files covers the current directory (or -C) down."""
+    try:
+        base, trees, sub, args = _git_parse(rest, cwd)
+    except (OSError, ValueError):
+        return True
+    options = args[:args.index("--")] if "--" in args else args
+    if sub == "status":
+        if not any(t.split("=", 1)[0] == "--ignored" and t != "--ignored=no" for t in options):
+            return False
+        specs = _git_pathspecs(args, set())
+        if trees:
+            return True
+        return _pathspecs_reach(specs, base, [clients]) if specs else _toplevel_reaches(base, [clients])
+    if sub == "ls-files":
+        listing = any((_is_long_flag(t, "--others", 4) or _is_long_flag(t, "--ignored", 4)) if t.startswith("--")
+                      else _short_flag_has(t, "oi", "xX") for t in options)
+        if not listing:
+            return False
+        specs = _git_pathspecs(args, {"-x", "--exclude", "-X", "--exclude-from", "--exclude-per-directory",
+                                      "--with-tree", "--format"}) or ["."]
+        return bool(trees) or _pathspecs_reach(specs, base, [clients])
+    return False
 
 
 def _installer_reason(name: str, args: list[str]) -> str:
@@ -1184,6 +1488,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             return "git grep or git diff over untracked files can read client context." + NARROW_PATH_HINT
         elif _basename(tok) == "git" and _git_wipe_reaches(rest, words, clients, claude_dir, cwd):
             return GIT_WIPE_REASON
+        elif _basename(tok) == "git" and _git_listing_reaches(rest, clients, cwd):
+            return GIT_LISTING_REASON
         elif _basename(tok) == "git" and _git_stage_reason(rest, clients, claude_dir, cwd):
             return _git_stage_reason(rest, clients, claude_dir, cwd)
         elif _INSTALLER_RE.match(_basename(tok)):
@@ -1209,13 +1515,26 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 reason = f"python -m {module} is not an allowed torque entry point"
             if reason:
                 return reason
+        elif _basename(tok) == "ln":
+            if _ln_reaches(rest, clients, cwd):
+                return LN_REASON
         elif _basename(tok) in TAR_HEADS:
             operands = _tar_operands(rest, cwd)
             if operands is None or any(_root_reaches(raw, clients, base) for raw, base in operands):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
+            if _follows_links(_basename(tok), rest):
+                starts = []
+                for raw, base in operands:
+                    paths, roots = _token_paths(raw, base, clients.parent)
+                    starts += paths + roots
+                if _links_reach(starts, clients):
+                    return FOLLOW_REASON
         elif _is_recursive_search(tok, rest):
-            if _recursive_search_reaches(_basename(tok), rest, clients, cwd):
+            head = _basename(tok)
+            if _recursive_search_reaches(head, rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
+            if _follows_links(head, rest) and _links_reach(_follow_roots(head, rest, cwd, clients.parent), clients):
+                return FOLLOW_REASON
     chdir = _env_chdir(toks)
     if chdir is not None:
         # env -C DIR / --chdir=DIR runs the rest of the command in DIR.
@@ -1430,7 +1749,7 @@ def _cd_target(toks: list[str]) -> str | None:
     prefixes), the directory it changes to ("~" for a bare cd), or "" when that
     directory cannot be known here. None when the segment is not a directory change."""
     j = 0
-    while j < len(toks) and (toks[j] in _CD_PREFIXES or _ASSIGN_RE.match(toks[j])):
+    while j < len(toks) and (toks[j] in _CD_PREFIXES or toks[j] in _SHELL_KEYWORDS or _ASSIGN_RE.match(toks[j])):
         j += 1
     words = _without_redirections(toks[j:])
     if not words or words[0] not in _CD_HEADS:
@@ -1502,6 +1821,9 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
     command = _expand_home_in_command(command)
     command = _decode_ansi_c(command)
     command = _PWD_BRACED_RE.sub("$PWD", command)
+    # Any other ${...} (${R}, ${PWD%/project}) is unknown here. Keep it one word,
+    # $0, so the splitter below does not cut it at its braces.
+    command = _BRACED_PARAM_RE.sub("$0", command)
     command = _expand_braces(command)
     start = list(cwd) if isinstance(cwd, list) else [cwd]
     if _STASH_UNTRACKED_REF_RE.search(command) and re.search(r"(?<![A-Za-z0-9_.-])git(?![A-Za-z0-9_-])", command):
@@ -1701,6 +2023,9 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
                 "Pass a path, such as project/ or src/.")
             return False, "Build-only mode: client context stays out of the AI session." + hint
         pattern = str(tool_input.get("pattern") or "")
+        if tool_name == "Glob" and _reaches(_glob_pattern_root(root, pattern), clients):
+            return False, ("Build-only mode: client context stays out of the AI session. This Glob pattern "
+                           "climbs (..) or is rooted at or above clients/." + NARROW_PATH_HINT)
         glob_field = str(tool_input.get("glob") or "")
         mentions_clients = "clients" in pattern.casefold() or "clients" in glob_field.casefold()
         if mentions_clients and _reaches(cwd, clients):
@@ -1736,6 +2061,33 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
     return False, (f"Build-only mode: {tool_name or 'this tool'} is not a tool this mode recognises, "
                    "so it is blocked. Use Bash, Read, Edit, Write, Grep or Glob, or ask the workspace "
                    "owner to run it.")
+
+
+def _glob_pattern_root(root: Path, pattern: str) -> Path:
+    """The folder a Glob pattern can reach from root: its leading components
+    without a wildcard (an absolute pattern starts from its own root), then one
+    level up for each `..` later in the pattern that climbs past what came before
+    it. `**` may match nothing, so it adds no depth."""
+    parts = re.split(r"[/\\]", pattern)
+    fixed = 0
+    for part in parts:
+        if _has_glob_char(part):
+            break
+        fixed += 1
+    try:
+        base = _resolve(root, "/".join(parts[:fixed]) or ("/" if pattern[:1] in "/\\" and pattern else "."))
+    except (OSError, ValueError):
+        return root
+    depth = lowest = 0
+    for part in parts[fixed:]:
+        if part == "..":
+            depth -= 1
+        elif part not in ("", ".", "**"):
+            depth += 1
+        lowest = min(lowest, depth)
+    for _ in range(-lowest):
+        base = base.parent
+    return base
 
 
 def _lsp_reason(tool_input: dict, clients: Path, claude_dir: Path, workspace: Path, cwd: Path) -> str:

@@ -94,8 +94,28 @@ repository now expects a worktree path instead.
 ## Review scope
 
 The fixes follow the spot-check's recommendations and the reviews' suggested
-fixes. They have not yet been re-reviewed independently. Until they
-are, treat the list in [build-only mode](ai-access.md) as the claim to check.
+fixes. This section was first written before the fixes were re-reviewed; this is
+what happened after.
+
+A scoped security re-review of the pull request (head 9b52bfb) drove the gate with
+about 350 hook events against four scratch workspaces. It confirmed twelve of the
+thirteen items and found the two open routes described above: old-style tar key
+bundles, and `git add -f` staging ignored client files. Three spot-checks followed,
+one for each fix round (7b17574, 3fe8afc and 5886604). The first found `git stage -f`
+and plumbing commands (`git diff-index`, `git diff-tree`) reading staged client
+files back. The second found the routes listed above: an attached `-F` value, git's
+programs run by path, `git status -v` and further `git log` options, and the index
+check passing when git failed. The third found one gap: `git status --v` and `--ve`
+with client files staged printed them, because git accepts shorter abbreviations of
+`--verbose` than the gate checked. That was fixed in d3b0891, with tests written
+first.
+
+A final re-run of those cases through the real hook at d3b0891 found them blocked,
+and CI passed on that commit. The re-run was part of a later review round, which
+also found routes this release still allows: recursive tools following a symbolic
+link out of `project/`, paths built from a variable set in the same command, a
+`cd` inside `if`, `grep -d recurse`, and git's ignored-file listings. Alpha 13
+closes them; see the [alpha 13 record](validation-alpha13.md).
 
 ## Known remaining limits
 

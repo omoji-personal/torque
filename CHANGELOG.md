@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.0.0a13 - unpublished build-only mode follow-up, 2026-09-24
+
+A later review round found ordinary shell routes around build-only mode that the
+documentation implied were covered. This release closes them and brings the alpha
+12 record up to date.
+
+- `ln` and `ln -s` are blocked when the link's target resolves to `clients/`, into
+  it, to the workspace root or to any folder above it.
+- Recursive tools in a mode that follows symbolic links (`rg -L`, `find -L`/`-follow`/`-H`,
+  `grep -R`, `tar -h`, `cp -rL`, `rsync -L`/`-k`, `zip -r` without `-y`, `fd -L`,
+  `ls -RL`, `tree -l`, `ag -f`, `ack --follow`, `scp -r`, `diff -r`) are blocked when a
+  link under their search root leads to `clients/` or above it. The gate walks the
+  root following links, up to 20,000 entries and 64 levels, and blocks past either.
+- A path or search root holding an unresolved `$` expansion, including one set earlier
+  in the same command (`R=..; rg x $R`, `"${PWD%/project}"`), is read as each folder up
+  to the workspace root, the rule `cd "$DIR"` already followed.
+- A `cd` inside `if`, `then`, `else`, `elif`, `while`, `until` or `for ... do`, or in an
+  `if` condition, changes the directory later paths are checked from.
+- `grep -d recurse`, `--directories=recurse` and abbreviations such as `--recur` count as
+  recursive searches.
+- `git status --ignored` and `git ls-files -o`/`-i`/`--others`/`--ignored` are blocked
+  when their scope reaches `clients/`.
+- A `Glob` pattern that is absolute or climbs with `..` is read as rooted where it leads.
+- The alpha 12 validation record's "Review scope" now records its scoped security
+  re-review, the three spot-checks and the final re-run at d3b0891.
+- [Build-only mode](docs/ai-access.md) lists the new checks, the new over-blocks and
+  what a variable can still hide.
+
 ## 2.0.0a12 - unpublished build-only mode follow-up, 2026-09-23
 
 A spot-check of alpha 11's host-tool change and a further review round found

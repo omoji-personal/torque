@@ -58,8 +58,13 @@ guard on recognized tool calls, not a sandbox. It has two values:
   first, so a shell or process server cannot run what Bash may not.
 - Reading, writing, editing, or recursively searching into `clients/`, through: absolute,
   relative, `..`, `~`, `$HOME`, `$PWD` and symlinked paths, and on Windows Git Bash drive paths
-  (`/c/...`, `/cygdrive/c/...`); paths relative to a `cd`, `pushd` or `popd` earlier in the same
-  command, also behind `builtin`, `command` or `time`, and `env -C DIR`/`--chdir` (after one whose
+  (`/c/...`, `/cygdrive/c/...`); a path or search root holding an unresolved `$` expansion
+  (`$R`, `"${R}"`, `${PWD%/project}`, `$1`, also one set earlier in the same command), which is
+  read as each folder from the current directory up to the workspace root, so it counts as
+  reaching the workspace root, as a `cd "$DIR"` does; paths relative to a `cd`, `pushd` or `popd`
+  earlier in the same command, also behind `builtin`, `command` or `time`, inside an `if`,
+  `then`, `else`, `elif`, `while`, `until` or `for ... do` body or in an `if` condition, and
+  `env -C DIR`/`--chdir` (after one whose
   target the gate cannot know, such as `cd -`, `cd ~-`, `popd`,
   `cd "$OLDPWD"` or `cd "$(git rev-parse --show-toplevel)"`, the rest of the command is checked
   from every directory seen, the workspace root, the folders between, and the root's parents);
@@ -69,7 +74,8 @@ guard on recognized tool calls, not a sandbox. It has two values:
   ANSI-C and locale quoting (`$'\x63lients'`, `$"clients"`); globs (`c*/`, `*/acme`,
   `[c]lients`), expanded against the disk; brace expansion (`{clients,x}`); zsh glob groups and
   qualifiers (`c(l)ients`, `notes(.)`) and comma-less brace groups (`c{l..l}ients`), each read as
-  a wildcard; `**` treated as a recursive search from its fixed prefix; `grep -r`, `rg`, `ag`,
+  a wildcard; `**` treated as a recursive search from its fixed prefix; `grep -r` (also
+  `-d recurse`, `--directories=recurse` and abbreviations such as `--recur`), `rg`, `ag`,
   `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current directory; option values
   such as `-g '*.md'`, `-A 2` or `-A2` are not mistaken for the pattern or a path, a pattern given
   with `-e`, `-f`, `-eERROR`, `-rneERROR` or grep's `--regexp` and its abbreviations such as
@@ -81,7 +87,18 @@ guard on recognized tool calls, not a sandbox. It has two values:
   reading old-style key bundles such as `tar cCf .. - .` the way tar does, each key that takes a
   value taking the next word, and blocking a directory known only at run time), and `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing
   `clients/`; and a
-  `Grep`/`Glob` rooted at or above `clients/` or naming it.
+  `Grep`/`Glob` rooted at or above `clients/` or naming it, and a `Glob` whose pattern is
+  absolute or climbs with `..` (`../**/*.md`), read as rooted where it leads.
+- Symbolic links out of the tree. `ln` and `ln -s` whose target resolves to `clients/`, into it,
+  to the workspace root or to any folder above it (a relative symbolic target is read from the
+  folder the link is made in). And recursive tools in a mode that follows links: `rg -L` or
+  `--follow`, `find -L`, `-follow` or `-H`, `grep -R` or `--dereference-recursive`, `tar -h` or
+  `--dereference` (and bsdtar's `-L`), `cp -rL`, `rsync -L`, `--copy-links`, `-k` or
+  `--copy-unsafe-links`, `zip -r` without `-y`, `fd -L`, `ls -RL`, `tree -l`, `ag -f`,
+  `ack --follow`, `scp -r` and `diff -r`. The gate walks each search root, following links as
+  the tool would, and blocks the command when a link leads to `clients/`, into it or to a
+  folder above it. The walk stops at 20,000 entries or 64 levels, and past either the command
+  is blocked. The same tools without a follow option skip or store links, and pass.
 - Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
   tool's shell, and a `PowerShell` tool (or any other tool with a `command`, `cmd` or `script`
   argument) gets the same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
@@ -127,6 +144,10 @@ guard on recognized tool calls, not a sandbox. It has two values:
   and `git hash-object -w` on those paths (or reading paths from standard input); and a file
   value attached to `-f` or `-F` (`git commit -Fclients/...`, `sed -fclients/...`), which is
   checked as a path like any other. Stage named paths such as `project/`.
+- git's listings of files it does not track: `git status --ignored` and `git ls-files` with
+  `-o`, `-i`, `--others` or `--ignored`, when their scope reaches `clients/`. `git status`
+  covers the whole repository unless pathspecs narrow it (`git status --ignored .` from
+  `project/` passes); `git ls-files` covers the current directory down.
 - git pointed at another repository or work tree: `-C`, `--git-dir`, `--work-tree`,
   `-c core.worktree=`, and `GIT_DIR=`/`GIT_WORK_TREE=` on the same command, unless they stay
   inside `project/`. git's own programs run by path (`$(git --exec-path)/git-add`,
@@ -236,9 +257,14 @@ before each monthly review.
 
 It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 
-- A command built at run time (a path from a variable set outside the command, from command
-  output such as `$(... | base64 -d)`, or from `eval`), the code of
-  `python -c`, any script file the assistant writes and runs, and a heredoc fed to an interpreter.
+- A command built at run time: a variable whose value spells part of a name rather than a
+  folder (`X=cli; cat ../${X}ents/...`; a variable is read as a folder from the current
+  directory up to the workspace root, not as any text), a path from command output such as
+  `$(... | base64 -d)`, or from `eval`, the code of `python -c`, any script file the
+  assistant writes and runs, and a heredoc fed to an interpreter.
+- Links followed by the host's own `Grep` or `Glob` tools. The gate walks a search root for
+  links only for the Bash tools named above; whether those host tools follow links was not
+  tested.
 - A network tool (`curl`, a language HTTP client) reaching an org or a client system directly
   with credentials the user holds.
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
@@ -298,7 +324,11 @@ argument that also works as a glob matching a root entry (`.*` matches `.claude`
 `cd project; rg foo` and similar chains (after `;`, `||` or `|` the `cd` may have failed, so the
 gate also checks the directory before it; use `cd project && rg foo`); a recursive search after
 a `cd` the gate cannot resolve (`cd "$DIR" && rg foo` is checked from the workspace root too; use
-a literal path); Bash reads under `.claude/` or of the installed Torque package; writing any
+a literal path); a recursive search, archive or git pathspec whose path holds a variable
+(`rg foo "$DIR"`, `git add "$f"`), which is read as the workspace root; `git status --ignored`
+from `project/` with no pathspec, which covers the whole repository; a tool in a following
+mode (`rg -L`, `grep -R`, `zip -r` without `-y`, `find -L`) over a tree larger than the walk's
+limits; Bash reads under `.claude/` or of the installed Torque package; writing any
 `torque/` folder, `torque.py`, `.pth` file or `sitecustomize.py` in the workspace; tools missing
 from the recognised list above; a command that merely mentions a script name as an argument
 (`rg jsc-qa`); nearly every Bash command run from inside a worktree under `.claude/worktrees/`
