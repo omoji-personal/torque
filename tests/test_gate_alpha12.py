@@ -627,3 +627,131 @@ def test_reaches_and_within_handle_a_root_path():
     root = Path(os.path.abspath(os.sep))
     assert gate._reaches(root, root / "w" / "clients")
     assert gate._is_within(root / "w", root)
+
+
+# --- Scoped re-review: tar key bundles and tar variants (NB-2) ---
+
+TAR2_BLOCK = [
+    "tar cCf .. - .",
+    "tar cCf .. /dev/stdout .",
+    "tar cfC - .. .",
+    "tar czCf .. /tmp/x.tgz .",
+    "bsdtar -C.. -cf - .",
+    "bsdtar -cf - ..",
+    "/usr/bin/bsdtar -C .. -cf - .",
+    "gtar -C.. -cf - .",
+    "gnutar -cf - ..",
+]
+TAR2_ALLOW = [
+    "tar cCf . - src",
+    "tar cf - src",
+    "bsdtar -cf - src",
+    "gtar -C src -cf - .",
+]
+
+
+@pytest.mark.parametrize("command", TAR2_BLOCK)
+def test_rr_tar_key_bundles_and_variants_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws / "project"), command
+
+
+@pytest.mark.parametrize("command", TAR2_ALLOW)
+def test_rr_tar_key_bundles_confined_allowed(ws, command):
+    assert _allowed("Bash", {"command": command}, ws, ws / "project"), command
+
+
+# --- Scoped re-review: git add -f and reading staged or stashed client files (NB-1, NB-3) ---
+
+ADD_BLOCK_ROOT = [
+    "git add -f .",
+    "git add -A -f",
+    "git add --force --all",
+    "git add --forc -A",
+    "git add -fA",
+    "git add -f -- .",
+    "git add -f .claude",
+    "git add -f '*'",
+    "git add -f :/",
+    "git add -f --pathspec-from-file=list.txt",
+]
+ADD_ALLOW_ROOT = [
+    "git add .",
+    "git add -A",
+    "git add project/README.md",
+    "git add -f project/README.md",
+    "git add -u",
+    "git add -f -u",
+    "git commit -am wip",
+    "git diff --cached",
+    "git show :project/README.md",
+    "git log -p -3",
+    "git stash show -p",
+]
+
+
+@pytest.mark.parametrize("command", ADD_BLOCK_ROOT)
+def test_rr_forced_add_reaching_protected_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+
+
+def test_rr_forced_add_from_project_blocked(ws):
+    assert _blocked("Bash", {"command": "git add -f .."}, ws, ws / "project")
+    assert _allowed("Bash", {"command": "git add -f ."}, ws, ws / "project")
+
+
+@pytest.mark.parametrize("command", ADD_ALLOW_ROOT)
+def test_rr_ordinary_add_and_reads_allowed(ws, command):
+    assert _allowed("Bash", {"command": command}, ws, ws), command
+
+
+def test_rr_plain_add_blocked_when_clients_are_not_ignored(ws):
+    (ws / ".gitignore").write_text("", encoding="utf-8")
+    for command in ("git add .", "git add -A", "git add --all", "cd project && git add -A"):
+        assert _blocked("Bash", {"command": command}, ws, ws), command
+    assert _allowed("Bash", {"command": "git add project"}, ws, ws)
+
+
+READBACK = [
+    "git diff --cached",
+    "git diff --staged",
+    "git show :clients/acme/notes.md",
+    "git show :0:clients/acme/notes.md",
+    "git log -p",
+    "git log --all -p",
+    "git cat-file -p :clients/acme/notes.md",
+    "git grep --cached SECRET",
+    "git show 'stash^@'",
+    "git -c stash.showIncludeUntracked=true stash show -p",
+]
+
+
+@pytest.mark.parametrize("command", READBACK)
+def test_rr_reading_staged_client_files_blocked(ws, command):
+    _git(ws, "add", "-f", "clients/acme/notes.md")
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+
+
+@pytest.mark.parametrize("command", READBACK)
+def test_rr_reading_a_stash_of_client_files_blocked(ws, command):
+    _git(ws, "stash", "push", "-a", "-q")
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+
+
+# --- Scoped re-review minors ---
+
+def test_rr_enter_existing_worktree_by_path_in_a_tracked_workspace(ws):
+    _git(ws, "worktree", "add", "-q", str(ws / ".claude" / "worktrees" / "feat"))
+    feat = ws / ".claude" / "worktrees" / "feat"
+    assert (feat / "workspace.json").is_file()
+    event = {"tool_name": "EnterWorktree", "tool_input": {"path": ".claude/worktrees/feat"}, "cwd": str(ws)}
+    result = subprocess.run([sys.executable, "-m", "torque.gate"], input=json.dumps(event), capture_output=True,
+                            text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": str(ws),
+                                            "PYTHONPATH": str(REPO / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")})
+    assert result.returncode == 0, result.stderr
+    assert _blocked("EnterWorktree", {"path": str(feat / "clients")}, feat, ws)
+    assert _blocked("EnterWorktree", {"path": str(ws / "project")}, feat, ws)
+
+
+def test_rr_interpreter_message_wording():
+    import inspect
+    assert "runs the build-only mode hook" in inspect.getsource(gate)
