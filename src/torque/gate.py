@@ -14,7 +14,9 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
+import urllib.parse
 from functools import lru_cache
 from pathlib import Path
 
@@ -71,8 +73,17 @@ _MCP_SF_SUBSTRINGS = ("salesforce", "sfdx", "sf_", "_sf", "soql", "sosl", "sobje
 _MCP_SF_TOKEN_RE = re.compile(r"(^|[_\-.])sf([_\-.]|$)")
 PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path",
               "MultiEdit": "file_path", "NotebookEdit": "notebook_path", "NotebookRead": "notebook_path",
-              "LS": "path", "LSP": "filePath"}
-READ_TOOLS = {"Read", "NotebookRead", "LS", "LSP"}
+              "LS": "path"}
+READ_TOOLS = {"Read", "NotebookRead", "LS"}
+# LSP operations that answer about one file. The others (workspaceSymbol,
+# findReferences, goToImplementation, the call hierarchy) return results from the
+# language server's whole index, which is rooted at the workspace and covers
+# clients/.
+LSP_FILE_OPERATIONS = {"documentSymbol", "hover", "goToDefinition"}
+# Claude Code creates EnterWorktree worktrees here, and copies the gitignored
+# files that .worktreeinclude names into each one.
+WORKTREES_DIR = (".claude", "worktrees")
+WORKTREE_INCLUDE = ".worktreeinclude"
 # Tools that name no path and run no command, allowed as they are. Any other tool
 # that carries a `command` string (Monitor, PowerShell, ...) is scanned like Bash,
 # and a tool this list and the checks below do not recognise is blocked.
@@ -80,7 +91,7 @@ SAFE_TOOLS = {"TodoWrite", "TodoRead", "TaskCreate", "TaskUpdate", "TaskList", "
               "Task", "Agent", "TaskOutput", "TaskStop", "BashOutput", "KillShell", "KillBash",
               "WebSearch", "WebFetch", "ExitPlanMode", "EnterPlanMode", "AskUserQuestion",
               "Skill", "SlashCommand", "ToolSearch", "ListMcpResourcesTool", "SendMessage",
-              "EnterWorktree", "ExitWorktree"}
+              "ExitWorktree"}
 # Tools whose string arguments are checked like an MCP tool's.
 MCP_LIKE_TOOLS = {"ReadMcpResourceTool"}
 SHELL_HEADS = {"bash", "sh", "zsh"}
@@ -242,10 +253,12 @@ def _reaches(root: Path, guarded: Path) -> bool:
 
 
 def _targets_guarded_file(text: str) -> bool:
-    """True if text (a raw Bash token, or a resolved path) names workspace.json or
-    a .claude/settings*.json hook config, case-insensitively. Only the owner
-    changes these; an AI session must not be able to switch the mode off."""
-    if "workspace.json" in text.casefold():
+    """True if text (a raw Bash token, or a resolved path) names workspace.json,
+    a .claude/settings*.json hook config or .worktreeinclude, case-insensitively.
+    Only the owner changes these; an AI session must not be able to switch the
+    mode off, or list clients/ for copying into a new worktree."""
+    folded = text.casefold()
+    if "workspace.json" in folded or WORKTREE_INCLUDE in folded:
         return True
     return bool(SETTINGS_RE.search(text))
 
@@ -611,27 +624,12 @@ def _git_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
     may be rooted at or above clients/. Git accepts any unambiguous prefix of a
     long option (--untr, --no-ind), so prefixes count too. Plain `git grep` and
     `git diff` read tracked content only."""
-    base = cwd
-    j = 0
-    while j < len(rest):
-        tok = rest[j]
-        if tok == "-C" and j + 1 < len(rest):
-            try:
-                base = _resolve(base, rest[j + 1])
-            except (OSError, ValueError):
-                return True
-            j += 2
-            continue
-        if tok in ("-c", "--git-dir", "--work-tree", "--namespace") and j + 1 < len(rest):
-            j += 2
-            continue
-        if tok.startswith("-"):
-            j += 1
-            continue
-        break
-    if j >= len(rest) or rest[j] not in ("grep", "diff"):
+    try:
+        base, _, sub, args = _git_parse(rest, cwd)
+    except (OSError, ValueError):
+        return True
+    if sub not in ("grep", "diff"):
         return False
-    sub, args = rest[j], rest[j + 1:]
     if sub == "diff":
         if not any(_is_long_flag(t, "--no-index", 6) for t in args):
             return False
@@ -671,6 +669,182 @@ def _git_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
 _GIT_GREP_PATTERN_FLAGS = {"-e", "-f", "--regexp", "--file"}
 _GIT_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--after-context", "--before-context", "--context",
                          "-m", "--max-count", "--max-depth", "--threads", "-O", "--open-files-in-pager"}
+_STASH_ACTIONS = {"push", "save", "show", "list", "apply", "pop", "drop", "branch", "clear", "create", "store"}
+# A stash's untracked files are its third parent: stash^3, stash@{0}^3, refs/stash^3.
+_STASH_UNTRACKED_REF_RE = re.compile(r"(?<![A-Za-z0-9_.-])(?:refs/)?stash(?:@\{[^}]*\}|~\d*)*\^3")
+GIT_WIPE_REASON = ("git clean, or git stash of untracked files, run at or above client context, the .claude "
+                   "hook configuration or the hook's environment can delete them or copy them into git. "
+                   "Use git clean -n to preview, or name paths such as project/")
+
+
+def _git_parse(rest: list[str], cwd: Path) -> tuple[Path, list[Path], str | None, list[str]]:
+    """Split the words after `git` into (directory after any -C, work trees named
+    by --work-tree or --git-dir, subcommand, its arguments). Raises when a -C
+    or work-tree path cannot be resolved."""
+    base = cwd
+    trees: list[Path] = []
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if tok == "-C" and j + 1 < len(rest):
+            base = _resolve(base, rest[j + 1])
+            j += 2
+            continue
+        name, eq, value = tok.partition("=")
+        if name in ("--work-tree", "--git-dir"):
+            if not eq:
+                value = rest[j + 1] if j + 1 < len(rest) else ""
+                j += 1
+            if value:
+                path = _resolve(base, value)
+                trees.append(path if name == "--work-tree" else path.parent)
+            j += 1
+            continue
+        if tok in ("-c", "--namespace") and j + 1 < len(rest):
+            j += 2
+            continue
+        if tok.startswith("-"):
+            j += 1
+            continue
+        break
+    sub = rest[j] if j < len(rest) else None
+    return base, trees, sub, rest[j + 1:]
+
+
+def _git_output(base: Path, args: list[str]) -> str | None:
+    """Run a read-only git query in base; None when git fails or is missing. The
+    workspace's own git settings cannot start an fsmonitor command here."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        done = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(base), *args],
+                              capture_output=True, text=True, timeout=15, env=env,
+                              stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def _git_toplevel(base: Path) -> Path | None:
+    out = _git_output(base, ["rev-parse", "--show-toplevel"])
+    if not out or not out.strip():
+        return None
+    return Path(os.path.realpath(out.strip()))
+
+
+def _git_protected(clients: Path, claude_dir: Path) -> list[Path]:
+    """What git clean or an untracked stash must not reach: clients/, .claude/,
+    the installed Torque package and the hook interpreter's environment."""
+    always, writes = _interpreter_paths()
+    return [clients, claude_dir, _package_dir(), *always, *writes]
+
+
+def _git_pathspecs(args: list[str], value_flags: set[str]) -> list[str]:
+    """The pathspecs among a git subcommand's arguments: every word after `--`,
+    and before it every word that is not a flag or a flag's value."""
+    out: list[str] = []
+    j = 0
+    while j < len(args):
+        tok = args[j]
+        if tok == "--":
+            return out + args[j + 1:]
+        if tok in value_flags:
+            j += 2
+            continue
+        if not tok.startswith("-"):
+            out.append(tok)
+        j += 1
+    return out
+
+
+def _pathspecs_reach(raws: list[str], base: Path, protected: list[Path]) -> bool:
+    """True when a pathspec, read from base, reaches a protected path. Git matches
+    a wildcard across directories, so a pathspec with one is rooted at its fixed
+    prefix. A magic pathspec (`:/` is the repository's top) is not interpreted."""
+    for raw in raws:
+        if raw.startswith(":"):
+            return True
+        root = _resolve(base, _glob_fixed_prefix(raw) if _has_glob_char(raw) else raw)
+        if any(_reaches(root, p) for p in protected):
+            return True
+    return False
+
+
+def _toplevel_reaches(base: Path, protected: list[Path]) -> bool:
+    """True when the repository base belongs to reaches a protected path, or when
+    git cannot say which repository that is."""
+    top = _git_toplevel(base)
+    return top is None or any(_reaches(top, p) for p in protected)
+
+
+def _short_flag_has(tok: str, letters: str, value_letters: str = "") -> bool:
+    """True when a short-option group (-fdx) holds one of letters, before any
+    letter that takes the rest of the group as its value."""
+    if not tok.startswith("-") or tok.startswith("--") or len(tok) < 2:
+        return False
+    group = tok[1:]
+    for index, ch in enumerate(group):
+        if ch in value_letters:
+            group = group[:index]
+            break
+    return any(ch in group for ch in letters)
+
+
+def _stash_reads_untracked(args: list[str], action: str) -> bool:
+    for tok in args:
+        if tok == "--":
+            break
+        if tok.startswith("--"):
+            if _is_long_flag(tok, "--include-untracked", 3) or _is_long_flag(tok, "--only-untracked", 4):
+                return True
+            if action != "show" and _is_long_flag(tok, "--all", 3):
+                return True
+        elif _short_flag_has(tok, "u" if action == "show" else "ua", "m"):
+            return True
+    return False
+
+
+def _git_wipe_reaches(rest: list[str], words: list[str], clients: Path, claude_dir: Path, cwd: Path) -> bool:
+    """`git clean` (other than a dry run) and `git stash` of untracked files (-u,
+    --include-untracked, -a, --all) delete or copy files git does not track,
+    clients/, .claude/ and a virtual environment among them. Either is blocked
+    when run at or above those, or the hook's environment. `git stash show -u`
+    and a stash's untracked parent (stash^3) read such a copy back. git clean
+    works from the current directory down; a stash covers its whole repository
+    unless pathspecs narrow it."""
+    try:
+        base, trees, sub, args = _git_parse(rest, cwd)
+        for word in words:
+            name, eq, value = word.partition("=")
+            if eq and value and name in ("GIT_WORK_TREE", "GIT_DIR"):
+                path = _resolve(cwd, value)
+                trees.append(path if name == "GIT_WORK_TREE" else path.parent)
+    except (OSError, ValueError):
+        return any(t in ("clean", "stash") for t in rest) or any(_STASH_UNTRACKED_REF_RE.search(t) for t in rest)
+    protected = _git_protected(clients, claude_dir)
+    tree_reaches = any(_reaches(t, p) for t in trees for p in protected)
+    if any(_STASH_UNTRACKED_REF_RE.search(t) for t in args):
+        return tree_reaches or _toplevel_reaches(base, protected)
+    if sub == "clean":
+        options = args[:args.index("--")] if "--" in args else args
+        if any(_is_long_flag(t, "--dry-run", 3) if t.startswith("--") else _short_flag_has(t, "n", "e")
+               for t in options):
+            return False
+        roots = _git_pathspecs(args, {"-e", "--exclude"}) or ["."]
+        return tree_reaches or _pathspecs_reach(roots, base, protected)
+    if sub != "stash":
+        return False
+    action = args[0] if args and args[0] in _STASH_ACTIONS else "push"
+    action_args = args[1:] if args and args[0] in _STASH_ACTIONS else args
+    if action not in ("push", "save", "show") or not _stash_reads_untracked(action_args, action):
+        return False
+    if tree_reaches:
+        return True
+    specs: list[str] = []
+    if action == "push" and not any(t.startswith("--pathspec-from-file") for t in action_args):
+        specs = _git_pathspecs(action_args, {"-m", "--message"})
+    if specs:
+        return _pathspecs_reach(specs, base, protected)
+    return _toplevel_reaches(base, protected)
 
 
 def _installer_reason(name: str, args: list[str]) -> str:
@@ -795,6 +969,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                         + NARROW_PATH_HINT)
         elif _basename(tok) == "git" and _git_reaches(rest, clients, cwd):
             return "git grep or git diff over untracked files can read client context." + NARROW_PATH_HINT
+        elif _basename(tok) == "git" and _git_wipe_reaches(rest, words, clients, claude_dir, cwd):
+            return GIT_WIPE_REASON
         elif _INSTALLER_RE.match(_basename(tok)):
             reason = _installer_reason(_basename(tok), rest)
             if reason:
@@ -1037,6 +1213,13 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
     command = _decode_ansi_c(command)
     command = _PWD_BRACED_RE.sub("$PWD", command)
     command = _expand_braces(command)
+    start = list(cwd) if isinstance(cwd, list) else [cwd]
+    if _STASH_UNTRACKED_REF_RE.search(command) and re.search(r"(?<![A-Za-z0-9_.-])git(?![A-Za-z0-9_-])", command):
+        # The segment splitter below cuts stash@{0}^3 at its braces, so a stash's
+        # untracked parent is looked for in the whole command.
+        protected = _git_protected(clients, claude_dir)
+        if any(_toplevel_reaches(base, protected) for base in start):
+            return GIT_WIPE_REASON
     globbed = _WORD_GROUP_RE.sub("*", command)
     if globbed != command:
         # zsh glob groups and qualifiers (c(l)ients, notes(.)) and comma-less
@@ -1045,7 +1228,6 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
         reason = _scan_bash(globbed, clients, claude_dir, workspace, cwd, _depth + 1)
         if reason:
             return reason
-    start = list(cwd) if isinstance(cwd, list) else [cwd]
     seen: list[Path] = list(start)
     current: list[Path] = list(start)
     grouped = any(c in command for c in _GROUPING_CHARS)
@@ -1145,12 +1327,38 @@ def _mcp_reaches_salesforce(tool_name: str) -> bool:
     return any(_MCP_SF_TOKEN_RE.search(part) for part in name.split("__")[1:])
 
 
+def _worktree_copies(workspace: Path) -> list[Path]:
+    """The worktrees under the workspace's .claude/worktrees/, resolved. Each may
+    hold a copy of clients/ (tracked client files, or files .worktreeinclude
+    names), so each is checked as a workspace of its own."""
+    folder = workspace.joinpath(*WORKTREES_DIR)
+    try:
+        entries = sorted(p for p in folder.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    copies = [Path(os.path.realpath(str(p))) for p in entries]
+    return [c for c in dict.fromkeys(copies) if _cf(str(c)) != _cf(str(workspace))]
+
+
 def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
            cwd: Path | None = None) -> tuple[bool, str]:
     if mode != "build-only":
         return True, ""
     workspace = Path(os.path.realpath(str(workspace)))
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
+    allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, copy=False)
+    if not allowed:
+        return allowed, reason
+    for copy in _worktree_copies(workspace):
+        allowed, reason = _decide_root(tool_name, tool_input, copy, cwd, copy=True)
+        if not allowed:
+            return allowed, reason
+    return True, ""
+
+
+def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, copy: bool) -> tuple[bool, str]:
+    """decide() for one root: the workspace, or (copy=True) a worktree copy of it
+    under .claude/worktrees/, whose clients/ is guarded the same way."""
     clients = Path(os.path.realpath(str(workspace / "clients")))
     claude_dir = Path(os.path.realpath(str(workspace / ".claude")))
     if tool_name.startswith("mcp__"):
@@ -1158,6 +1366,18 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
             return False, ("De-identified mode: this MCP tool looks like Salesforce org access. "
                            "Disable Salesforce MCP servers in a build-only workspace.")
         reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, workspace, cwd)
+        if reason:
+            return False, f"De-identified mode: {reason}."
+        return True, ""
+    if tool_name == "LSP":
+        reason = _lsp_reason(tool_input, clients, claude_dir, workspace, cwd)
+        if reason:
+            return False, f"De-identified mode: {reason}."
+        return True, ""
+    if tool_name == "EnterWorktree":
+        # A worktree copy's own pass has nothing to add: entering is checked
+        # against the workspace that holds .claude/worktrees/.
+        reason = "" if copy else _enter_worktree_reason(tool_input, workspace, cwd)
         if reason:
             return False, f"De-identified mode: {reason}."
         return True, ""
@@ -1219,6 +1439,84 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
                    "owner to run it.")
 
 
+def _lsp_reason(tool_input: dict, clients: Path, claude_dir: Path, workspace: Path, cwd: Path) -> str:
+    """LSP: only single-file operations, on a named file outside clients/, and
+    every string argument checked like an MCP tool's."""
+    operation = tool_input.get("operation")
+    if not isinstance(operation, str) or operation not in LSP_FILE_OPERATIONS:
+        shown = operation if isinstance(operation, str) and operation else "without an operation"
+        return (f"LSP {shown} can return results from the language server's whole index, which covers "
+                "clients/. Only documentSymbol, hover and goToDefinition on a file outside clients/ "
+                "are allowed")
+    path = tool_input.get("filePath")
+    if not isinstance(path, str) or not path.strip() or "\n" in path or len(path) > 4096:
+        return "LSP needs a filePath outside clients/ in this mode"
+    return _mcp_path_reason("LSP", tool_input, clients, claude_dir, workspace, cwd, label="this LSP call",
+                            hint="")
+
+
+def _enter_worktree_reason(tool_input: dict, workspace: Path, cwd: Path) -> str:
+    """EnterWorktree `path` must name a worktree under .claude/worktrees/ and not
+    its clients/. Without `path` (a `name`, or nothing) Claude Code creates a new
+    worktree there: a copy of the tracked tree plus the gitignored files
+    .worktreeinclude names. That is blocked when the copy would hold client files."""
+    worktrees = Path(os.path.realpath(str(workspace.joinpath(*WORKTREES_DIR))))
+    raw = tool_input.get("path")
+    if raw is not None:
+        if not isinstance(raw, str) or not raw.strip():
+            return "EnterWorktree needs a path to a worktree under .claude/worktrees/"
+        target = _resolve(cwd, _uri_path(raw))
+        t, w = _cf(str(target)), _cf(str(worktrees))
+        if not t.startswith(w + os.sep):
+            return ("EnterWorktree can only enter a worktree under .claude/worktrees/ in this mode; "
+                    "entering another folder could load its instructions and git state")
+        parts = re.split(r"[/\\]", t[len(w) + 1:])
+        if len(parts) > 1 and parts[1] == "clients":
+            return "client context stays out of the AI session"
+        return ""
+    return _worktree_copy_reason(workspace)
+
+
+def _worktree_copy_reason(workspace: Path) -> str:
+    """Why a new worktree of workspace would copy client files, or ""."""
+    spec = ":(icase)clients"
+    tracked = _git_output(workspace, ["ls-files", "--", spec])
+    if tracked is None:
+        return ("EnterWorktree could not confirm with git that a new worktree leaves clients/ out, so "
+                "it is blocked")
+    if tracked.strip():
+        return ("clients/ has files tracked in git, so a new worktree would copy them. Ask the owner "
+                "to untrack them (git rm -r --cached clients)")
+    include = workspace / WORKTREE_INCLUDE
+    if not os.path.lexists(include):
+        return ""
+    try:
+        text = include.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = None
+    listed = _git_output(workspace, ["ls-files", "--others", "--ignored", f"--exclude-from={include}",
+                                     "--", spec]) if text is not None else None
+    if text is None or listed is None or "clients" in text.casefold() or listed.strip():
+        return (".worktreeinclude names files in clients/, so a new worktree would copy them. Ask the "
+                "owner to change .worktreeinclude")
+    return ""
+
+
+def _uri_path(raw: str) -> str:
+    """The path in a file:// URI (host dropped, percent-escapes decoded); any
+    other string unchanged."""
+    if raw[:7].casefold() != "file://":
+        return raw
+    rest = raw[7:]
+    if not rest.startswith("/"):
+        slash = rest.find("/")
+        rest = rest[slash:] if slash >= 0 else ""
+    rest = urllib.parse.unquote(rest)
+    if re.match(r"^/[A-Za-z]:", rest):
+        rest = rest[1:]
+    return rest
+
+
 def _string_values(value: object, depth: int = 0):
     """Every string inside a tool_input (dict values and list items, nested)."""
     if depth > 8:
@@ -1234,7 +1532,8 @@ def _string_values(value: object, depth: int = 0):
 
 
 def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir: Path, workspace: Path,
-                     cwd: Path) -> str:
+                     cwd: Path, label: str = "this MCP tool call",
+                     hint: str = ". Disable file-reading MCP servers in a build-only workspace") -> str:
     """Treat every single-line string argument of an MCP tool as a possible path
     (a file:// URI included). Any that lands in clients/, the hook configuration
     or the installed Torque package is blocked; a tree-walking tool (search,
@@ -1243,20 +1542,19 @@ def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir
     for raw in _string_values(tool_input):
         if not raw or "\n" in raw or len(raw) > 4096:
             continue
-        candidate = raw[len("file://"):] if raw.casefold().startswith("file://") else raw
-        try:
-            target = _resolve(cwd, candidate)
-        except (OSError, ValueError):
-            continue
-        if _is_within(target, clients) or (recursive and _reaches(target, clients)):
-            return "this MCP tool call names client context. Disable file-reading MCP servers in a build-only workspace"
-        if _targets_guarded_file(target.as_posix()) or _is_within(target, claude_dir):
-            return "this MCP tool call names workspace.json or the hook configuration"
-        if _is_within(target, _package_dir()) or _TORQUE_INSTALL_RE.search(target.as_posix()):
-            return "this MCP tool call names the installed Torque package that enforces this mode"
-        if _in_interpreter(target, True) or _is_shadow_path(target, workspace):
-            return ("this MCP tool call names a file that could replace the gate at the hook's "
-                    "Python startup")
+        for candidate in dict.fromkeys([raw[7:] if raw[:7].casefold() == "file://" else raw, _uri_path(raw)]):
+            try:
+                target = _resolve(cwd, candidate)
+            except (OSError, ValueError):
+                continue
+            if _is_within(target, clients) or (recursive and _reaches(target, clients)):
+                return f"{label} names client context{hint}"
+            if _targets_guarded_file(target.as_posix()) or _is_within(target, claude_dir):
+                return f"{label} names workspace.json or the hook configuration"
+            if _is_within(target, _package_dir()) or _TORQUE_INSTALL_RE.search(target.as_posix()):
+                return f"{label} names the installed Torque package that enforces this mode"
+            if _in_interpreter(target, True) or _is_shadow_path(target, workspace):
+                return f"{label} names a file that could replace the gate at the hook's Python startup"
     return ""
 
 
@@ -1351,7 +1649,7 @@ def _touched_paths(tool_input: dict, cwd: Path) -> list[Path]:
     for raw in itertools.islice(_string_values(tool_input), 64):
         if not raw or "\x00" in raw or len(raw) > 20000:
             continue
-        words = [raw[len("file://"):] if raw.casefold().startswith("file://") else raw]
+        words = [_uri_path(raw)]
         if any(c in raw for c in " \t\n;&|<>"):
             try:
                 expanded = _expand_braces(_decode_ansi_c(_expand_home_in_command(raw)))
