@@ -244,14 +244,20 @@ def _cf(text: str) -> str:
 def _is_within(target: Path, guarded: Path) -> bool:
     """True when target is guarded itself, or anything under it."""
     t, g = _cf(str(target)), _cf(str(guarded))
-    return t == g or t.startswith(g + os.sep)
+    return t == g or t.startswith(_with_sep(g))
 
 
 def _reaches(root: Path, guarded: Path) -> bool:
     """True when root is guarded itself, an ancestor of guarded (so a recursive
     operation rooted at root could reach it), or already inside it."""
     a, b = _cf(str(root)), _cf(str(guarded))
-    return a == b or b.startswith(a + os.sep) or a.startswith(b + os.sep)
+    return a == b or b.startswith(_with_sep(a)) or a.startswith(_with_sep(b))
+
+
+def _with_sep(path: str) -> str:
+    """path with one trailing separator. A filesystem root (/, C:\\) already ends
+    in one, and adding another would make nothing look inside it."""
+    return path if path.endswith(("/", "\\")) else path + os.sep
 
 
 def _targets_guarded_file(text: str) -> bool:

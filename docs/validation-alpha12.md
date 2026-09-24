@@ -46,14 +46,17 @@ A third review round then found more ordinary routes, all allowed:
 Each has a regression test in `tests/test_gate_alpha12.py`, committed before the
 fix. 90 of that file's first 118 tests failed against the alpha 11 gate, and 40 of
 the 82 round-three tests failed before their fixes (the git clean cases already
-passed). Tests of the new name and the playbook sections were also written first.
+passed). Tests of the new name and the playbook sections were also written first. CI on
+Linux and Windows then showed that a root at the filesystem root (`/`) did not count
+as reaching `clients/` (macOS resolves `/tmp/..` to `/private`, which hid it); that has
+a test too, and is fixed.
 One alpha 11
 test that allowed `EnterWorktree` with a `name` in a workspace that is not a git
 repository now expects a worktree path instead.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.12.14, local):** 1701 pytest tests and 154
+- **Offline suite (macOS, Python 3.12.14, local):** 1707 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** the spot-check's events and the git commands above were replayed
