@@ -347,7 +347,10 @@ a literal path); a recursive search, archive or git pathspec whose path holds a 
 (`rg foo "$DIR"`, `git add "$f"`), which is read as the workspace root; `git status --ignored`
 from `project/` with no pathspec, which covers the whole repository; a tool in a following
 mode (`rg -L`, `grep -R`, `zip -r` without `-y`, `find -L`) over a tree larger than the walk's
-limits; Bash reads under `.claude/` or of the installed Torque package; writing any
+limits; `git apply` at the workspace root without `--directory` inside `project/`, `git am`
+when the repository's top is the workspace root, and `patch` fed from a pipe
+(`git diff | patch -p1`; use `git apply` or a patch file); extracting an archive at the
+workspace root; Bash reads under `.claude/` or of the installed Torque package; writing any
 `torque/` folder, `torque.py`, `.pth` file or `sitecustomize.py` in the workspace; tools missing
 from the recognised list above; a command that merely mentions a script name as an argument
 (`rg jsc-qa`); nearly every Bash command run from inside a worktree under `.claude/worktrees/`
