@@ -33,6 +33,7 @@ class Guard:
     host_key: tuple[str, str]
     refused: list[str] = field(default_factory=list)
     # The window's end, and a check that the window and the client's consent still hold.
+    namespaces: tuple[str, ...] = ()
     expires_at: float | None = None
     recheck: object = None
     recheck_every: float = 1.0
@@ -40,13 +41,14 @@ class Guard:
     _last_check: float = 0.0
     _last_ok: bool = True
 
-    def authorized(self, now: float | None = None) -> bool:
-        """The session may still act: not stopped, inside its window, and (checked
-        at most every recheck_every seconds) its window and consent still hold."""
+    def authorized(self, now: float | None = None, write: bool = True) -> bool:
+        """The session may still act: not stopped, inside its window, and its window and
+        consent still hold. A write-capable request always checks the window and consent
+        again, with no cache; a read uses a check at most recheck_every seconds old."""
         now = time.time() if now is None else now
         if self.stopped or (self.expires_at is not None and now > self.expires_at):
             return False
-        if self.recheck is not None and now - self._last_check >= self.recheck_every:
+        if self.recheck is not None and (write or now - self._last_check >= self.recheck_every):
             try:
                 self._last_ok = bool(self.recheck())
             except Exception:
@@ -62,16 +64,20 @@ BLOCKED_DOMAINS = ("salesforce.com", "force.com", "salesforce-setup.com", "site.
                    "cloudforce.com", "database.com", "salesforce-sites.com", "documentforce.com",
                    "salesforce-experience.com", "lightning.com", "sfdc.net")
 SHARED_HOSTS = ("static.lightning.force.com", "login.salesforce.com", "test.salesforce.com")
+# The exact host names an org uses (no wildcards: a wildcard after the My Domain name
+# would also match a sandbox's or another org's hosts). {ns} is a Visualforce namespace:
+# "c" for the org's own pages, plus the managed packages the workspace lists.
 ORG_HOST_FORMS = ("{p}{k}.my.salesforce.com", "{p}{k}.lightning.force.com", "{p}{k}.my.salesforce-setup.com",
-                  "{p}{k}.my.site.com", "{p}{k}.file.force.com", "{p}--*{k}.vf.force.com",
-                  "{p}--*{k}.file.force.com", "{p}--*{k}.my.site.com", "{p}{k}.my.salesforce-sites.com",
-                  "{p}--*{k}.documentforce.com")
+                  "{p}{k}.my.site.com", "{p}{k}.file.force.com", "{p}{k}.my.salesforce-sites.com")
+NAMESPACED_FORMS = ("{p}--{ns}{k}.vf.force.com", "{p}--{ns}{k}.file.force.com", "{p}--{ns}{k}.documentforce.com")
 
 
 def org_hosts(guard: Guard) -> list[str]:
     prefix, kind = guard.host_key
     k = "" if kind == "prod" else f".{kind}"
-    return [form.format(p=prefix, k=k) for form in ORG_HOST_FORMS]
+    namespaces = ["c", *[n for n in guard.namespaces if n != "c"]]
+    return ([form.format(p=prefix, k=k) for form in ORG_HOST_FORMS]
+            + [form.format(p=prefix, k=k, ns=ns.casefold()) for form in NAMESPACED_FORMS for ns in namespaces])
 
 
 def resolver_rules(guard: Guard, approved_target: str | None = None) -> str:
@@ -147,7 +153,10 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
         return bool(current and current.get("id") == window.get("id")
                     and not consent.consent_problems(item_now, client=ws.slug_for(client))
                     and entry_now and entry_now.get("org_id_18") == info.org_id_18)
+    from .namespaces import DEFAULT_MANAGED
+    extra = config.get("managed_namespaces") if isinstance(config.get("managed_namespaces"), list) else []
     return Guard(org_alias=target_org, org_id_18=info.org_id_18, host_key=host_key,
+                 namespaces=tuple(n for n in (*DEFAULT_MANAGED, *extra) if isinstance(n, str) and n.isalnum()),
                  expires_at=approval._epoch(window["expires_at"]), recheck=recheck)
 
 
@@ -170,7 +179,7 @@ async def install(context, guard: Guard) -> None:
     the session (close its pages and context, refuse every further request) when the
     window ends or the consent or window no longer holds."""
     async def handle(route, request):
-        if not guard.authorized():
+        if not guard.authorized(write=(request.method or "").upper() not in SAFE_METHODS):
             guard.refused.append(f"{request.method} {request.url.split('?')[0]} (session stopped)")
             already = guard.stopped
             guard.stopped = True

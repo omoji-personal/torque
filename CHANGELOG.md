@@ -91,6 +91,9 @@ default (`full`) and build-only behavior are unchanged.
   context, when its window ends or the consent is suspended; a recovery approval binds the
   snapshot folder and the exact operation, read with the recovery's own parser, and the run
   must match them.
+- After the targeted recheck: the browser's allowed Salesforce hosts are exact names (no
+  wildcard that could admit a sandbox or another org), and every write-capable request
+  reads the window and consent again, with no cache.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).

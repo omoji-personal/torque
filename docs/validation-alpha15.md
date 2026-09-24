@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2583 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2606 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 408 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 431 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -122,6 +122,11 @@ Chromium build is not installed, as in CI). The browser session stops at the end
 window or on consent suspension. A recovery approval binds the snapshot folder and the
 exact operation, and the executor refuses a mismatch. The full-mode guard's handling of
 `cd` failure branches and subshells is deferred to a follow-up release.
+
+**Targeted recheck:** the browser's allowed hosts are exact names (a wildcard had admitted a
+sandbox's Visualforce and site hosts under production rules), and every write-capable
+request rereads the window and consent. Tests: `tests/test_connected_r6.py`, written first
+(8 of 23 failed; the others are controls for the org's own hosts and other-org pairs).
 
 Two exceptions to "unchanged" are deliberate and documented in [build-only
 mode](ai-access.md): consent, approval and key files are refused wherever the hook runs,
