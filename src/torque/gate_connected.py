@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import time
 import urllib.parse
 
 from . import approval, consent, gate, workspace as ws
@@ -126,7 +125,6 @@ _SF_SUFFIXES = tuple((f".{kind}.{rest}" if kind != "prod" else f".{rest}", kind)
                      for rest in ("my.salesforce.com", "lightning.force.com", "my.salesforce-setup.com",
                                   "vf.force.com", "my.site.com", "file.force.com"))
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
-BROWSER_STATE = "browser-state.json"
 
 
 def org_key(url: str) -> tuple[str, str] | None:
@@ -156,62 +154,6 @@ def browser_org(item: dict | None, url: str) -> tuple[bool, str | None]:
         if approved and _same_org(found, approved):
             return True, org["alias"]
     return True, None
-
-
-def _state_path(workspace: Path, bound: str) -> Path:
-    return approval._dirs(workspace, bound)["base"] / BROWSER_STATE
-
-
-TAB_KEYS = ("tabId", "tab_id", "tab", "pageId", "page_id", "targetId", "target_id", "pageIdx", "page_idx")
-
-
-def _tab(tool_name: str, tool_input: dict) -> str | None:
-    """server|tab for a browser tool call that names its tab; None when it names none."""
-    server = tool_name.split("__")[1] if tool_name.count("__") > 1 else ""
-    for key in TAB_KEYS:
-        value = tool_input.get(key)
-        if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value) != "":
-            return f"{server}|{value}"
-    return None
-
-
-def _load_state(workspace: Path, bound: str) -> dict:
-    try:
-        data = json.loads(_state_path(workspace, bound).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _tab_org(workspace: Path, bound: str, session_id, tool_name: str, tab: str) -> tuple[str | None, str]:
-    """(the one approved org this tab has shown, or None, and why not). A tab is bound
-    to an org only when every Salesforce org it was sent to is that org, and its
-    browser server has had no navigation without a tab."""
-    session = _load_state(workspace, bound).get(str(session_id)) or {}
-    server = tab.split("|", 1)[0]
-    if (session.get("servers") or {}).get(server) == "tainted":
-        return None, "this browser server navigated without naming a tab, so its tabs are no longer known"
-    history = (session.get("tabs") or {}).get(tab) or []
-    orgs = {h for h in history if h != "web"}
-    if not orgs:
-        return None, "this tab has not been sent to a Salesforce org through the browser tools in this session"
-    if len(orgs) > 1 or "other" in orgs:
-        return None, "this tab has shown more than one Salesforce org, or one outside the consent"
-    return next(iter(orgs)), ""
-
-
-def _record_navigation(workspace: Path, bound: str, session_id, tab: str | None, server: str, entry: str) -> None:
-    path = _state_path(workspace, bound)
-    data = _load_state(workspace, bound)
-    session = data.setdefault(str(session_id), {})
-    if tab is None:
-        session.setdefault("servers", {})[server] = "tainted"
-    else:
-        session.setdefault("tabs", {}).setdefault(tab, []).append(entry)
-    session["at"] = approval._iso(time.time())
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(tmp, path)
 
 
 def _route_client(route: Route) -> str | None:
@@ -260,25 +202,13 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     skipping = bool(permission_mode) and permission_mode not in PROMPT_MODES
     browser_tool = tool_name.startswith("mcp__") and bool(BROWSER_SERVER.search(tool_name.split("__")[1]
                                                                                  if tool_name.count("__") > 1 else ""))
-    tab = _tab(tool_name, tool_input) if browser_tool else None
-    named_orgs: set[str] = set()
     if browser_tool:
-        server = tool_name.split("__")[1]
-        urls = [u for v in gate._string_values(tool_input) for u in _URL_RE.findall(v)]
-        for url in urls:
+        # Browser tools may read and navigate, but not to a Salesforce org outside the consent.
+        for url in [u for v in gate._string_values(tool_input) for u in _URL_RE.findall(v)]:
             is_org, alias = browser_org(item, url)
             if is_org and (alias is None or not bound):
                 decisions.append(_deny(f"{url.split('?')[0]} is a Salesforce org that is not in "
                                        f"{bound or 'a bound client'}'s consent."))
-            if is_org:
-                named_orgs.add(alias or "other")
-        from .connected_routes import MCP_ORG_KEYS
-        named_orgs |= {tool_input[k] for k in MCP_ORG_KEYS if isinstance(tool_input.get(k), str)}
-        if bound and urls:
-            # What the tab was asked to show: the gate sees the request, not the result.
-            last = browser_org(item, urls[-1])
-            entry = (last[1] or "other") if last[0] else "web"
-            after_allow.append(lambda e=entry: _record_navigation(workspace, bound, session_id, tab, server, e))
     for route in routes:
         client = _route_client(route)
         if not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
@@ -319,30 +249,22 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                         workspace, bound, {"action": "check-only", "org_alias": org, "command": command or tool_name,
                                            "session_id": session_id, "tool_use_id": tool_use_id}))
                 decisions.append(Decision("allow", ""))
+        elif route.kind == "browser_write" and not route.org:
+            # A browser MCP or devtools tool cannot show which org its page is in after
+            # navigation and redirects, so it never makes changes in connected mode.
+            decisions.append(_deny("browser changes go through Torque's own browser, `torque browser ... "
+                                   "--target-org ORG`, which checks each request's org against a granted "
+                                   "window; browser tools here may read and navigate only."))
         elif route.kind == "browser_write":
-            # The window must be for the org of the exact tab the change is made in: named
-            # by the route (torque browser -o ORG), or the one org that tab was sent to.
-            if route.org:
-                org, why = route.org, ""
-            elif tab is None:
-                org, why = None, ("this browser tool does not name its tab, so the gate cannot tell which org "
-                                  "it acts in; use a tool that takes a tab ID, or torque browser -o ORG")
-            else:
-                org, why = _tab_org(workspace, bound, session_id, tool_name, tab)
-            if org and named_orgs - {org}:
-                org, why = None, "this browser change names another org than its tab's"
-            window = approval.find_browser_approval(workspace, bound, org, config=config) if org else None
+            window = approval.find_browser_approval(workspace, bound, route.org, config=config)
             if window:
                 after_allow.append(lambda win=window: approval.note_browser_use(
                     workspace, bound, win, tool_name=tool_name, session_id=session_id, tool_use_id=tool_use_id))
                 decisions.append(Decision("allow", ""))
-            elif not org:
-                decisions.append(_deny(f"{why}. A browser change needs a window granted for the org of its tab; "
-                                       "navigate that tab to the org with the browser tool first."))
             else:
-                decisions.append(_deny(f"browser changes in {org} need a browser window for {org}: "
+                decisions.append(_deny(f"browser changes in {route.org} need a browser window for {route.org}: "
                                        "`torque approval request --browser --purpose TEXT ...`, "
-                                       "then the consultant grants it. Reading pages is fine."))
+                                       "then the consultant grants it."))
         elif route.kind == "org_write":
             if len(writes) != 1 or (command and not is_simple(command)):
                 decisions.append(_deny("run one approved write command on its own, with nothing chained, "

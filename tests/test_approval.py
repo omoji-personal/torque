@@ -341,8 +341,12 @@ def test_command_words():
     assert approval.command_words("sf project deploy start -o x") is None
 
 
-def test_approved_parent_for_revert_children(setup):
+def test_approved_parent_for_revert_children(setup, tmp_path, monkeypatch):
     root, cid, before, project = setup
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(approval, "_recovery_snapshot", lambda *a: (snap, ["deploy", "-o", "acme-sbx"]))
     argv = ["torque", "recover", "run", "snap-1", "--org", "acme-sbx", "--workspace", str(root), "--client", "acme"]
     req = approval.create_request(root, "Acme", cid, "acme-sbx", argv=argv, resolve=ORGS.get, cwd=project)
     item = grant(root, req)

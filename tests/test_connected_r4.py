@@ -268,3 +268,46 @@ def test_n6_destructive_manifest_is_bound(tmp_path):
     (folder / "destructive.xml").write_text("<Package><types><members>Keep</members><name>ApexClass</name></types>"
                                             "</Package>", encoding="utf-8")
     assert approval.payload_digest(argv, folder)[0] != before
+
+
+def test_d2_torque_browser_session_installs_the_guard(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from torque import browser_guard as bg
+    from jsc_browser_tests import auth
+    guard = bg.Guard(org_alias="acme-sbx", org_id_18="00D000000000001AAA",
+                     host_key=gc.org_key("https://acme--sbx.sandbox.my.salesforce.com"))
+    monkeypatch.setattr(bg, "connected_guard", lambda target: guard)
+    events = []
+
+    class Page:
+        async def goto(self, url, **kw):
+            events.append(("goto", url))
+
+        async def title(self):
+            return "Home"
+
+    class Context:
+        pages = []
+
+        async def route(self, pattern, handler):
+            events.append(("route", pattern))
+
+        async def new_page(self):
+            return Page()
+
+    class Browser:
+        async def new_context(self):
+            return Context()
+
+    class Chromium:
+        async def launch(self, headless=True):
+            return Browser()
+
+    admin = SimpleNamespace(target_org="acme-sbx", frontdoor_url="https://acme--sbx.sandbox.my.salesforce.com/x",
+                            instance_url="https://acme--sbx.sandbox.my.salesforce.com")
+    asyncio.run(auth.open_session(SimpleNamespace(chromium=Chromium()), admin))
+    assert events[0] == ("route", "**/*") and events[1][0] == "goto"
+    monkeypatch.setattr(bg, "connected_guard", lambda target: (_ for _ in ()).throw(bg.GuardRefused("no window")))
+    with pytest.raises(auth.AuthError, match="no window"):
+        asyncio.run(auth.open_session(SimpleNamespace(chromium=Chromium()), admin))

@@ -23,15 +23,18 @@ import re
 # or by its parent object's file.
 TYPE_NEEDLES = {
     "Flow": ("flows/{name}.flow-meta.xml", "flows/{name}.flow"),
-    "ApexClass": ("classes/{name}.cls",),
-    "ApexTrigger": ("triggers/{name}.trigger",),
-    "ApexPage": ("pages/{name}.page",),
-    "ApexComponent": ("components/{name}.component",),
+    # A tuple lists files that must all be present (the recovery needs each one).
+    "ApexClass": (("classes/{name}.cls", "classes/{name}.cls-meta.xml"),),
+    "ApexTrigger": (("triggers/{name}.trigger", "triggers/{name}.trigger-meta.xml"),),
+    "ApexPage": (("pages/{name}.page", "pages/{name}.page-meta.xml"),),
+    "ApexComponent": (("components/{name}.component", "components/{name}.component-meta.xml"),),
     "Layout": ("layouts/{name}.layout-meta.xml", "layouts/{name}.layout"),
     "FlexiPage": ("flexipages/{name}.flexipage-meta.xml", "flexipages/{name}.flexipage"),
     "PermissionSet": ("permissionsets/{name}.permissionset-meta.xml", "permissionsets/{name}.permissionset"),
     "CustomObject": ("objects/{name}/{name}.object-meta.xml", "objects/{name}.object"),
-    "LightningComponentBundle": ("lwc/{name}/{name}.js-meta.xml",),
+    "LightningComponentBundle": (("lwc/{name}/{name}.js", "lwc/{name}/{name}.js-meta.xml"),),
+    "StaticResource": (("staticresources/{name}.resource-meta.xml", "staticresources/{name}.resource"),
+                       ("staticresources/{name}.resource-meta.xml", "staticresources/{name}/")),
     "AuraDefinitionBundle": ("aura/{name}/{name}.cmp", "aura/{name}/{name}.app", "aura/{name}/{name}.evt",
                              "aura/{name}/{name}.intf", "aura/{name}/{name}.tokens"),
     "CustomLabel": ("labels/CustomLabels.labels-meta.xml", "labels/CustomLabels.labels"),
@@ -85,6 +88,11 @@ CONTAINER_NEEDLES = {
     "CompactLayout": ("/objects/{parent}/",), "FieldSet": ("/objects/{parent}/",),
     "WebLink": ("/objects/{parent}/",), "BusinessProcess": ("/objects/{parent}/",), "Index": ("/objects/{parent}/",),
     "CustomField": ("/objects/{parent}/fields/{child}.",), "CustomObject": ("/objects/{name}/", "/objects/{name}."),
+    # A bundle deploys every file in its folder.
+    "AuraDefinitionBundle": ("/aura/{name}/",), "LightningComponentBundle": ("/lwc/{name}/",),
+    "ExperienceBundle": ("/experiences/{name}/", "/experiences/{name}."),
+    "StaticResource": ("/staticresources/{name}.", "/staticresources/{name}/"),
+    "Document": ("/documents/{name}", ), "EmailTemplate": ("/email/{name}.", "/email/{name}/"),
 }
 
 
@@ -311,11 +319,20 @@ def _source_components(root: Path) -> list[str]:
     return out
 
 
+def destructive_components(argv: list[str], cwd: Path) -> list[str]:
+    """Components a deploy deletes, from its pre- and post-destructive manifests."""
+    out: list[str] = []
+    for value in argv_flags.values(argv, DESTRUCTIVE_FLAGS, legacy=argv_flags.is_legacy(argv)):
+        out += _manifest_components(Path(cwd) / value)
+    return list(dict.fromkeys(out))
+
+
 def deploy_components(argv: list[str], cwd: Path) -> list[str]:
-    """Components a deploy names with --metadata, a manifest or a source folder."""
+    """Components a deploy sends, named with --metadata, a manifest or a source folder
+    (not the ones it deletes: see destructive_components)."""
     legacy = argv_flags.is_legacy(argv)
     out: list[str] = list(argv_flags.values(argv, METADATA_FLAGS, legacy=legacy))
-    for value in argv_flags.values(argv, MANIFEST_FLAGS + DESTRUCTIVE_FLAGS, legacy=legacy):
+    for value in argv_flags.values(argv, MANIFEST_FLAGS, legacy=legacy):
         out += _manifest_components(Path(cwd) / value)
     source_flags = SOURCE_DIR_FLAGS if legacy or "deploy" in argv[:4] else ("-d", "--source-dir")
     for value in argv_flags.values(argv, source_flags, legacy=legacy):
@@ -336,7 +353,7 @@ def write_components(argv: list[str], cwd: Path) -> list[str]:
         record_id = argv_flags.values(argv, ("-i", "--record-id"))
         return [f"Record:{sobject[0]}:{record_id[0]}"] if sobject and record_id else []
     if any(tok in ("deploy", "force:source:deploy", "force:mdapi:deploy") for tok in argv[1:4]):
-        return deploy_components(argv, cwd)
+        return list(dict.fromkeys(deploy_components(argv, cwd) + destructive_components(argv, cwd)))
     return []
 
 
@@ -351,8 +368,9 @@ def _needles(component: str) -> list[str]:
         return [name + ".", name + "/"]
     parent, _, child = name.partition(".")
     sobject, _, record_id = name.partition(":")
+    flat = [n for p in patterns for n in (p if isinstance(p, tuple) else (p,))]
     return [p.format(name=name, parent=parent, child=child, record=_record_file(sobject, record_id))
-            for p in patterns]
+            for p in flat]
 
 
 def _holds(path: str, needle: str) -> bool:
@@ -364,10 +382,26 @@ def _holds(path: str, needle: str) -> bool:
     return path.endswith("/" + needle)
 
 
+def _alternatives(component: str) -> list[tuple[str, ...]]:
+    """Each way a before-state can hold a component: a set of files that must all be present."""
+    kind, _, name = component.partition(":")
+    patterns = TYPE_NEEDLES.get(kind)
+    if patterns is None or not name or "*" in name:
+        return [(n,) for n in _needles(component)]
+    parent, _, child = name.partition(".")
+    sobject, _, record_id = name.partition(":")
+    values = dict(name=name, parent=parent, child=child, record=_record_file(sobject, record_id))
+    return [tuple(p.format(**values) for p in (pattern if isinstance(pattern, tuple) else (pattern,)))
+            for pattern in patterns]
+
+
 def coverage(components: list[str], before: dict) -> list[str]:
-    """Components the before-state does not contain (a wildcard is never covered)."""
+    """Components the before-state cannot restore (a wildcard is never covered): each
+    needs every file its recovery uses, such as Apex source with its -meta.xml, or a
+    Lightning component's JavaScript with its -meta.xml."""
     paths = [f["path"] for f in before.get("files", [])]
-    return [c for c in components if not any(_holds(p, n) for n in _needles(c) for p in paths)]
+    return [c for c in components
+            if not any(all(any(_holds(p, n) for p in paths) for n in group) for group in _alternatives(c))]
 
 
 def load_before_state(workspace, client, change_id, event_id, verify: bool = True) -> dict:

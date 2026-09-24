@@ -112,7 +112,8 @@ def window(w, org="acme-sbx"):
 def test_d2_click_is_bound_to_the_navigated_tab(w):
     window(w)
     assert run(w, NAV, {"url": SBX, "tabId": 1}).action == "allow"
-    assert run(w, CLICK, {"action": "left_click", "tabId": 1}).action == "allow"
+    # Round 4 ruling: browser tools never make changes in connected mode.
+    assert run(w, CLICK, {"action": "left_click", "tabId": 1}).action == "deny"
     assert run(w, CLICK, {"action": "left_click", "tabId": 2}).action == "deny"
     assert run(w, CLICK, {"action": "left_click"}).action == "deny"
     assert run(w, "mcp__chrome-devtools__click", {"uid": "x"}).action == "deny"
@@ -153,7 +154,9 @@ def test_d7_destructive_changes_are_in_scope(tmp_path):
                                             "</Package>", encoding="utf-8")
     argv = ["sf", "project", "deploy", "start", "-m", "ApexClass:A", "--pre-destructive-changes", "destructive.xml",
             "-o", "x"]
-    assert set(before_state.deploy_components(argv, folder)) == {"ApexClass:A", "ApexClass:Old"}
+    assert before_state.deploy_components(argv, folder) == ["ApexClass:A"]
+    assert before_state.destructive_components(argv, folder) == ["ApexClass:Old"]
+    assert set(before_state.write_components(argv, folder)) == {"ApexClass:A", "ApexClass:Old"}
 
 
 def test_d7_object_needs_its_definition_file():

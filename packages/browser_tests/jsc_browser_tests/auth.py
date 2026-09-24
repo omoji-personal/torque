@@ -61,14 +61,31 @@ class BrowserSession:
 
 async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
                        headed: bool = False, timeout: int = 30000) -> BrowserSession:
-    """Return a BrowserSession with an authenticated page, via CDP or frontdoor."""
+    """Return a BrowserSession with an authenticated page, via CDP or frontdoor.
+
+    In a connected Torque workspace, the org is checked against the client's consent
+    and a granted browser window first, and every request of the browser context is
+    checked against that org before it is sent (torque.browser_guard)."""
     browser = context = None
+    guard = None
+    try:
+        from torque.browser_guard import GuardRefused, connected_guard
+    except ImportError:
+        connected_guard = None
+    if connected_guard is not None:
+        try:
+            guard = connected_guard(admin_auth.target_org)
+        except GuardRefused as exc:
+            raise AuthError(f"connected mode: {exc}") from None
     if cdp_endpoint:
         try:
             browser = await pw.chromium.connect_over_cdp(cdp_endpoint)
             if not browser.contexts:
                 raise AuthError("Configured CDP browser has no context")
             context = browser.contexts[0]
+            if guard is not None:
+                from torque.browser_guard import install
+                await install(context, guard)
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto(admin_auth.instance_url, wait_until="domcontentloaded", timeout=timeout)
             title = await page.title()
@@ -83,6 +100,9 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
     try:
         browser = await pw.chromium.launch(headless=not headed)
         context = await browser.new_context()
+        if guard is not None:
+            from torque.browser_guard import install
+            await install(context, guard)
         page = await context.new_page()
         await page.goto(admin_auth.frontdoor_url, wait_until="domcontentloaded", timeout=timeout)
         title = await page.title()

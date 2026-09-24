@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2549 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2572 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 374 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 397 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -104,6 +104,14 @@ normalized into record evidence; a path-resolving full-mode guard; an unbound ch
 doctor probe; MCP writes without files; and consent checked for the right client. The
 browser binding still rests on the navigation the session asked for, not its result; that
 limit is stated in [connected mode](connected-approval.md#what-it-cannot-stop).
+
+**Round 4** (the recheck of round 3, with the owner's ruling on browsers): browser MCP and
+devtools changes are refused in connected mode, and Torque's own browser checks the org ID
+at start and each request's actual origin while it runs; bundles are bound whole; recovery
+coverage needs every file the recovery restores; recovery approvals bind their snapshot;
+destructive deploys bind their manifests and check deletions against the before-state; the
+full-mode guard follows directory changes. Tests: `tests/test_connected_r4.py`, written
+first (17 of 22 failed before the fix; the other 5 are controls that must keep passing; a 23rd checks that the browser session installs the guard).
 
 Two exceptions to "unchanged" are deliberate and documented in [build-only
 mode](ai-access.md): consent, approval and key files are refused wherever the hook runs,

@@ -44,7 +44,7 @@ PAYLOAD_BYTES_CAP = 20 * 1024 * 1024
 PAYLOAD_WALK_CAP = 20000
 # Flags whose value is a file or folder the command deploys, loads or runs (sf and
 # legacy sfdx spellings). Multi-value flags and comma lists are read in full.
-PAYLOAD_FLAGS = ("-d", "--source-dir", "--sourcepath", "-p", "--metadata-dir", "--deploydir", "-x", "--manifest",
+PAYLOAD_FLAGS = ("--recovery-snapshot", "-d", "--source-dir", "--sourcepath", "-p", "--metadata-dir", "--deploydir", "-x", "--manifest",
                  "-f", "--file", "--files", "--plan", "--pre-destructive-changes", "--post-destructive-changes",
                  "--predestructivechanges", "--postdestructivechanges", "--sobject-tree-files",
                  "--sobjecttreefiles", "--apex-code-file", "--apexcodefile", "--csvfile", "--csv-file")
@@ -435,7 +435,8 @@ def _derive(req: dict, extra_namespaces=()) -> dict:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise ws.WorkspaceError("the request's working folder is missing")
         if req["kind"] == "command":
-            return _derive_command(req.get("payload_argv"), req.get("org_alias"), cwd, extra_namespaces)
+            return _derive_command(req.get("argv") or req.get("payload_argv"), req.get("org_alias"), cwd,
+                                   extra_namespaces)
         mcp = req.get("mcp") or {}
         return _derive_mcp(mcp.get("tool_name"), mcp.get("tool_input"), req.get("org_alias"), cwd)
     if req.get("kind") == "browser":
@@ -447,6 +448,64 @@ def _derive(req: dict, extra_namespaces=()) -> dict:
                 "payload_files": 0, "payload_argv": None, "payload_check": None, "cwd": None, "namespaces": [],
                 "components": []}
     raise ws.WorkspaceError("unknown request kind")
+
+
+def recovery_snapshot_id(command: str) -> str | None:
+    """The snapshot a recovery command (torque recover exec|run ID, jsc revert exec ID) restores."""
+    words = command_words(command)
+    if not words:
+        return None
+    head, rest = words
+    rest = [w for w in rest if not w.startswith("-")]
+    if head == "torque" and rest[:1] == ["recover"] and rest[1:2] in (["exec"], ["run"]) and len(rest) > 2:
+        return rest[2]
+    if head == "torque" and rest[:3] == ["revert", "revert", "exec"] and len(rest) > 3:
+        return rest[3]
+    if head == "jsc" and rest[:2] == ["revert", "exec"] and len(rest) > 2:
+        return rest[2]
+    return None
+
+
+def _recovery_snapshot(workspace, client, snapshot_id: str, org_alias: str, org_id: str) -> tuple[Path, list[str]]:
+    """(the snapshot folder, the command the recovery will run), read the way the
+    recovery executor reads them, for the client's own snapshot store."""
+    folder, _, _ = ws.load_client(workspace, client)
+    previous = os.environ.get("TORQUE_WORKSPACE")
+    os.environ["TORQUE_WORKSPACE"] = str(folder)
+    try:
+        from jsc_revert import manifest as mf, revert_planner
+        try:
+            snap_dir, snap = mf.load_by_id(org_id[:15], org_alias, snapshot_id)
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            raise ws.WorkspaceError(f"cannot find recovery snapshot {snapshot_id} for {org_alias}: {exc}") from exc
+        if str(snap.get("org", {}).get("org_id_18", ""))[:15] != org_id[:15]:
+            raise ws.WorkspaceError("the recovery snapshot belongs to another org")
+        plan = revert_planner.build_revert_command({**snap, "org": {**snap["org"], "alias": org_alias}}, snap_dir)
+    finally:
+        if previous is None:
+            os.environ.pop("TORQUE_WORKSPACE", None)
+        else:
+            os.environ["TORQUE_WORKSPACE"] = previous
+    return Path(snap_dir), list(plan or [])
+
+
+def _bind_recovery(derived: dict, workspace, client, org_alias: str, org_id: str) -> dict:
+    """For a recovery command, bind every file of its snapshot (manifest and captured
+    before-state) and show the command the recovery will run. A change to the
+    snapshot after the grant then refuses the approval."""
+    snapshot_id = recovery_snapshot_id(derived["command"]) if derived.get("payload_argv") else None
+    if snapshot_id is None:
+        return derived
+    snap_dir, plan = _recovery_snapshot(workspace, client, snapshot_id, org_alias, org_id)
+    payload_argv = [*derived["payload_argv"], "--recovery-snapshot", str(snap_dir)]
+    cwd = Path(str(derived["cwd"]))
+    problems = payload_problems(["recover", "--source-dir", str(snap_dir)], cwd)
+    if problems:
+        raise ws.WorkspaceError("the recovery snapshot cannot be bound: " + "; ".join(problems[:5]))
+    digest, count = payload_digest(payload_argv, cwd, capped=False)
+    return {**derived, "payload_argv": payload_argv, "payload_digest": digest, "payload_files": count,
+            "payload_check": "gate" if payload_digest(payload_argv, cwd)[0] else "wrapper",
+            "recovery_snapshot": snapshot_id, "recovery_plan": plan}
 
 
 def _extra_namespaces(workspace) -> tuple[str, ...]:
@@ -475,9 +534,10 @@ def create_request(workspace, client, change_id, org_alias, *, argv=None, mcp=No
                "cwd": str(cwd)}
     else:
         kind = "command"
-        req = {"kind": kind, "payload_argv": list(argv), "cwd": str(cwd), "org_alias": org_alias}
+        req = {"kind": kind, "argv": list(argv), "payload_argv": list(argv), "cwd": str(cwd), "org_alias": org_alias}
     derived = _derive(req, _extra_namespaces(workspace))
     org_id, org_kind = _org_identity(item, org_alias, resolve)
+    derived = _bind_recovery(derived, workspace, client, org_alias, org_id)
     if manual_recovery is not None and len(manual_recovery.strip()) < MIN_RECOVERY_CHARS:
         raise ws.WorkspaceError(f"a manual recovery path needs at least {MIN_RECOVERY_CHARS} characters")
     if before_state_event is not None:
@@ -610,6 +670,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     item = _usable_consent(workspace, client)
     derived = _derive(req, _extra_namespaces(workspace))
     org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
+    derived = _bind_recovery(derived, workspace, client, req["org_alias"], org_id)
     new_components = [c for c in new_components if isinstance(c, str) and c]
     before = None
     recovery = req.get("manual_recovery") if isinstance(req.get("manual_recovery"), str) else None
@@ -671,6 +732,9 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
                            if before else recovery or ("not required" if org_kind != "production" else "n/a")),
         f"Namespaces:  {', '.join(derived['namespaces']) or 'none'}",
         f"Payload:     {derived['payload_digest'] or 'n/a'} ({derived['payload_files']} files)",
+        *([f"Recovery:    snapshot {derived['recovery_snapshot']} will run: "
+           f"{shlex.join(derived['recovery_plan']) if derived['recovery_plan'] else 'NOTHING (no plan)'}"]
+          if derived.get("recovery_snapshot") else []),
     ]
     if derived["namespaces"]:
         lines.append("Warning:     this call names managed-package components; check that this is intended.")
@@ -696,6 +760,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
                                if before else None),
               "manual_recovery": recovery, "validated_job": req.get("validated_job"),
               "new_components": new_components, "namespaces": derived["namespaces"],
+              "recovery_snapshot": derived.get("recovery_snapshot"), "recovery_plan": derived.get("recovery_plan"),
               "approver": _user(), "approver_uid": os.getuid() if hasattr(os, "getuid") else None,
               "granted_at": _iso(t), "expires_at": _iso(t + ttl), "single_use": kind != "browser"}
     verify = config.get("approval_verify", "hmac")

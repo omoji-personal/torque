@@ -77,6 +77,14 @@ default (`full`) and build-only behavior are unchanged.
   resolves paths and covers folders that hold the records; doctor probes an unbound
   check-only call; MCP writes without files can be granted; both capture spellings are org
   reads and consent is checked for the right client.
+- After the R2 recheck of round 3: in connected mode only Torque's own browser (`torque
+  browser --target-org ORG`) changes an org. It checks the org ID and a granted window when
+  it starts, and every request's actual origin while it runs. Browser MCP and devtools tools
+  may only read and navigate. Bundles bind every file in their folder; Apex, Lightning
+  component and static resource recovery needs every file it restores; recovery approvals
+  bind their snapshot and show the recovery command; destructive manifests are bound as
+  files and their deletions checked against the before-state without needing local source;
+  the full-mode guard follows `cd` within a command.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).

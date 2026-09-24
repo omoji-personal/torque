@@ -158,8 +158,8 @@ def test_browser_interaction_needs_window(w, tmp_path):
     assert run(w, "mcp__claude-in-chrome__navigate",
                {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/home", "tabId": 7}
                ).action == "allow"
-    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 7}).action == "allow"
-    assert run(w, "mcp__claude-in-chrome__form_input", {"tabId": 7}).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 7}).action == "deny"
+    assert run(w, "Bash", {"command": "torque browser run --target-org acme-sbx"}).action == "allow"
     assert run(w, "mcp__computer-use__type", {"text": "x"}).action == "deny"
 
 

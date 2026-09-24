@@ -55,6 +55,7 @@ Browser flows are executable configuration. Domain implementations, seed users a
 - The replay scanner reports matching rule/count with redacted details and does not echo the matched credential. Lesson scrubbing remains best effort, and raw operational state stays private.
 - Revert execution validates the snapshot org against the current explicit target before building a command, including when `--force` is requested. A stored alias does not override the selected target. Subprocess Python invocations use the running interpreter; fallback execution does not choose an unrelated PATH `jsc` binary.
 - In a [connected](connected-approval.md) workspace (2.0.0a15), the revert wrappers (`wrappers/_common.py`) and revert execution (`revert_executor.py`) run a write only when the gate has just consumed an approval for that exact command, and refuse when the target alias now resolves to another org ID than the approved one. They find connected mode themselves (refusing when the workspace configuration cannot be read), verify the approval again, return it when the org cannot be resolved, and a revert runs only the one wrapper command it names under its approval. Dry runs and workspaces not in connected mode are unchanged.
+- In a connected workspace (2.0.0a15), the browser session setup (`jsc_browser_tests/auth.py`) checks the org against the consent and a granted browser window, and installs a request guard on the browser context that refuses requests to another Salesforce org. Outside connected mode it is unchanged.
 
 ## Packaging contract
 

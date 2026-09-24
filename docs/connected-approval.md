@@ -20,7 +20,8 @@ sandbox. The limits are listed below.
 | Reads of the bound client's approved orgs | `sf data query -o acme-prod`, `sf project retrieve start`, Salesforce MCP query, get and describe tools, `sf api request rest` GET | allowed when the consent covers the org and the data class. Record data (queries, searches, exports, record gets, REST record and query paths, the same reads in legacy `sfdx` and MCP form) needs `records`; Apex logs need `debug_logs`; a REST path Torque cannot place counts as record data |
 | Check-only | `sf project deploy validate`, `--dry-run`, `sf apex run test` | allowed and logged in `clients/<slug>/approvals/activity.jsonl` |
 | Org writes | any other `sf`/`sfdx` command with an org flag, `sf api request` other than a plain GET, `torque deploy/data/org/recover`, `jsc` write verbs, Salesforce MCP tools that are not clearly reads | allowed once, by consuming a matching approval |
-| Browser changes | clicks, typing and scripts in browser MCP servers; `torque browser`/`qa` with an org | allowed inside a granted browser window for the org the browser is in (see below) |
+| Browser changes | `torque browser ... --target-org ORG` (and `torque qa` with an org) | allowed inside a granted browser window for that org; Torque's own browser checks every request's org (see below) |
+| Browser tools | clicks, typing, scripts and form input through browser MCP or devtools servers | refused: they may read pages and navigate (not to an org outside the consent), never change anything |
 | Programs the gate cannot check | `python x.py`, `node`, `bash script.sh`, `sh -c '...'`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | the host asks the consultant when the session's permission mode is `default`, `acceptEdits` or `plan` (or the host sends none) |
 | Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
 | Out of scope | another client's folder or `--client`, `torque client list`, an org not in the consent (whatever the route), an `sf` call without an explicit org | refused |
@@ -118,9 +119,11 @@ record must still load when it is used; the working folder; and the files the co
 deploys or loads. Those are every file and folder any payload flag names (every value of a
 multi-value flag, attached or separate, legacy `sfdx` spellings and comma lists included),
 the data files a `sf data import tree` plan names, the manifest, the project files each
-named component comes from (a component kept in a shared file, such as a custom label,
-workflow rule or sharing rule, binds that whole file; an object's child binds its object
-folder), every package folder for a deploy with no selector, and for an MCP call every file
+named component comes from (a bundle, such as an Aura or Lightning component, a static
+resource or an Experience bundle, binds every file in its folder; a component kept in a
+shared file, such as a custom label, workflow rule or sharing rule, binds that whole file;
+an object's child binds its object folder), the destructive manifests (the components they
+delete need no local file), every package folder for a deploy with no selector, and for an MCP call every file
 or folder its input names. A named file that does not exist, a link, or a named component
 with no file in the project's package folders is refused rather than hashed as empty. A 15-minute window (30 for a browser
 window) with 60 seconds of clock skew; single use. The gate decides every other part of a
@@ -152,7 +155,10 @@ approval again (signature or owner, window, consent, change) and its files, and 
 when the alias now resolves to another org ID than the one approved. The claim is atomic:
 two runs racing for one approval get it once. If the wrapper cannot resolve the org at all,
 nothing runs and the approval is returned so the same command can be run again inside its
-window (at most three times, each logged). A revert started by `torque recover` names the
+window (at most three times, each logged). A recovery approval (`torque recover exec|run
+SNAPSHOT`, `jsc revert exec`) binds every file of that snapshot, its manifest and captured
+before-state, and the grant screen shows the command the recovery will run; a snapshot
+changed after the grant refuses the approval. A revert started by `torque recover` names the
 one wrapper command it starts; that command runs once under the parent's approval, and if
 it cannot resolve the org, the parent's approval is returned the same way.
 Scripts that write call `torque approval require --workspace W --client C --org A -- <command>`
@@ -181,7 +187,9 @@ names (`--metadata`, a manifest, every file under `--source-dir`, and every comp
 pre- or post-destructive manifest deletes), or the record a single-record update or delete
 names. Each must have its content in the before-state (the definition file itself: the Apex
 source, not only its `-meta.xml`; an object's own `.object-meta.xml`, not only one of its
-fields; a component bundle's definition file), or be declared new at grant
+fields; both files the recovery restores for Apex, its source and its `-meta.xml`; a
+Lightning component's JavaScript and `-meta.xml`; an Aura bundle's definition; a static
+resource's body and `-meta.xml`), or be declared new at grant
 (`--new-component Type:Name`). A write whose changes Torque cannot list (anonymous Apex,
 bulk loads, a deploy with no selector) needs a manual recovery path instead. A before-state
 captured from another org, captured after the request, or changed since capture blocks the
@@ -189,28 +197,26 @@ grant. The snapshot a Torque wrapper takes inside the approved write never count
 
 ## Browser windows
 
+In connected mode, only Torque's own browser changes anything in an org:
+`torque browser ... --target-org ORG` (and `torque qa` with an org). Browser MCP and
+devtools servers may read pages and navigate (not to a Salesforce org outside the consent),
+and every click, typing, script or form input through them is refused. They cannot show
+which org their page is in after navigation, redirects or a failed load, so their org
+cannot be enforced; Torque's Playwright session can.
+
 `torque approval request --browser --minutes 20 --purpose "Add Tier to the Case layout" --org acme-sbx ...`
 asks for a window of up to 30 minutes for one org. Clicks cannot be listed in advance, so
 the window is per org and time, not per action. In a production org the request needs
 `--manual-recovery TEXT`.
 
-A browser change is bound to the exact tab it acts in. The gate keeps, for this session,
-the Salesforce orgs each tab (browser server and tab ID) was sent to through the browser
-tools: a URL in a browser tool's input is matched against the My Domain address the consent
-recorded for each approved org (production, sandbox, developer and Visualforce hosts).
-Navigating to a Salesforce org outside the consent is refused; other sites are fine. A
-browser change (click, typing, script, form input) is allowed only when:
-
-- the tool names its tab (a tool without a tab ID, such as a devtools click on the
-  selected page, is refused; use a tool that takes a tab ID, or `torque browser -o ORG`);
-- that tab was sent to exactly one Salesforce org in this session, that org has a granted
-  window, and the tab never showed another org;
-- the call itself names no other org (no URL or org argument for a different org); and
-- that browser server has had no navigation that did not name its tab.
-
-The gate sees the navigation the session asked for, not what the browser then showed. A
-navigation that failed, or a redirect, leaves the tab where the gate cannot see it; that is
-the remaining limit, listed below.
+When Torque's browser starts in a connected workspace, it resolves the org live and
+requires the ID the consent records, a granted window for that org, and the org's My
+Domain address (recorded with the consent). While it runs, every request the browser makes,
+including each navigation, redirect, frame and background call, is checked before it is
+sent: a request to another Salesforce org is refused, and so is any request that would
+change something (anything but GET, HEAD or OPTIONS) on a Salesforce host that is not the
+approved org. The org is therefore checked on the page's actual origin, after redirects,
+not on the address the session asked for.
 
 ## Two approval tiers
 
@@ -249,8 +255,9 @@ With the hook in force, on recognized routes:
   the permission rules; the grant also needs a real terminal outside the session and a typed code);
 - a write to an org outside the bound client's consent (whatever route names it), reads of
   another client's folder, and listing every client (`torque client list`);
-- a browser change in a tab that is not bound to one org with a granted window (as far as
-  the gate has seen that tab), and navigation to a Salesforce org outside the consent;
+- a browser change through a browser MCP or devtools tool, a change by Torque's own browser
+  without a granted window for its org, any request of Torque's browser to another
+  Salesforce org, and navigation by browser tools to a Salesforce org outside the consent;
 - reads of record data or debug logs the consent does not cover, in every recognized form;
 - org access for a client without active, signed-off consent;
 - a production approval of any kind (browser windows included) without an independent
@@ -283,11 +290,8 @@ With the hook in force, on recognized routes:
 - Commands built at run time, programs that run commands through their own options (`tar
   --to-command`, `rsync -e`, `zip -TT`, GNU `sed`'s `e`), and every route
   [build-only mode](ai-access.md#what-it-cannot-stop) lists as unparsed.
-- Actions inside a granted browser window (per window, not per click), actions a URL
-  triggers during read-only navigation, and a tab that is not where the gate recorded it: a
-  navigation the browser did not complete, a server-side redirect, or a link followed inside
-  the page to another org. The gate sees the requested navigation, not its result; a
-  PostToolUse check of the page's address would be needed to close this, and is not built.
+- Actions inside a granted browser window in the approved org (per window, not per click),
+  and actions a URL triggers while browser tools only read and navigate.
 - An alias remapped before a raw `sf` write (doctor `--live` detects it at readiness time).
 - Two tool calls running at the same time: a file edited while an approved deploy starts.
 - The hook not running (missing, disabled, timed out, or a host without hooks).

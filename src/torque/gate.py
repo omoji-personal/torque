@@ -2893,15 +2893,42 @@ def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -
     for text in _command_strings(tool_input):
         if len(text) > MAX_INPUT_CHARS:
             continue
-        for toks, _ in _segments_with_separators(_expand_home_in_command(text)):
+        # Follow cd, pushd and popd the way the build-only scan does: after a directory
+        # change the rest of the command is checked from every folder it could be in.
+        # After a change to a folder the gate cannot know ("$X", cd -), a command that
+        # removes or writes is refused when the workspace holds records at all.
+        seen: list[Path] = [cwd]
+        current: list[Path] = [cwd]
+        unknown = False
+        for toks, sep in _segments_with_separators(_expand_home_in_command(text)):
             removes = any(_basename(tok) in _REMOVERS for tok in toks)
-            for tok in toks:
-                for target in _token_paths(tok, cwd)[0]:
-                    if APPROVAL_KEY_RE.search(target.as_posix()) or _protected_record(target):
-                        return reason
-                    if removes and _holds_records(target):
-                        return reason
+            writes = removes or any(re.match(r"^(\d+|&)?>", tok) for tok in toks) \
+                or any(_basename(tok) in _WRITE_VERBS for tok in toks)
+            if unknown and writes and any(_holds_records(root) for root in _workspace_roots(cwd)):
+                return reason
+            for here in current:
+                for tok in toks:
+                    for target in _token_paths(tok, here)[0]:
+                        if APPROVAL_KEY_RE.search(target.as_posix()) or _protected_record(target):
+                            return reason
+                        if removes and _holds_records(target):
+                            return reason
+            target = _cd_target(toks)
+            if target == "" or (target is not None and sep in ("`", "(")):
+                unknown = True
+                continue
+            if target is not None:
+                moved = _next_cwds(current, target)
+                _add_cwds(seen, moved)
+                current = list(dict.fromkeys(moved))[:_MAX_CWDS] if moved else current
     return ""
+
+
+def _workspace_roots(start: Path) -> list[Path]:
+    try:
+        return [folder for folder, _mode, _known in _workspace_chain(start)]
+    except OSError:
+        return []
 
 
 def _connected_workspaces(cwd: Path, tool_input: dict) -> list[Path]:

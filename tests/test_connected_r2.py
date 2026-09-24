@@ -138,7 +138,8 @@ def test_d2_click_needs_navigation_to_the_window_org(w):
     assert run(w, *click).action == "deny"
     nav = {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/ObjectManager/home", "tabId": 1}
     assert run(w, "mcp__claude-in-chrome__navigate", nav).action == "allow"
-    assert run(w, *click).action == "allow"
+    assert run(w, *click).action == "deny"  # round 4 ruling: only torque browser makes changes
+    assert run(w, "Bash", {"command": "torque browser run --target-org acme-sbx"}).action == "allow"
     assert run(w, *click, session="other").action == "deny"
 
 
@@ -231,10 +232,9 @@ def test_d6_approved_write_refused_in_bypass_mode_and_not_used(w, tmp_path):
 
 def test_d6_browser_action_refused_in_bypass_mode(w):
     browser_window(w, "acme-sbx")
-    run(w, "mcp__claude-in-chrome__navigate", {"url": "https://acme--sbx.sandbox.my.salesforce.com/", "tabId": 1})
-    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1}, mode="auto"
-               ).action == "deny"
-    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1}).action == "allow"
+    command = {"command": "torque browser run --target-org acme-sbx"}
+    assert run(w, "Bash", command, mode="auto").action == "deny"
+    assert run(w, "Bash", command).action == "allow"
 
 
 def test_d6_shell_c_asks(w):
@@ -513,6 +513,7 @@ def test_d13_grant_shows_validation_result_and_audit_trail(w, tmp_path):
     src = tmp_path / "b" / "classes"
     src.mkdir(parents=True)
     (src / "A.cls").write_text("class", encoding="utf-8")
+    (src / "A.cls-meta.xml").write_text("<ApexClass/>", encoding="utf-8")
     before = before_state.import_before_state(w, "Acme", cid, tmp_path / "b")
     argv = ["sf", "project", "deploy", "start", "-m", "ApexClass:A", "-o", "acme-prod"]
     req = approval.create_request(w, "Acme", cid, "acme-prod", argv=argv, resolve=ORGS.get, cwd=folder,
