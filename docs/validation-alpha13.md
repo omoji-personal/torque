@@ -44,7 +44,7 @@ equivalents that must stay allowed.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.13.15, local):** 2069 pytest tests and 154
+- **Offline suite (macOS, Python 3.13.15, local):** 2070 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** 81 hook events were piped through the real hook command
@@ -59,7 +59,9 @@ equivalents that must stay allowed.
   `git ls-files -o` in `project/`, and `Glob`, `Grep` and `Read` in `project/`.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
   Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull
-  request.
+  request. The first run failed one test on Windows: a `find` expression word (`'*.md'`)
+  was walked as a path, and Windows rejects `*` in a path with an error the walk treated
+  as a reason to block. The walk now skips words that are not folders, with a test.
 
 ## Review scope
 
