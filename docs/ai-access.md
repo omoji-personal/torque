@@ -76,9 +76,10 @@ guard on recognized tool calls, not a sandbox. It has two values:
   `--reg=` is not mistaken for a path, and modes with no pattern, rg's `--files` and ack's `-f`, read
   every word as a path); `git grep
   --untracked` or `--no-index`, `git diff --no-index` and `diff -r`, rooted at or above
-  `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar` (following
-  its `-C DIR`, `-CDIR` and `--directory` changes in order, and blocking a directory known only at
-  run time), and `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing
+  `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar`, `bsdtar`,
+  `gtar` and `gnutar` (following their `-C DIR`, `-CDIR` and `--directory` changes in order,
+  reading old-style key bundles such as `tar cCf .. - .` the way tar does, each key that takes a
+  value taking the next word, and blocking a directory known only at run time), and `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing
   `clients/`; and a
   `Grep`/`Glob` rooted at or above `clients/` or naming it.
 - Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
@@ -120,6 +121,14 @@ guard on recognized tool calls, not a sandbox. It has two values:
   stash's untracked files back (`git stash show -u`, `--only-untracked`, or its third parent,
   `stash^3`, `stash@{0}^3`) is blocked in the same places. A magic pathspec (`:/`) and a
   repository git cannot identify count as reaching them.
+- `git add -f`/`--force` whose pathspecs (or `-A`/`--all` with none, the whole repository) reach
+  `clients/`, `.claude/` or the hook's environment, since it stages ignored files there; and a
+  plain `git add` reaching `clients/` when `clients/` holds files git does not ignore.
+- While git holds client files, in the index (tracked or staged) or in the untracked part of a
+  stash, the git commands that print index, history or stash content or file names (`show`,
+  `diff`, `log`, `cat-file`, `grep`, `stash`, `ls-files`, `ls-tree`, `archive`, `blame` and
+  similar), so `git diff --cached`, `git show :path`, `git log --all -p` and `git show 'stash^@'`
+  cannot print them. Ask the owner to run `git rm -r --cached clients` or drop the stash.
 - Changing Torque itself: `Write`/`Edit`/`MultiEdit`/`NotebookEdit` into the installed `torque`
   package directory, any Bash command naming that directory or Torque's install metadata
   (`torque_salesforce-*.dist-info`, `__editable__*torque*`), and `pip`, `python -m pip`, `uv` or
@@ -261,7 +270,9 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   `.worktreeinclude` names. A `WorktreeCreate` hook that copies more is not inspected.
 - Git routes other than the ones named: an alias (`git -c alias.x=clean x`), a stash's untracked
   files read by object hash, `git checkout` or `git reset` of tracked files under `.claude/`
-  from history, and a work tree set in an earlier command (`export GIT_WORK_TREE=..`).
+  from history, a work tree set in an earlier command (`export GIT_WORK_TREE=..`), client files
+  already in commit history but no longer in the index or a stash (`git show HEAD~3:clients/...`),
+  and git plumbing that writes objects (`git hash-object -w`, `git update-index --add`).
 
 It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
 `Clients__c`) from the workspace root; an MCP string argument that is exactly `clients`, or `.`
@@ -277,6 +288,7 @@ a literal path); Bash reads under `.claude/` or of the installed Torque package;
 from the recognised list above; a command that merely mentions a script name as an argument
 (`rg jsc-qa`); nearly every Bash command run from inside a worktree under `.claude/worktrees/`
 (its relative paths are under `.claude/`; use absolute paths to `project/` or leave the
-worktree); `EnterWorktree` with a `name` in a workspace that is not a git repository; `git clean`
+worktree); `EnterWorktree` with a `name` in a workspace that is not a git repository; every git
+command that prints content while the index or a stash holds client files, even for other paths; `git clean`
 from the workspace root, even when `clients/` is ignored; and `LSP` on a path under `.claude/` or
 in the Torque installation. Run those from `project/` or yourself.
