@@ -2620,12 +2620,19 @@ def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir
     return ""
 
 
-def _resolve_ai_access(value: object) -> str:
-    """Only an explicit "full" means full. Everything else present (null, an
-    empty string, a typo, wrong case, a non-string) fails closed to build-only.
-    A missing key is handled by the caller and means full, the documented default."""
+MODE_STRICTNESS = {"build-only": 2, "connected": 1, "full": 0}
+
+
+def _resolve_ai_access(value: object, approval: object = None) -> str:
+    """Only an explicit "full" means full, and only "connected" together with
+    approval "required" means connected. Everything else present (null, an
+    empty string, a typo, wrong case, a non-string, connected without required
+    approval) fails closed to build-only. A missing key is handled by the caller
+    and means full, the documented default."""
     if value == "full":
         return "full"
+    if value == "connected" and approval == "required":
+        return "connected"
     return "build-only"
 
 
@@ -2667,7 +2674,8 @@ def _workspace_chain(start: Path) -> list[tuple[Path, str, bool]]:
             except (OSError, ValueError):
                 chain.append((folder, "build-only", False))
                 continue
-            mode = _resolve_ai_access(data["ai_access"]) if "ai_access" in data else "full"
+            mode = (_resolve_ai_access(data["ai_access"], data.get("approval"))
+                    if "ai_access" in data else "full")
             chain.append((folder, mode, True))
         elif _is_workspace_marker(folder):
             chain.append((folder, "build-only", False))
@@ -2675,15 +2683,15 @@ def _workspace_chain(start: Path) -> list[tuple[Path, str, bool]]:
 
 
 def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
-    """The governing workspace for start: the strictest wins. A nested
-    workspace.json (even `{}` or an explicit "full") cannot downgrade a
-    build-only workspace above it. Returns the nearest build-only workspace
-    when there is one, else the nearest workspace, else (start, "full", True)."""
+    """The governing workspace for start: the strictest wins (build-only, then
+    connected, then full). A nested workspace.json (even `{}` or an explicit
+    "full") cannot loosen a stricter workspace above it. Returns the nearest
+    workspace of the strictest mode, else (start, "full", True)."""
     chain = _workspace_chain(start)
-    for entry in chain:
-        if entry[1] == "build-only":
-            return entry
-    return chain[0] if chain else (start, "full", True)
+    if not chain:
+        return (start, "full", True)
+    strictest = max(MODE_STRICTNESS[entry[1]] for entry in chain)
+    return next(entry for entry in chain if MODE_STRICTNESS[entry[1]] == strictest)
 
 
 # The command a Claude Code hook should run. If `torque.gate` cannot be imported

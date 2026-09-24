@@ -75,8 +75,14 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("path")
     upgrade.add_argument("--check", action="store_true", help="show available updates without writing")
     upgrade.add_argument("--json", action="store_true")
-    ai_access = work_sub.add_parser("ai-access", help="set build-only mode; the owner runs this, not an AI session")
+    ai_access = work_sub.add_parser("ai-access", help="set build-only or connected mode; the owner runs this, "
+                                                      "not an AI session")
     ai_access.add_argument("mode", choices=ws.AI_ACCESS_MODES)
+    ai_access.add_argument("--approval", choices=ws.APPROVAL_VALUES,
+                           help="connected mode only: org writes need a per-write approval (required)")
+    ai_access.add_argument("--verify", choices=ws.APPROVAL_VERIFY,
+                           help="connected mode only: hmac (same OS account) or owner-uid (separate approver account)")
+    ai_access.add_argument("--approver-uid", type=int, help="owner-uid verification: the approver account's uid")
     ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
     ai_access.add_argument("--json", action="store_true")
     demo = sub.add_parser("demo", help="create an offline synthetic consulting workspace; no org needed")
@@ -817,8 +823,14 @@ def main(argv: list[str] | None = None) -> int:
                 path = ws.init_workspace(parsed.path, parsed.name, parsed.profile)
                 _print_json({"workspace": str(path), "org_calls": False}) if parsed.json else print(path)
             elif parsed.action == "ai-access":
-                root = ws.set_ai_access(parsed.path, parsed.mode)
-                _print_json({"workspace": str(root), "ai_access": parsed.mode}) if parsed.json else print(parsed.mode)
+                root = ws.set_ai_access(parsed.path, parsed.mode, parsed.approval, parsed.verify,
+                                        parsed.approver_uid)
+                shown = "connected (approval required)" if parsed.mode == "connected" else parsed.mode
+                if parsed.json:
+                    _print_json({"workspace": str(root), "ai_access": parsed.mode,
+                                 **({"approval": parsed.approval} if parsed.approval else {})})
+                else:
+                    print(shown)
             else:
                 from .template_updates import update_templates
                 report = update_templates(Path(parsed.path), check=parsed.check)

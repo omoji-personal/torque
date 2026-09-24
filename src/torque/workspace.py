@@ -16,7 +16,9 @@ from uuid import uuid4
 
 PROFILES = ("generic", "solution-lead")
 STATUSES = ("prepared", "executed", "verified", "incomplete")
-AI_ACCESS_MODES = ("full", "build-only")
+AI_ACCESS_MODES = ("full", "build-only", "connected")
+APPROVAL_VALUES = ("required",)
+APPROVAL_VERIFY = ("hmac", "owner-uid")
 CONFIG = "workspace.json"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 
@@ -267,13 +269,39 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
     return root, config
 
 
-def set_ai_access(workspace: str | Path, mode: str) -> Path:
+def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
+                  verify: str | None = None, approver_uid: int | None = None, presence=None) -> Path:
     """Set the workspace ai_access mode. Only the owner calls this; an AI session
-    running in build-only mode has its own edits to workspace.json blocked by the gate."""
+    has its own edits to workspace.json blocked by the gate. Connected mode needs
+    approval="required" and a person at a real terminal (presence)."""
     if mode not in AI_ACCESS_MODES:
         raise WorkspaceError(f"unknown ai_access mode: {mode}")
+    if mode != "connected" and (approval is not None or verify is not None or approver_uid is not None):
+        raise WorkspaceError("--approval, --verify and --approver-uid apply only to connected mode")
+    if mode == "connected":
+        if approval not in APPROVAL_VALUES:
+            raise WorkspaceError("connected mode needs --approval required")
+        verify = verify or "hmac"
+        if verify not in APPROVAL_VERIFY:
+            raise WorkspaceError(f"unknown approval verification: {verify}")
+        if verify == "owner-uid" and (type(approver_uid) is not int or approver_uid < 0):
+            raise WorkspaceError("owner-uid verification needs --approver-uid, the approver account's numeric uid")
+        if verify == "hmac" and approver_uid is not None:
+            raise WorkspaceError("--approver-uid applies only to owner-uid verification")
+        if presence is None:
+            from .presence import operator_present as presence
+        check = presence()
+        if not check.ok:
+            raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
     root, config = load_workspace(workspace)
     config["ai_access"] = mode
+    for key in ("approval", "approval_verify", "approver_uid"):
+        config.pop(key, None)
+    if mode == "connected":
+        config["approval"] = approval
+        config["approval_verify"] = verify
+        if verify == "owner-uid":
+            config["approver_uid"] = approver_uid
     config["ai_access_changed_at"] = _now()
     _atomic_replace_text(_inside(root, root / CONFIG), json.dumps(config, indent=2, ensure_ascii=False) + "\n")
     return root
