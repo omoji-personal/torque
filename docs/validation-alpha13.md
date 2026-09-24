@@ -58,7 +58,7 @@ change.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.13.15, local):** 2113 pytest tests and 154
+- **Offline suite (macOS, Python 3.13.15, local):** 2118 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** 98 hook events were piped through the real hook command (`python -I -c
@@ -78,8 +78,11 @@ change.
   apply` of a confined patch, `--check`, `patch --dry-run`, extraction into `src/`,
   `unzip -l`, and `Glob`, `Grep` and `Read` in `project/`.
 - **Budget probe:** in a scratch workspace holding 15,000 links onto a 1,000-link chain
-  (made with gate-allowed `ln -s` loops), 48 globs over those links followed by a read of
-  a client file exit 2 through the real hook in 5.05 seconds, with the budget message.
+  and two self-links (all made with gate-allowed `ln -s` commands), through the real hook:
+  48 globs over the chain followed by a read of a client file exit 2 in 3.4 seconds (each
+  pattern is expanded once, and the read is blocked); a 24-level `*/` glob through the
+  self-links followed by the same read exits 2 in 5.55 seconds, stopped by the watchdog;
+  `git status` exits 0 in 0.06 seconds.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
   Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull
   request. An earlier head's first run failed one test on Windows, in the per-call link walk
@@ -125,8 +128,22 @@ of 10,000 glob matches, with a block past either (the same 48-glob command now b
 in about 5 seconds); unzip option clusters read like getopt; doctor resolves each link
 fully and follows links into outside folders; and doctor warns when the hook entry has
 no `timeout` or a larger one. A command longer than the longest path the system
-accepts is also no longer read as a path that fails the call closed. These fixes have
-not been spot-checked yet.
+accepts is also no longer read as a path that fails the call closed.
+
+A second spot-check (2720d87) confirmed those fixes: the 48-glob command blocked in
+5.04 seconds, and the unzip clusters, the doctor link report and timeout warning, the
+150 ordinary cases, the long commands and the patch and archive set all held. It
+returned "fix first" once more. The budget was only checked between steps, and a
+glob of many `*/` levels through two self-links (made by a gate-allowed `ln -s .`)
+spent all its time inside the standard library's glob: at 24 levels the hook took
+1,020 seconds, past the hook timeout. And each glob was charged in several passes, so
+the real cap was about 2,000 matches, not the documented 10,000.
+
+The rulings, fixed with tests written first: a watchdog thread in the hook process
+blocks the call and exits 2 half a second after the budget, whatever the gate is
+doing, with the cooperative checks kept as the fast path; and each distinct glob
+pattern is expanded and charged once per call, so 2,400 matches pass and 10,001
+block. These fixes have not been spot-checked yet.
 
 ## Known remaining limits
 
@@ -143,6 +160,5 @@ command output (`cat "$(...)/clients/..."`) is still a command built at run time
 `git apply` reads from standard input inside `project/` is left to git's own path checks,
 an archive member that is a link a later member writes through is left to the
 extractor, and extractors other than `tar`, `bsdtar`, `unzip` and `ditto -x` are not
-parsed. A hook that times out lets the call proceed; the gate's own 5-second budget
-blocks first, but a single path resolution or glob step already running when the
-budget ends finishes before the check. See [build-only mode](ai-access.md) for the full list.
+parsed. A hook that times out lets the call proceed; the gate's own 5-second budget,
+enforced by a watchdog in the hook process, blocks first. See [build-only mode](ai-access.md) for the full list.

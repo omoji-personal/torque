@@ -17,6 +17,7 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from functools import lru_cache
@@ -170,8 +171,13 @@ _WORD_GROUP_RE = re.compile(r"(?<=[^\s$<>=(|&;`'\"])(\([^()\s]*\)|\{[^{}\s,]*\})
 # Code's own hook timeout, which would let the call run.
 GATE_TIME_BUDGET = 5.0
 GLOB_MATCH_LIMIT = 10_000
+# The watchdog in main() ends the hook process this long after the budget if the
+# cooperative checks have not already blocked the call.
+WATCHDOG_GRACE = 0.5
 _deadline: float | None = None
 _glob_matches = 0
+# Each distinct glob pattern is expanded, and charged, once per call.
+_glob_cache: dict[str, tuple[list[Path], list[Path]]] = {}
 
 
 class BudgetExceeded(Exception):
@@ -474,6 +480,18 @@ def _glob_paths(operand: str, cwd: Path) -> tuple[list[Path], list[Path]]:
         # search rooted at the fixed prefix.
         return [], [prefix]
     pattern = expanded if os.path.isabs(expanded) else os.path.join(str(cwd), expanded)
+    if pattern in _glob_cache:
+        cached_paths, cached_roots = _glob_cache[pattern]
+        return list(cached_paths), list(cached_roots)
+    result = _expand_glob(pattern, prefix)
+    if _deadline is not None:
+        _glob_cache[pattern] = result
+    return list(result[0]), list(result[1])
+
+
+def _expand_glob(pattern: str, prefix: Path) -> tuple[list[Path], list[Path]]:
+    """Expand one absolute glob pattern, charging each match to the call's glob
+    budget. Over _GLOB_LIMIT matches it is read as a recursive root (prefix)."""
     found: list[str] = []
     try:
         for match in glob.iglob(pattern):
@@ -2216,6 +2234,7 @@ class _call_budget:
         if self.owner:
             _deadline = time.monotonic() + GATE_TIME_BUDGET
             _glob_matches = 0
+            _glob_cache.clear()
         return self
 
     def __exit__(self, *exc):
@@ -2223,7 +2242,26 @@ class _call_budget:
         if self.owner:
             _deadline = None
             _glob_matches = 0
+            _glob_cache.clear()
         return False
+
+
+def _watchdog_fire() -> None:
+    """The hard end of the time budget: whatever the gate is doing (a glob inside
+    the standard library, a slow disk), block the call and end the process."""
+    try:
+        sys.stderr.write(_budget_reason(BudgetExceeded(
+            f"the gate's {GATE_TIME_BUDGET:g}-second time budget for one call ran out")) + "\n")
+        sys.stderr.flush()
+    finally:
+        os._exit(2)
+
+
+def _start_watchdog() -> threading.Timer:
+    timer = threading.Timer(GATE_TIME_BUDGET + WATCHDOG_GRACE, _watchdog_fire)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None) -> tuple[bool, str]:
@@ -2671,6 +2709,16 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
 
 
 def main() -> int:
+    # A hard limit on top of the cooperative checks: a daemon timer that blocks the
+    # call and ends the process if the gate is still running after its budget.
+    watchdog = _start_watchdog()
+    try:
+        return _main()
+    finally:
+        watchdog.cancel()
+
+
+def _main() -> int:
     try:
         event = json.loads(sys.stdin.read())
         if not isinstance(event, dict):
