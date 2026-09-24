@@ -267,6 +267,50 @@ def test_n3_doctor_ignores_links_inside_the_tree_and_skipped_folders(tmp_path):
     assert not any("link" in action for action in report["next_actions"])
 
 
+def test_n3_doctor_reports_a_two_hop_link_through_an_outside_folder(tmp_path):
+    root = _doctor_ws(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _symlink(str(outside), root / "project" / "ext")
+    _, report = _doctor_report(root)
+    assert report["ai_access"]["links_out"]["found"] == []
+    _symlink(str(root / "clients"), outside / "back")
+    code, report = _doctor_report(root)
+    found = report["ai_access"]["links_out"]["found"]
+    assert len(found) == 1 and found[0].startswith("project/ext"), found
+    assert report["ready"] is False and code == 3
+
+
+def test_n3_doctor_reports_a_link_chain_ending_above_clients(tmp_path):
+    root = _doctor_ws(tmp_path)
+    _symlink("../..", root / "project" / "src" / "hop2")
+    _symlink("src/hop2", root / "project" / "hop1")
+    _, report = _doctor_report(root)
+    found = report["ai_access"]["links_out"]["found"]
+    assert "project/hop1" in found and "project/src/hop2" in found, found
+
+
+def _hook_settings(root, timeout):
+    from torque import gate
+    import sys
+    entry = {"type": "command", "command": gate.hook_command(sys.executable.replace("\\", "/"))}
+    if timeout is not None:
+        entry["timeout"] = timeout
+    (root / ".claude").mkdir(exist_ok=True)
+    (root / ".claude" / "settings.json").write_text(json.dumps(
+        {"hooks": {"PreToolUse": [{"matcher": ".*", "hooks": [entry]}]}}), encoding="utf-8")
+
+
+@pytest.mark.parametrize("timeout,warned", [(None, True), (601, True), (3600, True), (600, False), (120, False)])
+def test_doctor_warns_about_the_hook_timeout(tmp_path, timeout, warned):
+    root = _doctor_ws(tmp_path)
+    _hook_settings(root, timeout)
+    _, report = _doctor_report(root)
+    hook = report["ai_access"]["hook"]
+    assert hook["timeouts"] == [timeout], hook
+    assert any("timeout" in action for action in report["next_actions"]) is warned, report["next_actions"]
+
+
 def test_n3_doctor_link_scan_stops_at_its_cap_and_says_so(tmp_path, monkeypatch):
     from torque import cli
     root = _doctor_ws(tmp_path)
@@ -520,6 +564,10 @@ APPLY_BLOCK = [
     ("unzip a.zip -d ..", "project"),
     ("unzip -d.. a.zip", "project"),
     ("unzip -: a.zip", "project"),
+    ("unzip -od.. a.zip", "project"),
+    ("unzip -qod .. a.zip", "project"),
+    ("unzip -qo -d.. a.zip", "project"),
+    ("unzip -oqd ../clients a.zip", "project"),
     ("ditto -x -k a.zip ..", "project"),
 ]
 APPLY_ALLOW = [
@@ -543,6 +591,9 @@ APPLY_ALLOW = [
     ("unzip a.zip", "project"),
     ("unzip a.zip -d project/out", ""),
     ("unzip -l a.zip", ""),
+    ("unzip -od out a.zip", "project"),
+    ("unzip -qod src a.zip", "project"),
+    ("unzip -qo -dout a.zip", "project"),
     ("ditto -x -k a.zip out", "project"),
 ]
 
@@ -582,6 +633,57 @@ def test_kimi_r4_07_changelog_says_tagged_not_unpublished(version):
     assert "unpublished" not in heading and "not published to a package index" in heading, heading
 
 
+# --- Spot-check: one time budget and one glob budget per call ---
+
+def test_gate_blocks_when_its_time_budget_runs_out(ws, monkeypatch):
+    monkeypatch.setattr(gate, "GATE_TIME_BUDGET", -1.0)
+    allowed, reason = gate.decide("Bash", {"command": "ls src/*"}, ws, "build-only", ws / "project")
+    assert not allowed and "time budget" in reason, reason
+
+
+def test_gate_time_budget_is_a_few_seconds():
+    assert 1.0 <= gate.GATE_TIME_BUDGET <= 10.0
+
+
+def test_gate_checks_the_deadline_during_glob_expansion(ws, monkeypatch):
+    for n in range(50):
+        (ws / "project" / "src" / f"m{n}.py").write_text("", encoding="utf-8")
+    clock = {"now": 0.0}
+
+    def monotonic():
+        clock["now"] += 0.2
+        return clock["now"]
+
+    monkeypatch.setattr(gate.time, "monotonic", monotonic)
+    allowed, reason = gate.decide("Bash", {"command": "ls src/*.py"}, ws, "build-only", ws / "project")
+    assert not allowed and "time budget" in reason, reason
+
+
+def test_gate_blocks_above_its_glob_match_budget(ws, monkeypatch):
+    for n in range(12):
+        (ws / "project" / "src" / f"m{n}.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(gate, "GLOB_MATCH_LIMIT", 5)
+    allowed, reason = gate.decide("Bash", {"command": "ls src/*.py"}, ws, "build-only", ws / "project")
+    assert not allowed and "glob" in reason, reason
+    assert _bash_allowed("ls src/a.py", ws, ws / "project")
+
+
+def test_gate_budget_is_fresh_for_each_call(ws):
+    for _ in range(3):
+        assert _bash_allowed("ls src/*.py", ws, ws / "project")
+
+
+def test_hook_reports_the_budget_and_exits_2(wsg, monkeypatch):
+    event = {"tool_name": "Bash", "tool_input": {"command": "ls src/*"}, "cwd": str(wsg / "project")}
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(wsg))
+    env["PYTHONPATH"] = str(REPO / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    import sys
+    code = "import torque.gate as g, sys; g.GATE_TIME_BUDGET = -1.0; sys.exit(g.main())"
+    result = subprocess.run([sys.executable, "-c", code], input=json.dumps(event), capture_output=True, text=True,
+                            env=env)
+    assert result.returncode == 2 and "time budget" in result.stderr, result.stderr
+
+
 # --- Re-review finding 4: a word longer than the file name limit ---
 
 def _hook(event, project_dir):
@@ -612,6 +714,12 @@ def test_long_word_naming_client_context_still_blocked(wsg):
 def test_installation_docs_state_the_hook_timeout():
     text = " ".join((REPO / "docs" / "installation.md").read_text(encoding="utf-8").split())
     assert '"timeout": 600' in text and "timed-out hook" in text and "proceed" in text
+
+
+def test_ai_access_doc_states_the_gate_budget():
+    text = _doc()
+    assert "well under a second" not in text
+    assert "5-second" in text and "10,000" in text
 
 
 # --- Ordinary build session: nothing new blocks it ---
