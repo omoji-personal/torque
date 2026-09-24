@@ -80,27 +80,36 @@ def _body(rule: str) -> tuple[str, str] | None:
     return tool, body
 
 
-def _pattern(body: str) -> re.Pattern:
-    """A rule body as a regular expression: `*` matches anything, and a final `:*`
-    means the prefix alone or followed by a space and anything."""
-    prefix_form = body.endswith(":*")
-    text = body[:-2] if prefix_form else body
-    regex = ".*".join(re.escape(part) for part in text.split("*"))
-    return re.compile(regex + ("( .*)?" if prefix_form else ""), re.DOTALL)
+def _globs(body: str) -> list[str]:
+    """A rule body as glob patterns over the command text (`*` is any text). A final
+    `:*` means the prefix alone or followed by a space and anything."""
+    if body.endswith(":*"):
+        return [body[:-2], body[:-2] + " *"]
+    return [body]
 
 
-def _samples(body: str) -> list[str]:
-    base = body[:-2] if body.endswith(":*") else body
-    base = base.replace("*", "")
-    return [base.strip(), base.strip() + " x", base + "3 x"]
+def _intersects(p: str, q: str) -> bool:
+    """True when some text matches both glob patterns (exact, not sampled)."""
+    from functools import lru_cache
+
+    @lru_cache(maxsize=None)
+    def match(i: int, j: int) -> bool:
+        if i == len(p) and j == len(q):
+            return True
+        if i < len(p) and p[i] == "*":
+            return match(i + 1, j) or (j < len(q) and match(i, j + 1))
+        if j < len(q) and q[j] == "*":
+            return match(i, j + 1) or (i < len(p) and match(i + 1, j))
+        return i < len(p) and j < len(q) and p[i] == q[j] and match(i + 1, j + 1)
+    return match(0, 0)
 
 
 def _covered(rule: str) -> bool:
-    """True when an allow rule could match a route the generated rules ask about or
-    deny. Wildcards are read conservatively: any overlap counts."""
+    """True when an allow rule could match any call the generated rules ask about or
+    deny: the glob languages of the two rules intersect."""
     if rule in ASK_RULES or rule in deny_rules():
         return True
-    if rule in ("Bash", "Bash(*)") or rule == "mcp__*":
+    if rule in ("Bash", "Bash(*)") or rule.startswith("mcp__*"):
         return True
     if any(rule == server or rule.startswith(server + "__") or rule.startswith(server + "*")
            for server in BROWSER_SERVERS):
@@ -111,11 +120,7 @@ def _covered(rule: str) -> bool:
     tool, body = mine
     for generated in ASK_RULES + deny_rules():
         theirs = _body(generated)
-        if not theirs or theirs[0] != tool:
-            continue
-        if any(_pattern(body).fullmatch(sample) for sample in _samples(theirs[1])):
-            return True
-        if any(_pattern(theirs[1]).fullmatch(sample) for sample in _samples(body)):
+        if theirs and theirs[0] == tool and any(_intersects(a, b) for a in _globs(body) for b in _globs(theirs[1])):
             return True
     return False
 

@@ -54,8 +54,8 @@ def test_probe_expectations(tmp_path):
     root = make(tmp_path, {"permissions": permissions.generate()})
     report = dc.report(root, None, probe=fake_probe)
     kinds = {p["route"]: p["got"] for p in report["probes"]}
-    assert kinds == {"org_write": "deny", "read_unbound": "deny", "unverifiable": "ask", "admin": "deny",
-                     "browser_write": "deny"}
+    assert kinds == {"org_write": "deny", "read_unbound": "deny", "check_only_unbound": "deny",
+                     "unverifiable": "ask", "admin": "deny", "browser_write": "deny"}
     assert report["ready"], report["problems"]
     assert any("tier 1" in a for a in report["advice"])
 

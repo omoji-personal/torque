@@ -61,11 +61,15 @@ class IndeterminateScope(Exception):
     """The workspace's mode could not be read, so connected mode cannot be ruled out."""
 
 
-def _config_mode(path: Path):
-    """The workspace.json at path: None when absent, else its parsed object;
-    IndeterminateScope when present but unreadable or malformed."""
+def _config_mode(path: Path, selected_client: bool = False):
+    """The workspace.json at path: None when absent from a folder that is not a
+    Torque workspace, else its parsed object. IndeterminateScope when it is present
+    but unreadable or malformed, or absent where a workspace must have one (a
+    selected client's firm folder, or a folder with Torque's workspace marker)."""
     config_path = path / "workspace.json"
     if not config_path.exists():
+        if selected_client or ((path / "clients").is_dir() and (path / ".torque" / "templates.json").is_file()):
+            raise IndeterminateScope(f"{config_path} is missing")
         return None
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -91,7 +95,7 @@ def _connected_scope():
         client = None
         if (path / "client.json").is_file():
             client, path = path.name, path.parent.parent
-        if _is_connected(_config_mode(path)):
+        if _is_connected(_config_mode(path, selected_client=client is not None)):
             return path, client
     try:
         from torque import gate
@@ -100,7 +104,9 @@ def _connected_scope():
         return None
     except OSError as exc:
         raise IndeterminateScope(f"the working folder's workspace cannot be read ({exc})") from exc
-    for folder, mode, _known in chain:
+    for folder, mode, known in chain:
+        if not known:
+            raise IndeterminateScope(f"the workspace configuration at {folder} cannot be read")
         if mode == "connected":
             return folder, os.environ.get("TORQUE_CLIENT") or None
     return None
@@ -121,17 +127,20 @@ def _invocation() -> tuple[str, list[str]]:
 
 def _consumed_approval(workspace, client, invocation, org):
     from torque.approval import consumed_for_wrapper
-    return consumed_for_wrapper(workspace, client, invocation, org)
+    return consumed_for_wrapper(workspace, client, invocation, org, cwd=os.getcwd())
 
 
 def _parent_approval(workspace, client, approval_id, org, invocation):
     from torque.approval import approved_parent
-    return approved_parent(workspace, client, approval_id, org, invocation)
+    return approved_parent(workspace, client, approval_id, org, invocation, cwd=os.getcwd())
 
 
 def _release(workspace, client, invocation, org):
-    from torque.approval import release_for_retry
-    return release_for_retry(workspace, client, invocation, org)
+    from torque.approval import release_child, release_for_retry
+    parent = os.environ.get(APPROVED_PARENT_ENV)
+    if parent:
+        return release_child(workspace, client, parent, org, invocation, cwd=os.getcwd())
+    return release_for_retry(workspace, client, invocation, org, cwd=os.getcwd())
 
 
 def release_after_resolution_failure(target_org: str) -> None:
@@ -141,7 +150,7 @@ def release_after_resolution_failure(target_org: str) -> None:
         scope = _connected_scope()
     except IndeterminateScope:
         return
-    if scope is None or scope[1] is None or os.environ.get(APPROVED_PARENT_ENV):
+    if scope is None or scope[1] is None:
         return
     try:
         if _release(scope[0], scope[1], _invocation(), target_org):

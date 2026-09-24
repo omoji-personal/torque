@@ -30,9 +30,16 @@ TYPE_NEEDLES = {
     "Layout": ("layouts/{name}.layout-meta.xml", "layouts/{name}.layout"),
     "FlexiPage": ("flexipages/{name}.flexipage-meta.xml", "flexipages/{name}.flexipage"),
     "PermissionSet": ("permissionsets/{name}.permissionset-meta.xml", "permissionsets/{name}.permissionset"),
-    "CustomObject": ("objects/{name}/", "objects/{name}.object"),
-    "LightningComponentBundle": ("lwc/{name}/",),
-    "AuraDefinitionBundle": ("aura/{name}/",),
+    "CustomObject": ("objects/{name}/{name}.object-meta.xml", "objects/{name}.object"),
+    "LightningComponentBundle": ("lwc/{name}/{name}.js-meta.xml",),
+    "AuraDefinitionBundle": ("aura/{name}/{name}.cmp", "aura/{name}/{name}.app", "aura/{name}/{name}.evt",
+                             "aura/{name}/{name}.intf", "aura/{name}/{name}.tokens"),
+    "CustomLabel": ("labels/CustomLabels.labels-meta.xml", "labels/CustomLabels.labels"),
+    "WorkflowRule": ("workflows/{parent}.workflow-meta.xml", "workflows/{parent}.workflow"),
+    "WorkflowFieldUpdate": ("workflows/{parent}.workflow-meta.xml", "workflows/{parent}.workflow"),
+    "WorkflowAlert": ("workflows/{parent}.workflow-meta.xml", "workflows/{parent}.workflow"),
+    "SharingCriteriaRule": ("sharingRules/{parent}.sharingRules-meta.xml", "sharingRules/{parent}.sharingRules"),
+    "SharingOwnerRule": ("sharingRules/{parent}.sharingRules-meta.xml", "sharingRules/{parent}.sharingRules"),
     "CustomField": ("objects/{parent}/fields/{child}.field-meta.xml", "objects/{parent}.object"),
     "ValidationRule": ("objects/{parent}/validationRules/{child}.validationRule-meta.xml",
                        "objects/{parent}.object"),
@@ -59,6 +66,35 @@ SOURCE_PATTERNS = (
     (r"(?:^|/)aura/([^/]+)/", "AuraDefinitionBundle:{0}"),
 )
 SOURCE_DIR_FLAGS = ("-d", "--source-dir", "--sourcepath", "-p")
+DESTRUCTIVE_FLAGS = ("--pre-destructive-changes", "--post-destructive-changes", "--predestructivechanges",
+                     "--postdestructivechanges")
+# Where a component's local files live, for the approval's file binding. Components
+# kept in a shared file (labels, workflows, sharing rules) bind that whole file;
+# object children bind their object folder.
+CONTAINER_NEEDLES = {
+    "CustomLabel": ("/labels/",), "CustomLabels": ("/labels/",),
+    "WorkflowRule": ("/workflows/{parent}.workflow",), "WorkflowFieldUpdate": ("/workflows/{parent}.workflow",),
+    "WorkflowAlert": ("/workflows/{parent}.workflow",), "WorkflowOutboundMessage": ("/workflows/{parent}.workflow",),
+    "WorkflowTask": ("/workflows/{parent}.workflow",), "Workflow": ("/workflows/{name}.workflow",),
+    "SharingCriteriaRule": ("/sharingRules/{parent}.sharingRules",),
+    "SharingOwnerRule": ("/sharingRules/{parent}.sharingRules",), "SharingRules": ("/sharingRules/{name}.",),
+    "AssignmentRule": ("/assignmentRules/{parent}.assignmentRules",),
+    "AutoResponseRule": ("/autoResponseRules/{parent}.autoResponseRules",),
+    "EscalationRule": ("/escalationRules/{parent}.escalationRules",),
+    "MatchingRule": ("/matchingRules/{parent}.matchingRule",),
+    "CompactLayout": ("/objects/{parent}/",), "FieldSet": ("/objects/{parent}/",),
+    "WebLink": ("/objects/{parent}/",), "BusinessProcess": ("/objects/{parent}/",), "Index": ("/objects/{parent}/",),
+    "CustomField": ("/objects/{parent}/fields/{child}.",), "CustomObject": ("/objects/{name}/", "/objects/{name}."),
+}
+
+
+def payload_needles(component: str) -> list[str]:
+    """Path fragments of the local files a component is deployed from."""
+    kind, _, name = component.partition(":")
+    parent, _, child = name.partition(".")
+    if kind in CONTAINER_NEEDLES:
+        return [n.format(name=name, parent=parent, child=child) for n in CONTAINER_NEEDLES[kind]]
+    return ["/" + n for n in _needles(component)] + ["/" + name.split(".")[-1] + "."]
 DEPLOY_WALK_CAP = 20000
 METADATA_FLAGS = ("-m", "--metadata")
 MANIFEST_FLAGS = ("-x", "--manifest")
@@ -111,9 +147,58 @@ def _summary(event: dict) -> dict:
             "org_alias": event.get("org_alias"), "org_id_18": event.get("org_id_18")}
 
 
-def import_before_state(workspace, client, change_id, source) -> dict:
+def _export_records(path: Path, sobject: str | None) -> list[dict]:
+    """Records in a JSON export (sf data query --json, sf data export tree, or a list of
+    records with attributes.type) or a CSV export (with `sobject` naming the object)."""
+    records: list[dict] = []
+    if path.suffix.lower() == ".json":
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        if isinstance(data, dict):
+            result = data.get("result")
+            data = (result.get("records") if isinstance(result, dict) else None) or data.get("records") or []
+        for row in data if isinstance(data, list) else []:
+            if not isinstance(row, dict):
+                continue
+            kind = (row.get("attributes") or {}).get("type") if isinstance(row.get("attributes"), dict) else None
+            kind = kind or sobject
+            record_id = row.get("Id") or row.get("id")
+            if isinstance(kind, str) and isinstance(record_id, str) and kind and record_id:
+                records.append({"type": kind, "id": record_id, "fields": row})
+    elif path.suffix.lower() == ".csv" and sobject:
+        import csv
+        try:
+            with path.open(newline="", encoding="utf-8-sig") as handle:
+                for row in csv.DictReader(handle):
+                    record_id = row.get("Id") or row.get("ID") or row.get("id")
+                    if record_id:
+                        records.append({"type": sobject, "id": record_id, "fields": dict(row)})
+        except (OSError, UnicodeError, csv.Error):
+            return []
+    return records
+
+
+def _normalize_exports(folder: Path, sobject: str | None) -> None:
+    """Write each exported record as records/Object__Id.json, the form coverage reads,
+    next to the original export files."""
+    exports = [p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in (".json", ".csv")
+               and "records" not in p.relative_to(folder).parts[:1]]
+    for export in exports:
+        for record in _export_records(export, sobject):
+            if not str(record["type"]).replace("_", "").isalnum() or not str(record["id"]).isalnum():
+                continue
+            target = folder / "records" / _record_file(record["type"], record["id"])
+            target.parent.mkdir(exist_ok=True)
+            target.write_text(json.dumps(record["fields"], indent=2), encoding="utf-8")
+
+
+def import_before_state(workspace, client, change_id, source, sobject: str | None = None) -> dict:
     """Copy an earlier retrieve (a folder) or a record export (a JSON or CSV file, or a
-    folder of them) into the change's evidence. The org it came from is not verified."""
+    folder of them) into the change's evidence. Exported records are also stored as
+    records/Object__Id.json, so the grant can check them against a record write (a CSV
+    export needs `sobject`). The org it came from is not verified."""
     source = Path(source).expanduser().absolute()
     if source.is_symlink() or not (source.is_dir() or source.is_file()):
         raise ws.WorkspaceError(f"before-state must be a folder or a file (not a link): {source}")
@@ -122,11 +207,17 @@ def import_before_state(workspace, client, change_id, source) -> dict:
     resolved = source.resolve()
     if (clients == resolved or clients in resolved.parents) and not (folder == resolved or folder in resolved.parents):
         raise ws.WorkspaceError("the before-state belongs to a different client")
-    if resolved.is_file():
-        with tempfile.TemporaryDirectory(prefix="torque-before-") as tmp:
-            shutil.copyfile(resolved, Path(tmp) / resolved.name)
-            return _store(workspace, client, change_id, Path(tmp), None, "import")
-    return _store(workspace, client, change_id, resolved, None, "import")
+    if sobject is not None and not sobject.replace("_", "").isalnum():
+        raise ws.WorkspaceError(f"not an object name: {sobject!r}")
+    with tempfile.TemporaryDirectory(prefix="torque-before-") as tmp:
+        staging = Path(tmp) / "import"
+        if resolved.is_file():
+            staging.mkdir()
+            shutil.copyfile(resolved, staging / resolved.name)
+        else:
+            shutil.copytree(resolved, staging, symlinks=True)
+        _normalize_exports(staging, sobject)
+        return _store(workspace, client, change_id, staging, None, "import")
 
 
 def _sf_json(run, cmd: list[str], timeout: int) -> dict:
@@ -224,7 +315,7 @@ def deploy_components(argv: list[str], cwd: Path) -> list[str]:
     """Components a deploy names with --metadata, a manifest or a source folder."""
     legacy = argv_flags.is_legacy(argv)
     out: list[str] = list(argv_flags.values(argv, METADATA_FLAGS, legacy=legacy))
-    for value in argv_flags.values(argv, MANIFEST_FLAGS, legacy=legacy):
+    for value in argv_flags.values(argv, MANIFEST_FLAGS + DESTRUCTIVE_FLAGS, legacy=legacy):
         out += _manifest_components(Path(cwd) / value)
     source_flags = SOURCE_DIR_FLAGS if legacy or "deploy" in argv[:4] else ("-d", "--source-dir")
     for value in argv_flags.values(argv, source_flags, legacy=legacy):

@@ -5,6 +5,11 @@ import pytest
 from torque import changes, workspace as ws
 
 
+def full(kind, **fields):
+    """An event with every field its kind requires (null where it does not apply)."""
+    return {**{key: None for key in changes.APPROVAL_EVENT_FIELDS[kind]}, **fields}
+
+
 @pytest.fixture
 def change(tmp_path):
     root = ws.init_workspace(tmp_path / "firm", "Synthetic consultants")
@@ -16,11 +21,13 @@ def change(tmp_path):
 def test_approval_events_round_trip_and_render(change):
     root, cid = change
     changes.append_approval_event(root, "Acme", cid, "approval_request",
-                                  {"request_id": "req-000000000001", "command": "sf project deploy start -o acme-prod",
-                                   "org_alias": "acme-prod", "org_kind": "production"})
+                                  full("approval_request", request_id="req-000000000001",
+                                       command="sf project deploy start -o acme-prod", org_alias="acme-prod",
+                                       org_kind="production"))
     changes.append_approval_event(root, "Acme", cid, "approval_grant",
-                                  {"request_id": "req-000000000001", "approval_id": "apr-000000000001",
-                                   "approver": "consultant", "expires_at": "2026-10-01T15:19:05+00:00"})
+                                  full("approval_grant", request_id="req-000000000001",
+                                       approval_id="apr-000000000001", approver="consultant",
+                                       expires_at="2026-10-01T15:19:05+00:00"))
     kinds = [e["kind"] for e in changes.get_change(root, "Acme", cid)["events"]]
     assert kinds[-2:] == ["approval_request", "approval_grant"]
     text = changes.render_change(root, "Acme", cid)
@@ -36,7 +43,8 @@ def test_unknown_approval_kind_refused(change):
 def test_fields_cannot_override_event_identity(change):
     root, cid = change
     event = changes.append_approval_event(root, "Acme", cid, "approval_deny",
-                                          {"request_id": "req-000000000001", "reason": "not now",
+                                          {**full("approval_deny", request_id="req-000000000001",
+                                                  reason="not now"),
                                            "kind": "check", "basis": "operator_reported", "id": "x"})
     assert event["kind"] == "approval_deny" and event["basis"] == "torque_approval"
     changes.get_change(root, "Acme", cid)
@@ -44,7 +52,8 @@ def test_fields_cannot_override_event_identity(change):
 
 def test_approval_event_with_wrong_basis_is_invalid(change):
     root, cid = change
-    event = changes.append_approval_event(root, "Acme", cid, "approval_request", {"request_id": "req-000000000001"})
+    event = changes.append_approval_event(root, "Acme", cid, "approval_request",
+                                          full("approval_request", request_id="req-000000000001"))
     path = root / "clients" / "acme" / "changes" / cid / "events" / f"{event['id']}.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["basis"] = "operator_reported"

@@ -134,9 +134,9 @@ def browser_window(w, org="acme-sbx"):
 
 def test_d2_click_needs_navigation_to_the_window_org(w):
     browser_window(w, "acme-sbx")
-    click = ("mcp__claude-in-chrome__computer", {"action": "left_click"})
+    click = ("mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1})
     assert run(w, *click).action == "deny"
-    nav = {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/ObjectManager/home"}
+    nav = {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/ObjectManager/home", "tabId": 1}
     assert run(w, "mcp__claude-in-chrome__navigate", nav).action == "allow"
     assert run(w, *click).action == "allow"
     assert run(w, *click, session="other").action == "deny"
@@ -144,8 +144,9 @@ def test_d2_click_needs_navigation_to_the_window_org(w):
 
 def test_d2_sandbox_window_does_not_cover_production(w):
     browser_window(w, "acme-sbx")
-    assert run(w, "mcp__claude-in-chrome__navigate", {"url": "https://acme.lightning.force.com/"}).action == "allow"
-    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click"}).action == "deny"
+    assert run(w, "mcp__claude-in-chrome__navigate", {"url": "https://acme.lightning.force.com/", "tabId": 1}
+               ).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1}).action == "deny"
 
 
 def test_d2_navigation_to_an_org_outside_consent_is_refused(w):
@@ -230,8 +231,10 @@ def test_d6_approved_write_refused_in_bypass_mode_and_not_used(w, tmp_path):
 
 def test_d6_browser_action_refused_in_bypass_mode(w):
     browser_window(w, "acme-sbx")
-    run(w, "mcp__claude-in-chrome__navigate", {"url": "https://acme--sbx.sandbox.my.salesforce.com/"})
-    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click"}, mode="auto").action == "deny"
+    run(w, "mcp__claude-in-chrome__navigate", {"url": "https://acme--sbx.sandbox.my.salesforce.com/", "tabId": 1})
+    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1}, mode="auto"
+               ).action == "deny"
+    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1}).action == "allow"
 
 
 def test_d6_shell_c_asks(w):
@@ -332,24 +335,24 @@ def wrapper_setup(w, tmp_path):
 
 
 def test_d8_wrapper_lookup_authenticates_the_approval(w, tmp_path):
-    argv, item, _ = wrapper_setup(w, tmp_path)
+    argv, item, folder = wrapper_setup(w, tmp_path)
     path = w / "clients" / "acme" / "approvals" / "granted" / f"{item['id']}.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["org_id_18"] = "00D000000000009AAA"
     path.write_text(json.dumps(data), encoding="utf-8")
     if os.name != "nt":
         os.chmod(path, 0o600)
-    assert approval.consumed_for_wrapper(w, "Acme", ("torque", argv[1:]), "acme-sbx") is None
+    assert approval.consumed_for_wrapper(w, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=folder) is None
 
 
 def test_d8_revert_child_must_match_the_authorized_command(w, tmp_path):
-    argv, item, _ = wrapper_setup(w, tmp_path)
-    assert approval.consumed_for_wrapper(w, "Acme", ("torque", argv[1:]), "acme-sbx")
+    argv, item, folder = wrapper_setup(w, tmp_path)
+    assert approval.consumed_for_wrapper(w, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=folder)
     child = ["deploy", "-o", "acme-sbx", "--metadata", "ApexClass:A"]
     approval.authorize_child(w, "Acme", item["id"], child)
-    assert approval.approved_parent(w, "Acme", item["id"], "acme-sbx", ("jsc", ["deploy", "-o", "acme-sbx"])) is None
-    assert approval.approved_parent(w, "Acme", item["id"], "acme-sbx", ("jsc", child))["id"] == item["id"]
-    assert approval.approved_parent(w, "Acme", item["id"], "acme-sbx", ("jsc", child)) is None
+    assert approval.approved_parent(w, "Acme", item["id"], "acme-sbx", ("jsc", ["deploy", "-o", "acme-sbx"]), cwd=folder) is None
+    assert approval.approved_parent(w, "Acme", item["id"], "acme-sbx", ("jsc", child), cwd=folder)["id"] == item["id"]
+    assert approval.approved_parent(w, "Acme", item["id"], "acme-sbx", ("jsc", child), cwd=folder) is None
 
 
 # D9: a transient org-resolution failure in the wrapper does not use up the approval
@@ -358,7 +361,7 @@ def test_d9_released_approval_can_be_used_again(w, tmp_path):
     argv, item, folder = wrapper_setup(w, tmp_path)
     key = approval.call_key_for_command(item["command"])
     assert not approval.consume(w, "Acme", key, "acme-sbx", config=CONFIG, cwd=folder)[0]
-    assert approval.release_for_retry(w, "Acme", ("torque", argv[1:]), "acme-sbx")
+    assert approval.release_for_retry(w, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=folder)
     assert approval.consume(w, "Acme", key, "acme-sbx", config=CONFIG, cwd=folder)[0]
 
 
@@ -541,7 +544,7 @@ def test_d14_large_payload_uses_the_wrapper_route(w, tmp_path, monkeypatch):
     assert approval.consume(w, "Acme", approval.call_key_for_command(req["command"]), "acme-sbx", config=CONFIG,
                             cwd=folder)[0]
     (folder / "force-app" / "main" / "default" / "classes" / "A.cls").write_text("changed", encoding="utf-8")
-    assert approval.consumed_for_wrapper(w, "Acme", ("torque", argv[1:]), "acme-sbx") is None
+    assert approval.consumed_for_wrapper(w, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=folder) is None
 
 
 # D15: consent, evidence and approval files guarded in full mode too

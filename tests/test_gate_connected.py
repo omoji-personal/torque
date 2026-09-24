@@ -47,6 +47,9 @@ def grant_write(w, tmp_path, command=WRITE, org="acme-prod"):
     src.mkdir(parents=True, exist_ok=True)
     (src / "Case_Escalation.flow-meta.xml").write_text("<Flow/>", encoding="utf-8")
     before = before_state.import_before_state(w, "Acme", cid, tmp_path / "b")
+    flows = w / "force-app" / "main" / "default" / "flows"
+    flows.mkdir(parents=True, exist_ok=True)
+    (flows / "Case_Escalation.flow-meta.xml").write_text("<Flow>v2</Flow>", encoding="utf-8")
     req = approval.create_request(w, "Acme", cid, org, argv=command.split(), resolve=ORGS.get,
                                   before_state_event=before["event_id"], cwd=w)
     approval.grant(w, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(), resolve=ORGS.get)
@@ -151,11 +154,12 @@ def test_browser_interaction_needs_window(w, tmp_path):
     req = approval.create_request(w, "Acme", cid, "acme-sbx", browser_minutes=10,
                                   purpose="Add the Tier field to the Case layout", resolve=ORGS.get)
     approval.grant(w, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(), resolve=ORGS.get)
-    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click"}).action == "deny"
+    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 7}).action == "deny"
     assert run(w, "mcp__claude-in-chrome__navigate",
-               {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/home"}).action == "allow"
-    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click"}).action == "allow"
-    assert run(w, "mcp__claude-in-chrome__form_input", {}).action == "allow"
+               {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/home", "tabId": 7}
+               ).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 7}).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__form_input", {"tabId": 7}).action == "allow"
     assert run(w, "mcp__computer-use__type", {"text": "x"}).action == "deny"
 
 

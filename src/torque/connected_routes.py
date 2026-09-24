@@ -21,7 +21,7 @@ KINDS = ("local", "read", "check_only", "org_write", "browser_write", "unverifia
 # "Host facts verified"). Everything else with an org flag is a write.
 SF_READ = {
     ("data", "query"), ("data", "get", "record"), ("data", "search"), ("data", "export"),
-    ("data", "bulk", "results"), ("data", "resume"),
+    ("data", "bulk", "results"), ("data", "resume"),  # resume reports a job and can return its rows
     ("sobject", "describe"), ("sobject", "list"),
     ("org", "display"), ("org", "list"),
     ("project", "retrieve", "start"), ("project", "retrieve", "preview"),
@@ -34,7 +34,7 @@ SF_READ = {
 }
 # Reads of record data and of debug logs, which the client's consent must cover.
 SF_RECORD_READS = {("data", "query"), ("data", "get", "record"), ("data", "search"), ("data", "export"),
-                   ("data", "bulk", "results")}
+                   ("data", "bulk", "results"), ("data", "resume")}
 SF_LOG_READS = {("apex", "get", "log"), ("apex", "list", "log")}
 SF_CHECK_ONLY = {("project", "deploy", "validate"), ("apex", "run", "test"), ("flow", "run", "test"),
                  ("logic", "run", "test")}
@@ -263,7 +263,8 @@ def _sf(rest: list[str], detail: str) -> Route:
     if topic[:3] == ("api", "request", "rest"):
         methods = _flag_values(rest, {"-X", "--method"})
         # A custom Apex REST endpoint can change data on any method; a request file sets its own method.
-        custom = any("apexrest" in w.casefold() or "executeanonymous" in w.casefold() for w in rest)
+        custom = any("apexrest" in _decoded(w).casefold() or "executeanonymous" in _decoded(w).casefold()
+                     for w in rest)
         kind = "read" if (all(m.upper() == "GET" for m in methods) and not custom
                           and not _flag_values(rest, {"--body", "-b", "--file", "-f"})) else "org_write"
         path = topic[3] if len(topic) > 3 else ""
@@ -290,10 +291,25 @@ _REST_METADATA = re.compile(
     r"/limits/?$|/tooling/(sobjects|query)", re.IGNORECASE)
 
 
+def _decoded(path: str) -> str:
+    """The URL as the server reads it: percent escapes and + decoded, repeatedly."""
+    import urllib.parse
+    text = path or ""
+    for _ in range(4):
+        decoded = urllib.parse.unquote_plus(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text
+
+
 def rest_data_class(path: str) -> str | None:
-    """The consent class a REST GET reads: debug_logs, None (schema) or records."""
-    text = (path or "").split("?", 1)[0] if "/tooling/query" not in (path or "") else (path or "")
-    if "apexlog" in (path or "").casefold():
+    """The consent class a REST GET reads: debug_logs, None (schema) or records. The
+    path is decoded first, so an escaped name is read as the server reads it."""
+    full = _decoded(path)
+    path = full
+    text = full.split("?", 1)[0] if "/tooling/query" not in full else full
+    if re.search(r"apex\s*log", full, re.IGNORECASE):
         return "debug_logs"
     if _REST_METADATA.search(text):
         return None
@@ -331,10 +347,10 @@ def _torque(rest: list[str], detail: str) -> Route:
     if head == "approval":
         if sub in ("grant", "deny") or (sub == "permissions" and "--write" in rest):
             return Route("admin", None, detail, client)
-        if sub == "request" and any(t.split("=", 1)[0] in ("--capture-before-record", "--capture-before-metadata")
-                                    for t in rest):
-            # Capturing a before-state reads the org now.
-            records = any(t.split("=", 1)[0] == "--capture-before-record" for t in rest)
+        names = {t.split("=", 1)[0] for t in rest}
+        if sub == "request" and names & {"--capture-before-record", "--capture-before-metadata", "--capture-before"}:
+            # Capturing a before-state reads the org now, in either spelling.
+            records = bool(names & {"--capture-before-record", "--record"})
             return Route("read" if org else "no_org", org, detail, client, data="records" if records else None)
         return Route("local", None, detail, client)
     if head == "client" and sub == "list":

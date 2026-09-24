@@ -42,6 +42,8 @@ def register(sub) -> None:
                          help="with --capture-before: a component to retrieve (repeatable)")
     request.add_argument("--record", action="append", default=[], metavar="OBJECT:ID",
                          help="with --capture-before: a record to read (repeatable)")
+    request.add_argument("--before-state-object", metavar="OBJECT",
+                         help="with --before-state: the object a CSV record export holds")
     request.add_argument("--validated-job", help="ID of the check-only deploy that validated this change")
     request.add_argument("--browser", action="store_true", help="request a browser window instead of a command")
     request.add_argument("--minutes", type=int, default=30, help="browser window length (1 to 30)")
@@ -161,7 +163,8 @@ def _request(p, tail) -> int:
     org_id, _ = approval._org_identity(item, p.org, None)
     before = None
     if p.before_state:
-        before = before_state.import_before_state(p.workspace, p.client, p.change, Path(p.before_state))
+        before = before_state.import_before_state(p.workspace, p.client, p.change, Path(p.before_state),
+                                                  sobject=p.before_state_object)
     elif metadata:
         before = before_state.capture_metadata(p.workspace, p.client, p.change, p.org, metadata, org_id_18=org_id)
     elif records:
@@ -253,7 +256,9 @@ def _log(p) -> int:
         print(f"{row['created_at']} {row['kind']} {ident} {row.get('org_alias') or ''} "
               f"{row.get('command') or row.get('reason') or ''}".rstrip())
         for observation in row.get("later_observations") or []:
-            print(f"    later metadata observation: job {observation['job_id']} {observation['result']}")
+            link = ("linked: the approval's validated job" if observation.get("linked")
+                    else "not linked to this approval (same org, later)")
+            print(f"    later metadata observation: job {observation['job_id']} {observation['result']} ({link})")
     if not rows:
         print("No approval events.")
     return 0

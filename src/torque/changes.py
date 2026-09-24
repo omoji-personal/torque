@@ -148,11 +148,34 @@ def _append(root: Path, record: dict, event: dict) -> dict:
     return value
 
 
+# The fields each approval event must carry (a value may be null where it does not
+# apply, such as a browser window's command digest).
+APPROVAL_EVENT_FIELDS = {
+    "approval_request": ("request_id", "command", "command_sha256", "payload_digest", "request_kind", "org_alias",
+                         "org_id_18", "org_kind", "validated_job", "before_state_event", "manual_recovery"),
+    "approval_grant": ("request_id", "approval_id", "command", "command_sha256", "payload_digest", "org_alias",
+                       "org_id_18", "org_kind", "approver", "granted_at", "expires_at", "before_state",
+                       "manual_recovery", "validated_job"),
+    "approval_deny": ("request_id", "reason", "command", "command_sha256", "payload_digest", "org_alias",
+                      "org_id_18", "org_kind", "approver", "before_state_event", "manual_recovery", "validated_job"),
+    "approval_consume": ("approval_id", "request_id", "command", "command_sha256", "payload_digest", "org_alias",
+                         "org_id_18", "org_kind", "approver", "before_state", "manual_recovery", "validated_job",
+                         "granted_at", "expires_at", "session_id", "tool_use_id"),
+}
+
+
+def _missing_fields(kind: str, event: dict) -> list[str]:
+    return [key for key in APPROVAL_EVENT_FIELDS.get(kind, ()) if key not in event]
+
+
 def append_approval_event(workspace: str | Path, client: str, change_id: str, kind: str, fields: dict) -> dict:
     """Record one approval step. These events log what happened; they do not
     authorize anything (the approval store and the gate do)."""
     if kind not in APPROVAL_KINDS:
         raise ws.WorkspaceError(f"unknown approval event kind: {kind}")
+    missing = _missing_fields(kind, fields)
+    if missing:
+        raise ws.WorkspaceError(f"{kind} event is missing: {', '.join(missing)}")
     root, record = load_change(workspace, client, change_id)
     reserved = {"schema", "id", "change", "client", "created_at", "kind", "basis", "summary"}
     extra = {k: v for k, v in fields.items() if k not in reserved}
@@ -248,6 +271,8 @@ def _events(root: Path, record: dict) -> list[dict]:
         elif event["kind"] in _TORQUE_BASIS:
             if event.get("basis") != _TORQUE_BASIS[event["kind"]]:
                 raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
+            if _missing_fields(event["kind"], event):
+                raise ws.WorkspaceError(f"invalid approval event (missing fields): {path.name}")
             if event["kind"] == BEFORE_STATE_KIND and (
                     not isinstance(event.get("files"), list) or not isinstance(event.get("sha256"), str)
                     or not isinstance(event.get("path"), str)):

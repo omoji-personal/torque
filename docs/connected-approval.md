@@ -63,8 +63,9 @@ Each "present" step also prints a six-character code the owner types back.
    (fail-closed form, `-I`, matcher, timeout), the effective permission rules across the
    user, project and local settings files, the approval tier, the consent, that each
    approved alias still resolves to its recorded org ID, and runs synthetic calls through the
-   hook: five unbound (an org write, a read, a script, an approval grant and a browser
-   click: deny, deny, ask, deny, deny) and, with `--client`, seven bound to that client (a
+   hook: six unbound (an org write, a read, a check-only deploy, a script, an approval grant
+   and a browser click: deny, deny, deny, ask, deny, deny; the check-only probe is refused
+   before anything is logged) and, with `--client`, seven bound to that client (a
    read of an approved org: allow; an unapproved write, an org outside the consent, the
    default org and another client: deny; a script: ask; a script with prompts skipped:
    deny). The hook only decides; nothing it allows is run. It exits 3 when anything is not
@@ -115,10 +116,13 @@ org ID resolved at grant, which the client's consent must still record for that 
 the consent still active and signed off, when it is used; the client; the change, whose
 record must still load when it is used; the working folder; and the files the command
 deploys or loads. Those are every file and folder any payload flag names (every value of a
-multi-value flag, legacy `sfdx` spellings and comma lists included), the data files a
-`sf data import tree` plan names, the manifest, the project files matching each named
-component, and for an MCP call every file or folder its input names. A named file that does
-not exist, or a link, is refused rather than hashed. A 15-minute window (30 for a browser
+multi-value flag, attached or separate, legacy `sfdx` spellings and comma lists included),
+the data files a `sf data import tree` plan names, the manifest, the project files each
+named component comes from (a component kept in a shared file, such as a custom label,
+workflow rule or sharing rule, binds that whole file; an object's child binds its object
+folder), every package folder for a deploy with no selector, and for an MCP call every file
+or folder its input names. A named file that does not exist, a link, or a named component
+with no file in the project's package folders is refused rather than hashed as empty. A 15-minute window (30 for a browser
 window) with 60 seconds of clock skew; single use. The gate decides every other part of a
 call first and uses the approval only when the whole call is allowed, so a call refused for
 another reason leaves its approval unused.
@@ -141,13 +145,16 @@ formatting characters) as an escape such as `\x1b`, so what it shows is what wil
 For Torque's own routes (`torque deploy`, `data`, `org`, `recover`), the wrapper checks
 again when it runs. It finds connected mode itself (the selected workspace's
 `workspace.json`, or a connected workspace at or above the working folder), and refuses
-when that file cannot be read. It needs an approval the gate consumed for this exact command
-in the last two minutes, verifies that approval again (signature or owner, window, consent,
-change), and refuses when the alias now resolves to another org ID than the one approved.
-If the wrapper cannot resolve the org at all, nothing runs and the approval is returned so
-the same command can be run again inside its window (at most three times, each logged). A
-revert started by `torque recover` names the one wrapper command it starts; that command,
-and only once, runs under the parent's approval.
+when it cannot tell: a configuration that cannot be read, or a selected client or a
+workspace marker with no configuration. It needs an approval the gate consumed for this
+exact command in the last two minutes, run from the approved working folder, verifies that
+approval again (signature or owner, window, consent, change) and its files, and refuses
+when the alias now resolves to another org ID than the one approved. The claim is atomic:
+two runs racing for one approval get it once. If the wrapper cannot resolve the org at all,
+nothing runs and the approval is returned so the same command can be run again inside its
+window (at most three times, each logged). A revert started by `torque recover` names the
+one wrapper command it starts; that command runs once under the parent's approval, and if
+it cannot resolve the org, the parent's approval is returned the same way.
 Scripts that write call `torque approval require --workspace W --client C --org A -- <command>`
 first (exit 0 uses a matching approval, exit 3 refuses).
 
@@ -158,9 +165,11 @@ path before a grant, for every kind of approval. A browser window cannot have a
 before-state (its actions are not known in advance), so a production browser window needs
 `--manual-recovery`. For a command or MCP call, any of:
 
-- `--before-state PATH`: an earlier retrieve (a folder) or a record export (a JSON or CSV
-  file), copied into the change's evidence with a hash per file. Its org is not verified,
-  and the grant screen says so;
+- `--before-state PATH`: an earlier retrieve (a folder) or a record export, copied into the
+  change's evidence with a hash per file. Each exported record is also stored as
+  `records/Object__Id.json`, the form the grant checks a record write against: a JSON export
+  (`sf data query --json`, `sf data export tree`) names its objects; a CSV export needs
+  `--before-state-object OBJECT`. Its org is not verified, and the grant screen says so;
 - `--capture-before --metadata Type:Name` or `--capture-before --record Object:Id`
   (also `--capture-before-metadata` / `--capture-before-record`): read now, as its own
   recorded step, after the org is checked live against the consent; the capture records the
@@ -168,9 +177,11 @@ before-state (its actions are not known in advance), so a production browser win
 - `--manual-recovery TEXT`: at least 40 characters.
 
 The grant checks a before-state against what the write changes: the components a deploy
-names (`--metadata`, a manifest, or every file under `--source-dir`), or the record a
-single-record update or delete names. Each must have its content in the before-state (the
-source file itself, not only its `-meta.xml`), or be declared new at grant
+names (`--metadata`, a manifest, every file under `--source-dir`, and every component a
+pre- or post-destructive manifest deletes), or the record a single-record update or delete
+names. Each must have its content in the before-state (the definition file itself: the Apex
+source, not only its `-meta.xml`; an object's own `.object-meta.xml`, not only one of its
+fields; a component bundle's definition file), or be declared new at grant
 (`--new-component Type:Name`). A write whose changes Torque cannot list (anonymous Apex,
 bulk loads, a deploy with no selector) needs a manual recovery path instead. A before-state
 captured from another org, captured after the request, or changed since capture blocks the
@@ -183,13 +194,23 @@ asks for a window of up to 30 minutes for one org. Clicks cannot be listed in ad
 the window is per org and time, not per action. In a production org the request needs
 `--manual-recovery TEXT`.
 
-The gate learns which org the browser is in from the browser tools' own navigation: a URL
-in a browser tool's input is matched against the My Domain address the consent recorded for
-each approved org (production, sandbox, developer and Visualforce hosts). Navigating to a
-Salesforce org that is not in the consent is refused; other sites are fine. A browser change
-(click, typing, script, form input) is allowed only when this session's last navigation was
-to an org with a granted window. Selecting or switching tabs forgets the org until the next
-navigation, and a change with no known org is refused.
+A browser change is bound to the exact tab it acts in. The gate keeps, for this session,
+the Salesforce orgs each tab (browser server and tab ID) was sent to through the browser
+tools: a URL in a browser tool's input is matched against the My Domain address the consent
+recorded for each approved org (production, sandbox, developer and Visualforce hosts).
+Navigating to a Salesforce org outside the consent is refused; other sites are fine. A
+browser change (click, typing, script, form input) is allowed only when:
+
+- the tool names its tab (a tool without a tab ID, such as a devtools click on the
+  selected page, is refused; use a tool that takes a tab ID, or `torque browser -o ORG`);
+- that tab was sent to exactly one Salesforce org in this session, that org has a granted
+  window, and the tab never showed another org;
+- the call itself names no other org (no URL or org argument for a different org); and
+- that browser server has had no navigation that did not name its tab.
+
+The gate sees the navigation the session asked for, not what the browser then showed. A
+navigation that failed, or a redirect, leaves the tab where the gate cannot see it; that is
+the remaining limit, listed below.
 
 ## Two approval tiers
 
@@ -228,8 +249,8 @@ With the hook in force, on recognized routes:
   the permission rules; the grant also needs a real terminal outside the session and a typed code);
 - a write to an org outside the bound client's consent (whatever route names it), reads of
   another client's folder, and listing every client (`torque client list`);
-- a browser change in an org without a window for that org, and navigation to a Salesforce
-  org outside the consent;
+- a browser change in a tab that is not bound to one org with a granted window (as far as
+  the gate has seen that tab), and navigation to a Salesforce org outside the consent;
 - reads of record data or debug logs the consent does not cover, in every recognized form;
 - org access for a client without active, signed-off consent;
 - a production approval of any kind (browser windows included) without an independent
@@ -263,8 +284,10 @@ With the hook in force, on recognized routes:
   --to-command`, `rsync -e`, `zip -TT`, GNU `sed`'s `e`), and every route
   [build-only mode](ai-access.md#what-it-cannot-stop) lists as unparsed.
 - Actions inside a granted browser window (per window, not per click), actions a URL
-  triggers during read-only navigation, and a click that follows a link from the window's org
-  to another org (the gate sees only navigation made through the browser tools).
+  triggers during read-only navigation, and a tab that is not where the gate recorded it: a
+  navigation the browser did not complete, a server-side redirect, or a link followed inside
+  the page to another org. The gate sees the requested navigation, not its result; a
+  PostToolUse check of the page's address would be needed to close this, and is not built.
 - An alias remapped before a raw `sf` write (doctor `--live` detects it at readiness time).
 - Two tool calls running at the same time: a file edited while an approved deploy starts.
 - The hook not running (missing, disabled, timed out, or a host without hooks).

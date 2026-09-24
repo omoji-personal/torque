@@ -17,8 +17,12 @@ Two changes in 2.0.0a15 reach beyond connected mode, wherever the gate hook is w
 shell command or a file write that names a client's `consent.json`, `consent-evidence/` or
 `approvals/`, or the approval key (`~/.config/torque/approval.key`), is refused in every
 mode: in build-only mode also outside the governing workspace, and in `full` mode for a
-Torque workspace's records (a record changed while the gate is otherwise off would be
-trusted when the owner turns connected mode on). Everything else `full` mode allows is
+Torque workspace's records, with each path resolved first (a relative path inside those
+folders counts), and a removing or moving command (`rm`, `mv`, `rsync`, `find` and
+similar) on a folder that holds them (the client's folder, `clients/`, the workspace) is
+refused too. A record changed while the gate is otherwise off would be trusted when the
+owner turns connected mode on. The `full`-mode check never blocks by failing: if it cannot
+finish, the call is allowed as before. Everything else `full` mode allows is
 unchanged.
 
 ## Current limits, stated plainly

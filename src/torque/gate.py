@@ -2831,48 +2831,76 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     return gated
 
 
-def _in_workspace(path: Path) -> bool:
-    """path lies under a Torque workspace's clients/ folder."""
-    for folder in path.parents:
-        if folder.name == "clients":
-            try:
-                return bool(_workspace_chain(folder.parent)) and _workspace_chain(folder.parent)[0][0] == folder.parent
-            except OSError:
-                return True
+_PROTECTED_NAMES = ("consent.json", "consent-evidence", "approvals")
+_REMOVERS = {"rm", "rmdir", "mv", "unlink", "shred", "truncate", "rsync", "find", "chmod", "chown", "ln", "cp",
+             "ditto", "tar", "unzip", "git"}
+
+
+def _is_workspace_root(folder: Path) -> bool:
+    return (folder / "workspace.json").is_file() or _is_workspace_marker(folder)
+
+
+def _protected_record(path: Path) -> bool:
+    """path is a client's consent, consent evidence or approval record (or inside one)
+    in a Torque workspace."""
+    parts = path.parts
+    for index in range(len(parts) - 3, -1, -1):
+        if parts[index] == "clients" and parts[index + 2] in _PROTECTED_NAMES:
+            return _is_workspace_root(Path(*parts[:index]))
+    return False
+
+
+def _holds_records(path: Path) -> bool:
+    """path is a folder that holds such records: a client folder, clients/, or the
+    workspace root."""
+    try:
+        if not path.is_dir():
+            return False
+        if path.parent.name == "clients" and _is_workspace_root(path.parent.parent):
+            return any((path / name).exists() for name in _PROTECTED_NAMES)
+        clients = path if path.name == "clients" else path / "clients"
+        if clients.is_dir() and _is_workspace_root(clients.parent):
+            return any((child / name).exists() for child in clients.iterdir() if child.is_dir()
+                       for name in _PROTECTED_NAMES)
+    except OSError:
+        return True
     return False
 
 
 def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
     """In a workspace with no build-only or connected mode, the consent, consent
     evidence and approval records of a Torque workspace, and the approval key, are
-    still kept from recognized tools: a record changed while the gate is otherwise
-    off would be trusted when the owner turns connected mode on."""
-    raw = json.dumps(tool_input, ensure_ascii=False).casefold()
-    if "consent" not in raw and "approval" not in raw:
-        return ""
+    still kept from recognized tools, with every path resolved first (relative paths
+    and folders that hold them included): a record changed while the gate is
+    otherwise off would be trusted when the owner turns connected mode on."""
     try:
         return _approval_file_targets_reason(tool_name, tool_input, cwd)
-    except Exception:  # A best-effort guard in full mode: it never blocks by failing.
+    except Exception:  # Best effort in full mode: it never blocks by failing or running long.
         return ""
 
 
 def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
-    targets: list[Path] = []
+    reason = ("Torque: a client's consent and approval records and the approval key are changed only "
+              "by the consultant's torque commands, in every mode.")
     key = PATH_TOOLS.get(tool_name)
-    if key and tool_name not in READ_TOOLS and isinstance(tool_input.get(key), str) and tool_input[key]:
-        targets.append(_resolve(cwd, tool_input[key]))
-    for text in _command_strings(tool_input) if not key else []:
+    if key:
+        raw = tool_input.get(key)
+        if tool_name not in READ_TOOLS and isinstance(raw, str) and raw:
+            target = _resolve(cwd, raw)
+            if APPROVAL_KEY_RE.search(target.as_posix()) or _protected_record(target):
+                return reason
+        return ""
+    for text in _command_strings(tool_input):
         if len(text) > MAX_INPUT_CHARS:
             continue
         for toks, _ in _segments_with_separators(_expand_home_in_command(text)):
+            removes = any(_basename(tok) in _REMOVERS for tok in toks)
             for tok in toks:
-                paths, _ = _token_paths(tok, cwd)
-                targets += paths
-    for target in targets:
-        text = target.as_posix()
-        if APPROVAL_KEY_RE.search(text) or (APPROVAL_FILE_RE.search(text) and _in_workspace(target)):
-            return ("Torque: a client's consent and approval records and the approval key are changed only "
-                    "by the consultant's torque commands, in every mode.")
+                for target in _token_paths(tok, cwd)[0]:
+                    if APPROVAL_KEY_RE.search(target.as_posix()) or _protected_record(target):
+                        return reason
+                    if removes and _holds_records(target):
+                        return reason
     return ""
 
 

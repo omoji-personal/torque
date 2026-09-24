@@ -16,6 +16,9 @@ PROBE_CLIENT = "doctor-probe"
 PROBES = (
     ("org_write", "Bash", {"command": "sf project deploy start -m Flow:Doctor_Probe -o doctor-probe"}, "deny"),
     ("read_unbound", "Bash", {"command": "sf data query -q 'SELECT Id FROM Organization' -o doctor-probe"}, "deny"),
+    # Refused because no client is bound; the gate logs a check-only call only after allowing it.
+    ("check_only_unbound", "Bash", {"command": "sf project deploy validate -m Flow:Doctor_Probe -o doctor-probe"},
+     "deny"),
     ("unverifiable", "Bash", {"command": "python3 doctor_probe.py"}, "ask"),
     ("admin", "Bash", {"command": "torque approval grant req-000000000000 --workspace . --client doctor-probe"},
      "deny"),

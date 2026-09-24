@@ -209,7 +209,7 @@ def test_d9_revert_child_resolution_failure_returns_the_parent_approval(w, tmp_p
     assert approval.consumed_for_wrapper(w, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=folder)
     child = ["deploy", "-o", "acme-sbx", "--metadata", "ApexClass:A"]
     approval.authorize_child(w, "Acme", item["id"], child)
-    assert approval.release_child(w, "Acme", item["id"], "acme-sbx", ("jsc", child))
+    assert approval.release_child(w, "Acme", item["id"], "acme-sbx", ("jsc", child), cwd=folder)
     assert approval.consume(w, "Acme", item["command_sha256"], "acme-sbx", config=CONFIG, cwd=folder)[0]
 
 

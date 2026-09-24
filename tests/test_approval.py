@@ -189,6 +189,9 @@ def test_sandbox_needs_no_before_state(setup):
 
 def test_uncovered_component_blocks_until_declared_new(setup):
     root, cid, before, project = setup
+    classes = project / "force-app" / "main" / "default" / "classes"
+    classes.mkdir(parents=True)
+    (classes / "NewRouter.cls").write_text("public class NewRouter {}", encoding="utf-8")
     argv = CMD[:-2] + ["-m", "ApexClass:NewRouter", "-o", "acme-prod"]
     req = request(root, cid, before, project, argv=argv)
     with pytest.raises(ws.WorkspaceError, match="ApexClass:NewRouter"):
@@ -324,11 +327,11 @@ def test_wrapper_lookup(setup):
             "--client", "acme"]
     req = approval.create_request(root, "Acme", cid, "acme-sbx", argv=argv, resolve=ORGS.get, cwd=project)
     grant(root, req)
-    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx") is None
+    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=project) is None
     assert use(root, req, org="acme-sbx")[0]
-    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:] + ["--wait", "5"]), "acme-sbx") is None
-    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx")["id"]
-    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx") is None
+    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:] + ["--wait", "5"]), "acme-sbx", cwd=project) is None
+    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=project)["id"]
+    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=project) is None
 
 
 def test_command_words():
@@ -343,15 +346,15 @@ def test_approved_parent_for_revert_children(setup):
     argv = ["torque", "recover", "run", "snap-1", "--org", "acme-sbx", "--workspace", str(root), "--client", "acme"]
     req = approval.create_request(root, "Acme", cid, "acme-sbx", argv=argv, resolve=ORGS.get, cwd=project)
     item = grant(root, req)
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx") is None
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", cwd=project) is None
     assert use(root, req, org="acme-sbx")[0]
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx") is None
-    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx")
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", cwd=project) is None
+    assert approval.consumed_for_wrapper(root, "Acme", ("torque", argv[1:]), "acme-sbx", cwd=project)
     child = ("jsc", ["deploy", "-o", "acme-sbx"])
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child) is None
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child, cwd=project) is None
     approval.authorize_child(root, "Acme", item["id"], child[1])
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-prod", child) is None
-    assert approval.approved_parent(root, "Acme", "../../x", "acme-sbx", child) is None
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-prod", child, cwd=project) is None
+    assert approval.approved_parent(root, "Acme", "../../x", "acme-sbx", child, cwd=project) is None
     import time
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child, now=time.time() + 3600) is None
-    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child)["id"] == item["id"]
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child, now=time.time() + 3600, cwd=project) is None
+    assert approval.approved_parent(root, "Acme", item["id"], "acme-sbx", child, cwd=project)["id"] == item["id"]

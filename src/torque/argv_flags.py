@@ -22,6 +22,9 @@ def values(argv: list[str], names, legacy: bool = False) -> list[str]:
         if tok.startswith("--") and eq and name in names:
             found = [attached]
             i += 1
+            while name in MULTI and i < len(argv) and not argv[i].startswith("-"):
+                found.append(argv[i])
+                i += 1
         elif tok in names:
             found = []
             j = i + 1

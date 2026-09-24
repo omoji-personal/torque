@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2522 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2549 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 347 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 374 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -91,6 +91,19 @@ wrapper route; the grant reads the check-only result and compares an attached au
 typed codes on every owner step; tier 2 is enforced as a separate account and refused on
 Windows; the permission rules and doctor checks are wider. Where the report was not
 followed in full, the private report records why.
+
+**R2 recheck** (on 3e89afb) reported 10 findings not fully fixed and three new ones. Its
+tests are in `tests/test_connected_r3.py`, written failing first (27 of 27 failed). The
+fixes: default deploy scope, shared metadata files and attached multi-value flags in the
+file binding, with components that have no local file refused; browser changes bound to the
+exact tab and the org it alone was sent to; decoded REST paths; destructive manifests and
+definition files in before-state coverage; wrappers that refuse an indeterminate workspace
+or another working folder and claim atomically; a revert child's failure returning the
+parent approval; enforced approval-event schemas; exact permission overlap; record exports
+normalized into record evidence; a path-resolving full-mode guard; an unbound check-only
+doctor probe; MCP writes without files; and consent checked for the right client. The
+browser binding still rests on the navigation the session asked for, not its result; that
+limit is stated in [connected mode](connected-approval.md#what-it-cannot-stop).
 
 Two exceptions to "unchanged" are deliberate and documented in [build-only
 mode](ai-access.md): consent, approval and key files are refused wherever the hook runs,

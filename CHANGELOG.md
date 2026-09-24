@@ -63,6 +63,20 @@ default (`full`) and build-only behavior are unchanged.
   flag overlapping wildcard allows; doctor reads the user, project and local settings,
   requires the fail-closed hook and runs bound probes; consent, approval and key files are
   guarded in every mode where the hook runs.
+- After the R2 recheck: a deploy with no selector binds every package folder, components in
+  shared files (custom labels, workflows, sharing rules) bind that file, a named component
+  with no local file is refused, and `--flag=a b` reads both values; a browser change is
+  bound to the exact tab (server and tab ID) and needs that tab to have shown only the
+  window's org; REST paths are decoded before classification and `sf data resume` needs the
+  records class; destructive manifests are in the recovery scope and an object or bundle
+  needs its definition file; wrappers refuse an indeterminate workspace state and a different
+  working folder, claim atomically, and a revert child that cannot resolve its org returns
+  the parent approval; approval events have enforced schemas, denials keep their recovery
+  and validation references, and the log marks unlinked observations; permission overlap is
+  exact glob intersection; record exports become record evidence; the full-mode guard
+  resolves paths and covers folders that hold the records; doctor probes an unbound
+  check-only call; MCP writes without files can be granted; both capture spellings are org
+  reads and consent is checked for the right client.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).

@@ -163,6 +163,11 @@ def payload_problems(argv: list[str], cwd: Path) -> list[str]:
             problems.append(f"{path} does not exist")
     files = payload_files(argv, cwd, capped=False) or []
     problems += [f"{path} is a link; payload files must be real files" for path in files if path.is_symlink()]
+    try:
+        missing = _component_files(argv, Path(cwd), [10 ** 9])[1]
+    except _TooLarge:
+        missing = []
+    problems += [f"{component} has no file in this project's package folders" for component in missing]
     return problems
 
 
@@ -203,40 +208,63 @@ def _walk(root: Path, budget: list[int]) -> list[Path]:
     return found
 
 
+DEPLOY_WORDS = ("deploy", "force:source:deploy", "force:source:push", "force:mdapi:deploy")
+SELECTOR_FLAGS = ("-m", "--metadata", "-x", "--manifest", "-d", "--source-dir", "--sourcepath", "-p",
+                  "--metadata-dir", "--deploydir")
+
+
+def _is_deploy(argv: list[str]) -> bool:
+    return any(tok in DEPLOY_WORDS for tok in argv[1:4]) and "import" not in argv[1:4]
+
+
+def _component_files(argv: list[str], cwd: Path, budget: list[int]) -> tuple[list[Path], list[str]]:
+    """(project files the command's components come from, named components with no
+    local file). A deploy with no selector deploys the whole project (every package
+    folder); a wildcard or type-only selector covers every file too."""
+    legacy = argv_flags.is_legacy(argv)
+    components = _flag_items(argv, COMPONENT_FLAGS)
+    manifests = _flag_items(argv, before_state.MANIFEST_FLAGS)
+    selectorless = _is_deploy(argv) and not argv_flags.values(argv, SELECTOR_FLAGS, legacy=legacy)
+    if not (components or manifests or selectorless):
+        return [], []
+    files = [cwd / extra for extra in ("sfdx-project.json", ".forceignore") if (cwd / extra).is_file()]
+    try:
+        named = before_state.deploy_components(argv, cwd) if (components or manifests) else []
+    except ws.WorkspaceError:
+        named = components
+    everything = selectorless
+    wanted: dict[str, list[str]] = {}
+    for component in named:
+        kind, _, name = component.partition(":")
+        if not name or "*" in name:
+            everything = True
+            continue
+        if kind == "File":
+            continue
+        wanted[component] = before_state.payload_needles(component)
+    matched: set[str] = set()
+    for folder in _package_dirs(cwd):
+        for path in _walk(folder, budget):
+            text = "/" + path.as_posix()
+            hit = [c for c, needles in wanted.items() if any(n in text for n in needles)]
+            matched.update(hit)
+            if everything or hit:
+                files.append(path)
+    return files, [c for c in wanted if c not in matched]
+
+
 def payload_files(argv: list[str], cwd: Path, capped: bool = True) -> list[Path] | None:
     """The local files that decide what the command writes: named files and folders,
-    a tree-import plan's data files, the manifest, and the project files matching
-    each named component. None when over the caps (capped only)."""
+    a tree-import plan's data files, the manifest, the project files each named
+    component comes from (shared files such as CustomLabels included), and the whole
+    project for a deploy with no selector. None when over the caps (capped only)."""
     cwd = Path(cwd)
     budget = [PAYLOAD_WALK_CAP if capped else 10 ** 9]
     files: list[Path] = []
     try:
         for path in named_payload(argv, cwd):
             files += _walk(path, budget)
-        components = _flag_items(argv, COMPONENT_FLAGS)
-        manifests = _flag_items(argv, before_state.MANIFEST_FLAGS)
-        if components or manifests:
-            for extra in ("sfdx-project.json", ".forceignore"):
-                if (cwd / extra).is_file():
-                    files.append(cwd / extra)
-            try:
-                named = before_state.deploy_components(argv, cwd)
-            except ws.WorkspaceError:
-                named = components
-            needles = []
-            everything = False
-            for component in named:
-                kind, _, name = component.partition(":")
-                if not name or "*" in name:
-                    everything = True
-                    continue
-                needles += ["/" + n for n in before_state._needles(component)]
-                needles.append("/" + name.split(".")[-1] + ".")
-            for folder in _package_dirs(cwd):
-                for path in _walk(folder, budget):
-                    text = path.as_posix()
-                    if everything or any(n in text for n in needles):
-                        files.append(path)
+        files += _component_files(argv, cwd, budget)[0]
     except _TooLarge:
         return None
     unique = list(dict.fromkeys(files))
@@ -290,7 +318,7 @@ def _resolver(resolve):
 
 def _usable_consent(workspace, client) -> dict:
     item = consent.load_consent(workspace, client)
-    problems = consent.consent_problems(item)
+    problems = consent.consent_problems(item, client=ws.slug_for(client))
     if problems:
         raise ws.WorkspaceError("consent is not usable: " + "; ".join(problems))
     return item
@@ -396,7 +424,7 @@ def _derive_mcp(tool_name: str, tool_input: dict, org_alias: str, cwd: Path) -> 
     key = call_key_for_mcp(tool_name, tool_input)
     return {"command": f"{tool_name} {text}", "call_key": key, "command_sha256": key,
             "payload_digest": digest, "payload_files": count, "payload_argv": payload_argv,
-            "payload_check": "gate", "cwd": str(cwd) if payload_argv else None,
+            "payload_check": "gate", "cwd": str(cwd),
             "namespaces": find_namespaces([text], Path(".")), "components": [],
             "mcp": {"tool_name": tool_name, "tool_input": tool_input}}
 
@@ -719,8 +747,12 @@ def deny(workspace, client, request_id, reason, *, presence=None, confirm=None) 
     return changes.append_approval_event(workspace, client, req["change"], "approval_deny",
                                          {"request_id": request_id, "reason": reason.strip(),
                                           "command": req.get("command"), "command_sha256": req.get("command_sha256"),
+                                          "payload_digest": req.get("payload_digest"),
                                           "org_alias": req.get("org_alias"), "org_id_18": req.get("org_id_18"),
-                                          "org_kind": req.get("org_kind"), "approver": _user()})
+                                          "org_kind": req.get("org_kind"), "approver": _user(),
+                                          "before_state_event": req.get("before_state_event"),
+                                          "manual_recovery": req.get("manual_recovery"),
+                                          "validated_job": req.get("validated_job")})
 
 
 def _problem(record: dict, path: Path, config: dict, client: str, now: float) -> str:
@@ -976,7 +1008,31 @@ def _authentic(workspace, client, path: Path, record: dict, used: dict, config: 
                 or _binding_problem(workspace, client, record))
 
 
-def _wrapper_matches(workspace, client, invocation, org_alias, *, window, now, config):
+def _exclusive(path: Path, value: dict) -> bool:
+    """Create path only if it does not exist (the atomic step of every claim)."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(value))
+    return True
+
+
+def _read(path: Path) -> dict | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _same_folder(record: dict, cwd) -> bool:
+    here = os.path.realpath(str(cwd if cwd is not None else os.getcwd()))
+    return record.get("cwd") is None or here == record.get("cwd")
+
+
+def _wrapper_matches(workspace, client, invocation, org_alias, *, window, now, config, cwd):
     dirs = _dirs(workspace, client)
     head, words = invocation
     for path, record in _granted(dirs):
@@ -986,9 +1042,11 @@ def _wrapper_matches(workspace, client, invocation, org_alias, *, window, now, c
         if found is None:
             continue
         marker, used = found
-        if now - _epoch(used["at"]) > window or used.get("wrapper"):
+        if now - _epoch(used["at"]) > window or (dirs["consumed"] / f"{record['id']}.wrapper").exists():
             continue
         if command_words(str(record.get("command"))) != (head, list(words)):
+            continue
+        if not _same_folder(record, cwd):
             continue
         if not _authentic(workspace, client, path, record, used, config):
             continue
@@ -996,47 +1054,62 @@ def _wrapper_matches(workspace, client, invocation, org_alias, *, window, now, c
 
 
 def consumed_for_wrapper(workspace, client, invocation: tuple[str, list[str]], org_alias, *,
-                         window=WRAPPER_WINDOW, now=None, config=None) -> dict | None:
+                         window=WRAPPER_WINDOW, now=None, config=None, cwd=None) -> dict | None:
     """The approval the gate consumed in the last `window` seconds for this exact
-    Torque route invocation, authenticated again, with its files checked again (in
-    full, with no gate time budget), marked so it serves one wrapper run."""
+    Torque route invocation, run from the approved folder (`cwd`, default the current
+    one), authenticated again, with its files checked again in full, claimed
+    atomically so it serves one wrapper run."""
     now = now if now is not None else time.time()
     config = config if config is not None else _config(workspace)
-    for _path, record, marker, used in _wrapper_matches(workspace, client, invocation, org_alias, window=window,
-                                                          now=now, config=config):
+    dirs = _dirs(workspace, client)
+    for _path, record, _marker, _used in _wrapper_matches(workspace, client, invocation, org_alias,
+                                                            window=window, now=now, config=config, cwd=cwd):
         if record.get("payload_argv"):
             digest, _ = payload_digest(record["payload_argv"], Path(str(record.get("cwd"))), capped=False)
             if digest != record.get("payload_digest"):
                 continue
-        used["wrapper"] = _iso(now)
-        marker.write_text(json.dumps(used), encoding="utf-8")
-        return record
+        if _exclusive(dirs["consumed"] / f"{record['id']}.wrapper", {"at": _iso(now), "cwd": record.get("cwd")}):
+            return record
     return None
 
 
 MAX_RELEASES = 3
 
 
+def _releases(dirs: dict, approval_id: str) -> int:
+    pattern = re.compile(re.escape(approval_id) + r"\.released-\d+$")
+    return sum(1 for p in dirs["consumed"].iterdir() if pattern.match(p.name))
+
+
+def _release(dirs: dict, approval_id: str, why: str, org_alias: str) -> bool:
+    """Return a consumed approval (nothing ran), keeping its markers for the record."""
+    count = _releases(dirs, approval_id)
+    if count >= MAX_RELEASES:
+        return False
+    base = dirs["consumed"] / approval_id
+    for suffix in (".wrapper", ".child"):
+        side = base.with_name(approval_id + suffix)
+        if side.exists():
+            os.replace(side, base.with_name(f"{approval_id}.released-{count + 1}{suffix.replace('.', '-')}"))
+    os.replace(base, base.with_name(f"{approval_id}.released-{count + 1}"))
+    try:
+        _activity(dirs, {"action": f"released: {why}", "approval_id": approval_id, "org_alias": org_alias})
+    except OSError:
+        pass
+    return True
+
+
 def release_for_retry(workspace, client, invocation: tuple[str, list[str]], org_alias, *,
-                      window=WRAPPER_WINDOW, now=None, config=None) -> bool:
+                      window=WRAPPER_WINDOW, now=None, config=None, cwd=None) -> bool:
     """After the wrapper could not resolve the org (nothing ran), return the approval
     the gate just consumed for this exact invocation, so the same command can be run
     again inside its window. At most three times per approval; each release is logged."""
     now = now if now is not None else time.time()
     config = config if config is not None else _config(workspace)
     dirs = _dirs(workspace, client)
-    for _path, record, marker, used in _wrapper_matches(workspace, client, invocation, org_alias, window=window,
-                                                          now=now, config=config):
-        released = sorted(dirs["consumed"].glob(record["id"] + ".released-*"))
-        if len(released) >= MAX_RELEASES:
-            return False
-        os.replace(marker, dirs["consumed"] / f"{record['id']}.released-{len(released) + 1}")
-        try:
-            _activity(dirs, {"action": "released after the org could not be resolved", "approval_id": record["id"],
-                             "org_alias": org_alias})
-        except OSError:
-            pass
-        return True
+    for _path, record, _marker, _used in _wrapper_matches(workspace, client, invocation, org_alias,
+                                                            window=window, now=now, config=config, cwd=cwd):
+        return _release(dirs, record["id"], "the org could not be resolved", org_alias)
     return False
 
 
@@ -1045,50 +1118,69 @@ PARENT_WINDOW = 1800
 
 def authorize_child(workspace, client, approval_id, child_words: list[str]) -> None:
     """The revert executor names the one wrapper command it will start for the
-    approval its own run verified."""
+    approval its own run verified (once per verified run)."""
     if not _valid_id(approval_id, "apr-"):
         raise ws.WorkspaceError("invalid approval ID")
     dirs = _dirs(workspace, client)
-    marker = dirs["consumed"] / approval_id
-    used = json.loads(marker.read_text(encoding="utf-8"))
-    if not used.get("wrapper"):
+    if _read(dirs["consumed"] / f"{approval_id}.wrapper") is None:
         raise ws.WorkspaceError("the approval was not verified by the parent run")
-    used["child"] = list(child_words)
-    marker.write_text(json.dumps(used), encoding="utf-8")
+    if not _exclusive(dirs["consumed"] / f"{approval_id}.child", {"child": list(child_words)}):
+        raise ws.WorkspaceError("a child command was already named for this approval")
+
+
+def _parent_state(workspace, client, approval_id, org_alias, invocation, *, window, now, config, cwd):
+    if not _valid_id(approval_id, "apr-") or invocation is None:
+        return None
+    dirs = _dirs(workspace, client)
+    path = dirs["granted"] / f"{approval_id}.json"
+    record = _read(path)
+    found = _consumed(dirs, record) if record else None
+    wrapper = _read(dirs["consumed"] / f"{approval_id}.wrapper")
+    child = _read(dirs["consumed"] / f"{approval_id}.child")
+    if not found or not wrapper or not child:
+        return None
+    try:
+        started = _epoch(wrapper["at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if record.get("org_alias") != org_alias or now - started > window or child.get("child") != list(invocation[1]):
+        return None
+    if not _same_folder(record, cwd) or not _authentic(workspace, client, path, record, found[1], config):
+        return None
+    return dirs, record
 
 
 def approved_parent(workspace, client, approval_id, org_alias, invocation=None, *, window=PARENT_WINDOW,
-                    now=None, config=None) -> dict | None:
+                    now=None, config=None, cwd=None) -> dict | None:
     """For the wrapper the revert executor starts: the approval its parent verified in
     the last `window` seconds, authenticated again, for exactly the command the parent
-    named, used once."""
+    named, run from the approved folder, claimed atomically once."""
     now = now if now is not None else time.time()
-    if not _valid_id(approval_id, "apr-"):
-        return None
     config = config if config is not None else _config(workspace)
-    dirs = _dirs(workspace, client)
-    path = dirs["granted"] / f"{approval_id}.json"
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    state = _parent_state(workspace, client, approval_id, org_alias, invocation, window=window, now=now,
+                          config=config, cwd=cwd)
+    if state is None:
         return None
-    found = _consumed(dirs, record) if isinstance(record, dict) else None
-    if found is None:
+    dirs, record = state
+    if not _exclusive(dirs["consumed"] / f"{approval_id}.child-used", {"at": _iso(now)}):
         return None
-    marker, used = found
-    try:
-        started = _epoch(used["wrapper"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    if record.get("org_alias") != org_alias or now - started > window or used.get("child_used"):
-        return None
-    if invocation is None or used.get("child") != list(invocation[1]):
-        return None
-    if not _authentic(workspace, client, path, record, used, config):
-        return None
-    used["child_used"] = _iso(now)
-    marker.write_text(json.dumps(used), encoding="utf-8")
     return record
+
+
+def release_child(workspace, client, approval_id, org_alias, invocation, *, window=PARENT_WINDOW, now=None,
+                  config=None, cwd=None) -> bool:
+    """The revert's child could not resolve the org (nothing ran): return the parent's
+    approval, so the same `torque recover` command can be run again in its window."""
+    now = now if now is not None else time.time()
+    config = config if config is not None else _config(workspace)
+    state = _parent_state(workspace, client, approval_id, org_alias, invocation, window=window, now=now,
+                          config=config, cwd=cwd)
+    if state is None:
+        return False
+    dirs, record = state
+    if (dirs["consumed"] / f"{approval_id}.child-used").exists():
+        return False
+    return _release(dirs, approval_id, "the recovery child could not resolve the org", org_alias)
 
 
 def list_approvals(workspace, client) -> list[dict]:
