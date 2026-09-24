@@ -362,7 +362,7 @@ def test_k8_shim_runs_the_real_gate(ws):
 
 def test_k8_hook_command_embeds_shim():
     command = gate.hook_command("/opt/venv/bin/python")
-    assert command.startswith('"/opt/venv/bin/python" -c "')
+    assert command.startswith('"/opt/venv/bin/python" -I -c "')
     assert gate.HOOK_SHIM_CODE in command
     assert '"' not in gate.HOOK_SHIM_CODE and "%" not in gate.HOOK_SHIM_CODE
 
@@ -401,12 +401,18 @@ def test_k8_doctor_reports_unwired_hook_in_build_only(tmp_path):
     assert any("hook" in action for action in report["next_actions"])
 
 
-@pytest.mark.skipif(os.name == "nt", reason="the probe runs the hook through a POSIX shell")
+def _probe_skip():
+    from torque import cli
+    return os.name == "nt" and cli._hook_shell() is None
+
+
+@pytest.mark.skipif(_probe_skip(), reason="no Git Bash to run the hook the way Claude Code does")
 def test_k8_doctor_verifies_wired_shim(tmp_path):
     root = _init_ws(tmp_path, "build-only")
     (root / ".claude").mkdir(exist_ok=True)
-    settings = {"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*",
-                                          "hooks": [{"type": "command", "command": gate.hook_command(sys.executable)}]}]}}
+    python = Path(sys.executable).as_posix()
+    settings = {"hooks": {"PreToolUse": [{"matcher": ".*",
+                                          "hooks": [{"type": "command", "command": gate.hook_command(python)}]}]}}
     (root / ".claude" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
     code, report = _doctor(root)
     hook = report["ai_access"]["hook"]
@@ -414,11 +420,11 @@ def test_k8_doctor_verifies_wired_shim(tmp_path):
     assert code == 0
 
 
-@pytest.mark.skipif(os.name == "nt", reason="the probe runs the hook through a POSIX shell")
+@pytest.mark.skipif(_probe_skip(), reason="no Git Bash to run the hook the way Claude Code does")
 def test_k8_doctor_flags_a_hook_that_does_not_block(tmp_path):
     root = _init_ws(tmp_path, "build-only")
     (root / ".claude").mkdir(exist_ok=True)
-    broken = f'"{sys.executable}" -c "import sys; sys.exit(1)" # torque.gate'
+    broken = f'"{Path(sys.executable).as_posix()}" -c "import sys; sys.exit(1)" # torque.gate'
     settings = {"hooks": {"PreToolUse": [{"matcher": "Bash|Read|mcp__.*",
                                           "hooks": [{"type": "command", "command": broken}]}]}}
     (root / ".claude" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
@@ -523,3 +529,334 @@ def test_cd_and_narrowing_follow_the_separator():
     assert _blocked("Bash", {"command": "(cd /tmp && true); cat clients/acme/notes.md"})
     assert _blocked("Bash", {"command": "cd /tmp && true || cat clients/acme/notes.md"})
     assert _blocked("Bash", {"command": 'cd "$D" && cat clients/acme/notes.md'})
+
+
+# --- Security re-review: a cd, pushd or popd to an unknown directory ---
+# The shell may now be anywhere, so every directory seen so far, the workspace
+# root, the directories between the session's directory and the root, and the
+# root's ancestors all stay possible.
+
+UNKNOWN_CD_BLOCK_ROOT = [
+    "cd /tmp && cd - && cat clients/acme/notes.md",
+    "cd /tmp && cd - >/dev/null && cat clients/acme/notes.md",
+    "cd /tmp && cd ~- && cat clients/acme/notes.md",
+    'cd /tmp && cd "$OLDPWD" && cat clients/acme/notes.md',
+    "pushd /tmp && popd && cat clients/acme/notes.md",
+    "pushd /tmp >/dev/null && popd >/dev/null && cat clients/acme/notes.md",
+    "cd /tmp && popd && cat clients/acme/notes.md",
+    "pushd /tmp && pushd && cat clients/acme/notes.md",
+    "cd /tmp && pushd +1 && cat clients/acme/notes.md",
+    "cd /tmp && builtin cd - && cat clients/acme/notes.md",
+    "cd /tmp && command cd - && cat clients/acme/notes.md",
+    "cd /tmp && CDPATH= cd - && cat clients/acme/notes.md",
+    "cd project && cd - && cat clients/acme/notes.md",
+]
+UNKNOWN_CD_BLOCK_PROJECT = [
+    "cd ~- && cat clients/acme/notes.md",
+    "cd ~+ && cat ../clients/acme/notes.md",
+    'cd "$OLDPWD" && cat clients/acme/notes.md',
+    'cd "$(git rev-parse --show-toplevel)" && cat clients/acme/notes.md',
+    "cd `git rev-parse --show-toplevel` && cat clients/acme/notes.md",
+    'cd "$PWD/.." && cat clients/acme/notes.md',
+    'cd "$D" && cat w/clients/acme/notes.md',
+    "popd && cat clients/acme/notes.md",
+    "cd - && rg secret",
+]
+UNKNOWN_CD_ALLOW = [
+    "cd /tmp && cd - && git status",
+    'cd "$(git rev-parse --show-toplevel)" && git status',
+    "pushd project && popd && cat project/README.md",
+    'cd "$OLDPWD" && pytest',
+]
+
+
+@pytest.mark.parametrize("command", UNKNOWN_CD_BLOCK_ROOT)
+def test_unknown_cd_from_root_widens_candidates(command):
+    assert _blocked("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize("command", UNKNOWN_CD_BLOCK_PROJECT)
+def test_unknown_cd_from_subfolder_widens_to_workspace(command):
+    assert _blocked("Bash", {"command": command}, W, W / "project"), command
+
+
+@pytest.mark.parametrize("command", UNKNOWN_CD_ALLOW)
+def test_unknown_cd_ordinary_work_allowed(command):
+    assert gate.decide("Bash", {"command": command}, W, "build-only", W / "project") == (True, ""), command
+
+
+# --- Security re-review: a shadow torque package or interpreter startup file ---
+
+def _interpreter_targets():
+    import sysconfig
+    purelib = Path(sysconfig.get_paths()["purelib"])
+    targets = [purelib / "zz-shadow.pth", purelib / "sitecustomize.py", purelib / "usercustomize.py",
+               purelib / "torque" / "gate.py"]
+    if sys.prefix != sys.base_prefix:
+        scripts = Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin")
+        targets += [scripts / ("python.exe" if os.name == "nt" else "python3"), Path(sys.executable)]
+    return targets
+
+
+SHADOW_WRITES = ["torque/__init__.py", "torque/gate.py", "torque.py", "project/torque/gate.py",
+                 "sitecustomize.py", "project/usercustomize.py", "project/.venv/lib/x.pth", "evil.pth"]
+
+
+@pytest.mark.parametrize("rel", SHADOW_WRITES)
+@pytest.mark.parametrize("tool", ["Write", "Edit", "MultiEdit"])
+def test_shadow_package_writes_in_workspace_blocked(ws, tool, rel):
+    assert _blocked(tool, {"file_path": str(ws / rel), "content": "def main(): return 0"}, ws, ws), rel
+
+
+@pytest.mark.parametrize("target", _interpreter_targets(), ids=lambda p: p.name)
+def test_writes_into_hook_interpreter_blocked(target):
+    assert _blocked("Write", {"file_path": str(target), "content": ""}), target
+    assert _blocked("mcp__filesystem__write_file", {"path": str(target), "content": ""}), target
+
+
+SHADOW_BASH = [
+    "mkdir torque && echo 'def main(): return 0' > torque/gate.py",
+    "echo 'def main(): return 0' > torque.py",
+    "cp /tmp/x.py torque/__init__.py",
+    "echo import os > sitecustomize.py",
+    "cp /tmp/x.pth project/evil.pth",
+]
+
+
+@pytest.mark.parametrize("command", SHADOW_BASH)
+def test_shadow_package_bash_writes_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+
+
+def test_bash_writes_into_hook_interpreter_blocked():
+    for target in _interpreter_targets():
+        assert _blocked("Bash", {"command": f"cp /tmp/x '{target.as_posix()}'"}), target
+
+
+def test_running_the_hook_interpreter_is_allowed(ws):
+    python = Path(sys.executable).as_posix()
+    for command in (f"'{python}' -m pytest", f"'{python}' --version", ".venv/bin/python -m pytest"):
+        assert gate.decide("Bash", {"command": command}, ws, "build-only", ws) == (True, ""), command
+
+
+def test_ordinary_python_writes_allowed(ws):
+    for rel in ("project/app.py", "project/tests/test_app.py", "project/torque_notes.md"):
+        assert gate.decide("Write", {"file_path": str(ws / rel), "content": ""}, ws, "build-only", ws) == (True, ""), rel
+
+
+def test_hook_command_is_isolated_from_the_working_directory():
+    import shlex
+    argv = shlex.split(gate.hook_command("/opt/venv/bin/python"))
+    assert argv[:3] == ["/opt/venv/bin/python", "-I", "-c"], argv
+
+
+def test_hook_ignores_a_shadow_package_in_the_workspace(ws):
+    import shlex
+    shadow = ws / "torque"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text("", encoding="utf-8")
+    (shadow / "gate.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+    (ws / "sitecustomize.py").write_text("", encoding="utf-8")
+    event = {"tool_name": "Read", "tool_input": {"file_path": "clients/acme/notes.md"}, "cwd": str(ws)}
+    argv = shlex.split(gate.hook_command(Path(sys.executable).as_posix()))
+    result = subprocess.run(argv, cwd=ws, input=json.dumps(event), capture_output=True, text=True)
+    assert result.returncode == 2 and "client context" in result.stderr, result.stderr
+
+
+def test_documented_hooks_are_isolated():
+    for doc in ("docs/ai-access.md", "docs/installation.md"):
+        text = (REPO / doc).read_text(encoding="utf-8")
+        assert 'python\\" -I -c' in text or 'python.exe\\" -I -c' in text, doc
+        assert '"matcher": ".*"' in text, doc
+
+
+def _write_hook(root, command, matcher=".*"):
+    (root / ".claude").mkdir(exist_ok=True)
+    settings = {"hooks": {"PreToolUse": [{"matcher": matcher, "hooks": [{"type": "command", "command": command}]}]}}
+    (root / ".claude" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+
+@pytest.mark.skipif(_probe_skip(), reason="no Git Bash to run the hook the way Claude Code does")
+def test_doctor_flags_a_hook_that_is_not_isolated(tmp_path):
+    root = _init_ws(tmp_path, "build-only")
+    python = Path(sys.executable).as_posix()
+    _write_hook(root, f'"{python}" -c "{gate.HOOK_SHIM_CODE}"')
+    code, report = _doctor(root)
+    hook = report["ai_access"]["hook"]
+    assert hook["verified"] and not hook["isolated"], hook
+    assert code == 3 and any("-I" in action for action in report["next_actions"])
+
+
+@pytest.mark.skipif(_probe_skip(), reason="no Git Bash to run the hook the way Claude Code does")
+def test_doctor_accepts_isolated_hook_with_full_matcher(tmp_path):
+    root = _init_ws(tmp_path, "build-only")
+    _write_hook(root, gate.hook_command(Path(sys.executable).as_posix()))
+    code, report = _doctor(root)
+    hook = report["ai_access"]["hook"]
+    assert hook["verified"] and hook["isolated"] and hook["matcher_covers_tools"], hook
+    assert code == 0
+
+
+@pytest.mark.skipif(_probe_skip(), reason="no Git Bash to run the hook the way Claude Code does")
+def test_doctor_flags_a_matcher_that_misses_tools(tmp_path):
+    root = _init_ws(tmp_path, "build-only")
+    _write_hook(root, gate.hook_command(Path(sys.executable).as_posix()),
+                matcher="Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*")
+    code, report = _doctor(root)
+    assert not report["ai_access"]["hook"]["matcher_covers_tools"]
+    assert code == 3 and any('".*"' in action for action in report["next_actions"])
+
+
+@pytest.mark.skipif(_probe_skip(), reason="no Git Bash to run the hook the way Claude Code does")
+def test_doctor_names_a_gate_that_could_not_load(tmp_path):
+    root = _init_ws(tmp_path, "build-only")
+    python = Path(sys.executable).as_posix()
+    _write_hook(root, f'"{python}" -c "import sys; sys.stderr.write(\'the gate could not load\'); sys.exit(2)" '
+                      "# torque.gate")
+    code, report = _doctor(root)
+    assert code == 3
+    text = " ".join(report["next_actions"])
+    assert "could not load" in text and "(exit 2)" not in text, text
+
+
+# --- Security re-review: tools other than Bash that run commands, and unknown tools ---
+
+COMMAND_TOOL_BLOCK = [
+    ("Monitor", {"command": "cat clients/acme/notes.md", "description": "x"}),
+    ("Monitor", {"command": "tail -f clients/acme/notes.md"}),
+    ("Monitor", {"command": "sf data query -q 'SELECT Id FROM Account' -o prod"}),
+    ("Monitor", {"command": "torque workspace ai-access full --path ."}),
+    ("PowerShell", {"command": "Get-Content clients/acme/notes.md"}),
+    ("PowerShell", {"command": "Get-Content clients\\acme\\notes.md"}),
+    ("PowerShell", {"command": "sf org display --target-org prod"}),
+    ("SomeFutureShell", {"command": "cat clients/acme/notes.md"}),
+    ("SomeFutureTool", {}),
+    ("SomeFutureTool", {"anything": "x"}),
+    ("LS", {"path": "/w/clients"}),
+    ("NotebookRead", {"notebook_path": "/w/clients/acme/n.ipynb"}),
+    ("ReadMcpResourceTool", {"server": "files", "uri": "file:///w/clients/acme/notes.md"}),
+]
+COMMAND_TOOL_ALLOW = [
+    ("Monitor", {"command": "tail -f project/build.log"}),
+    ("PowerShell", {"command": "Get-ChildItem project"}),
+    ("TodoWrite", {"todos": [{"content": "clients", "status": "pending"}]}),
+    ("WebSearch", {"query": "salesforce flow fault"}),
+    ("WebFetch", {"url": "https://developer.salesforce.com/", "prompt": "x"}),
+    ("Task", {"prompt": "look at project/", "description": "x"}),
+    ("Agent", {"prompt": "look at project/", "description": "x"}),
+    ("LS", {"path": "/w/project"}),
+    ("ExitPlanMode", {"plan": "x"}),
+]
+
+
+@pytest.mark.parametrize("tool,inp", COMMAND_TOOL_BLOCK)
+def test_command_tools_and_unknown_tools_blocked(tool, inp):
+    assert _blocked(tool, inp), (tool, inp)
+    assert gate.decide(tool, inp, W, "full") == (True, "")
+
+
+@pytest.mark.parametrize("tool,inp", COMMAND_TOOL_ALLOW)
+def test_known_safe_tools_allowed(tool, inp):
+    assert gate.decide(tool, inp, W, "build-only") == (True, ""), (tool, inp)
+
+
+# --- Security re-review: Windows Git Bash paths ---
+
+@pytest.mark.parametrize("raw,expected", [
+    ("/c/Users/a/ws/clients", "C:/Users/a/ws/clients"),
+    ("/C/Users", "C:/Users"),
+    ("/d", "D:/"),
+    ("/cygdrive/c/Users/a", "C:/Users/a"),
+    ("/cygdrive/e", "E:/"),
+    ("/tmp/x", "/tmp/x"),
+    ("/cc/x", "/cc/x"),
+    ("clients/x", "clients/x"),
+])
+def test_msys_paths_normalised_on_windows(raw, expected):
+    assert gate._native_path(raw, windows=True) == expected
+    assert gate._native_path(raw, windows=False) == raw
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Git Bash drive paths only exist on Windows")
+def test_msys_paths_reach_clients_on_windows():
+    workspace = Path("C:/w")
+    for command in ("cat /c/w/clients/acme/notes.md", "cat /cygdrive/c/w/clients/acme/notes.md",
+                    "cd /c/w/project && cat ../clients/acme/notes.md"):
+        assert _blocked("Bash", {"command": command}, workspace, workspace), command
+    assert _blocked("Read", {"file_path": "/c/w/clients/acme/notes.md"}, workspace, workspace)
+
+
+# --- Security re-review: minor routes ---
+
+MINOR_BLOCK = [
+    "git grep --untrack secret",
+    "git grep --unt secret",
+    "git grep --no-ind secret",
+    "git grep --no-i secret",
+    "git -C /w grep --untr secret",
+    "diff -r /tmp/e .",
+    "diff -ru /tmp/e /w",
+    "diff --recursive /tmp/e .",
+    "cd project && diff -r /tmp/e ..",
+    "git diff --no-index /tmp/e .",
+    "git diff --no-ind /tmp/e /w/clients",
+    "git diff --no-index -- /tmp/e clients/acme",
+    "cat $'\\x63lients/acme/notes.md'",
+    "cat $'\\143lients/acme/notes.md'",
+    'cat $"clients/acme/notes.md"',
+]
+MINOR_ALLOW = [
+    "git grep --no-color secret",
+    "diff -r project/force-app /tmp/e",
+    "diff project/README.md /tmp/x",
+    "git diff",
+    "git diff --stat HEAD~1",
+    "git diff --no-index project/README.md /tmp/x",
+    "printf $'a\\tb\\n'",
+]
+
+
+@pytest.mark.parametrize("command", MINOR_BLOCK)
+def test_minor_routes_blocked(command):
+    assert _blocked("Bash", {"command": command}), command
+
+
+@pytest.mark.parametrize("command", MINOR_ALLOW)
+def test_minor_routes_ordinary_work_allowed(command):
+    assert gate.decide("Bash", {"command": command}, W, "build-only") == (True, ""), command
+
+
+ZSH_GLOB_BLOCK = [
+    "cat c(l)ients/acme/notes.md",
+    "cat c(l|x)ients/acme/notes.md",
+    "cat (c)lients/acme/notes.md",
+    "ls clients(/)",
+    "cat clients/acme/notes(.)",
+    "cat c{l..l}ients/acme/notes.md",
+]
+ZSH_GLOB_ALLOW = [
+    "(cd project && ls)",
+    "echo $(date)",
+    "cat project/*.md",
+    "f() { echo hi; }; f",
+]
+
+
+@pytest.mark.parametrize("command", ZSH_GLOB_BLOCK)
+def test_zsh_glob_grouping_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+
+
+@pytest.mark.parametrize("command", ZSH_GLOB_ALLOW)
+def test_zsh_glob_grouping_ordinary_work_allowed(ws, command):
+    assert gate.decide("Bash", {"command": command}, ws, "build-only", ws) == (True, ""), command
+
+
+def test_root_glob_block_names_the_glob(ws):
+    allowed, reason = gate.decide("Bash", {"command": "ls *"}, ws, "build-only", ws)
+    assert not allowed and "glob" in reason and "targets workspace.json" not in reason, reason
+
+
+def test_readme_duration_wording():
+    text = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "over six months" not in text and "about six months" in text
