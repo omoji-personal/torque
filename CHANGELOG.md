@@ -94,13 +94,15 @@ default (`full`) and build-only behavior are unchanged.
 - After the targeted recheck: the browser's allowed Salesforce hosts are exact names (no
   wildcard that could admit a sandbox or another org), and every write-capable request
   reads the window and consent again, with no cache.
-- After the last targeted rechecks: the login hosts are no longer resolver exceptions (the
-  session starts through frontdoor on the org's My Domain), so a 307 or 308 POST redirect
-  to them, or to another org, fails to resolve; the only other exception is the static
-  content host, which the route handler allows for reads only. The browser handles every
-  request and redirect itself (Torque never replays one, so no header or body can be
-  resent to another origin), and every request the handler sees, reads included, reads
-  the window and consent again, with no cache.
+- After the last targeted rechecks: Torque's browser in connected mode resolves only the
+  approved org's exact hosts and `static.lightning.force.com`; every other host (the login
+  hosts, other orgs, non-Salesforce hosts, IP literals, `localhost`, trailing-dot names)
+  does not resolve, so a request or redirect hop to it fails before it is sent. The route
+  handler allows the static host for reads only; a redirected request to it is not seen by
+  the handler, and a 307 or 308 redirect can carry a POST body there (a read-only content
+  host with no org data). Torque no longer sends its own copy of any request. Every
+  request the handler sees, reads included, reads the window and consent again, with no
+  cache.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).

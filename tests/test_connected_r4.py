@@ -145,7 +145,8 @@ def test_d2_torque_browser_guard_checks_every_request():
     assert not bg.request_allowed(guard, "https://acme.lightning.force.com/aura", "POST")
     assert not bg.request_allowed(guard, "https://acme.my.salesforce.com/", "GET")
     assert not bg.request_allowed(guard, "https://login.salesforce.com/", "POST")
-    assert bg.request_allowed(guard, "https://static.example.com/x.js", "GET")
+    # Since R2i only the org and static hosts are allowed, non-Salesforce hosts included.
+    assert not bg.request_allowed(guard, "https://static.example.com/x.js", "GET")
 
 
 def test_d2_torque_browser_refuses_without_a_window(w, monkeypatch):

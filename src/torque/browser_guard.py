@@ -7,7 +7,7 @@ starts, the org is resolved live and must match the client's consent and a
 granted browser window; while it runs, every request the route handler sees (each navigation, frame and
 background call) rereads the window and consent and must go to the approved org's
 exact hosts (or read a static host), and host-resolver rules keep every other
-Salesforce host, redirect hops included, from resolving."""
+host, redirect hops included, from resolving."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +16,6 @@ import time
 import urllib.parse
 
 from . import approval, consent, workspace as ws
-from .connected_routes import SF_HOSTS
 from .gate_connected import _same_org, org_key
 
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
@@ -53,14 +52,9 @@ class Guard:
             return False
 
 
-# Salesforce domains no request may reach except the approved org's own hosts and the
-# static, read-only content host the Lightning UI loads. Used as Chromium host-resolver
-# rules, so a redirect hop, a service worker or any other request to another org (or to
-# the login hosts: the session starts through frontdoor on the org's My Domain) cannot
-# even resolve its name.
-BLOCKED_DOMAINS = ("salesforce.com", "force.com", "salesforce-setup.com", "site.com", "visualforce.com",
-                   "cloudforce.com", "database.com", "salesforce-sites.com", "documentforce.com",
-                   "salesforce-experience.com", "lightning.com", "sfdc.net")
+# The static, read-only content host the Lightning UI loads. It holds no org data, so a
+# redirected request that reaches it (the route handler never sees a redirect hop) cannot
+# write to any org.
 STATIC_HOSTS = ("static.lightning.force.com",)
 # The exact host names an org uses (no wildcards: a wildcard after the My Domain name
 # would also match a sandbox's or another org's hosts). {ns} is a Visualforce namespace:
@@ -79,12 +73,12 @@ def org_hosts(guard: Guard) -> list[str]:
 
 
 def resolver_rules(guard: Guard, approved_target: str | None = None) -> str:
-    """Chromium --host-resolver-rules: every Salesforce domain unresolvable except the
-    approved org's hosts. approved_target maps those hosts somewhere (tests only)."""
-    approved = [f"MAP {h} {approved_target}" if approved_target else f"EXCLUDE {h}" for h in org_hosts(guard)]
-    shared = [f"EXCLUDE {h}" for h in STATIC_HOSTS]
-    blocked = [rule for domain in BLOCKED_DOMAINS for rule in (f"MAP *.{domain} ~NOTFOUND", f"MAP {domain} ~NOTFOUND")]
-    return ", ".join(approved + shared + blocked)
+    """Chromium --host-resolver-rules: every host unresolvable (Salesforce or not, IP
+    literals, localhost and trailing-dot forms included) except the approved org's exact
+    hosts and the static hosts. approved_target maps those hosts somewhere (tests only)."""
+    allowed = [*org_hosts(guard), *STATIC_HOSTS]
+    rules = [f"MAP {h} {approved_target}" if approved_target else f"EXCLUDE {h}" for h in allowed]
+    return ", ".join([*rules, "MAP * ~NOTFOUND"])
 
 
 def launch_options(guard: Guard, approved_target: str | None = None) -> tuple[dict, dict]:
@@ -94,17 +88,17 @@ def launch_options(guard: Guard, approved_target: str | None = None) -> tuple[di
             {"service_workers": "block"})
 
 
-def _salesforce_host(host: str) -> bool:
-    return bool(SF_HOSTS.search(host)) or any(host == d or host.endswith("." + d) for d in BLOCKED_DOMAINS)
+NETWORK_SCHEMES = ("http", "https", "ws", "wss")
 
 
 def request_allowed(guard: Guard, url: str, method: str) -> bool:
-    """The same policy as the resolver rules, for each request the handler sees: on a
-    Salesforce domain, only the approved org's exact hosts, and the static hosts for
-    reads (GET, HEAD, OPTIONS); anything outside Salesforce is allowed."""
-    host = (urllib.parse.urlsplit(url).hostname or "").casefold().rstrip(".")
-    if not _salesforce_host(host):
+    """The resolver's host list, for each request the handler sees: the approved org's
+    exact hosts for any method, the static hosts for GET, HEAD and OPTIONS only, and no
+    other host. A URL with no network destination (data:, blob:) is allowed."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme.casefold() not in NETWORK_SCHEMES:
         return True
+    host = (parts.hostname or "").casefold()
     if host in org_hosts(guard):
         return True
     return host in STATIC_HOSTS and (method or "").upper() in SAFE_METHODS
@@ -185,7 +179,7 @@ async def install(context, guard: Guard) -> None:
     Allowed requests go on unchanged (route.continue_): the browser sends them and
     follows any redirect itself, so no header or body is ever replayed. Playwright does
     not call this handler for a redirect hop; the resolver rules (launch_options) are
-    what stop a hop to any host outside the approved org."""
+    what stop a hop to any host but the approved org's and the static hosts."""
     async def refuse(route, method, url, why=""):
         guard.refused.append(f"{method} {url.split('?')[0]}{why}")
         await route.abort("blockedbyclient")

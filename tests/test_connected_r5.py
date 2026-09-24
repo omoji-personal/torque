@@ -56,7 +56,7 @@ def test_d2_resolver_rules_keep_other_orgs_unresolvable():
     rules = bg.resolver_rules(bg.Guard(org_alias="acme-sbx", org_id_18="00D000000000001AAA", host_key=SBX_KEY))
     assert "EXCLUDE acme--sbx.sandbox.my.salesforce.com" in rules
     assert "EXCLUDE acme--sbx.sandbox.lightning.force.com" in rules
-    assert "MAP *.salesforce.com ~NOTFOUND" in rules and "MAP *.force.com ~NOTFOUND" in rules
+    assert rules.endswith("MAP * ~NOTFOUND")  # deny-all since R2i
     assert "acme.my.salesforce.com" not in rules
 
 

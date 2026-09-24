@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2638 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2664 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 463 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 489 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -139,6 +139,15 @@ real Chromium run confirms that 307 and 308 POST redirects to `login.salesforce.
 `test.salesforce.com` and another org fail with a name-resolution error, and that each POST
 body reached only the approved org's server, once.
 
+**Deny-all resolver:** the connected browser's resolver now denies every host except the
+approved org's exact hosts and the static content host. Tests: `tests/test_connected_r9.py`,
+written first (19 of 26 failed). A real Chromium run confirms that 307 POST redirects to a
+non-Salesforce host, `localhost`, `127.0.0.1`, another org's trailing-dot name and the
+approved org's own trailing-dot name fail with a name-resolution error (Chromium does not
+strip the trailing dot before applying the rules), and that a 307 POST redirect to the
+static host arrives there: the documented residual. The host list has not been checked
+against a live Lightning page load; that is part of the live rehearsal.
+
 Two exceptions to "unchanged" are deliberate and documented in [build-only
 mode](ai-access.md): consent, approval and key files are refused wherever the hook runs,
 `full` mode included, and three alpha 14 record tests were generalized for the new version.
@@ -151,7 +160,8 @@ Pending, and run by the owner's controller rather than in this build:
   before-state; grant from a separate terminal (tier 2 if a second OS account is available);
   write allowed once; replay, changed payload and out-of-consent org denied; script asks;
   browser click denied, then allowed inside a window; `torque recover` preview and run;
-  `approval log`. It needs a developer org the owner supplies. Doctor probes inside a real
+  `approval log`; Setup and a record page load in Torque's connected browser with the
+  resolver's host list. It needs a developer org the owner supplies. Doctor probes inside a real
   Claude Code session are part of it.
 - Owner sign-off, then the `v2.0.0a15` tag.
 
