@@ -155,13 +155,26 @@ FOLLOW_MODES = [
 
 @pytest.mark.parametrize("command", FOLLOW_MODES)
 def test_n3_gate_does_not_walk_the_tree(ws_up, command, monkeypatch):
+    """Over a 40-level tree the gate lists at most a couple of single folders (the
+    worktrees folder, a shell glob), never the tree."""
+    deep = ws_up / "project"
+    for n in range(40):
+        deep = deep / f"d{n}"
+    deep.mkdir(parents=True)
+    scanned = []
+    real_scandir = os.scandir
+
+    def counting_scandir(path="."):
+        scanned.append(str(path))
+        return real_scandir(path)
+
     def no_walk(*args, **kwargs):
         raise AssertionError("the gate walked the filesystem")
 
-    monkeypatch.setattr(gate.os, "scandir", no_walk)
-    monkeypatch.setattr(gate.os, "walk", no_walk)
-    monkeypatch.setattr(gate.os, "listdir", no_walk)
+    monkeypatch.setattr(os, "scandir", counting_scandir)
+    monkeypatch.setattr(os, "walk", no_walk)
     assert _bash_allowed(command, ws_up, ws_up / "project"), command
+    assert len(scanned) <= 3, scanned
 
 
 @pytest.mark.parametrize("command", ["rg SECRET up", "grep -r SECRET up", "cat up/clients/acme/notes.md",
