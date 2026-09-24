@@ -1,5 +1,5 @@
-"""R2g: every redirect hop checked by Torque (method and destination), and no cached
-authorization for any request. Written failing first."""
+"""R2g: no cached authorization for any request, with the production recheck. Written
+failing first."""
 import asyncio
 import io
 import os
@@ -78,55 +78,8 @@ def guard():
                     expires_at=time.time() + 600, recheck=lambda: True)
 
 
-@pytest.mark.parametrize("status", [307, 308])
-@pytest.mark.parametrize("shared", ["https://login.salesforce.com/", "https://test.salesforce.com/x"])
-def test_d2_post_redirect_to_a_shared_host_is_refused(status, shared):
-    route = Route({APPROVED + "/aura": Response(status, shared)})
-    run(guard(), route, request(APPROVED + "/aura"))
-    assert route.result == "abort" and route.fetched == [("POST", APPROVED + "/aura")]
-
-
-def test_d2_post_redirect_to_another_org_is_refused():
-    route = Route({APPROVED + "/aura": Response(307, "https://acme.my.salesforce.com/aura")})
-    run(guard(), route, request(APPROVED + "/aura"))
-    assert route.result == "abort" and len(route.fetched) == 1
-
-
-def test_d2_303_turns_a_post_into_a_get_to_a_shared_host():
-    route = Route({APPROVED + "/save": Response(303, "https://login.salesforce.com/done"),
-                   "https://login.salesforce.com/done": Response(200)})
-    run(guard(), route, request(APPROVED + "/save"))
-    assert route.fetched == [("POST", APPROVED + "/save"), ("GET", "https://login.salesforce.com/done")]
-    assert route.result == "fulfill" and route.fulfilled.status == 200
-
-
-def test_d2_a_chain_inside_the_org_is_followed_and_every_hop_checked():
-    route = Route({APPROVED + "/a": Response(302, "/b"), APPROVED + "/b": Response(307, APPROVED + "/c"),
-                   APPROVED + "/c": Response(200)})
-    run(guard(), route, request(APPROVED + "/a", method="GET"))
-    assert [u for _, u in route.fetched] == [APPROVED + "/a", APPROVED + "/b", APPROVED + "/c"]
-    assert route.result == "fulfill" and route.fulfilled.status == 200
-
-
-def test_d2_a_chain_that_leaves_later_is_refused():
-    route = Route({APPROVED + "/a": Response(302, APPROVED + "/b"),
-                   APPROVED + "/b": Response(302, "https://beta.my.salesforce.com/")})
-    run(guard(), route, request(APPROVED + "/a", method="GET"))
-    assert route.result == "abort" and len(route.fetched) == 2
-
-
-def test_d2_navigation_redirect_is_handed_to_the_browser_at_its_checked_end():
-    route = Route({APPROVED + "/a": Response(302, APPROVED + "/b"), APPROVED + "/b": Response(200)})
-    run(guard(), route, request(APPROVED + "/a", method="GET", navigation=True))
-    assert route.result == "fulfill" and route.fulfilled.status == 302
-    assert route.fulfilled.headers["location"] == APPROVED + "/b"
-
-
-def test_d2_too_many_hops_is_refused():
-    table = {APPROVED + f"/{i}": Response(302, APPROVED + f"/{i + 1}") for i in range(30)}
-    route = Route(table)
-    run(guard(), route, request(APPROVED + "/0", method="GET"))
-    assert route.result == "abort"
+# D2's manual redirect loop was removed in R2h (see test_connected_r8.py); the
+# browser follows redirects natively and the resolver rules enforce every hop.
 
 
 # N7: no cache for any request, with the production recheck
@@ -178,72 +131,11 @@ def _two_reads(guard_obj, change):
 def test_n7_a_read_right_after_suspension_is_refused(connected):
     root, _ = connected
     live = bg.connected_guard("acme-sbx")
-    assert _two_reads(live, lambda: consent.suspend(root, "Acme", presence=YES)) == ("fulfill", "abort", True)
+    assert _two_reads(live, lambda: consent.suspend(root, "Acme", presence=YES)) == ("continue", "abort", True)
 
 
 def test_n7_a_read_right_after_the_window_is_withdrawn_is_refused(connected):
     root, item = connected
     live = bg.connected_guard("acme-sbx")
     path = root / "clients" / "acme" / "approvals" / "granted" / f"{item['id']}.json"
-    assert _two_reads(live, lambda: path.unlink()) == ("fulfill", "abort", True)
-
-
-def test_d2_real_browser_redirect_hops_go_through_the_guard():
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    pw = pytest.importorskip("playwright.async_api")
-    cache = Path.home() / "Library" / "Caches" / "ms-playwright"
-    found = sorted(cache.glob("chromium_headless_shell-*/*/chrome-headless-shell")) if cache.is_dir() else []
-    if not found:
-        pytest.skip("no Chromium build available")
-    hits = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *a):
-            pass
-
-        def _serve(self):
-            hits.append((self.command, self.path))
-            if self.path == "/post-to-login":
-                self.send_response(307)
-                self.send_header("Location", "https://login.salesforce.com/torque-test-must-not-arrive")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-            elif self.path == "/a":
-                self.send_response(302)
-                self.send_header("Location", "/b")
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-            else:
-                body = b"<html>ok</html>"
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-        do_GET = _serve
-        do_POST = _serve
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    live = guard()
-
-    async def main():
-        async with pw.async_playwright() as p:
-            browser = await p.chromium.launch(executable_path=str(found[-1]))
-            context = await browser.new_context()
-            await bg.install(context, live)
-            page = await context.new_page()
-            await page.goto(f"http://127.0.0.1:{port}/a")
-            landed = page.url
-            status = await page.evaluate("fetch('/post-to-login', {method: 'POST', body: 'x'})"
-                                         ".then(r => r.status).catch(() => 'blocked')")
-            await browser.close()
-            return landed, status
-    try:
-        landed, status = asyncio.run(main())
-    finally:
-        server.shutdown()
-    assert landed.endswith("/b") and status == "blocked"
-    assert any("login.salesforce.com" in r for r in live.refused)
+    assert _two_reads(live, lambda: path.unlink()) == ("continue", "abort", True)
