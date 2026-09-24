@@ -50,14 +50,32 @@ guard on recognized tool calls, not a sandbox. It has two values:
   tool (a name containing `tree`, `search`, `find`, `grep`, `glob`, or `walk`) rooted at or above
   `clients/` is blocked too.
 - Reading, writing, editing, or recursively searching into `clients/`, through: absolute,
-  relative, `..`, `~`, `$HOME`, `$PWD` and symlinked paths; paths relative to a `cd` or `pushd`
-  earlier in the same command; redirections (`<file`, `>file`, `2>file`, `&>file`); `--flag=path`
-  and `NAME=path` values; globs (`c*/`, `*/acme`, `[c]lients`), expanded against the disk;
-  brace expansion (`{clients,x}`); `**` treated as a recursive search from its fixed prefix;
-  `grep -r`, `rg`, `ag`, `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current
-  directory); `git grep --untracked` or `--no-index` rooted at or above `clients/`; `tar`, and `zip`, `cp`,
-  `scp` or `rsync` with a recursive flag, over a tree containing `clients/`; and a
+  relative, `..`, `~`, `$HOME`, `$PWD` and symlinked paths, and on Windows Git Bash drive paths
+  (`/c/...`, `/cygdrive/c/...`); paths relative to a `cd`, `pushd` or `popd` earlier in the same
+  command (after one whose target the gate cannot know, such as `cd -`, `cd ~-`, `popd`,
+  `cd "$OLDPWD"` or `cd "$(git rev-parse --show-toplevel)"`, the rest of the command is checked
+  from every directory seen, the workspace root, the folders between, and the root's parents);
+  redirections (`<file`, `>file`, `2>file`, `&>file`); `--flag=path` and `NAME=path` values;
+  ANSI-C and locale quoting (`$'\x63lients'`, `$"clients"`); globs (`c*/`, `*/acme`,
+  `[c]lients`), expanded against the disk; brace expansion (`{clients,x}`); zsh glob groups and
+  qualifiers (`c(l)ients`, `notes(.)`) and comma-less brace groups (`c{l..l}ients`), each read as
+  a wildcard; `**` treated as a recursive search from its fixed prefix; `grep -r`, `rg`, `ag`,
+  `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current directory); `git grep
+  --untracked` or `--no-index`, `git diff --no-index` and `diff -r`, rooted at or above
+  `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar`, and
+  `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing `clients/`; and a
   `Grep`/`Glob` rooted at or above `clients/` or naming it.
+- Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
+  tool's shell, and a `PowerShell` tool (or any other tool with a `command` argument) gets the
+  same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
+  for PowerShell syntax.
+- Tools the gate does not recognise. Besides Bash, the file tools (`Read`, `Edit`, `Write`,
+  `MultiEdit`, `NotebookEdit`, `NotebookRead`, `LS`), `Grep`, `Glob`, MCP tools and command
+  tools, only these pass unchecked: `TodoWrite`, `TodoRead`, `TaskCreate`, `TaskUpdate`,
+  `TaskList`, `TaskGet`, `Task`, `Agent`, `TaskOutput`, `TaskStop`, `BashOutput`, `KillShell`,
+  `KillBash`, `WebSearch`, `WebFetch`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`,
+  `Skill`, `SlashCommand`, `ToolSearch` and `ListMcpResourcesTool`. `ReadMcpResourceTool` is
+  checked like an MCP tool. Every other tool is blocked, including tools a host adds later.
 - A Bash command aimed at `workspace.json`, `.claude/settings*.json`, or the `.claude` directory
   (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on `workspace.json` and
   `.claude/settings*.json`), and a destructive command (`rm`, `mv`, `cp`, `truncate`, a
@@ -67,6 +85,16 @@ guard on recognized tool calls, not a sandbox. It has two values:
   (`torque_salesforce-*.dist-info`, `__editable__*torque*`), and `pip`, `python -m pip`, `uv` or
   `pipx` installing, upgrading, reinstalling or uninstalling a package whose name contains
   `torque` (plus `pipx *-all`). Reading the package stays allowed.
+- Replacing the gate at the hook's Python startup. The documented hook runs Python with `-I`
+  (isolated mode), so the working directory, `PYTHONPATH` and the user site directory are not
+  on the import path, and a `torque` folder in the workspace is never imported. As a second
+  layer, the file tools, MCP path arguments and Bash commands that write files (`cp`, `mv`,
+  `tee`, `mkdir`, `ln`, a redirection and similar) are blocked from creating a `torque/` folder
+  or anything in one, `torque.py`, a `.pth` file, `sitecustomize.py` or `usercustomize.py`
+  anywhere in the workspace. Any path inside the hook interpreter's site-packages or its
+  virtual environment's `pyvenv.cfg` is blocked outright, and writes to the interpreter binary
+  and its virtual environment's `bin`/`Scripts` folder are blocked (running them stays
+  allowed).
 
 ## Which workspace governs
 
@@ -105,15 +133,21 @@ installed (forward slashes on Windows). `torque doctor --workspace .` prints thi
 the interpreter it runs under, as `ai_access.hook.recommended_command` in `--json` output.
 
 ```json
-{"hooks": {"PreToolUse": [{"matcher": "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*",
-  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
+{"hooks": {"PreToolUse": [{"matcher": ".*",
+  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
 ```
 
 The hook reads the tool-call JSON on stdin and exits 0 to allow or 2 to block. Claude Code treats
 any other exit code as a non-blocking error and lets the tool run. The `sys.excepthook` wrapper
 turns a failed `import torque.gate` (Torque missing from that interpreter, a broken install) into
-exit 2, so that case blocks instead of silently passing. The older form, `python -m torque.gate`,
-still works but exits 1 when Torque cannot be imported, which lets every call through.
+exit 2, so that case blocks instead of silently passing. `-I` (isolated mode) keeps the
+working directory, `PYTHONPATH` and the user site directory off the import path: without it,
+Python imports a `torque` folder from the hook's working directory (the workspace) before the
+installed one, and a single file write would replace the gate. The `.*` matcher sends every
+tool call to the gate, which is what lets it scan `Monitor` and block tools it does not
+recognise. The older form, `python -m torque.gate`, still runs but has neither protection: it
+exits 1 when Torque cannot be imported, which lets every call through, and it imports from the
+working directory.
 
 The wrapper cannot help when the interpreter itself is missing (the shell exits 127, which is also
 non-blocking) or when the session is started outside the workspace folder (the workspace's
@@ -123,32 +157,50 @@ non-blocking) or when the session is started outside the workspace folder (the w
 torque doctor --workspace /path/to/workspace
 ```
 
-In build-only mode doctor runs the configured hook once on a synthetic `clients/` Read and reports
-`AI access: build-only (hook verified)`, or `HOOK NOT IN FORCE` with the fix, and exits 3 when the
-hook is missing or did not block. Run it after setup, after every Torque or Python update, and
+In build-only mode doctor runs the configured hook once on a synthetic `clients/` Read (on
+Windows through Git Bash when installed, as Claude Code does) and reports
+`AI access: build-only (hook verified)`, or `HOOK NOT IN FORCE` with the fix. It exits 3 when the
+hook is missing, did not block, could not load the gate, runs without `-I`, or has a matcher
+narrower than `.*`. Run it after setup, after every Torque or Python update, and
 before each monthly review.
 
 ## What it cannot stop
 
 It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 
-- A command built at run time (a path assembled from variables, `eval`, `cd "$DIR"`), the code of
+- A command built at run time (a path from a variable set outside the command, from command
+  output such as `$(... | base64 -d)`, or from `eval`), the code of
   `python -c`, any script file the assistant writes and runs, and a heredoc fed to an interpreter.
 - A network tool (`curl`, a language HTTP client) reaching an org or a client system directly
   with credentials the user holds.
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
   database connectors. Disable those connectors for a build-only session.
-- Any tool outside the hook matcher, including tools a host adds later, and a host without this
-  hook.
+- A tool call the hook never sees: a matcher narrower than `.*` (doctor flags it), and a host
+  without this hook.
+- Replacing the gate by a route the write checks do not parse. A script or `python -c` code the
+  assistant runs, `git checkout` or `git apply` of a tracked `torque/` folder, a download tool
+  writing a file (`curl -o`), or an archive extracted into the workspace can still create a
+  `torque/` folder, `sitecustomize.py` or a `.pth` file. With the documented `-I` hook none of
+  those in the workspace is imported. A hook without `-I` (including `python -m torque.gate`)
+  would import them; doctor flags such a hook. A script can also write into the hook
+  interpreter's site-packages, its binary or a system site directory it loads, since the gate
+  does not inspect scripts; that interpreter should live in a folder the session's account
+  cannot write to.
 - `pip install -r` of a requirements file, or `pip install .` from a Torque checkout, that
   replaces Torque without naming it on the command line.
 - Copy or archive tools other than `tar`, `zip`, `cp`, `scp` and `rsync` with a recursive flag
   (for example `7z`, `ditto`, `robocopy`) run over the workspace.
 
 It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
-`Clients__c`) from the workspace root; an MCP string argument that is exactly `clients`; `echo *`
-or `ls *` at the workspace root (the glob matches `clients/`); `cd project; rg foo` and
-similar chains (after `;`, `||` or `|` the `cd` may have failed, so the gate also checks the
-directory before it; use `cd project && rg foo`); Bash
-reads under `.claude/` or of the installed Torque package; and a command that merely mentions a
-script name as an argument (`rg jsc-qa`). Run those from `project/` or yourself.
+`Clients__c`) from the workspace root; an MCP string argument that is exactly `clients`, or `.`
+for a tree-walking MCP tool; a glob at the workspace root that matches `clients/`, such as
+`echo *`, `ls *`, `grep foo *`, `git add *` or `npx prettier --check '**/*.ts'` (these would list,
+stage, read or rewrite client files; name the files or run them from `project/`); a regex
+argument that also works as a glob matching a root entry (`.*` matches `.claude`);
+`cd project; rg foo` and similar chains (after `;`, `||` or `|` the `cd` may have failed, so the
+gate also checks the directory before it; use `cd project && rg foo`); a recursive search after
+a `cd` the gate cannot resolve (`cd "$DIR" && rg foo` is checked from the workspace root too; use
+a literal path); Bash reads under `.claude/` or of the installed Torque package; writing any
+`torque/` folder, `torque.py`, `.pth` file or `sitecustomize.py` in the workspace; tools missing
+from the recognised list above; and a command that merely mentions a script name as an argument
+(`rg jsc-qa`). Run those from `project/` or yourself.
