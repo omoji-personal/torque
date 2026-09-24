@@ -214,29 +214,31 @@ the window is per org and time, not per action. In a production org the request 
 
 When Torque's browser starts in a connected workspace, it resolves the org live and
 requires the ID the consent records, a granted window for that org, and the org's My
-Domain address (recorded with the consent). While it runs, every request the browser makes,
-including each navigation, redirect, frame and background call, is checked before it is
-sent: a request to another Salesforce org is refused, and so is any request that would
-change something (anything but GET, HEAD or OPTIONS) on a Salesforce host that is not the
-approved org. Redirects are covered below the page too: Torque launches the browser with
+Domain address (recorded with the consent). The session starts through frontdoor on that
+My Domain, so the login hosts are never needed.
+
+Every Salesforce domain is enforced below the page: Torque launches the browser with
 host-resolver rules that leave every Salesforce domain unresolvable except the approved
 org's own exact host names (its My Domain, Lightning, Setup, site and file hosts, and its
 Visualforce hosts for its own and its managed packages' namespaces; no wildcard, so a
-production org's rules never admit one of its sandboxes, or the reverse) and the shared
-login and static hosts, with no proxy and with service
-workers blocked, so a redirect hop to another org fails before any request is sent. On top
-of that, Torque sends every request itself with redirects turned off and checks each hop
-before following it: the destination and the method it would carry (a 307 or 308 keeps a
-POST). The shared login and static hosts are GET-only, so a redirect that would carry a
-POST to them is refused; any other Salesforce host must be the approved org. Only the final
-response reaches the page. An
-attached operator browser (`TORQUE_BROWSER_CDP`) cannot be set up this way and is refused
-in connected mode.
+production org's rules never admit one of its sandboxes, or the reverse) and one static,
+read-only content host the Lightning UI loads (`static.lightning.force.com`). The login
+hosts (`login.salesforce.com`, `test.salesforce.com`) do not resolve. The browser runs with
+no proxy and with service workers blocked. Every request and every redirect hop, whatever
+its method, fails before it is sent when its host is outside that list.
 
-The session lives only as long as its authorization. Every request, reads included,
-reads the window and the consent again first, with no cache. When the window ends, or the
-consent is suspended or no longer usable, or the window is withdrawn, Torque refuses the
-request, closes every page and the browser context, and the run stops.
+On top of that, every request the route handler sees (each navigation, frame and
+background call) is checked before it is sent, with the same host list: the approved
+org's hosts for any method, the static host for GET, HEAD or OPTIONS only (a POST to it is
+refused), and nothing else on a Salesforce domain. An allowed request goes on unchanged:
+the browser sends it and follows its redirects itself, so Torque never replays a request,
+its headers or its body. An attached operator browser (`TORQUE_BROWSER_CDP`) cannot be set
+up this way and is refused in connected mode.
+
+The session lives only as long as its authorization. Every request the handler sees, reads
+included, reads the window and the consent again first, with no cache. When the window
+ends, or the consent is suspended or no longer usable, or the window is withdrawn, Torque
+refuses the request, closes every page and the browser context, and the run stops.
 
 ## Two approval tiers
 
@@ -299,6 +301,11 @@ With the hook in force, on recognized routes:
 
 ## What it cannot stop
 
+- **A redirect chain already in flight.** Playwright does not call the route handler for
+  a redirect hop the browser follows, so a chain that started before the window ended or
+  the consent was suspended completes. It stays inside the approved org's hosts, because
+  the resolver rules stop any hop that would leave them. The next request the handler sees
+  is refused and the context closes.
 - Code the session writes and runs (scripts, `python -c`, heredocs to interpreters, a git
   hook, a test runner's configuration): the host asks, and the consultant must read it first.
 - In tier 1, a script reading the key and forging an approval, or driving a terminal to

@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2619 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2638 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 444 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 463 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -127,6 +127,17 @@ exact operation, and the executor refuses a mismatch. The full-mode guard's hand
 sandbox's Visualforce and site hosts under production rules), and every write-capable
 request rereads the window and consent. Tests: `tests/test_connected_r6.py`, written first
 (8 of 23 failed; the others are controls for the org's own hosts and other-org pairs).
+
+**Last targeted rechecks:** every request, reads included, rereads the window and consent
+with no cache (`tests/test_connected_r7.py`, with the production recheck). A manual
+redirect loop tried in between was removed: it sent requests outside Chromium's resolver
+and could resend an Authorization header or body to another origin. The browser now
+handles every request and redirect itself; the login hosts are no longer resolver
+exceptions, and the static content host is allowed for reads only. Tests:
+`tests/test_connected_r8.py`, written first (14 of 30 failed; the others are controls). A
+real Chromium run confirms that 307 and 308 POST redirects to `login.salesforce.com`,
+`test.salesforce.com` and another org fail with a name-resolution error, and that each POST
+body reached only the approved org's server, once.
 
 Two exceptions to "unchanged" are deliberate and documented in [build-only
 mode](ai-access.md): consent, approval and key files are refused wherever the hook runs,

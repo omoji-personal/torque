@@ -4,10 +4,10 @@ Browser tools driven by the AI session cannot show which org a page is in after
 navigation and redirects, so connected mode refuses their changes. Torque's own
 Playwright session is the one browser path that may change an org: before it
 starts, the org is resolved live and must match the client's consent and a
-granted browser window; while it runs, every request the browser makes (every
-navigation, redirect, frame and background call) is checked against that org's
-My Domain host and refused when it goes to another Salesforce org, or when it
-would change anything on a Salesforce host that is not the approved org."""
+granted browser window; while it runs, every request the route handler sees (each navigation, frame and
+background call) rereads the window and consent and must go to the approved org's
+exact hosts (or read a static host), and host-resolver rules keep every other
+Salesforce host, redirect hops included, from resolving."""
 from __future__ import annotations
 
 import asyncio
@@ -36,10 +36,8 @@ class Guard:
     namespaces: tuple[str, ...] = ()
     expires_at: float | None = None
     recheck: object = None
-    recheck_every: float = 1.0
+    recheck_every: float = 0.0  # unused; kept so older callers still construct a Guard
     stopped: bool = False
-    _last_check: float = 0.0
-    _last_ok: bool = True
 
     def authorized(self, now: float | None = None, write: bool = True) -> bool:
         """The session may still act: not stopped, inside its window, and its window and
@@ -47,22 +45,23 @@ class Guard:
         now = time.time() if now is None else now
         if self.stopped or (self.expires_at is not None and now > self.expires_at):
             return False
-        if self.recheck is not None:
-            try:
-                self._last_ok = bool(self.recheck())
-            except Exception:
-                self._last_ok = False
-            self._last_check = now
-        return self._last_ok
+        if self.recheck is None:
+            return True
+        try:
+            return bool(self.recheck())
+        except Exception:
+            return False
 
 
-# Salesforce domains no request may reach except the approved org's own hosts (and a
-# few shared, non-org hosts). Used as Chromium host-resolver rules, so a redirect hop,
-# a service worker or any other request to another org cannot even resolve its name.
+# Salesforce domains no request may reach except the approved org's own hosts and the
+# static, read-only content host the Lightning UI loads. Used as Chromium host-resolver
+# rules, so a redirect hop, a service worker or any other request to another org (or to
+# the login hosts: the session starts through frontdoor on the org's My Domain) cannot
+# even resolve its name.
 BLOCKED_DOMAINS = ("salesforce.com", "force.com", "salesforce-setup.com", "site.com", "visualforce.com",
                    "cloudforce.com", "database.com", "salesforce-sites.com", "documentforce.com",
                    "salesforce-experience.com", "lightning.com", "sfdc.net")
-SHARED_HOSTS = ("static.lightning.force.com", "login.salesforce.com", "test.salesforce.com")
+STATIC_HOSTS = ("static.lightning.force.com",)
 # The exact host names an org uses (no wildcards: a wildcard after the My Domain name
 # would also match a sandbox's or another org's hosts). {ns} is a Visualforce namespace:
 # "c" for the org's own pages, plus the managed packages the workspace lists.
@@ -83,7 +82,7 @@ def resolver_rules(guard: Guard, approved_target: str | None = None) -> str:
     """Chromium --host-resolver-rules: every Salesforce domain unresolvable except the
     approved org's hosts. approved_target maps those hosts somewhere (tests only)."""
     approved = [f"MAP {h} {approved_target}" if approved_target else f"EXCLUDE {h}" for h in org_hosts(guard)]
-    shared = [f"EXCLUDE {h}" for h in SHARED_HOSTS]
+    shared = [f"EXCLUDE {h}" for h in STATIC_HOSTS]
     blocked = [rule for domain in BLOCKED_DOMAINS for rule in (f"MAP *.{domain} ~NOTFOUND", f"MAP {domain} ~NOTFOUND")]
     return ", ".join(approved + shared + blocked)
 
@@ -95,15 +94,20 @@ def launch_options(guard: Guard, approved_target: str | None = None) -> tuple[di
             {"service_workers": "block"})
 
 
+def _salesforce_host(host: str) -> bool:
+    return bool(SF_HOSTS.search(host)) or any(host == d or host.endswith("." + d) for d in BLOCKED_DOMAINS)
+
+
 def request_allowed(guard: Guard, url: str, method: str) -> bool:
-    """A request to the approved org, or one that changes nothing outside Salesforce."""
-    host = (urllib.parse.urlsplit(url).hostname or "").casefold()
-    key = org_key(url)
-    if key is not None:
-        return _same_org(key, guard.host_key)
-    if SF_HOSTS.search(host) and (method or "").upper() not in SAFE_METHODS:
-        return False
-    return True
+    """The same policy as the resolver rules, for each request the handler sees: on a
+    Salesforce domain, only the approved org's exact hosts, and the static hosts for
+    reads (GET, HEAD, OPTIONS); anything outside Salesforce is allowed."""
+    host = (urllib.parse.urlsplit(url).hostname or "").casefold().rstrip(".")
+    if not _salesforce_host(host):
+        return True
+    if host in org_hosts(guard):
+        return True
+    return host in STATIC_HOSTS and (method or "").upper() in SAFE_METHODS
 
 
 def connected_guard(target_org: str, resolve=None) -> Guard | None:
@@ -173,33 +177,22 @@ async def _stop(context, guard: Guard) -> None:
         pass
 
 
-REDIRECT_STATUSES = (301, 302, 303, 307, 308)
-MAX_HOPS = 20
-
-
-def _next_method(status: int, method: str) -> str:
-    """The method a browser uses for the next hop: 307 and 308 keep it; 301, 302 and
-    303 turn anything but GET or HEAD into GET."""
-    if status in (307, 308) or method in ("GET", "HEAD"):
-        return method
-    return "GET"
-
-
 async def install(context, guard: Guard) -> None:
     """Check every request of a Playwright browser context against the guard, and stop
     the session (close its pages and context, refuse every further request) when the
     window ends or the consent or window no longer holds.
 
-    Torque sends each request itself with redirects off (route.fetch, max_redirects=0),
-    so every redirect hop is checked, destination and method, before it is sent:
-    Playwright does not call the route handler again for a hop it follows itself."""
+    Allowed requests go on unchanged (route.continue_): the browser sends them and
+    follows any redirect itself, so no header or body is ever replayed. Playwright does
+    not call this handler for a redirect hop; the resolver rules (launch_options) are
+    what stop a hop to any host outside the approved org."""
     async def refuse(route, method, url, why=""):
         guard.refused.append(f"{method} {url.split('?')[0]}{why}")
         await route.abort("blockedbyclient")
 
     async def handle(route, request):
         method = (request.method or "GET").upper()
-        if not guard.authorized(write=method not in SAFE_METHODS):
+        if not guard.authorized():
             already = guard.stopped
             guard.stopped = True
             await refuse(route, method, request.url, " (session stopped)")
@@ -209,37 +202,7 @@ async def install(context, guard: Guard) -> None:
         if not request_allowed(guard, request.url, method):
             await refuse(route, method, request.url)
             return
-        try:
-            navigation = bool(request.is_navigation_request())
-        except Exception:
-            navigation = False
-        url = request.url
-        headers = dict(getattr(request, "headers", None) or {})
-        body = getattr(request, "post_data", None)
-        for _hop in range(MAX_HOPS):
-            response = await route.fetch(url=url, method=method, headers=headers, post_data=body,
-                                         max_redirects=0)
-            location = (response.headers or {}).get("location")
-            if response.status in REDIRECT_STATUSES and location:
-                next_url = urllib.parse.urljoin(url, location)
-                next_method = _next_method(response.status, method)
-                if not request_allowed(guard, next_url, next_method):
-                    await refuse(route, next_method, next_url, " (redirect)")
-                    return
-                if next_method != method:
-                    body = None
-                    headers = {k: v for k, v in headers.items()
-                               if k.casefold() not in ("content-type", "content-length")}
-                url, method = next_url, next_method
-                continue
-            if navigation and url != request.url:
-                # Hand the checked end of the chain to the browser, so the page's address
-                # is the real one; that request comes back through this handler.
-                await route.fulfill(status=302, headers={"location": url})
-            else:
-                await route.fulfill(response=response)
-            return
-        await refuse(route, method, url, " (too many redirects)")
+        await route.continue_()
     await context.route("**/*", handle)
 
     async def watch():
