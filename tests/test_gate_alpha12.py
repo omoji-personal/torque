@@ -890,14 +890,13 @@ def test_final_git_root_redirect_blocked_from_root(ws):
 
 @pytest.fixture
 def broken_git(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("a stand-in git script needs a POSIX shell")
     bindir = tmp_path / "fakebin"
     bindir.mkdir()
-    if os.name == "nt":
-        (bindir / "git.bat").write_text("@exit /b 1\r\n", encoding="utf-8")
-    else:
-        script = bindir / "git"
-        script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        script.chmod(0o755)
+    script = bindir / "git"
+    script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    script.chmod(0o755)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
     return bindir
 
