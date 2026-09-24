@@ -568,3 +568,48 @@ def test_new1_uri_path_helper():
     assert gate._uri_path("file:///C:/w/a.py") == "C:/w/a.py"
     assert gate._uri_path("file:///w/a%20b.py") == "/w/a b.py"
     assert gate._uri_path("/w/a.py") == "/w/a.py"
+
+
+# --- The mode's name, and playbooks in build-only mode ---
+
+def test_block_messages_use_the_build_only_name():
+    allowed, reason = gate.decide("Read", {"file_path": "/w/clients/acme/notes.md"}, W, "build-only")
+    assert not allowed and reason.startswith("Build-only mode:"), reason
+    assert "Build-only mode" in gate.HOOK_SHIM_CODE
+
+
+@pytest.mark.parametrize("rel", ["README.md", "docs/ai-access.md", "docs/installation.md", "src/torque/gate.py",
+                                 "src/torque/cli.py", "docs/validation-alpha12.md"])
+def test_user_facing_text_does_not_call_the_mode_de_identified(rel):
+    text = (REPO / rel).read_text(encoding="utf-8").casefold()
+    assert "de-identified mode" not in text and "de-identified-mode" not in text, rel
+
+
+def test_ai_access_doc_says_the_mode_redacts_nothing():
+    text = " ".join(_doc().split())
+    assert "Build-only mode redacts nothing" in text
+    assert "removing client details" in text
+
+
+DEMO_PLAYBOOKS = ["triage-alert", "gift-payments", "grants-outbound-funds", "requirements-to-build"]
+
+
+@pytest.mark.parametrize("name", DEMO_PLAYBOOKS)
+def test_demo_playbooks_have_a_build_only_section(name):
+    for path in (REPO / "workflows" / f"{name}.md", REPO / "src" / "torque" / "data" / "commands" / f"{name}.md"):
+        text = path.read_text(encoding="utf-8")
+        assert "## In build-only mode" in text, path
+        section = " ".join(text.split("## In build-only mode", 1)[1].split())
+        for phrase in ("names, IDs and values removed", "hand-off", "consultant"):
+            assert phrase in section, (path, phrase)
+
+
+def test_round3_docs_name_the_new_checks():
+    text = _doc()
+    for phrase in ("`cmd`", "`script`", "`--files`", "`-C`", "--directory", "abbreviat", "file://localhost"):
+        assert phrase in text, phrase
+
+
+def test_readme_explains_the_legacy_qa_token_entries():
+    text = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
+    assert "qa-token-" in text and "legacy" in text
