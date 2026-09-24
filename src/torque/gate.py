@@ -851,6 +851,10 @@ def _links_reach(starts: list[Path], clients: Path) -> bool:
         if key in seen:
             continue
         seen.add(key)
+        if not os.path.isdir(folder):
+            # Not a folder (a file, a missing path, or a word such as a find
+            # expression that Windows rejects as a path): nothing to walk.
+            continue
         try:
             entries = os.scandir(folder)
         except (FileNotFoundError, NotADirectoryError, PermissionError):
