@@ -937,3 +937,17 @@ def test_final_doctor_git_calls_disable_configured_programs():
     source = inspect.getsource(cli)
     assert 'subprocess.run(["git", "ls-files"' not in source
     assert "core.fsmonitor=false" in inspect.getsource(gate)
+
+
+# --- Final: git accepts any unambiguous prefix of a long option ---
+
+@pytest.mark.parametrize("command", ["git status --v", "git status --ve", "git status --verb"])
+def test_final_status_verbose_prefixes_blocked_while_tracked(ws, command):
+    _git(ws, "add", "-f", "clients/acme/notes.md")
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+
+
+@pytest.mark.parametrize("command", ["git add --a", "git add --u", "git add --pathspec-fr=list.txt",
+                                     "git add --pathspec-from=list.txt", "git stash show --onl"])
+def test_final_long_option_prefixes_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws), command
