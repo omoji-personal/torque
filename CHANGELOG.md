@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.0.0a12 - unpublished de-identified mode follow-up, 2026-09-23
+
+A spot-check of alpha 11's host-tool change and a review of git working-tree
+commands found routes around de-identified mode. This release closes them.
+
+- `EnterWorktree` may only enter a worktree under `.claude/worktrees/`, never its
+  `clients/`. Creating a new worktree (`name`, or no arguments) is blocked when
+  `clients/` has files tracked in git, when `.worktreeinclude` names or matches
+  files in `clients/`, or when git cannot answer. `.worktreeinclude` is now a
+  guarded file like `workspace.json`.
+- Each worktree under `.claude/worktrees/` is checked as a workspace of its own,
+  so a copy of `clients/` there is guarded like `clients/`.
+- `LSP` is limited to `documentSymbol`, `hover` and `goToDefinition` on a named
+  `filePath` outside `clients/`. Workspace-wide operations (`workspaceSymbol`,
+  `findReferences` and the rest) and unknown operations are blocked, a
+  `file://` URI is read as its path, and every string argument is checked.
+- `git clean` without `-n`/`--dry-run`, and `git stash` with `-u`, `-a`,
+  `--include-untracked` or `--all`, are blocked at or above `clients/`,
+  `.claude/` or the hook's environment, as are `git stash show -u` and a stash's
+  untracked parent (`stash^3`).
+- [De-identified mode](docs/ai-access.md) lists `SendMessage` to a peer session,
+  what a language server returns, and the remaining git routes as limits.
+- The alpha 11 validation record's "Review scope" now records its security
+  review, two re-reviews and the spot-check.
+
+1606 offline tests pass (154 subtests). See the
+[alpha 12 validation record](docs/validation-alpha12.md).
+
 ## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23
 
 A four-model review of alpha 10's de-identified mode found routes an assistant can
