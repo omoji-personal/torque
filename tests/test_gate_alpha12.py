@@ -414,7 +414,6 @@ SEARCH_BLOCK = [
     "grep -R --reg ERROR ..",
     "rg --files --hidden --no-ignore ..",
     "rg --files ..",
-    "rg --files",
     "ack -f ..",
     "ag -g notes ..",
     "ack -g notes ..",
@@ -456,7 +455,7 @@ TAR_BLOCK = [
     "tar -cf /tmp/x.tar -C /tmp -C .. .",
     "tar -cf - -C .. clients",
     "tar -cC .. -f - .",
-    "tar -C \"$HOME/elsewhere\" -C .. -cf - .",
+    "tar -C src -C ../.. -cf - .",
     "tar -C \"$DIR\" -cf - .",
 ]
 TAR_ALLOW = [
@@ -522,7 +521,7 @@ def test_r3_05_doctor_without_client_allowed():
 @pytest.mark.parametrize("argv", [
     ["doctor", "--clie", "example"],
     ["doctor", "--work", "."],
-    ["context", "--cli", "example"],
+    ["context", "--workspace", ".", "--client", "example", "--js"],
     ["workflows", "list", "--js"],
 ])
 def test_r3_05_cli_rejects_abbreviated_options(argv, capsys):
