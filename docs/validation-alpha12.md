@@ -77,7 +77,7 @@ repository now expects a worktree path instead.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.12.14, local):** 1827 pytest tests and 154
+- **Offline suite (macOS, Python 3.12.14, local):** 1835 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** the spot-check's events and the git commands above were replayed

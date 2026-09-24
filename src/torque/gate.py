@@ -824,11 +824,11 @@ def _git_add_roots(args: list[str]) -> list[str] | None:
     """The pathspecs `git add`/`git stage` covers. A pathspec file, or no pathspec
     with -A, --all or -u (the whole tree), give None: the repository top."""
     options = args[:args.index("--")] if "--" in args else args
-    if any(t.startswith("--pathspec-from-file") for t in options):
+    if any(_is_long_flag(t, "--pathspec-from-file", 12) for t in options):
         return None
     specs = _git_pathspecs(args, {"--chmod"})
-    whole = any((_is_long_flag(t, "--all", 4) or _is_long_flag(t, "--no-ignore-removal", 6)
-                 or _is_long_flag(t, "--update", 4)) if t.startswith("--") else _short_flag_has(t, "Au", "")
+    whole = any((_is_long_flag(t, "--all", 3) or _is_long_flag(t, "--no-ignore-removal", 6)
+                 or _is_long_flag(t, "--update", 3)) if t.startswith("--") else _short_flag_has(t, "Au", "")
                 for t in options)
     if not specs and whole:
         return None
@@ -877,7 +877,7 @@ def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Pat
             if (paths or cacheinfo) and (bool(trees) or _pathspecs_reach(paths + cacheinfo, base, protected)):
                 return GIT_STAGE_REASON
     if sub is not None and _clients_in_index(clients.parent):
-        verbose = any(_is_long_flag(t, "--verbose", 5) if t.startswith("--") else _short_flag_has(t, "v", "")
+        verbose = any(_is_long_flag(t, "--verbose", 3) if t.startswith("--") else _short_flag_has(t, "v", "")
                       for t in args)
         if sub != "status" or verbose:
             return GIT_TRACKED_REASON
@@ -996,7 +996,7 @@ def _stash_reads_untracked(args: list[str], action: str) -> bool:
         if tok == "--":
             break
         if tok.startswith("--"):
-            if _is_long_flag(tok, "--include-untracked", 3) or _is_long_flag(tok, "--only-untracked", 4):
+            if _is_long_flag(tok, "--include-untracked", 3) or _is_long_flag(tok, "--only-untracked", 3):
                 return True
             if action != "show" and _is_long_flag(tok, "--all", 3):
                 return True
@@ -1042,7 +1042,7 @@ def _git_wipe_reaches(rest: list[str], words: list[str], clients: Path, claude_d
     if tree_reaches:
         return True
     specs: list[str] = []
-    if action == "push" and not any(t.startswith("--pathspec-from-file") for t in action_args):
+    if action == "push" and not any(_is_long_flag(t, "--pathspec-from-file", 12) for t in action_args):
         specs = _git_pathspecs(action_args, {"-m", "--message"})
     if specs:
         return _pathspecs_reach(specs, base, protected)

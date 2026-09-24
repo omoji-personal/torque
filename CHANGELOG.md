@@ -59,7 +59,7 @@ them and renames the mode.
 - The alpha 11 validation record's "Review scope" now records its security
   review, two re-reviews and the spot-check.
 
-1827 offline tests pass (154 subtests). See the
+1835 offline tests pass (154 subtests). See the
 [alpha 12 validation record](docs/validation-alpha12.md).
 
 ## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23
