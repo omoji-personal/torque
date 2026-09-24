@@ -106,13 +106,13 @@ PATTERN_FIRST_HEADS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd"}
 DESTRUCTIVE_VERBS = {"rm", "mv", "cp", "truncate", "shred", "unlink", "rmdir"}
 PY_LAUNCHER_RE = re.compile(r"^(python[23]?(\.\d+)?|pythonw|py)$")
 SETTINGS_RE = re.compile(r"(^|[/\\])\.claude[/\\]settings[^/\\]*\.json$", re.IGNORECASE)
-_GREP_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*[rR][a-zA-Z]*$")
-_LS_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*R[a-zA-Z]*$")
 # Copy and archive tools that read a whole directory tree when given a recursive flag
 # (tar always does).
 RECURSIVE_COPY_HEADS = {"cp", "scp", "rsync", "zip"}
-_COPY_RECURSIVE_FLAG_RE = re.compile(r"^--(recursive|archive)$|^-[a-zA-Z]*[rRa][a-zA-Z]*$")
-_DIFF_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*r[a-zA-Z]*$")
+# Short options that take a value, per copy tool: in a cluster (-rA2, -9r, -rtDIR)
+# the first of them takes the rest, so letters after it are not options. Digits
+# (zip's compression level) are allowed anywhere in a cluster.
+_COPY_VALUE_LETTERS = {"cp": "tS", "scp": "cFiJloPSD", "rsync": "efBMT", "zip": "bntOxi"}
 _GLOB_CHARS = frozenset("*?[")
 _HOME_TOKEN_RE = re.compile(r"\$\{HOME\}|\$HOME")
 CASEFOLD_PLATFORMS = ("darwin", "win32")
@@ -523,15 +523,17 @@ def _is_recursive_search(tok: str, rest: list[str]) -> bool:
     if head in ALWAYS_RECURSIVE_HEADS:
         return True
     if head in GREP_HEADS:
-        return any(_GREP_RECURSIVE_FLAG_RE.match(t) or _grep_long_recursive(t) for t in rest) or _grep_directories_recurse(rest)
+        return (any(t == "--recursive" or _grep_long_recursive(t) or _short_flag_has(t, "rR", _GREP_VALUE_LETTERS + "d")
+                    for t in rest) or _grep_directories_recurse(rest))
     if head == "ls":
-        return any(_LS_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return any(t == "--recursive" or _short_flag_has(t, "R", "wTI") for t in rest)
     if head in TAR_HEADS:
         return True
     if head in RECURSIVE_COPY_HEADS:
-        return any(_COPY_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return any(t in ("--recursive", "--archive") or _short_flag_has(t, "rRa", _COPY_VALUE_LETTERS[head])
+                   for t in rest)
     if head == "diff":
-        return any(_DIFF_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return any(t == "--recursive" or _short_flag_has(t, "r", "xXSFLCUDWI") for t in rest)
     return False
 
 
@@ -823,7 +825,8 @@ def _follow_roots(head: str, rest: list[str], cwd: Path, workspace: Path) -> lis
     raws = _recursive_search_targets(head, rest) or ["."]
     if head in ("cp", "scp", "rsync") and len(raws) > 1:
         raws = raws[:-1]
-    elif head == "zip":
+    elif head == "zip" and "-" not in rest:
+        # The first word is the archive, unless it is written to standard output (-).
         raws = raws[1:]
     out: list[Path] = []
     for raw in raws:

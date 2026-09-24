@@ -23,6 +23,12 @@ documentation implied were covered. This release closes them and brings the alph
 - `git status --ignored` and `git ls-files -o`/`-i`/`--others`/`--ignored` are blocked
   when their scope reaches `clients/`.
 - A `Glob` pattern that is absolute or climbs with `..` is read as rooted where it leads.
+- Short-option clusters are parsed per tool: digits (`zip -9r`, `grep -r2`) may appear
+  anywhere, and an option that takes a value ends the cluster (`grep -rA2`), so these
+  still count as recursive.
+- `torque doctor` and the alpha 12 record state the final rule while client files are
+  tracked or staged: only `git status` without `-v`/`--verbose` and `git rm --cached` of
+  paths under `clients/` pass.
 - The alpha 12 validation record's "Review scope" now records its scoped security
   re-review, the three spot-checks and the final re-run at d3b0891.
 - [Build-only mode](docs/ai-access.md) lists the new checks, the new over-blocks and
