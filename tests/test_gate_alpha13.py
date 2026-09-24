@@ -134,8 +134,8 @@ def test_n3_ln_at_or_above_clients_blocked(ws, command):
 
 
 def test_n3_ln_to_an_ancestor_of_the_workspace_blocked(ws):
-    assert _bash_blocked(f"ln -s {ws.parent} data", ws, ws / "project")
-    assert _bash_blocked(f"ln -s {ws} data", ws, ws / "project")
+    assert _bash_blocked(f"ln -s {ws.parent.as_posix()} data", ws, ws / "project")
+    assert _bash_blocked(f"ln -s {ws.as_posix()} data", ws, ws / "project")
 
 
 @pytest.mark.parametrize("command", LN_ALLOW)
@@ -386,6 +386,75 @@ def test_n5_glob_pattern_with_an_absolute_root_blocked(ws):
 @pytest.mark.parametrize("pattern", GLOB_ALLOW)
 def test_n5_glob_pattern_inside_project_allowed(ws, pattern):
     assert _allowed("Glob", {"pattern": pattern}, ws, ws / "project"), pattern
+
+
+# --- R4-01: short-option clusters with digits or a value option ---
+
+CLUSTER_BLOCK = [
+    "grep -rA2 ERROR ..",
+    "grep -rnA2 ERROR ..",
+    "grep -nrC3 ERROR ..",
+    "grep -r2 ERROR ..",
+    "egrep -riA2 ERROR ..",
+    "zip -9r - ..",
+    "zip -r9 - ..",
+    "zip -9r out.zip ..",
+    "ls -R1 ..",
+    "ls -1R ..",
+    "diff -rU3 .. /tmp/x",
+]
+CLUSTER_ALLOW = [
+    "grep -rA2 ERROR src",
+    "grep -rnA2 ERROR .",
+    "grep -nrC3 ERROR src",
+    "zip -9r - src",
+    "zip -r9 out.zip src",
+    "ls -R1 src",
+    "diff -rU3 src /tmp/x",
+    "grep -A2r ERROR README.md",
+    "grep -eERROR README.md",
+]
+
+
+@pytest.mark.parametrize("command", CLUSTER_BLOCK)
+def test_r4_01_clusters_with_digits_still_recursive(ws, command):
+    assert _bash_blocked(command, ws, ws / "project"), command
+
+
+@pytest.mark.parametrize("command", CLUSTER_ALLOW)
+def test_r4_01_confined_clusters_allowed(ws, command):
+    assert _bash_allowed(command, ws, ws / "project"), command
+
+
+def test_r4_01_zip_to_stdout_still_walks_its_input_for_links(ws_up):
+    assert _bash_blocked("zip -9r - .", ws_up, ws_up / "project")
+    assert _bash_allowed("zip -9ry - .", ws_up, ws_up / "project")
+
+
+# --- R4-07: doctor and the alpha 12 record state the final tracked-clients rule ---
+
+def test_r4_07_doctor_names_the_final_rule(tmp_path):
+    import contextlib
+    import io
+    from torque import cli, workspace as wsmod
+    root = tmp_path / "w"
+    wsmod.init_workspace(root, "Example firm", "generic")
+    wsmod.set_ai_access(root, "build-only")
+    (root / "clients" / "acme").mkdir(parents=True, exist_ok=True)
+    (root / "clients" / "acme" / "notes.md").write_text("x", encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-f", "clients/acme/notes.md")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["doctor", "--workspace", str(root), "--json"])
+    actions = " ".join(json.loads(out.getvalue())["next_actions"])
+    assert "status and log" not in actions
+    assert "git status" in actions and "-v" in actions and "git rm --cached" in actions
+
+
+def test_r4_07_alpha12_record_has_no_status_and_log_rule():
+    text = " ".join((REPO / "docs" / "validation-alpha12.md").read_text(encoding="utf-8").split())
+    assert "only `git status` and `git log` pass" not in text
 
 
 # --- Ordinary build session: nothing new blocks it ---
