@@ -18,7 +18,15 @@ documentation implied were covered. This release closes them and brings the alph
 - A word longer than any file name (a long commit message, a long `echo` chain) is no
   longer read as a path that fails the whole call closed.
 - The hook examples set `"timeout": 600`, and the documentation says a timed-out hook lets
-  the call proceed.
+  the call proceed. `torque doctor` warns when the hook entry has no timeout or a larger
+  one.
+- Each gate call has a 5-second time budget for path resolution, glob expansion and its
+  git queries, and a budget of 10,000 glob matches; past either it blocks with a message
+  saying so, rather than letting the host's hook timeout allow the call.
+- `unzip` option clusters are read like getopt: `-od..` and `-qod ..` name the extraction
+  folder.
+- Doctor's link scan follows a link to a folder outside the workspace, so a link that
+  reaches `clients/` through an outside folder is reported.
 - A path or search root holding an unresolved `$` expansion, including one set earlier
   in the same command (`R=..; rg x $R`, `"${PWD%/project}"`), is read as each folder up
   to the workspace root, the rule `cd "$DIR"` already followed.

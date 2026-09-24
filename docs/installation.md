@@ -90,7 +90,9 @@ import Torque, instead of exit 1, which Claude Code would treat as non-blocking.
 folder written into the workspace cannot replace the gate. The `.*` matcher sends every
 tool call to the gate, which blocks tools it does not recognise. `"timeout": 600` keeps
 Claude Code's default hook timeout explicit: a timed-out hook lets the call proceed as if
-it were allowed, so do not lower it. The gate normally answers in well under a second. The wrapper cannot
+it were allowed, so do not lower it (doctor warns when it is missing or larger). The gate
+has its own 5-second budget per call and blocks when it runs out, well inside that
+timeout. The wrapper cannot
 help if the interpreter path itself is wrong. Check the wiring once after setup,
 and after every update, with build-only mode set:
 

@@ -17,6 +17,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.parse
 from functools import lru_cache
 from pathlib import Path
@@ -163,6 +164,41 @@ _ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
 # group with no comma, c{l..l}ients. $(...) and ${...} are not groups.
 _WORD_GROUP_RE = re.compile(r"(?<=[^\s$<>=(|&;`'\"])(\([^()\s]*\)|\{[^{}\s,]*\})"
                             r"|(\([^()\s]*\)|\{[^{}\s,]*\})(?=[^\s)}|&;<>`'\"])")
+# Each hook call gets one wall-clock budget, in seconds, for everything it reads from
+# the disk (path resolution, glob expansion, git queries), and one budget of glob
+# matches. Past either the call is blocked, so the hook answers long before Claude
+# Code's own hook timeout, which would let the call run.
+GATE_TIME_BUDGET = 5.0
+GLOB_MATCH_LIMIT = 10_000
+_deadline: float | None = None
+_glob_matches = 0
+
+
+class BudgetExceeded(Exception):
+    """The call used up the gate's time or glob budget."""
+
+
+def _spend(matches: int = 0) -> None:
+    """Charge the current call's budgets; raise BudgetExceeded past either."""
+    global _glob_matches
+    if _deadline is not None and time.monotonic() > _deadline:
+        raise BudgetExceeded(f"the gate's {GATE_TIME_BUDGET:g}-second time budget for one call ran out")
+    if matches:
+        _glob_matches += matches
+        if _glob_matches > GLOB_MATCH_LIMIT:
+            raise BudgetExceeded(f"globs in this call match more than {GLOB_MATCH_LIMIT} paths")
+
+
+def _remaining() -> float | None:
+    """Seconds left in the current call's time budget, or None outside a call."""
+    return None if _deadline is None else max(0.0, _deadline - time.monotonic())
+
+
+def _budget_reason(exc: BudgetExceeded) -> str:
+    return (f"Build-only mode: {exc}, so the call could not be checked in time; blocking to fail closed. "
+            "Name fewer paths or narrower globs, such as project/src/*.py.")
+
+
 NARROW_PATH_HINT = " Pass a narrower path, such as project/ or src/, instead of the workspace root."
 
 
@@ -241,6 +277,7 @@ def _resolve(base: Path, raw: str) -> Path:
     target = Path(raw)
     if not target.is_absolute():
         target = base / target
+    _spend()
     return Path(os.path.realpath(str(target)))
 
 
@@ -437,13 +474,20 @@ def _glob_paths(operand: str, cwd: Path) -> tuple[list[Path], list[Path]]:
         # search rooted at the fixed prefix.
         return [], [prefix]
     pattern = expanded if os.path.isabs(expanded) else os.path.join(str(cwd), expanded)
+    found: list[str] = []
     try:
-        found = list(itertools.islice(glob.iglob(pattern), _GLOB_LIMIT + 1))
+        for match in glob.iglob(pattern):
+            _spend(1)
+            found.append(match)
+            if len(found) > _GLOB_LIMIT:
+                return [], [prefix]
     except (OSError, ValueError, re.error):
         return [], [prefix]
-    if len(found) > _GLOB_LIMIT:
-        return [], [prefix]
-    return [Path(os.path.realpath(p)) for p in found], []
+    out: list[Path] = []
+    for match in found:
+        _spend()
+        out.append(Path(os.path.realpath(match)))
+    return out, []
 
 
 def _dollar_variants(operand: str, cwd: Path, workspace: Path | None) -> list[str]:
@@ -1078,10 +1122,12 @@ def _git_run(base: Path, args: list[str]) -> tuple[int, str, str] | None:
     git could not run or timed out."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["LC_ALL"] = "C"
+    _spend()
+    left = _remaining()
     try:
         done = subprocess.run(["git", *GIT_QUERY_OPTIONS, "-C", str(base), *args],
-                              capture_output=True, text=True, timeout=15, env=env,
-                              stdin=subprocess.DEVNULL)
+                              capture_output=True, text=True, timeout=15 if left is None else min(15, left),
+                              env=env, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     return done.returncode, done.stdout, done.stderr
@@ -1481,23 +1527,49 @@ def _tar_extract_reason(head: str, rest: list[str], clients: Path, cwd: Path) ->
     return EXTRACT_REASON if any(_reaches(d, clients) for d in dirs) else ""
 
 
+def _short_option_values(rest: list[str], value_letters: str) -> tuple[list[tuple[str, str]], str]:
+    """Read short-option clusters the way getopt does: in `-qod..` or `-qod ..`
+    the first letter that takes a value takes the rest of the word, or the next
+    word when it ends the word. Returns ([(letter, value)], every flag letter
+    seen before a value letter). Words after `--` are not options."""
+    values: list[tuple[str, str]] = []
+    flags = ""
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if tok == "--":
+            break
+        if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
+            for index, letter in enumerate(tok[1:], start=1):
+                if letter in value_letters:
+                    value = tok[index + 1:]
+                    if not value:
+                        value = rest[j + 1] if j + 1 < len(rest) else ""
+                        j += 1
+                    values.append((letter, value))
+                    break
+                flags += letter
+        j += 1
+    return values, flags
+
+
+# unzip's options that take a value: -d EXDIR, -P PASSWORD, -I/-O character sets.
+_UNZIP_VALUE_LETTERS = "dPIO"
+
+
 def _unzip_reason(rest: list[str], clients: Path, cwd: Path) -> str:
-    """unzip writes under -d DIR, else the current directory. Listing, testing and
-    printing modes (-l, -t, -p, -c, -Z) write nothing; -: keeps `..` in names."""
-    if any(t == "-:" or (t.startswith("-") and not t.startswith("--") and ":" in t) for t in rest):
+    """unzip writes under -d EXDIR (in any cluster: -d DIR, -dDIR, -od.., -qod ..),
+    else the current directory. Listing, testing and printing modes (-l, -t, -p,
+    -c, -Z) write nothing; -: keeps `..` in member names."""
+    values, flags = _short_option_values(rest, _UNZIP_VALUE_LETTERS)
+    if ":" in flags:
         return EXTRACT_REASON
-    if any(t.startswith("-") and not t.startswith("--") and re.search(r"[ltpcZ]", t.split("d", 1)[0][1:])
-           for t in rest if t not in ("-d",)):
+    if re.search(r"[ltpcZ]", flags):
         return ""
-    target = "."
-    for j, tok in enumerate(rest):
-        if tok == "-d":
-            target = rest[j + 1] if j + 1 < len(rest) else ""
-        elif tok.startswith("-d") and len(tok) > 2:
-            target = tok[2:]
-    if not target:
+    targets = [value for letter, value in values if letter == "d"] or ["."]
+    if any(not target for target in targets):
         return EXTRACT_REASON
-    return EXTRACT_REASON if _root_reaches(target, clients, cwd) else ""
+    return EXTRACT_REASON if any(_root_reaches(target, clients, cwd) for target in targets) else ""
 
 
 def _ditto_reason(rest: list[str], clients: Path, cwd: Path) -> str:
@@ -2127,6 +2199,34 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
            cwd: Path | None = None) -> tuple[bool, str]:
     if mode != "build-only":
         return True, ""
+    with _call_budget():
+        try:
+            return _decide(tool_name, tool_input, workspace, cwd)
+        except BudgetExceeded as exc:
+            return False, _budget_reason(exc)
+
+
+class _call_budget:
+    """Start the time and glob budgets for one call, unless a call (main) has
+    already started them; the outermost user clears them."""
+
+    def __enter__(self):
+        global _deadline, _glob_matches
+        self.owner = _deadline is None
+        if self.owner:
+            _deadline = time.monotonic() + GATE_TIME_BUDGET
+            _glob_matches = 0
+        return self
+
+    def __exit__(self, *exc):
+        global _deadline, _glob_matches
+        if self.owner:
+            _deadline = None
+            _glob_matches = 0
+        return False
+
+
+def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None) -> tuple[bool, str]:
     workspace = Path(os.path.realpath(str(workspace)))
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
     allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, copy=False)
@@ -2518,14 +2618,26 @@ def _touched_paths(tool_input: dict, cwd: Path) -> list[Path]:
 _NAME_MAX = 255
 
 
+def _path_max(start: Path) -> int:
+    try:
+        return int(os.pathconf(start.anchor or "/", "PC_PATH_MAX"))
+    except (AttributeError, OSError, ValueError):
+        return 1024
+
+
 def _not_a_path(start: Path, exc: OSError) -> bool:
     """True when looking up start failed only because it is not a path at all:
     the name is too long (ENAMETOOLONG, or Windows' ERROR_FILENAME_EXCED_RANGE)
-    and one of its components is longer than any file name can be, as when a
+    and the kernel would refuse it for any tool, because a component is longer
+    than any file name or the whole is longer than the longest path, as when a
     whole command or a long commit message is read as a path. Any other error,
-    or a long path whose parts are all plausible names, still fails closed."""
+    or a too-long path the kernel would accept, still fails closed."""
     too_long = exc.errno == errno.ENAMETOOLONG or getattr(exc, "winerror", None) == 206
-    return too_long and any(len(part.encode("utf-8", "surrogateescape")) > _NAME_MAX for part in start.parts)
+    if not too_long:
+        return False
+    encoded = [part.encode("utf-8", "surrogateescape") for part in start.parts]
+    return (any(len(part) > _NAME_MAX for part in encoded)
+            or len(str(start).encode("utf-8", "surrogateescape")) >= _path_max(start))
 
 
 def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
@@ -2571,13 +2683,17 @@ def main() -> int:
             tool_input = {}
         if not isinstance(tool_input, dict):
             raise ValueError("tool_input must be an object")
-        gated = _gated_workspaces(cwd, tool_input)
-        allowed, reason = True, ""
-        # Every build-only workspace from cwd upward applies; the strictest wins.
-        for root in gated:
-            allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, "build-only", cwd)
-            if not allowed:
-                break
+        with _call_budget():
+            gated = _gated_workspaces(cwd, tool_input)
+            allowed, reason = True, ""
+            # Every build-only workspace from cwd upward applies; the strictest wins.
+            for root in gated:
+                allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, "build-only", cwd)
+                if not allowed:
+                    break
+    except BudgetExceeded as exc:
+        print(_budget_reason(exc), file=sys.stderr)
+        return 2
     except Exception as exc:
         # Any failure here means this call could not be safely evaluated. Since
         # decide() only does real work in build-only mode (it returns immediately

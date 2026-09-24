@@ -232,8 +232,11 @@ the interpreter it runs under, as `ai_access.hook.recommended_command` in `--jso
 
 Claude Code gives a command hook 600 seconds by default, and a timed-out hook lets the call
 proceed, as if it were allowed. Set `"timeout": 600` on the hook entry, as below, and do not
-lower it. The gate does no filesystem walk per call and normally answers in well under a
-second; its own git queries stop after 15 seconds each.
+lower it; doctor warns when the entry has no `timeout` or a larger one. The gate does not
+walk the tree, and each call has its own 5-second budget for everything it reads from the
+disk (path resolution, glob expansion, its git queries) and a budget of 10,000 glob matches.
+Past either the gate blocks the call (exit 2) with a message saying so, long before the
+hook timeout, so a slow or huge glob cannot turn a block into an allow.
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
@@ -289,8 +292,10 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   route the link rule does not see (`mv` or `cp -P` of a link, a script, an archive, `git
   checkout`, a link whose folder is only created later). Run `torque doctor` after adding
   material to `project/`: it scans the workspace once (outside `clients/`, skipping
-  `node_modules` and `.git`, up to 200,000 entries) and reports every link that resolves to
-  `clients/` or above it as not ready, or says the scan stopped at its limit.
+  `node_modules` and `.git`, up to 200,000 entries), resolves each link fully, follows a link
+  to a folder outside the workspace into that folder, and reports every link that leads to
+  `clients/` or above it (directly, through a chain, or through an outside folder) as not
+  ready, or says the scan stopped at its limit.
 - A network tool (`curl`, a language HTTP client) reaching an org or a client system directly
   with credentials the user holds.
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or

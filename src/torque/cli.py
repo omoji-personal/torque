@@ -482,7 +482,7 @@ def _gate_hook_report(root: Path) -> dict:
     python = sys.executable.replace("\\", "/")
     hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False,
                   "fail_closed_shim": False, "isolated": False, "disabled_by": [], "verified": None,
-                  "probe_exit": None,
+                  "probe_exit": None, "timeouts": [],
                   "probe_error": "", "recommended_command": gate.hook_command(python)}
     matchers: list[str] = []
     for name in ("settings.json", "settings.local.json"):
@@ -501,6 +501,7 @@ def _gate_hook_report(root: Path) -> dict:
                 command = str(item.get("command") or "") if isinstance(item, dict) else ""
                 if "torque.gate" in command:
                     hook["commands"].append(command)
+                    hook["timeouts"].append(item.get("timeout"))
                     hook["configured"] = True
                     matchers.append(matcher)
     hook["matcher_covers_tools"] = _matcher_covers(matchers)
@@ -521,6 +522,8 @@ def _gate_hook_report(root: Path) -> dict:
     return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook}
 
 
+# The hook timeout the documentation gives, in seconds (Claude Code's default).
+HOOK_TIMEOUT = 600
 # The most entries doctor's link scan reads before it stops and reports an
 # incomplete scan.
 LINK_SCAN_LIMIT = 200_000
@@ -529,43 +532,54 @@ _LINK_SCAN_SKIP = {"node_modules", ".git"}
 
 def _links_out(root: Path) -> dict:
     """Symbolic links (and Windows junctions) in the workspace, outside clients/
-    and skipping node_modules and .git folders, that resolve to clients/, into it,
-    to the workspace root or to a folder above it. A recursive tool that follows
-    links (rg -L, grep -R, find -L, macOS cp -r, ...) would read clients/ through
-    one. Run once by doctor; the gate itself does not walk the tree."""
+    and skipping node_modules and .git folders, that lead to clients/, into it,
+    to the workspace root or to a folder above it. Each link is resolved fully
+    (realpath). A link to a folder outside the workspace is followed there too,
+    so one that reaches clients/ through an outside folder is reported as
+    `path (via outside-link)`. A recursive tool that follows links (rg -L,
+    grep -R, find -L, macOS cp -r, ...) would read clients/ through any of
+    them. Run once by doctor; the gate itself does not walk the tree."""
     from . import gate
     root = Path(os.path.realpath(str(root)))
     clients = Path(os.path.realpath(str(root / "clients")))
     found: list[str] = []
     budget = LINK_SCAN_LIMIT
-    complete = True
-    for folder, dirs, files in os.walk(root):
-        here = Path(folder)
-        keep = []
-        for name in dirs:
-            path = here / name
-            if name in _LINK_SCAN_SKIP or (here == root and name == "clients"):
-                continue
-            if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
-                files.append(name)
-                continue
-            keep.append(name)
-        dirs[:] = keep
-        for name in files:
-            budget -= 1
+    queue: list[tuple[Path, str | None]] = [(root, None)]
+    scanned: set[str] = set()
+    while queue:
+        start, origin = queue.pop(0)
+        key = gate._cf(str(start))
+        if key in scanned:
+            continue
+        scanned.add(key)
+        for folder, dirs, files in os.walk(start):
+            here = Path(folder)
+            budget -= 1 + len(dirs) + len(files)
             if budget < 0:
-                complete = False
-                break
-            path = here / name
-            if not path.is_symlink():
-                continue
-            real = Path(os.path.realpath(str(path)))
-            if gate._reaches(real, clients):
-                found.append(path.relative_to(root).as_posix())
-        if not complete:
-            break
-        budget -= len(dirs)
-    return {"found": sorted(found), "complete": complete}
+                return {"found": sorted(found), "complete": False}
+            keep = []
+            for name in dirs:
+                path = here / name
+                if name in _LINK_SCAN_SKIP or (here == root and name == "clients"):
+                    continue
+                if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+                    files.append(name)
+                    continue
+                keep.append(name)
+            dirs[:] = keep
+            for name in files:
+                path = here / name
+                if not (path.is_symlink() or getattr(path, "is_junction", lambda: False)()):
+                    continue
+                real = Path(os.path.realpath(str(path)))
+                label = origin or path.relative_to(root).as_posix()
+                if origin is not None:
+                    label = f"{origin} (via {path.as_posix()})"
+                if gate._reaches(real, clients):
+                    found.append(label)
+                elif real.is_dir() and not gate._is_within(real, root):
+                    queue.append((real, origin or path.relative_to(root).as_posix()))
+    return {"found": sorted(dict.fromkeys(found)), "complete": True}
 
 
 def _doctor(args: argparse.Namespace) -> int:
@@ -637,6 +651,15 @@ def _doctor(args: argparse.Namespace) -> int:
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
+        slow = [t for t in hook["timeouts"] if not isinstance(t, (int, float)) or isinstance(t, bool)
+                or t > HOOK_TIMEOUT]
+        if hook["configured"] and slow:
+            from . import gate
+            report["next_actions"].append(
+                f'Set "timeout": {HOOK_TIMEOUT} on the torque.gate hook entry (it has '
+                + ("none" if slow[0] is None else repr(slow[0])) + "). A hook that times out lets the call "
+                f"proceed; the gate blocks by itself once its {gate.GATE_TIME_BUDGET:g}-second budget runs out, "
+                "well inside that timeout.")
         links = _links_out(Path(root))
         access["links_out"] = links
         if links["found"]:
