@@ -482,7 +482,7 @@ def _gate_hook_report(root: Path) -> dict:
     python = sys.executable.replace("\\", "/")
     hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False,
                   "fail_closed_shim": False, "isolated": False, "disabled_by": [], "verified": None,
-                  "probe_exit": None,
+                  "probe_exit": None, "timeouts": [],
                   "probe_error": "", "recommended_command": gate.hook_command(python)}
     matchers: list[str] = []
     for name in ("settings.json", "settings.local.json"):
@@ -501,6 +501,7 @@ def _gate_hook_report(root: Path) -> dict:
                 command = str(item.get("command") or "") if isinstance(item, dict) else ""
                 if "torque.gate" in command:
                     hook["commands"].append(command)
+                    hook["timeouts"].append(item.get("timeout"))
                     hook["configured"] = True
                     matchers.append(matcher)
     hook["matcher_covers_tools"] = _matcher_covers(matchers)
@@ -519,6 +520,66 @@ def _gate_hook_report(root: Path) -> dict:
             if failed:
                 hook["probe_error"] = (failed[0].strip().splitlines() or [""])[-1][:300]
     return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook}
+
+
+# The hook timeout the documentation gives, in seconds (Claude Code's default).
+HOOK_TIMEOUT = 600
+# The most entries doctor's link scan reads before it stops and reports an
+# incomplete scan.
+LINK_SCAN_LIMIT = 200_000
+_LINK_SCAN_SKIP = {"node_modules", ".git"}
+
+
+def _links_out(root: Path) -> dict:
+    """Symbolic links (and Windows junctions) in the workspace, outside clients/
+    and skipping node_modules and .git folders, that lead to clients/, into it,
+    to the workspace root or to a folder above it. Each link is resolved fully
+    (realpath). A link to a folder outside the workspace is followed there too,
+    so one that reaches clients/ through an outside folder is reported as
+    `path (via outside-link)`. A recursive tool that follows links (rg -L,
+    grep -R, find -L, macOS cp -r, ...) would read clients/ through any of
+    them. Run once by doctor; the gate itself does not walk the tree."""
+    from . import gate
+    root = Path(os.path.realpath(str(root)))
+    clients = Path(os.path.realpath(str(root / "clients")))
+    found: list[str] = []
+    budget = LINK_SCAN_LIMIT
+    queue: list[tuple[Path, str | None]] = [(root, None)]
+    scanned: set[str] = set()
+    while queue:
+        start, origin = queue.pop(0)
+        key = gate._cf(str(start))
+        if key in scanned:
+            continue
+        scanned.add(key)
+        for folder, dirs, files in os.walk(start):
+            here = Path(folder)
+            budget -= 1 + len(dirs) + len(files)
+            if budget < 0:
+                return {"found": sorted(found), "complete": False}
+            keep = []
+            for name in dirs:
+                path = here / name
+                if name in _LINK_SCAN_SKIP or (here == root and name == "clients"):
+                    continue
+                if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+                    files.append(name)
+                    continue
+                keep.append(name)
+            dirs[:] = keep
+            for name in files:
+                path = here / name
+                if not (path.is_symlink() or getattr(path, "is_junction", lambda: False)()):
+                    continue
+                real = Path(os.path.realpath(str(path)))
+                label = origin or path.relative_to(root).as_posix()
+                if origin is not None:
+                    label = f"{origin} (via {path.as_posix()})"
+                if gate._reaches(real, clients):
+                    found.append(label)
+                elif real.is_dir() and not gate._is_within(real, root):
+                    queue.append((real, origin or path.relative_to(root).as_posix()))
+    return {"found": sorted(dict.fromkeys(found)), "complete": True}
 
 
 def _doctor(args: argparse.Namespace) -> int:
@@ -590,6 +651,29 @@ def _doctor(args: argparse.Namespace) -> int:
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
+        slow = [t for t in hook["timeouts"] if not isinstance(t, (int, float)) or isinstance(t, bool)
+                or t > HOOK_TIMEOUT]
+        if hook["configured"] and slow:
+            from . import gate
+            report["next_actions"].append(
+                f'Set "timeout": {HOOK_TIMEOUT} on the torque.gate hook entry (it has '
+                + ("none" if slow[0] is None else repr(slow[0])) + "). A hook that times out lets the call "
+                f"proceed; the gate blocks by itself once its {gate.GATE_TIME_BUDGET:g}-second budget runs out, "
+                "well inside that timeout.")
+        links = _links_out(Path(root))
+        access["links_out"] = links
+        if links["found"]:
+            report["ready"] = False
+            shown = ", ".join(links["found"][:10]) + (" ..." if len(links["found"]) > 10 else "")
+            report["next_actions"].append(
+                f"{len(links['found'])} link(s) in the workspace lead to clients/ or above it: {shown}. A recursive "
+                "tool that follows links (rg -L, grep -R, find -L, macOS cp -r and others) would read client "
+                "files through them, and the gate does not walk the tree. Remove or repoint them.")
+        elif not links["complete"]:
+            report["ready"] = False
+            report["next_actions"].append(
+                f"The link scan stopped after {LINK_SCAN_LIMIT} entries (node_modules and .git are skipped), so "
+                "links that lead to clients/ or above it may remain. Check large folders for such links.")
         from . import gate
         count = gate.clients_index_count(root)
         access["clients_in_git"] = "unknown" if count is None else count
@@ -597,14 +681,15 @@ def _doctor(args: argparse.Namespace) -> int:
             report["ready"] = False
             report["next_actions"].append(
                 "Torque could not check whether files under clients/ are tracked in Git (git failed, timed out "
-                "or is missing), so the gate blocks git commands other than git status here. Check that git "
-                "works in this workspace.")
+                "or is missing), so the gate blocks every git command here except git status without "
+                "-v/--verbose and git rm --cached of paths under clients/. Check that git works in this workspace.")
         elif count:
             report["ready"] = False
             report["next_actions"].append(
                 f"{access['clients_in_git']} file(s) under clients/ are tracked in Git or staged. Client files "
-                "must stay untracked: low-level git commands can read them, so the gate blocks git commands "
-                "other than status and log here. Run git rm -r --cached clients and keep clients/ ignored.")
+                "must stay untracked: low-level git commands can read them, so the gate blocks every git "
+                "command here except git status without -v/--verbose and git rm --cached of paths under "
+                "clients/. Run git rm -r --cached clients and keep clients/ ignored.")
         if hook["disabled_by"]:
             report["ready"] = False
             report["next_actions"].append(

@@ -8,6 +8,7 @@ host that does not wire up the hook can still get through. See docs/ai-access.md
 """
 from __future__ import annotations
 import codecs
+import errno
 import glob
 import itertools
 import json
@@ -16,6 +17,8 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 from functools import lru_cache
 from pathlib import Path
@@ -106,13 +109,13 @@ PATTERN_FIRST_HEADS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd"}
 DESTRUCTIVE_VERBS = {"rm", "mv", "cp", "truncate", "shred", "unlink", "rmdir"}
 PY_LAUNCHER_RE = re.compile(r"^(python[23]?(\.\d+)?|pythonw|py)$")
 SETTINGS_RE = re.compile(r"(^|[/\\])\.claude[/\\]settings[^/\\]*\.json$", re.IGNORECASE)
-_GREP_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*[rR][a-zA-Z]*$")
-_LS_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*R[a-zA-Z]*$")
 # Copy and archive tools that read a whole directory tree when given a recursive flag
 # (tar always does).
 RECURSIVE_COPY_HEADS = {"cp", "scp", "rsync", "zip"}
-_COPY_RECURSIVE_FLAG_RE = re.compile(r"^--(recursive|archive)$|^-[a-zA-Z]*[rRa][a-zA-Z]*$")
-_DIFF_RECURSIVE_FLAG_RE = re.compile(r"^--recursive$|^-[a-zA-Z]*r[a-zA-Z]*$")
+# Short options that take a value, per copy tool: in a cluster (-rA2, -9r, -rtDIR)
+# the first of them takes the rest, so letters after it are not options. Digits
+# (zip's compression level) are allowed anywhere in a cluster.
+_COPY_VALUE_LETTERS = {"cp": "tS", "scp": "cFiJloPSD", "rsync": "efBMT", "zip": "bntOxi"}
 _GLOB_CHARS = frozenset("*?[")
 _HOME_TOKEN_RE = re.compile(r"\$\{HOME\}|\$HOME")
 CASEFOLD_PLATFORMS = ("darwin", "win32")
@@ -141,6 +144,12 @@ _TORQUE_INSTALL_RE = re.compile(r"__editable__[^/\\]*torque|torque_salesforce[^/
 _MCP_RECURSIVE_MARKERS = ("tree", "search", "find", "grep", "glob", "walk", "recursive")
 _CD_HEADS = {"cd", "pushd", "popd"}
 _CD_PREFIXES = {"builtin", "command", "time", "noglob", "nocorrect"}
+# Reserved words that can start a segment holding a cd: if cd ..; then cd ..; do cd ..
+_SHELL_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
+# A parameter expansion the gate cannot know: $NAME, ${...}, $1, $@, and a bare $
+# left where the splitter cut $(...) apart.
+_PARAM_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-]|$)")
+_BRACED_PARAM_RE = re.compile(r"\$\{[^{}]*\}")
 _MAX_CWDS = 32
 # Commands that write, create or replace files, for the checks that only apply
 # to a write (a planted torque package, the hook interpreter's binaries).
@@ -156,6 +165,46 @@ _ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
 # group with no comma, c{l..l}ients. $(...) and ${...} are not groups.
 _WORD_GROUP_RE = re.compile(r"(?<=[^\s$<>=(|&;`'\"])(\([^()\s]*\)|\{[^{}\s,]*\})"
                             r"|(\([^()\s]*\)|\{[^{}\s,]*\})(?=[^\s)}|&;<>`'\"])")
+# Each hook call gets one wall-clock budget, in seconds, for everything it reads from
+# the disk (path resolution, glob expansion, git queries), and one budget of glob
+# matches. Past either the call is blocked, so the hook answers long before Claude
+# Code's own hook timeout, which would let the call run.
+GATE_TIME_BUDGET = 5.0
+GLOB_MATCH_LIMIT = 10_000
+# The watchdog in main() ends the hook process this long after the budget if the
+# cooperative checks have not already blocked the call.
+WATCHDOG_GRACE = 0.5
+_deadline: float | None = None
+_glob_matches = 0
+# Each distinct glob pattern is expanded, and charged, once per call.
+_glob_cache: dict[str, tuple[list[Path], list[Path]]] = {}
+
+
+class BudgetExceeded(Exception):
+    """The call used up the gate's time or glob budget."""
+
+
+def _spend(matches: int = 0) -> None:
+    """Charge the current call's budgets; raise BudgetExceeded past either."""
+    global _glob_matches
+    if _deadline is not None and time.monotonic() > _deadline:
+        raise BudgetExceeded(f"the gate's {GATE_TIME_BUDGET:g}-second time budget for one call ran out")
+    if matches:
+        _glob_matches += matches
+        if _glob_matches > GLOB_MATCH_LIMIT:
+            raise BudgetExceeded(f"globs in this call match more than {GLOB_MATCH_LIMIT} paths")
+
+
+def _remaining() -> float | None:
+    """Seconds left in the current call's time budget, or None outside a call."""
+    return None if _deadline is None else max(0.0, _deadline - time.monotonic())
+
+
+def _budget_reason(exc: BudgetExceeded) -> str:
+    return (f"Build-only mode: {exc}, so the call could not be checked in time; blocking to fail closed. "
+            "Name fewer paths or narrower globs, such as project/src/*.py.")
+
+
 NARROW_PATH_HINT = " Pass a narrower path, such as project/ or src/, instead of the workspace root."
 
 
@@ -234,6 +283,7 @@ def _resolve(base: Path, raw: str) -> Path:
     target = Path(raw)
     if not target.is_absolute():
         target = base / target
+    _spend()
     return Path(os.path.realpath(str(target)))
 
 
@@ -430,33 +480,76 @@ def _glob_paths(operand: str, cwd: Path) -> tuple[list[Path], list[Path]]:
         # search rooted at the fixed prefix.
         return [], [prefix]
     pattern = expanded if os.path.isabs(expanded) else os.path.join(str(cwd), expanded)
+    if pattern in _glob_cache:
+        cached_paths, cached_roots = _glob_cache[pattern]
+        return list(cached_paths), list(cached_roots)
+    result = _expand_glob(pattern, prefix)
+    if _deadline is not None:
+        _glob_cache[pattern] = result
+    return list(result[0]), list(result[1])
+
+
+def _expand_glob(pattern: str, prefix: Path) -> tuple[list[Path], list[Path]]:
+    """Expand one absolute glob pattern, charging each match to the call's glob
+    budget. Over _GLOB_LIMIT matches it is read as a recursive root (prefix)."""
+    found: list[str] = []
     try:
-        found = list(itertools.islice(glob.iglob(pattern), _GLOB_LIMIT + 1))
+        for match in glob.iglob(pattern):
+            _spend(1)
+            found.append(match)
+            if len(found) > _GLOB_LIMIT:
+                return [], [prefix]
     except (OSError, ValueError, re.error):
         return [], [prefix]
-    if len(found) > _GLOB_LIMIT:
-        return [], [prefix]
-    return [Path(os.path.realpath(p)) for p in found], []
+    out: list[Path] = []
+    for match in found:
+        _spend()
+        out.append(Path(os.path.realpath(match)))
+    return out, []
 
 
-def _token_paths(tok: str, cwd: Path) -> tuple[list[Path], list[Path]]:
-    """Every path a raw Bash token can name from cwd, as (paths, recursive roots)."""
+def _dollar_variants(operand: str, cwd: Path, workspace: Path | None) -> list[str]:
+    """operand with every parameter expansion the gate cannot know ($R, ${R%x},
+    $1) replaced by each directory it could stand for: the current directory,
+    the folders between it and the workspace root, and the root itself. So a
+    path or search root built from a variable counts as reaching the workspace
+    root, as a cd to one already does. Without a workspace, operand as it is."""
+    if workspace is None:
+        return [operand]
+    expanded = _PWD_TOKEN_RE.sub(lambda _m: str(cwd), _expand_home(operand))
+    if not _PARAM_RE.search(expanded):
+        return [operand]
+    anchors = [cwd]
+    if _is_within(cwd, workspace):
+        anchors += [p for p in cwd.parents if _is_within(p, workspace)]
+    anchors.append(workspace)
+    return [_PARAM_RE.sub(lambda _m, a=a: a.as_posix(), expanded) for a in dict.fromkeys(anchors)]
+
+
+def _token_paths(tok: str, cwd: Path, workspace: Path | None = None) -> tuple[list[Path], list[Path]]:
+    """Every path a raw Bash token can name from cwd, as (paths, recursive roots).
+    With a workspace, an unknown parameter expansion is read as each directory
+    from cwd up to the workspace root (_dollar_variants)."""
     operand = _token_operand(tok)
     if not operand or operand.startswith("-"):
         return [], []
     paths: list[Path] = []
-    try:
-        paths.append(_resolve(cwd, operand))
-    except (OSError, ValueError):
-        pass
-    matches, roots = _glob_paths(operand, cwd)
-    return paths + matches, roots
+    roots: list[Path] = []
+    for variant in _dollar_variants(operand, cwd, workspace):
+        try:
+            paths.append(_resolve(cwd, variant))
+        except (OSError, ValueError):
+            pass
+        matches, found = _glob_paths(variant, cwd)
+        paths += matches
+        roots += found
+    return paths, roots
 
 
 def _token_is_client_path(tok: str, clients: Path, cwd: Path) -> bool:
     if not tok:
         return False
-    paths, roots = _token_paths(tok, cwd)
+    paths, roots = _token_paths(tok, cwd, clients.parent)
     return any(_is_within(p, clients) for p in paths) or any(_reaches(r, clients) for r in roots)
 
 
@@ -489,15 +582,52 @@ def _is_recursive_search(tok: str, rest: list[str]) -> bool:
     if head in ALWAYS_RECURSIVE_HEADS:
         return True
     if head in GREP_HEADS:
-        return any(_GREP_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return (any(t == "--recursive" or _grep_long_recursive(t) or _short_flag_has(t, "rR", _GREP_VALUE_LETTERS + "d")
+                    for t in rest) or _grep_directories_recurse(rest))
     if head == "ls":
-        return any(_LS_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return any(t == "--recursive" or _short_flag_has(t, "R", "wTI") for t in rest)
     if head in TAR_HEADS:
         return True
     if head in RECURSIVE_COPY_HEADS:
-        return any(_COPY_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return any(t in ("--recursive", "--archive") or _short_flag_has(t, "rRa", _COPY_VALUE_LETTERS[head])
+                   for t in rest)
     if head == "diff":
-        return any(_DIFF_RECURSIVE_FLAG_RE.match(t) for t in rest)
+        return any(t == "--recursive" or _short_flag_has(t, "r", "xXSFLCUDWI") for t in rest)
+    return False
+
+
+def _grep_long_recursive(tok: str) -> bool:
+    """grep's --recursive and --dereference-recursive, and the abbreviations
+    getopt accepts for them (--recur, --deref)."""
+    name = tok.split("=", 1)[0]
+    return name.startswith("--") and (_is_long_flag(name, "--recursive", 5)
+                                       or _is_long_flag(name, "--dereference-recursive", 5))
+
+
+# grep's short options that take a value, other than -d.
+_GREP_VALUE_LETTERS = "ABCmDef"
+
+
+def _grep_directories_recurse(rest: list[str]) -> bool:
+    """grep -d recurse, -drecurse, --directories=recurse (and abbreviations of the
+    option and of `recurse`), which search a tree like -r."""
+    for j, tok in enumerate(rest):
+        if tok == "--":
+            break
+        value = None
+        if tok.startswith("--"):
+            name, eq, val = tok.partition("=")
+            if _is_long_flag(name, "--directories", 4):
+                value = val if eq else (rest[j + 1] if j + 1 < len(rest) else "")
+        elif tok.startswith("-") and len(tok) > 1:
+            for index, letter in enumerate(tok[1:], start=1):
+                if letter in _GREP_VALUE_LETTERS:
+                    break
+                if letter == "d":
+                    value = tok[index + 1:] or (rest[j + 1] if j + 1 < len(rest) else "")
+                    break
+        if value is not None and len(value) >= 3 and "recurse".startswith(value):
+            return True
     return False
 
 
@@ -604,7 +734,7 @@ TAR_HEADS = {"tar", "bsdtar", "gtar", "gnutar"}
 _TAR_MODE_RE = re.compile(r"^[A-Za-z]*[ctxruAd][A-Za-z]*$")
 
 
-def _tar_operands(args: list[str], cwd: Path) -> list[tuple[str, Path]] | None:
+def _tar_operands(args: list[str], cwd: Path, dirs: list[Path] | None = None) -> list[tuple[str, Path]] | None:
     """tar's operands, each with the directory it is read from. -C DIR, -CDIR and
     --directory=DIR apply, in order, to the operands after them; each one is
     relative to the one before. None when a directory is only known at run time."""
@@ -657,6 +787,8 @@ def _tar_operands(args: list[str], cwd: Path) -> list[tuple[str, Path]] | None:
                     base = _resolve(base, value)
                 except (OSError, ValueError):
                     return None
+                if dirs is not None:
+                    dirs.append(base)
             else:
                 out.append((value, base))
         j += 1
@@ -672,9 +804,121 @@ def _recursive_search_reaches(head: str, rest: list[str], clients: Path, cwd: Pa
 
 def _root_reaches(raw: str, clients: Path, cwd: Path) -> bool:
     """True when a recursive operation rooted at raw (a raw token, glob allowed)
-    could reach clients/."""
-    paths, roots = _token_paths(raw, cwd)
+    could reach clients/. A root built from a variable counts as the workspace root."""
+    paths, roots = _token_paths(raw, cwd, clients.parent)
     return any(_reaches(p, clients) for p in paths + roots)
+
+
+LN_REASON = ("a link to client context, the workspace root or a folder above it would let a later command "
+             "reach clients/. Link to a path inside project/")
+
+
+_LINK_ITEM_TYPES = {"symboliclink", "junction", "hardlink"}
+
+
+def _link_target_reaches(target: str, link: str, clients: Path, cwd: Path) -> bool:
+    """A link target, read both from the current directory and from the folder
+    the link is made in (Windows reads a relative symbolic target from there),
+    reaching clients/ or above it."""
+    if not target or _PARAM_RE.search(target) or "`" in target:
+        return True
+    try:
+        link_dir = _resolve(cwd, os.path.dirname(link) or ".") if link else cwd
+    except (OSError, ValueError):
+        return True
+    return any(_root_reaches(target, clients, base) for base in dict.fromkeys([cwd, link_dir]))
+
+
+def _mklink_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """cmd's `mklink [/D|/H|/J] LINK TARGET`."""
+    operands = [t for t in rest if not re.match(r"^/{1,2}[A-Za-z]$", t)]
+    if len(operands) < 2:
+        return False
+    return _link_target_reaches(operands[1], operands[0], clients, cwd)
+
+
+def _new_item_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """PowerShell's `New-Item -ItemType SymbolicLink|Junction|HardLink -Path P
+    -Target T` (or -Value, -Name, -Type)."""
+    values: dict[str, str] = {}
+    for j, tok in enumerate(rest):
+        if tok.startswith("-") and j + 1 < len(rest):
+            name = tok[1:].split(":", 1)[0].casefold()
+            for full in ("itemtype", "type", "path", "name", "target", "value"):
+                if full.startswith(name) and len(name) >= 2:
+                    values.setdefault("itemtype" if full == "type" else full, rest[j + 1])
+                    break
+    if values.get("itemtype", "").casefold() not in _LINK_ITEM_TYPES:
+        return False
+    target = values.get("target", values.get("value", ""))
+    return _link_target_reaches(target, values.get("path", values.get("name", "")), clients, cwd)
+
+
+def _ln_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """True when `ln` (symbolic or hard) would make a link whose target is
+    clients/, inside it, the workspace root or any folder above it. A relative
+    symbolic target is read from the folder the link is made in; a hard link's,
+    or one made with -r/--relative, from the current directory."""
+    symbolic = relative = False
+    target_dir: str | None = None
+    operands: list[str] = []
+    ended = False
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if ended or not tok.startswith("-") or tok == "-":
+            operands.append(tok)
+        elif tok == "--":
+            ended = True
+        elif tok.startswith("--"):
+            name, eq, value = tok.partition("=")
+            if _is_long_flag(name, "--symbolic", 4):
+                symbolic = True
+            elif _is_long_flag(name, "--relative", 3):
+                relative = True
+            elif _is_long_flag(name, "--target-directory", 3):
+                target_dir = value if eq else (rest[j + 1] if j + 1 < len(rest) else "")
+                j += 0 if eq else 1
+            elif _is_long_flag(name, "--suffix", 4) and not eq:
+                j += 1
+        else:
+            group = tok[1:]
+            for index, letter in enumerate(group):
+                if letter == "s":
+                    symbolic = True
+                elif letter == "r":
+                    relative = True
+                elif letter in "tS":
+                    value = group[index + 1:]
+                    if not value:
+                        value = rest[j + 1] if j + 1 < len(rest) else ""
+                        j += 1
+                    if letter == "t":
+                        target_dir = value
+                    break
+        j += 1
+    if target_dir is not None:
+        targets, link_dir = operands, target_dir
+    elif len(operands) >= 2:
+        targets, last = operands[:-1], operands[-1]
+        try:
+            link_dir = last if os.path.isdir(_resolve(cwd, last)) else (os.path.dirname(last) or ".")
+        except (OSError, ValueError):
+            return True
+    else:
+        targets, link_dir = operands, "."
+    if not targets:
+        return False
+    if symbolic and not relative:
+        if _PARAM_RE.search(link_dir) or "`" in link_dir:
+            return True
+        try:
+            base = _resolve(cwd, link_dir or ".")
+        except (OSError, ValueError):
+            return True
+    else:
+        base = cwd
+    return any(_root_reaches(raw, clients, base) for raw in targets)
 
 
 def _flag_values(args: list[str], flags: set[str]) -> list[str] | None:
@@ -846,7 +1090,8 @@ def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Pat
     """Client files enter git through `git add`/`git stage`, `git update-index
     --add` and `git hash-object -w`. Each is blocked when its paths reach
     clients/, .claude/ or the hook's environment. And while client files are in
-    the index, every git command but status and log (without patches) is blocked."""
+    the index (or git cannot say), every git command is blocked except git status
+    without -v/--verbose and git rm --cached of paths under clients/."""
     try:
         base, trees, sub, args = _git_parse(rest, cwd)
     except (OSError, ValueError):
@@ -895,10 +1140,12 @@ def _git_run(base: Path, args: list[str]) -> tuple[int, str, str] | None:
     git could not run or timed out."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["LC_ALL"] = "C"
+    _spend()
+    left = _remaining()
     try:
         done = subprocess.run(["git", *GIT_QUERY_OPTIONS, "-C", str(base), *args],
-                              capture_output=True, text=True, timeout=15, env=env,
-                              stdin=subprocess.DEVNULL)
+                              capture_output=True, text=True, timeout=15 if left is None else min(15, left),
+                              env=env, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     return done.returncode, done.stdout, done.stderr
@@ -963,7 +1210,7 @@ def _pathspecs_reach(raws: list[str], base: Path, protected: list[Path]) -> bool
     a wildcard across directories, so a pathspec with one is rooted at its fixed
     prefix. A magic pathspec (`:/` is the repository's top) is not interpreted."""
     for raw in raws:
-        if raw.startswith(":"):
+        if raw.startswith(":") or _PARAM_RE.search(raw) or "`" in raw:
             return True
         root = _resolve(base, _glob_fixed_prefix(raw) if _has_glob_char(raw) else raw)
         if any(_reaches(root, p) for p in protected):
@@ -1047,6 +1294,310 @@ def _git_wipe_reaches(rest: list[str], words: list[str], clients: Path, claude_d
     if specs:
         return _pathspecs_reach(specs, base, protected)
     return _toplevel_reaches(base, protected)
+
+
+GIT_LISTING_REASON = ("git status --ignored and git ls-files --others/--ignored list the names of files under "
+                      "client context." + NARROW_PATH_HINT)
+
+
+def _git_listing_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """`git status --ignored` and `git ls-files -o/-i/--others/--ignored` print
+    the names of files git does not track, clients/ among them. Blocked when
+    their scope reaches clients/: status covers the whole repository unless
+    pathspecs narrow it; ls-files covers the current directory (or -C) down."""
+    try:
+        base, trees, sub, args = _git_parse(rest, cwd)
+    except (OSError, ValueError):
+        return True
+    options = args[:args.index("--")] if "--" in args else args
+    if sub == "status":
+        if not any(t.split("=", 1)[0] == "--ignored" and t != "--ignored=no" for t in options):
+            return False
+        specs = _git_pathspecs(args, set())
+        if trees:
+            return True
+        return _pathspecs_reach(specs, base, [clients]) if specs else _toplevel_reaches(base, [clients])
+    if sub == "ls-files":
+        listing = any((_is_long_flag(t, "--others", 4) or _is_long_flag(t, "--ignored", 4)) if t.startswith("--")
+                      else _short_flag_has(t, "oi", "xX") for t in options)
+        if not listing:
+            return False
+        specs = _git_pathspecs(args, {"-x", "--exclude", "-X", "--exclude-from", "--exclude-per-directory",
+                                      "--with-tree", "--format"}) or ["."]
+        return bool(trees) or _pathspecs_reach(specs, base, [clients])
+    return False
+
+
+PATCH_REASON = ("applying a patch outside project/ (git apply, git am, patch), or one whose paths climb out "
+                "with .. or are absolute, could overwrite workspace.json, the hook configuration or client "
+                "files. Run it from project/ with a patch file whose paths stay inside it")
+EXTRACT_REASON = ("extracting an archive at or above the workspace root, into clients/, or with absolute or "
+                  "rewritten member names could overwrite workspace.json, the hook configuration or client "
+                  "files. Extract into project/ or a folder under it")
+# The most of a patch file the gate reads to check its paths.
+_PATCH_READ_LIMIT = 5_000_000
+
+
+def _patch_file_safe(raw: str, cwd: Path) -> bool:
+    """True when a patch file can be read and every path it names is relative
+    and has no `..` segment (/dev/null aside)."""
+    try:
+        path = _resolve(cwd, raw)
+        if path.stat().st_size > _PATCH_READ_LIMIT:
+            return False
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return False
+    names: list[str] = []
+    for line in text.splitlines():
+        if line.startswith(("--- ", "+++ ")):
+            names.append(line[4:].split("\t", 1)[0].strip())
+        elif line.startswith("diff --git "):
+            names += line[len("diff --git "):].split()
+        elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ", "Index: ")):
+            names.append(line.split(" ", 2)[-1].strip())
+    for name in names:
+        name = name.strip('"')
+        if name == "/dev/null":
+            continue
+        if name.startswith(("/", "\\", "~")) or re.match(r"^[A-Za-z]:", name):
+            return False
+        if ".." in re.split(r"[/\\]", name):
+            return False
+    return True
+
+
+def _git_patch_reason(rest: list[str], workspace: Path, cwd: Path) -> str:
+    """git apply and git am write the files a patch names. git apply run inside
+    project/ changes only paths under the current directory and rejects `..`
+    and absolute paths; git am applies from the repository's top. So git apply
+    must run inside project/ (or at the root with a --directory inside project/),
+    and git am needs a repository whose top is inside project/. A named patch
+    file must name no absolute path and no `..`; --unsafe-paths is blocked."""
+    try:
+        base, trees, sub, args = _git_parse(rest, cwd)
+    except (OSError, ValueError):
+        return PATCH_REASON if any(t in ("apply", "am") for t in rest) else ""
+    if sub not in ("apply", "am"):
+        return ""
+    project = Path(os.path.realpath(str(workspace / "project")))
+    if sub == "am":
+        if args and all(t in ("--abort", "--quit", "--show-current-patch") or t.startswith("--show-current-patch=")
+                        for t in args):
+            return ""
+        top = _git_toplevel(base)
+        if top is None or not _is_within(top, project) or trees:
+            return PATCH_REASON
+        files = [t for t in args if not t.startswith("-")]
+        return "" if all(_patch_file_safe(f, base) for f in files if os.path.isfile(_resolve(base, f))) else PATCH_REASON
+    options = args[:args.index("--")] if "--" in args else args
+    names = [t.split("=", 1)[0] for t in options if t.startswith("--")]
+    if any(_is_long_flag(n, "--unsafe-paths", 4) for n in names):
+        return PATCH_REASON
+    writes = (any(_is_long_flag(n, "--apply", 4) or _is_long_flag(n, "--index", 4) or _is_long_flag(n, "--cached", 4)
+                  for n in names)
+              or not any(_is_long_flag(n, flag, 4) for n in names for flag in ("--check", "--stat", "--numstat",
+                                                                                  "--summary")))
+    if not writes:
+        return ""
+    directory = None
+    files: list[str] = []
+    j = 0
+    while j < len(args):
+        tok = args[j]
+        name, eq, value = tok.partition("=")
+        if tok == "--":
+            files += args[j + 1:]
+            break
+        if tok.startswith("--") and _is_long_flag(name, "--directory", 5):
+            directory = value if eq else (args[j + 1] if j + 1 < len(args) else "")
+            j += 0 if eq else 1
+        elif tok.startswith("--") and not eq and name in ("--exclude", "--include", "--whitespace",
+                                                          "--build-fake-ancestor"):
+            j += 1
+        elif tok in ("-p", "-C"):
+            j += 1
+        elif not tok.startswith("-"):
+            files.append(tok)
+        j += 1
+    if directory is not None:
+        if not directory or directory.startswith(("/", "\\", "~")) or re.match(r"^[A-Za-z]:", directory) \
+                or ".." in re.split(r"[/\\]", directory) or _PARAM_RE.search(directory):
+            return PATCH_REASON
+        try:
+            confined = _is_within(_resolve(base, directory), project)
+        except (OSError, ValueError):
+            return PATCH_REASON
+    else:
+        confined = _is_within(base, project)
+    if not confined or trees:
+        return PATCH_REASON
+    if any(f != "-" and not _patch_file_safe(f, base) for f in files):
+        return PATCH_REASON
+    return ""
+
+
+def _patch_reason(toks: list[str], words: list[str], index: int, workspace: Path, cwd: Path) -> str:
+    """`patch` writes the files its patch names, relative to its directory
+    (-d/--directory, else the current one). It must run inside project/, and
+    its patch must come from a file the gate can read (-i, --input, a `<` file
+    or the second operand) whose paths are relative with no `..`. A dry run
+    writes nothing."""
+    rest = words[index + 1:]
+    if any(t in ("--dry-run", "-C", "--check") for t in rest):
+        return ""
+    directory = None
+    source = None
+    operands: list[str] = []
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        name, eq, value = tok.partition("=")
+        if tok == "--":
+            operands += rest[j + 1:]
+            break
+        if tok.startswith("--"):
+            if name in ("--directory", "--input"):
+                val = value if eq else (rest[j + 1] if j + 1 < len(rest) else "")
+                j += 0 if eq else 1
+                if name == "--directory":
+                    directory = val
+                else:
+                    source = val
+            elif not eq and name in ("--strip", "--output", "--reject-file", "--backup", "--prefix", "--suffix",
+                                     "--basename-prefix", "--fuzz", "--version-control", "--ifdef", "--quoting-style",
+                                     "--get", "--reject-format", "--read-only"):
+                j += 1
+        elif tok.startswith("-") and len(tok) > 1:
+            letter = tok[1]
+            if letter in "dioprBDFVYzg":
+                val = tok[2:] or (rest[j + 1] if j + 1 < len(rest) else "")
+                if not tok[2:]:
+                    j += 1
+                if letter == "d":
+                    directory = val
+                elif letter == "i":
+                    source = val
+        else:
+            operands.append(tok)
+        j += 1
+    if source is None and len(operands) >= 2:
+        source = operands[1]
+    if source is None:
+        for k, tok in enumerate(toks):
+            m = _REDIRECT_RE.match(tok)
+            if m and tok.lstrip("0123456789").startswith("<") and not tok.lstrip("0123456789").startswith(("<<", "<&", "<>")):
+                source = m.group("rest") or (toks[k + 1] if k + 1 < len(toks) else "")
+    if not source or source == "-":
+        return PATCH_REASON
+    project = Path(os.path.realpath(str(workspace / "project")))
+    try:
+        base = _resolve(cwd, directory) if directory else cwd
+    except (OSError, ValueError):
+        return PATCH_REASON
+    if (directory and _PARAM_RE.search(directory)) or not _is_within(base, project):
+        return PATCH_REASON
+    return "" if _patch_file_safe(source, cwd) else PATCH_REASON
+
+
+def _tar_extracts(rest: list[str]) -> bool:
+    if rest and not rest[0].startswith("-") and _TAR_MODE_RE.match(rest[0]) and "x" in rest[0]:
+        return True
+    for tok in rest:
+        if tok == "--":
+            break
+        if tok.startswith("--"):
+            name = tok.split("=", 1)[0]
+            if _is_long_flag(name, "--extract", 5) or _is_long_flag(name, "--get", 4):
+                return True
+        elif _short_flag_has(tok, "x", "".join(sorted(_TAR_VALUE_LETTERS))):
+            return True
+    return False
+
+
+def _tar_extract_reason(head: str, rest: list[str], clients: Path, cwd: Path) -> str:
+    """tar/bsdtar extraction writes under the current directory and each -C
+    directory. Blocked when one of those is the workspace root, above it or in
+    clients/, and for absolute member names (-P) or rewritten names
+    (--transform, -s)."""
+    if not _tar_extracts(rest):
+        return ""
+    for tok in rest:
+        if tok == "--":
+            break
+        name = tok.split("=", 1)[0]
+        if tok.startswith("--"):
+            if (_is_long_flag(name, "--absolute-names", 4) or _is_long_flag(name, "--transform", 4)
+                    or _is_long_flag(name, "--xform", 3)):
+                return EXTRACT_REASON
+        elif _short_flag_has(tok, "Ps" if head == "bsdtar" else "P", "".join(sorted(_TAR_VALUE_LETTERS))):
+            return EXTRACT_REASON
+    if rest and not rest[0].startswith("-") and _TAR_MODE_RE.match(rest[0]) and "P" in rest[0]:
+        return EXTRACT_REASON
+    dirs: list[Path] = []
+    operands = _tar_operands(rest, cwd, dirs)
+    if operands is None:
+        return EXTRACT_REASON
+    # Members extract into the directory in effect: the current one when no -C
+    # is given, or when words besides the archive come before the first -C.
+    if not dirs or sum(1 for _, base in operands if base == cwd) > 1:
+        dirs.append(cwd)
+    return EXTRACT_REASON if any(_reaches(d, clients) for d in dirs) else ""
+
+
+def _short_option_values(rest: list[str], value_letters: str) -> tuple[list[tuple[str, str]], str]:
+    """Read short-option clusters the way getopt does: in `-qod..` or `-qod ..`
+    the first letter that takes a value takes the rest of the word, or the next
+    word when it ends the word. Returns ([(letter, value)], every flag letter
+    seen before a value letter). Words after `--` are not options."""
+    values: list[tuple[str, str]] = []
+    flags = ""
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if tok == "--":
+            break
+        if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
+            for index, letter in enumerate(tok[1:], start=1):
+                if letter in value_letters:
+                    value = tok[index + 1:]
+                    if not value:
+                        value = rest[j + 1] if j + 1 < len(rest) else ""
+                        j += 1
+                    values.append((letter, value))
+                    break
+                flags += letter
+        j += 1
+    return values, flags
+
+
+# unzip's options that take a value: -d EXDIR, -P PASSWORD, -I/-O character sets.
+_UNZIP_VALUE_LETTERS = "dPIO"
+
+
+def _unzip_reason(rest: list[str], clients: Path, cwd: Path) -> str:
+    """unzip writes under -d EXDIR (in any cluster: -d DIR, -dDIR, -od.., -qod ..),
+    else the current directory. Listing, testing and printing modes (-l, -t, -p,
+    -c, -Z) write nothing; -: keeps `..` in member names."""
+    values, flags = _short_option_values(rest, _UNZIP_VALUE_LETTERS)
+    if ":" in flags:
+        return EXTRACT_REASON
+    if re.search(r"[ltpcZ]", flags):
+        return ""
+    targets = [value for letter, value in values if letter == "d"] or ["."]
+    if any(not target for target in targets):
+        return EXTRACT_REASON
+    return EXTRACT_REASON if any(_root_reaches(target, clients, cwd) for target in targets) else ""
+
+
+def _ditto_reason(rest: list[str], clients: Path, cwd: Path) -> str:
+    """ditto -x extracts an archive into its last operand."""
+    if not any(_short_flag_has(t, "x") for t in rest):
+        return ""
+    operands = [t for t in rest if not t.startswith("-")]
+    if len(operands) < 2:
+        return EXTRACT_REASON
+    return EXTRACT_REASON if _root_reaches(operands[-1], clients, cwd) else ""
 
 
 def _installer_reason(name: str, args: list[str]) -> str:
@@ -1184,6 +1735,10 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             return "git grep or git diff over untracked files can read client context." + NARROW_PATH_HINT
         elif _basename(tok) == "git" and _git_wipe_reaches(rest, words, clients, claude_dir, cwd):
             return GIT_WIPE_REASON
+        elif _basename(tok) == "git" and _git_listing_reaches(rest, clients, cwd):
+            return GIT_LISTING_REASON
+        elif _basename(tok) == "git" and _git_patch_reason(rest, workspace, cwd):
+            return PATCH_REASON
         elif _basename(tok) == "git" and _git_stage_reason(rest, clients, claude_dir, cwd):
             return _git_stage_reason(rest, clients, claude_dir, cwd)
         elif _INSTALLER_RE.match(_basename(tok)):
@@ -1209,12 +1764,37 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 reason = f"python -m {module} is not an allowed torque entry point"
             if reason:
                 return reason
+        elif _basename(tok) == "ln":
+            if _ln_reaches(rest, clients, cwd):
+                return LN_REASON
+        elif _basename(tok) == "mklink":
+            if _mklink_reaches(rest, clients, cwd):
+                return LN_REASON
+        elif _basename(tok) == "new-item":
+            if _new_item_reaches(rest, clients, cwd):
+                return LN_REASON
+        elif _basename(tok) == "patch":
+            reason = _patch_reason(toks, words, i, workspace, cwd)
+            if reason:
+                return reason
+        elif _basename(tok) == "unzip":
+            reason = _unzip_reason(rest, clients, cwd)
+            if reason:
+                return reason
+        elif _basename(tok) == "ditto":
+            reason = _ditto_reason(rest, clients, cwd)
+            if reason:
+                return reason
         elif _basename(tok) in TAR_HEADS:
+            reason = _tar_extract_reason(_basename(tok), rest, clients, cwd)
+            if reason:
+                return reason
             operands = _tar_operands(rest, cwd)
             if operands is None or any(_root_reaches(raw, clients, base) for raw, base in operands):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
         elif _is_recursive_search(tok, rest):
-            if _recursive_search_reaches(_basename(tok), rest, clients, cwd):
+            head = _basename(tok)
+            if _recursive_search_reaches(head, rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
     chdir = _env_chdir(toks)
     if chdir is not None:
@@ -1430,7 +2010,7 @@ def _cd_target(toks: list[str]) -> str | None:
     prefixes), the directory it changes to ("~" for a bare cd), or "" when that
     directory cannot be known here. None when the segment is not a directory change."""
     j = 0
-    while j < len(toks) and (toks[j] in _CD_PREFIXES or _ASSIGN_RE.match(toks[j])):
+    while j < len(toks) and (toks[j] in _CD_PREFIXES or toks[j] in _SHELL_KEYWORDS or _ASSIGN_RE.match(toks[j])):
         j += 1
     words = _without_redirections(toks[j:])
     if not words or words[0] not in _CD_HEADS:
@@ -1502,6 +2082,9 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
     command = _expand_home_in_command(command)
     command = _decode_ansi_c(command)
     command = _PWD_BRACED_RE.sub("$PWD", command)
+    # Any other ${...} (${R}, ${PWD%/project}) is unknown here. Keep it one word,
+    # $0, so the splitter below does not cut it at its braces.
+    command = _BRACED_PARAM_RE.sub("$0", command)
     command = _expand_braces(command)
     start = list(cwd) if isinstance(cwd, list) else [cwd]
     if _STASH_UNTRACKED_REF_RE.search(command) and re.search(r"(?<![A-Za-z0-9_.-])git(?![A-Za-z0-9_-])", command):
@@ -1634,6 +2217,54 @@ def decide(tool_name: str, tool_input: dict, workspace: Path, mode: str,
            cwd: Path | None = None) -> tuple[bool, str]:
     if mode != "build-only":
         return True, ""
+    with _call_budget():
+        try:
+            return _decide(tool_name, tool_input, workspace, cwd)
+        except BudgetExceeded as exc:
+            return False, _budget_reason(exc)
+
+
+class _call_budget:
+    """Start the time and glob budgets for one call, unless a call (main) has
+    already started them; the outermost user clears them."""
+
+    def __enter__(self):
+        global _deadline, _glob_matches
+        self.owner = _deadline is None
+        if self.owner:
+            _deadline = time.monotonic() + GATE_TIME_BUDGET
+            _glob_matches = 0
+            _glob_cache.clear()
+        return self
+
+    def __exit__(self, *exc):
+        global _deadline, _glob_matches
+        if self.owner:
+            _deadline = None
+            _glob_matches = 0
+            _glob_cache.clear()
+        return False
+
+
+def _watchdog_fire() -> None:
+    """The hard end of the time budget: whatever the gate is doing (a glob inside
+    the standard library, a slow disk), block the call and end the process."""
+    try:
+        sys.stderr.write(_budget_reason(BudgetExceeded(
+            f"the gate's {GATE_TIME_BUDGET:g}-second time budget for one call ran out")) + "\n")
+        sys.stderr.flush()
+    finally:
+        os._exit(2)
+
+
+def _start_watchdog() -> threading.Timer:
+    timer = threading.Timer(GATE_TIME_BUDGET + WATCHDOG_GRACE, _watchdog_fire)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None) -> tuple[bool, str]:
     workspace = Path(os.path.realpath(str(workspace)))
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
     allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, copy=False)
@@ -1701,6 +2332,9 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
                 "Pass a path, such as project/ or src/.")
             return False, "Build-only mode: client context stays out of the AI session." + hint
         pattern = str(tool_input.get("pattern") or "")
+        if tool_name == "Glob" and _reaches(_glob_pattern_root(root, pattern), clients):
+            return False, ("Build-only mode: client context stays out of the AI session. This Glob pattern "
+                           "climbs (..) or is rooted at or above clients/." + NARROW_PATH_HINT)
         glob_field = str(tool_input.get("glob") or "")
         mentions_clients = "clients" in pattern.casefold() or "clients" in glob_field.casefold()
         if mentions_clients and _reaches(cwd, clients):
@@ -1736,6 +2370,33 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
     return False, (f"Build-only mode: {tool_name or 'this tool'} is not a tool this mode recognises, "
                    "so it is blocked. Use Bash, Read, Edit, Write, Grep or Glob, or ask the workspace "
                    "owner to run it.")
+
+
+def _glob_pattern_root(root: Path, pattern: str) -> Path:
+    """The folder a Glob pattern can reach from root: its leading components
+    without a wildcard (an absolute pattern starts from its own root), then one
+    level up for each `..` later in the pattern that climbs past what came before
+    it. `**` may match nothing, so it adds no depth."""
+    parts = re.split(r"[/\\]", pattern)
+    fixed = 0
+    for part in parts:
+        if _has_glob_char(part):
+            break
+        fixed += 1
+    try:
+        base = _resolve(root, "/".join(parts[:fixed]) or ("/" if pattern[:1] in "/\\" and pattern else "."))
+    except (OSError, ValueError):
+        return root
+    depth = lowest = 0
+    for part in parts[fixed:]:
+        if part == "..":
+            depth -= 1
+        elif part not in ("", ".", "**"):
+            depth += 1
+        lowest = min(lowest, depth)
+    for _ in range(-lowest):
+        base = base.parent
+    return base
 
 
 def _lsp_reason(tool_input: dict, clients: Path, claude_dir: Path, workspace: Path, cwd: Path) -> str:
@@ -1991,6 +2652,32 @@ def _touched_paths(tool_input: dict, cwd: Path) -> list[Path]:
     return list(dict.fromkeys(out))
 
 
+# The longest file name component most filesystems accept, in bytes.
+_NAME_MAX = 255
+
+
+def _path_max(start: Path) -> int:
+    try:
+        return int(os.pathconf(start.anchor or "/", "PC_PATH_MAX"))
+    except (AttributeError, OSError, ValueError):
+        return 1024
+
+
+def _not_a_path(start: Path, exc: OSError) -> bool:
+    """True when looking up start failed only because it is not a path at all:
+    the name is too long (ENAMETOOLONG, or Windows' ERROR_FILENAME_EXCED_RANGE)
+    and the kernel would refuse it for any tool, because a component is longer
+    than any file name or the whole is longer than the longest path, as when a
+    whole command or a long commit message is read as a path. Any other error,
+    or a too-long path the kernel would accept, still fails closed."""
+    too_long = exc.errno == errno.ENAMETOOLONG or getattr(exc, "winerror", None) == 206
+    if not too_long:
+        return False
+    encoded = [part.encode("utf-8", "surrogateescape") for part in start.parts]
+    return (any(len(part) > _NAME_MAX for part in encoded)
+            or len(str(start).encode("utf-8", "surrogateescape")) >= _path_max(start))
+
+
 def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     """Every build-only workspace that applies to a call: those at or above the
     event's cwd, those at or above the session's project directory
@@ -2009,13 +2696,29 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
         if key in checked:
             continue
         checked.add(key)
-        for folder, mode, _ in _workspace_chain(start):
+        try:
+            chain = _workspace_chain(start)
+        except OSError as exc:
+            if _not_a_path(start, exc):
+                continue
+            raise
+        for folder, mode, _ in chain:
             if mode == "build-only" and folder not in gated:
                 gated.append(folder)
     return gated
 
 
 def main() -> int:
+    # A hard limit on top of the cooperative checks: a daemon timer that blocks the
+    # call and ends the process if the gate is still running after its budget.
+    watchdog = _start_watchdog()
+    try:
+        return _main()
+    finally:
+        watchdog.cancel()
+
+
+def _main() -> int:
     try:
         event = json.loads(sys.stdin.read())
         if not isinstance(event, dict):
@@ -2028,13 +2731,17 @@ def main() -> int:
             tool_input = {}
         if not isinstance(tool_input, dict):
             raise ValueError("tool_input must be an object")
-        gated = _gated_workspaces(cwd, tool_input)
-        allowed, reason = True, ""
-        # Every build-only workspace from cwd upward applies; the strictest wins.
-        for root in gated:
-            allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, "build-only", cwd)
-            if not allowed:
-                break
+        with _call_budget():
+            gated = _gated_workspaces(cwd, tool_input)
+            allowed, reason = True, ""
+            # Every build-only workspace from cwd upward applies; the strictest wins.
+            for root in gated:
+                allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, "build-only", cwd)
+                if not allowed:
+                    break
+    except BudgetExceeded as exc:
+        print(_budget_reason(exc), file=sys.stderr)
+        return 2
     except Exception as exc:
         # Any failure here means this call could not be safely evaluated. Since
         # decide() only does real work in build-only mode (it returns immediately

@@ -81,14 +81,18 @@ uses for hooks when installed) as well as cmd:
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
+  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
 ```
 
 The `sys.excepthook` wrapper makes the hook exit 2 (block) if that interpreter cannot
 import Torque, instead of exit 1, which Claude Code would treat as non-blocking. `-I`
 (isolated mode) keeps the working directory off Python's import path, so a `torque`
 folder written into the workspace cannot replace the gate. The `.*` matcher sends every
-tool call to the gate, which blocks tools it does not recognise. The wrapper cannot
+tool call to the gate, which blocks tools it does not recognise. `"timeout": 600` keeps
+Claude Code's default hook timeout explicit: a timed-out hook lets the call proceed as if
+it were allowed, so do not lower it (doctor warns when it is missing or larger). The gate
+has its own 5-second budget per call and blocks when it runs out, well inside that
+timeout. The wrapper cannot
 help if the interpreter path itself is wrong. Check the wiring once after setup,
 and after every update, with build-only mode set:
 

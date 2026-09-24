@@ -57,7 +57,8 @@ tests written first (40 of 58 failed before the fix): old-style tar key bundles
 files that `git diff --cached` then printed. The fix blocks client files where they
 enter git (`git add`, `git stage`, `git update-index --add`, `git hash-object -w`)
 rather than listing every command that can print them; while client files are in the
-index, only `git status` and `git log` pass and doctor fails. A stash of client files
+index, doctor fails and the gate lets only a few git commands pass (`git status` and
+`git log` at first; the final rule, below, is narrower). A stash of client files
 the owner made stays readable and is listed as a limit.
 
 A spot-check of that fix found more ways in and out: a file value attached to
@@ -65,8 +66,8 @@ A spot-check of that fix found more ways in and out: a file value attached to
 (`$(git --exec-path)/git-add`), `git status -v` and further `git log` options
 printing staged content, a git error or timeout, or a redirected repository, making
 the index check pass, and doctor counting a failed check as zero. Each has a test
-written first. While client files are tracked, only `git status` and
-`git rm --cached` of `clients/` now pass. Remaining ways for git to read data it
+written first. While client files are tracked or staged, only `git status` without
+`-v`/`--verbose` and `git rm --cached` of paths under `clients/` now pass. Remaining ways for git to read data it
 already holds are listed as limits rather than chased further: the review's
 control is an agent account that holds no client material. It also found
 that re-entering an existing worktree by path was blocked when the worktree tracks
@@ -94,8 +95,28 @@ repository now expects a worktree path instead.
 ## Review scope
 
 The fixes follow the spot-check's recommendations and the reviews' suggested
-fixes. They have not yet been re-reviewed independently. Until they
-are, treat the list in [build-only mode](ai-access.md) as the claim to check.
+fixes. This section was first written before the fixes were re-reviewed; this is
+what happened after.
+
+A scoped security re-review of the pull request (head 9b52bfb) drove the gate with
+about 350 hook events against four scratch workspaces. It confirmed twelve of the
+thirteen items and found the two open routes described above: old-style tar key
+bundles, and `git add -f` staging ignored client files. Three spot-checks followed,
+one for each fix round (7b17574, 3fe8afc and 5886604). The first found `git stage -f`
+and plumbing commands (`git diff-index`, `git diff-tree`) reading staged client
+files back. The second found the routes listed above: an attached `-F` value, git's
+programs run by path, `git status -v` and further `git log` options, and the index
+check passing when git failed. The third found one gap: `git status --v` and `--ve`
+with client files staged printed them, because git accepts shorter abbreviations of
+`--verbose` than the gate checked. That was fixed in d3b0891, with tests written
+first.
+
+A final re-run of those cases through the real hook at d3b0891 found them blocked,
+and CI passed on that commit. The re-run was part of a later review round, which
+also found routes this release still allows: recursive tools following a symbolic
+link out of `project/`, paths built from a variable set in the same command, a
+`cd` inside `if`, `grep -d recurse`, and git's ignored-file listings. Alpha 13
+closes them; see the [alpha 13 record](validation-alpha13.md).
 
 ## Known remaining limits
 
