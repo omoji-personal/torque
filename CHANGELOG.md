@@ -1,5 +1,83 @@
 # Changelog
 
+## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23
+
+A four-model review of alpha 10's de-identified mode found routes an assistant can
+take in ordinary use. This release closes the reported routes and states the
+mode's limits. A security re-review of the first alpha 11 candidate found more;
+the last group of items below closes those.
+
+- Paths after a `cd` or `pushd` earlier in the same command, attached
+  redirections (`<file`, `2>file`), `--flag=path` and `NAME=path` values, globs
+  expanded against the disk, brace expansion and `$PWD` are now resolved before
+  the `clients/` check. `**`, `tar`, and `zip`, `cp`, `scp` or `rsync` with a
+  recursive flag are treated as recursive reads.
+- MCP tool calls are checked for path arguments, not only for Salesforce names:
+  a string argument that resolves into `clients/`, the hook configuration or the
+  installed Torque package is blocked, as is a tree-walking MCP tool rooted at or
+  above `clients/`.
+- `git grep --untracked` and `git grep --no-index` rooted at or above `clients/`
+  are blocked. Plain `git grep` still passes.
+- An explicit `null` or empty `ai_access` now means build-only. Every build-only
+  workspace from the session's directory upward applies, so a nested
+  `workspace.json` cannot downgrade the workspace above it.
+- Edits to the installed Torque package by the file tools or a Bash command that
+  names it, and `pip`, `uv` or `pipx` commands that name Torque (uninstall,
+  reinstall, downgrade), are blocked. Scripts and unnamed installs
+  (`pip install -r`) are not; see the limits in the docs.
+- New fail-closed hook command: it exits 2 (block) instead of 1 when the hook's
+  interpreter cannot import Torque. `torque doctor --workspace` now reports the
+  mode, runs the wired hook on a synthetic probe in build-only mode, and exits 3
+  with the fix when the hook is missing or does not block.
+- `sf code-analyzer run`, `sf code-analyzer rules` and `sf project convert` now
+  work in build-only mode when no org flag is given and their roots stay away
+  from `clients/`.
+- The alert-triage demo's client note is a draft to send only after the likely
+  cause is confirmed. The demo guide describes all four synthetic scenarios.
+- [De-identified mode](docs/ai-access.md) now opens with its current limits: no
+  org allowlist, no metadata-only mode, an unauthenticated setting, one guarded
+  folder, the session running as the user, and no redaction of pasted text.
+
+Closed after the security re-review:
+
+- A `cd`, `pushd` or `popd` whose target the gate cannot know (`cd -`, `cd ~-`,
+  `popd`, `cd "$OLDPWD"`, `cd "$(git rev-parse --show-toplevel)"`) no longer
+  narrows the directories a later path is checked from. The rest of the command
+  is checked from every directory seen, the workspace root, the folders between
+  and the root's parents.
+- The hook command runs Python with `-I`, so a `torque/` folder or
+  `sitecustomize.py` written into the workspace cannot replace the gate. Writes
+  of a `torque/` folder, `torque.py`, `.pth` files and `sitecustomize.py` or
+  `usercustomize.py` anywhere in the workspace, and into the hook interpreter's
+  site-packages, binary and virtual environment, are blocked. Doctor exits 3 for
+  a hook without `-I`.
+- Tools other than Bash that run a command string (Claude Code's `Monitor`, a
+  `PowerShell` tool) get the Bash scan, and tools the gate does not recognise are
+  blocked. The documented hook matcher is now `.*`; doctor exits 3 for a
+  narrower one.
+- On Windows, Git Bash drive paths (`/c/...`, `/cygdrive/c/...`) are resolved to
+  their drive, and doctor runs its probe through Git Bash when installed, as
+  Claude Code does.
+- The session's project directory (`CLAUDE_PROJECT_DIR`) and every path a call
+  names now also select the governing workspace, so `cd ..` out of the workspace
+  no longer ends its gating.
+- Redirections glued to a word (`cat<file`), search options with values
+  (`rg -g '*.md'`, `grep -r -A 2`), `git grep -- PATTERN`, `command cd`,
+  `time cd`, `env -C DIR`, `sf project convert` rooted at or above `clients/`
+  (or with no root), and curl's `@file` forms are handled.
+- Deleting, moving or recreating the environment that holds the gate
+  (`rm -rf .venv`, `python -m venv --clear`) is blocked. Doctor reads matchers
+  as regular expressions, fails when `disableAllHooks` switches hooks off, and
+  says its probe ran the hook command, not the host.
+- Git's abbreviated long options (`--untr`, `--no-ind`), `git diff --no-index`,
+  `diff -r`, ANSI-C quoting (`$'\x63lients'`), zsh glob groups (`c(l)ients`) and
+  comma-less brace groups are handled. Doctor names a hook that could not load
+  the gate instead of reporting "exit 2", and a glob at the root names the glob
+  in its block message.
+
+1488 offline tests pass (154 subtests). See the
+[alpha 11 validation record](docs/validation-alpha11.md).
+
 ## 2.0.0a10 - unpublished de-identified mode, Windows and demo breadth update, 2026-09-23
 
 - Every forwarded command (data, deploy, revert, QA, logs, probes, advisory, and

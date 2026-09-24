@@ -623,5 +623,6 @@ def test_unrelated_mcp_tools_allowed(tool):
 
 
 def test_documented_matcher_includes_mcp():
+    # ".*" sends every tool call, MCP tools included, to the gate.
     for doc in ("docs/ai-access.md", "docs/installation.md"):
-        assert "|mcp__.*" in (REPO / doc).read_text(encoding="utf-8"), doc
+        assert '"matcher": ".*"' in (REPO / doc).read_text(encoding="utf-8"), doc
