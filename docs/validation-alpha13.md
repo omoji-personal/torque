@@ -102,7 +102,7 @@ lets the call run. It over-blocked ordinary work in any project with a real
 `node_modules`. Separately, a word longer than a file name, such as a long commit
 message, failed every call closed; that predates alpha 13.
 
-The owner's rulings: remove the per-call walk; block making a link that leads out of
+The rulings: remove the per-call walk; block making a link that leads out of
 the tree (`ln`, `cp -s`, `mklink`, `New-Item`) and keep resolving a path that names a
 link; add a one-time `torque doctor` scan that reports such links as not ready; treat
 an over-long word as not a path; keep the gate free of filesystem walks and document
@@ -143,7 +143,9 @@ The rulings, fixed with tests written first: a watchdog thread in the hook proce
 blocks the call and exits 2 half a second after the budget, whatever the gate is
 doing, with the cooperative checks kept as the fast path; and each distinct glob
 pattern is expanded and charged once per call, so 2,400 matches pass and 10,001
-block. These fixes have not been spot-checked yet.
+block. A final check through the real hook confirmed the 24-level glob now blocks
+in about 5 seconds with exit 2 while `git status` still passes; the glob cap is covered
+by its tests.
 
 ## Known remaining limits
 
