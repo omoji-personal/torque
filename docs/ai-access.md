@@ -121,14 +121,16 @@ guard on recognized tool calls, not a sandbox. It has two values:
   stash's untracked files back (`git stash show -u`, `--only-untracked`, or its third parent,
   `stash^3`, `stash@{0}^3`) is blocked in the same places. A magic pathspec (`:/`) and a
   repository git cannot identify count as reaching them.
-- `git add -f`/`--force` whose pathspecs (or `-A`/`--all` with none, the whole repository) reach
-  `clients/`, `.claude/` or the hook's environment, since it stages ignored files there; and a
-  plain `git add` reaching `clients/` when `clients/` holds files git does not ignore.
-- While git holds client files, in the index (tracked or staged) or in the untracked part of a
-  stash, the git commands that print index, history or stash content or file names (`show`,
-  `diff`, `log`, `cat-file`, `grep`, `stash`, `ls-files`, `ls-tree`, `archive`, `blame` and
-  similar), so `git diff --cached`, `git show :path`, `git log --all -p` and `git show 'stash^@'`
-  cannot print them. Ask the owner to run `git rm -r --cached clients` or drop the stash.
+- The ways client files get into git: `git add` or `git stage`, forced or not, whose pathspecs
+  (or `-A`, `--all` or `-u` with none, the whole repository) reach `clients/`, `.claude/` or the
+  hook's environment, and `git update-index --add`/`--force-remove`/`--index-info` and
+  `git hash-object -w` on those paths (or reading paths from standard input). Stage named paths
+  such as `project/`.
+- Client files must stay untracked (Torque ignores `clients/` by default). If they are tracked
+  or staged, low-level git commands can read them, so while any file under `clients/` is in
+  git's index the gate blocks every git command except `git status` and `git log` without a
+  patch option, and `torque doctor` reports it and fails. Ask the owner to run
+  `git rm -r --cached clients`.
 - Changing Torque itself: `Write`/`Edit`/`MultiEdit`/`NotebookEdit` into the installed `torque`
   package directory, any Bash command naming that directory or Torque's install metadata
   (`torque_salesforce-*.dist-info`, `__editable__*torque*`), and `pip`, `python -m pip`, `uv` or
@@ -271,7 +273,8 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - Git routes other than the ones named: an alias (`git -c alias.x=clean x`), a stash's untracked
   files read by object hash, `git checkout` or `git reset` of tracked files under `.claude/`
   from history, a work tree set in an earlier command (`export GIT_WORK_TREE=..`), client files
-  already in commit history but no longer in the index or a stash (`git show HEAD~3:clients/...`),
+  already in commit history but no longer in the index (`git show HEAD~3:clients/...`), a stash
+  of client files the owner made (`git log --all -p`, `git show 'stash^@'`),
   and git plumbing that writes objects (`git hash-object -w`, `git update-index --add`).
 
 It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
@@ -289,6 +292,7 @@ from the recognised list above; a command that merely mentions a script name as 
 (`rg jsc-qa`); nearly every Bash command run from inside a worktree under `.claude/worktrees/`
 (its relative paths are under `.claude/`; use absolute paths to `project/` or leave the
 worktree); `EnterWorktree` with a `name` in a workspace that is not a git repository; every git
-command that prints content while the index or a stash holds client files, even for other paths; `git clean`
+command but `status` and `log` while client files are in git's index; `git add .` or `git add -A`
+from the workspace root, even when `clients/` is ignored (stage named paths); `git clean`
 from the workspace root, even when `clients/` is ignored; and `LSP` on a path under `.claude/` or
 in the Torque installation. Run those from `project/` or yourself.

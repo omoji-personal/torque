@@ -766,9 +766,9 @@ _GIT_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--after-context", "--before-context"
 _STASH_ACTIONS = {"push", "save", "show", "list", "apply", "pop", "drop", "branch", "clear", "create", "store"}
 # A stash's untracked files are its third parent: stash^3, stash@{0}^3, refs/stash^3.
 _STASH_UNTRACKED_REF_RE = re.compile(r"(?<![A-Za-z0-9_.-])(?:refs/)?stash(?:@\{[^}]*\}|~\d*)*\^3")
-GIT_STAGE_REASON = ("git add with -f, or of client files git does not ignore, at or above client context, the "
-                    ".claude hook configuration or the hook's environment would copy them into git. Name "
-                    "paths such as project/")
+GIT_STAGE_REASON = ("git add, git stage, git update-index --add or git hash-object -w at or above client "
+                    "context, the .claude hook configuration or the hook's environment would copy them into "
+                    "git. Name paths such as project/")
 GIT_WIPE_REASON = ("git clean, or git stash of untracked files, run at or above client context, the .claude "
                    "hook configuration or the hook's environment can delete them or copy them into git. "
                    "Use git clean -n to preview, or name paths such as project/")
@@ -808,79 +808,78 @@ def _git_parse(rest: list[str], cwd: Path) -> tuple[Path, list[Path], str | None
     return base, trees, sub, rest[j + 1:]
 
 
-# git subcommands that print file contents or names from the index, history or
-# stashes. They are blocked while the index or a stash holds client files.
-_GIT_CONTENT_READERS = {"show", "diff", "log", "cat-file", "grep", "archive", "blame", "annotate", "format-patch",
-                        "whatchanged", "reflog", "ls-tree", "ls-files", "rev-list", "difftool", "range-diff",
-                        "bundle", "fast-export", "stash", "shortlog", "cherry", "notes"}
+# While client files are in git's index, only these git commands are allowed.
+_GIT_WHILE_TRACKED = {"status", "log"}
+# log options that print file contents.
+_GIT_LOG_PATCH_RE = re.compile(r"^(-p|-u|--patch.*|--full-diff|-c|--cc|--diff-merges.*|--remerge-diff|"
+                               r"-[a-zA-Z]*[pu][a-zA-Z]*|--textconv|--word-diff.*|--color-words.*|-L.*|--show-signature)$")
 _CLIENT_SPEC = ":(icase)clients"
+GIT_TRACKED_REASON = ("client files are in git's index in this workspace, so git commands other than status and "
+                      "log are blocked. Client files must stay untracked: ask the owner to run "
+                      "git rm -r --cached clients")
 
 
-def _git_add_roots(args: list[str]) -> tuple[bool, list[str] | None]:
-    """For `git add` arguments: (forced, the pathspecs it stages). A pathspec file,
-    or -A/--all with no pathspec (the whole tree), give None: the repository top."""
+def _git_add_roots(args: list[str]) -> list[str] | None:
+    """The pathspecs `git add`/`git stage` covers. A pathspec file, or no pathspec
+    with -A, --all or -u (the whole tree), give None: the repository top."""
     options = args[:args.index("--")] if "--" in args else args
-    forced = any(_is_long_flag(t, "--force", 5) if t.startswith("--") else _short_flag_has(t, "f", "") for t in options)
     if any(t.startswith("--pathspec-from-file") for t in options):
-        return forced, None
+        return None
     specs = _git_pathspecs(args, {"--chmod"})
-    whole = any(t.startswith("--") and (_is_long_flag(t, "--all", 4) or _is_long_flag(t, "--no-ignore-removal", 6))
-                or _short_flag_has(t, "A", "") for t in options)
+    whole = any((_is_long_flag(t, "--all", 4) or _is_long_flag(t, "--no-ignore-removal", 6)
+                 or _is_long_flag(t, "--update", 4)) if t.startswith("--") else _short_flag_has(t, "Au", "")
+                for t in options)
     if not specs and whole:
-        return forced, None
-    return forced, specs
+        return None
+    return specs
 
 
-def _git_holds_clients(base: Path) -> bool:
-    """True when the index, or the untracked part of any stash, holds a file under
-    clients/, or when git cannot say. Outside a repository (or without git) there
-    is nothing for git to print."""
-    if not (base / ".git").exists() and _git_toplevel(base) is None:
+def _clients_in_index(workspace: Path) -> bool:
+    """True when git's index for the workspace holds a file under clients/. Outside
+    a repository, or without git, there is none."""
+    if not (workspace / ".git").exists() and _git_toplevel(workspace) is None:
         return False
-    staged = _git_output(base, ["ls-files", "--", _CLIENT_SPEC])
-    if staged is None or staged.strip():
-        return True
-    stashes = _git_output(base, ["log", "-g", "--format=%H", "refs/stash"])
-    if stashes is None:
-        # No stash at all (the ref is missing) is the ordinary case.
-        return _git_output(base, ["rev-parse", "-q", "--verify", "refs/stash"]) is not None
-    for sha in stashes.split():
-        # ls-tree takes no icase pathspec; the untracked tree is filtered here.
-        names = _git_output(base, ["ls-tree", "-r", "--name-only", f"{sha}^3"]) or ""
-        if any(name.casefold().startswith("clients/") for name in names.splitlines()):
-            return True
-    return False
+    listed = _git_output(workspace, ["ls-files", "--", _CLIENT_SPEC])
+    return listed is None or bool(listed.strip())
 
 
 def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Path) -> str:
-    """`git add -f` rooted at or above clients/, .claude/ or the hook's environment
-    stages ignored files there; a plain `git add` does the same to client files git
-    does not ignore. And while the index or a stash holds client files, commands
-    that print index, history or stash content (git diff --cached, git show :path,
-    git log -p, git stash show) are blocked."""
+    """Client files enter git through `git add`/`git stage`, `git update-index
+    --add` and `git hash-object -w`. Each is blocked when its paths reach
+    clients/, .claude/ or the hook's environment. And while client files are in
+    the index, every git command but status and log (without patches) is blocked."""
     try:
         base, trees, sub, args = _git_parse(rest, cwd)
     except (OSError, ValueError):
-        return "" if not any(t in ("add", *_GIT_CONTENT_READERS) for t in rest) else GIT_STAGE_REASON
-    if sub == "add":
-        forced, specs = _git_add_roots(args)
-        protected = _git_protected(clients, claude_dir) if forced else [clients]
+        return GIT_STAGE_REASON
+    protected = _git_protected(clients, claude_dir)
+    if sub in ("add", "stage"):
+        specs = _git_add_roots(args)
         if specs is None:
             reaches = bool(trees) or _toplevel_reaches(base, protected)
-        elif not specs:
-            return ""
         else:
-            reaches = bool(trees) or _pathspecs_reach(specs, base, protected)
-        if not reaches:
-            return ""
-        if forced:
+            reaches = bool(specs) and (bool(trees) or _pathspecs_reach(specs, base, protected))
+        if reaches:
             return GIT_STAGE_REASON
-        # Pathspecs are relative to the directory git runs in: ask from the workspace.
-        loose = _git_output(clients.parent, ["ls-files", "-o", "--exclude-standard", "--", _CLIENT_SPEC])
-        return GIT_STAGE_REASON if loose is None or loose.strip() else ""
-    if sub in _GIT_CONTENT_READERS and _git_holds_clients(clients.parent):
-        return ("git holds client files (in the index or a stash), so commands that print index, history or "
-                "stash content are blocked. Ask the owner to run git rm -r --cached clients or drop the stash")
+    elif sub in ("update-index", "hash-object"):
+        writes = (any(_is_long_flag(t, "--add", 4) or _is_long_flag(t, "--force-remove", 4)
+                      or _is_long_flag(t, "--index-info", 4) for t in args)
+                  if sub == "update-index" else "-w" in args)
+        if writes:
+            if any(t in ("--stdin", "--index-info", "--stdin-paths", "-z") or t.startswith("--index-info")
+                   for t in args):
+                return GIT_STAGE_REASON
+            paths = [t.rsplit(",", 1)[-1] for t in _git_pathspecs(args, {"--cacheinfo", "-t", "--path",
+                                                                          "--chmod"}) if t]
+            cacheinfo = [args[i + 3] for i, t in enumerate(args) if t == "--cacheinfo" and i + 3 < len(args)
+                         and "," not in args[i + 1]]
+            cacheinfo += [args[i + 1].rsplit(",", 1)[-1] for i, t in enumerate(args)
+                          if t == "--cacheinfo" and i + 1 < len(args) and "," in args[i + 1]]
+            if (paths or cacheinfo) and (bool(trees) or _pathspecs_reach(paths + cacheinfo, base, protected)):
+                return GIT_STAGE_REASON
+    if sub is not None and _clients_in_index(clients.parent):
+        if sub not in _GIT_WHILE_TRACKED or (sub == "log" and any(_GIT_LOG_PATCH_RE.match(t) for t in args)):
+            return GIT_TRACKED_REASON
     return ""
 
 
