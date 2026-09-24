@@ -699,6 +699,8 @@ def _hook(event, project_dir):
     "git commit -m '" + "x" * 400 + "'",
     "echo hi;" * 30,
     " && ".join(f"echo {chr(97 + n % 26)}" for n in range(28)),
+    "ls src/a.py ; " * 70,
+    "ls src/a.py ; " * 400 + "echo done",
 ])
 def test_long_words_are_not_paths_and_do_not_fail_closed(wsg, command):
     result = _hook({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(wsg / "project")}, wsg)
