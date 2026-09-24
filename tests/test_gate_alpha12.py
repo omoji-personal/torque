@@ -739,12 +739,26 @@ TRACKED_BLOCK = [
     "git archive HEAD",
     "git -c stash.showIncludeUntracked=true stash show -p",
     "cd project && git diff --cached",
+    "git log",
+    "git log --oneline -5",
+    "git log -U3",
+    "git log --unified=3",
+    "git log -S SECRET",
+    "git status -v",
+    "git status --verbose",
+    "git status -vv",
+    "git status -sv",
+    "git rm --cached -r clients project",
+    "git rm -r clients",
+    "git rm --cached -r clients && git diff --cached",
 ]
 TRACKED_ALLOW = [
     "git status",
     "git status --short",
-    "git log --oneline -5",
-    "git log",
+    "git status -s --porcelain",
+    "git rm -r --cached clients",
+    "git rm --cached -r -q clients/acme",
+    "git rm --cached clients/acme/notes.md",
 ]
 
 
@@ -755,7 +769,7 @@ def test_rr_git_blocked_while_clients_are_in_the_index(ws, command):
 
 
 @pytest.mark.parametrize("command", TRACKED_ALLOW)
-def test_rr_status_and_log_allowed_while_clients_are_in_the_index(ws, command):
+def test_rr_status_and_rm_cached_allowed_while_clients_are_in_the_index(ws, command):
     _git(ws, "add", "-f", "clients/acme/notes.md")
     assert _allowed("Bash", {"command": command}, ws, ws), command
 
@@ -764,6 +778,7 @@ def test_rr_committed_clients_also_block(ws):
     _git(ws, "add", "-f", "clients/acme/notes.md")
     _git(ws, "commit", "-q", "-m", "oops")
     assert _blocked("Bash", {"command": "git show HEAD"}, ws, ws)
+    assert _blocked("Bash", {"command": "git log -1"}, ws, ws)
     assert _allowed("Bash", {"command": "git status"}, ws, ws)
 
 
@@ -805,3 +820,121 @@ def test_rr_enter_existing_worktree_by_path_in_a_tracked_workspace(ws):
 def test_rr_interpreter_message_wording():
     import inspect
     assert "runs the build-only mode hook" in inspect.getsource(gate)
+
+
+# --- Final spot-check: attached file values, git-core programs, redirected repositories ---
+
+ATTACHED_BLOCK = [
+    "git commit --allow-empty -Fclients/acme/notes.md",
+    "git commit --allow-empty -qFclients/acme/notes.md",
+    "git tag -a v1 -Fclients/acme/notes.md",
+    "git notes add -Fclients/acme/notes.md",
+    "sed -fclients/acme/notes.md project/README.md",
+    "awk -fclients/acme/notes.md project/README.md",
+    "grep -fclients/acme/notes.md project/README.md",
+    "grep -Fclients/acme/notes.md",
+]
+
+
+@pytest.mark.parametrize("command", ATTACHED_BLOCK)
+def test_final_attached_file_values_are_paths(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws), command
+
+
+def test_final_attached_file_value_from_project(ws):
+    assert _blocked("Bash", {"command": "git commit --allow-empty -F../clients/acme/notes.md"}, ws, ws / "project")
+    for command in ("git commit -Fmsg.txt", "rm -rf build", "sed -fscript.sed README.md", "grep -F foo README.md",
+                    "tar -xf /tmp/a.tar"):
+        assert _allowed("Bash", {"command": command}, ws, ws / "project"), command
+
+
+@pytest.mark.parametrize("command", [
+    "$(git --exec-path)/git-add -f .",
+    "/usr/libexec/git-core/git-add -f ..",
+    "`git --exec-path`/git-diff --cached",
+    "/Library/Developer/CommandLineTools/usr/libexec/git-core/git-cat-file --batch-all-objects --batch",
+])
+def test_final_git_core_programs_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws / "project"), command
+
+
+def test_final_git_named_files_still_usable(ws):
+    for command in ("cat project/git-notes.md", "git-lfs pull", "ls project"):
+        assert _allowed("Bash", {"command": command}, ws, ws), command
+
+
+@pytest.mark.parametrize("command", [
+    "git --git-dir=../.git diff",
+    "git --git-dir ../.git status",
+    "git --work-tree=.. status",
+    "git -C .. status",
+    "git -C /tmp status",
+    "GIT_DIR=../.git git diff",
+    "GIT_WORK_TREE=.. git status",
+    "env GIT_DIR=../.git git log",
+    "git -c core.worktree=.. status",
+])
+def test_final_git_redirected_outside_project_blocked(ws, command):
+    assert _blocked("Bash", {"command": command}, ws, ws / "project"), command
+
+
+@pytest.mark.parametrize("command", ["git -C src status", "git -C . status", "git --work-tree=. status"])
+def test_final_git_redirected_within_project_allowed(ws, command):
+    assert _allowed("Bash", {"command": command}, ws, ws / "project"), command
+
+
+def test_final_git_root_redirect_blocked_from_root(ws):
+    assert _blocked("Bash", {"command": "git -C . status"}, ws, ws)
+    assert _allowed("Bash", {"command": "git -C project status"}, ws, ws)
+
+
+@pytest.fixture
+def broken_git(tmp_path, monkeypatch):
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    if os.name == "nt":
+        (bindir / "git.bat").write_text("@exit /b 1\r\n", encoding="utf-8")
+    else:
+        script = bindir / "git"
+        script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+    return bindir
+
+
+def test_final_git_error_fails_closed_but_no_repository_is_fine(ws, broken_git, tmp_path):
+    assert _blocked("Bash", {"command": "git diff --cached"}, ws, ws)
+    assert _allowed("Bash", {"command": "git status"}, ws, ws)
+    assert _allowed("Bash", {"command": "git --version"}, W, W)
+
+
+def test_final_not_a_repository_is_fine(tmp_path):
+    plain = tmp_path / "plain"
+    (plain / "clients").mkdir(parents=True)
+    plain = Path(os.path.realpath(str(plain)))
+    assert gate._clients_in_index(plain) is False
+    assert _allowed("Bash", {"command": "git diff"}, plain, plain)
+
+
+def test_final_doctor_reports_unknown_when_git_fails(tmp_path, broken_git):
+    from torque import cli, workspace as wsmod
+    import contextlib
+    import io
+    root = tmp_path / "w"
+    wsmod.init_workspace(root, "Example firm", "generic")
+    wsmod.set_ai_access(root, "build-only")
+    (root / ".git").mkdir()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["doctor", "--workspace", str(root), "--json"])
+    report = json.loads(out.getvalue())
+    assert code == 3 and report["ai_access"]["clients_in_git"] == "unknown"
+    assert any("could not check" in action for action in report["next_actions"])
+
+
+def test_final_doctor_git_calls_disable_configured_programs():
+    import inspect
+    from torque import cli
+    source = inspect.getsource(cli)
+    assert 'subprocess.run(["git", "ls-files"' not in source
+    assert "core.fsmonitor=false" in inspect.getsource(gate)
