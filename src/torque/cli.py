@@ -471,6 +471,16 @@ def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, s
         return None, ""
 
 
+def _clients_in_git(root: Path) -> int:
+    """How many files under the workspace's clients/ are in Git's index (tracked
+    or staged); 0 outside a repository or without git."""
+    from . import gate
+    if not (root / ".git").exists() and gate._git_toplevel(root) is None:
+        return 0
+    listed = gate._git_output(root, ["ls-files", "--", ":(icase)clients"])
+    return len(listed.splitlines()) if listed else 0
+
+
 def _gate_hook_report(root: Path) -> dict:
     """Inspect the workspace's own Claude Code hook for build-only mode and,
     in build-only mode, run it once on a synthetic client-path Read to prove it
@@ -588,6 +598,13 @@ def _doctor(args: argparse.Namespace) -> int:
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
+        access["clients_in_git"] = _clients_in_git(root)
+        if access["clients_in_git"]:
+            report["ready"] = False
+            report["next_actions"].append(
+                f"{access['clients_in_git']} file(s) under clients/ are tracked in Git or staged. Client files "
+                "must stay untracked: low-level git commands can read them, so the gate blocks git commands "
+                "other than status and log here. Run git rm -r --cached clients and keep clients/ ignored.")
         if hook["disabled_by"]:
             report["ready"] = False
             report["next_actions"].append(

@@ -54,8 +54,11 @@ a test too, and is fixed.
 A scoped re-review of those fixes found two open routes, both now fixed with
 tests written first (40 of 58 failed before the fix): old-style tar key bundles
 (`tar cCf .. - .`) and `bsdtar`/`gtar`, and `git add -f .` staging ignored client
-files that `git diff --cached` then printed, with the related read-back of a stash
-that holds client files (`git log --all -p`, `git show 'stash^@'`). It also found
+files that `git diff --cached` then printed. The fix blocks client files where they
+enter git (`git add`, `git stage`, `git update-index --add`, `git hash-object -w`)
+rather than listing every command that can print them; while client files are in the
+index, only `git status` and `git log` pass and doctor fails. A stash of client files
+the owner made stays readable and is listed as a limit. It also found
 that re-entering an existing worktree by path was blocked when the worktree tracks
 `workspace.json`; that works now.
 One alpha 11
@@ -64,7 +67,7 @@ repository now expects a worktree path instead.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.12.14, local):** 1765 pytest tests and 154
+- **Offline suite (macOS, Python 3.12.14, local):** 1782 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** the spot-check's events and the git commands above were replayed
