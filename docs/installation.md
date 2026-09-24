@@ -70,7 +70,7 @@ The demo path must be new and outside the checkout, same as on macOS/Linux. Put
 `.venv\Scripts` on PATH, or use the absolute path, the same way `.venv/bin` is used
 above.
 
-The de-identified-mode hook (see `ai-access.md`) goes in the workspace's own
+The build-only-mode hook (see `ai-access.md`) goes in the workspace's own
 `.claude/settings.json`, never a user-level settings file. On Windows, do not use a
 bare `python` in the hook command: it often resolves to the Microsoft Store alias or
 to an interpreter without Torque installed. The hook then fails with an exit code
@@ -81,7 +81,7 @@ uses for hooks when installed) as well as cmd:
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
+  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
 ```
 
 The `sys.excepthook` wrapper makes the hook exit 2 (block) if that interpreter cannot

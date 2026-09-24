@@ -1,4 +1,4 @@
-"""Alpha 11: regression tests for the round-1 audit of de-identified mode.
+"""Alpha 11: regression tests for the round-1 audit of build-only mode.
 
 The *_BLOCK lists hold the bypasses the audit reported plus neighbouring
 forms; most were allowed by the 2.0.0a10 gate. Each section names the audit

@@ -1,7 +1,9 @@
 # Validation for alpha 12: September 23, 2026
 
-Alpha 12 is a development build with no package-index release. It changes only
-de-identified mode (`src/torque/gate.py`) and documentation. The
+Alpha 12 is a development build with no package-index release. It changes
+build-only mode (`src/torque/gate.py`), option parsing in the `torque` command, four
+playbooks and documentation. Alpha 11 called the mode de-identified; it redacts
+nothing, so it is now named after its `build-only` setting. The
 [alpha 11 record](validation-alpha11.md) and the [alpha 10 record](validation-alpha10.md)
 still describe the earlier fixes, Windows CI and the Windows limits.
 
@@ -28,38 +30,57 @@ repository: `git clean -fdx` deleted the hook's environment, `.claude/` and
 `clients/`, and `git stash --all && git stash show -p --include-untracked` printed a
 client file.
 
+A third review round then found more ordinary routes, all allowed:
+
+- an MCP tool that runs a command (`start_process` with `cat clients/...`, or an
+  `sf ... --target-org` command) skipped the Bash scan;
+- `rg -uuu -eERROR ..`, `grep -R -eERROR ..` and `rg --files --hidden --no-ignore ..`
+  from `project/`, where the attached pattern or the missing pattern made `..` read as
+  the pattern;
+- `tar -C.. -cf - .` from `project/`, where the `.` is read from the workspace root;
+- `git clean -fdx .venv` over a hook environment inside the workspace (closed by the
+  `git clean` check above);
+- `torque doctor --clie example`, which the CLI expanded to `--client`;
+- a `file://localhost/...` URI, whose host was kept as part of the path.
+
 Each has a regression test in `tests/test_gate_alpha12.py`, committed before the
-fix. 90 of that file's 118 tests failed against the alpha 11 gate. One alpha 11
+fix. 90 of that file's first 118 tests failed against the alpha 11 gate, and 40 of
+the 82 round-three tests failed before their fixes (the git clean cases already
+passed). Tests of the new name and the playbook sections were also written first.
+One alpha 11
 test that allowed `EnterWorktree` with a `name` in a workspace that is not a git
 repository now expects a worktree path instead.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.12.14, local):** 1606 pytest tests and 154
+- **Offline suite (macOS, Python 3.12.14, local):** 1701 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** the spot-check's events and the git commands above were replayed
   through the real hook command (`python -I -c ...`) against a scratch build-only
   workspace under git. Each reported route exits 2; `EnterWorktree` into an
   existing worktree, `LSP` `hover` on a project file, `SendMessage`, `ExitWorktree`,
-  `git clean -n` and `git status` exit 0.
+  `git clean -n` and `git status` exit 0. The round-three commands were replayed the same
+  way, the `git clean` ones with the hook's interpreter in the workspace's `.venv`: each
+  exits 2, and the same searches, `tar` and `git clean` confined to `project/` exit 0.
 - **CI:** `Validate Torque` on the pull request, all 9 cells (Ubuntu, macOS and
   Windows, each on Python 3.10, 3.12 and 3.14). The run id is recorded on the pull
   request.
 
 ## Review scope
 
-The fixes follow the spot-check's recommendations and the review's suggested fix
-for the git routes. They have not yet been re-reviewed independently. Until they
-are, treat the list in [de-identified mode](ai-access.md) as the claim to check.
+The fixes follow the spot-check's recommendations and the reviews' suggested
+fixes. They have not yet been re-reviewed independently. Until they
+are, treat the list in [build-only mode](ai-access.md) as the claim to check.
 
 ## Known remaining limits
 
-De-identified mode is pattern matching on recognized tool calls, not a sandbox.
+Build-only mode is pattern matching on recognized tool calls, not a sandbox.
 Beyond the limits in the alpha 11 record: `SendMessage` to a peer session that is
 not gated; what a language server returns for an allowed `LSP` call, since its
 index covers `clients/`; a `WorktreeCreate` hook that copies more than git and
-`.worktreeinclude` would; and git aliases, stash objects read by hash, and a work
+`.worktreeinclude` would; an MCP tool that runs code from an argument other than
+`command`, `cmd` or `script`; and git aliases, stash objects read by hash, and a work
 tree set in an earlier command. Bash from inside a worktree under
 `.claude/worktrees/` is nearly always blocked, because its relative paths are
-under `.claude/`. See [de-identified mode](ai-access.md) for the full list.
+under `.claude/`. See [build-only mode](ai-access.md) for the full list.
