@@ -684,6 +684,72 @@ def test_hook_reports_the_budget_and_exits_2(wsg, monkeypatch):
     assert result.returncode == 2 and "time budget" in result.stderr, result.stderr
 
 
+def _run_main(code, event, project_dir, timeout=60):
+    import sys
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir))
+    env["PYTHONPATH"] = str(REPO / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    import time
+    start = time.monotonic()
+    result = subprocess.run([sys.executable, "-c", code], input=json.dumps(event), capture_output=True, text=True,
+                            env=env, timeout=timeout)
+    return result, time.monotonic() - start
+
+
+def test_watchdog_blocks_a_call_that_outruns_the_budget(wsg):
+    """The budget is a hard limit: a step that never checks it (here a decide()
+    that sleeps) is cut off by the watchdog, which blocks with exit 2."""
+    code = ("import time, sys, torque.gate as g\n"
+            "g.GATE_TIME_BUDGET = 0.5\n"
+            "g.decide = lambda *a, **k: (time.sleep(30), (True, ''))[1]\n"
+            "sys.exit(g.main())\n")
+    event = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(wsg / "project")}
+    result, elapsed = _run_main(code, event, wsg)
+    assert result.returncode == 2 and "time budget" in result.stderr, result.stderr
+    assert elapsed < 15, elapsed
+
+
+def test_watchdog_stops_an_exponential_glob_through_self_links(wsg):
+    lp = wsg / "project" / "lp"
+    lp.mkdir()
+    _symlink(".", lp / "a")
+    _symlink(".", lp / "b")
+    code = "import sys, torque.gate as g\ng.GATE_TIME_BUDGET = 1.0\nsys.exit(g.main())\n"
+    command = "ls lp/" + "*/" * 22 + "zz; cat ../clients/acme/notes.md"
+    event = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(wsg / "project")}
+    result, elapsed = _run_main(code, event, wsg)
+    assert result.returncode == 2, result.stderr
+    assert elapsed < 15, elapsed
+
+
+def test_watchdog_does_not_fire_on_an_ordinary_call(wsg):
+    code = "import sys, torque.gate as g\nsys.exit(g.main())\n"
+    event = {"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": str(wsg / "project")}
+    result, _ = _run_main(code, event, wsg)
+    assert result.returncode == 0 and not result.stderr, result.stderr
+
+
+def _many_files(folder, count):
+    folder.mkdir(parents=True, exist_ok=True)
+    for n in range(count):
+        (folder / f"f{n:05d}.js").write_bytes(b"")
+
+
+def test_glob_budget_counts_each_pattern_once_2400_matches_pass(ws):
+    _many_files(ws / "project" / "a", 1200)
+    _many_files(ws / "project" / "b", 1200)
+    assert _bash_allowed("ls a/*.js b/*.js", ws, ws / "project")
+    assert _bash_allowed("ls a/*.js b/*.js a/*.js; wc -l b/*.js", ws, ws / "project")
+
+
+def test_glob_budget_10001_distinct_matches_block(ws):
+    for index in range(6):
+        _many_files(ws / "project" / f"d{index}", 1667 if index < 5 else 1666)
+    command = "ls " + " ".join(f"d{index}/*.js" for index in range(6))
+    allowed, reason = gate.decide("Bash", {"command": command}, ws, "build-only", ws / "project")
+    assert not allowed and "10000" in reason, reason
+    assert _bash_allowed("ls " + " ".join(f"d{index}/*.js" for index in range(5)), ws, ws / "project")
+
+
 # --- Re-review finding 4: a word longer than the file name limit ---
 
 def _hook(event, project_dir):
