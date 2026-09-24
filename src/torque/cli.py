@@ -373,6 +373,141 @@ def _change(args: argparse.Namespace) -> int:
     return 3 if action == "verify-deploy" and result.get("result") != "pass" else 0
 
 
+# The gate blocks tools it does not recognise, so the hook must see every tool
+# call. A matcher is a regular expression over the tool name ("" and "*" match
+# all); it covers the tools when it matches each of these, including a made-up
+# name standing for tools a host adds later.
+_HOOK_COVERAGE_PROBES = ("Bash", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "NotebookRead", "LS",
+                         "Grep", "Glob", "Monitor", "PowerShell", "WebFetch", "Task", "mcp__server__tool",
+                         "FutureTool")
+
+
+def _matcher_covers(matchers: list[str]) -> bool:
+    """True when the union of the hook entries' matchers matches every probe name."""
+    def matches(matcher: str, name: str) -> bool:
+        if matcher.strip() in ("", "*"):
+            return True
+        try:
+            return re.fullmatch(matcher, name) is not None
+        except re.error:
+            return False
+    return bool(matchers) and all(any(matches(m, name) for m in matchers) for name in _HOOK_COVERAGE_PROBES)
+
+
+def _hook_settings_layers(root: Path) -> list[Path]:
+    """Claude Code settings files that can switch the workspace's hooks off:
+    the workspace's own, the user's, and the managed (administrator) file."""
+    layers = [root / ".claude" / "settings.json", root / ".claude" / "settings.local.json",
+              Path.home() / ".claude" / "settings.json"]
+    if sys.platform == "darwin":
+        layers.append(Path("/Library/Application Support/ClaudeCode/managed-settings.json"))
+    elif os.name == "nt":
+        layers.append(Path(os.environ.get("ProgramData") or "C:/ProgramData") / "ClaudeCode" / "managed-settings.json")
+    else:
+        layers.append(Path("/etc/claude-code/managed-settings.json"))
+    return layers
+
+
+def _hooks_disabled_by(root: Path) -> list[str]:
+    found = []
+    layers = _hook_settings_layers(root)
+    for path in layers:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("disableAllHooks") is True:
+            found.append(f"{path} (disableAllHooks)")
+        if path == layers[-1] and data.get("allowManagedHooksOnly") is True:
+            found.append(f"{path} (allowManagedHooksOnly)")
+    return found
+# The interpreter path, then an option group containing I (isolated mode).
+_HOOK_ISOLATED_RE = re.compile(r'^\s*(?:"[^"]*"|\S+)\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*I[A-Za-z]*\s')
+
+
+def _hook_shell() -> str | None:
+    """On Windows, the Git Bash that Claude Code runs hooks through, or None.
+    Elsewhere None: the probe runs through the default POSIX shell."""
+    if os.name != "nt":
+        return None
+    configured = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if configured and Path(configured).is_file():
+        return configured
+    candidates = []
+    git = shutil.which("git")
+    if git:
+        git_dir = Path(git).resolve().parent
+        candidates += [git_dir.parent / "bin" / "bash.exe", git_dir.parent.parent / "bin" / "bash.exe"]
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"), os.environ.get("LOCALAPPDATA")):
+        if base:
+            candidates += [Path(base) / "Git" / "bin" / "bash.exe", Path(base) / "Programs" / "Git" / "bin" / "bash.exe"]
+    return next((str(c) for c in candidates if c.is_file()), None)
+
+
+def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, str]:
+    shell = _hook_shell()
+    try:
+        if shell:
+            run = subprocess.run([shell, "-c", command], cwd=root, input=event, capture_output=True,
+                                 text=True, timeout=60)
+        else:
+            run = subprocess.run(command, shell=True, cwd=root, input=event, capture_output=True,
+                                 text=True, timeout=60)
+        return run.returncode, run.stderr
+    except (OSError, subprocess.TimeoutExpired):
+        return None, ""
+
+
+def _gate_hook_report(root: Path) -> dict:
+    """Inspect the workspace's own Claude Code hook for de-identified mode and,
+    in build-only mode, run it once on a synthetic client-path Read to prove it
+    blocks. Makes no org call and reads no client file."""
+    from . import gate
+    mode_root, mode, known = gate._workspace_mode(root)
+    python = sys.executable.replace("\\", "/")
+    hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False,
+                  "fail_closed_shim": False, "isolated": False, "disabled_by": [], "verified": None,
+                  "probe_exit": None,
+                  "probe_error": "", "recommended_command": gate.hook_command(python)}
+    matchers: list[str] = []
+    for name in ("settings.json", "settings.local.json"):
+        path = root / ".claude" / name
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        hooks = data.get("hooks") if isinstance(data, dict) else None
+        entries = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            matcher = str(entry.get("matcher") or "")
+            for item in entry.get("hooks") or []:
+                command = str(item.get("command") or "") if isinstance(item, dict) else ""
+                if "torque.gate" in command:
+                    hook["commands"].append(command)
+                    hook["configured"] = True
+                    matchers.append(matcher)
+    hook["matcher_covers_tools"] = _matcher_covers(matchers)
+    hook["disabled_by"] = _hooks_disabled_by(root)
+    hook["fail_closed_shim"] = bool(hook["commands"]) and all("sys.excepthook" in c for c in hook["commands"])
+    hook["isolated"] = bool(hook["commands"]) and all(_HOOK_ISOLATED_RE.match(c) for c in hook["commands"])
+    if mode == "build-only":
+        hook["verified"] = False
+        if hook["commands"]:
+            event = json.dumps({"tool_name": "Read", "cwd": str(root),
+                                "tool_input": {"file_path": "clients/.torque-doctor-probe/probe.md"}})
+            results = [_run_hook_probe(command, root, event) for command in hook["commands"]]
+            hook["probe_exit"] = results[0][0]
+            hook["verified"] = all(code == 2 and "could not" not in err for code, err in results)
+            failed = [err for code, err in results if code == 2 and "could not" in err]
+            if failed:
+                hook["probe_error"] = (failed[0].strip().splitlines() or [""])[-1][:300]
+    return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook}
+
+
 def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
@@ -386,6 +521,7 @@ def _doctor(args: argparse.Namespace) -> int:
     if args.workspace:
         root, firm = ws.load_workspace(args.workspace)
         report["workspace"] = {"path": str(root), "name": firm["name"], "profile": firm["profile"]}
+        report["ai_access"] = _gate_hook_report(Path(root))
         if args.client:
             client, _, data = ws.load_client(root, args.client)
             # Reading the selected journal also checks its local format, without evaluating claims.
@@ -410,6 +546,48 @@ def _doctor(args: argparse.Namespace) -> int:
     report["requested_capability"] = selected
     report["ready"] = report["capabilities"][selected]["local_dependencies_ready"]
     report["next_actions"] = []
+    access = report.get("ai_access")
+    if access and access["mode"] == "build-only":
+        hook = access["hook"]
+        if not hook["verified"]:
+            report["ready"] = False
+            if not hook["configured"]:
+                report["next_actions"].append(
+                    "Build-only mode is set but no torque.gate hook is wired in this workspace's "
+                    ".claude/settings.json, so nothing is blocked. Add the hook from docs/ai-access.md "
+                    "with this command: " + hook["recommended_command"])
+            elif hook["probe_error"]:
+                report["next_actions"].append(
+                    "The torque.gate hook could not run the gate (" + hook["probe_error"] + "), so it "
+                    "blocks every tool call, ordinary work included. Point the hook at an interpreter "
+                    "with Torque installed, using: " + hook["recommended_command"])
+            else:
+                report["next_actions"].append(
+                    f"The torque.gate hook did not block a client-path probe (exit {hook['probe_exit']}), "
+                    "so build-only mode is not in force. Point the hook at an interpreter with Torque "
+                    "installed, using: " + hook["recommended_command"])
+        else:
+            if not hook["fail_closed_shim"]:
+                report["next_actions"].append(
+                    "The torque.gate hook works, but fails open if its interpreter later loses Torque. "
+                    "Switch to the fail-closed hook command: " + hook["recommended_command"])
+            if not hook["isolated"]:
+                report["ready"] = False
+                report["next_actions"].append(
+                    "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
+                    "sitecustomize.py written into the workspace can replace the gate. Switch to: "
+                    + hook["recommended_command"])
+        if hook["disabled_by"]:
+            report["ready"] = False
+            report["next_actions"].append(
+                "Claude Code will not run this workspace's hook: " + "; ".join(hook["disabled_by"])
+                + ". Remove disableAllHooks (or allowManagedHooksOnly) so the torque.gate hook runs.")
+        if hook["configured"] and not hook["matcher_covers_tools"]:
+            report["ready"] = False
+            report["next_actions"].append(
+                'The hook matcher does not cover every tool call. Set it to ".*": the gate checks '
+                "command-running tools such as Monitor and blocks tools it does not recognise, but only "
+                "for the calls the matcher sends it.")
     if report["client"] and report["client"]["evidence_problems"]:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
@@ -440,6 +618,15 @@ def _doctor(args: argparse.Namespace) -> int:
             print(f"{name}: {'available' if found else 'not installed'}")
         if report["workspace"]:
             print(f"Workspace: {report['workspace']['name']}")
+            access = report["ai_access"]
+            if access["mode"] == "build-only":
+                h = access["hook"]
+                ok = h["verified"] and h["isolated"] and h["matcher_covers_tools"] and not h["disabled_by"]
+                state = ("hook command blocked a standalone probe; settings checked, host enforcement "
+                         "not tested" if ok else "HOOK NOT IN FORCE")
+                print(f"AI access: build-only ({state})")
+            else:
+                print("AI access: full (de-identified mode off)")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")

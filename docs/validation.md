@@ -1,7 +1,8 @@
 # Validation through alpha 9 — September 22, 2026
 
 Alpha 10 has its own record: [validation for alpha 10](validation-alpha10.md). It covers
-Windows CI, de-identified mode and the Windows limits that remain.
+Windows CI, de-identified mode and the Windows limits that remain. Alpha 11 hardens
+de-identified mode: [validation for alpha 11](validation-alpha11.md).
 
 Alpha 9 is a development build with no package-index release. It improves session continuity,
 local diagnostics, source/private separation and the offline verification runner.
