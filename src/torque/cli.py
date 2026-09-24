@@ -373,6 +373,57 @@ def _change(args: argparse.Namespace) -> int:
     return 3 if action == "verify-deploy" and result.get("result") != "pass" else 0
 
 
+_HOOK_MATCHER_TOOLS = ("Bash", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob", "mcp__")
+
+
+def _gate_hook_report(root: Path) -> dict:
+    """Inspect the workspace's own Claude Code hook for de-identified mode and,
+    in build-only mode, run it once on a synthetic client-path Read to prove it
+    blocks. Makes no org call and reads no client file."""
+    from . import gate
+    mode_root, mode, known = gate._workspace_mode(root)
+    python = sys.executable.replace("\\", "/")
+    hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False,
+                  "fail_closed_shim": False, "verified": None, "probe_exit": None,
+                  "recommended_command": gate.hook_command(python)}
+    for name in ("settings.json", "settings.local.json"):
+        path = root / ".claude" / name
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        hooks = data.get("hooks") if isinstance(data, dict) else None
+        entries = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            matcher = str(entry.get("matcher") or "")
+            for item in entry.get("hooks") or []:
+                command = str(item.get("command") or "") if isinstance(item, dict) else ""
+                if "torque.gate" in command:
+                    hook["commands"].append(command)
+                    hook["configured"] = True
+                    if matcher in ("", "*") or all(tool in matcher for tool in _HOOK_MATCHER_TOOLS):
+                        hook["matcher_covers_tools"] = True
+    hook["fail_closed_shim"] = bool(hook["commands"]) and all("sys.excepthook" in c for c in hook["commands"])
+    if mode == "build-only":
+        hook["verified"] = False
+        if hook["commands"]:
+            event = json.dumps({"tool_name": "Read", "cwd": str(root),
+                                "tool_input": {"file_path": "clients/.torque-doctor-probe/probe.md"}})
+            results = []
+            for command in hook["commands"]:
+                try:
+                    run = subprocess.run(command, shell=True, cwd=root, input=event, capture_output=True,
+                                         text=True, timeout=60)
+                    results.append((run.returncode, run.stderr))
+                except (OSError, subprocess.TimeoutExpired):
+                    results.append((None, ""))
+            hook["probe_exit"] = results[0][0]
+            hook["verified"] = all(code == 2 and "could not" not in err for code, err in results)
+    return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook}
+
+
 def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
@@ -386,6 +437,7 @@ def _doctor(args: argparse.Namespace) -> int:
     if args.workspace:
         root, firm = ws.load_workspace(args.workspace)
         report["workspace"] = {"path": str(root), "name": firm["name"], "profile": firm["profile"]}
+        report["ai_access"] = _gate_hook_report(Path(root))
         if args.client:
             client, _, data = ws.load_client(root, args.client)
             # Reading the selected journal also checks its local format, without evaluating claims.
@@ -410,6 +462,29 @@ def _doctor(args: argparse.Namespace) -> int:
     report["requested_capability"] = selected
     report["ready"] = report["capabilities"][selected]["local_dependencies_ready"]
     report["next_actions"] = []
+    access = report.get("ai_access")
+    if access and access["mode"] == "build-only":
+        hook = access["hook"]
+        if not hook["verified"]:
+            report["ready"] = False
+            if not hook["configured"]:
+                report["next_actions"].append(
+                    "Build-only mode is set but no torque.gate hook is wired in this workspace's "
+                    ".claude/settings.json, so nothing is blocked. Add the hook from docs/ai-access.md "
+                    "with this command: " + hook["recommended_command"])
+            else:
+                report["next_actions"].append(
+                    f"The torque.gate hook did not block a client-path probe (exit {hook['probe_exit']}), "
+                    "so build-only mode is not in force. Point the hook at an interpreter with Torque "
+                    "installed, using: " + hook["recommended_command"])
+        elif not hook["fail_closed_shim"]:
+            report["next_actions"].append(
+                "The torque.gate hook works, but fails open if its interpreter later loses Torque. "
+                "Switch to the fail-closed hook command: " + hook["recommended_command"])
+        if hook["configured"] and not hook["matcher_covers_tools"]:
+            report["next_actions"].append(
+                "The hook matcher does not cover every gated tool; use "
+                "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*")
     if report["client"] and report["client"]["evidence_problems"]:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
@@ -440,6 +515,12 @@ def _doctor(args: argparse.Namespace) -> int:
             print(f"{name}: {'available' if found else 'not installed'}")
         if report["workspace"]:
             print(f"Workspace: {report['workspace']['name']}")
+            access = report["ai_access"]
+            if access["mode"] == "build-only":
+                state = "hook verified" if access["hook"]["verified"] else "HOOK NOT IN FORCE"
+                print(f"AI access: build-only ({state})")
+            else:
+                print("AI access: full (de-identified mode off)")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")
