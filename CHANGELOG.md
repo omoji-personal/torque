@@ -6,13 +6,19 @@ A later review round found ordinary shell routes around build-only mode that the
 documentation implied were covered. This release closes them and brings the alpha
 12 record up to date.
 
-- `ln` and `ln -s` are blocked when the link's target resolves to `clients/`, into
-  it, to the workspace root or to any folder above it.
-- Recursive tools in a mode that follows symbolic links (`rg -L`, `find -L`/`-follow`/`-H`,
-  `grep -R`, `tar -h`, `cp -rL`, `rsync -L`/`-k`, `zip -r` without `-y`, `fd -L`,
-  `ls -RL`, `tree -l`, `ag -f`, `ack --follow`, `scp -r`, `diff -r`) are blocked when a
-  link under their search root leads to `clients/` or above it. The gate walks the
-  root following links, up to 20,000 entries and 64 levels, and blocks past either.
+- Making a link that leads out of the tree is blocked: `ln`/`ln -s`, `cp -s`, `mklink` and
+  `New-Item -ItemType SymbolicLink|Junction|HardLink` whose target resolves to `clients/`,
+  into it, to the workspace root or to any folder above it. A path that names a link is
+  still resolved.
+- `torque doctor` scans the workspace once (outside `clients/`, skipping `node_modules` and
+  `.git`, up to 200,000 entries) for links that resolve to `clients/` or above it, and
+  reports them, or an incomplete scan, as not ready. The gate does no filesystem walk per
+  call; a link that already exists and a recursive tool that follows links are listed as a
+  limit.
+- A word longer than any file name (a long commit message, a long `echo` chain) is no
+  longer read as a path that fails the whole call closed.
+- The hook examples set `"timeout": 600`, and the documentation says a timed-out hook lets
+  the call proceed.
 - A path or search root holding an unresolved `$` expansion, including one set earlier
   in the same command (`R=..; rg x $R`, `"${PWD%/project}"`), is read as each folder up
   to the workspace root, the rule `cd "$DIR"` already followed.

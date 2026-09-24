@@ -8,6 +8,7 @@ host that does not wire up the hook can still get through. See docs/ai-access.md
 """
 from __future__ import annotations
 import codecs
+import errno
 import glob
 import itertools
 import json
@@ -147,10 +148,6 @@ _SHELL_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
 # left where the splitter cut $(...) apart.
 _PARAM_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-]|$)")
 _BRACED_PARAM_RE = re.compile(r"\$\{[^{}]*\}")
-# How far the gate walks a search root looking for links a following tool would
-# take out of it. Past either limit the command is blocked.
-_FOLLOW_WALK_LIMIT = 20000
-_FOLLOW_WALK_DEPTH = 64
 _MAX_CWDS = 32
 # Commands that write, create or replace files, for the checks that only apply
 # to a write (a planted torque package, the hook interpreter's binaries).
@@ -750,145 +747,49 @@ def _root_reaches(raw: str, clients: Path, cwd: Path) -> bool:
     return any(_reaches(p, clients) for p in paths + roots)
 
 
-FOLLOW_REASON = ("this command follows symbolic links, and a link under its search root leads to client "
-                 "context or a folder above it (or the tree is too large to check). Drop the follow option "
-                 "(-L, -R, -h, --follow; zip -y stores links) or pass a narrower path, such as src/")
 LN_REASON = ("a link to client context, the workspace root or a folder above it would let a later command "
              "reach clients/. Link to a path inside project/")
 
 
-def _long_or_group(rest: list[str], longs: tuple[tuple[str, int], ...], letters: str, value_letters: str) -> bool:
-    """True when rest holds one of the long options (name, shortest accepted
-    prefix) or a short-option group with one of letters before any letter that
-    takes a value. Words after `--` are not options."""
-    for tok in rest:
-        if tok == "--":
-            return False
-        if tok.startswith("--"):
-            name = tok.split("=", 1)[0]
-            if any(_is_long_flag(name, flag, shortest) for flag, shortest in longs):
-                return True
-        elif _short_flag_has(tok, letters, value_letters):
-            return True
-    return False
+_LINK_ITEM_TYPES = {"symboliclink", "junction", "hardlink"}
 
 
-def _follows_links(head: str, rest: list[str]) -> bool:
-    """True when a recursive tool runs in a mode that follows symbolic links it
-    finds in the tree (rg -L, find -L/-follow/-H, grep -R, tar -h, cp -rL,
-    rsync -L/-k, zip without -y, fd -L, ls -RL, tree -l, scp -r, diff -r)."""
-    if head == "rg":
-        return _long_or_group(rest, (("--follow", 8),), "L", "ABCmgtTEMdjref")
-    if head == "fd":
-        return _long_or_group(rest, (("--follow", 8),), "L", "etEdSjxXco")
-    if head == "ag":
-        return _long_or_group(rest, (("--follow", 8),), "f", "ABCmGgp")
-    if head == "ack":
-        return "--follow" in rest
-    if head == "find":
-        return any(t in ("-L", "-H", "-follow") for t in rest)
-    if head in GREP_HEADS:
-        return _long_or_group(rest, (("--dereference-recursive", 5),), "R", _GREP_VALUE_LETTERS + "d")
-    if head == "tree":
-        return _long_or_group(rest, (), "l", "LPIoHT")
-    if head == "ls":
-        return _long_or_group(rest, (("--dereference", 5),), "L", "wTI")
-    if head == "cp":
-        return _long_or_group(rest, (("--dereference", 5),), "L", "tS")
-    if head == "scp":
+def _link_target_reaches(target: str, link: str, clients: Path, cwd: Path) -> bool:
+    """A link target, read both from the current directory and from the folder
+    the link is made in (Windows reads a relative symbolic target from there),
+    reaching clients/ or above it."""
+    if not target or _PARAM_RE.search(target) or "`" in target:
         return True
-    if head == "rsync":
-        return _long_or_group(rest, (("--copy-links", 7), ("--copy-dirlinks", 7), ("--copy-unsafe-links", 7)),
-                              "Lk", "efBMT")
-    if head == "zip":
-        return not _long_or_group(rest, (("--symlinks", 4),), "y", "bntO")
-    if head == "diff":
-        return "--no-dereference" not in rest
-    if head in TAR_HEADS:
-        if rest and not rest[0].startswith("-") and _TAR_MODE_RE.match(rest[0]) and re.search(r"[hL]", rest[0]):
-            return True
-        if any(t.startswith("--") and _is_long_flag(t.split("=", 1)[0], "--dereference", 5) for t in rest):
-            return True
-        for tok in rest:
-            if tok == "--":
-                break
-            if tok.startswith("-") and not tok.startswith("--"):
-                for letter in tok[1:]:
-                    if letter in "hL":
-                        return True
-                    if letter in _TAR_VALUE_LETTERS:
-                        break
-    return False
+    try:
+        link_dir = _resolve(cwd, os.path.dirname(link) or ".") if link else cwd
+    except (OSError, ValueError):
+        return True
+    return any(_root_reaches(target, clients, base) for base in dict.fromkeys([cwd, link_dir]))
 
 
-def _follow_roots(head: str, rest: list[str], cwd: Path, workspace: Path) -> list[Path]:
-    """The directories a following tool starts from: its search roots, without
-    the destination of cp, scp and rsync or the archive zip writes."""
-    raws = _recursive_search_targets(head, rest) or ["."]
-    if head in ("cp", "scp", "rsync") and len(raws) > 1:
-        raws = raws[:-1]
-    elif head == "zip" and "-" not in rest:
-        # The first word is the archive, unless it is written to standard output (-).
-        raws = raws[1:]
-    out: list[Path] = []
-    for raw in raws:
-        paths, roots = _token_paths(raw, cwd, workspace)
-        out += paths + roots
-    return out
+def _mklink_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """cmd's `mklink [/D|/H|/J] LINK TARGET`."""
+    operands = [t for t in rest if not re.match(r"^/{1,2}[A-Za-z]$", t)]
+    if len(operands) < 2:
+        return False
+    return _link_target_reaches(operands[1], operands[0], clients, cwd)
 
 
-def _links_reach(starts: list[Path], clients: Path) -> bool:
-    """Walk starts, following symbolic links (and Windows junctions) the way a
-    following tool would, and report True when a link resolves to clients/, into
-    it or to a folder above it. The walk is bounded by _FOLLOW_WALK_LIMIT entries
-    and _FOLLOW_WALK_DEPTH levels; reaching either, or an unexpected error,
-    also gives True (fail closed). A folder the user cannot read is skipped, since
-    the tool cannot read it either."""
-    budget = _FOLLOW_WALK_LIMIT
-    seen: set[str] = set()
-    stack = [(start, 0) for start in dict.fromkeys(starts)]
-    while stack:
-        folder, depth = stack.pop()
-        key = _cf(str(folder))
-        if key in seen:
-            continue
-        seen.add(key)
-        if not os.path.isdir(folder):
-            # Not a folder (a file, a missing path, or a word such as a find
-            # expression that Windows rejects as a path): nothing to walk.
-            continue
-        try:
-            entries = os.scandir(folder)
-        except (FileNotFoundError, NotADirectoryError, PermissionError):
-            continue
-        except OSError:
-            return True
-        try:
-            with entries:
-                for entry in entries:
-                    budget -= 1
-                    if budget < 0:
-                        return True
-                    link = entry.is_symlink() or bool(getattr(entry, "is_junction", lambda: False)())
-                    if link:
-                        real = Path(os.path.realpath(entry.path))
-                        if _reaches(real, clients):
-                            return True
-                        if not real.is_dir():
-                            continue
-                        child = real
-                    elif entry.is_dir(follow_symlinks=False):
-                        child = Path(entry.path)
-                    else:
-                        continue
-                    if depth + 1 > _FOLLOW_WALK_DEPTH:
-                        return True
-                    stack.append((child, depth + 1))
-        except PermissionError:
-            continue
-        except OSError:
-            return True
-    return False
+def _new_item_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+    """PowerShell's `New-Item -ItemType SymbolicLink|Junction|HardLink -Path P
+    -Target T` (or -Value, -Name, -Type)."""
+    values: dict[str, str] = {}
+    for j, tok in enumerate(rest):
+        if tok.startswith("-") and j + 1 < len(rest):
+            name = tok[1:].split(":", 1)[0].casefold()
+            for full in ("itemtype", "type", "path", "name", "target", "value"):
+                if full.startswith(name) and len(name) >= 2:
+                    values.setdefault("itemtype" if full == "type" else full, rest[j + 1])
+                    break
+    if values.get("itemtype", "").casefold() not in _LINK_ITEM_TYPES:
+        return False
+    target = values.get("target", values.get("value", ""))
+    return _link_target_reaches(target, values.get("path", values.get("name", "")), clients, cwd)
 
 
 def _ln_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
@@ -1776,6 +1677,12 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         elif _basename(tok) == "ln":
             if _ln_reaches(rest, clients, cwd):
                 return LN_REASON
+        elif _basename(tok) == "mklink":
+            if _mklink_reaches(rest, clients, cwd):
+                return LN_REASON
+        elif _basename(tok) == "new-item":
+            if _new_item_reaches(rest, clients, cwd):
+                return LN_REASON
         elif _basename(tok) == "patch":
             reason = _patch_reason(toks, words, i, workspace, cwd)
             if reason:
@@ -1795,19 +1702,10 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             operands = _tar_operands(rest, cwd)
             if operands is None or any(_root_reaches(raw, clients, base) for raw, base in operands):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
-            if _follows_links(_basename(tok), rest):
-                starts = []
-                for raw, base in operands:
-                    paths, roots = _token_paths(raw, base, clients.parent)
-                    starts += paths + roots
-                if _links_reach(starts, clients):
-                    return FOLLOW_REASON
         elif _is_recursive_search(tok, rest):
             head = _basename(tok)
             if _recursive_search_reaches(head, rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
-            if _follows_links(head, rest) and _links_reach(_follow_roots(head, rest, cwd, clients.parent), clients):
-                return FOLLOW_REASON
     chdir = _env_chdir(toks)
     if chdir is not None:
         # env -C DIR / --chdir=DIR runs the rest of the command in DIR.
@@ -2616,6 +2514,20 @@ def _touched_paths(tool_input: dict, cwd: Path) -> list[Path]:
     return list(dict.fromkeys(out))
 
 
+# The longest file name component most filesystems accept, in bytes.
+_NAME_MAX = 255
+
+
+def _not_a_path(start: Path, exc: OSError) -> bool:
+    """True when looking up start failed only because it is not a path at all:
+    the name is too long (ENAMETOOLONG, or Windows' ERROR_FILENAME_EXCED_RANGE)
+    and one of its components is longer than any file name can be, as when a
+    whole command or a long commit message is read as a path. Any other error,
+    or a long path whose parts are all plausible names, still fails closed."""
+    too_long = exc.errno == errno.ENAMETOOLONG or getattr(exc, "winerror", None) == 206
+    return too_long and any(len(part.encode("utf-8", "surrogateescape")) > _NAME_MAX for part in start.parts)
+
+
 def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     """Every build-only workspace that applies to a call: those at or above the
     event's cwd, those at or above the session's project directory
@@ -2634,7 +2546,13 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
         if key in checked:
             continue
         checked.add(key)
-        for folder, mode, _ in _workspace_chain(start):
+        try:
+            chain = _workspace_chain(start)
+        except OSError as exc:
+            if _not_a_path(start, exc):
+                continue
+            raise
+        for folder, mode, _ in chain:
             if mode == "build-only" and folder not in gated:
                 gated.append(folder)
     return gated
