@@ -50,6 +50,16 @@ def _client_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--client", required=True, help="explicit client name or slug")
 
 
+def _disable_abbreviations(parser: argparse.ArgumentParser) -> None:
+    """Accept only exact option names, in this parser and every subparser, so an
+    abbreviation such as `--clie` is never read as `--client`."""
+    parser.allow_abbrev = False
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for child in action.choices.values():
+                _disable_abbreviations(child)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="torque", description="Salesforce consulting workflows and private client context.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -144,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_parser(route, add_help=False, help=f"{route} operations with selected-client evidence; use {route} --help")
     for route in DELEGATES:
         sub.add_parser(route, add_help=False, help=f"forward to the {route} workflow; use {route} --help")
+    _disable_abbreviations(parser)
     parser.epilog = ("Delegated workflows accept --workspace PATH --client NAME for isolated client state. "
                      "Use the delegated --help for its native arguments. No global hooks or sf replacement.")
     return parser

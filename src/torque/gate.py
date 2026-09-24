@@ -94,6 +94,8 @@ SAFE_TOOLS = {"TodoWrite", "TodoRead", "TaskCreate", "TaskUpdate", "TaskList", "
               "ExitWorktree"}
 # Tools whose string arguments are checked like an MCP tool's.
 MCP_LIKE_TOOLS = {"ReadMcpResourceTool"}
+# Argument names that hold a command string, in a host tool or an MCP tool (at any depth).
+COMMAND_KEYS = ("command", "cmd", "script")
 SHELL_HEADS = {"bash", "sh", "zsh"}
 # Tools that read (and by default enumerate) an entire directory tree.
 ALWAYS_RECURSIVE_HEADS = {"rg", "ag", "ack", "find", "fd", "tree"}
@@ -495,36 +497,55 @@ def _recursive_search_targets(head: str, rest: list[str]) -> list[str]:
     value_flags = _SEARCH_VALUE_FLAGS.get(head, set())
     pattern_flags = _SEARCH_PATTERN_FLAGS.get(head, set())
     root_flags = _SEARCH_ROOT_FLAGS.get(head, set())
+    no_pattern_flags = _SEARCH_NO_PATTERN_FLAGS.get(head, set())
+    pattern_value_flags = _SEARCH_PATTERN_VALUE_FLAGS.get(head, set())
+    # Short options that take a value: the rest of a group (-A2, -eERROR) or the next word.
+    value_letters = {f[1] for f in value_flags | pattern_flags if len(f) == 2 and f[0] == "-"}
+    pattern_letters = {f[1] for f in pattern_flags if len(f) == 2 and f[0] == "-"}
+    getopt_long = head in GREP_HEADS
     non_flags: list[str] = []
     roots: list[str] = []
     explicit_pattern = False
+    no_pattern = False
     j = 0
     while j < len(rest):
         tok = rest[j]
-        name = tok.split("=", 1)[0]
+        name, eq, _ = tok.partition("=")
         if tok == "--":
             non_flags.extend(rest[j + 1:])
             break
         if name in root_flags:
-            if "=" in tok:
+            if eq:
                 roots.append(tok.split("=", 1)[1])
             elif j + 1 < len(rest):
                 roots.append(rest[j + 1])
                 j += 1
-        elif name in pattern_flags:
+        elif name in pattern_flags or (getopt_long and name.startswith("--")
+                                       and (_is_long_flag(name, "--regexp", 5) or name == "--file")):
+            # -e PATTERN, --regexp=PATTERN, and grep's abbreviations (--reg).
             explicit_pattern = True
-            j += 0 if "=" in tok else 1
+            j += 0 if eq else 1
+        elif name in no_pattern_flags:
+            # rg --files, ack -f: list files; every word is a path.
+            no_pattern = True
         elif name in value_flags:
-            j += 0 if "=" in tok else 1
-        elif tok.startswith("-") and len(tok) > 2 and not tok.startswith("--") and tok[-1] in "ef" \
-                and head in PATTERN_FIRST_HEADS:
-            # A short-option group ending in -e/-f (grep -rne PATTERN): the next word is the pattern.
-            explicit_pattern = True
-            j += 1
+            if name in pattern_value_flags:
+                explicit_pattern = True
+            j += 0 if eq else 1
+        elif tok.startswith("-") and not tok.startswith("--") and len(tok) > 2:
+            # A short-option group: -rn, -rneERROR, -uuu, -A2. The first letter that
+            # takes a value takes the rest of the group, or else the next word.
+            for index, letter in enumerate(tok[1:], start=1):
+                if letter in value_letters:
+                    if letter in pattern_letters:
+                        explicit_pattern = True
+                    if index == len(tok) - 1:
+                        j += 1
+                    break
         elif not tok.startswith("-"):
             non_flags.append(tok)
         j += 1
-    if head in PATTERN_FIRST_HEADS and non_flags and not explicit_pattern:
+    if head in PATTERN_FIRST_HEADS and non_flags and not explicit_pattern and not no_pattern:
         non_flags = non_flags[1:]
     return roots + non_flags
 
@@ -561,6 +582,62 @@ _SEARCH_PATTERN_FLAGS = {
 }
 # Options naming a directory to search, as a root.
 _SEARCH_ROOT_FLAGS = {"fd": {"--search-path", "--base-directory"}}
+# Modes that take no pattern, so every word is a path.
+_SEARCH_NO_PATTERN_FLAGS = {"rg": {"--files", "--type-list"}, "ack": {"-f"}}
+# Value options whose value is the pattern (file-name regex modes).
+_SEARCH_PATTERN_VALUE_FLAGS = {"ag": {"-g"}, "ack": {"-g"}}
+# tar's short options that take a value, and its --directory option.
+_TAR_VALUE_LETTERS = frozenset("bCfFgHKLNTVX")
+_TAR_MODE_RE = re.compile(r"^[A-Za-z]*[ctxruAd][A-Za-z]*$")
+
+
+def _tar_operands(args: list[str], cwd: Path) -> list[tuple[str, Path]] | None:
+    """tar's operands, each with the directory it is read from. -C DIR, -CDIR and
+    --directory=DIR apply, in order, to the operands after them; each one is
+    relative to the one before. None when a directory is only known at run time."""
+    base = cwd
+    out: list[tuple[str, Path]] = []
+    j = 0
+    while j < len(args):
+        tok = args[j]
+        if tok == "--":
+            out.extend((t, base) for t in args[j + 1:])
+            break
+        if j == 0 and not tok.startswith("-") and _TAR_MODE_RE.match(tok):
+            tok = "-" + tok  # old-style keys: tar cC .. f - .
+        value, is_dir = None, False
+        if tok.startswith("--"):
+            name, eq, val = tok.partition("=")
+            if _is_long_flag(name, "--directory", 5):
+                is_dir = True
+                if eq:
+                    value = val
+                elif j + 1 < len(args):
+                    value = args[j + 1]
+                    j += 1
+        elif tok.startswith("-") and len(tok) > 1:
+            for index, letter in enumerate(tok[1:], start=1):
+                if letter in _TAR_VALUE_LETTERS:
+                    value = tok[index + 1:]
+                    if not value and j + 1 < len(args):
+                        value = args[j + 1]
+                        j += 1
+                    is_dir = letter == "C"
+                    break
+        else:
+            out.append((tok, base))
+        if value is not None:
+            if is_dir:
+                if not value or "$" in value or "`" in value:
+                    return None
+                try:
+                    base = _resolve(base, value)
+                except (OSError, ValueError):
+                    return None
+            else:
+                out.append((value, base))
+        j += 1
+    return out or [(".", base)]
 
 
 def _recursive_search_reaches(head: str, rest: list[str], clients: Path, cwd: Path) -> bool:
@@ -900,7 +977,8 @@ def _torque_reason(args: list[str]) -> str:
     sub = args[0] if args else None
     if sub is not None and sub not in TORQUE_ALLOWED:
         return f"torque {sub} reads client context or an org"
-    if sub == "doctor" and any(t.split("=", 1)[0] == "--client" for t in args[1:]):
+    if sub == "doctor" and any(_is_long_flag(t, "--client", 3) for t in args[1:]):
+        # The CLI rejects abbreviated options, but an older install may not.
         return "torque doctor --client reads client context"
     return ""
 
@@ -994,6 +1072,10 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 reason = f"python -m {module} is not an allowed torque entry point"
             if reason:
                 return reason
+        elif _basename(tok) == "tar":
+            operands = _tar_operands(rest, cwd)
+            if operands is None or any(_root_reaches(raw, clients, base) for raw, base in operands):
+                return "this command can search client context recursively." + NARROW_PATH_HINT
         elif _is_recursive_search(tok, rest):
             if _recursive_search_reaches(_basename(tok), rest, clients, cwd):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
@@ -1361,6 +1443,13 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
     under .claude/worktrees/, whose clients/ is guarded the same way."""
     clients = Path(os.path.realpath(str(workspace / "clients")))
     claude_dir = Path(os.path.realpath(str(workspace / ".claude")))
+    if tool_name.startswith("mcp__") or tool_name in MCP_LIKE_TOOLS:
+        # An MCP tool that runs a command (a shell or process server) gets the
+        # Bash scan on its command strings before its path arguments are checked.
+        for text in _command_strings(tool_input):
+            reason = _scan_bash(text, clients, claude_dir, workspace, cwd)
+            if reason:
+                return False, f"De-identified mode: {reason}. Run it yourself outside the AI session."
     if tool_name.startswith("mcp__"):
         if _mcp_reaches_salesforce(tool_name):
             return False, ("De-identified mode: this MCP tool looks like Salesforce org access. "
@@ -1382,6 +1471,8 @@ def _decide_root(tool_name: str, tool_input: dict, workspace: Path, cwd: Path, c
             return False, f"De-identified mode: {reason}."
         return True, ""
     command = tool_input.get("command")
+    if tool_name not in SAFE_TOOLS and tool_name != "Bash" and not isinstance(command, str):
+        command = next((tool_input[k] for k in COMMAND_KEYS if isinstance(tool_input.get(k), str)), None)
     if tool_name == "Bash" or (tool_name not in SAFE_TOOLS and isinstance(command, str)):
         # Bash, and any other tool that runs a command string: Monitor runs in
         # the Bash tool's shell; PowerShell gets the same best-effort path scan,
@@ -1503,18 +1594,36 @@ def _worktree_copy_reason(workspace: Path) -> str:
 
 
 def _uri_path(raw: str) -> str:
-    """The path in a file:// URI (host dropped, percent-escapes decoded); any
-    other string unchanged."""
-    if raw[:7].casefold() != "file://":
+    """The path in a file: URI (file:///p, file://host/p, file:/p), parsed with
+    urllib: host dropped, percent-escapes decoded, /C:/ read as C:/. Any other
+    string is returned unchanged."""
+    if raw[:5].casefold() != "file:":
         return raw
-    rest = raw[7:]
-    if not rest.startswith("/"):
-        slash = rest.find("/")
-        rest = rest[slash:] if slash >= 0 else ""
-    rest = urllib.parse.unquote(rest)
-    if re.match(r"^/[A-Za-z]:", rest):
-        rest = rest[1:]
-    return rest
+    try:
+        path = urllib.parse.unquote(urllib.parse.urlparse(raw).path)
+    except ValueError:
+        return raw
+    if re.match(r"^/[A-Za-z]:", path):
+        path = path[1:]
+    return path
+
+
+def _command_strings(value: object, depth: int = 0):
+    """Every string (or list of strings) held under a COMMAND_KEYS name, at any depth."""
+    if depth > 8:
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str) and key.casefold() in COMMAND_KEYS:
+                if isinstance(item, str):
+                    yield item
+                elif isinstance(item, (list, tuple)) and all(isinstance(x, str) for x in item):
+                    yield " ".join(shlex.quote(x) for x in item)
+                    yield from item
+            yield from _command_strings(item, depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _command_strings(item, depth + 1)
 
 
 def _string_values(value: object, depth: int = 0):
@@ -1542,7 +1651,7 @@ def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir
     for raw in _string_values(tool_input):
         if not raw or "\n" in raw or len(raw) > 4096:
             continue
-        for candidate in dict.fromkeys([raw[7:] if raw[:7].casefold() == "file://" else raw, _uri_path(raw)]):
+        for candidate in dict.fromkeys([raw, _uri_path(raw)]):
             try:
                 target = _resolve(cwd, candidate)
             except (OSError, ValueError):
