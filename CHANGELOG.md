@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23
+
+A four-model review of alpha 10's de-identified mode found routes an assistant can
+take in ordinary use. This release closes them and states the mode's limits.
+
+- Paths after a `cd` or `pushd` earlier in the same command, attached
+  redirections (`<file`, `2>file`), `--flag=path` and `NAME=path` values, globs
+  expanded against the disk, brace expansion and `$PWD` are now resolved before
+  the `clients/` check. `**`, `tar`, and `zip`, `cp`, `scp` or `rsync` with a
+  recursive flag are treated as recursive reads.
+- MCP tool calls are checked for path arguments, not only for Salesforce names:
+  a string argument that resolves into `clients/`, the hook configuration or the
+  installed Torque package is blocked, as is a tree-walking MCP tool rooted at or
+  above `clients/`.
+- `git grep --untracked` and `git grep --no-index` rooted at or above `clients/`
+  are blocked. Plain `git grep` still passes.
+- An explicit `null` or empty `ai_access` now means build-only. Every build-only
+  workspace from the session's directory upward applies, so a nested
+  `workspace.json` cannot downgrade the workspace above it.
+- The session can no longer edit the installed Torque package or uninstall,
+  reinstall or downgrade Torque with `pip`, `uv` or `pipx`.
+- New fail-closed hook command: it exits 2 (block) instead of 1 when the hook's
+  interpreter cannot import Torque. `torque doctor --workspace` now reports the
+  mode, runs the wired hook on a synthetic probe in build-only mode, and exits 3
+  with the fix when the hook is missing or does not block.
+- `sf code-analyzer run`, `sf code-analyzer rules` and `sf project convert` now
+  work in build-only mode when no org flag is given and their roots stay away
+  from `clients/`.
+- The alert-triage demo's client note is a draft to send only after the likely
+  cause is confirmed. The demo guide describes all four synthetic scenarios.
+- [De-identified mode](docs/ai-access.md) now opens with its current limits: no
+  org allowlist, no metadata-only mode, an unauthenticated setting, one guarded
+  folder, the session running as the user, and no redaction of pasted text.
+
+1276 offline tests pass (154 subtests). See the
+[alpha 11 validation record](docs/validation-alpha11.md).
+
 ## 2.0.0a10 - unpublished de-identified mode, Windows and demo breadth update, 2026-09-23
 
 - Every forwarded command (data, deploy, revert, QA, logs, probes, advisory, and
