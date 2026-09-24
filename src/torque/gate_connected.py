@@ -19,8 +19,11 @@ from .connected_routes import Route, classify, is_simple
 
 RANK = {"allow": 0, "ask": 1, "deny": 2}
 PREFIX = "Connected mode: "
-# Permission modes in which a host prompt is skipped or decided without the consultant.
-NO_PROMPT_MODES = ("bypassPermissions", "auto", "dontAsk")
+# Permission modes in which the host shows the consultant a prompt. Any other named
+# mode (bypassPermissions, auto, dontAsk, or one this version does not know) is refused
+# for routes the gate cannot check. A missing mode is treated as a prompting one: hosts
+# and callers that do not send the field (the doctor probe, older hosts) keep the ask.
+PROMPT_MODES = ("default", "acceptEdits", "plan")
 
 
 @dataclass(frozen=True)
@@ -152,6 +155,8 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     command = tool_input.get("command") if isinstance(tool_input.get("command"), str) else ""
     writes = [r for r in routes if r.kind == "org_write"]
     decisions: list[Decision] = []
+    pending_write: Route | None = None
+    after_allow: list = []
     for route in routes:
         client = _route_client(route)
         if not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
@@ -168,7 +173,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         elif route.kind == "unverifiable":
             text = (f"the gate cannot check what `{route.detail}` does. Read it (and any script it runs) "
                     "before allowing it; it must not write to an org without an approval.")
-            if permission_mode in NO_PROMPT_MODES:
+            if permission_mode and permission_mode not in PROMPT_MODES:
                 decisions.append(_deny(text + f" Refused because this session skips prompts ({permission_mode})."))
             else:
                 decisions.append(Decision("ask", PREFIX + text))
@@ -183,20 +188,17 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                 decisions.append(_deny(f"{bound}'s consent does not cover debug logs."))
             else:
                 if route.kind == "check_only":
-                    approval.log_activity(workspace, bound, {"action": "check-only", "org_alias": route.org,
-                                                             "command": command or tool_name,
-                                                             "session_id": session_id, "tool_use_id": tool_use_id})
+                    after_allow.append(lambda org=route.org: approval.log_activity(
+                        workspace, bound, {"action": "check-only", "org_alias": org, "command": command or tool_name,
+                                           "session_id": session_id, "tool_use_id": tool_use_id}))
                 decisions.append(Decision("allow", ""))
         elif route.kind == "browser_write":
             orgs = [route.org] if route.org else [o["alias"] for o in item.get("approved_orgs", [])]
-            window = next((w for w in (approval.active_browser_approval(workspace, bound, org, config=config,
-                                                                         session_id=session_id,
-                                                                         tool_use_id=tool_use_id)
+            window = next((w for w in (approval.find_browser_approval(workspace, bound, org, config=config)
                                        for org in orgs) if w), None)
             if window:
-                approval.log_activity(workspace, bound, {"action": "browser", "approval_id": window["id"],
-                                                         "org_alias": window["org_alias"], "tool": tool_name,
-                                                         "session_id": session_id, "tool_use_id": tool_use_id})
+                after_allow.append(lambda win=window: approval.note_browser_use(
+                    workspace, bound, win, tool_name=tool_name, session_id=session_id, tool_use_id=tool_use_id))
                 decisions.append(Decision("allow", ""))
             else:
                 decisions.append(_deny("browser changes need a browser window: "
@@ -207,15 +209,24 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                 decisions.append(_deny("run one approved write command on its own, with nothing chained, "
                                        "piped or redirected."))
                 continue
-            if tool_name.startswith("mcp__"):
-                key = approval.call_key_for_mcp(tool_name, tool_input)
-            else:
-                key = approval.call_key_for_command(command)
-            used, why = approval.consume(workspace, bound, key, route.org, config=config, session_id=session_id,
-                                         tool_use_id=tool_use_id, cwd=cwd)
-            decisions.append(Decision("allow", "") if used else _deny(
-                f"{why}. Ask for it with `torque approval request ... -- <this exact command>`, "
-                "then stop until the consultant grants it."))
+            # Consumed only after every other route is decided (below), so a call that is
+            # denied for another reason never uses up its approval.
+            pending_write = route
         else:
             decisions.append(_deny(f"unrecognized route {route.kind}."))
-    return _worst(decisions)
+    worst = _worst(decisions)
+    if worst.action != "allow":
+        return worst
+    if pending_write is not None:
+        if tool_name.startswith("mcp__"):
+            key = approval.call_key_for_mcp(tool_name, tool_input)
+        else:
+            key = approval.call_key_for_command(command)
+        used, why = approval.consume(workspace, bound, key, pending_write.org, config=config,
+                                     session_id=session_id, tool_use_id=tool_use_id, cwd=cwd)
+        if not used:
+            return _deny(f"{why}. Ask for it with `torque approval request ... -- <this exact command>`, "
+                         "then stop until the consultant grants it.")
+    for record in after_allow:
+        record()
+    return worst

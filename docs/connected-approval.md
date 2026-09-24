@@ -21,7 +21,7 @@ sandbox. The limits are listed below.
 | Check-only | `sf project deploy validate`, `--dry-run`, `sf apex run test` | allowed and logged in `clients/<slug>/approvals/activity.jsonl` |
 | Org writes | any other `sf`/`sfdx` command with an org flag, `sf api request` other than a plain GET, `torque deploy/data/org/recover`, `jsc` write verbs, Salesforce MCP tools that are not clearly reads | allowed once, by consuming a matching approval |
 | Browser changes | clicks, typing and scripts in browser MCP servers; `torque browser`/`qa` with an org | allowed inside a granted browser window |
-| Programs the gate cannot check | `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | the host asks the consultant; refused when the session skips prompts (`bypassPermissions`, `auto`, `dontAsk`) |
+| Programs the gate cannot check | `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | the host asks the consultant when the session's permission mode is `default`, `acceptEdits` or `plan` (or the host sends none); refused in any other mode (`bypassPermissions`, `auto`, `dontAsk`, or one this version does not know) |
 | Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, desktop control (computer use) | refused |
 | Out of scope | another client's folder or `--client`, an org not in the consent, an `sf` call without an explicit org | refused |
 
@@ -97,10 +97,16 @@ claims the approval once, logs `approval_consume` with the hook's `session_id` a
 use for the reviewer's sample, with any later deploy observation on the same org.
 
 What an approval binds: the exact command text; the org alias and the org ID resolved at
-grant; the client; the change; the working folder; the files the command deploys or loads
+grant, which the client's consent must still record for that alias when it is used; the
+client; the change, whose record must still load when it is used; the working folder; the files the command deploys or loads
 (the named files and folders, the manifest, and the project files matching each named
 component; up to 2,000 files or 20 MB, above which the request is refused); a 15-minute
-window (30 for a browser window) with 60 seconds of clock skew; single use.
+window (30 for a browser window) with 60 seconds of clock skew; single use. The gate
+decides every other part of a call first and uses the approval only when the whole call is
+allowed, so a call refused for another reason leaves its approval unused.
+
+The grant screen shows every non-printable character (control, escape and bidirectional
+formatting characters) as an escape such as `\x1b`, so what it shows is what will run.
 
 For Torque's own routes (`torque deploy`, `data`, `org`, `recover`), the wrapper checks
 again when it runs: it needs an approval the gate consumed for this exact command in the
@@ -112,7 +118,9 @@ first (exit 0 uses a matching approval, exit 3 refuses).
 ## Before-state for production
 
 A production (or unknown) org needs an independent before-state or a written recovery
-path before a grant:
+path before a grant, for every kind of approval. A browser window cannot have a
+before-state (its actions are not known in advance), so a production browser window needs
+`--manual-recovery`. For a command or MCP call, any of:
 
 - `--before-state DIR`: an earlier retrieve or record export, copied into the change's
   evidence with a hash per file;
@@ -130,7 +138,7 @@ grant. The snapshot a Torque wrapper takes inside the approved write never count
 asks for a window of up to 30 minutes. Once granted, browser actions (clicks, typing,
 scripts, form input) are allowed for the bound client until it ends; reading and navigating
 pages is always allowed. Clicks cannot be listed in advance, so the window is per client and
-time, not per action.
+time, not per action. In a production org the request needs `--manual-recovery TEXT`.
 
 ## Two approval tiers
 
@@ -159,18 +167,23 @@ time, not per action.
 With the hook in force, on recognized routes:
 
 - a known org write by Bash, a Torque route or an MCP tool without a granted approval;
-- replay of an approval, and its use for another command, payload, working folder, org,
-  client or change, or after its window;
+- replay of an approval, its use for another command, payload, working folder, org or
+  client, its use after its window, after its change record is gone, or after the consent
+  stops naming the org ID it was granted for;
 - the session granting its own approval through recognized routes (refused by the gate and
   the permission rules; the grant also needs a real terminal outside the session and a typed code);
 - a write to an org outside the bound client's consent, and reads of another client's folder;
 - org access for a client without active, signed-off consent;
-- a production approval without an independent before-state or a written recovery path;
+- a production approval of any kind (browser windows included) without an independent
+  before-state or a written recovery path;
 - edits to the mode, consent and approval files, the approval key, and the Salesforce CLI's
   credential, alias and configuration folders and installation;
 - changing an alias or the default org with `sf alias set` or `sf config set`;
-- running org routes with prompts skipped (refused in `bypassPermissions`, `auto` and
-  `dontAsk`; doctor checks that bypass mode is disabled);
+- running programs the gate cannot check without the consultant's prompt (refused in every
+  permission mode except `default`, `acceptEdits` and `plan`; doctor checks that bypass mode is
+  disabled). A hook event with no permission mode is treated as prompting, so it asks;
+- an `sf` read without an explicit org flag (it would read the default org, which no consent
+  names);
 - an alias remapped to another org between grant and a Torque-route run (wrapper check).
 
 ## What it cannot stop
@@ -211,7 +224,7 @@ below; recheck them when either tool changes its hook or command contract.
 | `permission_mode` values | `default`, `plan`, `acceptEdits`, `auto`, `dontAsk`, `bypassPermissions` | gate |
 | Force a prompt | print `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "..."}}` on stdout, exit 0 | gate `ask` |
 | Block | exit 2; stderr is the reason. Exit 2 wins over any JSON and over allow rules | gate `deny` |
-| Hook `ask` in `bypassPermissions` or `auto` mode | Not documented. Bypass mode skips permission prompts, so an `ask` cannot be relied on there | gate denies unverifiable routes in both modes |
+| Hook `ask` in `bypassPermissions` or `auto` mode | Not documented. Bypass mode skips permission prompts, so an `ask` cannot be relied on there | gate asks only in `default`, `acceptEdits` and `plan` (or with no mode); any other mode is refused |
 | Hook decisions and rules | A matching deny or ask rule still applies when the hook returns `allow` or `ask` | permission generator |
 | Rule order | deny, then ask, then allow; the first match decides | permission generator, doctor drift |
 | Bash prefix rule | `Bash(sf apex run:*)` and `Bash(sf apex run *)` are equivalent; `:*` only at the end. Ask and deny rules also match inside compound commands and substitutions | permission generator |

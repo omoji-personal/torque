@@ -268,7 +268,7 @@ def _sf(rest: list[str], detail: str) -> Route:
         return Route("check_only" if org else "no_org", org, detail)
     if _match(topic, SF_READ):
         data = "records" if _match(topic, SF_RECORD_READS) else "debug_logs" if _match(topic, SF_LOG_READS) else None
-        if topic[:2] == ("org", "list") or (topic[:2] == ("org", "display") and not orgs):
+        if topic[:2] == ("org", "list"):
             return Route("read" if org else "local", org, detail)
         return Route("read" if org else "no_org", org, detail, data=data)
     return Route("org_write" if org else "no_org", org, detail)

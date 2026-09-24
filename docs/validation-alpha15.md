@@ -27,10 +27,10 @@ against Claude Code 2.1.281 and Salesforce CLI 2.150.6 and are recorded in
 
 ## Results
 
-- **Offline suite (macOS, Python 3.14.7, local):** 2455 pytest tests and 154
+- **Offline suite (macOS, Python 3.14.7, local):** 2469 pytest tests and 154
   subtests pass (2 skipped: one Windows-only test, and the private denylist check, which
   runs only where the owner's private list is configured), and the 12 standalone fixture
-  suites complete. That is 280 more tests than alpha 14's 2175. The wheel and source
+  suites complete. That is 294 more tests than alpha 14's 2175. The wheel and source
   distribution checks and the installed-wheel smoke test pass. No live org or provider call.
 - **Hook probes:** events piped through the real hook command (`python -I -c ...`) against
   a scratch connected workspace with a synthetic client, bound with `TORQUE_CLIENT`, each
@@ -63,10 +63,19 @@ captures count as org reads subject to the consent; a custom Apex REST call or a
 file counts as a write; desktop-control tools other than screenshots are refused (they could
 type into the consultant's terminal); unknown programs ask rather than pass.
 
-Pending, and run by the owner's controller rather than in this build:
+**R1, hostile QA** (run by the owner's controller on df87835) checked ten invariants: four
+held (single use, writes need an approval, one client per session, full and build-only
+unchanged) and six did not. Each gap now has a regression test in
+`tests/test_gate_connected.py`, written failing first, and a fix: the change record and
+the consent's org ID are part of the binding at use; `sf org display` without an org flag
+is refused like any other read without one; a production browser window needs a recovery
+path; the grant screen escapes non-printable characters; a named permission mode other
+than `default`, `acceptEdits` or `plan` is refused for unchecked programs (a missing mode
+still asks, which the doctor probe and hosts that send no mode rely on); the gate uses an
+approval only after the rest of the call is allowed. The connected-mode page now states
+exactly these rules.
 
-- **R1, hostile QA** on `gate.py`, `gate_connected.py`, `connected_routes.py`,
-  `approval.py` and `presence.py`, each finding with a reproducing hook event.
+Pending, and run by the owner's controller rather than in this build:
 - **R2, independent security re-review** of the full alpha 15 diff by a different model
   family, against the "What it stops" list in [connected mode](connected-approval.md).
 - **Live rehearsal** in a disposable Developer Edition org with synthetic data under a

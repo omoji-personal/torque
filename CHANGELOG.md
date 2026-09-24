@@ -27,8 +27,9 @@ default (`full`) and build-only behavior are unchanged.
 - Two approval tiers: tier 1 signs approvals with a key in the consultant's home (a script
   the session runs can read it and forge an approval, as documented); tier 2, recommended,
   accepts only approvals owned by a separate approver OS account.
-- Programs the gate cannot check make the host ask the consultant, and are refused when the
-  session skips prompts. Approval administration, `sf alias set`, `sf config set` and desktop
+- Programs the gate cannot check make the host ask the consultant in the `default`,
+  `acceptEdits` and `plan` permission modes (or when the host sends no mode), and are refused
+  in any other mode. Approval administration, `sf alias set`, `sf config set` and desktop
   control are refused. The Salesforce CLI's credential, alias and configuration folders and
   its installation are guarded.
 - `torque deploy|data|org|recover` re-check the consumed approval and the live org ID when
@@ -39,6 +40,11 @@ default (`full`) and build-only behavior are unchanged.
   calls through the hook (`--live` also compares each org's ID with the consent).
 - The rule file `production-approval.md` ("propose, show the plan and stop" for production)
   is copied into a connected workspace; `delivery-practice.md` gains one line pointing to it.
+- After the R1 review: an approval is unusable once its change record is gone or the consent
+  no longer names its org ID; the gate uses an approval only after every other part of the
+  call is allowed; an `sf` read without an org flag (`sf org display`) is refused; a
+  production browser window needs a written recovery path; the grant screen escapes
+  non-printable characters.
 - Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
   what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
   modes; the [alpha 15 record](docs/validation-alpha15.md).

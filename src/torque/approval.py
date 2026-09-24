@@ -441,7 +441,11 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     recovery = req.get("manual_recovery") if isinstance(req.get("manual_recovery"), str) else None
     if recovery is not None and len(recovery.strip()) < MIN_RECOVERY_CHARS:
         recovery = None
-    if req["kind"] != "browser" and org_kind == "production":
+    if org_kind == "production" and req["kind"] == "browser":
+        if not recovery:
+            raise ws.WorkspaceError("a production browser window needs a written manual recovery path "
+                                    f"(--manual-recovery, at least {MIN_RECOVERY_CHARS} characters)")
+    elif org_kind == "production":
         if req.get("before_state_event"):
             before = before_state.load_before_state(workspace, client, change_id, req["before_state_event"])
             missing = [c for c in before_state.coverage(derived["components"], before) if c not in new_components]
@@ -472,7 +476,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     if derived["namespaces"]:
         lines.append("Warning:     this call names managed-package components; check that this is intended.")
     for line in lines:
-        out.write(line + "\n")
+        out.write(printable(line) + "\n")
     out.flush()
     if confirm is None:
         from .presence import confirm_code as confirm
@@ -507,6 +511,13 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     except OSError:
         out.write("Note: the change record is not writable from this account; the grant is logged when used.\n")
     return record
+
+
+def printable(text: str) -> str:
+    """text with every non-printable character (control, escape, bidirectional
+    formatting) shown as an escape, so the screen shows what will run."""
+    return "".join(c if c.isprintable() or c == " " else c.encode("unicode_escape").decode("ascii")
+                   for c in str(text))
 
 
 def _log_grant(workspace, client, record: dict) -> None:
@@ -619,6 +630,22 @@ def _log_use(workspace, client, record: dict, session_id, tool_use_id) -> None:
         pass
 
 
+def _binding_problem(workspace, client, record: dict) -> str:
+    """The approval's change must still load, and the consent must still name the
+    approved org ID for its alias."""
+    try:
+        changes.load_change(workspace, client, record.get("change"))
+    except (OSError, ws.WorkspaceError):
+        return "the approval's change record is missing or invalid"
+    try:
+        entry = consent.approved_org(consent.load_consent(workspace, client), record.get("org_alias"))
+    except (OSError, ws.WorkspaceError):
+        entry = None
+    if entry is None or entry.get("org_id_18") != record.get("org_id_18"):
+        return "the client's consent no longer names the org ID this approval was granted for"
+    return ""
+
+
 def consume(workspace, client, call_key, org_alias, *, config, session_id=None, tool_use_id=None,
             cwd=None, now=None) -> tuple[bool, str]:
     """Use a matching granted approval once. Returns (True, approval ID) or (False, why)."""
@@ -630,7 +657,7 @@ def consume(workspace, client, call_key, org_alias, *, config, session_id=None, 
         if record.get("call_key") != call_key or record.get("org_alias") != org_alias \
                 or record.get("kind") == "browser":
             continue
-        problem = _problem(record, path, config, slug, now)
+        problem = _problem(record, path, config, slug, now) or _binding_problem(workspace, client, record)
         if problem:
             reasons.append(problem)
             continue
@@ -655,19 +682,36 @@ def consume(workspace, client, call_key, org_alias, *, config, session_id=None, 
     return False, "; ".join(dict.fromkeys(reasons)) or "no granted approval matches this exact call"
 
 
-def active_browser_approval(workspace, client, org_alias, *, config, now=None, session_id=None,
-                            tool_use_id=None) -> dict | None:
-    """A valid browser window for this org; its first use is logged in the change."""
+def find_browser_approval(workspace, client, org_alias, *, config, now=None) -> dict | None:
+    """A valid browser window for this org, with no side effect."""
     now = now if now is not None else time.time()
     slug = ws.slug_for(client)
     dirs = _dirs(workspace, client)
     for path, record in _granted(dirs):
         if record.get("kind") == "browser" and record.get("org_alias") == org_alias \
-                and not _problem(record, path, config, slug, now):
-            if _claim(dirs, record, now, session_id, tool_use_id):
-                _log_use(workspace, client, record, session_id, tool_use_id)
+                and not _problem(record, path, config, slug, now) and not _binding_problem(workspace, client, record):
             return record
     return None
+
+
+def note_browser_use(workspace, client, record: dict, *, tool_name=None, session_id=None, tool_use_id=None,
+                     now=None) -> None:
+    """Log one browser action in a window; its first use is also a change event."""
+    now = now if now is not None else time.time()
+    dirs = _dirs(workspace, client)
+    if _claim(dirs, record, now, session_id, tool_use_id):
+        _log_use(workspace, client, record, session_id, tool_use_id)
+    _activity(dirs, {"action": "browser", "approval_id": record["id"], "org_alias": record["org_alias"],
+                     "tool": tool_name, "session_id": session_id, "tool_use_id": tool_use_id})
+
+
+def active_browser_approval(workspace, client, org_alias, *, config, now=None, session_id=None,
+                            tool_use_id=None) -> dict | None:
+    """A valid browser window for this org, with its use logged."""
+    record = find_browser_approval(workspace, client, org_alias, config=config, now=now)
+    if record is not None:
+        note_browser_use(workspace, client, record, session_id=session_id, tool_use_id=tool_use_id, now=now)
+    return record
 
 
 def require(workspace, client, org_alias, argv, *, config, cwd=None, now=None) -> tuple[bool, str]:

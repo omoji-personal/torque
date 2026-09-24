@@ -166,10 +166,10 @@ def _request(p, tail) -> int:
     print(f"  torque approval grant {record['id']} --workspace {p.workspace} --client {p.client}")
     if record["kind"] == "command":
         print("After they say it is granted, run exactly this, from this folder:")
-        print(f"  {record['command']}")
+        print(f"  {approval.printable(record['command'])}")
     elif record["kind"] == "mcp":
         print("After they say it is granted, make exactly this MCP call:")
-        print(f"  {record['command']}")
+        print(f"  {approval.printable(record['command'])}")
     return 0
 
 
@@ -181,7 +181,7 @@ def _grant(p) -> int:
         print(f"Browser changes in {record['org_alias']} are allowed until then.")
     else:
         print("The agent may now run exactly:")
-        print(f"  {record['command']}")
+        print(f"  {approval.printable(record['command'])}")
     return 0
 
 
