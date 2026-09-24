@@ -373,7 +373,43 @@ def _change(args: argparse.Namespace) -> int:
     return 3 if action == "verify-deploy" and result.get("result") != "pass" else 0
 
 
-_HOOK_MATCHER_TOOLS = ("Bash", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob", "mcp__")
+# The gate blocks tools it does not recognise, so the hook must see every tool call.
+_HOOK_FULL_MATCHERS = ("", "*", ".*")
+# The interpreter path, then an option group containing I (isolated mode).
+_HOOK_ISOLATED_RE = re.compile(r'^\s*(?:"[^"]*"|\S+)\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*I[A-Za-z]*\s')
+
+
+def _hook_shell() -> str | None:
+    """On Windows, the Git Bash that Claude Code runs hooks through, or None.
+    Elsewhere None: the probe runs through the default POSIX shell."""
+    if os.name != "nt":
+        return None
+    configured = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if configured and Path(configured).is_file():
+        return configured
+    candidates = []
+    git = shutil.which("git")
+    if git:
+        git_dir = Path(git).resolve().parent
+        candidates += [git_dir.parent / "bin" / "bash.exe", git_dir.parent.parent / "bin" / "bash.exe"]
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"), os.environ.get("LOCALAPPDATA")):
+        if base:
+            candidates += [Path(base) / "Git" / "bin" / "bash.exe", Path(base) / "Programs" / "Git" / "bin" / "bash.exe"]
+    return next((str(c) for c in candidates if c.is_file()), None)
+
+
+def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, str]:
+    shell = _hook_shell()
+    try:
+        if shell:
+            run = subprocess.run([shell, "-c", command], cwd=root, input=event, capture_output=True,
+                                 text=True, timeout=60)
+        else:
+            run = subprocess.run(command, shell=True, cwd=root, input=event, capture_output=True,
+                                 text=True, timeout=60)
+        return run.returncode, run.stderr
+    except (OSError, subprocess.TimeoutExpired):
+        return None, ""
 
 
 def _gate_hook_report(root: Path) -> dict:
@@ -384,8 +420,8 @@ def _gate_hook_report(root: Path) -> dict:
     mode_root, mode, known = gate._workspace_mode(root)
     python = sys.executable.replace("\\", "/")
     hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False,
-                  "fail_closed_shim": False, "verified": None, "probe_exit": None,
-                  "recommended_command": gate.hook_command(python)}
+                  "fail_closed_shim": False, "isolated": False, "verified": None, "probe_exit": None,
+                  "probe_error": "", "recommended_command": gate.hook_command(python)}
     for name in ("settings.json", "settings.local.json"):
         path = root / ".claude" / name
         try:
@@ -403,24 +439,21 @@ def _gate_hook_report(root: Path) -> dict:
                 if "torque.gate" in command:
                     hook["commands"].append(command)
                     hook["configured"] = True
-                    if matcher in ("", "*") or all(tool in matcher for tool in _HOOK_MATCHER_TOOLS):
+                    if matcher.strip() in _HOOK_FULL_MATCHERS:
                         hook["matcher_covers_tools"] = True
     hook["fail_closed_shim"] = bool(hook["commands"]) and all("sys.excepthook" in c for c in hook["commands"])
+    hook["isolated"] = bool(hook["commands"]) and all(_HOOK_ISOLATED_RE.match(c) for c in hook["commands"])
     if mode == "build-only":
         hook["verified"] = False
         if hook["commands"]:
             event = json.dumps({"tool_name": "Read", "cwd": str(root),
                                 "tool_input": {"file_path": "clients/.torque-doctor-probe/probe.md"}})
-            results = []
-            for command in hook["commands"]:
-                try:
-                    run = subprocess.run(command, shell=True, cwd=root, input=event, capture_output=True,
-                                         text=True, timeout=60)
-                    results.append((run.returncode, run.stderr))
-                except (OSError, subprocess.TimeoutExpired):
-                    results.append((None, ""))
+            results = [_run_hook_probe(command, root, event) for command in hook["commands"]]
             hook["probe_exit"] = results[0][0]
             hook["verified"] = all(code == 2 and "could not" not in err for code, err in results)
+            failed = [err for code, err in results if code == 2 and "could not" in err]
+            if failed:
+                hook["probe_error"] = (failed[0].strip().splitlines() or [""])[-1][:300]
     return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook}
 
 
@@ -472,19 +505,33 @@ def _doctor(args: argparse.Namespace) -> int:
                     "Build-only mode is set but no torque.gate hook is wired in this workspace's "
                     ".claude/settings.json, so nothing is blocked. Add the hook from docs/ai-access.md "
                     "with this command: " + hook["recommended_command"])
+            elif hook["probe_error"]:
+                report["next_actions"].append(
+                    "The torque.gate hook could not run the gate (" + hook["probe_error"] + "), so it "
+                    "blocks every tool call, ordinary work included. Point the hook at an interpreter "
+                    "with Torque installed, using: " + hook["recommended_command"])
             else:
                 report["next_actions"].append(
                     f"The torque.gate hook did not block a client-path probe (exit {hook['probe_exit']}), "
                     "so build-only mode is not in force. Point the hook at an interpreter with Torque "
                     "installed, using: " + hook["recommended_command"])
-        elif not hook["fail_closed_shim"]:
-            report["next_actions"].append(
-                "The torque.gate hook works, but fails open if its interpreter later loses Torque. "
-                "Switch to the fail-closed hook command: " + hook["recommended_command"])
+        else:
+            if not hook["fail_closed_shim"]:
+                report["next_actions"].append(
+                    "The torque.gate hook works, but fails open if its interpreter later loses Torque. "
+                    "Switch to the fail-closed hook command: " + hook["recommended_command"])
+            if not hook["isolated"]:
+                report["ready"] = False
+                report["next_actions"].append(
+                    "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
+                    "sitecustomize.py written into the workspace can replace the gate. Switch to: "
+                    + hook["recommended_command"])
         if hook["configured"] and not hook["matcher_covers_tools"]:
+            report["ready"] = False
             report["next_actions"].append(
-                "The hook matcher does not cover every gated tool; use "
-                "Bash|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|mcp__.*")
+                'The hook matcher does not cover every tool call. Set it to ".*": the gate checks '
+                "command-running tools such as Monitor and blocks tools it does not recognise, but only "
+                "for the calls the matcher sends it.")
     if report["client"] and report["client"]["evidence_problems"]:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
