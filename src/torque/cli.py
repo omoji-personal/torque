@@ -50,6 +50,16 @@ def _client_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--client", required=True, help="explicit client name or slug")
 
 
+def _disable_abbreviations(parser: argparse.ArgumentParser) -> None:
+    """Accept only exact option names, in this parser and every subparser, so an
+    abbreviation such as `--clie` is never read as `--client`."""
+    parser.allow_abbrev = False
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for child in action.choices.values():
+                _disable_abbreviations(child)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="torque", description="Salesforce consulting workflows and private client context.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -65,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("path")
     upgrade.add_argument("--check", action="store_true", help="show available updates without writing")
     upgrade.add_argument("--json", action="store_true")
-    ai_access = work_sub.add_parser("ai-access", help="set the de-identified mode; the owner runs this, not an AI session")
+    ai_access = work_sub.add_parser("ai-access", help="set build-only mode; the owner runs this, not an AI session")
     ai_access.add_argument("mode", choices=ws.AI_ACCESS_MODES)
     ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
     ai_access.add_argument("--json", action="store_true")
@@ -144,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_parser(route, add_help=False, help=f"{route} operations with selected-client evidence; use {route} --help")
     for route in DELEGATES:
         sub.add_parser(route, add_help=False, help=f"forward to the {route} workflow; use {route} --help")
+    _disable_abbreviations(parser)
     parser.epilog = ("Delegated workflows accept --workspace PATH --client NAME for isolated client state. "
                      "Use the delegated --help for its native arguments. No global hooks or sf replacement.")
     return parser
@@ -460,8 +471,10 @@ def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, s
         return None, ""
 
 
+
+
 def _gate_hook_report(root: Path) -> dict:
-    """Inspect the workspace's own Claude Code hook for de-identified mode and,
+    """Inspect the workspace's own Claude Code hook for build-only mode and,
     in build-only mode, run it once on a synthetic client-path Read to prove it
     blocks. Makes no org call and reads no client file."""
     from . import gate
@@ -577,6 +590,21 @@ def _doctor(args: argparse.Namespace) -> int:
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
+        from . import gate
+        count = gate.clients_index_count(root)
+        access["clients_in_git"] = "unknown" if count is None else count
+        if count is None:
+            report["ready"] = False
+            report["next_actions"].append(
+                "Torque could not check whether files under clients/ are tracked in Git (git failed, timed out "
+                "or is missing), so the gate blocks git commands other than git status here. Check that git "
+                "works in this workspace.")
+        elif count:
+            report["ready"] = False
+            report["next_actions"].append(
+                f"{access['clients_in_git']} file(s) under clients/ are tracked in Git or staged. Client files "
+                "must stay untracked: low-level git commands can read them, so the gate blocks git commands "
+                "other than status and log here. Run git rm -r --cached clients and keep clients/ ignored.")
         if hook["disabled_by"]:
             report["ready"] = False
             report["next_actions"].append(
@@ -599,10 +627,10 @@ def _doctor(args: argparse.Namespace) -> int:
     if args.workspace:
         private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients"]
         try:
-            tracked = subprocess.run(["git", "ls-files", "--", *private_paths], cwd=root,
-                                     capture_output=True, text=True, timeout=10)
-            report["git_tracking"] = {"checked": tracked.returncode == 0,
-                                      "tracked_private_paths": tracked.stdout.splitlines() if tracked.returncode == 0 else []}
+            from . import gate
+            tracked = gate._git_run(root, ["ls-files", "--", *private_paths])
+            ok = tracked is not None and tracked[0] == 0
+            report["git_tracking"] = {"checked": ok, "tracked_private_paths": tracked[1].splitlines() if ok else []}
             if report["git_tracking"]["tracked_private_paths"]:
                 report["next_actions"].append("Some private paths are already tracked by Git. Ignore rules do not untrack existing files; review their repository visibility.")
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -626,7 +654,7 @@ def _doctor(args: argparse.Namespace) -> int:
                          "not tested" if ok else "HOOK NOT IN FORCE")
                 print(f"AI access: build-only ({state})")
             else:
-                print("AI access: full (de-identified mode off)")
+                print("AI access: full (build-only mode off)")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")

@@ -1,4 +1,4 @@
-# De-identified mode
+# Build-only mode
 
 `ai_access` is a workspace setting for a firm with an AI-use policy: it lets an AI session run in a
 Torque workspace while keeping it away from client orgs and client context. It is a best-effort
@@ -18,15 +18,16 @@ guard on recognized tool calls, not a sandbox. It has two values:
 - **The setting is not authenticated.** Whoever owns the workspace folder changes it.
   `ai_access_changed_at` records when, in a file that owner can edit. Leadership approval is a
   process around the setting, not something Torque enforces.
-- **One folder is guarded.** Only the governing workspace's `clients/` (and its `.claude/`
-  configuration) is protected. Mail, drive and chat connectors, other folders such as `private/`,
+- **One folder is guarded.** Only the governing workspace's `clients/` (with its copies in
+  worktrees under `.claude/worktrees/`) and its `.claude/` configuration are protected. Mail, drive and chat connectors, other folders such as `private/`,
   and other workspaces are not, unless a tool argument names a path inside `clients/`.
 - **The session runs as the user.** Any credential the operating-system user holds (a Salesforce
   CLI authorization, a token file, a browser session) is reachable by a script the session writes
   and runs. The guard does not inspect scripts. Run a build-only session in an account that holds
   no client-org authorizations.
-- **Nothing is de-identified.** The mode blocks paths and commands; it does not remove names, IDs
-  or values from text pasted into the session. Redact alerts and notes before pasting them.
+- **Nothing is redacted.** Build-only mode redacts nothing: it blocks paths and commands, and
+  removing client details (names, IDs, values) from text pasted into the session is the user's
+  job. Redact alerts and notes before pasting them.
 
 ## What build-only blocks
 
@@ -39,17 +40,22 @@ guard on recognized tool calls, not a sandbox. It has two values:
   convert uses `--manifest`/`--metadata`), `--version`, `--help`, `version`, `help`, `plugins`. `code-analyzer`'s `-o` and `-v`
   short flags read as org flags; use `--output-file` and `--view`.
 - Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
-  other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`.
+  other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`. The
+  `torque` command rejects abbreviated options, and the gate also blocks abbreviations of
+  `--client` (`--clie`), which an older install would accept.
 - Torque's other installed scripts (`jsc`, `jsc-qa`, `jsc-advisory`, `jsc-memory`,
   `jsc-loganalyzer`, `jsc-probes`, `jsc-browser-tests`, `meeting-processor`,
   `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):
   anything other than `--help`, `-h`, or `--version`.
 - MCP tools whose server or tool name indicates Salesforce access (a name containing `salesforce`,
   `sfdx`, `sf_`, `_sf`, `soql`, `sosl`, `sobject`, or `apex`, or a server or tool named `sf`), and
-  any MCP call with a string argument (at any depth, `file://` URIs included) that resolves into
+  any MCP call with a string argument (at any depth) that resolves into
   `clients/`, `workspace.json`, `.claude/`, or the installed Torque package. A tree-walking MCP
   tool (a name containing `tree`, `search`, `find`, `grep`, `glob`, or `walk`) rooted at or above
-  `clients/` is blocked too.
+  `clients/` is blocked too. A `file:` URI is parsed as a URI: `file:///p`, `file://localhost/p`
+  and `file:/p` all name `/p`, with `%` escapes decoded. An MCP tool that runs a command (a
+  `command`, `cmd` or `script` argument at any depth) gets the Bash scan below on that string
+  first, so a shell or process server cannot run what Bash may not.
 - Reading, writing, editing, or recursively searching into `clients/`, through: absolute,
   relative, `..`, `~`, `$HOME`, `$PWD` and symlinked paths, and on Windows Git Bash drive paths
   (`/c/...`, `/cygdrive/c/...`); paths relative to a `cd`, `pushd` or `popd` earlier in the same
@@ -65,27 +71,74 @@ guard on recognized tool calls, not a sandbox. It has two values:
   qualifiers (`c(l)ients`, `notes(.)`) and comma-less brace groups (`c{l..l}ients`), each read as
   a wildcard; `**` treated as a recursive search from its fixed prefix; `grep -r`, `rg`, `ag`,
   `ack`, `find`, `fd`, `tree`, `ls -R` (default target: the current directory; option values
-  such as `-g '*.md'` or `-A 2` are not mistaken for the pattern or a path); `git grep
+  such as `-g '*.md'`, `-A 2` or `-A2` are not mistaken for the pattern or a path, a pattern given
+  with `-e`, `-f`, `-eERROR`, `-rneERROR` or grep's `--regexp` and its abbreviations such as
+  `--reg=` is not mistaken for a path, and modes with no pattern, rg's `--files` and ack's `-f`, read
+  every word as a path); `git grep
   --untracked` or `--no-index`, `git diff --no-index` and `diff -r`, rooted at or above
-  `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar`, and
-  `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing `clients/`; and a
+  `clients/` (git's abbreviated forms, such as `--untr` or `--no-ind`, count too); `tar`, `bsdtar`,
+  `gtar` and `gnutar` (following their `-C DIR`, `-CDIR` and `--directory` changes in order,
+  reading old-style key bundles such as `tar cCf .. - .` the way tar does, each key that takes a
+  value taking the next word, and blocking a directory known only at run time), and `zip`, `cp`, `scp` or `rsync` with a recursive flag, over a tree containing
+  `clients/`; and a
   `Grep`/`Glob` rooted at or above `clients/` or naming it.
 - Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
-  tool's shell, and a `PowerShell` tool (or any other tool with a `command` argument) gets the
-  same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
+  tool's shell, and a `PowerShell` tool (or any other tool with a `command`, `cmd` or `script`
+  argument) gets the same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
   for PowerShell syntax.
 - Tools the gate does not recognise. Besides Bash, the file tools (`Read`, `Edit`, `Write`,
   `MultiEdit`, `NotebookEdit`, `NotebookRead`, `LS`, `LSP`), `Grep`, `Glob`, MCP tools and command
   tools, only these pass unchecked: `TodoWrite`, `TodoRead`, `TaskCreate`, `TaskUpdate`,
   `TaskList`, `TaskGet`, `Task`, `Agent`, `TaskOutput`, `TaskStop`, `BashOutput`, `KillShell`,
   `KillBash`, `WebSearch`, `WebFetch`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`,
-  `Skill`, `SlashCommand`, `ToolSearch`, `ListMcpResourcesTool`, `SendMessage`, `EnterWorktree`
-  and `ExitWorktree`. `LSP` is checked like `Read` on its `filePath`. `ReadMcpResourceTool` is
-  checked like an MCP tool. Every other tool is blocked, including tools a host adds later.
-- A Bash command aimed at `workspace.json`, `.claude/settings*.json`, or the `.claude` directory
-  (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on `workspace.json` and
-  `.claude/settings*.json`), and a destructive command (`rm`, `mv`, `cp`, `truncate`, a
-  redirection) using a glob at the workspace root.
+  `Skill`, `SlashCommand`, `ToolSearch`, `ListMcpResourcesTool`, `SendMessage` and
+  `ExitWorktree`. `ReadMcpResourceTool` is checked like an MCP tool. Every other tool is blocked,
+  including tools a host adds later.
+- `LSP` calls other than `documentSymbol`, `hover` and `goToDefinition`. The others
+  (`workspaceSymbol`, `findReferences`, `goToImplementation`, the call hierarchy, and any
+  operation the gate does not know) answer from the language server's whole index, which is
+  rooted at the workspace and covers `clients/`. The three allowed operations need a `filePath`;
+  a `file:` URI is read as its path (host dropped, `%` escapes decoded), and every string
+  argument is checked like an MCP tool's, so none may name `clients/`, `.claude/` or the Torque
+  installation.
+- `EnterWorktree` into anything but a worktree under `.claude/worktrees/`, or into a worktree's
+  `clients/`. With a `name` (or no arguments) Claude Code creates a new worktree there, a copy of
+  the tracked tree plus the gitignored files `.worktreeinclude` names. That is blocked when
+  `git ls-files` finds tracked files in `clients/`, when `.worktreeinclude` mentions `clients` or
+  matches a file in it, or when git cannot answer (no repository, git missing).
+- Worktree copies. Every folder under `.claude/worktrees/` is checked as a workspace of its own,
+  so its `clients/` is guarded like the workspace's: `Read`, `Grep`, `Glob`, `LSP`, MCP path
+  arguments and Bash commands that reach `.claude/worktrees/<name>/clients/` are blocked.
+- A Bash command aimed at `workspace.json`, `.claude/settings*.json`, `.worktreeinclude`, or the
+  `.claude` directory (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on
+  `workspace.json`, `.claude/settings*.json` and `.worktreeinclude`), and a destructive command
+  (`rm`, `mv`, `cp`, `truncate`, a redirection) using a glob at the workspace root.
+- `git clean` without `-n`/`--dry-run`, and `git stash` with `-u`, `--include-untracked`, `-a` or
+  `--all`, run at or above `clients/`, `.claude/`, the installed Torque package or the hook's
+  Python environment. Either would delete those files or copy them into a stash. `git clean`
+  works from the current directory (or `-C`, `--work-tree`, `GIT_WORK_TREE`) down, narrowed by
+  its pathspecs; a stash covers its whole repository unless pathspecs narrow it. Reading a
+  stash's untracked files back (`git stash show -u`, `--only-untracked`, or its third parent,
+  `stash^3`, `stash@{0}^3`) is blocked in the same places. A magic pathspec (`:/`) and a
+  repository git cannot identify count as reaching them.
+- These routes for client files into git: `git add` or `git stage`, forced or not, whose
+  pathspecs (or `-A`, `--all` or `-u` with none, the whole repository) reach `clients/`,
+  `.claude/` or the hook's environment; `git update-index --add`/`--force-remove`/`--index-info`
+  and `git hash-object -w` on those paths (or reading paths from standard input); and a file
+  value attached to `-f` or `-F` (`git commit -Fclients/...`, `sed -fclients/...`), which is
+  checked as a path like any other. Stage named paths such as `project/`.
+- git pointed at another repository or work tree: `-C`, `--git-dir`, `--work-tree`,
+  `-c core.worktree=`, and `GIT_DIR=`/`GIT_WORK_TREE=` on the same command, unless they stay
+  inside `project/`. git's own programs run by path (`$(git --exec-path)/git-add`,
+  `.../git-core/git-diff`) are blocked too.
+- Client files must stay untracked (Torque ignores `clients/` by default); if they are tracked,
+  low-level git commands can read them and doctor reports it. While any file under `clients/` is
+  in git's index, or when the gate's own git check fails or times out, the gate blocks every git
+  command except `git status` without `-v`/`--verbose` and `git rm --cached` of paths under
+  `clients/`, which is the way out: `git rm -r --cached clients`. `torque doctor` reports the
+  count (or "unknown" when git fails) and is not ready. A workspace that is not in a git
+  repository has nothing to report. Doctor's and the gate's own git queries run with no pager
+  and with fsmonitor and the untracked cache turned off.
 - Changing Torque itself: `Write`/`Edit`/`MultiEdit`/`NotebookEdit` into the installed `torque`
   package directory, any Bash command naming that directory or Torque's install metadata
   (`torque_salesforce-*.dist-info`, `__editable__*torque*`), and `pip`, `python -m pip`, `uv` or
@@ -122,7 +175,8 @@ workspace above it.
 ## What it allows
 
 Local generators, `sf project convert`, `sf code-analyzer` scoped away from `clients/`, git
-(including plain `git grep`, which reads tracked files only), tests, non-client source edits
+(including plain `git grep`, which reads tracked files only, `git clean -n`, and `git stash`
+without untracked files), tests, non-client source edits
 (`project/`), and the packaged conversational workflows.
 
 ## Setting the mode
@@ -145,7 +199,7 @@ the interpreter it runs under, as `ai_access.hook.recommended_command` in `--jso
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
+  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\""}]}]}}
 ```
 
 The hook reads the tool-call JSON on stdin and exits 0 to allow or 2 to block. Claude Code treats
@@ -210,6 +264,30 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   replaces Torque without naming it on the command line.
 - Copy or archive tools other than `tar`, `zip`, `cp`, `scp` and `rsync` with a recursive flag
   (for example `7z`, `ditto`, `robocopy`) run over the workspace.
+- An MCP tool that runs code from an argument other than `command`, `cmd` or `script` (for
+  example an `args` list or a `code` string). Only those three are scanned as commands; disable
+  shell and process MCP servers in a build-only workspace.
+- `SendMessage`. It passes unchecked. Within the session it reaches subagents and teammates whose
+  own tool calls are gated, but a message to a peer session that is not gated can ask it to read
+  `clients/` and reply. `ListAgents` is blocked, and the gate cannot tell a subagent from a peer.
+  Do not run other Claude Code sessions with access to the workspace alongside a build-only one.
+- What a language server returns for an allowed `LSP` call. Its index covers `clients/`, so
+  `hover` or `goToDefinition` on a project file can still show a location or text from
+  `clients/` when project code refers to it. Exclude `clients/` in the language server's own
+  configuration where it has one.
+- What the host does on `EnterWorktree` beyond the checks above: the gate assumes Claude Code
+  creates worktrees under `.claude/worktrees/` and copies only the tracked tree and what
+  `.worktreeinclude` names. A `WorktreeCreate` hook that copies more is not inspected.
+- Git routes other than the ones named. The checks above cover how client files get into git in
+  ordinary use; they do not cover every way git can read data it already holds. Not covered: an
+  alias (`git -c alias.x=clean x`); a stash's untracked files read by object hash; `git
+  checkout` or `git reset` of tracked files under `.claude/` from history; a repository or work
+  tree set in an earlier command (`export GIT_WORK_TREE=..`) or in the repository's own
+  configuration (`core.worktree`, a separate git directory); client files already in commit
+  history but no longer in the index (`git show HEAD~3:clients/...`); a stash of client files
+  the owner made (`git log --all -p`, `git show 'stash^@'`); and git's programs reached by a
+  bare name on `PATH` or a path built at run time other than `$(git --exec-path)`. The real
+  control is an agent account that holds no client material.
 
 It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
 `Clients__c`) from the workspace root; an MCP string argument that is exactly `clients`, or `.`
@@ -222,5 +300,15 @@ gate also checks the directory before it; use `cd project && rg foo`); a recursi
 a `cd` the gate cannot resolve (`cd "$DIR" && rg foo` is checked from the workspace root too; use
 a literal path); Bash reads under `.claude/` or of the installed Torque package; writing any
 `torque/` folder, `torque.py`, `.pth` file or `sitecustomize.py` in the workspace; tools missing
-from the recognised list above; and a command that merely mentions a script name as an argument
-(`rg jsc-qa`). Run those from `project/` or yourself.
+from the recognised list above; a command that merely mentions a script name as an argument
+(`rg jsc-qa`); nearly every Bash command run from inside a worktree under `.claude/worktrees/`
+(its relative paths are under `.claude/`; use absolute paths to `project/` or leave the
+worktree); `EnterWorktree` with a `name` in a workspace that is not a git repository; every git
+command but `git status` and `git rm --cached` of `clients/` while client files are in git's index
+or while the gate's git check fails; `git add .`, `git add -A` or `git add -u` from the
+workspace root, and `git add -A` or `-u` from `project/` (both cover the whole repository), even
+when `clients/` is ignored (stage named paths); `git -C`, `--git-dir` or `--work-tree` pointing
+outside `project/`, including `git -C .` from the workspace root; `git clean` from the workspace
+root, even when `clients/` is ignored; a short-option group containing `f` or `F` whose remaining
+letters happen to name a protected path; and `LSP` on a path under `.claude/` or
+in the Torque installation. Run those from `project/` or yourself.

@@ -1,4 +1,4 @@
-"""Alpha 11: regression tests for the round-1 audit of de-identified mode.
+"""Alpha 11: regression tests for the round-1 audit of build-only mode.
 
 The *_BLOCK lists hold the bypasses the audit reported plus neighbouring
 forms; most were allowed by the 2.0.0a10 gate. Each section names the audit
@@ -1027,7 +1027,7 @@ def test_doctor_names_a_standalone_probe_not_host_enforcement(tmp_path, capsys):
 
 @pytest.mark.parametrize("tool,inp", [
     ("SendMessage", {"to": "agent-1", "message": "continue with project/"}),
-    ("EnterWorktree", {"name": "feature"}),
+    ("EnterWorktree", {"path": "/w/.claude/worktrees/feature"}),
     ("ExitWorktree", {}),
     ("LSP", {"operation": "goToDefinition", "filePath": "/w/project/src/a.ts", "line": 1, "character": 1}),
 ])
