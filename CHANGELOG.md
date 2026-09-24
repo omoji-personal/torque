@@ -30,7 +30,14 @@ them and renames the mode.
 - Search parsing reads attached patterns (`-eERROR`, `grep -rneERROR`), grep's
   `--regexp` abbreviations and modes without a pattern (`rg --files`, `ack -f`),
   so a following `..` is read as a path. `tar` follows its `-C` and
-  `--directory` changes in order.
+  `--directory` changes in order, reads old-style key bundles (`tar cCf .. - .`) as
+  tar does, and `bsdtar`, `gtar` and `gnutar` are treated as tar.
+- `git add -f` (and a plain `git add` of client files git does not ignore) reaching
+  `clients/`, `.claude/` or the hook's environment is blocked, and while the index
+  or a stash holds client files, git commands that print index, history or stash
+  content are blocked.
+- `EnterWorktree` by path into an existing worktree works when the worktree tracks
+  `workspace.json`.
 - A recursive search, archive or clean rooted at the filesystem root (`grep -r x /`,
   `tar -C / ...`) now counts as reaching `clients/`; on Linux and Windows it did not.
 - `file:` URIs are parsed as URIs, so `file://localhost/...` and `file:/...`
@@ -47,7 +54,7 @@ them and renames the mode.
 - The alpha 11 validation record's "Review scope" now records its security
   review, two re-reviews and the spot-check.
 
-1707 offline tests pass (154 subtests). See the
+1765 offline tests pass (154 subtests). See the
 [alpha 12 validation record](docs/validation-alpha12.md).
 
 ## 2.0.0a11 - unpublished de-identified mode hardening, 2026-09-23

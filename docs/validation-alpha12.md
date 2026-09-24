@@ -50,13 +50,21 @@ passed). Tests of the new name and the playbook sections were also written first
 Linux and Windows then showed that a root at the filesystem root (`/`) did not count
 as reaching `clients/` (macOS resolves `/tmp/..` to `/private`, which hid it); that has
 a test too, and is fixed.
+
+A scoped re-review of those fixes found two open routes, both now fixed with
+tests written first (40 of 58 failed before the fix): old-style tar key bundles
+(`tar cCf .. - .`) and `bsdtar`/`gtar`, and `git add -f .` staging ignored client
+files that `git diff --cached` then printed, with the related read-back of a stash
+that holds client files (`git log --all -p`, `git show 'stash^@'`). It also found
+that re-entering an existing worktree by path was blocked when the worktree tracks
+`workspace.json`; that works now.
 One alpha 11
 test that allowed `EnterWorktree` with a `name` in a workspace that is not a git
 repository now expects a worktree path instead.
 
 ## Results
 
-- **Offline suite (macOS, Python 3.12.14, local):** 1707 pytest tests and 154
+- **Offline suite (macOS, Python 3.12.14, local):** 1765 pytest tests and 154
   subtests pass (1 Windows-only test skipped), and the 12 standalone fixture suites
   complete. No live org or provider call.
 - **Hook probe:** the spot-check's events and the git commands above were replayed

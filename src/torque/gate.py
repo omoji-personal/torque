@@ -145,7 +145,7 @@ _MAX_CWDS = 32
 # Commands that write, create or replace files, for the checks that only apply
 # to a write (a planted torque package, the hook interpreter's binaries).
 _WRITE_VERBS = DESTRUCTIVE_VERBS | {"ln", "tee", "install", "chmod", "chown", "touch", "dd", "patch",
-                                    "mkdir", "rsync", "scp", "tar", "unzip", "ditto", "sed", "perl"}
+                                    "mkdir", "rsync", "scp", "tar", "bsdtar", "gtar", "gnutar", "unzip", "ditto", "sed", "perl"}
 # Files an interpreter runs or imports at startup when found next to it or on sys.path.
 _STARTUP_NAMES = {"sitecustomize.py", "usercustomize.py", "torque.py"}
 # Git Bash (MSYS) and Cygwin drive paths: /c/Users/..., /cygdrive/c/Users/...
@@ -486,7 +486,7 @@ def _is_recursive_search(tok: str, rest: list[str]) -> bool:
         return any(_GREP_RECURSIVE_FLAG_RE.match(t) for t in rest)
     if head == "ls":
         return any(_LS_RECURSIVE_FLAG_RE.match(t) for t in rest)
-    if head == "tar":
+    if head in TAR_HEADS:
         return True
     if head in RECURSIVE_COPY_HEADS:
         return any(_COPY_RECURSIVE_FLAG_RE.match(t) for t in rest)
@@ -594,6 +594,7 @@ _SEARCH_NO_PATTERN_FLAGS = {"rg": {"--files", "--type-list"}, "ack": {"-f"}}
 _SEARCH_PATTERN_VALUE_FLAGS = {"ag": {"-g"}, "ack": {"-g"}}
 # tar's short options that take a value, and its --directory option.
 _TAR_VALUE_LETTERS = frozenset("bCfFgHKLNTVX")
+TAR_HEADS = {"tar", "bsdtar", "gtar", "gnutar"}
 _TAR_MODE_RE = re.compile(r"^[A-Za-z]*[ctxruAd][A-Za-z]*$")
 
 
@@ -601,6 +602,18 @@ def _tar_operands(args: list[str], cwd: Path) -> list[tuple[str, Path]] | None:
     """tar's operands, each with the directory it is read from. -C DIR, -CDIR and
     --directory=DIR apply, in order, to the operands after them; each one is
     relative to the one before. None when a directory is only known at run time."""
+    if args and not args[0].startswith("-") and _TAR_MODE_RE.match(args[0]):
+        # Old-style keys (tar cCf .. - .): each key letter that takes a value takes
+        # the next word, in order, not the rest of the bundle.
+        expanded: list[str] = []
+        words = iter(args[1:])
+        for letter in args[0]:
+            expanded.append("-" + letter)
+            if letter in _TAR_VALUE_LETTERS:
+                word = next(words, None)
+                if word is not None:
+                    expanded.append(word)
+        args = expanded + list(words)
     base = cwd
     out: list[tuple[str, Path]] = []
     j = 0
@@ -609,8 +622,6 @@ def _tar_operands(args: list[str], cwd: Path) -> list[tuple[str, Path]] | None:
         if tok == "--":
             out.extend((t, base) for t in args[j + 1:])
             break
-        if j == 0 and not tok.startswith("-") and _TAR_MODE_RE.match(tok):
-            tok = "-" + tok  # old-style keys: tar cC .. f - .
         value, is_dir = None, False
         if tok.startswith("--"):
             name, eq, val = tok.partition("=")
@@ -755,6 +766,9 @@ _GIT_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--after-context", "--before-context"
 _STASH_ACTIONS = {"push", "save", "show", "list", "apply", "pop", "drop", "branch", "clear", "create", "store"}
 # A stash's untracked files are its third parent: stash^3, stash@{0}^3, refs/stash^3.
 _STASH_UNTRACKED_REF_RE = re.compile(r"(?<![A-Za-z0-9_.-])(?:refs/)?stash(?:@\{[^}]*\}|~\d*)*\^3")
+GIT_STAGE_REASON = ("git add with -f, or of client files git does not ignore, at or above client context, the "
+                    ".claude hook configuration or the hook's environment would copy them into git. Name "
+                    "paths such as project/")
 GIT_WIPE_REASON = ("git clean, or git stash of untracked files, run at or above client context, the .claude "
                    "hook configuration or the hook's environment can delete them or copy them into git. "
                    "Use git clean -n to preview, or name paths such as project/")
@@ -792,6 +806,82 @@ def _git_parse(rest: list[str], cwd: Path) -> tuple[Path, list[Path], str | None
         break
     sub = rest[j] if j < len(rest) else None
     return base, trees, sub, rest[j + 1:]
+
+
+# git subcommands that print file contents or names from the index, history or
+# stashes. They are blocked while the index or a stash holds client files.
+_GIT_CONTENT_READERS = {"show", "diff", "log", "cat-file", "grep", "archive", "blame", "annotate", "format-patch",
+                        "whatchanged", "reflog", "ls-tree", "ls-files", "rev-list", "difftool", "range-diff",
+                        "bundle", "fast-export", "stash", "shortlog", "cherry", "notes"}
+_CLIENT_SPEC = ":(icase)clients"
+
+
+def _git_add_roots(args: list[str]) -> tuple[bool, list[str] | None]:
+    """For `git add` arguments: (forced, the pathspecs it stages). A pathspec file,
+    or -A/--all with no pathspec (the whole tree), give None: the repository top."""
+    options = args[:args.index("--")] if "--" in args else args
+    forced = any(_is_long_flag(t, "--force", 5) if t.startswith("--") else _short_flag_has(t, "f", "") for t in options)
+    if any(t.startswith("--pathspec-from-file") for t in options):
+        return forced, None
+    specs = _git_pathspecs(args, {"--chmod"})
+    whole = any(t.startswith("--") and (_is_long_flag(t, "--all", 4) or _is_long_flag(t, "--no-ignore-removal", 6))
+                or _short_flag_has(t, "A", "") for t in options)
+    if not specs and whole:
+        return forced, None
+    return forced, specs
+
+
+def _git_holds_clients(base: Path) -> bool:
+    """True when the index, or the untracked part of any stash, holds a file under
+    clients/, or when git cannot say. Outside a repository (or without git) there
+    is nothing for git to print."""
+    if not (base / ".git").exists() and _git_toplevel(base) is None:
+        return False
+    staged = _git_output(base, ["ls-files", "--", _CLIENT_SPEC])
+    if staged is None or staged.strip():
+        return True
+    stashes = _git_output(base, ["log", "-g", "--format=%H", "refs/stash"])
+    if stashes is None:
+        # No stash at all (the ref is missing) is the ordinary case.
+        return _git_output(base, ["rev-parse", "-q", "--verify", "refs/stash"]) is not None
+    for sha in stashes.split():
+        # ls-tree takes no icase pathspec; the untracked tree is filtered here.
+        names = _git_output(base, ["ls-tree", "-r", "--name-only", f"{sha}^3"]) or ""
+        if any(name.casefold().startswith("clients/") for name in names.splitlines()):
+            return True
+    return False
+
+
+def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Path) -> str:
+    """`git add -f` rooted at or above clients/, .claude/ or the hook's environment
+    stages ignored files there; a plain `git add` does the same to client files git
+    does not ignore. And while the index or a stash holds client files, commands
+    that print index, history or stash content (git diff --cached, git show :path,
+    git log -p, git stash show) are blocked."""
+    try:
+        base, trees, sub, args = _git_parse(rest, cwd)
+    except (OSError, ValueError):
+        return "" if not any(t in ("add", *_GIT_CONTENT_READERS) for t in rest) else GIT_STAGE_REASON
+    if sub == "add":
+        forced, specs = _git_add_roots(args)
+        protected = _git_protected(clients, claude_dir) if forced else [clients]
+        if specs is None:
+            reaches = bool(trees) or _toplevel_reaches(base, protected)
+        elif not specs:
+            return ""
+        else:
+            reaches = bool(trees) or _pathspecs_reach(specs, base, protected)
+        if not reaches:
+            return ""
+        if forced:
+            return GIT_STAGE_REASON
+        # Pathspecs are relative to the directory git runs in: ask from the workspace.
+        loose = _git_output(clients.parent, ["ls-files", "-o", "--exclude-standard", "--", _CLIENT_SPEC])
+        return GIT_STAGE_REASON if loose is None or loose.strip() else ""
+    if sub in _GIT_CONTENT_READERS and _git_holds_clients(clients.parent):
+        return ("git holds client files (in the index or a stash), so commands that print index, history or "
+                "stash content are blocked. Ask the owner to run git rm -r --cached clients or drop the stash")
+    return ""
 
 
 def _git_output(base: Path, args: list[str]) -> str | None:
@@ -1055,6 +1145,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             return "git grep or git diff over untracked files can read client context." + NARROW_PATH_HINT
         elif _basename(tok) == "git" and _git_wipe_reaches(rest, words, clients, claude_dir, cwd):
             return GIT_WIPE_REASON
+        elif _basename(tok) == "git" and _git_stage_reason(rest, clients, claude_dir, cwd):
+            return _git_stage_reason(rest, clients, claude_dir, cwd)
         elif _INSTALLER_RE.match(_basename(tok)):
             reason = _installer_reason(_basename(tok), rest)
             if reason:
@@ -1078,7 +1170,7 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                 reason = f"python -m {module} is not an allowed torque entry point"
             if reason:
                 return reason
-        elif _basename(tok) == "tar":
+        elif _basename(tok) in TAR_HEADS:
             operands = _tar_operands(rest, cwd)
             if operands is None or any(_root_reaches(raw, clients, base) for raw, base in operands):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
@@ -1183,7 +1275,7 @@ def _token_reason(tok: str, clients: Path, claude_dir: Path, workspace: Path, cw
         return "this command reaches client context"
     paths, _ = _token_paths(tok, cwd)
     if any(_in_interpreter(p, write) for p in paths):
-        return "this command targets the Python installation that runs build-only mode hook"
+        return "this command targets the Python installation that runs the build-only mode hook"
     if write and any(_is_shadow_path(p, workspace) for p in paths):
         return ("this command writes a torque package, torque.py, a .pth file or a "
                 "sitecustomize/usercustomize module, which could replace the hook's gate")
@@ -1557,20 +1649,28 @@ def _enter_worktree_reason(tool_input: dict, workspace: Path, cwd: Path) -> str:
     its clients/. Without `path` (a `name`, or nothing) Claude Code creates a new
     worktree there: a copy of the tracked tree plus the gitignored files
     .worktreeinclude names. That is blocked when the copy would hold client files."""
-    worktrees = Path(os.path.realpath(str(workspace.joinpath(*WORKTREES_DIR))))
+    dirs = [workspace.joinpath(*WORKTREES_DIR)]
+    # A worktree that tracks workspace.json governs itself; the folder it sits in
+    # (<workspace>/.claude/worktrees/) is where its siblings, and itself, live.
+    parts = workspace.parts
+    for i in range(len(parts) - 2):
+        if parts[i].casefold() == WORKTREES_DIR[0] and parts[i + 1].casefold() == WORKTREES_DIR[1]:
+            dirs.append(Path(*parts[:i + 2]))
     raw = tool_input.get("path")
     if raw is not None:
         if not isinstance(raw, str) or not raw.strip():
             return "EnterWorktree needs a path to a worktree under .claude/worktrees/"
         target = _resolve(cwd, _uri_path(raw))
-        t, w = _cf(str(target)), _cf(str(worktrees))
-        if not t.startswith(w + os.sep):
-            return ("EnterWorktree can only enter a worktree under .claude/worktrees/ in this mode; "
-                    "entering another folder could load its instructions and git state")
-        parts = re.split(r"[/\\]", t[len(w) + 1:])
-        if len(parts) > 1 and parts[1] == "clients":
-            return "client context stays out of the AI session"
-        return ""
+        t = _cf(str(target))
+        for folder in dirs:
+            w = _cf(os.path.realpath(str(folder)))
+            if t.startswith(w + os.sep):
+                inner = re.split(r"[/\\]", t[len(w) + 1:])
+                if len(inner) > 1 and inner[1] == "clients":
+                    return "client context stays out of the AI session"
+                return ""
+        return ("EnterWorktree can only enter a worktree under .claude/worktrees/ in this mode; "
+                "entering another folder could load its instructions and git state")
     return _worktree_copy_reason(workspace)
 
 
