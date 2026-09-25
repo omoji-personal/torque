@@ -5,6 +5,7 @@ ones after it in file order."""
 import json
 import os
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -255,36 +256,53 @@ def test_hook_python_defaults_to_sys_executable(tmp_path, monkeypatch):
     assert sys.executable.replace("\\", "/") in command
 
 
-def test_settings_dir_chmod_skipped_when_not_owned_by_the_real_caller(tmp_path, monkeypatch):
-    """Minor 4: chmod .claude to 0755 only when this call's real OS caller
-    (os.getuid(), which is what actually governs whether the chmod syscall
-    would succeed) owns it; otherwise leave directory modes to provisioning.
-    getuid= is pinned to the registered delegate's own uid so only the
-    ownership-check comparison itself is faked, not delegate matching. The
-    directory is forced to a known, restrictive 0700 first: init_workspace's
-    own mkdir(parents=True, ...) quirk already leaves .claude at 0755 in a
+def test_settings_dir_relaxes_only_when_this_call_created_it(tmp_path, monkeypatch):
+    """R55, extended to write_settings (spec requirement 22): .claude relaxes
+    to 0755 only when this call is the one that created it (existence read
+    before mkdir), exactly like workspace.py's _connected_rule/.claude/rules.
+    Ownership no longer decides this (superseding Minor 4): a preexisting
+    .claude is never re-moded as a side effect of this call, whoever owns
+    it. .claude already exists from delegated_workspace()'s init, so it is
+    removed first to prove the "this call created it" half."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    shutil.rmtree(root / ".claude")
+    permissions.write_settings(root, profile="unattended", delegated=True, model_id=MODEL, root_owner=FAKE_OWNER,
+                               **CLEAN)
+    assert oct((root / ".claude").stat().st_mode & 0o777) == oct(0o755)
+
+
+def test_settings_dir_leaves_a_preexisting_dir_alone_when_owned_by_the_real_caller(tmp_path, monkeypatch):
+    """Counterpart: a preexisting .claude (from init) keeps its mode even
+    though this call's real OS caller (os.getuid()) owns it; only whether
+    this call created the folder decides, never who owns it. The directory
+    is forced to a known, restrictive 0700 first: init_workspace's own
+    mkdir(parents=True, ...) quirk already leaves .claude at 0755 in a
     typical sandbox (pathlib applies `mode` only to a mkdir call's own final
     target, not to parents it creates along the way), so without forcing a
-    different starting mode this test cannot tell "the chmod ran and produced
-    0755 anyway" apart from "the chmod was correctly skipped"."""
+    different starting mode this test cannot tell "the chmod ran and
+    produced 0755 anyway" apart from "the chmod was correctly skipped"."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    (root / ".claude").chmod(0o700)
+    permissions.write_settings(root, profile="unattended", delegated=True, model_id=MODEL, root_owner=FAKE_OWNER,
+                               **CLEAN)
+    assert (root / ".claude").stat().st_mode & 0o777 == 0o700
+    # the settings file itself, which this call just created, is still relaxed
+    assert oct((root / ".claude" / "settings.json").stat().st_mode & 0o777) == oct(0o644)
+
+
+def test_settings_dir_leaves_a_preexisting_dir_alone_when_not_owned_by_the_real_caller(tmp_path, monkeypatch):
+    """Same, for a preexisting .claude this call's real OS caller does not
+    own: the settings file still relaxes, the folder still does not (this
+    is no longer an ownership check, since ownership is irrelevant now; it
+    only proves the getuid mismatch this test injects has no bearing on the
+    outcome either way)."""
     root = delegated_workspace(tmp_path, monkeypatch)
     (root / ".claude").chmod(0o700)
     monkeypatch.setattr(os, "getuid", lambda: ME + 5)
     permissions.write_settings(root, profile="unattended", delegated=True, model_id=MODEL, root_owner=FAKE_OWNER,
                                getuid=lambda: ME, **CLEAN)
     assert (root / ".claude").stat().st_mode & 0o777 == 0o700
-    # the settings file itself, which this call just created, is still relaxed
     assert oct((root / ".claude" / "settings.json").stat().st_mode & 0o777) == oct(0o644)
-
-
-def test_settings_dir_chmod_applied_when_owned_by_the_real_caller(tmp_path, monkeypatch):
-    """Counterpart: the ordinary (owned) case still relaxes .claude to 0755,
-    so the guard above is a genuine ownership check, not a no-op."""
-    root = delegated_workspace(tmp_path, monkeypatch)
-    (root / ".claude").chmod(0o700)
-    permissions.write_settings(root, profile="unattended", delegated=True, model_id=MODEL, root_owner=FAKE_OWNER,
-                               **CLEAN)
-    assert oct((root / ".claude").stat().st_mode & 0o777) == oct(0o755)
 
 
 def test_sidecar_written_before_any_step_that_can_fail_after_settings(tmp_path, monkeypatch):

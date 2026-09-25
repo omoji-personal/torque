@@ -51,10 +51,35 @@ def test_no_flow_deletes_recreates_or_re_modes_a_folder(tmp_path, monkeypatch):
                             root_owner=FAKE_OWNER, control_stat=approval._control_stat, **CLEAN)
     binding = launch.create_binding(root, "Acme", model_id=MODEL, root_owner=FAKE_OWNER, **CLEAN)
 
+    # R55 (spec requirement 22), part (c): the delegated setup steps
+    # themselves (ai-access, permissions write with hooks, consent record,
+    # sign-off), the ones that write into .claude, .claude/rules and
+    # clients/acme/consent.json. Like every other delegated write above,
+    # these run before as_agent below, with no getuid override: os.getuid()
+    # is the real, unmocked test-process uid here, the same account that
+    # ran delegated_workspace()'s init and so already owns every folder
+    # these steps touch, exactly the real default a single-account
+    # deployment would see. (An earlier version of this test threaded
+    # getuid=lambda: ME through these calls specifically to dodge
+    # write_settings' now-removed ownership-based .claude relax; that relax
+    # is gone (R55's write_settings follow-up: created-by-this-step decides,
+    # never ownership), so the override is gone too.)
+    setup_kwargs = {"model_id": MODEL, "root_owner": FAKE_OWNER, **CLEAN}
+    ws.set_ai_access(root, "connected", approval="required", verify="owner-uid", approver_uid=ME, delegated=True,
+                     **setup_kwargs)
+    permissions.write_settings(root, profile="unattended", with_hooks=True, delegated=True, **setup_kwargs)
+    letter2 = tmp_path / "agreement2.pdf"
+    letter2.write_bytes(b"synthetic agreement 2")
+    consent.record_consent(root, "Acme", "2026-09-30", letter2, ["metadata", "records"], ["acme-dev"], ["Contact"],
+                           resolve=ORGS.get, delegated=True, **setup_kwargs)
+    consent.sign_off(root, "Acme", "Second Model Reviewer", delegated=True, **setup_kwargs)
+    assert not consent.consent_problems(consent.load_consent(root, "Acme"))
+
     # claim_binding and every later call in this test are the agent's side (a
     # separate OS account from the approver's), the same as approval.consume
-    # below; grant/deny/create_binding above are the delegated approver's own
-    # writes and must run before this uid switch, not after.
+    # below; grant/deny/create_binding and the delegated setup steps above are
+    # the delegated approver/setup delegate's own writes and must run before
+    # this uid switch, not after.
     as_agent(monkeypatch)
     launch.claim_binding(root, "Acme", binding["id"], **CLEAN)
     # F1: write_launch_record creates the approvals folders only when absent;
@@ -77,32 +102,6 @@ def test_no_flow_deletes_recreates_or_re_modes_a_folder(tmp_path, monkeypatch):
     approval.decision(root, "Acme", req["id"])
     approval.approval_log(root, "Acme")
     doctor_connected.report(root, "Acme", live=True, resolve=ORGS.get)
-
-    # R55 (spec requirement 22), part (c): the delegated setup steps
-    # themselves (ai-access, permissions write with hooks, consent record,
-    # sign-off), the ones that write into .claude, .claude/rules and
-    # clients/acme/consent.json. getuid=lambda: ME keeps proving this account
-    # is the workspace's named setup delegate even though as_agent above
-    # mocked the real os.getuid() to ME + 1; that mismatch (ME + 1 != the
-    # real, on-disk owner of .claude, which is ME, this same process, from
-    # delegated_workspace()'s init) is deliberate here, the same way
-    # test_settings_dir_chmod_skipped_when_not_owned_by_the_real_caller
-    # proves it: it is what makes write_settings' own ownership-gated
-    # .claude relax (permissions.py, "Fix round 1, minor 4", a separate,
-    # already-reviewed rule from R55's) correctly skip a folder this
-    # delegate does not really own, matching a real deployment where
-    # .claude was provisioned by a different account than the one now
-    # running this step.
-    setup_kwargs = {"model_id": MODEL, "root_owner": FAKE_OWNER, "getuid": lambda: ME, **CLEAN}
-    ws.set_ai_access(root, "connected", approval="required", verify="owner-uid", approver_uid=ME, delegated=True,
-                     **setup_kwargs)
-    permissions.write_settings(root, profile="unattended", with_hooks=True, delegated=True, **setup_kwargs)
-    letter2 = tmp_path / "agreement2.pdf"
-    letter2.write_bytes(b"synthetic agreement 2")
-    consent.record_consent(root, "Acme", "2026-09-30", letter2, ["metadata", "records"], ["acme-dev"], ["Contact"],
-                           resolve=ORGS.get, delegated=True, **setup_kwargs)
-    consent.sign_off(root, "Acme", "Second Model Reviewer", delegated=True, **setup_kwargs)
-    assert not consent.consent_problems(consent.load_consent(root, "Acme"))
 
     # F35: also exercise the owner grant and a consent sign-off. An owner
     # (presence) grant is refused outright while the approver delegate is an

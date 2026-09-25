@@ -331,14 +331,11 @@ def write_settings(workspace, presence=None, confirm=None, *, profile="interacti
     to 0755) whenever this write is delegated or the profile is unattended. The
     harness chowns them to root afterward (matches workspace.py's
     set_ai_access/_connected_rule and consent.py's _save). The owner/interactive
-    path is unchanged (still mkstemp's 0600/0700). Fix round 1, minor 4: `.claude`
-    itself relaxes only when this call's real OS caller (`os.getuid()`, which is
-    what actually governs whether the chmod syscall would succeed, not the
-    injectable `getuid` used only to prove the delegate's own identity above)
-    owns it; a directory owned by someone else (root, or another account, from
-    earlier provisioning; reachable here only because this call could still write
-    a file into it via group permissions) is left alone for provisioning to fix,
-    not chmodded (which would raise) or silently ignored as still-restrictive.
+    path is unchanged (still mkstemp's 0600/0700). R55 (spec requirement 22,
+    superseding fix round 1's minor 4): `.claude` itself relaxes only when this
+    call is the one that created it (existence read before `mkdir`), exactly
+    like `workspace.py`'s `_connected_rule`/`.claude/rules`; a preexisting
+    `.claude` is never re-moded as a side effect of this call, whoever owns it.
 
     F13, extended by fix round 1's important 2: the sidecar is also (re)written,
     reflecting the new profile, whenever one already exists, even on a plain
@@ -377,6 +374,7 @@ def write_settings(workspace, presence=None, confirm=None, *, profile="interacti
             raise delegation.Refusal("tier-2-required", "the unattended profile is only for a tier 2 workspace "
                                                         "whose approver is a named delegate")
     path = ws._inside(root, root / ".claude" / "settings.json")
+    claude_existed = path.parent.exists()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     current = ws._read_json(path) if path.exists() else {}
     merged = merge(current, generate(profile), profile)
@@ -407,7 +405,7 @@ def write_settings(workspace, presence=None, confirm=None, *, profile="interacti
     # that reflects it.
     if agent_readable and os.name != "nt":
         path.chmod(0o644)
-        if path.parent.stat().st_uid == os.getuid():
+        if not claude_existed:
             path.parent.chmod(0o755)
         if write_sidecar:
             target.chmod(0o644)
