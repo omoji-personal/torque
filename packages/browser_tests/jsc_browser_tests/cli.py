@@ -66,7 +66,8 @@ def cmd_browser(args: argparse.Namespace) -> int:
         print(f"  Available: {_list_library_flows()}", file=sys.stderr)
         return 1
     return _run_flow_with_profiles(flow, args.target_org, profiles=["admin"], headed=args.headed,
-                                   allow_production_writes=getattr(args, "allow_production_writes", False))
+                                   allow_production_writes=getattr(args, "allow_production_writes", False),
+                                   as_json=getattr(args, "json", False))
 
 
 def cmd_multiprofile(args: argparse.Namespace) -> int:
@@ -92,6 +93,7 @@ def cmd_multiprofile(args: argparse.Namespace) -> int:
         seed=seed, headed=args.headed,
         max_concurrency=args.max_concurrency,
         allow_production_writes=getattr(args, "allow_production_writes", False),
+        as_json=getattr(args, "json", False),
     )
 
 
@@ -133,8 +135,10 @@ def _run_flow_with_profiles(
     headed: bool = False,
     max_concurrency: int = 1,
     allow_production_writes: bool = False,
+    as_json: bool = False,
 ) -> int:
-    """Use the same applicability, preflight, cleanup and scorer as suite-run."""
+    """Use the same applicability, preflight, cleanup and scorer as suite-run. With
+    as_json, print only a JSON list of redacted results, each with its identity report."""
     from .sf_client import SfClient
     from .provisioning.fixtures import new_runid
     if max_concurrency > 1:
@@ -142,11 +146,14 @@ def _run_flow_with_profiles(
     runid = new_runid()
     run_dir = artifact_child(state_dir("qa-tests"), target_org, f"{runid}-{flow.name}")
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    print(f"Run dir: {run_dir}")
+    if not as_json:
+        print(f"Run dir: {run_dir}")
     results = []
+
     def record(result):
         results.append(result)
-        _print_flow_result(result)
+        if not as_json:
+            _print_flow_result(result)
     config = {
         "sf": SfClient(target_org), "target_org": target_org,
         "flows": [flow], "profiles": profiles, "seed": seed or {},
@@ -156,6 +163,9 @@ def _run_flow_with_profiles(
         "on_result": record,
     }
     code = asyncio.run(run_suite(config))
+    if as_json:
+        print(json.dumps([_result_to_dict(r) for r in results], indent=2))
+        return code
     print(f"\nSummary: {len(results)} matrix cells, "
           f"{sum(r.overall_status == 'FAIL' for r in results)} FAIL; exit code {code}")
     return code
@@ -187,6 +197,7 @@ def _result_to_dict(r: runner.FlowResult) -> dict:
             for s in r.steps
         ],
         "side_effects": r.side_effects,
+        "identity": runner.identity_report(r),
     })
 
 
@@ -275,14 +286,16 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("browser", help="single-profile (admin) browser walkthrough")
     b.add_argument("flow_name")
     b.add_argument("--target-org", required=True)
-    b.add_argument("--headed", action="store_true", help="visible browser window")
+    b.add_argument("--headed", action="store_true", help="visible browser window (not under a delegated window)")
+    b.add_argument("--json", action="store_true", help="print a JSON list of redacted results with identity reports")
     b.add_argument("--allow-production-writes", action="store_true", help="Run test-record mutations on an explicitly selected production org")
     b.set_defaults(func=cmd_browser)
 
     m = sub.add_parser("multiprofile", help="walk flow as admin + each non-admin profile")
     m.add_argument("flow_name")
     m.add_argument("--target-org", required=True)
-    m.add_argument("--headed", action="store_true")
+    m.add_argument("--headed", action="store_true", help="visible browser window (not under a delegated window)")
+    m.add_argument("--json", action="store_true", help="print a JSON list of redacted results with identity reports")
     m.add_argument("--max-concurrency", type=int, default=1,
                    help="compatibility option; browser profile execution remains serial")
     m.add_argument("--allow-production-writes", action="store_true", help="Run test-record mutations on an explicitly selected production org")

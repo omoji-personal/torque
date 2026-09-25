@@ -45,8 +45,10 @@ SF_LOCAL = {("project", "generate"), ("project", "convert"), ("project", "list",
             ("version",), ("help",), ("commands",), ("whatsnew",), ("which",), ("search",), ("info",),
             ("doctor",), ("autocomplete",), ("alias", "list"), ("config", "list"), ("config", "get"),
             ("env", "list"), ("plugins",), ("plugins", "inspect")}
-# Login and browser sessions: the gate cannot tell what they do.
-SF_ASK = {("org", "login"), ("org", "logout"), ("org", "open"), ("plugins", "install"), ("plugins", "link"),
+# Login and browser sessions: the gate cannot tell what they do. `org open` is not
+# here: it mints a session URL (an org write, D17), so it falls through to the
+# default rule below, "anything else with an org flag is a write".
+SF_ASK = {("org", "login"), ("org", "logout"), ("plugins", "install"), ("plugins", "link"),
           ("plugins", "update"), ("plugins", "uninstall"), ("plugins", "reset"), ("update",)}
 # Changing an alias or the default org would move an approved command to another org.
 SF_ADMIN = {("alias", "set"), ("alias", "unset"), ("config", "set"), ("config", "unset")}
@@ -142,6 +144,7 @@ class Route:
     detail: str
     client: str | None = None
     data: str | None = None  # "records" or "debug_logs" when the read needs that consent class
+    headed: bool = False  # a browser route asking for a visible browser (--headed or a prefix of it)
 
 
 def _flag_values(args: list[str], names) -> list[str]:
@@ -342,10 +345,10 @@ def _torque(rest: list[str], detail: str) -> Route:
     org = orgs[0] if len(orgs) == 1 else None
     if len(orgs) > 1:
         return Route("no_org", None, detail + " (names more than one org)", client)
-    if head == "launch" or (head == "workspace" and sub == "ai-access"):
+    if head == "launch" or (head == "workspace" and sub in ("ai-access", "delegate")):
         return Route("admin", None, detail, client)
     if head == "approval":
-        if sub in ("grant", "deny") or (sub == "permissions" and "--write" in rest):
+        if sub in ("grant", "deny", "launch-binding") or (sub == "permissions" and "--write" in rest):
             return Route("admin", None, detail, client)
         names = {t.split("=", 1)[0] for t in rest}
         if sub == "request" and names & {"--capture-before-record", "--capture-before-metadata", "--capture-before"}:
@@ -377,7 +380,8 @@ def _torque(rest: list[str], detail: str) -> Route:
         return Route("read" if org else "local", org, detail, client,
                      data="debug_logs" if head == "logs" else None)
     if head in TORQUE_BROWSER_ROUTES:
-        return Route("browser_write" if org else "local", org, detail, client)
+        headed = any(len(n) >= 4 and "--headed".startswith(n) for n in (t.split("=", 1)[0] for t in rest))
+        return Route("browser_write" if org else "local", org, detail, client, headed=headed)
     if head in TORQUE_WRITE_ELSE:
         return Route("org_write" if org else "local", org, detail, client)
     if org:
@@ -514,6 +518,33 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     return routes
 
 
+def _exports(words: list[str]) -> bool:
+    """The segment puts variables into the environment of later commands (after any
+    keywords, assignments and wrapper words such as command, builtin or time): `export`,
+    `declare -x`/`typeset -x`/`local -x`/`readonly -x` (flags combined or not), or
+    `set -a`/`set -o allexport` (every later assignment is exported)."""
+    while words:
+        if g._basename(words[0]) in BENIGN_WRAPPERS:
+            # `command export ...`, `builtin declare -x ...`, `time -p export ...`
+            words = _strip_benign(g._basename(words[0]), words)
+        elif words[0] in _KEYWORDS or _ASSIGN_RE.match(words[0]):
+            words = words[1:]
+        else:
+            break
+    if not words:
+        return False
+    head, flags = words[0], [w for w in words[1:] if w.startswith(("-", "+")) and w not in ("-", "--")]
+    if head == "export":
+        return True
+    if head in ("declare", "typeset", "local", "readonly"):
+        return any(f.startswith("-") and "x" in f[1:] for f in flags)
+    if head == "set":
+        rest = words[1:]
+        return any(f.startswith("-") and not f.startswith("--") and "a" in f[1:] for f in flags) or any(
+            rest[i] == "-o" and i + 1 < len(rest) and rest[i + 1] == "allexport" for i in range(len(rest)))
+    return False
+
+
 def classify_bash(command: str, _depth: int = 0) -> list[Route]:
     """Routes for one shell command string, in order, without duplicates."""
     if _depth > 8:
@@ -527,8 +558,17 @@ def classify_bash(command: str, _depth: int = 0) -> list[Route]:
         segments = [g._without_redirections(toks) for toks, _ in g._segments_with_separators(text) if toks]
     else:
         segments = parsed[0]
+    exported = False
     for words in segments:
-        routes.extend(_segment(words, _depth))
+        found = _segment(words, _depth)
+        if exported:
+            # An exported variable (DEBUG=pw:api prints the session URL, PWDEBUG forces a
+            # visible browser, SF_* can point an alias at another org) reaches every later
+            # program of the shell, so the gate cannot check what they do.
+            found = [Route("unverifiable", r.org, r.detail + " (after an exported variable)", r.client)
+                     if r.kind in ("read", "check_only", "org_write", "browser_write") else r for r in found]
+        routes.extend(found)
+        exported = exported or _exports(words)
     for nested in g._direct_substitutions(text):
         routes.extend(r for r in classify_bash(nested, _depth + 1) if r.kind != "local")
     return list(dict.fromkeys(routes)) or [Route("local", None, "")]

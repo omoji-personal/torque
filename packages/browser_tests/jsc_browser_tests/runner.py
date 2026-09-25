@@ -230,6 +230,13 @@ async def run_flow_variation(
         result.side_effects["identity_status"] = "NOT_CHECKED"
         return result
 
+    try:
+        auth.refuse_debug_env_when_connected()
+    except auth.AuthError as exc:
+        result.error = exception_detail(exc)
+        result.side_effects["identity_status"] = "NOT_CHECKED"
+        return result
+
     from playwright.async_api import async_playwright
     from .sf_client import SfClient
     from .flow_spec import FlowCtx
@@ -258,6 +265,8 @@ async def run_flow_variation(
             baseline_user = await auth.observe_user_id(page)
             identity.update(baseline_user_id=baseline_user, observed_user_id=baseline_user,
                             status="OBSERVED", basis="browser Aura CurrentUser.Id")
+            await _verify_org_by_username(page, identity, admin_auth, baseline_user,
+                                          strict=bool(getattr(sess, "guarded", False)))
             if variation.profile != "admin":
                 requested_user = test_user["user_id"]
                 identity["requested_user_id"] = requested_user
@@ -301,4 +310,51 @@ async def run_flow_variation(
             await auth.close_session(sess)
     result.error = redact(result.error)
     result.side_effects = redact(result.side_effects)
+    for step in result.steps:
+        step.detail = redact(step.detail)
+        step.side_effects = redact(step.side_effects)
     return result
+
+
+async def _verify_org_by_username(page, identity: dict, admin_auth, user_id: str, *, strict: bool) -> None:
+    """Before Login As, read the page user's Username in the page and compare it with the
+    username sf resolves for the alias. Usernames are globally unique, so a match proves
+    the org and the user. A mismatch or an unreadable username stops a connected
+    (guarded) run; elsewhere (a15 behavior) it is recorded, never as a match."""
+    expected = getattr(admin_auth, "username", "") or ""
+    try:
+        if not expected:
+            raise auth.AuthError("sf resolved no username for the org alias")
+        observed = await auth.observe_username(page, user_id, getattr(admin_auth, "api_version", "") or None)
+    except auth.AuthError:
+        identity["org_status"] = "NOT_CHECKED"
+        if strict:
+            raise auth.AuthError("The browser's username could not be read or checked; flow was not executed") from None
+        return
+    identity["observed_username"] = observed
+    if observed.casefold() != expected.casefold():
+        identity["org_status"] = "MISMATCH"
+        if strict:
+            raise auth.AuthError("The browser's user is not the org alias's user; flow was not executed")
+        return
+    identity.update(org_status="MATCHED", observed_org_id_18=admin_auth.org_id_18, org_verified_by="username")
+
+
+def identity_report(result: "FlowResult") -> dict:
+    """Who the browser was, observed in the page: the org (the alias's org ID, verified by
+    the page user's username), the admin before Login As and their username, the user
+    after it, and the admin after restoration. Never a session URL or token."""
+    effects = result.side_effects or {}
+    identity = effects.get("browser_identity") or {}
+    restore = effects.get("session_restore") or {}
+    before = identity.get("baseline_user_id")
+    after = restore.get("user_id") if restore.get("status") == "OBSERVED" else None
+    status = identity.get("status")
+    org_status = identity.get("org_status")
+    if status in ("MATCHED", "OBSERVED") and org_status != "MATCHED":
+        status = "ORG_" + (org_status or "NOT_CHECKED")
+    return {"org_id_18": identity.get("observed_org_id_18"), "org_verified_by": identity.get("org_verified_by"),
+            "admin_before": before, "admin_username": identity.get("observed_username"),
+            "user_after_login_as": identity.get("observed_user_id") if identity.get("requested_user_id") else None,
+            "admin_restored": after, "restored": bool(before and after and before[:15] == after[:15]),
+            "status": status}

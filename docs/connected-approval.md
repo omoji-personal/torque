@@ -61,19 +61,64 @@ Each "present" step also prints a six-character code the owner types back.
    Until then the consent is pending and the gate refuses org access for the client.
    `torque client consent suspend` stops connected work for the client at once.
 6. Check readiness: `torque doctor --workspace W --client Acme --live`. It checks the hook
-   (fail-closed form, `-I`, matcher, timeout), the effective permission rules across the
-   user, project and local settings files, the approval tier, the consent, that each
-   approved alias still resolves to its recorded org ID, and runs synthetic calls through the
-   hook: six unbound (an org write, a read, a check-only deploy, a script, an approval grant
-   and a browser click: deny, deny, deny, ask, deny, deny; the check-only probe is refused
-   before anything is logged) and, with `--client`, seven bound to that client (a
-   read of an approved org: allow; an unapproved write, an org outside the consent, the
-   default org and another client: deny; a script: ask; a script with prompts skipped:
-   deny). The hook only decides; nothing it allows is run. It exits 3 when anything is not
-   ready.
+   (fail-closed form, `-I`, matcher, timeout, and that its interpreter exists and can run:
+   a hook that cannot start fails open), the effective permission rules across the user
+   (`$CLAUDE_CONFIG_DIR/settings.json` when that is set, else `~/.claude/settings.json`),
+   project and local settings files, the approval tier, the consent, that each approved
+   alias still resolves to its recorded org ID, and runs the synthetic calls in
+   "Doctor probes" below through the hook. It also shows the permission profile, the named
+   delegates, who performed each recorded setup step (and how), and the client's grants by
+   approver kind. The hook only decides; nothing it allows is run. It exits 3 when
+   anything is not ready.
 7. Start the session (present): `torque launch --workspace W --client Acme [-- claude options]`.
-   It binds the session to the client (`TORQUE_CLIENT`, which the hook inherits and the
-   session cannot change) and starts `claude` in the workspace. Use one session per client.
+   It writes a launch record for the process it becomes and starts `claude` in the
+   workspace with `TORQUE_CLIENT` and `TORQUE_LAUNCH` naming that record. The gate binds a
+   call to the client only through that record, and only when it belongs to the hook's own
+   process or one of its nearest ancestors with the same start time; `TORQUE_CLIENT` set by
+   hand binds nothing. Use one session per client. An unattended session starts from a
+   delegated approver's launch binding instead ([delegated approver](delegated-approver.md)).
+
+### Doctor probes
+
+Six probes run unbound, and with `--client` seven more run bound to that client. The
+bound ones bind the way a launched session does: doctor writes a `probe` launch record
+for its own process, runs the hook with `TORQUE_CLIENT` and `TORQUE_LAUNCH` naming it,
+and removes the record afterwards. The gate answer is the same under both permission
+profiles; the last two columns show what the host then does under each.
+
+| Probe | Call | Gate answer | Interactive | Under `claude -p` (unattended) |
+|---|---|---|---|---|
+| `org_write` | `sf project deploy start` to an org, unbound | deny | refused | refused: the hook denies it, no prompt |
+| `read_unbound` | `sf data query`, unbound | deny | refused | refused: the hook denies it, no prompt |
+| `check_only_unbound` | `sf project deploy validate`, unbound (refused before anything is logged) | deny | refused | refused: the hook denies it, no prompt |
+| `unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
+| `admin` | `torque approval grant` | deny | refused | refused: the hook denies it, no prompt |
+| `browser_write` | a browser click (`mcp__claude-in-chrome__computer`) | deny | refused | refused: the hook denies it, no prompt |
+| `bound_read` | `sf org display` on an approved org | allow | runs | runs only if a read allow rule covers it; otherwise refused under claude -p |
+| `bound_write_unapproved` | `sf project deploy start` with no approval | deny | refused | refused: the hook denies it, no prompt |
+| `bound_org_outside_consent` | an org the consent does not name | deny | refused | refused: the hook denies it, no prompt |
+| `bound_default_org` | `sf org display` with no `-o` | deny | refused | refused: the hook denies it, no prompt |
+| `bound_other_client` | `torque context` for another client | deny | refused | refused: the hook denies it, no prompt |
+| `bound_unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
+| `bound_skipped_prompts` | a script with prompts skipped (`bypassPermissions`) | deny | refused | refused: the hook denies it, no prompt |
+
+Doctor also runs these checks through the configured hooks:
+
+| Check | Call | Expected |
+|---|---|---|
+| `sidecar_write` | a `Write` to `.claude/torque-permissions.json` | deny (the session cannot change its own profile) |
+| `sidecar_bash_write` | a Bash redirect to the same file | deny |
+| `post_hook_mcp` | the `PostToolUse` hook on a browser (MCP) call | runs and exits 0 |
+| `post_hook_failure` | the `PostToolUseFailure` hook on a failed Bash call | runs and exits 0 |
+
+The two after-call checks run when those hooks are wired; they record only approved
+calls, so the synthetic ones write nothing. Under the unattended profile doctor also
+requires a tier 2 workspace whose approver is a named delegate, the gate hook under
+`PostToolUse` and `PostToolUseFailure` with the same command and matcher `.*`, no `ask`
+rule on a route the gate decides by approval, and a permission sidecar
+(`.claude/torque-permissions.json`) whose `settings_sha256` and `hook_python` still match
+`.claude/settings.json`. Run doctor as the agent account the session uses, so the probes
+prove that account can run the hook.
 
 ## One write, start to finish (synthetic example)
 
@@ -110,7 +155,9 @@ claims the approval once, logs `approval_consume` with the hook's `session_id` a
 `torque approval log --workspace W --client Acme` lists every request, grant, denial and
 use for the reviewer's sample, with the deploy observations recorded later on the same org:
 an observation whose job ID is the approval's validated job is marked linked, any other is
-listed as unlinked.
+listed as unlinked. It also lists each approved call's execution record (how it ended), a
+delegated approver's grants and denials, launches and the recorded setup steps; every row
+names the approver's kind (`human` or `ai`) and where it came from.
 
 What an approval binds: the exact command text (`command_sha256`); the org alias and the
 org ID resolved at grant, which the client's consent must still record for that alias, with
@@ -217,6 +264,18 @@ requires the ID the consent records, a granted window for that org, and the org'
 Domain address (recorded with the consent). The session starts through frontdoor on that
 My Domain, so the login hosts are never needed.
 
+Once the page loads, the run reads the signed-in user's Username from the page itself (a
+same-origin read) and compares it, ignoring case, with the alias's Salesforce CLI
+username; usernames are unique across Salesforce, so a match proves both the org and the
+user. A mismatch or an unreadable username stops a connected run before the flow starts.
+`torque browser ... --json` (which `torque qa` uses) prints an identity report per cell:
+the org and how it was verified, the admin before and after, the user after Login As, and
+whether the admin was restored. No session URL or session ID reaches the output, the run
+folder or the logs. Under a window a delegated approver granted, Torque's browser runs
+headless only: the gate and the browser both refuse `--headed`, and a `DEBUG`, `PWDEBUG`
+or `DEBUG_FILE` setting that could print the session URL or force a visible browser is
+refused before the browser starts.
+
 Every host is enforced below the page: Torque launches the browser with host-resolver
 rules that deny every host name (Salesforce or not, including IP literals, `localhost` and
 names written with a trailing dot) except the approved org's own exact host names (its My
@@ -269,6 +328,9 @@ refuses the request, closes every page and the browser context, and the run stop
   `chmod -R +a "APPROVER allow list,search,readattr,readextattr,readsecurity,read,file_inherit,directory_inherit" W`;
   on Linux use the equivalent `setfacl` entries. The grant is recorded in the change when the
   approval is used, if the approver cannot write the change record.
+  Tier 2 is also what a [delegated approver](delegated-approver.md) needs: an approver
+  account (a person or an automated reviewer) that grants and denies without a terminal,
+  for non-production orgs, so a session can run unattended.
 
 ## What it stops
 
@@ -362,6 +424,20 @@ below; recheck them when either tool changes its hook or command contract.
 | Agent environment | Tool subprocesses have `CLAUDECODE=1` and `CLAUDE_CODE_ENTRYPOINT` set | presence check |
 | Agent ancestry | The Bash tool's parent process is named `claude` | presence check |
 | Hook environment | The hook inherits the Claude Code process environment; `CLAUDE_PROJECT_DIR` is set | client binding (`TORQUE_CLIENT`) |
+| Unattended-host addendum (rows below) | Checked 2026-09-24 against Claude Code 2.1.282, driving `claude -p` with `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `CLAUDE_CODE_SSE_PORT` unset (a fresh headless session), from a scratch workspace with its own `.claude/settings.json` | D3, D12, D13, D14, D15 |
+| A `PreToolUse` hook `permissionDecision: "allow"` with no matching `ask`/`deny` permission rule | Runs the tool under `claude -p --permission-mode default`. The session ends normally, no hang (`echo probe-allowed` ran, exit 0, about 8 seconds) | D13 (`gate_connected.allow_json`) |
+| A matching `ask` permission rule after a `PreToolUse` hook already returned `allow` | The rule still applies: the tool is declined, not run. The session still ends normally in about 9 seconds, no hang; only `PreToolUse` is logged for that call, `PostToolUse` never follows | D3 (`GATED_ASK` design), D13 (unverifiable-command backstop) |
+| An unanswerable `ask` under `-p --permission-mode default` (no hook decision, no matching rule, default `--permission-prompts host`) | A read-only-shaped Bash command (`echo`, `ls` inside the working directory) runs without prompting. A write-shaped command (`touch`, a `>` redirect) is refused at once, with Claude Code's own text: "This session is non-interactive, so there was no prompt for you to approve it." Neither shape hangs | D13; sharpens "the hook not running" in "What it cannot stop" with the read/write split |
+| An `sf`/`torque` write wrapped in an interpreter or shell form (`python -m torque ...`, `env sf ...`, `exec sf ...`, `bash -c "sf ..."`) under the unattended profile | Matches a backstop `ask` rule (`Bash(python:*)`, `Bash(env *)`, `Bash(exec *)`, `Bash(bash:*)`, one of GATED_ASK's own INTERPRETER/INTERPRETER_FAMILIES siblings that stays in every profile), not the gate's own `sf`/`torque` route rule. That `ask` is unanswerable under `-p`, and a write-shaped command is refused at once (the row above), even on a route the gate itself would have allowed: the wrapping form, not the underlying command, is what the host rule sees first. Unattended sessions must call `sf` and `torque` directly, never wrapped | D3 (`GATED_ASK`/backstop design) |
+| The working-directory sandbox (separate from the permission-ask system) | `ls /nonexistent-probe` (outside the session's cwd) is refused immediately, before any permission decision; only `PreToolUse` is logged, no `PostToolUse` or `PostToolUseFailure`, no hang | D13 (a refusal here is not a gate or permission-rule decision) |
+| `PostToolUse` input keys for Bash under `-p` | `session_id`, `transcript_path`, `cwd`, `prompt_id`, `permission_mode`, `effort` (`{"level": ...}`), `hook_event_name`, `tool_name`, `tool_input`, `tool_use_id`, `duration_ms`, `tool_response` (`stdout`, `stderr`, `interrupted`, `isImage`, `noOutputExpected`). No exit-code field; `PostToolUse` fires only for exit 0 | D14 (`execution.outcome`) |
+| `PostToolUseFailure` input keys, and where a Bash exit code appears | Fires instead of `PostToolUse` for a nonzero exit. Same base keys as `PostToolUse` (`prompt_id` and `effort` included) plus `error` (a string starting `Exit code N` on its first line, then stderr) and `is_interrupt` (boolean); no `tool_response` key at all. Verified with `ls ./nonexistent-file-here`, exit 1 | D14 (`execution.outcome`'s exit-code regex reads `error`) |
+| A Bash call that hits its own `timeout` tool-input value | Is not killed: the process moves to a background task instead of failing. The hook event is still `PostToolUse`, not `PostToolUseFailure`; `tool_response.interrupted` stays `false` and there is no `exitCode`/`exit_code` field. `tool_response` instead carries `backgroundTaskId` (string) and `timedOutAfterMs` (number), and the process keeps running past the hook until something stops it. Verified with `perl -e '1 while 1'`, `timeout: 2000` | D14: `execution.outcome()` as drafted falls through to `("succeeded", 0)` for this shape, misrecording a timed-out call as succeeded; needs its own case before D14 ships |
+| `BASH_MAX_TIMEOUT_MS` | Setting it to `3000`, either as an ambient env var of the `claude` process or via `.claude/settings.json`'s `env` block, did not clamp an explicit `timeout: 30000` on a Bash call in either case (`sleep 15` ran to completion, `duration_ms` about 15100) | D12/D13 test-harness timing; do not rely on it as a hard ceiling over an explicit larger request |
+| `CLAUDE_CONFIG_DIR` when set | Relocates the whole config root, not only `settings.json`: pointing it at a directory with no credentials fails the session before hooks or settings load (`Not logged in · Please run /login`); `claude doctor` under the same var independently reports "Not signed in to claude.ai". Not proven to control settings-rule resolution on its own, since login must succeed first | D3 (a tier-2 separate approver account needs its own credentials under a custom `CLAUDE_CONFIG_DIR`, not only a settings file) |
+| `--input-format stream-json` without `--output-format stream-json` | Fails fast, no hang: `Error: --input-format=stream-json requires output-format=stream-json.`, exit 1 | D13 test harness |
+| `--input-format`/`--output-format stream-json` without `--verbose` | Fails fast, no hang: `Error: When using --print, --output-format=stream-json requires --verbose`, exit 1 | D13 test harness |
+| stream-json `result` message shape | `{"type": "result", "subtype": "success", "is_error": false, "result": "<text>", "session_id": ..., "stop_reason": "end_turn", "num_turns": 1, "duration_ms": ..., "permission_denials": [], "usage": {...}, "modelUsage": {...}, ...}`; `--verbose` adds many more fields (cost, subagent stats, timing) | D13 test harness result parsing |
 
 `sf` commands that only read (from the 2.150.6 summaries) and that connected mode
 allows for an approved org: `data query`, `data get record`, `data search`,

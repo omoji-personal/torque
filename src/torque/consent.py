@@ -37,7 +37,30 @@ def _require_operator(presence, confirm=None) -> None:
             raise ws.WorkspaceError("the confirmation code did not match; nothing was changed")
 
 
+def _actor(workspace, presence, confirm, delegated, model_id, env, ancestors, getuid, root_owner=None):
+    """(the delegated actor or None). The presence path is a15's, unchanged: it
+    calls `_require_operator` exactly as before. The delegated path proves the
+    caller is the workspace's named setup delegate (`delegation.delegated_actor`,
+    an OS-account proof, not presence) and needs tier 2 already active (the
+    default `require_tier2=True`: consent steps assume `ws.set_ai_access` already
+    switched the workspace to connected, tier 2). `root_owner` is an injectable
+    override for tests that cannot create a second real OS account."""
+    if delegated:
+        from . import delegation
+        return delegation.delegated_actor(workspace, "setup", model_id=model_id, getuid=getuid, env=env,
+                                          ancestors=ancestors, root_owner=root_owner)
+    _require_operator(presence, confirm)
+    return None
+
+
 def _path(workspace, client) -> tuple[Path, Path]:
+    """The client's consent.json path. This reads workspace.json again here, by
+    plain path (ws.load_client -> ws.load_workspace), only to resolve the
+    workspace root and confirm the client folder exists. On the delegated
+    path this runs after `_actor` has already proven the caller's identity and
+    tier 2 from delegation.py's protected, single-descriptor read
+    (delegation.delegated_actor / _delegated_actor_and_config); nothing here is
+    authorized from this second read, it only locates a path."""
     folder, _, _ = ws.load_client(workspace, client)
     return folder, ws._inside(folder, folder / FILE)
 
@@ -62,21 +85,29 @@ def _user() -> str:
     return _current_user_name()
 
 
-def _save(path: Path, item: dict) -> None:
+def _save(path: Path, item: dict, *, delegated: bool = False) -> None:
     text = json.dumps(item, indent=2, ensure_ascii=False) + "\n"
     if path.exists():
         ws._atomic_replace_text(path, text)
     else:
         ws._write_json(path, item)
     if os.name != "nt":
-        path.chmod(0o600)
+        # F12: the a15 owner path keeps 0600 (unchanged). A setup delegate's own
+        # uid writes 0644 instead, so the different account the gate and hooks
+        # later run as can read it; the harness chowns it to root afterward.
+        path.chmod(0o644 if delegated else 0o600)
 
 
 def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: list[str], orgs: list[str],
-                   suspend_contacts: list[str], presence=None, resolve=None) -> dict:
+                   suspend_contacts: list[str], presence=None, resolve=None, *, delegated: bool = False,
+                   model_id: str | None = None, env=None, ancestors=None, getuid=None, root_owner=None) -> dict:
     """Record (or replace) the agreement. A new record is pending until a second
-    reviewer signs off."""
-    _require_operator(presence)
+    reviewer signs off. `delegated=True`: the workspace's setup delegate is
+    recording this in place of the consultant at a real terminal; the record
+    gains `recorded_by_actor` (the delegate's identity and kind)."""
+    if model_id is not None and not delegated:
+        raise ws.WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
+    actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
     if not isinstance(agreed_on, str) or not _DATE.fullmatch(agreed_on):
         raise ws.WorkspaceError("agreed_on must be YYYY-MM-DD")
     unknown = [c for c in data_allowed if c not in DATA_CLASSES]
@@ -112,36 +143,47 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
             "data_allowed": list(dict.fromkeys(data_allowed)), "approved_orgs": approved,
             "suspend_contacts": [c.strip() for c in suspend_contacts if c and c.strip()],
             "reviewer": None, "recorded_by": _user(), "recorded_at": ws._now()}
-    _save(path, item)
+    if actor is not None:
+        item["recorded_by"] = actor.account
+        item["recorded_by_actor"] = actor.as_dict()
+    _save(path, item, delegated=delegated)
     return item
 
 
-def _update(workspace, client, presence, change) -> dict:
-    _require_operator(presence)
+def _update(workspace, client, presence, change, *, delegated: bool = False, model_id: str | None = None,
+           env=None, ancestors=None, getuid=None, root_owner=None) -> dict:
+    actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
     _, path = _path(workspace, client)
     item = load_consent(workspace, client)
     if item is None:
         raise ws.WorkspaceError("no consent record; run torque client consent record first")
-    change(item)
-    _save(path, item)
+    change(item, actor)
+    _save(path, item, delegated=delegated)
     return item
 
 
-def sign_off(workspace, client, reviewer: str, presence=None) -> dict:
+def sign_off(workspace, client, reviewer: str, presence=None, *, delegated: bool = False,
+            model_id: str | None = None, env=None, ancestors=None, getuid=None, root_owner=None) -> dict:
     """The second reviewer's sign-off. It activates a pending record; it does
-    not lift a suspension (record the agreement again for that)."""
+    not lift a suspension (record the agreement again for that). `delegated=True`:
+    the workspace's setup delegate signs off in place of the consultant; the
+    reviewer entry gains `signed_off_by` (the delegate's identity and kind)."""
+    if model_id is not None and not delegated:
+        raise ws.WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
     if not isinstance(reviewer, str) or not reviewer.strip():
         raise ws.WorkspaceError("name the second reviewer")
 
-    def apply(item):
-        item["reviewer"] = {"name": reviewer.strip(), "signed_off_at": ws._now()}
+    def apply(item, actor):
+        item["reviewer"] = {"name": reviewer.strip(), "signed_off_at": ws._now(),
+                            **({"signed_off_by": actor.as_dict()} if actor else {})}
         if item.get("status") == "pending":
             item["status"] = "active"
-    return _update(workspace, client, presence, apply)
+    return _update(workspace, client, presence, apply, delegated=delegated, model_id=model_id, env=env,
+                   ancestors=ancestors, getuid=getuid, root_owner=root_owner)
 
 
 def suspend(workspace, client, presence=None) -> dict:
-    def apply(item):
+    def apply(item, actor):
         item["status"] = "suspended"
         item["suspended_at"] = ws._now()
     return _update(workspace, client, presence, apply)

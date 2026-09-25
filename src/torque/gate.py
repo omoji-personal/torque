@@ -2465,6 +2465,18 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
         if write and _targets_guarded_file(target.as_posix()):
             return False, ("Build-only mode: only the owner changes workspace.json, the hook configuration, or a "
                            "client's consent and approval records.")
+        if write and not org_rules and _is_within(target, claude_dir) \
+                and not _is_within(target, claude_dir / "worktrees"):
+            # R51: the same protection _token_targets_claude_dir already gives a Bash
+            # write to anything under .claude/ (the hook configuration directory,
+            # including the connected-mode permission profile sidecar), for the file
+            # tools (Write, Edit, MultiEdit, NotebookEdit) that reach this branch.
+            # Connected-mode only (org_rules False): common.md's "build-only and full
+            # behavior do not change" -- build-only keeps exactly a15's file-tool
+            # behavior for .claude/. A worktree copy under .claude/worktrees/ is
+            # exempt: each copy gets its own _decide_root pass (copy=True), which
+            # already guards that copy's own contents on its own terms.
+            return False, "Build-only mode: only the owner changes the .claude hook configuration directory."
         if write and (_is_within(target, _package_dir())
                       or _TORQUE_INSTALL_RE.search(target.as_posix())):
             return False, ("Build-only mode: the installed Torque package enforces this mode; "
@@ -2967,11 +2979,30 @@ def main() -> int:
         watchdog.cancel()
 
 
+# The events after a call runs (D14). The same hook command handles all three.
+POST_EVENTS = ("PostToolUse", "PostToolUseFailure")
+
+
+def _post_event(event: dict) -> int:
+    """Always 0: a hook after the call cannot undo it, so it never blocks."""
+    try:
+        # Imported only here: a PreToolUse call never loads it.
+        from .execution import handle
+        return handle(event, os.environ)
+    except Exception as exc:
+        print(f"Connected mode: the execution record could not be written ({exc}).", file=sys.stderr)
+        return 0
+
+
 def _main() -> int:
     try:
         event = json.loads(sys.stdin.read())
         if not isinstance(event, dict):
             raise ValueError("hook input must be a JSON object")
+        if event.get("hook_event_name") in POST_EVENTS:
+            # F2: dispatch only on the parsed event name. A post-call event never
+            # blocks (the call already ran); it only records how an approved call ended.
+            return _post_event(event)
         if "tool_name" not in event:
             raise ValueError("hook input has no tool_name")
         cwd = Path(os.path.realpath(str(event.get("cwd") or ".")))
@@ -2995,12 +3026,25 @@ def _main() -> int:
             if connected:
                 # Imported only here: a workspace without connected mode never loads it.
                 from .gate_connected import ask_json, decide_connected
+                from . import gate_connected as gc
+                from . import launch as launches
+                # Requirement 9: a session is bound to a client only by its launch record.
                 results = [decide_connected(str(event.get("tool_name", "")), tool_input, root, cwd,
-                                            env=os.environ, permission_mode=event.get("permission_mode"),
+                                            env=launches.bound_env(os.environ, root),
+                                            permission_mode=event.get("permission_mode"),
                                             session_id=event.get("session_id"),
                                             tool_use_id=event.get("tool_use_id"))
                            for root in connected]
                 worst = max(results, key=lambda r: ("allow", "ask", "deny").index(r.action))
+                if worst.action == "allow" and worst.approved:
+                    # Tie the explicit allow to the root(s) whose own decision actually
+                    # carries the approval id, not to "any connected root is unattended":
+                    # a second, non-approving connected root's profile must never decide
+                    # whether a different root's approval gets this explicit allow.
+                    approving = [root for root, result in zip(connected, results) if result.approved]
+                    if approving and all(gc.unattended(root) for root in approving):
+                        print(gc.allow_json(f"Connected mode: approval {worst.approved} was used for this call."))
+                        return 0
                 if worst.action == "ask":
                     print(ask_json(worst.reason))
                     return 0

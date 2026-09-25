@@ -68,3 +68,46 @@ def test_new_workspace_does_not_get_the_connected_rule(tmp_path):
     root = ws.init_workspace(tmp_path / "w", "Firm")
     assert not (root / ".claude" / "rules" / "production-approval.md").exists()
     assert "production-approval.md" in (root / ".claude" / "rules" / "delivery-practice.md").read_text(encoding="utf-8")
+
+
+def _key_rules(home):
+    key = f"/{home.as_posix()}/.config/torque/approval.key"
+    return f"Read({key})", f"Edit({key})"
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the ~ key rule is the POSIX key location")
+def test_v2_2_owner_rules_keep_the_absolute_key_rule(tmp_path, monkeypatch):
+    """The owner's (non-delegated) output is unchanged from a15: the fixed rules
+    plus the absolute key rules for the owner's own home, in that order."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert p.deny_rules() == p.FIXED_DENY_RULES + _key_rules(tmp_path)
+    assert p.generate()["deny"] == list(dict.fromkeys(p.FIXED_DENY_RULES + _key_rules(tmp_path)))
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the ~ key rule is the POSIX key location")
+def test_v2_2_delegated_rules_name_no_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    deny = p.generate("unattended", delegated=True)["deny"]
+    assert not any(str(tmp_path) in r for r in deny)
+    assert "Read(~/.config/torque/approval.key)" in deny and "Edit(~/.config/torque/approval.key)" in deny
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the ~ key rule is the POSIX key location")
+def test_v2_2_drift_accepts_the_home_relative_key_rule_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "agent"))
+    relative_only = {"permissions": {"ask": list(p.ASK_RULES), "deny": list(p.FIXED_DENY_RULES),
+                                     "disableBypassPermissionsMode": "disable"}}
+    assert p.drift(relative_only, p.generate()) == []
+    # Without the ~ form, the absolute key rule is still required (fail closed).
+    for missing in ("Read(~/.config/torque/approval.key)", "Edit(~/.config/torque/approval.key)"):
+        settings = json.loads(json.dumps(relative_only))
+        settings["permissions"]["deny"].remove(missing)
+        problems = p.drift(settings, p.generate())
+        assert f"missing deny rule {missing}" in problems
+        absolute = missing.replace("~", "/" + (tmp_path / "agent").as_posix())
+        assert f"missing deny rule {absolute}" in problems
+    # A key rule for some other account's home does not stand in for this account's.
+    other = {"permissions": {**relative_only["permissions"],
+                             "deny": [r for r in p.FIXED_DENY_RULES if "approval.key" not in r]
+                             + list(_key_rules(tmp_path / "delegate"))}}
+    assert any("approval.key" in x for x in p.drift(other, p.generate()))

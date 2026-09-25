@@ -17,6 +17,7 @@ import subprocess
 
 from . import __version__
 from . import cli_approval
+from . import delegation
 from . import workspace as ws
 
 DELEGATES = {
@@ -85,7 +86,19 @@ def build_parser() -> argparse.ArgumentParser:
                            help="connected mode only: hmac (same OS account) or owner-uid (separate approver account)")
     ai_access.add_argument("--approver-uid", type=int, help="owner-uid verification: the approver account's uid")
     ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
+    ai_access.add_argument("--delegated", action="store_true",
+                           help="the workspace's setup delegate is running this, not the owner")
+    ai_access.add_argument("--model-id", help="delegated only: the AI reviewer's model identifier")
     ai_access.add_argument("--json", action="store_true")
+    delegate_p = work_sub.add_parser("delegate", help="name a delegated approver or setup delegate; the owner "
+                                                       "at a real terminal, or an administrator provisioning "
+                                                       "the workspace, runs this")
+    delegate_p.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
+    delegate_p.add_argument("--role", required=True, choices=delegation.ROLES)
+    delegate_p.add_argument("--account", required=True, help="the delegate's OS account name")
+    delegate_p.add_argument("--uid", required=True, type=int, help="the delegate account's numeric uid")
+    delegate_p.add_argument("--kind", required=True, choices=delegation.KINDS)
+    delegate_p.add_argument("--json", action="store_true")
     demo = sub.add_parser("demo", help="create an offline synthetic consulting workspace; no org needed")
     demo.add_argument("path")
     demo.add_argument("--json", action="store_true")
@@ -823,6 +836,7 @@ def main(argv: list[str] | None = None) -> int:
     global INVOCATION
     args = list(sys.argv[1:] if argv is None else argv)
     INVOCATION = ("torque", list(args))
+    parsed = None
     try:
         if args and args[0] in PUBLIC_ROUTES:
             delegate, prefix = PUBLIC_ROUTES[args[0]]
@@ -851,13 +865,21 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"workspace": str(path), "org_calls": False}) if parsed.json else print(path)
             elif parsed.action == "ai-access":
                 root = ws.set_ai_access(parsed.path, parsed.mode, parsed.approval, parsed.verify,
-                                        parsed.approver_uid)
+                                        parsed.approver_uid, delegated=parsed.delegated,
+                                        model_id=parsed.model_id)
                 shown = "connected (approval required)" if parsed.mode == "connected" else parsed.mode
                 if parsed.json:
                     _print_json({"workspace": str(root), "ai_access": parsed.mode,
                                  **({"approval": parsed.approval} if parsed.approval else {})})
                 else:
                     print(shown)
+            elif parsed.action == "delegate":
+                root = delegation.set_delegate(parsed.path, parsed.role, parsed.account, parsed.uid, parsed.kind)
+                config = ws.load_workspace(root)[1]
+                if parsed.json:
+                    _print_json({"workspace": str(root), "delegates": config["delegates"]})
+                else:
+                    print(f"{parsed.role} delegate: {parsed.account} (uid {parsed.uid}, {parsed.kind})")
             else:
                 from .template_updates import update_templates
                 report = update_templates(Path(parsed.path), check=parsed.check)
@@ -965,6 +987,16 @@ def main(argv: list[str] | None = None) -> int:
         elif parsed.command == "workflows":
             return _workflows(parsed)
         return 0
+    except delegation.Refusal as exc:
+        # F37: a delegated setup verb (workspace ai-access, client consent record
+        # or sign-off) refuses the same way cli_approval's delegated grant/deny
+        # will: exit 3, with --json a machine-readable reason_class and message,
+        # instead of falling into the generic WorkspaceError exit 2 below.
+        if getattr(parsed, "json", False):
+            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc)})
+        else:
+            print(f"torque: refused ({exc.reason_class}): {exc}", file=sys.stderr)
+        return 3
     except (ws.WorkspaceError, OSError, ValueError) as exc:
         print(f"torque: {exc}", file=sys.stderr)
         return 2

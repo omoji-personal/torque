@@ -32,11 +32,28 @@ PROMPT_MODES = ("default", "acceptEdits", "plan")
 class Decision:
     action: str
     reason: str
+    approved: str | None = None   # the approval (or browser window) this allow used
 
 
 def ask_json(reason: str) -> str:
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                               "permissionDecisionReason": reason}})
+
+
+def allow_json(reason: str) -> str:
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow",
+                                              "permissionDecisionReason": reason}})
+
+
+def unattended(root: Path) -> bool:
+    """The workspace runs the unattended permission profile, which is honored only
+    for a tier 2 workspace whose approver is a named delegate."""
+    from . import delegation, permissions
+    try:
+        config = ws.load_workspace(root)[1]
+    except (OSError, ws.WorkspaceError):
+        return False
+    return permissions.load_profile(root) == "unattended" and delegation.delegated_tier2(config)
 
 
 def _worst(decisions: list[Decision]) -> Decision:
@@ -188,6 +205,12 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     routes = classify(tool_name, tool_input)
     if all(r.kind == "local" and _route_client(r) in (None, bound) for r in routes):
         return Decision("allow", "")
+    from . import permissions
+    if permissions.load_profile(workspace) == "invalid":
+        # V2 I1: fail closed before anything below can consume an approval. A
+        # damaged or unreadable sidecar is never read as the interactive profile.
+        return _deny(f"the permission profile ({permissions.PROFILE_FILE}) is unreadable or invalid. "
+                     "The consultant reruns the permissions setup step.")
     unbound = _deny("no client is bound to this session. The consultant starts it with "
                     "`torque launch --workspace W --client NAME`.")
     config = ws.load_workspace(workspace)[1]
@@ -199,6 +222,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     decisions: list[Decision] = []
     pending_write: Route | None = None
     after_allow: list = []
+    approved_id: str | None = None
     skipping = bool(permission_mode) and permission_mode not in PROMPT_MODES
     browser_tool = tool_name.startswith("mcp__") and bool(BROWSER_SERVER.search(tool_name.split("__")[1]
                                                                                  if tool_name.count("__") > 1 else ""))
@@ -257,7 +281,11 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                                    "window; browser tools here may read and navigate only."))
         elif route.kind == "browser_write":
             window = approval.find_browser_approval(workspace, bound, route.org, config=config)
-            if window:
+            if window and route.headed and window.get("delegated") is not False:
+                decisions.append(_deny(f"the browser window for {route.org} was granted by a delegated approver, "
+                                       "so Torque's browser runs headless only: run it without --headed."))
+            elif window:
+                approved_id = window["id"]
                 after_allow.append(lambda win=window: approval.note_browser_use(
                     workspace, bound, win, tool_name=tool_name, session_id=session_id, tool_use_id=tool_use_id))
                 decisions.append(Decision("allow", ""))
@@ -288,9 +316,10 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         if not used:
             return _deny(f"{why}. Ask for it with `torque approval request ... -- <this exact command>`, "
                          "then stop until the consultant grants it.")
+        approved_id = why
     try:
         for record in after_allow:
             record()
     except (OSError, ws.WorkspaceError) as exc:
         return _deny(f"the action could not be recorded ({exc}); it was refused.")
-    return worst
+    return Decision(worst.action, worst.reason, approved_id if worst.action == "allow" else None)

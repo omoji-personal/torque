@@ -178,7 +178,10 @@ def _hook(monkeypatch, capsys, event):
 
 
 def test_hook_end_to_end(w, monkeypatch, capsys):
+    from torque import launch
+    record = launch.write_launch_record(w, "Acme", "human")
     monkeypatch.setenv("TORQUE_CLIENT", "acme")
+    monkeypatch.setenv("TORQUE_LAUNCH", record["id"])
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
     base = {"hook_event_name": "PreToolUse", "cwd": str(w), "session_id": "s1", "tool_use_id": "t1",
             "permission_mode": "default", "tool_name": "Bash"}

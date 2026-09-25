@@ -88,6 +88,53 @@ def atomic_write_new(path: Path, text: str) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+# V2 I6: the extended attribute holding a file's POSIX access list (Linux). It
+# exists only when the file has more than the three mode-bit entries, for example
+# when its folder carries a default entry for the approver account.
+ACL_XATTR = "system.posix_acl_access"
+
+
+def open_acl_mask(path) -> None:
+    """V2 I6: on a file or folder with an extended POSIX access list, add group
+    read (and search, for a folder) to its mode bits. With an access list, the
+    group bits are the access-list mask, and a file created 0600 (a folder 0700)
+    in a folder with a default entry gets an empty mask, which hides that entry.
+    Adding the bits sets the mask; who may read is still decided by the entries
+    the default access list gave the path (the owning group's entry included),
+    never by the bits alone. No-op where `os.getxattr` does not exist (macOS,
+    Windows), for a path without an extended access list, and for a link."""
+    getxattr = getattr(os, "getxattr", None)
+    if getxattr is None or os.name == "nt":
+        return
+    try:
+        found = os.lstat(path)
+        if stat.S_ISLNK(found.st_mode):
+            return
+        getxattr(path, ACL_XATTR, follow_symlinks=False)
+    except OSError:
+        return
+    bits = 0o050 if stat.S_ISDIR(found.st_mode) else 0o040
+    os.chmod(path, (found.st_mode & 0o7777) | bits)
+
+
+def share_with_approver(workspace, *paths) -> None:
+    """V2 I6: `open_acl_mask` on each path the delegated approver reads (the
+    agent's requests and change records and the folders Torque creates for
+    them), only in a delegated tier 2 workspace. A workspace without a delegated
+    approver, macOS and Windows keep the private 0600 and 0700 modes."""
+    if getattr(os, "getxattr", None) is None or os.name == "nt" or not paths:
+        return
+    from . import delegation
+    try:
+        config = load_workspace(workspace)[1]
+    except (OSError, WorkspaceError):
+        return
+    if not delegation.delegated_tier2(config):
+        return
+    for path in paths:
+        open_acl_mask(path)
+
+
 def _atomic_replace_text(path: Path, text: str) -> None:
     """Replace an explicitly managed private file without exposing a partial write."""
     fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)
@@ -259,12 +306,21 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
     return root
 
 
+def _validate_config(config: dict, path: Path) -> dict:
+    """The workspace.json schema check, factored out so a caller that already
+    holds a parsed dict from its own protected read (delegation.py's
+    single-descriptor read, avoiding a TOCTOU between reading and checking the
+    file) can reuse this instead of a second, separately-worded copy."""
+    if (not isinstance(config, dict) or config.get("schema") != "torque.workspace/1"
+            or not isinstance(config.get("name"), str) or not config["name"].strip()
+            or config.get("profile") not in PROFILES):
+        raise WorkspaceError(f"invalid workspace configuration: {path}")
+    return config
+
+
 def load_workspace(path: str | Path) -> tuple[Path, dict]:
     root = Path(path).expanduser().resolve()
-    config = _read_json(_inside(root, root / CONFIG))
-    if (config.get("schema") != "torque.workspace/1" or not isinstance(config.get("name"), str)
-            or not config["name"].strip() or config.get("profile") not in PROFILES):
-        raise WorkspaceError(f"invalid workspace configuration: {root / CONFIG}")
+    config = _validate_config(_read_json(_inside(root, root / CONFIG)), root / CONFIG)
     _inside(root, root / "clients")
     return root, config
 
@@ -275,14 +331,32 @@ def _owner_uid_supported() -> bool:
 
 
 def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
-                  verify: str | None = None, approver_uid: int | None = None, presence=None) -> Path:
-    """Set the workspace ai_access mode. Only the owner calls this; an AI session
-    has its own edits to workspace.json blocked by the gate. Connected mode needs
-    approval="required" and a person at a real terminal (presence)."""
+                  verify: str | None = None, approver_uid: int | None = None, presence=None, *,
+                  delegated: bool = False, model_id: str | None = None, env=None, ancestors=None,
+                  getuid=None, root_owner=None) -> Path:
+    """Set the workspace ai_access mode. Ordinarily only the owner calls this, at a
+    real terminal; an AI session has its own edits to workspace.json blocked by the
+    gate. Connected mode needs approval="required" and a person at a real terminal
+    (presence).
+
+    A connected workspace's named setup delegate may instead switch to connected
+    mode without a terminal (`delegated=True`): the caller's identity comes from
+    `delegation.delegated_actor`, an OS-account proof, not from presence. A
+    delegated switch always sets tier 2 (`verify="owner-uid"`); anything else
+    refuses with reason class "tier-2-required". The delegate's identity is
+    recorded as `config["ai_access_changed_by"]`. `root_owner`, like `env`,
+    `ancestors` and `getuid`, is an injectable override of
+    `delegation.delegated_actor`'s own default, for tests that cannot create a
+    second real OS account."""
     if mode not in AI_ACCESS_MODES:
         raise WorkspaceError(f"unknown ai_access mode: {mode}")
+    if model_id is not None and not delegated:
+        raise WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
     if mode != "connected" and (approval is not None or verify is not None or approver_uid is not None):
         raise WorkspaceError("--approval, --verify and --approver-uid apply only to connected mode")
+    if delegated and mode != "connected":
+        raise WorkspaceError("a delegated setup only sets connected mode")
+    actor = None
     if mode == "connected":
         if approval not in APPROVAL_VALUES:
             raise WorkspaceError("connected mode needs --approval required")
@@ -295,17 +369,34 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
             raise WorkspaceError("owner-uid verification needs --approver-uid, the approver account's numeric uid")
         if verify == "hmac" and approver_uid is not None:
             raise WorkspaceError("--approver-uid applies only to owner-uid verification")
-        injected = presence is not None
-        if presence is None:
-            from .presence import operator_present as presence
-        check = presence()
-        if not check.ok:
-            raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
-        if not injected:
-            from .presence import confirm_code
-            if not confirm_code():
-                raise WorkspaceError("the confirmation code did not match; nothing was changed")
-    root, config = load_workspace(workspace)
+        if delegated:
+            from . import delegation
+            if verify != "owner-uid":
+                raise delegation.Refusal("tier-2-required", "a delegated setup uses tier 2: --verify owner-uid "
+                                                            "--approver-uid UID")
+            # The identity proof reads workspace.json once through the protected,
+            # single-descriptor reader (delegation._read_protected_config) and
+            # hands the config back, so the update below reuses it rather than a
+            # second, separately timed, plain path-based reopen.
+            actor, delegated_config, delegated_root = delegation._delegated_actor_and_config(
+                workspace, "setup", model_id=model_id, require_tier2=False, getuid=getuid, env=env,
+                ancestors=ancestors, root_owner=root_owner)
+        else:
+            injected = presence is not None
+            if presence is None:
+                from .presence import operator_present as presence
+            check = presence()
+            if not check.ok:
+                raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
+            if not injected:
+                from .presence import confirm_code
+                if not confirm_code():
+                    raise WorkspaceError("the confirmation code did not match; nothing was changed")
+    if delegated:
+        root, config = delegated_root, delegated_config
+        _inside(root, root / "clients")
+    else:
+        root, config = load_workspace(workspace)
     config["ai_access"] = mode
     for key in ("approval", "approval_verify", "approver_uid"):
         config.pop(key, None)
@@ -315,27 +406,55 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
         if verify == "owner-uid":
             config["approver_uid"] = approver_uid
     config["ai_access_changed_at"] = _now()
-    _atomic_replace_text(_inside(root, root / CONFIG), json.dumps(config, indent=2, ensure_ascii=False) + "\n")
-    _connected_rule(root, mode == "connected")
+    if mode == "connected" and delegated:
+        config["ai_access_changed_by"] = actor.as_dict()
+    else:
+        config.pop("ai_access_changed_by", None)
+    config_path = _inside(root, root / CONFIG)
+    _atomic_replace_text(config_path, json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    if delegated and os.name != "nt":
+        # F12: a file the setup delegate's own uid wrote defaults to 0600 (mkstemp),
+        # unreadable to the different account the gate and hooks later run as.
+        # 0644 lets that account read it; the harness chowns it to root afterward.
+        config_path.chmod(0o644)
+    _connected_rule(root, mode == "connected", delegated=delegated)
     return root
 
 
 CONNECTED_RULE = "production-approval.md"
 
 
-def _connected_rule(root: Path, present: bool) -> None:
+def _connected_rule(root: Path, present: bool, *, delegated: bool = False) -> None:
     """Materialize the "propose, do not act" rule in a connected workspace, and
-    remove it when the workspace leaves connected mode."""
+    remove it when the workspace leaves connected mode.
+
+    On the delegated setup path (F12 fix round 1), the rule file relaxes to
+    world-readable, the same reason workspace.json and consent.json do: the
+    setup delegate's own uid wrote it, unreadable to the different account
+    the gate and hooks later run as; the harness chowns it to root
+    afterward. `.claude/rules` and `.claude` each relax only when this call
+    is the one that created them (R55, spec requirement 22): a preexisting
+    directory's mode, whichever step wrote it, is never weakened as a side
+    effect of this one. The owner path is unchanged."""
     target = _inside(root, root / ".claude" / "rules" / CONNECTED_RULE)
     if not present:
         target.unlink(missing_ok=True)
         return
     text = resources.files("torque").joinpath("data", "connected", CONNECTED_RULE).read_text(encoding="utf-8")
+    claude_dir = target.parent.parent
+    claude_existed = claude_dir.exists()
+    rules_existed = target.parent.exists()
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if target.exists():
         _atomic_replace_text(target, text)
     else:
         atomic_write_new(target, text)
+    if delegated and os.name != "nt":
+        target.chmod(0o644)
+        if not rules_existed:
+            target.parent.chmod(0o755)
+        if not claude_existed:
+            claude_dir.chmod(0o755)
 
 
 @contextmanager

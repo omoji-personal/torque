@@ -95,8 +95,9 @@ async def _live_preflight(config):
     missing = [p for p in needed if not (seed.get("users") or {}).get(p, {}).get("user_id")]
     if missing:
         return {**{p: "FAIL" for p in missing}, "preflight_error": "Missing test user for requested profile(s)"}
-    from playwright.async_api import async_playwright
     from . import auth
+    auth.refuse_debug_env_when_connected()
+    from playwright.async_api import async_playwright
     from .matrix import login_as_preflight
     sf = config["sf"]
     admin_auth = auth.get_admin_auth(sf, config["target_org"])

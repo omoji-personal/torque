@@ -7,6 +7,7 @@ spot-check of alpha 11 found: [validation for alpha 12](validation-alpha12.md). 
 the routes a later review round found: [validation for alpha 13](validation-alpha13.md). Alpha 14
 blocks over-long commands before any pattern runs: [validation for alpha 14](validation-alpha14.md). Alpha 15
 adds opt-in connected mode with per-write approval: [validation for alpha 15](validation-alpha15.md).
+Alpha 16 adds the delegated approver: [validation for alpha 16](validation-alpha16.md).
 
 Alpha 9 is a development build with no package-index release. It improves session continuity,
 local diagnostics, source/private separation and the offline verification runner.

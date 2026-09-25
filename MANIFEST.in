@@ -1,4 +1,4 @@
-include AGENTS.md CLAUDE.md NOTICE CONTRIBUTING.md SECURITY.md CHANGELOG.md
+include AGENTS.md CLAUDE.md NOTICE CONTRIBUTING.md SECURITY.md CHANGELOG.md conftest.py
 recursive-include .github *.yml *.yaml *.md
 recursive-include docs *.md *.json
 recursive-include scripts *.py

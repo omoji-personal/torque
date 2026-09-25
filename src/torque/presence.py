@@ -48,11 +48,27 @@ def _process_ancestors(limit: int = MAX_ANCESTORS) -> list[tuple[int, str]]:
     return chain + [(-1, "<unknown>")]
 
 
+def agent_reason(env=None, ancestors=None) -> str:
+    """Why this process looks like part of an AI session; "" when it does not.
+    Checks the agent environment markers and (macOS, Linux) the ancestry."""
+    env = os.environ if env is None else env
+    found = [name for name in AGENT_ENV if name in env]
+    if found:
+        return f"this looks like an agent session ({', '.join(found)} is set)"
+    if os.name != "nt":
+        for pid, command in (ancestors or _process_ancestors)():
+            if pid == -1:
+                return "could not read the process ancestry; refusing"
+            name = os.path.basename(command.strip()).casefold()
+            if any(marker in name for marker in AGENT_PROCESS_MARKERS):
+                return f"an agent process ({name}) is an ancestor of this command"
+    return ""
+
+
 def operator_present(env=None, stdin=None, stdout=None, ancestors=None) -> Presence:
     """All must hold: stdin and stdout are terminals; no agent environment marker
     is set; and (macOS, Linux) no ancestor process is the agent host. On Windows
     only the first two are checked, which is weaker."""
-    env = os.environ if env is None else env
     stdin = sys.stdin if stdin is None else stdin
     stdout = sys.stdout if stdout is None else stdout
     try:
@@ -61,17 +77,28 @@ def operator_present(env=None, stdin=None, stdout=None, ancestors=None) -> Prese
         terminal = False
     if not terminal:
         return Presence(False, "this needs a real terminal; run it yourself, not through the AI session")
-    found = [name for name in AGENT_ENV if name in env]
-    if found:
-        return Presence(False, f"this looks like an agent session ({', '.join(found)} is set)")
-    if os.name != "nt":
-        for pid, command in (ancestors or _process_ancestors)():
-            if pid == -1:
-                return Presence(False, "could not read the process ancestry; refusing")
-            name = os.path.basename(command.strip()).casefold()
-            if any(marker in name for marker in AGENT_PROCESS_MARKERS):
-                return Presence(False, f"an agent process ({name}) is an ancestor of this command")
-    return Presence(True, "")
+    reason = agent_reason(env, ancestors)
+    return Presence(not reason, reason)
+
+
+def require_presence(message, presence=None, confirm=None, *, error) -> None:
+    """Require a person at a real terminal outside the session, who types back a
+    code (the code is skipped only when a caller injects its own presence check
+    without a confirm). `message` names what needs presence, e.g. "delegates are
+    named by the owner"; `error` is the exception class the caller wants raised.
+    One shared helper (F27) so callers do not each keep their own copy of this
+    presence-then-confirm shape."""
+    injected = presence is not None
+    if presence is None:
+        presence = operator_present
+    check = presence()
+    if not check.ok:
+        raise error(f"{message} at a real terminal: {check.reason}")
+    if confirm is not None or not injected:
+        if confirm is None:
+            confirm = confirm_code
+        if not confirm():
+            raise error("the confirmation code did not match; nothing was changed")
 
 
 def confirm_code(stdin=None, stdout=None, choose=secrets.choice) -> bool:

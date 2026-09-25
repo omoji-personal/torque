@@ -20,6 +20,8 @@ class AdminAuth(NamedTuple):
     org_id_18: str
     instance_url: str
     frontdoor_url: str  # CONTAINS access token; do NOT log or commit
+    username: str = ""  # the username sf resolves for the alias
+    api_version: str = ""
 
 
 def get_admin_auth(sf_client, target_org: str) -> AdminAuth:
@@ -36,6 +38,8 @@ def get_admin_auth(sf_client, target_org: str) -> AdminAuth:
         org_id_18=d2.get("id", ""),
         instance_url=d2.get("instanceUrl", ""),
         frontdoor_url=frontdoor,
+        username=d2.get("username", "") or "",
+        api_version=d2.get("apiVersion", "") or "",
     )
 
 
@@ -57,6 +61,7 @@ class BrowserSession:
     browser: object
     context: object
     owns_browser: bool    # False when attached — never close the operator's browser
+    guarded: bool = False  # connected mode: the page's username must match the alias's
 
 
 async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
@@ -77,6 +82,11 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
             guard = connected_guard(admin_auth.target_org)
         except GuardRefused as exc:
             raise AuthError(f"connected mode: {exc}") from None
+    if guard is not None and debug_env_problem():
+        raise AuthError("connected mode: " + debug_env_problem())
+    if guard is not None and getattr(guard, "delegated", True) and headed:
+        raise AuthError("connected mode: a browser window granted by a delegated approver runs headless "
+                        "only; run without --headed")
     if guard is not None and cdp_endpoint:
         raise AuthError("connected mode: an attached (CDP) browser cannot be guarded; Torque launches its own "
                         "browser, whose requests it checks before they are sent")
@@ -116,7 +126,7 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
         if "login" in (title or "").lower():
             raise AuthError("Frontdoor did not establish a session")
         return BrowserSession(page=page, channel="frontdoor", browser=browser,
-                              context=context, owns_browser=True)
+                              context=context, owns_browser=True, guarded=guard is not None)
     except Exception as exc:
         # Playwright includes the full navigated frontdoor URL in many exceptions.
         # Close only our resources and retain the exception type, never its URL/message.
@@ -138,6 +148,38 @@ async def close_session(sess) -> None:
         except Exception: pass
         try: await sess.browser.close()
         except Exception: pass
+
+
+def debug_env_problem(env=None) -> str | None:
+    """Playwright settings that would print the navigated frontdoor URL (DEBUG, DEBUG_FILE)
+    or force a visible browser (PWDEBUG), else None. Any non-empty DEBUG counts: Node's
+    debug module turns Playwright's pw:* logs on for *, pw*, p* and other patterns."""
+    import os
+    env = os.environ if env is None else env
+    found = [name for name in ("DEBUG", "PWDEBUG", "DEBUG_FILE") if env.get(name)]
+    if not found:
+        return None
+    return (f"{', '.join(found)} is set; Playwright debugging prints the session URL or opens a visible "
+            "browser, so a connected run does not start with it. Unset it and run again")
+
+
+def in_connected_mode() -> bool:
+    """This run is in a connected Torque workspace (or that cannot be ruled out)."""
+    try:
+        from jsc_revert.wrappers import _common
+    except ImportError:
+        return False
+    try:
+        return _common._connected_scope() is not None
+    except _common.IndeterminateScope:
+        return True
+
+
+def refuse_debug_env_when_connected() -> None:
+    """Call before Playwright starts: its driver reads these variables when it starts."""
+    problem = debug_env_problem()
+    if problem and in_connected_mode():
+        raise AuthError("connected mode: " + problem)
 
 
 def cdp_endpoint_from_env() -> str | None:
@@ -168,6 +210,49 @@ async def observe_user_id(page) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", value):
         raise AuthError("Current browser User Id is unavailable; named-user coverage is unverified")
     return value
+
+
+UI_API_VERSION = "62.0"  # fallback when sf org display names no apiVersion
+_USER_ID = r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?"
+_USERNAME = r"[^\s@]{1,80}@[^\s@]{1,80}"
+# Runs in the page: a same-origin UI API read of the page user's own Username (the
+# Lightning domain serves it on the session; the REST root does not). Only the HTTP
+# status and the Username string come back; the response body stays in the page.
+_PAGE_USERNAME_JS = r"""async ([version, userId]) => {
+    try {
+        const response = await fetch('/services/data/v' + version + '/ui-api/records/' + userId
+                                     + '?fields=User.Username',
+                                     {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+        if (!response.ok) return {status: response.status, username: null};
+        const body = await response.json();
+        const field = body && body.apiName === 'User' && body.fields && body.fields.Username;
+        return {status: response.status, username: field && typeof field.value === 'string' ? field.value : null};
+    } catch (_) { return {status: 0, username: null}; }
+}"""
+
+
+async def observe_username(page, user_id: str, api_version: str | None = None) -> str:
+    """Read the Username of the page's user (its Aura User Id) from inside the page.
+
+    A Salesforce username is globally unique, so matching it with the username sf
+    resolves for the org alias proves both the org and the user. Unknown is an error,
+    never a match; only the Username is kept, never the response."""
+    version = api_version if isinstance(api_version, str) and re.fullmatch(r"\d{2,3}\.0", api_version) \
+        else UI_API_VERSION
+    if not isinstance(user_id, str) or not re.fullmatch(_USER_ID, user_id):
+        raise AuthError("Browser username cannot be read without a valid User Id")
+    try:
+        found = await page.evaluate(_PAGE_USERNAME_JS, [version, user_id])
+    except Exception as exc:
+        raise AuthError(f"Browser username could not be read ({type(exc).__name__})") from None
+    status = found.get("status") if isinstance(found, dict) else None
+    username = found.get("username") if isinstance(found, dict) else None
+    if status != 200:
+        code = status if isinstance(status, int) else "no response"
+        raise AuthError(f"Browser username could not be read (UI API HTTP {code})")
+    if not isinstance(username, str) or not re.fullmatch(_USERNAME, username):
+        raise AuthError("Browser username is unavailable in the UI API response")
+    return username
 
 
 def same_user(observed: str, expected: str) -> bool:
