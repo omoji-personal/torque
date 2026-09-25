@@ -61,19 +61,59 @@ Each "present" step also prints a six-character code the owner types back.
    Until then the consent is pending and the gate refuses org access for the client.
    `torque client consent suspend` stops connected work for the client at once.
 6. Check readiness: `torque doctor --workspace W --client Acme --live`. It checks the hook
-   (fail-closed form, `-I`, matcher, timeout), the effective permission rules across the
-   user, project and local settings files, the approval tier, the consent, that each
-   approved alias still resolves to its recorded org ID, and runs synthetic calls through the
-   hook: six unbound (an org write, a read, a check-only deploy, a script, an approval grant
-   and a browser click: deny, deny, deny, ask, deny, deny; the check-only probe is refused
-   before anything is logged) and, with `--client`, seven bound to that client (a
-   read of an approved org: allow; an unapproved write, an org outside the consent, the
-   default org and another client: deny; a script: ask; a script with prompts skipped:
-   deny). The hook only decides; nothing it allows is run. It exits 3 when anything is not
-   ready.
+   (fail-closed form, `-I`, matcher, timeout, and that its interpreter exists and can run:
+   a hook that cannot start fails open), the effective permission rules across the user
+   (`$CLAUDE_CONFIG_DIR/settings.json` when that is set, else `~/.claude/settings.json`),
+   project and local settings files, the approval tier, the consent, that each approved
+   alias still resolves to its recorded org ID, and runs the synthetic calls in
+   "Doctor probes" below through the hook. It also shows the permission profile, the named
+   delegates, who performed each recorded setup step (and how), and the client's grants by
+   approver kind. The hook only decides; nothing it allows is run. It exits 3 when
+   anything is not ready.
 7. Start the session (present): `torque launch --workspace W --client Acme [-- claude options]`.
    It binds the session to the client (`TORQUE_CLIENT`, which the hook inherits and the
    session cannot change) and starts `claude` in the workspace. Use one session per client.
+
+### Doctor probes
+
+Six probes run unbound, and with `--client` seven more run bound to that client. The
+bound ones bind the way a launched session does: doctor writes a `probe` launch record
+for its own process, runs the hook with `TORQUE_CLIENT` and `TORQUE_LAUNCH` naming it,
+and removes the record afterwards. The last column applies under the unattended profile.
+
+| Probe | Call | Gate answer | Under `claude -p` (unattended) |
+|---|---|---|---|
+| `org_write` | `sf project deploy start` to an org, unbound | deny | refused: the hook denies it, no prompt |
+| `read_unbound` | `sf data query`, unbound | deny | refused: the hook denies it, no prompt |
+| `check_only_unbound` | `sf project deploy validate`, unbound (refused before anything is logged) | deny | refused: the hook denies it, no prompt |
+| `unverifiable` | `python3 doctor_probe.py` | ask | refused: the ask has no one to answer under claude -p |
+| `admin` | `torque approval grant` | deny | refused: the hook denies it, no prompt |
+| `browser_write` | a browser click (`mcp__claude-in-chrome__computer`) | deny | refused: the hook denies it, no prompt |
+| `bound_read` | `sf org display` on an approved org | allow | runs only if a read allow rule covers it; otherwise refused under claude -p |
+| `bound_write_unapproved` | `sf project deploy start` with no approval | deny | refused: the hook denies it, no prompt |
+| `bound_org_outside_consent` | an org the consent does not name | deny | refused: the hook denies it, no prompt |
+| `bound_default_org` | `sf org display` with no `-o` | deny | refused: the hook denies it, no prompt |
+| `bound_other_client` | `torque context` for another client | deny | refused: the hook denies it, no prompt |
+| `bound_unverifiable` | `python3 doctor_probe.py` | ask | refused: the ask has no one to answer under claude -p |
+| `bound_skipped_prompts` | a script with prompts skipped (`bypassPermissions`) | deny | refused: the hook denies it, no prompt |
+
+Doctor also runs these checks through the configured hooks:
+
+| Check | Call | Expected |
+|---|---|---|
+| `sidecar_write` | a `Write` to `.claude/torque-permissions.json` | deny (the session cannot change its own profile) |
+| `sidecar_bash_write` | a Bash redirect to the same file | deny |
+| `post_hook_mcp` | the `PostToolUse` hook on a browser (MCP) call | runs and exits 0 |
+| `post_hook_failure` | the `PostToolUseFailure` hook on a failed Bash call | runs and exits 0 |
+
+The two after-call checks run when those hooks are wired; they record only approved
+calls, so the synthetic ones write nothing. Under the unattended profile doctor also
+requires a tier 2 workspace whose approver is a named delegate, the gate hook under
+`PostToolUse` and `PostToolUseFailure` with the same command and matcher `.*`, no `ask`
+rule on a route the gate decides by approval, and a permission sidecar
+(`.claude/torque-permissions.json`) whose `settings_sha256` and `hook_python` still match
+`.claude/settings.json`. Run doctor as the agent account the session uses, so the probes
+prove that account can run the hook.
 
 ## One write, start to finish (synthetic example)
 

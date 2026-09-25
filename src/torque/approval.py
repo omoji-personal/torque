@@ -2200,7 +2200,7 @@ def approval_log(workspace, client, since: str | None = None) -> list[dict]:
                 continue
             row = {"change": change["id"], **{k: event.get(k) for k in (
                 "created_at", "kind", "request_id", "approval_id", "command", "org_alias", "org_id_18", "org_kind",
-                "approver", "session_id", "tool_use_id", "reason")}}
+                "approver", "approver_kind", "session_id", "tool_use_id", "reason")}}
             if event["kind"] == "approval_consume":
                 # Linked only by job ID (the validated job a quick deploy promotes); other
                 # observations on the org after the use are listed as unlinked.
