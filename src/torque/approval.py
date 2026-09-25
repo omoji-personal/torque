@@ -938,6 +938,8 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
                                 root_owner=root_owner)
     if model_id is not None:
         raise ws.WorkspaceError("--model-id applies only to a delegated grant (--delegated)")
+    if idempotency_key is not None:
+        raise ws.WorkspaceError("--idempotency-key applies only to a delegated grant (--delegated)")
     _require_operator(presence)
     out = out or sys.stdout
     req, current = load_request_hashed(workspace, client, request_id)
@@ -1201,6 +1203,14 @@ def _publish_grant(workspace, client, record: dict) -> dict:
     return record
 
 
+def _owner_mismatch(st, approver) -> bool:
+    """The one stat-based ownership test (F28): not the approver account's, or
+    writable by someone else. Shared, so it is written once, by `_approver_owned`
+    and by `_problem`'s owner-uid branch (which still emits its own a15 message per
+    case; fix round 1 finding 1)."""
+    return st.st_uid != approver or st.st_mode & 0o022
+
+
 def _approver_owned(path: Path, config: dict) -> str:
     """"" when the file and its folder belong to the tier 2 approver account and no
     one else can write them; otherwise why not. Shared by the gate's owner-uid
@@ -1212,9 +1222,9 @@ def _approver_owned(path: Path, config: dict) -> str:
         st, folder = path.lstat(), path.parent.stat()
     except OSError:
         return "missing"
-    if path.is_symlink() or st.st_uid != approver or st.st_mode & 0o022:
+    if path.is_symlink() or _owner_mismatch(st, approver):
         return "not owned by the approver account, or writable by others"
-    if folder.st_uid != approver or folder.st_mode & 0o022:
+    if _owner_mismatch(folder, approver):
         return "its folder is not the approver account's"
     return ""
 
@@ -1324,12 +1334,14 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
             return "owner-uid approvals are not supported on this platform"
         if type(approver) is not int or approver == os.getuid():
             return "tier 2 needs a separate approver account; approver_uid is this account"
-        # F28: the file-and-folder ownership check is the same rule D7's idempotency
-        # lookup trusts a marker or a granted file by (_approver_owned); do not
-        # duplicate it here.
-        if _approver_owned(path, config):
-            return ("the approval file's owner (or its approvals/granted folder's owner) is not the approver "
-                    "account, or others can write it")
+        # F28: the stat-based ownership test is shared (_owner_mismatch), the same
+        # one D7's idempotency lookup trusts a marker or a granted file by
+        # (_approver_owned); the two a15 messages below stay exact (fix round 1
+        # finding 1: no test anywhere pins their text, but the ruling does).
+        if _owner_mismatch(st, approver):
+            return "the approval file's owner is not the approver account, or others can write it"
+        if _owner_mismatch(path.parent.stat(), approver):
+            return "approvals/granted must be owned by the approver account and writable only by it"
         layout = _granted_layout(path, client)
         if layout is None:
             return "the approval file is not in the workspace's clients/<client>/approvals/granted layout"

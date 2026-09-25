@@ -1,10 +1,13 @@
+import io
 import json
 import os
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from delegated_helpers import FAKE_OWNER, MODEL, ORGS, WRITE, control_owner, delegated_grant, delegated_workspace, \
-    flow_request
+from delegated_helpers import FAKE_OWNER, MODEL, ORGS, WRITE, YES, as_agent, control_owner, delegated_grant, \
+    delegated_workspace, flow_request
 from torque import approval, cli, delegation, presence, workspace as ws
 
 pytestmark = pytest.mark.skipif(not hasattr(os, "getuid"), reason="tier 2 is POSIX only")
@@ -175,3 +178,52 @@ def test_cli_grant_idempotency_key_returns_the_same_record(tmp_path, monkeypatch
     assert _cli_grant(root, req, view, "--idempotency-key", KEY, "--json") == 0
     second = json.loads(capsys.readouterr().out)
     assert first["id"] == second["id"] and len(granted_files(root)) == 1
+
+
+# --- Fix round 1, finding 1: F28's shared _approver_owned must not change the two ---
+# a15 gate messages; _problem still emits each verbatim (git show dea2041:src/torque/approval.py).
+
+def test_gate_owner_uid_file_message_matches_a15_exactly(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = delegated_grant(root, flow_request(root))
+    path = root / "clients/acme/approvals/granted" / f"{record['id']}.json"
+    config = {**ws.load_workspace(root)[1], "approver_uid": os.getuid() + 1}
+    assert approval._problem(record, path, config, "acme", approval._epoch(record["granted_at"])) == \
+        "the approval file's owner is not the approver account, or others can write it"
+
+
+def test_gate_owner_uid_folder_message_matches_a15_exactly(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = delegated_grant(root, flow_request(root))
+    path = root / "clients/acme/approvals/granted" / f"{record['id']}.json"
+    config = ws.load_workspace(root)[1]
+    real_stat = Path.stat
+
+    def fake_stat(self, *a, **k):
+        result = real_stat(self, *a, **k)
+        if self == path.parent:
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=config["approver_uid"] + 1)
+        return result
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    as_agent(monkeypatch)
+    assert approval._problem(record, path, config, "acme", approval._epoch(record["granted_at"])) == \
+        "approvals/granted must be owned by the approver account and writable only by it"
+
+
+# --- Fix round 1, finding 2: idempotency_key is delegated-only, beside --model-id. ---
+
+def test_owner_grant_rejects_idempotency_key(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
+    req = flow_request(root)
+    with pytest.raises(ws.WorkspaceError,
+                       match=r"--idempotency-key applies only to a delegated grant \(--delegated\)"):
+        approval.grant(root, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(),
+                       resolve=ORGS.get, idempotency_key=KEY)
+
+
+def test_cli_grant_idempotency_key_without_delegated_exits_2(tmp_path, monkeypatch, capsys):
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
+    req = flow_request(root)
+    assert cli.main(["approval", "grant", req["id"], "--workspace", str(root), "--client", "Acme",
+                     "--idempotency-key", KEY]) == 2
+    assert "--idempotency-key" in capsys.readouterr().err
