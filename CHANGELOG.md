@@ -1,5 +1,112 @@
 # Changelog
 
+## 2.0.0a15 - connected mode with per-write approval, 2026-09-24 (not published to a package index)
+
+An opt-in third `ai_access` mode for stage-2 work: an AI session works in one client's
+orgs, and each org write waits for the consultant's approval of that exact command. The
+default (`full`) and build-only behavior are unchanged.
+
+- `ai_access: "connected"` is valid only with `"approval": "required"`; anything else is
+  build-only, and an older Torque reads it as build-only. The strictest mode wins when
+  workspaces nest: build-only, then connected, then full. `torque workspace ai-access
+  connected --approval required` needs a person at a real terminal outside the session.
+- `torque launch` binds a session to one client. Reads of that client's approved orgs are
+  allowed; check-only deploys and test runs are allowed and logged; other clients' folders,
+  orgs outside the consent and `sf` calls without an explicit org are refused.
+- `torque client consent record|sign-off|suspend|show` keeps the client's written agreement,
+  its approved orgs (with their live 18-character IDs) and data classes, and a second
+  reviewer's sign-off. Org access needs active, signed-off consent.
+- `torque approval request|grant|deny|status|list|log|require`: the session requests an
+  approval for one exact command, MCP call or browser window; the consultant grants it at a
+  real terminal after reading the command, org, components, before-state, namespaces and file
+  digest, and types back a code; the gate consumes it once. It binds the command, the files
+  it deploys, the working folder, the org and its ID, the client, the change and a 15-minute
+  window (30 for a browser window). Every step is a change-record event.
+- Production approvals need an independent before-state (imported, or retrieved or read now
+  as its own step) covering each named component, or a written recovery path.
+- Two approval tiers: tier 1 signs approvals with a key in the consultant's home (a script
+  the session runs can read it and forge an approval, as documented); tier 2, recommended,
+  accepts only approvals owned by a separate approver OS account.
+- Programs the gate cannot check make the host ask the consultant in the `default`,
+  `acceptEdits` and `plan` permission modes (or when the host sends no mode), and are refused
+  in any other mode. Approval administration, `sf alias set`, `sf config set` and desktop
+  control are refused. The Salesforce CLI's credential, alias and configuration folders and
+  its installation are guarded.
+- `torque deploy|data|org|recover` re-check the consumed approval and the live org ID when
+  they run in a connected workspace.
+- `torque approval permissions [--write]` generates Claude Code permission rules (ask on
+  write routes and interpreters, deny approval administration, bypass mode disabled), and
+  `torque doctor` checks them, the hook, the tier and the consent, and runs five synthetic
+  calls through the hook (`--live` also compares each org's ID with the consent).
+- The rule file `production-approval.md` ("propose, show the plan and stop" for production)
+  is copied into a connected workspace; `delivery-practice.md` gains one line pointing to it.
+- After the R1 review: an approval is unusable once its change record is gone or the consent
+  no longer names its org ID; the gate uses an approval only after every other part of the
+  call is allowed; an `sf` read without an org flag (`sf org display`) is refused; a
+  production browser window needs a written recovery path; the grant screen escapes
+  non-printable characters.
+- After the R2 review: the file binding covers every payload flag value (legacy spellings and
+  comma lists included), a tree-import plan's data files and an MCP call's files, and refuses
+  missing files and links; a browser window is bound to the org the browser navigated to;
+  record and log reads in legacy, REST and MCP form need their consent class; consent needs a
+  dated sign-off by the right client for every use, scripts included; `torque client list`
+  and any route naming an org outside the consent are refused; skipped prompts refuse writes
+  and browser changes too, and `sh -c` asks; a before-state is checked for content-level
+  coverage (source folders included), the org it was captured from and its order, and a
+  capture checks the org first; Torque-route wrappers find connected mode themselves, refuse
+  an unreadable configuration and verify the approval again; an approval is returned after
+  the wrapper could not resolve the org; recording each use is mandatory; large payloads go
+  through the wrapper route; the grant screen reads the check-only result and can compare a
+  Setup Audit Trail export; every owner step asks for a typed code; tier 2 requires a
+  separate account and an approver-owned folder and is refused on Windows; the permission
+  rules cover interpreter families, `torque ai-regression` and the platform's key path, and
+  flag overlapping wildcard allows; doctor reads the user, project and local settings,
+  requires the fail-closed hook and runs bound probes; consent, approval and key files are
+  guarded in every mode where the hook runs.
+- After the R2 recheck: a deploy with no selector binds every package folder, components in
+  shared files (custom labels, workflows, sharing rules) bind that file, a named component
+  with no local file is refused, and `--flag=a b` reads both values; a browser change is
+  bound to the exact tab (server and tab ID) and needs that tab to have shown only the
+  window's org; REST paths are decoded before classification and `sf data resume` needs the
+  records class; destructive manifests are in the recovery scope and an object or bundle
+  needs its definition file; wrappers refuse an indeterminate workspace state and a different
+  working folder, claim atomically, and a revert child that cannot resolve its org returns
+  the parent approval; approval events have enforced schemas, denials keep their recovery
+  and validation references, and the log marks unlinked observations; permission overlap is
+  exact glob intersection; record exports become record evidence; the full-mode guard
+  resolves paths and covers folders that hold the records; doctor probes an unbound
+  check-only call; MCP writes without files can be granted; both capture spellings are org
+  reads and consent is checked for the right client.
+- After the R2 recheck of round 3: in connected mode only Torque's own browser (`torque
+  browser --target-org ORG`) changes an org. It checks the org ID and a granted window when
+  it starts, and every request's actual origin while it runs. Browser MCP and devtools tools
+  may only read and navigate. Bundles bind every file in their folder; Apex, Lightning
+  component and static resource recovery needs every file it restores; recovery approvals
+  bind their snapshot and show the recovery command; destructive manifests are bound as
+  files and their deletions checked against the before-state without needing local source;
+  the full-mode guard follows `cd` within a command.
+- After the final recheck: Torque's browser is launched so other orgs' hosts do not
+  resolve (redirect hops included), without a proxy or service workers, and an attached
+  operator browser is refused in connected mode; the session stops, closing its pages and
+  context, when its window ends or the consent is suspended; a recovery approval binds the
+  snapshot folder and the exact operation, read with the recovery's own parser, and the run
+  must match them.
+- After the targeted recheck: the browser's allowed Salesforce hosts are exact names (no
+  wildcard that could admit a sandbox or another org), and every write-capable request
+  reads the window and consent again, with no cache.
+- After the last targeted rechecks: Torque's browser in connected mode resolves only the
+  approved org's exact hosts and `static.lightning.force.com`; every other host (the login
+  hosts, other orgs, non-Salesforce hosts, IP literals, `localhost`, trailing-dot names)
+  does not resolve, so a request or redirect hop to it fails before it is sent. The route
+  handler allows the static host for reads only; a redirected request to it is not seen by
+  the handler, and a 307 or 308 redirect can carry a POST body there (a read-only content
+  host with no org data). Torque no longer sends its own copy of any request. Every
+  request the handler sees, reads included, reads the window and consent again, with no
+  cache.
+- Documentation: [connected mode](docs/connected-approval.md), with the host facts it relies on,
+  what it stops and what it cannot stop; [build-only mode](docs/ai-access.md) lists the three
+  modes; the [alpha 15 record](docs/validation-alpha15.md).
+
 ## 2.0.0a14 - long commands in build-only mode, 2026-09-24 (not published to a package index)
 
 A spot-check of the released alpha 13 found that one regular-expression call could hold

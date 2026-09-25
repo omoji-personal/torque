@@ -20,6 +20,11 @@ from . import workspace as ws
 _CHANGE_ID = re.compile(r"chg-[a-f0-9]{12}\Z")
 _EVENT_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 _RESULTS = ("pass", "fail", "unknown", "not_run")
+# Connected-mode approval events, written by Torque's approval code (basis "torque_approval").
+APPROVAL_KINDS = ("approval_request", "approval_grant", "approval_deny", "approval_consume")
+# An independent before-state captured for a production approval (basis "torque_before_state").
+BEFORE_STATE_KIND = "before_state"
+_TORQUE_BASIS = {**{kind: "torque_approval" for kind in APPROVAL_KINDS}, BEFORE_STATE_KIND: "torque_before_state"}
 
 
 def _text(value: str, name: str) -> str:
@@ -143,6 +148,41 @@ def _append(root: Path, record: dict, event: dict) -> dict:
     return value
 
 
+# The fields each approval event must carry (a value may be null where it does not
+# apply, such as a browser window's command digest).
+APPROVAL_EVENT_FIELDS = {
+    "approval_request": ("request_id", "command", "command_sha256", "payload_digest", "request_kind", "org_alias",
+                         "org_id_18", "org_kind", "validated_job", "before_state_event", "manual_recovery"),
+    "approval_grant": ("request_id", "approval_id", "command", "command_sha256", "payload_digest", "org_alias",
+                       "org_id_18", "org_kind", "approver", "granted_at", "expires_at", "before_state",
+                       "manual_recovery", "validated_job"),
+    "approval_deny": ("request_id", "reason", "command", "command_sha256", "payload_digest", "org_alias",
+                      "org_id_18", "org_kind", "approver", "before_state_event", "manual_recovery", "validated_job"),
+    "approval_consume": ("approval_id", "request_id", "command", "command_sha256", "payload_digest", "org_alias",
+                         "org_id_18", "org_kind", "approver", "before_state", "manual_recovery", "validated_job",
+                         "granted_at", "expires_at", "session_id", "tool_use_id"),
+}
+
+
+def _missing_fields(kind: str, event: dict) -> list[str]:
+    return [key for key in APPROVAL_EVENT_FIELDS.get(kind, ()) if key not in event]
+
+
+def append_approval_event(workspace: str | Path, client: str, change_id: str, kind: str, fields: dict) -> dict:
+    """Record one approval step. These events log what happened; they do not
+    authorize anything (the approval store and the gate do)."""
+    if kind not in APPROVAL_KINDS:
+        raise ws.WorkspaceError(f"unknown approval event kind: {kind}")
+    missing = _missing_fields(kind, fields)
+    if missing:
+        raise ws.WorkspaceError(f"{kind} event is missing: {', '.join(missing)}")
+    root, record = load_change(workspace, client, change_id)
+    reserved = {"schema", "id", "change", "client", "created_at", "kind", "basis", "summary"}
+    extra = {k: v for k, v in fields.items() if k not in reserved}
+    summary = fields.get("command") or fields.get("reason") or fields.get("approval_id") or kind
+    return _append(root, record, {**extra, "kind": kind, "summary": str(summary), "basis": "torque_approval"})
+
+
 def add_note(workspace: str | Path, client: str, identifier: str,
              text: str, kind: str = "note") -> dict:
     if kind not in ("note", "decision", "next_step"):
@@ -209,7 +249,8 @@ def _events(root: Path, record: dict) -> list[dict]:
                 or event.get("schema") != "torque.change-event/1" or event.get("change") != record["id"]
                 or event.get("client") != record["client"] or not isinstance(event.get("summary"), str)
                 or not event["summary"].strip() or not _timestamp(event.get("created_at"))
-                or event.get("kind") not in ("note", "decision", "next_step", "check", "metadata_observation")):
+                or event.get("kind") not in ("note", "decision", "next_step", "check", "metadata_observation",
+                                             *_TORQUE_BASIS)):
             raise ws.WorkspaceError(f"invalid change event: {path.name}")
         if event["kind"] == "check":
             if (event.get("result") not in _RESULTS or event.get("basis") != "operator_reported"
@@ -227,6 +268,15 @@ def _events(root: Path, record: dict) -> list[dict]:
                                event["observation"].get("metadata", {}).get("expected_components", [])):
                 if not isinstance(components, list) or any(not isinstance(c, str) for c in components):
                     raise ws.WorkspaceError(f"invalid metadata component scope: {path.name}")
+        elif event["kind"] in _TORQUE_BASIS:
+            if event.get("basis") != _TORQUE_BASIS[event["kind"]]:
+                raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
+            if _missing_fields(event["kind"], event):
+                raise ws.WorkspaceError(f"invalid approval event (missing fields): {path.name}")
+            if event["kind"] == BEFORE_STATE_KIND and (
+                    not isinstance(event.get("files"), list) or not isinstance(event.get("sha256"), str)
+                    or not isinstance(event.get("path"), str)):
+                raise ws.WorkspaceError(f"invalid before-state event: {path.name}")
         elif event.get("basis") != "operator_reported":
             raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
         events.append(event)
@@ -316,4 +366,12 @@ def render_change(workspace: str | Path, client: str, identifier: str) -> str:
                 path = Path(item["change_root"]) / evidence["path"]
                 lines += [f"  Evidence: [{evidence['name']}](<{path}>) ({event['evidence_integrity']})",
                           f"  SHA-256: `{evidence['sha256']}`"]
+    approvals = [e for e in item["events"] if e["kind"] in APPROVAL_KINDS or e["kind"] == BEFORE_STATE_KIND]
+    if approvals:
+        lines += ["", "## Approvals", ""]
+        for event in approvals:
+            ident = event.get("approval_id") or event.get("request_id") or ""
+            org = event.get("org_alias") or ""
+            lines.append(" ".join(part for part in (f"- {event['created_at']}", event["kind"], ident, org,
+                                                    event["summary"]) if part))
     return "\n".join(lines).rstrip() + "\n"

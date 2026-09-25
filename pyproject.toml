@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torque-salesforce"
-version = "2.0.0a14"
+version = "2.0.0a15"
 description = "A practical Salesforce consulting workspace, continued from JusticeserverClaude"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -56,7 +56,7 @@ exclude = ["tests*", "vendor*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-torque = ["data/*.json", "data/*.md", "data/commands/*.md", "data/rules/*.md", "data/skills/*/SKILL.md", "data/agents/*.md"]
+torque = ["data/*.json", "data/*.md", "data/commands/*.md", "data/rules/*.md", "data/connected/*.md", "data/skills/*/SKILL.md", "data/agents/*.md"]
 jsc_advisory = ["data/*.json"]
 jsc_qa = ["data/*.yaml"]
 jsc_browser_tests = ["config/*.yaml"]

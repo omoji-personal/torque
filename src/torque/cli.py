@@ -16,6 +16,7 @@ import sys
 import subprocess
 
 from . import __version__
+from . import cli_approval
 from . import workspace as ws
 
 DELEGATES = {
@@ -75,8 +76,14 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("path")
     upgrade.add_argument("--check", action="store_true", help="show available updates without writing")
     upgrade.add_argument("--json", action="store_true")
-    ai_access = work_sub.add_parser("ai-access", help="set build-only mode; the owner runs this, not an AI session")
+    ai_access = work_sub.add_parser("ai-access", help="set build-only or connected mode; the owner runs this, "
+                                                      "not an AI session")
     ai_access.add_argument("mode", choices=ws.AI_ACCESS_MODES)
+    ai_access.add_argument("--approval", choices=ws.APPROVAL_VALUES,
+                           help="connected mode only: org writes need a per-write approval (required)")
+    ai_access.add_argument("--verify", choices=ws.APPROVAL_VERIFY,
+                           help="connected mode only: hmac (same OS account) or owner-uid (separate approver account)")
+    ai_access.add_argument("--approver-uid", type=int, help="owner-uid verification: the approver account's uid")
     ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
     ai_access.add_argument("--json", action="store_true")
     demo = sub.add_parser("demo", help="create an offline synthetic consulting workspace; no org needed")
@@ -92,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     clients = client_sub.add_parser("list")
     clients.add_argument("--workspace", required=True)
     clients.add_argument("--json", action="store_true")
+    cli_approval.register_consent(client_sub)
     context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
     _client_args(context)
     context.add_argument("--json", action="store_true")
@@ -116,6 +124,8 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--workspace")
     doctor.add_argument("--client")
     doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--live", action="store_true",
+                        help="connected mode: resolve each approved org and compare its ID with the consent")
     doctor.add_argument("--for", dest="capability", choices=("workspace", "salesforce", "browser", "meeting"), default="workspace")
     change = sub.add_parser("change", help="connect requirements, decisions, checks and handoff")
     actions = change.add_subparsers(dest="action", required=True)
@@ -150,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     workflows.add_argument("name", nargs="?")
     workflows.add_argument("--json", action="store_true")
     workflows.add_argument("--workspace", help="prefer a selected workspace local recipe; otherwise show the packaged reference")
+    cli_approval.register(sub)
     for route in PUBLIC_ROUTES:
         sub.add_parser(route, add_help=False, help=f"{route} operations with selected-client evidence; use {route} --help")
     for route in DELEGATES:
@@ -701,6 +712,14 @@ def _doctor(args: argparse.Namespace) -> int:
                 'The hook matcher does not cover every tool call. Set it to ".*": the gate checks '
                 "command-running tools such as Monitor and blocks tools it does not recognise, but only "
                 "for the calls the matcher sends it.")
+    if access and access["mode"] == "connected":
+        from . import doctor_connected
+        connected = doctor_connected.report(Path(root), args.client, live=getattr(args, "live", False))
+        access["connected"] = connected
+        if not connected["ready"]:
+            report["ready"] = False
+        report["next_actions"] += [f"Connected mode: {problem.rstrip('.')}." for problem in connected["problems"]]
+        report["next_actions"] += [f"Connected mode (advice): {note.rstrip('.')}." for note in connected["advice"]]
     if report["client"] and report["client"]["evidence_problems"]:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
@@ -738,6 +757,12 @@ def _doctor(args: argparse.Namespace) -> int:
                 state = ("hook command blocked a standalone probe; settings checked, host enforcement "
                          "not tested" if ok else "HOOK NOT IN FORCE")
                 print(f"AI access: build-only ({state})")
+            elif access["mode"] == "connected":
+                connected = access["connected"]
+                state = "ready" if connected["ready"] else "NOT READY"
+                print(f"AI access: connected, approval required ({connected['approval_verify']}; {state})")
+                from . import doctor_connected
+                doctor_connected.print_report(connected)
             else:
                 print("AI access: full (build-only mode off)")
         if report["client"]:
@@ -789,8 +814,15 @@ def _recover_grammar():
         argparse.ArgumentParser._print_message = original
 
 
+# The words this process was invoked with, for a connected-mode wrapper to find
+# the approval the gate consumed for this exact command.
+INVOCATION: tuple[str, list[str]] | None = None
+
+
 def main(argv: list[str] | None = None) -> int:
+    global INVOCATION
     args = list(sys.argv[1:] if argv is None else argv)
+    INVOCATION = ("torque", list(args))
     try:
         if args and args[0] in PUBLIC_ROUTES:
             delegate, prefix = PUBLIC_ROUTES[args[0]]
@@ -807,6 +839,7 @@ def main(argv: list[str] | None = None) -> int:
             return _dispatch(delegate, [*prefix, *rest], display=display)
         if args and args[0] in DELEGATES:
             return _dispatch(args[0], args[1:])
+        args, tail = cli_approval.split_tail(args)
         parser = build_parser()
         parsed = parser.parse_args(args)
         if parsed.command is None:
@@ -817,8 +850,14 @@ def main(argv: list[str] | None = None) -> int:
                 path = ws.init_workspace(parsed.path, parsed.name, parsed.profile)
                 _print_json({"workspace": str(path), "org_calls": False}) if parsed.json else print(path)
             elif parsed.action == "ai-access":
-                root = ws.set_ai_access(parsed.path, parsed.mode)
-                _print_json({"workspace": str(root), "ai_access": parsed.mode}) if parsed.json else print(parsed.mode)
+                root = ws.set_ai_access(parsed.path, parsed.mode, parsed.approval, parsed.verify,
+                                        parsed.approver_uid)
+                shown = "connected (approval required)" if parsed.mode == "connected" else parsed.mode
+                if parsed.json:
+                    _print_json({"workspace": str(root), "ai_access": parsed.mode,
+                                 **({"approval": parsed.approval} if parsed.approval else {})})
+                else:
+                    print(shown)
             else:
                 from .template_updates import update_templates
                 report = update_templates(Path(parsed.path), check=parsed.check)
@@ -835,7 +874,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Synthetic demo ready: {result['workspace']}")
                 print(f"Start here: {result['start_here']}")
                 print("No Salesforce org, browser, model or paid account was used.")
+        elif parsed.command in ("approval", "launch"):
+            return cli_approval.run(parsed, tail)
         elif parsed.command == "client":
+            if parsed.action == "consent":
+                return cli_approval.run_consent(parsed)
             if parsed.action == "add":
                 path = ws.add_client(parsed.workspace, parsed.name, parsed.org)
                 _print_json({"client_root": str(path), "org_calls": False}) if parsed.json else print(path)

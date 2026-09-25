@@ -27,6 +27,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import threading
@@ -49,8 +50,150 @@ EXIT_POST_FINALIZE_FAILED = 30
 EXIT_CONCURRENCY_CONFLICT = 40
 EXIT_STALE_REVERT_BLOCKED = 50
 EXIT_TOKEN_INVALID = 60
+EXIT_NOT_APPROVED = 3  # connected mode: no consumed approval for this exact run
 
 _ACTIVE_WRAPPER = ContextVar("torque_active_wrapper", default=None)
+# Set by the revert executor for the wrapper it runs: the approval it verified.
+APPROVED_PARENT_ENV = "TORQUE_APPROVED_PARENT"
+
+
+class IndeterminateScope(Exception):
+    """The workspace's mode could not be read, so connected mode cannot be ruled out."""
+
+
+def _config_mode(path: Path, selected_client: bool = False):
+    """The workspace.json at path: None when absent from a folder that is not a
+    Torque workspace, else its parsed object. IndeterminateScope when it is present
+    but unreadable or malformed, or absent where a workspace must have one (a
+    selected client's firm folder, or a folder with Torque's workspace marker)."""
+    config_path = path / "workspace.json"
+    if not config_path.exists():
+        if selected_client or ((path / "clients").is_dir() and (path / ".torque" / "templates.json").is_file()):
+            raise IndeterminateScope(f"{config_path} is missing")
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise IndeterminateScope(f"{config_path} cannot be read ({exc})") from exc
+    if not isinstance(config, dict):
+        raise IndeterminateScope(f"{config_path} is not a JSON object")
+    return config
+
+
+def _is_connected(config) -> bool:
+    return isinstance(config, dict) and config.get("ai_access") == "connected" and config.get("approval") == "required"
+
+
+def _connected_scope():
+    """(workspace, client slug or None) when this run is in a connected workspace:
+    the one TORQUE_WORKSPACE selects, or one at or above the working folder (with the
+    client from TORQUE_CLIENT). None when neither is connected. Raises
+    IndeterminateScope when the selected workspace's configuration cannot be read."""
+    root = os.environ.get("TORQUE_WORKSPACE")
+    if root:
+        path = Path(root).expanduser()
+        client = None
+        if (path / "client.json").is_file():
+            client, path = path.name, path.parent.parent
+        if _is_connected(_config_mode(path, selected_client=client is not None)):
+            return path, client
+    try:
+        from torque import gate
+        chain = gate._workspace_chain(Path(os.path.realpath(os.getcwd())))
+    except ImportError:
+        return None
+    except OSError as exc:
+        raise IndeterminateScope(f"the working folder's workspace cannot be read ({exc})") from exc
+    for folder, mode, known in chain:
+        if not known:
+            raise IndeterminateScope(f"the workspace configuration at {folder} cannot be read")
+        if mode == "connected":
+            return folder, os.environ.get("TORQUE_CLIENT") or None
+    return None
+
+
+def _invocation() -> tuple[str, list[str]]:
+    """The words this process was started with: the torque command when run
+    through `torque`, else the jsc command line."""
+    try:
+        from torque import cli
+        if cli.INVOCATION is not None:
+            return cli.INVOCATION
+    except ImportError:
+        pass
+    import sys as _sys
+    return "jsc", list(_sys.argv[1:])
+
+
+def _consumed_approval(workspace, client, invocation, org):
+    from torque.approval import consumed_for_wrapper
+    return consumed_for_wrapper(workspace, client, invocation, org, cwd=os.getcwd())
+
+
+def _parent_approval(workspace, client, approval_id, org, invocation):
+    from torque.approval import approved_parent
+    return approved_parent(workspace, client, approval_id, org, invocation, cwd=os.getcwd())
+
+
+def _release(workspace, client, invocation, org):
+    from torque.approval import release_child, release_for_retry
+    parent = os.environ.get(APPROVED_PARENT_ENV)
+    if parent:
+        return release_child(workspace, client, parent, org, invocation, cwd=os.getcwd())
+    return release_for_retry(workspace, client, invocation, org, cwd=os.getcwd())
+
+
+def release_after_resolution_failure(target_org: str) -> None:
+    """Nothing ran because the org could not be resolved: in a connected workspace,
+    return the approval the gate consumed for this command so it can be retried."""
+    try:
+        scope = _connected_scope()
+    except IndeterminateScope:
+        return
+    if scope is None or scope[1] is None:
+        return
+    try:
+        if _release(scope[0], scope[1], _invocation(), target_org):
+            print("connected mode: the approval was not used and can be used again for the same command",
+                  file=sys.stderr)
+    except (OSError, ValueError):
+        pass
+
+
+def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
+    """(0, approval or None) when this run may proceed, else (EXIT_NOT_APPROVED, None).
+
+    In a connected workspace, a Torque write route runs only when the gate has
+    just consumed an approval for this exact command, and only against the org ID
+    the consultant approved; an alias remapped since the grant is refused here.
+    Dry runs and workspaces not in connected mode are unaffected."""
+    if dry_run:
+        return 0, None
+    try:
+        scope = _connected_scope()
+    except IndeterminateScope as exc:
+        print(f"error: connected mode cannot be ruled out: {exc}; nothing was run", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    if scope is None:
+        return 0, None
+    workspace, client = scope
+    if client is None:
+        print("error: connected mode: run this with --workspace PATH --client NAME", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    parent = os.environ.get(APPROVED_PARENT_ENV)
+    if parent:
+        record = _parent_approval(workspace, client, parent, target_org, _invocation())
+    else:
+        record = _consumed_approval(workspace, client, _invocation(), target_org)
+    if record is None:
+        print("error: connected mode: no approval was consumed for this exact command in the last "
+              "two minutes; request one with torque approval request", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    if record.get("org_id_18") != org_id_18:
+        print(f"error: connected mode: {target_org!r} now resolves to {org_id_18}, but the approval is for "
+              f"{record.get('org_id_18')}; nothing was run", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
+    return 0, {**record, "_scope": (workspace, client)}
 
 
 class WrapperContext:
@@ -89,8 +232,11 @@ class WrapperContext:
             print(f"error: cannot verify explicit org {self.target_org!r} "
                   "from org display and the Organization query",
                   file=sys.stderr)
+            release_after_resolution_failure(self.target_org)
             return EXIT_TOKEN_INVALID
-        return 0
+        rc, _ = connected_approval(self.target_org, self.org.org_id_18,
+                                   dry_run="--dry-run" in str(self.wrapper_command).split())
+        return rc
 
     def acquire_org_lock(self) -> int:
         """Try to acquire per-org lock. Returns 0 or EXIT_CONCURRENCY_CONFLICT."""

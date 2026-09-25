@@ -53,6 +53,8 @@ def execute_revert(
     org = org_detect.resolve_org(target_org)
     if org is None:
         print(f"error: cannot resolve org {target_org!r}", file=sys.stderr)
+        from .wrappers._common import release_after_resolution_failure
+        release_after_resolution_failure(target_org)
         return EXIT_ORG_RESOLUTION_FAILED
 
     try:
@@ -66,6 +68,13 @@ def execute_revert(
         print("error: snapshot belongs to a different org than the explicit target", file=sys.stderr)
         return EXIT_ORG_RESOLUTION_FAILED
     snap = {**snap, "org": {**snap["org"], "alias": target_org}}
+
+    # Connected mode: this run needs the approval the gate just consumed for it, for
+    # this org ID; the wrapper it starts is told which approval that was.
+    from .wrappers._common import APPROVED_PARENT_ENV, connected_approval
+    approved_rc, approved = connected_approval(target_org, org.org_id_18)
+    if approved_rc:
+        return approved_rc
 
     # Refuse non-revertible operations unless force-acked.
     # Re-derived, NOT read from the manifest: this is the gate that decides
@@ -111,7 +120,21 @@ def execute_revert(
     # All snapshot-creating wrappers now accept these (cli._add_revert_chain_args);
     # the deploy wrapper pre-includes them so the append stays idempotent
     # (audit 2026-06-09 REVERT-1 — data update/create/delete previously rejected them).
+    if approved is not None:
+        # Connected mode: the run must restore the approved snapshot, from the approved
+        # folder, with exactly the operation the consultant saw at grant.
+        from torque.approval import recovery_problem
+        problem = recovery_problem(approved, snap_dir, revert_cmd)
+        if problem:
+            print(f"error: connected mode: {problem}; nothing was run", file=sys.stderr)
+            return EXIT_ORG_RESOLUTION_FAILED
     revert_cmd = _append_forensic_chain(revert_cmd, snapshot_id, reason)
+    if approved is not None:
+        # Name the one wrapper command this approval covers; the child accepts only it.
+        from torque.approval import authorize_child
+        prefix = len(revert_planner._jsc_command())
+        workspace_root, client_slug = approved["_scope"]
+        authorize_child(workspace_root, client_slug, approved["id"], revert_cmd[prefix:])
 
     print(f"\nExecuting revert: {' '.join(revert_cmd)}\n", file=sys.stderr)
 
@@ -125,8 +148,13 @@ def execute_revert(
     # capture stdout/stderr; apply a generous timeout for revert operations.
     REVERT_TIMEOUT_S = int(os.environ.get("JSC_REVERT_EXECUTE_TIMEOUT_S", "1800"))
     try:
+        child_env = dict(os.environ)
+        child_env.pop(APPROVED_PARENT_ENV, None)
+        if approved is not None:
+            child_env[APPROVED_PARENT_ENV] = approved["id"]
         proc = subprocess.run(
             revert_cmd,
+            env=child_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

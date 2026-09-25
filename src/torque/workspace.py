@@ -16,7 +16,9 @@ from uuid import uuid4
 
 PROFILES = ("generic", "solution-lead")
 STATUSES = ("prepared", "executed", "verified", "incomplete")
-AI_ACCESS_MODES = ("full", "build-only")
+AI_ACCESS_MODES = ("full", "build-only", "connected")
+APPROVAL_VALUES = ("required",)
+APPROVAL_VERIFY = ("hmac", "owner-uid")
 CONFIG = "workspace.json"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 
@@ -267,16 +269,73 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
     return root, config
 
 
-def set_ai_access(workspace: str | Path, mode: str) -> Path:
+def _owner_uid_supported() -> bool:
+    """Tier 2 checks file ownership by numeric uid, which Windows does not have."""
+    return hasattr(os, "getuid")
+
+
+def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
+                  verify: str | None = None, approver_uid: int | None = None, presence=None) -> Path:
     """Set the workspace ai_access mode. Only the owner calls this; an AI session
-    running in build-only mode has its own edits to workspace.json blocked by the gate."""
+    has its own edits to workspace.json blocked by the gate. Connected mode needs
+    approval="required" and a person at a real terminal (presence)."""
     if mode not in AI_ACCESS_MODES:
         raise WorkspaceError(f"unknown ai_access mode: {mode}")
+    if mode != "connected" and (approval is not None or verify is not None or approver_uid is not None):
+        raise WorkspaceError("--approval, --verify and --approver-uid apply only to connected mode")
+    if mode == "connected":
+        if approval not in APPROVAL_VALUES:
+            raise WorkspaceError("connected mode needs --approval required")
+        verify = verify or "hmac"
+        if verify not in APPROVAL_VERIFY:
+            raise WorkspaceError(f"unknown approval verification: {verify}")
+        if verify == "owner-uid" and not _owner_uid_supported():
+            raise WorkspaceError("owner-uid (tier 2) approvals are not supported on this platform; use hmac")
+        if verify == "owner-uid" and (type(approver_uid) is not int or approver_uid < 0):
+            raise WorkspaceError("owner-uid verification needs --approver-uid, the approver account's numeric uid")
+        if verify == "hmac" and approver_uid is not None:
+            raise WorkspaceError("--approver-uid applies only to owner-uid verification")
+        injected = presence is not None
+        if presence is None:
+            from .presence import operator_present as presence
+        check = presence()
+        if not check.ok:
+            raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
+        if not injected:
+            from .presence import confirm_code
+            if not confirm_code():
+                raise WorkspaceError("the confirmation code did not match; nothing was changed")
     root, config = load_workspace(workspace)
     config["ai_access"] = mode
+    for key in ("approval", "approval_verify", "approver_uid"):
+        config.pop(key, None)
+    if mode == "connected":
+        config["approval"] = approval
+        config["approval_verify"] = verify
+        if verify == "owner-uid":
+            config["approver_uid"] = approver_uid
     config["ai_access_changed_at"] = _now()
     _atomic_replace_text(_inside(root, root / CONFIG), json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    _connected_rule(root, mode == "connected")
     return root
+
+
+CONNECTED_RULE = "production-approval.md"
+
+
+def _connected_rule(root: Path, present: bool) -> None:
+    """Materialize the "propose, do not act" rule in a connected workspace, and
+    remove it when the workspace leaves connected mode."""
+    target = _inside(root, root / ".claude" / "rules" / CONNECTED_RULE)
+    if not present:
+        target.unlink(missing_ok=True)
+        return
+    text = resources.files("torque").joinpath("data", "connected", CONNECTED_RULE).read_text(encoding="utf-8")
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if target.exists():
+        _atomic_replace_text(target, text)
+    else:
+        atomic_write_new(target, text)
 
 
 @contextmanager
