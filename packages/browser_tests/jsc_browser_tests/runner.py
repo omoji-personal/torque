@@ -258,6 +258,8 @@ async def run_flow_variation(
             baseline_user = await auth.observe_user_id(page)
             identity.update(baseline_user_id=baseline_user, observed_user_id=baseline_user,
                             status="OBSERVED", basis="browser Aura CurrentUser.Id")
+            await _verify_org_by_username(page, identity, admin_auth, baseline_user,
+                                          strict=bool(getattr(sess, "guarded", False)))
             if variation.profile != "admin":
                 requested_user = test_user["user_id"]
                 identity["requested_user_id"] = requested_user
@@ -272,7 +274,6 @@ async def run_flow_variation(
                 identity["status"] = "MATCHED"
             else:
                 identity["note"] = "admin is the configured role label; the observed User Id is not proof of administrative permissions"
-            await _observe_org(page, identity, admin_auth.org_id_18, strict=bool(getattr(sess, "guarded", False)))
 
             ctx = FlowCtx(
                 target_org=target_org, instance_url=admin_auth.instance_url,
@@ -308,27 +309,32 @@ async def run_flow_variation(
     return result
 
 
-async def _observe_org(page, identity: dict, expected_org_id: str, *, strict: bool) -> None:
-    """Record the org the page is in, read from the page after login. A page in another
-    org stops the run. An unreadable org stops a connected (guarded) run; elsewhere it is
-    recorded as not checked, never as a match."""
+async def _verify_org_by_username(page, identity: dict, admin_auth, user_id: str, *, strict: bool) -> None:
+    """Before Login As, read the page user's Username in the page and compare it with the
+    username sf resolves for the alias. Usernames are globally unique, so a match proves
+    the org and the user. A mismatch stops the run. An unreadable username stops a
+    connected (guarded) run; elsewhere it is recorded as not checked, never as a match."""
+    expected = getattr(admin_auth, "username", "") or ""
     try:
-        observed = await auth.observe_org_id(page)
+        if not expected:
+            raise auth.AuthError("sf resolved no username for the org alias")
+        observed = await auth.observe_username(page, user_id, getattr(admin_auth, "api_version", "") or None)
     except auth.AuthError:
         identity["org_status"] = "NOT_CHECKED"
         if strict:
-            raise auth.AuthError("The browser's org could not be read from the page; flow was not executed") from None
+            raise auth.AuthError("The browser's username could not be read or checked; flow was not executed") from None
         return
-    identity.update(observed_org_id_18=observed, org_basis="browser page (UserContext or oid)")
-    if not (expected_org_id and observed[:15] == expected_org_id[:15]):
+    identity["observed_username"] = observed
+    if observed.casefold() != expected.casefold():
         identity["org_status"] = "MISMATCH"
-        raise auth.AuthError("The browser's org does not match the selected org; flow was not executed")
-    identity["org_status"] = "MATCHED"
+        raise auth.AuthError("The browser's user is not the org alias's user; flow was not executed")
+    identity.update(org_status="MATCHED", observed_org_id_18=admin_auth.org_id_18, org_verified_by="username")
 
 
 def identity_report(result: "FlowResult") -> dict:
-    """Who the browser was, observed in the page: the org, the admin before Login As, the
-    user after it, and the admin after restoration. Never a session URL or token."""
+    """Who the browser was, observed in the page: the org (the alias's org ID, verified by
+    the page user's username), the admin before Login As and their username, the user
+    after it, and the admin after restoration. Never a session URL or token."""
     effects = result.side_effects or {}
     identity = effects.get("browser_identity") or {}
     restore = effects.get("session_restore") or {}
@@ -338,7 +344,8 @@ def identity_report(result: "FlowResult") -> dict:
     org_status = identity.get("org_status")
     if status in ("MATCHED", "OBSERVED") and org_status != "MATCHED":
         status = "ORG_" + (org_status or "NOT_CHECKED")
-    return {"org_id_18": identity.get("observed_org_id_18"), "admin_before": before,
+    return {"org_id_18": identity.get("observed_org_id_18"), "org_verified_by": identity.get("org_verified_by"),
+            "admin_before": before, "admin_username": identity.get("observed_username"),
             "user_after_login_as": identity.get("observed_user_id") if identity.get("requested_user_id") else None,
             "admin_restored": after, "restored": bool(before and after and before[:15] == after[:15]),
             "status": status}

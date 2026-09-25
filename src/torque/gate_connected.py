@@ -275,7 +275,10 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                                    "window; browser tools here may read and navigate only."))
         elif route.kind == "browser_write":
             window = approval.find_browser_approval(workspace, bound, route.org, config=config)
-            if window:
+            if window and route.headed and window.get("delegated") is not False:
+                decisions.append(_deny(f"the browser window for {route.org} was granted by a delegated approver, "
+                                       "so Torque's browser runs headless only: run it without --headed."))
+            elif window:
                 approved_id = window["id"]
                 after_allow.append(lambda win=window: approval.note_browser_use(
                     workspace, bound, win, tool_name=tool_name, session_id=session_id, tool_use_id=tool_use_id))

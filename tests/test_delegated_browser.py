@@ -57,3 +57,24 @@ def test_delegated_window_marks_the_browser_guard_delegated(tmp_path, monkeypatc
     guard = browser_guard.connected_guard("acme-dev", resolve=ORGS.get)
     assert guard is not None and guard.delegated is True
     assert guard.expires_at == approval._epoch(record["expires_at"])
+
+
+@pytest.mark.parametrize("flag", ["--headed", "--head", "--hea"])
+def test_gate_refuses_a_visible_browser_under_a_delegated_window(tmp_path, monkeypatch, flag):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = delegated_grant(root, window(root))
+    as_agent(monkeypatch)
+    decision = run(root, f"torque browser browser visit --target-org acme-dev {flag}")
+    assert decision.action == "deny" and "headless" in decision.reason and decision.approved is None
+    allowed = run(root, "torque browser browser visit --target-org acme-dev")
+    assert allowed.action == "allow" and allowed.approved == record["id"]
+
+
+def test_headed_is_read_from_the_browser_routes_only():
+    from torque.connected_routes import classify_bash
+    [route] = classify_bash("torque browser multiprofile visit --target-org acme-dev --headed")
+    assert route.kind == "browser_write" and route.headed
+    [route] = classify_bash("torque browser multiprofile visit --target-org acme-dev --json")
+    assert not route.headed
+    [route] = classify_bash("torque browser multiprofile visit --target-org acme-dev -- --headed")
+    assert not route.headed  # after --, not an option of the route

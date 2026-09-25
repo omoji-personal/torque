@@ -144,6 +144,7 @@ class Route:
     detail: str
     client: str | None = None
     data: str | None = None  # "records" or "debug_logs" when the read needs that consent class
+    headed: bool = False  # a browser route asking for a visible browser (--headed or a prefix of it)
 
 
 def _flag_values(args: list[str], names) -> list[str]:
@@ -379,7 +380,8 @@ def _torque(rest: list[str], detail: str) -> Route:
         return Route("read" if org else "local", org, detail, client,
                      data="debug_logs" if head == "logs" else None)
     if head in TORQUE_BROWSER_ROUTES:
-        return Route("browser_write" if org else "local", org, detail, client)
+        headed = any(len(n) >= 4 and "--headed".startswith(n) for n in (t.split("=", 1)[0] for t in rest))
+        return Route("browser_write" if org else "local", org, detail, client, headed=headed)
     if head in TORQUE_WRITE_ELSE:
         return Route("org_write" if org else "local", org, detail, client)
     if org:

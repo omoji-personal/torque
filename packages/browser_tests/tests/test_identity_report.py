@@ -13,9 +13,10 @@ from jsc_browser_tests.diagnostics import redact
 from jsc_browser_tests.flow_spec import FlowSpec
 
 ORG = "00D000000000003AAA"
-OTHER_ORG = "00D000000000009AAA"
 ADMIN = "005000000000001AAA"
 USER = "005000000000002AAA"
+ADMIN_NAME = "admin@acme-dev.example"
+USERNAMES = {ADMIN: "Admin@Acme-Dev.example", USER: "steward@acme-dev.example"}
 SID = "00Dsynthetic!secret"
 SECRET = f"https://x.my.salesforce.com/secur/frontdoor.jsp?sid={SID}"
 
@@ -29,19 +30,31 @@ def fake_playwright(monkeypatch):
     monkeypatch.setitem(sys.modules, "playwright.async_api", api)
 
 
-class Browser:
-    """The page's identity as the live browser shows it: admin until Login As, the
-    requested user after it, admin again after Logout As."""
-    def __init__(self, org=ORG, login_error=None):
-        self.user, self.org, self.login_error = ADMIN, org, login_error
+class Page:
+    """A signed-in Lightning page: Aura's $A gives the current User Id, and the page's own
+    same-origin UI API read gives that user's Username (or an HTTP error). Login As and
+    Logout As change the current user."""
+    def __init__(self, *, aura=True, ui_status=200, usernames=USERNAMES, login_error=None):
+        self.user, self.aura, self.ui_status = ADMIN, aura, ui_status
+        self.usernames, self.login_error, self.fetched = usernames, login_error, []
 
-    async def observe_user(self, page):
-        return self.user
+    async def wait_for_selector(self, *args, **kwargs):
+        pass
 
-    async def observe_org(self, page):
-        if isinstance(self.org, Exception):
-            raise self.org
-        return self.org
+    async def wait_for_function(self, script, timeout=None):
+        if not self.aura:
+            raise TimeoutError("Timeout 10000ms exceeded")
+
+    async def evaluate(self, script, arg=None):
+        if "ui-api/records/" in script:
+            version, user_id = arg
+            self.fetched.append((version, user_id))
+            if self.ui_status != 200:
+                return {"status": self.ui_status, "username": None}
+            return {"status": 200, "username": self.usernames.get(user_id)}
+        if "CurrentUser.Id" in script:
+            return self.user if self.aura else None
+        raise AssertionError("unexpected page script")
 
     async def login_as(self, page, instance_url, user_id, org_id_18=None):
         if self.login_error:
@@ -52,20 +65,17 @@ class Browser:
         self.user = ADMIN
 
 
-def stub(monkeypatch, *, org=ORG, login_error=None, guarded=False):
+def stub(monkeypatch, *, guarded=False, username=ADMIN_NAME, **page_options):
     fake_playwright(monkeypatch)
-    browser = Browser(org=org, login_error=login_error)
-    page = types.SimpleNamespace(wait_for_selector=AsyncMock())
+    page = Page(**page_options)
     opened = AsyncMock(return_value=types.SimpleNamespace(page=page, guarded=guarded))
-    monkeypatch.setattr(auth, "get_admin_auth", lambda *_: types.SimpleNamespace(
-        instance_url="https://x.my.salesforce.com", org_id_18=ORG, frontdoor_url=SECRET))
+    monkeypatch.setattr(auth, "get_admin_auth", lambda *_: auth.AdminAuth(
+        "acme-dev", ORG, "https://x.my.salesforce.com", SECRET, username=username, api_version="67.0"))
     monkeypatch.setattr(auth, "open_session", opened)
     monkeypatch.setattr(auth, "close_session", AsyncMock())
-    monkeypatch.setattr(auth, "login_as_user", browser.login_as)
-    monkeypatch.setattr(auth, "observe_user_id", browser.observe_user)
-    monkeypatch.setattr(auth, "observe_org_id", browser.observe_org)
-    monkeypatch.setattr(auth, "logout_as_user", browser.logout)
-    return opened
+    monkeypatch.setattr(auth, "login_as_user", page.login_as)
+    monkeypatch.setattr(auth, "logout_as_user", page.logout)
+    return opened, page
 
 
 def fake_cell(monkeypatch, *, leak=False):
@@ -103,53 +113,70 @@ def assert_clean(text):
         assert needle not in text, needle
 
 
-def test_identity_report_names_org_users_and_restoration(monkeypatch, tmp_path):
-    opened = stub(monkeypatch)
+VERIFIED = {"org_id_18": ORG, "org_verified_by": "username", "admin_before": ADMIN,
+            "admin_username": USERNAMES[ADMIN]}
+
+
+@pytest.mark.parametrize("guarded", [False, True])
+def test_identity_report_names_org_users_and_restoration(monkeypatch, tmp_path, guarded):
+    opened, page = stub(monkeypatch, guarded=guarded)
     ran = fake_cell(monkeypatch)
     result = run(tmp_path)
     assert ran == ["standard"]
-    assert runner.identity_report(result) == {"org_id_18": ORG, "admin_before": ADMIN, "user_after_login_as": USER,
+    assert runner.identity_report(result) == {**VERIFIED, "user_after_login_as": USER,
                                               "admin_restored": ADMIN, "restored": True, "status": "MATCHED"}
+    assert page.fetched == [("67.0", ADMIN)]  # the admin's username, read before Login As
     assert opened.await_args.kwargs.get("headed") is False
     assert cli._result_to_dict(result)["identity"]["org_id_18"] == ORG
-
-
-def test_identity_org_is_the_one_the_page_shows_not_the_argument(monkeypatch, tmp_path):
-    """The report names the org the page is in; a page in another org stops the run."""
-    stub(monkeypatch, org=OTHER_ORG, guarded=True)
-    ran = fake_cell(monkeypatch)
-    result = run(tmp_path)
-    assert ran == []
-    assert result.overall_status == "INCOMPLETE"
-    report = runner.identity_report(result)
-    assert report["org_id_18"] == OTHER_ORG and report["status"] == "ORG_MISMATCH"
-    assert report["restored"] is True
-
-
-def test_guarded_route_fails_closed_when_the_page_org_cannot_be_read(monkeypatch, tmp_path):
-    stub(monkeypatch, org=auth.AuthError("Browser org could not be observed"), guarded=True)
-    ran = fake_cell(monkeypatch)
-    result = run(tmp_path)
-    assert ran == [] and result.overall_status == "INCOMPLETE"
-    report = runner.identity_report(result)
-    assert report["org_id_18"] is None and report["status"] == "ORG_NOT_CHECKED"
-
-
-def test_unguarded_route_keeps_running_and_says_the_org_was_not_checked(monkeypatch, tmp_path):
-    """Outside connected mode the a15 behavior stands; the report does not claim a match."""
-    stub(monkeypatch, org=auth.AuthError("Browser org could not be observed"))
-    ran = fake_cell(monkeypatch)
-    result = run(tmp_path)
-    assert ran == ["standard"] and result.overall_status == "PASS"
-    assert runner.identity_report(result)["status"] == "ORG_NOT_CHECKED"
 
 
 def test_admin_report_has_no_login_as_user(monkeypatch, tmp_path):
     stub(monkeypatch, guarded=True)
     fake_cell(monkeypatch)
     result = run(tmp_path, profile="admin")
-    assert runner.identity_report(result) == {"org_id_18": ORG, "admin_before": ADMIN, "user_after_login_as": None,
+    assert runner.identity_report(result) == {**VERIFIED, "user_after_login_as": None,
                                               "admin_restored": None, "restored": False, "status": "OBSERVED"}
+
+
+FAILURES = {
+    "no $A": dict(aura=False),
+    "UI API 401": dict(ui_status=401),
+    "UI API 500": dict(ui_status=500),
+    "no Username field": dict(usernames={}),
+    "sf knows no username": dict(username=""),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FAILURES))
+def test_guarded_route_fails_closed_when_the_username_cannot_be_read(monkeypatch, tmp_path, case):
+    stub(monkeypatch, guarded=True, **FAILURES[case])
+    ran = fake_cell(monkeypatch)
+    result = run(tmp_path)
+    assert ran == [] and result.overall_status == "INCOMPLETE"
+    report = runner.identity_report(result)
+    assert report["org_id_18"] is None and report["org_verified_by"] is None
+    assert report["status"] in ("ORG_NOT_CHECKED", "NOT_CHECKED")  # NOT_CHECKED: no user at all (no $A)
+
+
+@pytest.mark.parametrize("guarded", [False, True])
+def test_a_username_mismatch_stops_the_run(monkeypatch, tmp_path, guarded):
+    """Another org (or another user) behind the page: its username is not the alias's."""
+    stub(monkeypatch, guarded=guarded, username="admin@acme-prod.example")
+    ran = fake_cell(monkeypatch)
+    result = run(tmp_path)
+    assert ran == [] and result.overall_status == "INCOMPLETE"
+    report = runner.identity_report(result)
+    assert report["org_id_18"] is None and report["status"] == "ORG_MISMATCH"
+
+
+@pytest.mark.parametrize("case", ["UI API 401", "no Username field", "sf knows no username"])
+def test_unguarded_route_keeps_running_and_says_the_org_was_not_checked(monkeypatch, tmp_path, case):
+    """Outside connected mode the a15 behavior stands; the report does not claim a match."""
+    stub(monkeypatch, **FAILURES[case])
+    ran = fake_cell(monkeypatch)
+    result = run(tmp_path)
+    assert ran == ["standard"] and result.overall_status == "PASS"
+    assert runner.identity_report(result)["status"] == "ORG_NOT_CHECKED"
 
 
 def test_no_session_url_in_any_output(monkeypatch, tmp_path, capsys):
@@ -166,7 +193,7 @@ def test_json_route_leaves_no_session_url_in_stdout_or_any_run_file(monkeypatch,
     """`multiprofile --json` end to end with fakes: the JSON on stdout, the manifest, the
     audit log and every other file in the run dir are scanned for the URL and the sid."""
     monkeypatch.setenv("TORQUE_WORKSPACE", str(tmp_path / "client"))
-    opened = stub(monkeypatch)
+    opened, _ = stub(monkeypatch, guarded=True)
     fake_cell(monkeypatch, leak=True)
     import jsc_browser_tests.matrix as matrix
     monkeypatch.setattr(matrix, "login_as_preflight", AsyncMock(return_value={"standard": "PASS"}))
@@ -180,7 +207,9 @@ def test_json_route_leaves_no_session_url_in_stdout_or_any_run_file(monkeypatch,
     out = capsys.readouterr()
     cells = json.loads(out.out)
     assert code != 0 and [c["profile"] for c in cells] == ["admin", "standard"]
-    assert cells[1]["identity"]["user_after_login_as"] == USER and cells[1]["identity"]["org_id_18"] == ORG
+    identity = cells[1]["identity"]
+    assert identity["user_after_login_as"] == USER and identity["org_id_18"] == ORG
+    assert identity["admin_username"] == USERNAMES[ADMIN] and identity["org_verified_by"] == "username"
     assert all(call.kwargs.get("headed") is False for call in opened.await_args_list)
     text = out.out + out.err
     files = [p for p in (tmp_path / "client").rglob("*") if p.is_file()]
@@ -190,20 +219,30 @@ def test_json_route_leaves_no_session_url_in_stdout_or_any_run_file(monkeypatch,
     assert_clean(text)
 
 
-def test_page_org_observer_returns_only_a_valid_org_id():
-    frames = [types.SimpleNamespace(evaluate=AsyncMock(return_value=None)),
-              types.SimpleNamespace(evaluate=AsyncMock(return_value=ORG))]
-    page = types.SimpleNamespace(frames=frames)
-    assert asyncio.run(auth.observe_org_id(page)) == ORG
-    for value in (None, SID, "005000000000001AAA", ORG + "!x", 42):
-        frames = [types.SimpleNamespace(evaluate=AsyncMock(return_value=value))]
+def test_username_reader_keeps_only_a_valid_username():
+    page = Page()
+    assert asyncio.run(auth.observe_username(page, ADMIN, "67.0")) == USERNAMES[ADMIN]
+    assert asyncio.run(auth.observe_username(page, ADMIN, "not a version")) == USERNAMES[ADMIN]
+    assert page.fetched[-1] == (auth.UI_API_VERSION, ADMIN)
+    for value in ({"status": 200, "username": SID}, {"status": 200, "username": "no at sign"},
+                  {"status": 200, "username": None}, {"status": 302, "username": ADMIN_NAME}, None, "text"):
+        bad = types.SimpleNamespace(evaluate=AsyncMock(return_value=value))
         with pytest.raises(auth.AuthError) as info:
-            asyncio.run(auth.observe_org_id(types.SimpleNamespace(frames=frames)))
+            asyncio.run(auth.observe_username(bad, ADMIN))
         assert SID not in str(info.value)
-    broken = types.SimpleNamespace(frames=[types.SimpleNamespace(evaluate=AsyncMock(side_effect=RuntimeError(SECRET)))])
+    broken = types.SimpleNamespace(evaluate=AsyncMock(side_effect=RuntimeError(SECRET)))
     with pytest.raises(auth.AuthError) as info:
-        asyncio.run(auth.observe_org_id(broken))
+        asyncio.run(auth.observe_username(broken, ADMIN))
     assert_clean(str(info.value))
+    with pytest.raises(auth.AuthError):
+        asyncio.run(auth.observe_username(page, "005'); alert(1); //", "67.0"))
+
+
+def test_page_scripts_read_no_cookie_and_return_only_status_and_username():
+    script = auth._PAGE_USERNAME_JS
+    assert "cookie" not in script.casefold()
+    assert "credentials: 'same-origin'" in script and "?fields=User.Username" in script
+    assert "return {status: response.status, username:" in script
 
 
 class FakeContext:

@@ -20,6 +20,8 @@ class AdminAuth(NamedTuple):
     org_id_18: str
     instance_url: str
     frontdoor_url: str  # CONTAINS access token; do NOT log or commit
+    username: str = ""  # the username sf resolves for the alias
+    api_version: str = ""
 
 
 def get_admin_auth(sf_client, target_org: str) -> AdminAuth:
@@ -36,6 +38,8 @@ def get_admin_auth(sf_client, target_org: str) -> AdminAuth:
         org_id_18=d2.get("id", ""),
         instance_url=d2.get("instanceUrl", ""),
         frontdoor_url=frontdoor,
+        username=d2.get("username", "") or "",
+        api_version=d2.get("apiVersion", "") or "",
     )
 
 
@@ -57,7 +61,7 @@ class BrowserSession:
     browser: object
     context: object
     owns_browser: bool    # False when attached — never close the operator's browser
-    guarded: bool = False  # connected mode: the org is checked, and the page's org must be read
+    guarded: bool = False  # connected mode: the page's username must match the alias's
 
 
 async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
@@ -174,36 +178,47 @@ async def observe_user_id(page) -> str:
     return value
 
 
-_ORG_ID = r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?"
-# Runs in the page and returns only a validated org ID, never a cookie string: the
-# Classic and Setup frames' UserContext.organizationId, else the org ID Salesforce keeps
-# in its `oid` cookie, read and matched inside the page (the session cookie is HttpOnly
-# and never read).
-_PAGE_ORG_JS = r"""() => {
-    const valid = v => (typeof v === 'string' && /^%s$/.test(v)) ? v : null;
-    try { const v = valid(window.UserContext && window.UserContext.organizationId); if (v) return v; } catch (_) {}
+UI_API_VERSION = "62.0"  # fallback when sf org display names no apiVersion
+_USER_ID = r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?"
+_USERNAME = r"[^\s@]{1,80}@[^\s@]{1,80}"
+# Runs in the page: a same-origin UI API read of the page user's own Username (the
+# Lightning domain serves it on the session; the REST root does not). Only the HTTP
+# status and the Username string come back; the response body stays in the page.
+_PAGE_USERNAME_JS = r"""async ([version, userId]) => {
     try {
-        const m = /(?:^|;\s*)oid=([^;]*)/.exec(document.cookie || '');
-        return m ? valid(decodeURIComponent(m[1])) : null;
-    } catch (_) { return null; }
-}""" % _ORG_ID
+        const response = await fetch('/services/data/v' + version + '/ui-api/records/' + userId
+                                     + '?fields=User.Username',
+                                     {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+        if (!response.ok) return {status: response.status, username: null};
+        const body = await response.json();
+        const field = body && body.apiName === 'User' && body.fields && body.fields.Username;
+        return {status: response.status, username: field && typeof field.value === 'string' ? field.value : null};
+    } catch (_) { return {status: 0, username: null}; }
+}"""
 
 
-async def observe_org_id(page) -> str:
-    """Read the org the active page is in, from the page itself (every frame, top first),
-    never from the CLI's org display. Unknown is an error, never a match."""
-    failure = None
-    for frame in list(getattr(page, "frames", None) or [page]):
-        try:
-            value = await frame.evaluate(_PAGE_ORG_JS)
-        except Exception as exc:
-            failure = type(exc).__name__  # a detached or cross-origin frame; try the next
-            continue
-        if isinstance(value, str) and re.fullmatch(_ORG_ID, value):
-            return value
-    if failure:
-        raise AuthError(f"Browser org could not be observed ({failure})")
-    raise AuthError("Browser org ID is unavailable in the page; the org is unverified")
+async def observe_username(page, user_id: str, api_version: str | None = None) -> str:
+    """Read the Username of the page's user (its Aura User Id) from inside the page.
+
+    A Salesforce username is globally unique, so matching it with the username sf
+    resolves for the org alias proves both the org and the user. Unknown is an error,
+    never a match; only the Username is kept, never the response."""
+    version = api_version if isinstance(api_version, str) and re.fullmatch(r"\d{2,3}\.0", api_version) \
+        else UI_API_VERSION
+    if not isinstance(user_id, str) or not re.fullmatch(_USER_ID, user_id):
+        raise AuthError("Browser username cannot be read without a valid User Id")
+    try:
+        found = await page.evaluate(_PAGE_USERNAME_JS, [version, user_id])
+    except Exception as exc:
+        raise AuthError(f"Browser username could not be read ({type(exc).__name__})") from None
+    status = found.get("status") if isinstance(found, dict) else None
+    username = found.get("username") if isinstance(found, dict) else None
+    if status != 200:
+        code = status if isinstance(status, int) else "no response"
+        raise AuthError(f"Browser username could not be read (UI API HTTP {code})")
+    if not isinstance(username, str) or not re.fullmatch(_USERNAME, username):
+        raise AuthError("Browser username is unavailable in the UI API response")
+    return username
 
 
 def same_user(observed: str, expected: str) -> bool:
