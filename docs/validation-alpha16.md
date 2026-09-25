@@ -32,12 +32,16 @@ or changed documentation contains an em dash.
 
 Every alpha 15 test passes without edits except one behavior test and the release-record
 tests the version bump touches. Reconciled against `git diff --stat dea2041 -- tests/`:
-five files that existed at `dea2041` differ. Three of them edit existing tests (the four
-tests below). The other two only add new tests and change no existing one:
+six files that existed at `dea2041` differ. Three of them edit existing tests (the four
+tests below). The other three only add new tests and change no existing one:
 `tests/test_approval.py` gains
 `test_production_upsert_still_refused_outright_not_bypassable_via_new_component` and
 `tests/test_before_state.py` gains `test_write_components_upsert_matches_a15_both_spellings`
-(both R44 regressions). Every other changed file under `tests/` is new in alpha 16.
+(both R44 regressions), and `tests/test_permissions.py` gains
+`test_v2_2_owner_rules_keep_the_absolute_key_rule`, `test_v2_2_delegated_rules_name_no_home`
+and `test_v2_2_drift_accepts_the_home_relative_key_rule_only` (with their helper
+`_key_rules`). Every other changed file under `tests/` is new in alpha 16.
+`tests/test_docs_delegated.py` checks this count and file list against git.
 
 - `tests/test_gate_connected.py::test_hook_end_to_end`. Its first line set only
   `TORQUE_CLIENT=acme` and expected the hook to bind the session to Acme. Requirement 9
@@ -192,6 +196,18 @@ failing:
 One alpha 16 test changed in this round: `test_unattended_gate::test_an_unstatable_sidecar_reads_as_invalid_not_as_absent`
 now denies `lstat` as well as `stat`, since the sidecar check uses `lstat`. It did not
 exist at `dea2041`.
+
+A third external review (at b02d0d6) found I1, I3 to I6, M1 and the doctor defect
+resolved, and three items open. Fix round V2-4 closed them, each with a test written
+first and seen failing:
+
+| item | fix | tests |
+|---|---|---|
+| I2 residual | An idempotent retry and the publish race also compare payload_check (a gate approval relabeled `wrapper` would skip the gate's payload recheck) and every other binding field the grant writes from the request, the derived call and the org: change, org kind, namespaces, validated job, before state, manual recovery, new components, recovery snapshot, plan and folder, and single use. A mismatch is `idempotency-conflict` | test_idempotent_grant::test_v2_4_retry_refuses_a_stored_gate_approval_switched_to_wrapper, ::test_v2_4_publish_race_refuses_a_stored_gate_approval_switched_to_wrapper, ::test_v2_4_retry_compares_every_derived_binding (12 cases), ::test_v2_4_exact_csv_retry_still_returns_the_earlier_grant |
+| Human view | `approval show` confines payloads only when the running account is the named approver delegate and that delegate's kind is `ai`; a named human approver sees the ordinary a15 view | test_request_view::test_v2_4_a_named_human_approver_at_the_running_uid_sees_the_ordinary_view, ::test_v2_4_a_named_ai_approver_at_the_running_uid_is_confined |
+| M2 residual | "Edited a15 tests" names six changed baseline files, not five (`tests/test_permissions.py` adds three tests); the count and file list are now checked against git | test_docs_delegated::test_edited_a15_tests_reconciliation_matches_git |
+
+No existing test changed in this round.
 
 Rulings on the remaining V2 items:
 

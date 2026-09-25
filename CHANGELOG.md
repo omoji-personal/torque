@@ -22,11 +22,11 @@ unchanged.
   hour. Run by the delegated approver account, the view and the grant read payload files
   only under the request's working folder (the project's `sfdx-project.json` included,
   checked before it is opened) and refuse a payload path outside it; run by anyone else,
-  the view derives the request as the consultant's grant does. The view lists the
+  a named human approver included, the view derives the request as the consultant's grant does. The view lists the
   components of a manifest an MCP deploy names. A retry with the same idempotency key
   repeats every check a fresh grant makes (request, payload, consent, org) and returns the
-  earlier grant only when its call key, payload, folder and org match the call derived
-  again. `torque approval lookup --idempotency-key K` finds an earlier grant, checking the
+  earlier grant only when every binding (call key, payload digest and check mode, argv,
+  folder, org and its kind, change, recovery fields) matches the call derived again. `torque approval lookup --idempotency-key K` finds an earlier grant, checking the
   whole stored record, field types included. `torque approval deny REQ --delegated --reason-class C --reason
   TEXT` publishes a denial; a denial is read only when its fields, the delegated approver's
   identity and its request's hash check out, and an unreadable denials folder is an error.

@@ -61,3 +61,37 @@ def test_changelog_readme_and_record_for_alpha16():
     assert "2.0.0a16" in readme and "delegated-approver.md" in readme
     connected = (ROOT / "docs" / "connected-approval.md").read_text(encoding="utf-8")
     assert "delegated-approver.md" in connected
+
+
+def test_edited_a15_tests_reconciliation_matches_git():
+    """V2-4: the "Edited a15 tests" count and file list match
+    `git diff --name-only dea2041 -- tests/` restricted to files that existed at
+    dea2041. Skipped when git or the dea2041 commit is not available (an sdist or
+    a shallow clone)."""
+    import re
+    import shutil
+    import subprocess
+    import pytest
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not available")
+
+    def run(*args):
+        return subprocess.run([git, "-C", str(ROOT), *args], capture_output=True, text=True, timeout=30,
+                              stdin=subprocess.DEVNULL)
+    if run("cat-file", "-e", "dea2041^{commit}").returncode != 0:
+        pytest.skip("the dea2041 baseline commit is not in this checkout")
+    baseline = run("ls-tree", "-r", "--name-only", "dea2041", "--", "tests/")
+    changed = run("diff", "--name-only", "dea2041", "--", "tests/")
+    if baseline.returncode != 0 or changed.returncode != 0:
+        pytest.skip("git could not compare against dea2041")
+    edited = sorted(set(changed.stdout.split()) & set(baseline.stdout.split()))
+    record = (ROOT / "docs" / "validation-alpha16.md").read_text(encoding="utf-8")
+    section = " ".join(record.split("## Edited a15 tests", 1)[1].split("\n## ", 1)[0].split())
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+             "nine": 9, "ten": 10}
+    match = re.search(r"(\w+) files that existed at `dea2041` differ", section)
+    assert match, "the reconciliation sentence is missing"
+    assert words.get(match.group(1).lower()) == len(edited), (match.group(1), edited)
+    for name in edited:
+        assert f"`{name}" in section, name
