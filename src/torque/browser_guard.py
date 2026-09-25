@@ -37,6 +37,8 @@ class Guard:
     recheck: object = None
     recheck_every: float = 0.0  # unused; kept so older callers still construct a Guard
     stopped: bool = False
+    # The window was granted by a delegated approver: the browser runs headless only.
+    delegated: bool = False
 
     def authorized(self, now: float | None = None, write: bool = True) -> bool:
         """The session may still act: not stopped, inside its window, and its window and
@@ -154,7 +156,8 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
     extra = config.get("managed_namespaces") if isinstance(config.get("managed_namespaces"), list) else []
     return Guard(org_alias=target_org, org_id_18=info.org_id_18, host_key=host_key,
                  namespaces=tuple(n for n in (*DEFAULT_MANAGED, *extra) if isinstance(n, str) and n.isalnum()),
-                 expires_at=approval._epoch(window["expires_at"]), recheck=recheck)
+                 expires_at=approval._epoch(window["expires_at"]), recheck=recheck,
+                 delegated=window.get("delegated") is not False)
 
 
 async def _stop(context, guard: Guard) -> None:

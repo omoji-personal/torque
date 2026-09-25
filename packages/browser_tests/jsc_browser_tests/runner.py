@@ -272,6 +272,7 @@ async def run_flow_variation(
                 identity["status"] = "MATCHED"
             else:
                 identity["note"] = "admin is the configured role label; the observed User Id is not proof of administrative permissions"
+            await _observe_org(page, identity, admin_auth.org_id_18, strict=bool(getattr(sess, "guarded", False)))
 
             ctx = FlowCtx(
                 target_org=target_org, instance_url=admin_auth.instance_url,
@@ -301,4 +302,43 @@ async def run_flow_variation(
             await auth.close_session(sess)
     result.error = redact(result.error)
     result.side_effects = redact(result.side_effects)
+    for step in result.steps:
+        step.detail = redact(step.detail)
+        step.side_effects = redact(step.side_effects)
     return result
+
+
+async def _observe_org(page, identity: dict, expected_org_id: str, *, strict: bool) -> None:
+    """Record the org the page is in, read from the page after login. A page in another
+    org stops the run. An unreadable org stops a connected (guarded) run; elsewhere it is
+    recorded as not checked, never as a match."""
+    try:
+        observed = await auth.observe_org_id(page)
+    except auth.AuthError:
+        identity["org_status"] = "NOT_CHECKED"
+        if strict:
+            raise auth.AuthError("The browser's org could not be read from the page; flow was not executed") from None
+        return
+    identity.update(observed_org_id_18=observed, org_basis="browser page (UserContext or oid)")
+    if not (expected_org_id and observed[:15] == expected_org_id[:15]):
+        identity["org_status"] = "MISMATCH"
+        raise auth.AuthError("The browser's org does not match the selected org; flow was not executed")
+    identity["org_status"] = "MATCHED"
+
+
+def identity_report(result: "FlowResult") -> dict:
+    """Who the browser was, observed in the page: the org, the admin before Login As, the
+    user after it, and the admin after restoration. Never a session URL or token."""
+    effects = result.side_effects or {}
+    identity = effects.get("browser_identity") or {}
+    restore = effects.get("session_restore") or {}
+    before = identity.get("baseline_user_id")
+    after = restore.get("user_id") if restore.get("status") == "OBSERVED" else None
+    status = identity.get("status")
+    org_status = identity.get("org_status")
+    if status in ("MATCHED", "OBSERVED") and org_status != "MATCHED":
+        status = "ORG_" + (org_status or "NOT_CHECKED")
+    return {"org_id_18": identity.get("observed_org_id_18"), "admin_before": before,
+            "user_after_login_as": identity.get("observed_user_id") if identity.get("requested_user_id") else None,
+            "admin_restored": after, "restored": bool(before and after and before[:15] == after[:15]),
+            "status": status}

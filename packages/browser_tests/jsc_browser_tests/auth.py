@@ -57,6 +57,7 @@ class BrowserSession:
     browser: object
     context: object
     owns_browser: bool    # False when attached — never close the operator's browser
+    guarded: bool = False  # connected mode: the org is checked, and the page's org must be read
 
 
 async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
@@ -77,6 +78,9 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
             guard = connected_guard(admin_auth.target_org)
         except GuardRefused as exc:
             raise AuthError(f"connected mode: {exc}") from None
+    if guard is not None and getattr(guard, "delegated", True) and headed:
+        raise AuthError("connected mode: a browser window granted by a delegated approver runs headless "
+                        "only; run without --headed")
     if guard is not None and cdp_endpoint:
         raise AuthError("connected mode: an attached (CDP) browser cannot be guarded; Torque launches its own "
                         "browser, whose requests it checks before they are sent")
@@ -116,7 +120,7 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
         if "login" in (title or "").lower():
             raise AuthError("Frontdoor did not establish a session")
         return BrowserSession(page=page, channel="frontdoor", browser=browser,
-                              context=context, owns_browser=True)
+                              context=context, owns_browser=True, guarded=guard is not None)
     except Exception as exc:
         # Playwright includes the full navigated frontdoor URL in many exceptions.
         # Close only our resources and retain the exception type, never its URL/message.
@@ -168,6 +172,38 @@ async def observe_user_id(page) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", value):
         raise AuthError("Current browser User Id is unavailable; named-user coverage is unverified")
     return value
+
+
+_ORG_ID = r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?"
+# Runs in the page and returns only a validated org ID, never a cookie string: the
+# Classic and Setup frames' UserContext.organizationId, else the org ID Salesforce keeps
+# in its `oid` cookie, read and matched inside the page (the session cookie is HttpOnly
+# and never read).
+_PAGE_ORG_JS = r"""() => {
+    const valid = v => (typeof v === 'string' && /^%s$/.test(v)) ? v : null;
+    try { const v = valid(window.UserContext && window.UserContext.organizationId); if (v) return v; } catch (_) {}
+    try {
+        const m = /(?:^|;\s*)oid=([^;]*)/.exec(document.cookie || '');
+        return m ? valid(decodeURIComponent(m[1])) : null;
+    } catch (_) { return null; }
+}""" % _ORG_ID
+
+
+async def observe_org_id(page) -> str:
+    """Read the org the active page is in, from the page itself (every frame, top first),
+    never from the CLI's org display. Unknown is an error, never a match."""
+    failure = None
+    for frame in list(getattr(page, "frames", None) or [page]):
+        try:
+            value = await frame.evaluate(_PAGE_ORG_JS)
+        except Exception as exc:
+            failure = type(exc).__name__  # a detached or cross-origin frame; try the next
+            continue
+        if isinstance(value, str) and re.fullmatch(_ORG_ID, value):
+            return value
+    if failure:
+        raise AuthError(f"Browser org could not be observed ({failure})")
+    raise AuthError("Browser org ID is unavailable in the page; the org is unverified")
 
 
 def same_user(observed: str, expected: str) -> bool:
