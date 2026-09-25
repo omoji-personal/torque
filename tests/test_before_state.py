@@ -130,3 +130,22 @@ def test_failed_capture_records_nothing(change):
     with pytest.raises(ws.WorkspaceError, match="no before-state"):
         bs.capture_metadata(root, "Acme", cid, "acme-prod", ["Flow:X"], run=fake)
     assert "before_state" not in [e["kind"] for e in changes.get_change(root, "Acme", cid)["events"]]
+
+
+# R44 (D4 fix round 1): write_components must stay exactly a15's behavior for an
+# upsert (empty for both flag spellings; grant()'s production before-state check,
+# via _derive_command, reads this function's output, not the view-only
+# Record:Object:external:Field normalization added in approval.view_components).
+
+
+def test_write_components_upsert_matches_a15_both_spellings():
+    long = ["sf", "data", "upsert", "record", "--sobject", "Contact", "--external-id", "Email_Ext_Id__c",
+            "--values", "Email_Ext_Id__c=steward@acme.example Title=Steward", "--target-org", "acme-dev"]
+    assert bs.write_components(long, None) == []
+    # a15's pre-existing quirk (unchanged here): the short -i flag collides with
+    # --record-id's short spelling, so a short-flag upsert is read as a (bogus)
+    # record ID rather than empty. Recorded here so a future change to that
+    # quirk is a deliberate, tested decision, not an accidental side effect.
+    short = ["sf", "data", "upsert", "record", "-s", "Contact", "-i", "Email_Ext_Id__c",
+             "-v", "Email_Ext_Id__c=steward@acme.example Title=Steward", "-o", "acme-dev"]
+    assert bs.write_components(short, None) == ["Record:Contact:Email_Ext_Id__c"]

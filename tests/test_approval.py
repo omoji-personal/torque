@@ -199,6 +199,24 @@ def test_uncovered_component_blocks_until_declared_new(setup):
     assert grant(root, req, new_components=["ApexClass:NewRouter"])["id"].startswith("apr-")
 
 
+def test_production_upsert_still_refused_outright_not_bypassable_via_new_component(setup):
+    """R44 regression: an upsert Torque cannot list a record ID for must still be
+    refused outright in production, exactly as a15 did, with no escape via
+    --new-component. (approval.view_components normalizes an upsert to
+    Record:Object:external:Field for a delegated approver's read-only view; that
+    normalization must never reach before_state.write_components, which this
+    production check reads through _derive_command.)"""
+    root, cid, before, project = setup
+    argv = ["sf", "data", "upsert", "record", "--sobject", "Contact", "--external-id", "Email_Ext_Id__c",
+            "--values", "Email_Ext_Id__c=steward@acme.example Title=Steward", "--target-org", "acme-prod"]
+    req = request(root, cid, before, project, argv=argv)
+    assert req["components"] == []
+    with pytest.raises(ws.WorkspaceError, match="cannot list"):
+        grant(root, req)
+    with pytest.raises(ws.WorkspaceError, match="cannot list"):
+        grant(root, req, new_components=["Record:Contact:external:Email_Ext_Id__c"])
+
+
 def test_changed_before_state_blocks_grant(setup):
     root, cid, before, project = setup
     req = request(root, cid, before, project)

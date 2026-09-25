@@ -285,15 +285,19 @@ def payload_files(argv: list[str], cwd: Path, capped: bool = True) -> list[Path]
     return None if capped and len(unique) > PAYLOAD_FILE_CAP else unique
 
 
-def payload_digest(argv: list[str], cwd: Path, capped: bool = True) -> tuple[str | None, int]:
-    """(sha256 over each payload file's path relative to cwd and content hash, file
-    count), or (None, 0) over the caps. A link is hashed as its target text and the
-    content read through it."""
+def _payload_entries(argv: list[str], cwd: Path, capped: bool = True) -> list[tuple[Path, str]] | None:
+    """(path, content sha256) for every payload file, read exactly the way the
+    digest needs it: a symlink is hashed as its target text (`link:<target>\\0`)
+    then the content read through it, an unreadable file as `<unreadable>`. None
+    when the payload is over the caps (capped only). The single source both
+    payload_digest and payload_listing read, so a view's file list and its
+    rolled-up digest can never disagree."""
     cwd = Path(cwd)
     files = payload_files(argv, cwd, capped=capped)
     if files is None:
-        return None, 0
-    total, lines = 0, []
+        return None
+    total = 0
+    out: list[tuple[Path, str]] = []
     for path in files:
         try:
             data = path.read_bytes()
@@ -303,13 +307,28 @@ def payload_digest(argv: list[str], cwd: Path, capped: bool = True) -> tuple[str
             data = b"<unreadable>"
         total += len(data)
         if capped and total > PAYLOAD_BYTES_CAP:
-            return None, 0
-        try:
-            name = path.relative_to(cwd).as_posix()
-        except ValueError:
-            name = path.as_posix()
-        lines.append(f"{name}\0{hashlib.sha256(data).hexdigest()}\n")
-    return "sha256:" + hashlib.sha256("".join(sorted(lines)).encode()).hexdigest(), len(files)
+            return None
+        out.append((path, hashlib.sha256(data).hexdigest()))
+    return out
+
+
+def _payload_name(path: Path, cwd: Path) -> str:
+    try:
+        return path.relative_to(cwd).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def payload_digest(argv: list[str], cwd: Path, capped: bool = True) -> tuple[str | None, int]:
+    """(sha256 over each payload file's path relative to cwd and content hash, file
+    count), or (None, 0) over the caps. A link is hashed as its target text and the
+    content read through it."""
+    cwd = Path(cwd)
+    entries = _payload_entries(argv, cwd, capped=capped)
+    if entries is None:
+        return None, 0
+    lines = [f"{_payload_name(path, cwd)}\0{sha}\n" for path, sha in entries]
+    return "sha256:" + hashlib.sha256("".join(sorted(lines)).encode()).hexdigest(), len(entries)
 
 
 def _dirs(workspace, client, create: bool = True) -> dict[str, Path]:
@@ -655,7 +674,10 @@ def load_request(workspace, client, request_id) -> dict:
 
 
 def load_request_hashed(workspace, client, request_id) -> tuple[dict, str]:
-    """The request and the SHA-256 of the exact bytes it was read from."""
+    """The request and the SHA-256 of the exact bytes it was read from. Every field
+    a view or a grant relies on is validated here, so a tampered or malformed
+    request surfaces as a WorkspaceError once, rather than a raw KeyError or
+    ValueError later."""
     if not _valid_id(request_id, "req-"):
         raise ws.WorkspaceError("a request ID looks like req-0123456789ab")
     path = _dirs(workspace, client, create=False)["requests"] / f"{request_id}.json"
@@ -667,6 +689,12 @@ def load_request_hashed(workspace, client, request_id) -> tuple[dict, str]:
     if not isinstance(req, dict) or req.get("schema") != REQUEST_SCHEMA or req.get("id") != request_id \
             or req.get("client") != ws.slug_for(client):
         raise ws.WorkspaceError(f"invalid request file: {path}")
+    if req.get("kind") not in KINDS or not isinstance(req.get("org_alias"), str) or not req.get("org_alias"):
+        raise ws.WorkspaceError(f"invalid request file: {path}")
+    try:
+        _epoch(req.get("created_at"))
+    except (TypeError, ValueError) as exc:
+        raise ws.WorkspaceError(f"invalid request file: {path}") from exc
     return req, "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
@@ -701,12 +729,23 @@ def operation_for(kind: str, argv: list[str] | None, mcp: dict | None) -> str:
 
 
 def view_components(argv: list[str] | None, cwd) -> list[str]:
-    """What a command changes, normalized (sorted, unique): deploy components,
-    Record:Object:Id, Record:Object:external:Field for an upsert, or (when the
-    write names no component Torque can list) Record:Object:where:CLAUSE."""
+    """What a command changes, normalized (sorted, unique) for the view only: deploy
+    components, Record:Object:Id, Record:Object:external:Field for an upsert (both
+    flag spellings), or (when the write names no component Torque can list)
+    Record:Object:where:CLAUSE. R44: an upsert is normalized here, never inside
+    before_state.write_components, which grant()'s production before-state check
+    (via _derive_command) still reads at its unchanged a15 behavior; folding this
+    into that function let a long-flag upsert grant in production with no
+    before-state, via --new-component, which a15 always refused outright."""
     if not argv:
         return []
-    found = before_state.write_components(list(argv), Path(cwd))
+    words = [w for w in argv[1:] if not w.startswith("-")][:3]
+    if tuple(words) == ("data", "upsert", "record"):
+        sobject = argv_flags.values(argv, ("-s", "--sobject"))
+        field = argv_flags.values(argv, ("-i", "--external-id"))
+        found = [f"Record:{sobject[0]}:external:{field[0]}"] if sobject and field else []
+    else:
+        found = before_state.write_components(list(argv), Path(cwd))
     if not found:
         sobject = argv_flags.values(argv, ("-s", "--sobject"))
         where = argv_flags.values(argv, ("-w", "--where"))
@@ -716,25 +755,23 @@ def view_components(argv: list[str] | None, cwd) -> list[str]:
 
 
 def payload_listing(argv: list[str] | None, cwd) -> list[dict]:
-    """Every payload file, path relative to cwd and its own sha256, sorted by path."""
+    """Every payload file, path relative to cwd and its own sha256 (the same hash
+    payload_digest folds into its rolled-up digest), sorted by path."""
     if not argv:
         return []
-    files = payload_files(list(argv), Path(cwd), capped=False) or []
-    out = []
-    for path in files:
-        try:
-            name = path.relative_to(Path(cwd)).as_posix()
-        except ValueError:
-            name = path.as_posix()
-        out.append({"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
-    return sorted(out, key=lambda f: f["path"])
+    cwd = Path(cwd)
+    entries = _payload_entries(list(argv), cwd, capped=False) or []
+    return sorted(({"path": _payload_name(path, cwd), "sha256": sha} for path, sha in entries),
+                  key=lambda f: f["path"])
 
 
 def _screen_lines(req: dict, derived: dict, org_id: str, org_kind: str, kind_line: str,
-                  *, middle: list[str] = ()) -> list[str]:
+                  *, middle: tuple[str, ...] = ()) -> list[str]:
     """The lines every approval screen shares: client, org, kind, call, working
     folder and components, then (with room in `middle` for the grant screen's own
-    New/Check-only/Before rows) namespaces and payload."""
+    New/Check-only/Before rows) namespaces and payload. Raw (unescaped): grant()
+    escapes each line itself at write time; screen_lines() escapes the whole list
+    once for the view."""
     return [f"Client:      {req['client']}    Change: {req.get('change')}",
             f"Org:         {req['org_alias']}  {org_id}  {org_kind.upper()}",
             kind_line,
@@ -746,11 +783,24 @@ def _screen_lines(req: dict, derived: dict, org_id: str, org_kind: str, kind_lin
             f"Payload:     {derived['payload_digest'] or 'n/a'} ({derived['payload_files']} files)"]
 
 
+def _ttl(req: dict) -> int:
+    """The approval window this request's kind (and, for a browser window, its
+    requested minutes, capped) allows. Shared by request_view and grant so a
+    request's advertised expiry and its actual grant window can never drift
+    apart."""
+    kind = req["kind"]
+    minutes = req.get("browser_minutes") if kind == "browser" else None
+    return min(TTL_SECONDS[kind], int(minutes) * 60) if minutes else TTL_SECONDS[kind]
+
+
 def screen_lines(req: dict, derived: dict, org_id: str, org_kind: str, ttl: int) -> list[str]:
-    """What a delegated approver reviews: the grant screen without the terminal prompt."""
+    """What a delegated approver reviews: the grant screen without the terminal
+    prompt, every line escaped through printable() exactly once (control and
+    bidirectional-override characters shown as escapes, never printed raw)."""
     kind_line = f"Kind:        {req['kind']}; valid {ttl // 60} minutes"
-    return [*_screen_lines(req, derived, org_id, org_kind, kind_line),
-            f"Purpose:     {printable(req.get('purpose') or 'n/a')}"]
+    lines = [*_screen_lines(req, derived, org_id, org_kind, kind_line),
+             f"Purpose:     {req.get('purpose') or 'n/a'}"]
+    return [printable(line) for line in lines]
 
 
 def request_view(workspace, client, request_id, *, resolve=None) -> dict:
@@ -763,7 +813,7 @@ def request_view(workspace, client, request_id, *, resolve=None) -> dict:
     org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
     kind = req["kind"]
     minutes = req.get("browser_minutes") if kind == "browser" else None
-    ttl = min(TTL_SECONDS[kind], int(minutes) * 60) if minutes else TTL_SECONDS[kind]
+    ttl = _ttl(req)
     argv = derived.get("payload_argv") if kind == "command" else None
     cwd = derived.get("cwd")
     return {"schema": VIEW_SCHEMA, "request_id": request_id, "request_sha256": sha, "client": req["client"],
@@ -897,8 +947,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
             raise ws.WorkspaceError("production needs an independent before-state (--before-state or "
                                     "--capture-before-*) or a written manual recovery path")
     kind = req["kind"]
-    minutes = req.get("browser_minutes") if kind == "browser" else None
-    ttl = min(TTL_SECONDS[kind], int(minutes) * 60) if minutes else TTL_SECONDS[kind]
+    ttl = _ttl(req)
     job = req.get("validated_job")
     job_line = job or "none recorded"
     if job:
