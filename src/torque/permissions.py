@@ -36,6 +36,7 @@ ASK_RULES = tuple([f"Bash({p}:*)" for p in (*SF_WRITE_PREFIXES, *TORQUE_WRITE_PR
                   + ["Bash(sh *)", "Bash(env *)", "Bash(exec *)"] + list(BROWSER_SERVERS))
 FIXED_DENY_RULES = (
     "Bash(torque approval grant:*)", "Bash(torque approval deny:*)",
+    "Bash(torque approval launch-binding:*)",
     "Bash(torque approval permissions *--write*)",
     "Bash(torque client consent record:*)", "Bash(torque client consent sign-off:*)",
     "Bash(torque client consent suspend:*)", "Bash(torque launch:*)", "Bash(torque workspace ai-access:*)",

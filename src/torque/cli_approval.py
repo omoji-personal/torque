@@ -123,8 +123,20 @@ def register(sub) -> None:
                              help="with --with-hooks: the interpreter path baked into the gate hook command "
                                   "(default: this process's own sys.executable; a delegated write should name "
                                   "one the different agent account can actually execute)")
-    launch = sub.add_parser("launch", help="connected mode: start an AI session bound to one client (owner only)")
+    binding = actions.add_parser("launch-binding", help="the delegated approver: a single-use binding for one "
+                                                        "unattended `torque launch --delegated`")
+    _client_args(binding)
+    binding.add_argument("--model-id", help="an AI approver's model identifier (required for an AI delegate)")
+    binding.add_argument("--minutes", type=int, default=10, help="how long the binding stays usable (1 to 15)")
+    binding.add_argument("--json", action="store_true", help="print the binding record")
+    launch = sub.add_parser("launch", help="connected mode: start an AI session bound to one client (owner at a "
+                                           "real terminal, or --delegated with the approver's launch binding)")
     _client_args(launch)
+    launch.add_argument("--delegated", action="store_true",
+                        help="unattended: claim the delegated approver's launch binding instead of the presence check "
+                             "(tier 2 only)")
+    launch.add_argument("--binding", metavar="lnk-ID", help="with --delegated: the binding from "
+                                                            "`torque approval launch-binding`")
 
 
 def register_consent(client_sub) -> None:
@@ -168,31 +180,65 @@ def _print(value) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False))
 
 
-def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None) -> int:
-    """Bind a new AI session to one client: the hook process inherits TORQUE_CLIENT
-    from this environment, and nothing the session runs can change it."""
-    injected = presence is not None
-    if presence is None:
-        from .presence import operator_present as presence
-    check = presence()
-    if not check.ok:
-        raise ws.WorkspaceError(f"launch a connected session yourself, at a real terminal: {check.reason}")
-    if not injected:
-        from .presence import confirm_code
-        if not confirm_code():
-            raise ws.WorkspaceError("the confirmation code did not match; nothing was started")
-    from . import consent, gate
+def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None, *, delegated=False, binding=None,
+           env=None, ancestors=None) -> int:
+    """Bind a new AI session to one client through a launch record for this process
+    (exec keeps the pid): after the consultant's presence check and code
+    (unchanged), or, with `delegated`, by claiming a single-use launch binding the
+    workspace's delegated approver wrote. `extra` passes through to `claude`
+    unchanged (for example `-p --input-format stream-json`). The hook process
+    inherits TORQUE_CLIENT, TORQUE_WORKSPACE and TORQUE_LAUNCH from this
+    environment; the gate binds only from the record TORQUE_LAUNCH names."""
+    from . import consent, gate, launch as launches
+    if delegated:
+        from .delegation import Refusal
+        if not binding:
+            raise ws.WorkspaceError("--delegated needs --binding lnk-... from `torque approval launch-binding`")
+        # Every presence-free check before anything else is read (agent-session,
+        # tier 2, approver delegate, launching account); claim_binding repeats them.
+        launches._tier2_config(workspace, env=env, ancestors=ancestors)
+    else:
+        if binding:
+            raise ws.WorkspaceError("--binding goes with --delegated")
+        injected = presence is not None
+        if presence is None:
+            from .presence import operator_present as presence
+        check = presence()
+        if not check.ok:
+            raise ws.WorkspaceError(f"launch a connected session yourself, at a real terminal: {check.reason}")
+        if not injected:
+            from .presence import confirm_code
+            if not confirm_code():
+                raise ws.WorkspaceError("the confirmation code did not match; nothing was started")
     root, config = ws.load_workspace(workspace)
     if gate._resolve_ai_access(config.get("ai_access"), config.get("approval")) != "connected":
         raise ws.WorkspaceError("launch is for a connected workspace; see docs/connected-approval.md")
     folder, _, client_config = ws.load_client(root, client)
     problems = consent.consent_problems(consent.load_consent(root, client))
     if problems:
+        if delegated:
+            raise Refusal("consent-unusable", "consent is not usable: " + "; ".join(problems))
         raise ws.WorkspaceError("consent is not usable: " + "; ".join(problems))
+    record = (launches.claim_binding(root, client, binding, env=env, ancestors=ancestors) if delegated
+              else launches.write_launch_record(root, client, "human"))
     os.environ["TORQUE_CLIENT"] = client_config["slug"]
     os.environ["TORQUE_WORKSPACE"] = str(folder)
+    os.environ["TORQUE_LAUNCH"] = record["id"]
     os.chdir(root)
     execvp(AGENT_BINARY, [AGENT_BINARY, *extra])
+    return 0
+
+
+def _launch_binding(p) -> int:
+    from . import launch as launches
+    record = launches.create_binding(p.workspace, p.client, model_id=p.model_id, minutes=p.minutes)
+    if p.json:
+        _print(record)
+        return 0
+    print(f"Launch binding {record['id']} for {record['client']}, single use, valid until {record['expires_at']}.")
+    print("Start the session with:")
+    print(f"  torque launch --workspace {p.workspace} --client {p.client} --delegated --binding {record['id']} "
+          "-- CLAUDE OPTIONS")
     return 0
 
 
@@ -412,7 +458,15 @@ def _permissions(p) -> int:
 
 def run(parsed, tail: list[str] | None) -> int:
     if parsed.command == "launch":
+        if parsed.binding and not parsed.delegated:
+            raise ws.WorkspaceError("--binding goes with --delegated")
+        if parsed.delegated:
+            if not parsed.binding:
+                raise ws.WorkspaceError("--delegated needs --binding lnk-... from `torque approval launch-binding`")
+            return launch(parsed.workspace, parsed.client, tail or [], delegated=True, binding=parsed.binding)
         return launch(parsed.workspace, parsed.client, tail or [])
+    if parsed.action == "launch-binding":
+        return _launch_binding(parsed)
     if parsed.action == "request":
         return _request(parsed, tail)
     if parsed.action == "grant":

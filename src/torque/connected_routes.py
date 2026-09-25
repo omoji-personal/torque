@@ -345,7 +345,7 @@ def _torque(rest: list[str], detail: str) -> Route:
     if head == "launch" or (head == "workspace" and sub in ("ai-access", "delegate")):
         return Route("admin", None, detail, client)
     if head == "approval":
-        if sub in ("grant", "deny") or (sub == "permissions" and "--write" in rest):
+        if sub in ("grant", "deny", "launch-binding") or (sub == "permissions" and "--write" in rest):
             return Route("admin", None, detail, client)
         names = {t.split("=", 1)[0] for t in rest}
         if sub == "request" and names & {"--capture-before-record", "--capture-before-metadata", "--capture-before"}:
