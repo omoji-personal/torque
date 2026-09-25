@@ -164,3 +164,40 @@ def test_a_delegated_grant_never_reads_a_payload_outside_the_working_folder(tmp_
                        payload_digest="none", out=io.StringIO(), resolve=ORGS.get, root_owner=FAKE_OWNER, **CLEAN)
     assert info.value.reason_class == "request-changed" and "outside the working folder" in str(info.value)
     assert not [p for p in touched if str(tmp_path / "outside") in os.path.realpath(p)]
+
+
+def test_v2_3_a_project_config_link_to_an_outside_file_is_refused_without_reading_it(tmp_path, monkeypatch):
+    """V2-3 I3: sfdx-project.json is checked for its resolved location before it
+    is opened; a link to a file outside the working folder is refused and the
+    outside file is never read."""
+    import builtins
+    import pathlib
+    cwd = tmp_path / "project"
+    (cwd / "force-app").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "sfdx-project.json"
+    secret.write_text(json.dumps({"packageDirectories": [{"path": "force-app"}]}), encoding="utf-8")
+    (cwd / "sfdx-project.json").symlink_to(secret)
+    opened = []
+    real_read_text, real_open, real_os_open = pathlib.Path.read_text, builtins.open, os.open
+    monkeypatch.setattr(pathlib.Path, "read_text",
+                        lambda self, *a, **k: opened.append(str(self)) or real_read_text(self, *a, **k))
+    monkeypatch.setattr(builtins, "open", lambda f, *a, **k: opened.append(str(f)) or real_open(f, *a, **k))
+    monkeypatch.setattr(os, "open", lambda f, *a, **k: opened.append(str(f)) or real_os_open(f, *a, **k))
+    metadata = ["sf", "project", "deploy", "start", "--metadata", "Flow:X", "--target-org", "acme-dev"]
+    problems = approval.payload_root_problems(metadata, cwd)
+    assert problems and any("sfdx-project.json" in p for p in problems)
+    assert not [p for p in opened if os.path.realpath(p) == os.path.realpath(secret)
+                or p == str(cwd / "sfdx-project.json")]
+
+
+def test_v2_3_a_project_config_link_inside_the_working_folder_is_accepted(tmp_path):
+    cwd = tmp_path / "project"
+    (cwd / "force-app").mkdir(parents=True)
+    (cwd / "config").mkdir()
+    (cwd / "config" / "project.json").write_text(json.dumps({"packageDirectories": [{"path": "force-app"}]}),
+                                                 encoding="utf-8")
+    (cwd / "sfdx-project.json").symlink_to(cwd / "config" / "project.json")
+    metadata = ["sf", "project", "deploy", "start", "--metadata", "Flow:X", "--target-org", "acme-dev"]
+    assert approval.payload_root_problems(metadata, cwd) == []

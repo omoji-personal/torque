@@ -235,6 +235,11 @@ def payload_root_problems(argv: list[str], cwd: Path) -> list[str]:
     manifests = _flag_items(argv, before_state.MANIFEST_FLAGS)
     selectorless = _is_deploy(argv) and not argv_flags.values(argv, SELECTOR_FLAGS, legacy=legacy)
     if components or manifests or selectorless:
+        # V2-3 I3: the project config's resolved location is checked before it is
+        # opened; a link to a file outside the working folder is never read.
+        project = cwd / "sfdx-project.json"
+        if os.path.lexists(project) and _outside(project, cwd):
+            return problems + [f"{project} resolves outside the working folder {cwd}"]
         problems += [f"package folder {p} is outside the working folder {cwd}"
                      for p in _package_dirs(cwd) if _outside(p, cwd)]
     return problems
