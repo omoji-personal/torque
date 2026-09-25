@@ -103,7 +103,15 @@ def _control_stat(path, st=None):
 approval.grant(root, "Acme", req_id, delegated=True, model_id="reviewer-model-1", request_sha256=sha,
                payload_digest=digest, out=io.StringIO(), resolve=orgs.get, env={}, ancestors=lambda: [],
                root_owner=lambda p: os.getuid() + 1, control_stat=_control_stat)
-print(json.dumps(seen))
+# V2 I3: the interpreter's own files (the standard library, installed packages and
+# this source tree, reached by imports) are the only accesses outside the workspace
+# the assertion below tolerates; the script reports where they are.
+runtime = {sys.prefix, sys.base_prefix, sys.exec_prefix, *[p or os.getcwd() for p in sys.path]}
+for module in list(sys.modules.values()):
+    found = getattr(module, "__file__", None)
+    if isinstance(found, str):
+        runtime.add(os.path.dirname(os.path.dirname(os.path.abspath(found))))
+print(json.dumps({"seen": seen, "runtime": sorted(runtime)}))
 """
 
 
@@ -117,12 +125,27 @@ def test_the_grant_touches_only_documented_paths(tmp_path, monkeypatch):
                           view["payload"]["digest"]], capture_output=True, text=True, timeout=60,
                          env={k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")})
     assert run.returncode == 0, run.stderr
-    seen = json.loads(run.stdout.splitlines()[-1])
+    report = json.loads(run.stdout.splitlines()[-1])
+    seen, runtime = report["seen"], [os.path.realpath(p) for p in report["runtime"]]
     cwd = case.relative_to(root).as_posix()
     reads = [p.format(client="acme", cwd=cwd) for p in approval.DELEGATED_READS]
     writes = [p.format(client="acme", cwd=cwd) for p in approval.DELEGATED_WRITES]
     inside = [(kind, os.path.relpath(os.path.realpath(path), root)) for kind, path in seen
-              if os.path.realpath(path).startswith(str(root) + os.sep) or os.path.realpath(path) == str(root)]
+              if under(os.path.realpath(path), str(root))]
     assert not [p for kind, p in inside if kind == "mkdir"]
     stray = [p for _, p in inside if not any(fnmatch.fnmatch(p, pat) for pat in reads + writes) and p != "."]
     assert stray == []
+    # V2 I3: the filter above only looks inside the workspace. Everything else the
+    # grant touched must be the interpreter's own files, or a stat of a folder above
+    # the workspace made while resolving its path; any other access outside the
+    # workspace (a payload root that escaped, the account's home) is a failure.
+    outside = [(kind, os.path.realpath(path)) for kind, path in seen if not under(os.path.realpath(path), str(root))]
+    escaped = [(kind, path) for kind, path in outside
+               if not any(under(path, r) for r in runtime)
+               and not (kind == "stat" and under(str(root), path))]
+    assert escaped == []
+
+
+def under(path: str, folder: str) -> bool:
+    folder = folder.rstrip(os.sep) or os.sep
+    return path == folder or path.startswith(folder if folder == os.sep else folder + os.sep)

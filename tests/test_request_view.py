@@ -143,6 +143,8 @@ def test_view_payload_files_reconcile_with_the_digest(tmp_path, monkeypatch):
 
 
 def test_payload_digest_and_listing_share_one_read_symlink_and_unreadable_parity(tmp_path):
+    """V2 I3: an unreadable payload file is refused by both readers alike (never
+    hashed as a constant); readable files and links keep one shared read."""
     if os.name == "nt":
         pytest.skip("chmod(0o000) and symlinks are not reliably testable on Windows")
     folder = tmp_path / "payload"
@@ -151,22 +153,27 @@ def test_payload_digest_and_listing_share_one_read_symlink_and_unreadable_parity
     target = folder / "target.txt"
     target.write_bytes(b"target-bytes")
     (folder / "link.txt").symlink_to(target)
+    argv = ["sf", "project", "deploy", "start", "--source-dir", str(folder), "--target-org", "acme-dev"]
+    digest, count = approval.payload_digest(argv, tmp_path, capped=False)
+    listing = approval.payload_listing(argv, tmp_path)
+    assert count == len(listing) == 3
+    expected_lines = sorted(f"{f['path']}\0{f['sha256']}\n" for f in listing)
+    assert digest == "sha256:" + hashlib.sha256("".join(expected_lines).encode()).hexdigest()
+    by_path = {f["path"]: f["sha256"] for f in listing}
+    assert by_path["payload/plain.txt"] == hashlib.sha256(b"plain-bytes").hexdigest()
+    assert by_path["payload/target.txt"] == hashlib.sha256(b"target-bytes").hexdigest()
+    assert by_path["payload/link.txt"] == hashlib.sha256(
+        ("link:" + str(target) + "\0").encode() + b"target-bytes").hexdigest()
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return
     locked = folder / "locked.txt"
     locked.write_bytes(b"locked-bytes")
     locked.chmod(0o000)
     try:
-        argv = ["sf", "project", "deploy", "start", "--source-dir", str(folder), "--target-org", "acme-dev"]
-        digest, count = approval.payload_digest(argv, tmp_path, capped=False)
-        listing = approval.payload_listing(argv, tmp_path)
-        assert count == len(listing) == 4
-        expected_lines = sorted(f"{f['path']}\0{f['sha256']}\n" for f in listing)
-        assert digest == "sha256:" + hashlib.sha256("".join(expected_lines).encode()).hexdigest()
-        by_path = {f["path"]: f["sha256"] for f in listing}
-        assert by_path["payload/plain.txt"] == hashlib.sha256(b"plain-bytes").hexdigest()
-        assert by_path["payload/target.txt"] == hashlib.sha256(b"target-bytes").hexdigest()
-        assert by_path["payload/link.txt"] == hashlib.sha256(
-            ("link:" + str(target) + "\0").encode() + b"target-bytes").hexdigest()
-        assert by_path["payload/locked.txt"] == hashlib.sha256(b"<unreadable>").hexdigest()
+        with pytest.raises(ws.WorkspaceError, match="cannot be read"):
+            approval.payload_digest(argv, tmp_path, capped=False)
+        with pytest.raises(ws.WorkspaceError, match="cannot be read"):
+            approval.payload_listing(argv, tmp_path)
     finally:
         locked.chmod(0o600)
 

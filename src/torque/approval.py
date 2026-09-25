@@ -191,13 +191,51 @@ def payload_problems(argv: list[str], cwd: Path) -> list[str]:
             problems.append(f"{path} is a link; name the real file")
         elif not path.exists():
             problems.append(f"{path} does not exist")
-    files = payload_files(argv, cwd, capped=False) or []
+    try:
+        files = payload_files(argv, cwd, capped=False) or []
+    except ws.WorkspaceError as exc:
+        return problems + [str(exc)]
     problems += [f"{path} is a link; payload files must be real files" for path in files if path.is_symlink()]
     try:
         missing = _component_files(argv, Path(cwd), [10 ** 9])[1]
     except _TooLarge:
         missing = []
+    except ws.WorkspaceError as exc:
+        return problems + [str(exc)]
     problems += [f"{component} has no file in this project's package folders" for component in missing]
+    return problems
+
+
+def _outside(path, cwd) -> bool:
+    """True when `path`, links resolved, is not the working folder or under it."""
+    base = os.path.realpath(str(cwd))
+    found = os.path.realpath(str(path))
+    return not (found == base or found.startswith(base.rstrip(os.sep) + os.sep))
+
+
+def payload_root_problems(argv: list[str], cwd: Path) -> list[str]:
+    """V2 I3: the payload paths a delegated approver would read that are not under
+    the request's working folder, the only payload root docs/delegated-approver.md
+    documents (`{cwd}/**`); [] when there are none. Checked in reading order, so
+    nothing outside is opened to find the next path: the named files and folders
+    and any tree-import plan first (links resolved, never read), then the data files
+    a plan inside names, then the package folders sfdx-project.json names when the
+    command's components are looked up in them."""
+    cwd = Path(cwd)
+    legacy = argv_flags.is_legacy(argv)
+    direct = [cwd / v for v in _flag_items(argv, PAYLOAD_FLAGS)]
+    direct += [cwd / v for v in _flag_items(argv, ("--plan",) if legacy else ("--plan", "-p"))]
+    problems = [f"{p} is outside the working folder {cwd}" for p in dict.fromkeys(direct) if _outside(p, cwd)]
+    if problems:
+        return problems
+    named = named_payload(argv, cwd)
+    problems = [f"{p} is outside the working folder {cwd}" for p in named if _outside(p, cwd)]
+    components = _flag_items(argv, COMPONENT_FLAGS)
+    manifests = _flag_items(argv, before_state.MANIFEST_FLAGS)
+    selectorless = _is_deploy(argv) and not argv_flags.values(argv, SELECTOR_FLAGS, legacy=legacy)
+    if components or manifests or selectorless:
+        problems += [f"package folder {p} is outside the working folder {cwd}"
+                     for p in _package_dirs(cwd) if _outside(p, cwd)]
     return problems
 
 
@@ -216,7 +254,10 @@ class _TooLarge(Exception):
 
 
 def _walk(root: Path, budget: list[int]) -> list[Path]:
-    """Every file under root, following no links; raises _TooLarge past the walk cap."""
+    """Every file under root, following no links; raises _TooLarge past the walk cap.
+    A root that does not exist gives nothing (payload_problems reports a missing
+    named path); any other folder that cannot be listed is a WorkspaceError, never
+    silently left out of the file set (V2 I3)."""
     if root.is_file():
         return [root]
     found: list[Path] = []
@@ -225,8 +266,12 @@ def _walk(root: Path, budget: list[int]) -> list[Path]:
         folder = stack.pop()
         try:
             entries = list(os.scandir(folder))
-        except OSError:
-            continue
+        except FileNotFoundError:
+            if folder == root:
+                continue
+            raise ws.WorkspaceError(f"payload folder {folder} cannot be read: it disappeared") from None
+        except OSError as exc:
+            raise ws.WorkspaceError(f"payload folder {folder} cannot be read: {exc.strerror or exc}") from None
         for entry in entries:
             budget[0] -= 1
             if budget[0] < 0:
@@ -304,7 +349,8 @@ def payload_files(argv: list[str], cwd: Path, capped: bool = True) -> list[Path]
 def _payload_entries(argv: list[str], cwd: Path, capped: bool = True) -> list[tuple[Path, str]] | None:
     """(path, content sha256) for every payload file, read exactly the way the
     digest needs it: a symlink is hashed as its target text (`link:<target>\\0`)
-    then the content read through it, an unreadable file as `<unreadable>`. None
+    then the content read through it. An unreadable file is a WorkspaceError
+    (V2 I3: never a constant stand-in, which would hide a change to it). None
     when the payload is over the caps (capped only). The single source both
     payload_digest and payload_listing read, so a view's file list and its
     rolled-up digest can never disagree."""
@@ -319,8 +365,8 @@ def _payload_entries(argv: list[str], cwd: Path, capped: bool = True) -> list[tu
             data = path.read_bytes()
             if path.is_symlink():
                 data = ("link:" + os.readlink(path) + "\0").encode() + data
-        except OSError:
-            data = b"<unreadable>"
+        except OSError as exc:
+            raise ws.WorkspaceError(f"payload file {path} cannot be read: {exc.strerror or exc}") from None
         total += len(data)
         if capped and total > PAYLOAD_BYTES_CAP:
             return None
@@ -459,8 +505,17 @@ def _torque_route(argv: list[str]) -> bool:
     return bool(words and words[1] and words[1][0] in TORQUE_WRITE_WORDS)
 
 
-def _derive_command(argv: list[str], org_alias: str, cwd: Path, extra_namespaces=()) -> dict:
-    """Everything the approval binds for a command, derived from argv alone."""
+def _confine(argv: list[str], cwd: Path) -> None:
+    problems = payload_root_problems(argv, cwd)
+    if problems:
+        raise ws.WorkspaceError("a delegated approver reads payload files only under the request's working "
+                                "folder: " + "; ".join(problems[:5]))
+
+
+def _derive_command(argv: list[str], org_alias: str, cwd: Path, extra_namespaces=(), confined=False) -> dict:
+    """Everything the approval binds for a command, derived from argv alone. With
+    `confined` (the delegated view and grant), a payload path outside the working
+    folder refuses before any payload file is read."""
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
         raise ws.WorkspaceError("give the exact write command after --")
     if not _command_head_ok(argv):
@@ -474,6 +529,8 @@ def _derive_command(argv: list[str], org_alias: str, cwd: Path, extra_namespaces
                                 f"(this is: {kinds})")
     if writes[0].org != org_alias:
         raise ws.WorkspaceError(f"the command targets {writes[0].org!r}, not {org_alias!r}")
+    if confined:
+        _confine(argv, cwd)
     problems = payload_problems(argv, cwd)
     if problems:
         raise ws.WorkspaceError("the files this command uses cannot be bound: " + "; ".join(problems[:5]))
@@ -507,7 +564,7 @@ def _mcp_paths(value, depth: int = 0) -> list[str]:
     return out
 
 
-def _derive_mcp(tool_name: str, tool_input: dict, org_alias: str, cwd: Path) -> dict:
+def _derive_mcp(tool_name: str, tool_input: dict, org_alias: str, cwd: Path, confined=False) -> dict:
     from .connected_routes import classify
     if not isinstance(tool_name, str) or not tool_name.startswith("mcp__") or not isinstance(tool_input, dict):
         raise ws.WorkspaceError("an MCP request needs the tool name (mcp__server__tool) and its JSON input")
@@ -519,6 +576,8 @@ def _derive_mcp(tool_name: str, tool_input: dict, org_alias: str, cwd: Path) -> 
     payload_argv = ["mcp", "--source-dir", *paths] if paths else None
     digest, count = None, 0
     if payload_argv:
+        if confined:
+            _confine(payload_argv, cwd)
         problems = payload_problems(payload_argv, cwd)
         if problems:
             raise ws.WorkspaceError("the files this call sends cannot be bound: " + "; ".join(problems[:5]))
@@ -534,16 +593,19 @@ def _derive_mcp(tool_name: str, tool_input: dict, org_alias: str, cwd: Path) -> 
             "mcp": {"tool_name": tool_name, "tool_input": tool_input}}
 
 
-def _derive(req: dict, extra_namespaces=()) -> dict:
+def _derive(req: dict, extra_namespaces=(), confined=False) -> dict:
+    """The request's call derived again. `confined` (V2 I3): the delegated view and
+    grant read payload files only under the request's working folder."""
     if req.get("kind") in ("command", "mcp"):
         cwd = Path(str(req.get("cwd") or ""))
         if not cwd.is_absolute() or not cwd.is_dir():
             raise ws.WorkspaceError("the request's working folder is missing")
         if req["kind"] == "command":
             return _derive_command(req.get("argv") or req.get("payload_argv"), req.get("org_alias"), cwd,
-                                   extra_namespaces)
+                                   extra_namespaces, confined=confined)
         mcp = req.get("mcp") or {}
-        return _derive_mcp(mcp.get("tool_name"), mcp.get("tool_input"), req.get("org_alias"), cwd)
+        return _derive_mcp(mcp.get("tool_name"), mcp.get("tool_input"), req.get("org_alias"), cwd,
+                           confined=confined)
     if req.get("kind") == "browser":
         purpose = str(req.get("purpose") or "").strip()
         minutes = req.get("browser_minutes")
@@ -883,7 +945,7 @@ def request_view(workspace, client, request_id, *, resolve=None) -> dict:
     live and must still match the consent."""
     req, sha = load_request_hashed(workspace, client, request_id)
     item = _usable_consent(workspace, client)
-    derived = _derive(req, _extra_namespaces(workspace))
+    derived = _derive(req, _extra_namespaces(workspace), confined=True)
     org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
     kind = req["kind"]
     minutes = req.get("browser_minutes") if kind == "browser" else None
@@ -1243,7 +1305,7 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
     except ws.WorkspaceError as exc:
         raise delegation.Refusal("consent-unusable", str(exc)) from None
     try:
-        derived = _derive(req, _extra_namespaces(workspace, config))
+        derived = _derive(req, _extra_namespaces(workspace, config), confined=True)
     except (OSError, ValueError, TypeError, KeyError, ws.WorkspaceError) as exc:
         raise delegation.Refusal("request-changed", f"the request's call cannot be derived: {exc}") from None
     _check_review(current, derived, request_sha256, payload_digest)
@@ -1994,7 +2056,11 @@ def consume(workspace, client, call_key, org_alias, *, config, session_id=None, 
                 reasons.append(f"the approval is for a command run in {record.get('cwd')}, not {here}")
                 continue
         if record.get("payload_argv") and record.get("payload_check") != "wrapper":
-            digest, _ = payload_digest(record["payload_argv"], Path(str(record.get("cwd"))))
+            try:
+                digest, _ = payload_digest(record["payload_argv"], Path(str(record.get("cwd"))))
+            except ws.WorkspaceError as exc:
+                reasons.append(f"the files this call uses cannot be checked: {exc}")
+                continue
             if digest is None:
                 return False, "the files this call uses are too large for the gate to check"
             if digest != record.get("payload_digest"):
@@ -2152,7 +2218,10 @@ def consumed_for_wrapper(workspace, client, invocation: tuple[str, list[str]], o
     for _path, record, _marker, _used in _wrapper_matches(workspace, client, invocation, org_alias,
                                                             window=window, now=now, config=config, cwd=cwd):
         if record.get("payload_argv"):
-            digest, _ = payload_digest(record["payload_argv"], Path(str(record.get("cwd"))), capped=False)
+            try:
+                digest, _ = payload_digest(record["payload_argv"], Path(str(record.get("cwd"))), capped=False)
+            except ws.WorkspaceError:
+                continue
             if digest != record.get("payload_digest"):
                 continue
         if _exclusive(dirs["consumed"] / f"{record['id']}.wrapper", {"at": _iso(now), "cwd": record.get("cwd")}):
