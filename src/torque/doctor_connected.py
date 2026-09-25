@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -235,7 +236,28 @@ def _interpreter(command: str) -> str | None:
     return (match.group(1) or match.group(2)) if match else None
 
 
-def _interpreter_problem(command: str) -> str:
+def rewrite_command(root: Path, profile: str, sidecar: dict | None, entries: dict,
+                    hook_python: str | None = None) -> str:
+    """The exact command that rewrites this workspace's rules for its CURRENT profile
+    (fix round 1): `approval permissions --write` defaults to interactive, so an
+    instruction without --unattended would silently downgrade an unattended workspace.
+    --with-hooks when the gate hook is wired, and the recorded (or given) interpreter."""
+    words = ["torque", "approval", "permissions", "--workspace", str(root), "--write"]
+    if profile == "unattended":
+        words.append("--unattended")
+    if any(entries[event] for event in HOOK_EVENTS) or profile == "unattended":
+        words.append("--with-hooks")
+        recorded = (sidecar or {}).get("hook_python")
+        python = hook_python or (recorded if isinstance(recorded, str) and recorded else None)
+        if python:
+            words += ["--hook-python", python]
+    text = " ".join(word if word == "PYTHON" else shlex.quote(word) for word in words)
+    if profile == "invalid":
+        text += " (add --unattended if this workspace ran the unattended profile)"
+    return text
+
+
+def _interpreter_problem(command: str, fix: str) -> str:
     """Why the interpreter a hook command starts cannot run here, or "". Claude Code
     treats a hook that cannot start as a non-blocking error, so the call goes ahead
     with no gate at all: the hook fails open."""
@@ -245,12 +267,12 @@ def _interpreter_problem(command: str) -> str:
     path = python if os.path.isabs(python) or "/" in python else shutil.which(python)
     if not path or not os.path.isfile(path) or not os.access(path, os.X_OK):
         return (f"the torque.gate hook's interpreter {python} is missing or not executable by this account, so the "
-                "host would run no gate for any call (the hook fails open); rewrite the rules with --hook-python "
-                "naming an interpreter the agent account can run")
+                f"host would run no gate for any call (the hook fails open); rewrite the rules with: {fix} (PYTHON "
+                "is an interpreter the agent account can run)")
     return ""
 
 
-def _post_hook_problems(entries: dict, pre_commands: list[str], profile: str) -> list[str]:
+def _post_hook_problems(entries: dict, pre_commands: list[str], profile: str, fix: str) -> list[str]:
     """F3: the after-call hooks run the same command as PreToolUse, for every tool
     (matcher ".*"). The unattended profile needs both, for execution records."""
     from .cli import _matcher_covers
@@ -260,7 +282,7 @@ def _post_hook_problems(entries: dict, pre_commands: list[str], profile: str) ->
         if not found:
             if profile == "unattended":
                 problems.append(f"the unattended profile needs the torque.gate hook under {event} too, for "
-                                "execution records")
+                                f"execution records; rewrite the rules with: {fix}")
             continue
         if not _matcher_covers([matcher for matcher, _ in found]):
             problems.append(f'the torque.gate hook under {event} must use the matcher ".*", so every tool call '
@@ -270,12 +292,12 @@ def _post_hook_problems(entries: dict, pre_commands: list[str], profile: str) ->
     return problems
 
 
-def _sidecar_problems(root: Path, sidecar: dict | None, profile: str, entries: dict) -> list[str]:
+def _sidecar_problems(root: Path, sidecar: dict | None, profile: str, entries: dict, fix: str) -> list[str]:
     """Drift between the permission sidecar and the settings it was written with."""
     if sidecar is None:
         return []
     if profile == "invalid":
-        return ["the permission sidecar .claude/torque-permissions.json is unreadable; rewrite the rules"]
+        return [f"the permission sidecar .claude/torque-permissions.json is unreadable; rewrite the rules with: {fix}"]
     problems = []
     try:
         actual = hashlib.sha256((root / ".claude" / "settings.json").read_bytes()).hexdigest()
@@ -286,7 +308,7 @@ def _sidecar_problems(root: Path, sidecar: dict | None, profile: str, entries: d
         now = f"hashes to {actual}" if actual else "cannot be read"
         problems.append(f"the permission sidecar {permissions.PROFILE_FILE} records settings_sha256 "
                         f"{recorded or 'none'}, but .claude/settings.json {now}: the rules changed after they were "
-                        "written, or the sidecar was edited; rewrite the rules")
+                        f"written, or the sidecar was edited; rewrite the rules with: {fix}")
     hook_python = sidecar.get("hook_python")
     if isinstance(hook_python, str) and hook_python:
         seen = set()
@@ -296,7 +318,7 @@ def _sidecar_problems(root: Path, sidecar: dict | None, profile: str, entries: d
                 if python != hook_python and (event, python) not in seen:
                     seen.add((event, python))
                     problems.append(f"the torque.gate hook under {event} runs {python}, but the rules were written "
-                                    f"for {hook_python}; rewrite the rules")
+                                    f"for {hook_python}; rewrite the rules with: {fix}")
     return problems
 
 
@@ -331,17 +353,19 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
             problems.append("hooks are disabled by " + "; ".join(hook["disabled_by"]))
     # R43: the hook runs the interpreter written in settings; one this account cannot run fails open.
     commands = list(dict.fromkeys(command for event in HOOK_EVENTS for _, command in entries[event]))
-    problems += list(dict.fromkeys(p for p in map(_interpreter_problem, commands) if p))
-    problems += _post_hook_problems(entries, hook["commands"], profile)
+    fix = rewrite_command(root, profile, sidecar, entries)
+    replace_python = rewrite_command(root, profile, sidecar, entries, hook_python="PYTHON")
+    problems += list(dict.fromkeys(p for p in (_interpreter_problem(c, replace_python) for c in commands) if p))
+    problems += _post_hook_problems(entries, hook["commands"], profile, fix)
     checked = profile if profile in permissions.PROFILES else "interactive"
     drift = permissions.drift(_settings(root), permissions.generate(checked), checked)
     gated = [item for item in drift if item.startswith(_GATED_DRIFT)]
     drift = [item for item in drift if item not in gated]
     if drift:
         problems.append(f"the host permission rules are not in place ({len(drift)} issues, first: {drift[0]}); "
-                        "run torque approval permissions --workspace W --write yourself")
+                        f"run {fix} yourself")
     problems += gated
-    problems += _sidecar_problems(root, sidecar, profile, entries)
+    problems += _sidecar_problems(root, sidecar, profile, entries, fix)
     if profile == "unattended":
         if not gate_connected.unattended(root):
             problems.append("the unattended profile is only for a tier 2 workspace whose approver is a named "

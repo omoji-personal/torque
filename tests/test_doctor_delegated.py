@@ -250,3 +250,61 @@ def test_doctor_cli_json_carries_the_unattended_report(tmp_path, monkeypatch, ca
     connected = data["ai_access"]["connected"]
     assert connected["profile"] == "unattended" and connected["setup_steps"]
     assert "approvals_by_kind" in connected
+
+
+# Fix round 1: every rewrite instruction gives the exact command for the current profile,
+# so following it never silently downgrades an unattended workspace to interactive.
+
+def _rewrite_lines(problems):
+    return [p for p in problems if "torque approval permissions" in p]
+
+
+def test_unattended_drift_gives_the_unattended_rewrite_command(tmp_path, monkeypatch):
+    python = sys.executable.replace("\\", "/")
+    root = ready_root(tmp_path, monkeypatch, hook_python=python)
+    edit_settings(root, lambda data: data.setdefault("env", {}).update({"X": "1"}))
+    problems = doctor_connected.report(root, "Acme")["problems"]
+    drift = [p for p in problems if "settings_sha256" in p]
+    assert drift and all("rewrite the rules" not in p or "torque approval permissions" in p for p in problems)
+    command = (f"torque approval permissions --workspace {root} --write --unattended --with-hooks "
+               f"--hook-python {python}")
+    assert command in drift[0]
+
+
+def test_every_rewrite_instruction_names_the_command(tmp_path, monkeypatch):
+    root = ready_root(tmp_path, monkeypatch)
+
+    def damage(data):
+        data["permissions"]["ask"].append("Bash(torque deploy:*)")
+        data["permissions"]["deny"] = []
+    edit_settings(root, damage)
+    sidecar_path = root / permissions.PROFILE_FILE
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar["hook_python"] = "/opt/agent-venv/bin/python3"
+    sidecar_path.write_text(json.dumps(sidecar))
+    problems = doctor_connected.report(root, "Acme")["problems"]
+    asking = [p for p in problems if "rewrite" in p or "--write" in p]
+    assert len(asking) >= 3
+    for p in asking:
+        assert f"torque approval permissions --workspace {root} --write --unattended --with-hooks" in p, p
+        assert "--hook-python /opt/agent-venv/bin/python3" in p, p
+
+
+def test_missing_interpreter_rewrite_command_keeps_the_profile(tmp_path, monkeypatch):
+    missing = str(tmp_path / "gone" / "python3")
+    root = ready_root(tmp_path, monkeypatch, hook_python=missing)
+    problems = doctor_connected.report(root, "Acme")["problems"]
+    line = next(p for p in problems if "fails open" in p)
+    assert f"--workspace {root} --write --unattended --with-hooks --hook-python" in line
+
+
+def test_interactive_drift_command_has_no_unattended_flag(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    permissions.write_settings(root, profile="interactive", with_hooks=True, delegated=True, model_id=MODEL,
+                               root_owner=FAKE_OWNER, **CLEAN)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+    as_agent(monkeypatch)
+    edit_settings(root, lambda data: data["permissions"].update({"deny": []}))
+    problems = _rewrite_lines(doctor_connected.report(root, "Acme")["problems"])
+    assert problems and all(f"--workspace {root} --write --with-hooks" in p for p in problems)
+    assert not any("--unattended" in p for p in problems)
