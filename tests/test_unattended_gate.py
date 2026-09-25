@@ -3,6 +3,7 @@ import json
 import os
 import shlex
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -184,3 +185,94 @@ def test_a_relative_traversal_path_to_the_sidecar_is_denied_through_decide_conne
         "Write", {"file_path": "./.claude/../.claude/torque-permissions.json", "content": "{}"}, root, root,
         env={"TORQUE_CLIENT": "acme"})
     assert decision.action == "deny"
+
+
+# Fix round 3 (controller review of fix round 2): 1 (Important) the new PATH_TOOLS
+# `.claude/` check must not reach into a worktree copy under `.claude/worktrees/`,
+# since each copy is decided by its own `_decide_root` pass (copy=True); 2 (scope)
+# the check must apply to connected-mode roots only, matching common.md's "Default
+# (full) and build-only behavior do not change" (it currently also fires for
+# `decide(mode="build-only", ...)`, which shares `_decide_root_for` with connected
+# mode's `decide_connected`).
+
+def _git(root, *args):
+    import subprocess
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True,
+                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"})
+
+
+def unattended_root_with_a_worktree(tmp_path, monkeypatch):
+    """An unattended_root workspace, tracked by git, with a real `git worktree add`
+    copy at .claude/worktrees/feat (test_gate_alpha12.py's own fixture pattern:
+    real git, not a hand-built directory)."""
+    root = unattended_root(tmp_path, monkeypatch)
+    (root / "project").mkdir(parents=True, exist_ok=True)
+    (root / "project" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (root / ".gitignore").write_text("/clients/\n", encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "init")
+    _git(root, "worktree", "add", "-q", str(root / ".claude" / "worktrees" / "feat"))
+    feat = root / ".claude" / "worktrees" / "feat"
+    assert (feat / "workspace.json").is_file()  # a real git worktree carries its own tracked copy
+    return root, feat
+
+
+def test_write_and_edit_inside_a_worktree_copy_are_allowed_from_the_workspace_root(tmp_path, monkeypatch):
+    root, feat = unattended_root_with_a_worktree(tmp_path, monkeypatch)
+    target = str(feat / "project" / "a.py")
+    write = gate_connected.decide_connected("Write", {"file_path": target, "content": "y = 2\n"}, root, root,
+                                            env={"TORQUE_CLIENT": "acme"})
+    edit = gate_connected.decide_connected(
+        "Edit", {"file_path": target, "old_string": "x = 1", "new_string": "y = 2"}, root, root,
+        env={"TORQUE_CLIENT": "acme"})
+    assert write.action == "allow" and edit.action == "allow"
+
+
+def test_write_and_edit_inside_a_worktree_copy_are_allowed_from_inside_the_worktree(tmp_path, monkeypatch):
+    root, feat = unattended_root_with_a_worktree(tmp_path, monkeypatch)
+    target = str(feat / "project" / "a.py")
+    # cwd is the worktree itself; workspace is still the outer root, matching how
+    # `_main` would evaluate the outer root's own connected-mode decision for a
+    # call made while "inside" the worktree.
+    write = gate_connected.decide_connected("Write", {"file_path": target, "content": "y = 2\n"}, root, feat,
+                                            env={"TORQUE_CLIENT": "acme"})
+    edit = gate_connected.decide_connected(
+        "Edit", {"file_path": target, "old_string": "x = 1", "new_string": "y = 2"}, root, feat,
+        env={"TORQUE_CLIENT": "acme"})
+    assert write.action == "allow" and edit.action == "allow"
+
+
+def test_the_main_workspaces_sidecar_and_settings_stay_denied_alongside_the_worktree_exemption(tmp_path, monkeypatch):
+    root, feat = unattended_root_with_a_worktree(tmp_path, monkeypatch)
+    sidecar = gate_connected.decide_connected(
+        "Write", {"file_path": str(root / permissions.PROFILE_FILE), "content": "{}"}, root, root,
+        env={"TORQUE_CLIENT": "acme"})
+    settings = gate_connected.decide_connected(
+        "Write", {"file_path": str(root / ".claude" / "settings.json"), "content": "{}"}, root, root,
+        env={"TORQUE_CLIENT": "acme"})
+    assert sidecar.action == "deny" and settings.action == "deny"
+
+
+def test_a_traversal_path_out_of_worktrees_back_to_the_sidecar_is_still_denied(tmp_path, monkeypatch):
+    root, feat = unattended_root_with_a_worktree(tmp_path, monkeypatch)
+    decision = gate_connected.decide_connected(
+        "Write", {"file_path": ".claude/worktrees/../torque-permissions.json", "content": "{}"}, root, root,
+        env={"TORQUE_CLIENT": "acme"})
+    assert decision.action == "deny"
+
+
+def test_build_only_write_to_a_claude_rules_file_is_unaffected(tmp_path, monkeypatch):
+    """dea2041 (a15) parity: build-only mode's file-tool checks never gained the
+    `.claude/` restriction the round-2 fix added for connected mode."""
+    from torque import workspace as ws
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    root = ws.init_workspace(tmp_path / "firm", "Firm")
+    root = Path(os.path.realpath(root))
+    ws.set_ai_access(root, "build-only")
+    (root / ".claude" / "rules").mkdir(parents=True, exist_ok=True)
+    (root / ".claude" / "rules" / "x.md").write_text("old", encoding="utf-8")
+    allowed, reason = gate.decide("Write", {"file_path": str(root / ".claude" / "rules" / "x.md")}, root,
+                                  "build-only", root)
+    assert (allowed, reason) == (True, "")

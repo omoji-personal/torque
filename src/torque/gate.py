@@ -2465,11 +2465,17 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
         if write and _targets_guarded_file(target.as_posix()):
             return False, ("Build-only mode: only the owner changes workspace.json, the hook configuration, or a "
                            "client's consent and approval records.")
-        if write and _is_within(target, claude_dir):
+        if write and not org_rules and _is_within(target, claude_dir) \
+                and not _is_within(target, claude_dir / "worktrees"):
             # R51: the same protection _token_targets_claude_dir already gives a Bash
             # write to anything under .claude/ (the hook configuration directory,
             # including the connected-mode permission profile sidecar), for the file
             # tools (Write, Edit, MultiEdit, NotebookEdit) that reach this branch.
+            # Connected-mode only (org_rules False): common.md's "build-only and full
+            # behavior do not change" -- build-only keeps exactly a15's file-tool
+            # behavior for .claude/. A worktree copy under .claude/worktrees/ is
+            # exempt: each copy gets its own _decide_root pass (copy=True), which
+            # already guards that copy's own contents on its own terms.
             return False, "Build-only mode: only the owner changes the .claude hook configuration directory."
         if write and (_is_within(target, _package_dir())
                       or _TORQUE_INSTALL_RE.search(target.as_posix())):
