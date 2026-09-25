@@ -6,7 +6,7 @@ import shlex
 import pytest
 
 from delegated_helpers import (ACCOUNT, CLEAN, FAKE_OWNER, ME, MODEL, ORGS, WRITE, YES, as_agent, base_workspace,
-                               delegated_grant, delegated_workspace, flow_request)
+                               control_owner, delegated_grant, delegated_workspace, flow_request)
 from torque import approval, changes, cli, consent, delegation, presence, workspace as ws
 from torque.presence import Presence
 
@@ -255,6 +255,7 @@ def test_gate_refuses_a_human_record_missing_an_identity_field(tmp_path, monkeyp
     ({"delegated": False}, "delegated approver"),
     ({"approver_kind": "human", "approver_model": None}, "delegated approval"),
     ({"approver_uid": ME + 7}, "delegated approval"),
+    ({"approver": ACCOUNT + "-other"}, "delegated approval"),
     ({"approver_model": None}, "malformed"),
     ({"approver_kind": "robot"}, "malformed"),
     ({"delegated": "yes"}, "malformed"),
@@ -313,8 +314,8 @@ def test_cli_delegated_grant_json_keeps_stdout_to_the_record(tmp_path, monkeypat
     req = flow_request(root)
     view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
     monkeypatch.setattr(presence, "agent_reason", lambda env=None, ancestors=None: "")
-    proof = delegation._delegated_actor_and_config
-    monkeypatch.setattr(delegation, "_delegated_actor_and_config",
+    proof = delegation._delegated_proof
+    monkeypatch.setattr(delegation, "_delegated_proof",
                         lambda *a, **k: proof(*a, **{**k, "root_owner": FAKE_OWNER}))
     monkeypatch.setattr(approval, "_resolver", lambda resolve: resolve or ORGS.get)
     capsys.readouterr()
@@ -412,3 +413,106 @@ def test_r45_malformed_approver_delegate_fails_closed(tmp_path, monkeypatch, del
     with pytest.raises(delegation.Refusal) as info:
         owner_grant(root, req)
     assert info.value.reason_class == "human-grant-needs-human-approver"
+
+
+# Fix round 1, ruling R46: in a tier 2 workspace the control files (workspace.json,
+# the client's consent.json) must not be owned or writable by the approver account.
+
+
+@pytest.mark.parametrize("name", ["workspace.json", "consent.json"])
+def test_r46_gate_refuses_when_the_approver_owns_a_control_file(tmp_path, monkeypatch, name):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    delegated_grant(root, flow_request(root))
+    control_owner(monkeypatch, owner=ME, only=name)
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert not ok and name in why and "approver account" in why
+
+
+def test_r46_gate_refuses_an_owner_grant_when_the_approver_owns_workspace_json(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
+    approval.grant(root, "Acme", flow_request(root)["id"], presence=YES, confirm=lambda: True, out=io.StringIO(),
+                   resolve=ORGS.get)
+    control_owner(monkeypatch, owner=ME, only="workspace.json")
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert not ok and "workspace.json" in why
+
+
+@pytest.mark.parametrize("name", ["workspace.json", "consent.json"])
+def test_r46_grant_refuses_when_the_approver_owns_a_control_file(tmp_path, monkeypatch, name):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    control_owner(monkeypatch, owner=ME, only=name)
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req)
+    assert info.value.reason_class == "not-delegated" and name in str(info.value)
+    assert not list((root / "clients/acme/approvals/granted").glob("apr-*.json"))
+
+
+def test_r46_group_writable_control_file_refused(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    delegated_grant(root, req)
+    consent_file = root / "clients/acme/consent.json"
+    consent_file.chmod(0o664)
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req)
+    assert info.value.reason_class == "not-delegated" and "consent.json" in str(info.value)
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert not ok and "consent.json" in why
+
+
+def test_r46_symlinked_consent_refused_by_the_gate(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    delegated_grant(root, flow_request(root))
+    consent_file = root / "clients/acme/consent.json"
+    real = tmp_path / "consent-real.json"
+    real.write_bytes(consent_file.read_bytes())
+    consent_file.unlink()
+    consent_file.symlink_to(real)
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert not ok and "consent.json" in why
+
+
+@pytest.mark.parametrize("owner", [ME + 1, 0], ids=["consultant", "root"])
+def test_r46_consultant_or_root_owned_control_files_accepted(tmp_path, monkeypatch, owner):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    control_owner(monkeypatch, owner=owner)
+    delegated_grant(root, flow_request(root))
+    as_agent(monkeypatch)
+    assert consume(root)[0]
+
+
+# Fix round 1, minor 1: every failure to read what is being granted is a Refusal.
+
+
+def test_delegated_grant_refuses_a_future_dated_request(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    early = approval._epoch(req["created_at"]) - approval.SKEW - 5
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req, now=early)
+    assert info.value.reason_class == "request-changed"
+
+
+def test_delegated_grant_refuses_an_unreadable_request_or_change(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    kwargs = {"delegated": True, "model_id": MODEL, "request_sha256": view["request_sha256"],
+              "payload_digest": view["payload"]["digest"], "out": io.StringIO(), "resolve": ORGS.get,
+              "root_owner": FAKE_OWNER, **CLEAN}
+    change_files = list((root / "clients/acme/changes").rglob(f"{req['change']}*"))
+    assert change_files
+    for path in change_files:
+        path.rename(path.with_name(path.name + ".moved"))
+    with pytest.raises(delegation.Refusal) as info:
+        approval.grant(root, "Acme", req["id"], **kwargs)
+    assert info.value.reason_class == "request-changed"
+    (root / "clients/acme/approvals/requests" / f"{req['id']}.json").write_text("{not json")
+    with pytest.raises(delegation.Refusal) as info:
+        approval.grant(root, "Acme", req["id"], **kwargs)
+    assert info.value.reason_class == "request-changed"

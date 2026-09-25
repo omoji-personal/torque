@@ -192,6 +192,17 @@ def _delegated_actor_and_config(workspace, role, *, model_id=None, require_tier2
     after the identity check) reuses this single protected read instead of a
     second, separately timed one. Same Refusal/reason-class contract as
     `delegated_actor`."""
+    actor, config, root, _st = _delegated_proof(workspace, role, model_id=model_id, require_tier2=require_tier2,
+                                                getuid=getuid, env=env, ancestors=ancestors,
+                                                root_owner=root_owner)
+    return actor, config, root
+
+
+def _delegated_proof(workspace, role, *, model_id=None, require_tier2=True, getuid=None, env=None,
+                     ancestors=None, root_owner=None) -> tuple[Actor, dict, Path, os.stat_result]:
+    """`_delegated_actor_and_config` plus the fstat of the workspace.json descriptor
+    the config was read from, for a caller (the delegated grant, R46) that checks
+    that file's owner and mode from the same protected read."""
     from .presence import agent_reason
     if not hasattr(os, "getuid"):
         raise Refusal("tier-2-required", "delegated steps need tier 2 approvals (not available on Windows)")
@@ -227,7 +238,7 @@ def _delegated_actor_and_config(workspace, role, *, model_id=None, require_tier2
             raise Refusal("not-delegated", "the delegated approver must be the workspace's approver account "
                                            "(approver_uid)")
     actor = Actor(item["kind"], item["account"], uid, _model(item["kind"], model_id), "delegate")
-    return actor, config, root
+    return actor, config, root, st
 
 
 def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getuid=None, env=None,

@@ -55,7 +55,31 @@ def delegated_workspace(tmp_path, monkeypatch, *, kind="ai", orgs=("acme-dev",))
     consent.sign_off(root, "Acme", "Reviewer", presence=YES)
     for name in ("requests", "granted", "consumed", "denied"):
         (root / "clients" / "acme" / "approvals" / name).mkdir(parents=True, exist_ok=True)
+    control_owner(monkeypatch)
     return root
+
+
+_REAL_CONTROL_STAT = None
+
+
+def control_owner(monkeypatch, owner=ME + 1, only=None):
+    """R46: workspace.json and consent.json must not belong to the approver account.
+    A single-uid test owns every file as ME, which is also the approver, so this
+    reports `owner` for those control files (default ME + 1: the consultant's own
+    account, the a15 layout; 0 simulates the root-owned locked layout). With
+    `only` (a file name), only that file is reported as `owner`; the rest keep the
+    default. Mode and file type come from the real file."""
+    from types import SimpleNamespace
+    global _REAL_CONTROL_STAT
+    if _REAL_CONTROL_STAT is None:
+        _REAL_CONTROL_STAT = approval._control_stat
+    real = _REAL_CONTROL_STAT
+
+    def fake(path, st=None):
+        found = real(path, st)
+        uid = owner if only is None or os.path.basename(str(path)) == only else ME + 1
+        return SimpleNamespace(st_mode=found.st_mode, st_uid=uid)
+    monkeypatch.setattr(approval, "_control_stat", fake)
 
 
 def snapshot(root) -> dict:

@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import secrets
 import shlex
+import stat
 import sys
 import time
 
@@ -1062,37 +1063,56 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
     """A delegated approver's grant: tier 2, no terminal, never for production or an
     unknown org, bound to the request it reviewed, recorded with its kind and
     identity. Every decision comes from the one protected read of workspace.json
-    the caller proof made. Writes only the approval file (the change record is the
-    agent's; the gate logs the grant when the approval is used). Every refusal is a
-    delegation.Refusal with a reason class."""
-    actor, config, _root = delegation._delegated_actor_and_config(
+    the caller proof made (R46: that file and the client's consent.json must not be
+    owned or writable by the approver account). Writes only the approval file (the
+    change record is the agent's; the gate logs the grant when the approval is used).
+    Every refusal is a delegation.Refusal with a reason class: an unreadable,
+    future-dated or underivable request or change record is `request-changed`; a
+    request past the request TTL is `request-expired`."""
+    actor, config, root, config_st = delegation._delegated_proof(
         workspace, "approver", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
         root_owner=root_owner)
     if not delegation.delegated_tier2(config):
         raise delegation.Refusal("tier-2-required", "a delegated grant needs tier 2 (owner-uid) approvals and "
                                                     "the workspace's approver account as its named approver")
+    try:
+        client_folder = ws.load_client(root, client)[0]
+    except (OSError, ws.WorkspaceError) as exc:
+        raise delegation.Refusal("request-changed", f"cannot read the client folder: {exc}") from None
+    controls = _controls_problem(root / ws.CONFIG, client_folder / consent.FILE, config["approver_uid"],
+                                 workspace_st=config_st)
+    if controls:
+        raise delegation.Refusal("not-delegated", controls)
     if not isinstance(request_sha256, str) or not request_sha256 \
             or not isinstance(payload_digest, str) or not payload_digest:
         raise delegation.Refusal("request-changed", "a delegated grant names the reviewed request's SHA-256 and "
                                                     "payload digest (--request-sha256, --payload-digest)")
     out = out or sys.stdout
     t = now if now is not None else time.time()
-    req, _current = load_request_hashed(workspace, client, request_id)
-    created = _epoch(req["created_at"])
+    try:
+        req, _current = load_request_hashed(workspace, client, request_id)
+        created = _epoch(req["created_at"])
+        change_id = req.get("change")
+        changes.load_change(workspace, client, change_id)
+        denied = _denied(workspace, client, change_id, request_id)
+    except (OSError, ValueError, TypeError, KeyError, ws.WorkspaceError) as exc:
+        raise delegation.Refusal("request-changed", f"the request or its change record cannot be read: {exc}") \
+            from None
     if created > t + SKEW:
-        raise ws.WorkspaceError(f"{request_id} is dated in the future; nothing was granted")
+        raise delegation.Refusal("request-changed", f"{request_id} is dated in the future; nothing was granted")
     if t > created + REQUEST_TTL + SKEW:
         raise delegation.Refusal("request-expired", f"{request_id} is older than {REQUEST_TTL // 60} minutes; "
                                                     "ask for a new request")
-    change_id = req.get("change")
-    changes.load_change(workspace, client, change_id)
-    if _denied(workspace, client, change_id, request_id):
+    if denied:
         raise delegation.Refusal("request-denied", f"{request_id} was denied; ask for a new request")
     try:
         item = _usable_consent(workspace, client)
     except ws.WorkspaceError as exc:
         raise delegation.Refusal("consent-unusable", str(exc)) from None
-    derived = _derive(req, _extra_namespaces(workspace, config))
+    try:
+        derived = _derive(req, _extra_namespaces(workspace, config))
+    except (OSError, ValueError, TypeError, KeyError, ws.WorkspaceError) as exc:
+        raise delegation.Refusal("request-changed", f"the request's call cannot be derived: {exc}") from None
     entry = consent.approved_org(item, req["org_alias"]) or {}
     try:
         org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
@@ -1184,6 +1204,13 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
         folder = path.parent.stat()
         if folder.st_uid != approver or folder.st_mode & 0o022:
             return "approvals/granted must be owned by the approver account and writable only by it"
+        # clients/<slug>/approvals/granted/<id>.json (see _dirs): the client folder is
+        # three levels up and the workspace root two above that.
+        client_folder = path.parent.parent.parent
+        controls = _controls_problem(client_folder.parent.parent / ws.CONFIG, client_folder / consent.FILE,
+                                     approver)
+        if controls:
+            return controls
     elif verify == "hmac":
         if os.name != "nt" and (st.st_mode & 0o077 or st.st_uid != os.getuid()):
             return "approval file must be mode 0600 and owned by this user"
@@ -1232,6 +1259,31 @@ def _ai_approver(config: dict) -> bool:
     return item is None or item["kind"] == "ai"
 
 
+def _control_stat(path, st=None):
+    """The owner and mode of a control file: `st` when the caller already holds the
+    fstat of a protected read, else lstat (a symlink is seen, never followed)."""
+    return st if st is not None else os.lstat(path)
+
+
+def _control_problem(path, approver, st=None) -> str:
+    """R46: why a control file (workspace.json, a client's consent.json) cannot be
+    trusted in a tier 2 workspace; "" when it can. The approver account must not
+    own it, nobody but its owner may write it, and it must be a regular file."""
+    try:
+        found = _control_stat(path, st)
+    except OSError:
+        return f"cannot read {path}; control files must not be owned or writable by the approver account"
+    if not stat.S_ISREG(found.st_mode) or found.st_uid == approver or found.st_mode & 0o022:
+        return (f"{path} is owned by the approver account, writable by others or not a regular file; control "
+                "files must not be owned or writable by the approver account")
+    return ""
+
+
+def _controls_problem(workspace_json, consent_json, approver, workspace_st=None) -> str:
+    return (_control_problem(workspace_json, approver, workspace_st)
+            or _control_problem(consent_json, approver))
+
+
 def _identity_problem(record: dict, config: dict, verify: str) -> str:
     """The gate's acceptance rule for who granted an approval: a recorded kind on
     every record; a human (owner) grant names no model; an AI or other delegated
@@ -1252,7 +1304,8 @@ def _identity_problem(record: dict, config: dict, verify: str) -> str:
         return ""
     item = delegation.delegate_for(config, "approver")
     if verify != "owner-uid" or not delegation.delegated_tier2(config) or item is None \
-            or item["kind"] != kind or record.get("approver_uid") != item["uid"]:
+            or item["kind"] != kind or record.get("approver_uid") != item["uid"] \
+            or record.get("approver") != item["account"]:
         return "a delegated approval needs a tier 2 workspace whose delegated approver made it"
     if record.get("org_kind") not in NONPRODUCTION:
         return "a delegated approval is never valid for a production or unknown org"
