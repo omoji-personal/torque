@@ -235,3 +235,59 @@ def test_request_view_hash_changes_when_the_request_is_tampered(tmp_path, monkey
     path.write_text(json.dumps(data), encoding="utf-8")
     tampered = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)["request_sha256"]
     assert tampered != original
+
+
+# --- V2 I5: the view names the write scope of bulk upserts and MCP write calls. ---
+
+def test_bulk_upserts_normalize_to_object_and_external_field(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    (root / "contacts.csv").write_text("Email_Ext_Id__c,Title\nsteward@acme.example,Steward\n", encoding="utf-8")
+    long = ["sf", "data", "upsert", "bulk", "--sobject", "Contact", "--external-id", "Email_Ext_Id__c",
+            "--file", "contacts.csv", "--target-org", "acme-dev"]
+    short = ["sf", "data", "upsert", "bulk", "-s", "Contact", "-i", "Email_Ext_Id__c", "-f", "contacts.csv",
+             "-o", "acme-dev"]
+    flags_first = ["sf", "data", "upsert", "bulk", "--target-org", "acme-dev", "--file", "contacts.csv",
+                   "--external-id", "Email_Ext_Id__c", "--sobject", "Contact"]
+    views = [approval.request_view(root, "Acme", flow_request(root, a)["id"], resolve=ORGS.get)
+             for a in (long, short, flags_first)]
+    assert {v["operation"] for v in views} == {"data upsert"}
+    assert [v["components"] for v in views] == [["Record:Contact:external:Email_Ext_Id__c"]] * 3
+    assert views[0]["payload"]["count"] == 1
+
+
+def test_legacy_bulk_upsert_names_object_and_external_field():
+    argv = ["sfdx", "force:data:bulk:upsert", "-s", "Contact", "-i", "Email_Ext_Id__c", "-f", "c.csv",
+            "-u", "acme-dev"]
+    assert approval.view_components(argv, ".") == ["Record:Contact:external:Email_Ext_Id__c"]
+
+
+def mcp_view(root, tool, args):
+    cid = changes.create_change(root, "Acme", "MCP write", "Records change", [], "acme-dev")["id"]
+    req = approval.create_request(root, "Acme", cid, "acme-dev", mcp=(tool, args), resolve=ORGS.get, cwd=root)
+    return approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+
+
+@pytest.mark.parametrize("tool, args, expected", [
+    ("mcp__salesforce__update_record",
+     {"usernameOrAlias": "acme-dev", "sObject": "Contact", "recordId": "003000000000001AAA",
+      "values": {"Title": "Steward"}}, ["Record:Contact:003000000000001AAA"]),
+    ("mcp__salesforce__upsert_record",
+     {"usernameOrAlias": "acme-dev", "sobject": "Contact", "externalIdField": "Email_Ext_Id__c",
+      "values": {"Email_Ext_Id__c": "steward@acme.example"}}, ["Record:Contact:external:Email_Ext_Id__c"]),
+    ("mcp__salesforce__create_record",
+     {"usernameOrAlias": "acme-dev", "objectName": "Case", "values": {"Subject": "Escalate"}}, ["Record:Case"]),
+    ("mcp__salesforce__deploy_metadata",
+     {"usernameOrAlias": "acme-dev", "sourceDir": "force-app/main/default/flows"}, ["Flow:Case_Escalation"]),
+])
+def test_mcp_write_views_name_their_object_or_target(tmp_path, monkeypatch, tool, args, expected):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    flow_request(root)  # writes the Case_Escalation flow file the deploy form names
+    view = mcp_view(root, tool, args)
+    assert view["operation"] == "mcp:" + tool and view["components"] == expected
+
+
+def test_an_mcp_write_without_an_object_or_target_has_no_components(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    view = mcp_view(root, "mcp__salesforce__execute_anonymous", {"usernameOrAlias": "acme-dev",
+                                                                 "code": "System.debug(1);"})
+    assert view["components"] == []

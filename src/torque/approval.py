@@ -877,9 +877,13 @@ def view_components(argv: list[str] | None, cwd) -> list[str]:
     if not argv:
         return []
     words = [w for w in argv[1:] if not w.startswith("-")][:3]
-    if tuple(words) == ("data", "upsert", "record"):
-        sobject = argv_flags.values(argv, ("-s", "--sobject"))
-        field = argv_flags.values(argv, ("-i", "--external-id"))
+    legacy = argv_flags.is_legacy(argv)
+    # V2 I5: a bulk upsert (`sf data upsert bulk`, legacy `force:data:bulk:upsert`)
+    # names its object and external ID field the same way a record upsert does.
+    if tuple(words[:2]) == ("data", "upsert") and words[2:3] in (["record"], ["bulk"]) \
+            or (legacy and words[:1] == ["force:data:bulk:upsert"]):
+        sobject = argv_flags.values(argv, ("-s", "--sobject", "--sobjecttype"), legacy=legacy)
+        field = argv_flags.values(argv, ("-i", "--external-id", "--externalid"), legacy=legacy)
         found = [f"Record:{sobject[0]}:external:{field[0]}"] if sobject and field else []
     else:
         found = before_state.write_components(list(argv), Path(cwd))
@@ -889,6 +893,40 @@ def view_components(argv: list[str] | None, cwd) -> list[str]:
         if sobject and where:
             found = [f"Record:{sobject[0]}:where:{' '.join(where[0].split())}"]
     return sorted(set(found))
+
+
+# V2 I5: MCP input keys (compared case-insensitively) that carry a write's object,
+# record ID and external ID field.
+MCP_OBJECT_KEYS = ("sobject", "sobjecttype", "sobjectname", "objectname", "objectapiname", "object")
+MCP_RECORD_KEYS = ("recordid", "id")
+MCP_EXTERNAL_KEYS = ("externalidfield", "externalidfieldname", "externalid")
+
+
+def _mcp_value(tool_input: dict, keys) -> str | None:
+    found = {k.casefold(): v for k, v in tool_input.items() if isinstance(k, str)}
+    return next((found[k].strip() for k in keys if isinstance(found.get(k), str) and found[k].strip()), None)
+
+
+def mcp_view_components(mcp: dict | None, cwd) -> list[str]:
+    """V2 I5: what an MCP write request changes, normalized for the view only (the
+    grant's own derived components stay as they were, for the same reason R44
+    keeps upserts out of before_state.write_components): Record:Object:Id,
+    Record:Object:external:Field or Record:Object when the input names an
+    object, else the deploy components of the local files it sends. [] when the
+    input names neither."""
+    mcp = mcp if isinstance(mcp, dict) else {}
+    tool_input = mcp.get("tool_input") if isinstance(mcp.get("tool_input"), dict) else {}
+    sobject = _mcp_value(tool_input, MCP_OBJECT_KEYS)
+    if sobject:
+        record = _mcp_value(tool_input, MCP_RECORD_KEYS)
+        field = _mcp_value(tool_input, MCP_EXTERNAL_KEYS)
+        return [f"Record:{sobject}:{record}" if record else
+                f"Record:{sobject}:external:{field}" if field else f"Record:{sobject}"]
+    paths = list(dict.fromkeys(_mcp_paths(tool_input)))
+    if not paths or cwd is None:
+        return []
+    argv = ["sf", "project", "deploy", "start", *[a for p in paths for a in ("--source-dir", p)]]
+    return sorted(set(before_state.deploy_components(argv, Path(cwd))))
 
 
 def payload_listing(argv: list[str] | None, cwd) -> list[dict]:
@@ -956,7 +994,8 @@ def request_view(workspace, client, request_id, *, resolve=None) -> dict:
     return {"schema": VIEW_SCHEMA, "request_id": request_id, "request_sha256": sha, "client": req["client"],
             "change": req.get("change"), "kind": kind, "operation": operation_for(kind, argv, req.get("mcp")),
             "org_alias": req["org_alias"], "org_id_18": org_id, "org_kind": org_kind,
-            "components": view_components(argv, cwd) if argv else [], "cwd": cwd,
+            "components": (mcp_view_components(req.get("mcp"), cwd) if kind == "mcp"
+                           else view_components(argv, cwd) if argv else []), "cwd": cwd,
             "payload": {"digest": derived["payload_digest"], "count": derived["payload_files"],
                         "files": payload_listing(derived.get("payload_argv"), cwd) if cwd else []},
             "purpose": req.get("purpose"), "browser_minutes": minutes,
