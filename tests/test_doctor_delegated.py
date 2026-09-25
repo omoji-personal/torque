@@ -341,3 +341,26 @@ def test_doctor_summarizes_verified_launches_and_approval_identities(tmp_path, m
     assert f"Verified launch: {ACCOUNT} (uid {ME}, ai, model {MODEL}): 1" in text
     assert "Unverified launches: 1" in text
     assert f"Approval identity: {ACCOUNT} (uid {ME}, ai, model {MODEL}, delegated): 1 granted, 1 denied" in text
+
+
+def test_v2_2_delegate_home_rules_pass_doctor_as_the_agent_account(tmp_path, monkeypatch):
+    """V2-2 (Round 0b): the setup delegate is a separate OS account with its own
+    home. Rules it writes must protect the key of the account that runs the AI
+    session, so doctor, run as that agent account, finds nothing missing, and
+    nothing in the written settings or sidecar names the delegate's home."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    delegate_home, agent_home = tmp_path / "delegate-home", tmp_path / "agent-home"
+    delegate_home.mkdir()
+    agent_home.mkdir()
+    monkeypatch.setenv("HOME", str(delegate_home))
+    permissions.write_settings(root, profile="unattended", with_hooks=True, delegated=True, model_id=MODEL,
+                               root_owner=FAKE_OWNER, **CLEAN)
+    for name in ("settings.json", "torque-permissions.json"):
+        assert str(delegate_home) not in (root / ".claude" / name).read_text()
+    deny = json.loads((root / ".claude" / "settings.json").read_text())["permissions"]["deny"]
+    assert "Read(~/.config/torque/approval.key)" in deny and "Edit(~/.config/torque/approval.key)" in deny
+    monkeypatch.setenv("HOME", str(agent_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+    as_agent(monkeypatch)
+    result = doctor_connected.report(root, "Acme")
+    assert not any("host permission rules" in p for p in result["problems"]), result["problems"]

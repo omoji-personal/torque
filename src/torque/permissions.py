@@ -70,17 +70,42 @@ def _absolute_rule_path(path: Path) -> str:
     return "/" + text if text.startswith("/") else "//" + text
 
 
-def deny_rules() -> tuple[str, ...]:
-    """The fixed rules plus the approval key at its real location on this platform."""
+HOME_KEY_RULES = ("Read(~/.config/torque/approval.key)", "Edit(~/.config/torque/approval.key)")
+
+
+def _absolute_key_rules() -> tuple[str, str]:
     from .approval import key_path
     key = _absolute_rule_path(key_path())
-    return FIXED_DENY_RULES + (f"Read({key})", f"Edit({key})")
+    return f"Read({key})", f"Edit({key})"
+
+
+def _home_rule_is_the_key() -> bool:
+    """True when the fixed `~/.config/torque/approval.key` rules name this account's
+    key exactly: POSIX, where key_path() is always under Path.home(). Claude Code
+    reads `~/path` in a Read or Edit rule from the home of the account running the
+    session (docs/connected-approval.md, "Host facts verified", file rules), so
+    there the ~ form protects the running account's key wherever it lives."""
+    from .approval import key_path
+    return os.name != "nt" and key_path() == Path.home() / ".config" / "torque" / "approval.key"
+
+
+def deny_rules(delegated: bool = False) -> tuple[str, ...]:
+    """The fixed rules plus the approval key at its real location on this platform.
+
+    V2-2: a delegated write runs as the setup delegate, a separate OS account whose
+    home is not the home of the agent account that later runs the session, so it
+    must not bake its own key path into the rules. On POSIX the fixed ~ rules
+    already name the session account's key, so the delegated rules are the fixed
+    rules alone. The owner's (non-delegated) output is unchanged from a15."""
+    if delegated and _home_rule_is_the_key():
+        return FIXED_DENY_RULES
+    return FIXED_DENY_RULES + _absolute_key_rules()
 
 
 DENY_RULES = FIXED_DENY_RULES
 
 
-def generate(profile: str = "interactive") -> dict:
+def generate(profile: str = "interactive", *, delegated: bool = False) -> dict:
     """The `permissions` object for WORKSPACE/.claude/settings.json. Adds no allow
     rule. The unattended profile drops every ask rule for a route GATED_ASK names
     (the gate decides those by approval instead); every other ask rule, including
@@ -89,7 +114,7 @@ def generate(profile: str = "interactive") -> dict:
     if profile not in PROFILES:
         raise ws.WorkspaceError(f"unknown permission profile {profile!r}")
     ask = [r for r in ASK_RULES if profile == "interactive" or r not in GATED_ASK]
-    return {"ask": ask, "deny": list(dict.fromkeys(deny_rules())), BYPASS_KEY: "disable"}
+    return {"ask": ask, "deny": list(dict.fromkeys(deny_rules(delegated))), BYPASS_KEY: "disable"}
 
 
 def _body(rule: str) -> tuple[str, str] | None:
@@ -200,7 +225,11 @@ def _drift_a15(settings: dict, generated: dict) -> list[str]:
     deny = perms.get("deny") if isinstance(perms.get("deny"), list) else []
     allow = perms.get("allow") if isinstance(perms.get("allow"), list) else []
     problems = [f"missing ask rule {r}" for r in generated["ask"] if r not in ask]
-    problems += [f"missing deny rule {r}" for r in generated["deny"] if r not in deny]
+    # V2-2: the ~ key rule stands in for the absolute one when it names this
+    # account's own key (rules a setup delegate wrote carry only the ~ form).
+    standing_in = (dict(zip(_absolute_key_rules(), HOME_KEY_RULES)) if _home_rule_is_the_key() else {})
+    problems += [f"missing deny rule {r}" for r in generated["deny"]
+                 if r not in deny and not (r in standing_in and standing_in[r] in deny)]
     problems += [f"allows {r}, which connected mode asks about or denies" for r in allow
                  if isinstance(r, str) and _covered(r)]
     if perms.get(BYPASS_KEY) != "disable":
@@ -384,7 +413,7 @@ def write_settings(workspace, presence=None, confirm=None, *, profile="interacti
     claude_existed = path.parent.exists()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     current = ws._read_json(path) if path.exists() else {}
-    merged = merge(current, generate(profile), profile)
+    merged = merge(current, generate(profile, delegated=actor is not None), profile)
     resolved_hook_python = None
     if with_hooks:
         resolved_hook_python = (hook_python or sys.executable).replace("\\", "/")

@@ -41,6 +41,9 @@ unchanged.
   `claude -p`. `--with-hooks` also wires `PostToolUse` and `PostToolUseFailure`, which
   record each approved call's outcome and exit status (`approval_executed`).
   `--hook-python` names the hook's interpreter.
+  A delegated write denies the approval key in its home-relative form
+  (`~/.config/torque/approval.key`), so the rules protect the key of the account that runs
+  the session, not the setup delegate's; `torque doctor` accepts that form on POSIX.
 - `torque approval log` adds execution records, delegated decisions, launches and setup
   steps, each with its approver kind. `torque doctor` shows the profile, delegates, setup
   steps, grants by kind, verified launches by actor and each approval identity (actor,
