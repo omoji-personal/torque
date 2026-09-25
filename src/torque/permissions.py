@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 
 from . import workspace as ws
 
@@ -141,18 +142,44 @@ def _covered(rule: str) -> bool:
     return False
 
 
+def _gated(rule: str) -> bool:
+    """True when `rule`'s glob language intersects a GATED_ASK route: the same
+    intersection test `_covered` uses (reusing `_body`/`_globs`/`_intersects`),
+    scoped to GATED_ASK instead of every generated rule. Catches a variant
+    spelling that is not string-identical to a GATED_ASK entry but still
+    overlaps one either way: a space instead of `:*` (`Bash(torque deploy *)`),
+    an added flag (`Bash(sf project deploy start --target-org:*)`), or a
+    broader prefix (`Bash(sf project deploy:*)`, which covers `start` too)."""
+    if rule in GATED_ASK:
+        return True
+    if any(rule == server or rule.startswith(server + "__") or rule.startswith(server + "*")
+           for server in BROWSER_SERVERS):
+        return True
+    mine = _body(rule)
+    if mine is None:
+        return False
+    tool, body = mine
+    for generated in GATED_ASK:
+        theirs = _body(generated)
+        if theirs and theirs[0] == tool and any(_intersects(a, b) for a in _globs(body) for b in _globs(theirs[1])):
+            return True
+    return False
+
+
 def merge(settings: dict, generated: dict, profile: str = "interactive") -> dict:
     """The settings with the generated rules added, allow rules for those routes
     removed, the user's other rules kept, and bypass mode disabled. Under the
-    unattended profile, an existing ask rule for a GATED_ASK route is dropped too
-    (F13's counterpart at merge time): a rule the owner wrote earlier, before the
-    workspace switched profile, must not survive the switch to unattended."""
+    unattended profile, an existing ask rule that gates a route (by glob
+    intersection, `_gated`, not only a string-identical GATED_ASK entry) is
+    dropped too (F13's counterpart at merge time): a rule the owner wrote
+    earlier, before the workspace switched profile, must not survive the
+    switch to unattended, even spelled with a different flag or prefix width."""
     out = dict(settings)
     perms = dict(out.get("permissions") or {})
     for key in ("ask", "deny"):
         existing = perms.get(key) if isinstance(perms.get(key), list) else []
         if key == "ask" and profile == "unattended":
-            existing = [r for r in existing if r not in GATED_ASK]
+            existing = [r for r in existing if not _gated(r)]
         perms[key] = list(dict.fromkeys([*existing, *generated[key]]))
     allow = perms.get("allow") if isinstance(perms.get("allow"), list) else []
     perms["allow"] = [r for r in allow if not (isinstance(r, str) and _covered(r))]
@@ -183,15 +210,17 @@ def _drift_a15(settings: dict, generated: dict) -> list[str]:
 
 def drift(settings: dict, generated: dict, profile: str = "interactive") -> list[str]:
     """`_drift_a15`'s problems, plus, under the unattended profile, any ask rule
-    left on a GATED_ASK route: a matching ask rule still declines the call even
-    after the gate's hook returns allow (docs/connected-approval.md), so it must
-    not be there for a route the gate itself decides."""
+    that gates a route (`_gated`: a glob intersection, not only a
+    string-identical GATED_ASK entry, so a variant spelling of the same route
+    is caught too): a matching ask rule still declines the call even after the
+    gate's hook returns allow (docs/connected-approval.md), so it must not be
+    there for a route the gate itself decides."""
     problems = _drift_a15(settings, generated)
     if profile == "unattended":
         perms = settings.get("permissions") if isinstance(settings.get("permissions"), dict) else {}
         ask = perms.get("ask") if isinstance(perms.get("ask"), list) else []
         problems += [f"the unattended profile must not ask on {r}; the gate decides it by approval"
-                     for r in ask if r in GATED_ASK]
+                     for r in ask if _gated(r)]
     return problems
 
 
@@ -216,9 +245,11 @@ def load_sidecar(root) -> dict | None:
 
 
 def load_profile(root) -> str:
-    """"interactive" (no sidecar, or a schema-mismatched empty read is treated
-    the same as "no sidecar written yet"), "unattended", or "invalid" (a sidecar
-    exists but is unreadable or names a profile PROFILES does not have)."""
+    """"interactive" only when no sidecar file exists yet. "invalid" whenever
+    one does exist but is unreadable, is not a JSON object, or its "schema" or
+    "profile" value does not match PROFILE_SCHEMA/PROFILES, a read failure
+    included (fail closed: an existing, damaged sidecar is never treated the
+    same as no sidecar at all). Otherwise the sidecar's own "profile" value."""
     data = load_sidecar(root)
     if data is None:
         return "interactive"
@@ -227,17 +258,25 @@ def load_profile(root) -> str:
     return data["profile"]
 
 
-def _with_hooks(settings: dict) -> dict:
+def _with_hooks(settings: dict, hook_python: str | None = None) -> dict:
     """Add the fail-closed gate hook under PreToolUse, PostToolUse and
     PostToolUseFailure (matcher .*), unless an entry already runs torque.gate.
     All three events are wired (F3): PostToolUse fires only for a Bash exit 0,
     and PostToolUseFailure fires instead of it for a nonzero exit
     (docs/connected-approval.md, "Host facts verified"), so recording execution
-    (D14) needs both to see every call, not only the successful ones."""
-    import sys
+    (D14) needs both to see every call, not only the successful ones.
+
+    Controller ruling R43: `hook_python` names the interpreter explicitly,
+    defaulting to `sys.executable` (unchanged for the owner path, which
+    ordinarily writes its own settings for its own later interactive session).
+    A delegated write must not silently record the setup delegate's own
+    `sys.executable`: that account's interpreter (its own venv, its own PATH)
+    may not be one the different agent account that later runs the hook can
+    execute at all, which would fail the hook open, not closed, exactly the
+    failure this whole mechanism exists to prevent."""
     from . import gate
     from .cli import HOOK_TIMEOUT
-    command = gate.hook_command(sys.executable.replace("\\", "/"))
+    command = gate.hook_command((hook_python or sys.executable).replace("\\", "/"))
     out = dict(settings)
     hooks = dict(out.get("hooks") or {})
     for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
@@ -270,14 +309,19 @@ def _owner_presence(presence, confirm) -> None:
 
 def write_settings(workspace, presence=None, confirm=None, *, profile="interactive", with_hooks=False,
                    delegated=False, model_id=None, env=None, ancestors=None, getuid=None,
-                   root_owner=None) -> Path:
+                   root_owner=None, hook_python=None) -> Path:
     """Merge the generated rules into WORKSPACE/.claude/settings.json: the owner at
     a terminal, or the workspace's setup delegate (SETUP_WRITES["permissions"]).
     The unattended profile is only for a tier 2 workspace with a named, matching
     approver delegate (delegation.delegated_tier2); a tier 1 (hmac) or
-    non-connected workspace refuses with reason class tier-2-required, before any
-    presence or delegated-actor check runs (an automatable refusal: no CLI flag
-    can fake presence or a delegate's caller proof; see F37/the CLI test).
+    non-connected workspace refuses with reason class tier-2-required. On the
+    delegated path this decision, and the settings path itself, come from
+    `delegation._delegated_actor_and_config`'s own single protected read, never a
+    second, separately timed `ws.load_workspace` (fix round 1, important 1): that
+    call's own agent-session check runs first, so an AI session refuses with
+    agent-session before any tier-2 decision is even reached, delegated or not.
+    The owner path is unaffected: `ws.load_workspace` after the owner's own
+    presence check, exactly as a15 and D2's `set_ai_access` do it.
 
     F12: a file the calling delegate's own uid wrote defaults to 0600 (mkstemp),
     unreadable to the different account the gate and hooks later run as; both the
@@ -285,57 +329,84 @@ def write_settings(workspace, presence=None, confirm=None, *, profile="interacti
     to 0755) whenever this write is delegated or the profile is unattended. The
     harness chowns them to root afterward (matches workspace.py's
     set_ai_access/_connected_rule and consent.py's _save). The owner/interactive
-    path is unchanged (still mkstemp's 0600/0700).
+    path is unchanged (still mkstemp's 0600/0700). Fix round 1, minor 4: `.claude`
+    itself relaxes only when this call's real OS caller (`os.getuid()`, which is
+    what actually governs whether the chmod syscall would succeed, not the
+    injectable `getuid` used only to prove the delegate's own identity above)
+    owns it; a directory owned by someone else (root, or another account, from
+    earlier provisioning; reachable here only because this call could still write
+    a file into it via group permissions) is left alone for provisioning to fix,
+    not chmodded (which would raise) or silently ignored as still-restrictive.
 
-    F13: the sidecar is also (re)written, reflecting the new profile, whenever one
-    already exists, even on a plain owner/interactive write with no delegation and
-    no unattended profile: otherwise an owner rewrite back to interactive would
-    leave a stale "unattended" sidecar behind, and the gate (D13) would keep
-    sending allow for routes this settings file now asks about again.
+    F13, extended by fix round 1's important 2: the sidecar is also (re)written,
+    reflecting the new profile, whenever one already exists, even on a plain
+    owner/interactive write with no delegation and no unattended profile; and it
+    is written before the settings file's own mode is relaxed, not after, so a
+    chmod failure past that point (a directory this call cannot own, an
+    unexpected OS error) can never leave settings.json rewritten to a new profile
+    while the sidecar still names the old one: both files' *content* is always
+    written together, before either file's *mode* is touched.
+
+    Controller ruling R43: `hook_python` (default `sys.executable`) is the
+    explicit interpreter path baked into the gate hook command when
+    `with_hooks` is set, and is recorded in the sidecar's own "hook_python" key;
+    see `_with_hooks`.
 
     `root_owner` (a callable `Path -> int`, default `path.stat().st_uid`) is
-    threaded straight through to `delegation.delegated_actor`: it exists only so
-    a test can name a workspace-directory owner distinct from the delegate's own
-    uid (controller ruling R41, a delegate must be a separate OS account from the
-    one that owns the workspace directory; landed in D1's fix round 1 after this
-    task's brief was written, same as D2's identically named parameter)."""
+    threaded straight through to `delegation._delegated_actor_and_config`: it
+    exists only so a test can name a workspace-directory owner distinct from the
+    delegate's own uid (controller ruling R41, a delegate must be a separate OS
+    account from the one that owns the workspace directory; landed in D1's fix
+    round 1 after this task's brief was written, same as D2's identically named
+    parameter)."""
     from . import delegation
     if profile not in PROFILES:
         raise ws.WorkspaceError(f"unknown permission profile {profile!r}")
-    root, config = ws.load_workspace(workspace)
+    actor = None
+    if delegated:
+        actor, config, root = delegation._delegated_actor_and_config(
+            workspace, "setup", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
+            root_owner=root_owner)
+    else:
+        _owner_presence(presence, confirm)
+        root, config = ws.load_workspace(workspace)
     if profile == "unattended":
         if not delegation.delegated_tier2(config):
             raise delegation.Refusal("tier-2-required", "the unattended profile is only for a tier 2 workspace "
                                                         "whose approver is a named delegate")
-    actor = None
-    if delegated:
-        actor = delegation.delegated_actor(workspace, "setup", model_id=model_id, getuid=getuid, env=env,
-                                           ancestors=ancestors, root_owner=root_owner)
-    else:
-        _owner_presence(presence, confirm)
-    path = settings_path(workspace)
+    path = ws._inside(root, root / ".claude" / "settings.json")
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     current = ws._read_json(path) if path.exists() else {}
     merged = merge(current, generate(profile), profile)
+    resolved_hook_python = None
     if with_hooks:
-        merged = _with_hooks(merged)
+        resolved_hook_python = (hook_python or sys.executable).replace("\\", "/")
+        merged = _with_hooks(merged, resolved_hook_python)
     text = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
     if path.exists():
         ws._atomic_replace_text(path, text)
     else:
         ws.atomic_write_new(path, text)
     agent_readable = actor is not None or profile == "unattended"
-    if agent_readable and os.name != "nt":
-        path.chmod(0o644)
-        path.parent.chmod(0o755)
     target = ws._inside(root, root / PROFILE_FILE)
-    if agent_readable or target.exists():
+    write_sidecar = agent_readable or target.exists()
+    if write_sidecar:
         import hashlib
         sidecar = {"schema": PROFILE_SCHEMA, "profile": profile, "written_at": ws._now(),
                    "written_by": (actor or delegation.human_actor()).as_dict(),
                    "settings_sha256": hashlib.sha256(text.encode()).hexdigest()}
+        if resolved_hook_python is not None:
+            sidecar["hook_python"] = resolved_hook_python
         body = json.dumps(sidecar, indent=2) + "\n"
         ws._atomic_replace_text(target, body) if target.exists() else ws.atomic_write_new(target, body)
-        if agent_readable and os.name != "nt":
+    # Both files now hold matching content; only file/directory modes remain, so
+    # a failure from here on (a directory this call cannot chmod, an unexpected
+    # OS error) can no longer leave settings.json rewritten without a sidecar
+    # that reflects it.
+    if agent_readable and os.name != "nt":
+        path.chmod(0o644)
+        if path.parent.stat().st_uid == os.getuid():
+            path.parent.chmod(0o755)
+        if write_sidecar:
             target.chmod(0o644)
     return path

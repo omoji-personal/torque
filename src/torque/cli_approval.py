@@ -87,6 +87,10 @@ def register(sub) -> None:
     permissions.add_argument("--delegated", action="store_true",
                              help="the workspace's setup delegate is running this, not the consultant")
     permissions.add_argument("--model-id", help="delegated only: the AI setup delegate's model identifier")
+    permissions.add_argument("--hook-python",
+                             help="with --with-hooks: the interpreter path baked into the gate hook command "
+                                  "(default: this process's own sys.executable; a delegated write should name "
+                                  "one the different agent account can actually execute)")
     launch = sub.add_parser("launch", help="connected mode: start an AI session bound to one client (owner only)")
     _client_args(launch)
 
@@ -292,9 +296,11 @@ def _require(p, tail) -> int:
 def _permissions(p) -> int:
     from . import permissions
     profile = "unattended" if p.unattended else "interactive"
+    if not p.write and (p.with_hooks or p.delegated or p.model_id or p.hook_python):
+        raise ws.WorkspaceError("--with-hooks, --delegated, --model-id and --hook-python need --write")
     if p.write:
         path = permissions.write_settings(p.workspace, profile=profile, with_hooks=p.with_hooks,
-                                          delegated=p.delegated, model_id=p.model_id)
+                                          delegated=p.delegated, model_id=p.model_id, hook_python=p.hook_python)
         print(f"Wrote the connected-mode permission rules to {path}")
         return 0
     _print({"permissions": permissions.generate(profile)})
