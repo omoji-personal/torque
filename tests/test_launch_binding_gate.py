@@ -95,10 +95,32 @@ def test_a_record_for_another_process_or_start_time_does_not_bind(tmp_path, monk
 
 
 def test_a_record_for_another_client_does_not_bind(tmp_path, monkeypatch, capsys):
+    """Beta exists and holds a copy of Acme's record: the record's own client
+    field refuses it, not a missing folder."""
+    from torque import workspace as ws
     root = delegated_workspace(tmp_path, monkeypatch)
-    launched(monkeypatch, root)
+    record = launched(monkeypatch, root)
+    ws.add_client(root, "Beta")
+    beta = root / "clients/beta/approvals/consumed"
+    beta.mkdir(parents=True)
+    (beta / f"{record['id']}.launch").write_bytes((consumed(root) / f"{record['id']}.launch").read_bytes())
     monkeypatch.setenv("TORQUE_CLIENT", "beta")
+    slug, why = launch.verify_launch(root, dict(os.environ))
+    assert slug is None and "not for this client" in why
     assert unbound(monkeypatch, capsys, root)
+
+
+def test_a_symlinked_record_does_not_bind(tmp_path, monkeypatch, capsys):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = launched(monkeypatch, root)
+    path = consumed(root) / f"{record['id']}.launch"
+    elsewhere = tmp_path / "record.launch"
+    path.rename(elsewhere)
+    path.symlink_to(elsewhere)
+    assert unbound(monkeypatch, capsys, root)
+    path.unlink()
+    elsewhere.rename(path)
+    assert hook(monkeypatch, capsys, root)[0] == 0
 
 
 def test_an_ai_record_needs_its_approver_binding(tmp_path, monkeypatch, capsys):
@@ -341,11 +363,10 @@ def test_the_real_test_process_is_older_than_a_new_binding(tmp_path, monkeypatch
     as_agent(monkeypatch)
     record = launch.claim_binding(root, "Acme", binding["id"], **CLEAN)
     begun = launch._lstart_epoch(record["pid_started"])
+    if begun >= approval._epoch(binding["created_at"]) - approval.SKEW:
+        pytest.skip("this pytest process is not yet more than SKEW older than a new binding")
     slug, why = launch.verify_launch(root, {"TORQUE_CLIENT": "acme", "TORQUE_LAUNCH": record["id"]})
-    if begun < approval._epoch(binding["created_at"]) - approval.SKEW:
-        assert slug is None and "before" in why
-    else:
-        assert slug == "acme"
+    assert slug is None and "before" in why
 
 
 def test_a_late_reclaim_does_not_bind(tmp_path, monkeypatch, capsys):
@@ -418,16 +439,80 @@ def test_delegated_launch_refuses_permission_bypass_flags(tmp_path, monkeypatch,
     assert not ran and not (consumed(root) / f"{binding['id']}.launch").exists()
 
 
-@pytest.mark.parametrize("flags", [["--permission-mode", "acceptEdits"], ["--permission-mode=plan"],
-                                   ["--model", "x"], ["--output-format", "stream-json", "--verbose"],
-                                   ["--permission-mode"]])
-def test_delegated_launch_passes_other_flags(flags):
-    assert launch.launch_flag_problem(["-p", *flags]) == ""
+HARNESS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+           "--permission-mode", "default"]
 
 
-def test_a_refused_flag_after_a_double_dash_is_still_refused():
-    """Fail closed: the whole passthrough is scanned, whatever claude would make of it."""
-    assert launch.launch_flag_problem(["-p", "--", "--settings", "s.json"])
+@pytest.mark.parametrize("flags", [
+    ["--bare"], ["--safe-mode"], ["--permission-prompt-tool", "mcp__x__y"], ["--mcp-config", "m.json"],
+    ["--plugin-dir", "p"], ["--agents", "{}"], ["--worktree"], ["--some-future-flag"], ["-x"], ["-"],
+    ["--permission-mode", "acceptEdits"], ["--permission-mode=acceptEdits"], ["--permission-mode=plan"],
+    ["--permission-mode"], ["--verbose=true"], ["--", "--bare"], ["prompt text", "--", "-x"]])
+def test_delegated_launch_refuses_anything_off_the_allowlist(tmp_path, monkeypatch, flags):
+    assert launch.launch_flag_problem(["-p", *flags])
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    monkeypatch.chdir(root)
+    ran = []
+    with pytest.raises(delegation.Refusal) as info:
+        cli_approval.launch(root, "Acme", ["-p", *flags], execvp=lambda *a: ran.append(a), delegated=True,
+                            binding=binding["id"], **CLEAN)
+    assert info.value.reason_class == "launch-flag-refused", str(info.value)
+    assert not ran and not (consumed(root) / f"{binding['id']}.launch").exists()
+
+
+@pytest.mark.parametrize("flags", [
+    HARNESS, ["--print", "summarize this"], ["-p", "--permission-mode=default"], ["--include-partial-messages"],
+    ["--replay-user-messages"], ["--model", "m"], ["--model=m"], ["--fallback-model", "m"], ["--effort", "high"],
+    ["--append-system-prompt", "--be brief"], ["--max-budget-usd", "5"], ["--json-schema", "{}"],
+    ["--session-id", "0f0e"], ["--name", "run"], ["--no-session-persistence"], ["-p", "--", "plain prompt"]])
+def test_delegated_launch_passes_allowlisted_options(flags):
+    assert launch.launch_flag_problem(flags) == ""
+
+
+def test_the_harness_argv_launches(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    monkeypatch.chdir(root)
+    seen = []
+    cli_approval.launch(root, "Acme", HARNESS, execvp=lambda program, args: seen.append(args), delegated=True,
+                        binding=binding["id"], **CLEAN)
+    assert seen == [["claude", *HARNESS]]
+
+
+def test_delegated_launch_refuses_claude_code_simple(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("CLAUDE_CODE_SIMPLE", "1")
+    ran = []
+    with pytest.raises(delegation.Refusal) as info:
+        cli_approval.launch(root, "Acme", HARNESS, execvp=lambda *a: ran.append(a), delegated=True,
+                            binding=binding["id"], **CLEAN)
+    assert info.value.reason_class == "launch-flag-refused" and "CLAUDE_CODE_SIMPLE" in str(info.value)
+    assert not ran and not (consumed(root) / f"{binding['id']}.launch").exists()
+
+
+def test_delegated_launch_child_has_no_claude_code_simple(tmp_path, monkeypatch):
+    """Removed from the child environment even if it appears after the check."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    monkeypatch.chdir(root)
+    monkeypatch.delenv("CLAUDE_CODE_SIMPLE", raising=False)
+    real = launch.claim_binding
+
+    def claim(*a, **k):
+        os.environ["CLAUDE_CODE_SIMPLE"] = "1"
+        return real(*a, **k)
+    monkeypatch.setattr(launch, "claim_binding", claim)
+    seen = []
+    cli_approval.launch(root, "Acme", HARNESS, execvp=lambda *a: seen.append(os.environ.get("CLAUDE_CODE_SIMPLE")),
+                        delegated=True, binding=binding["id"], **CLEAN)
+    assert seen == [None]
 
 
 def test_the_agent_session_check_comes_before_the_flag_check(tmp_path, monkeypatch):

@@ -35,11 +35,15 @@ MAX_PS_CALLS = 8
 MAX_ANCESTORS = 7
 VIA = ("binding", "presence", "probe")
 PS_TIMEOUT = 2
-# R49: claude options a delegated launch refuses, since each would let the session
-# skip or widen the permission rules the gate's deny rules rely on.
-REFUSED_FLAGS = ("--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--settings",
-                 "--setting-sources", "--allowedTools", "--allowed-tools", "--disallowedTools",
-                 "--disallowed-tools", "--add-dir")
+# R49 (amended): the only claude options a delegated launch passes through, an
+# allowlist (fail closed). Options that take a value take the next word or `=value`;
+# --permission-mode only with the value "default".
+ALLOWED_FLAGS = ("-p", "--print", "--include-partial-messages", "--replay-user-messages", "--verbose",
+                 "--no-session-persistence")
+ALLOWED_VALUE_OPTIONS = ("--input-format", "--output-format", "--model", "--fallback-model", "--effort",
+                         "--append-system-prompt", "--max-budget-usd", "--json-schema", "--session-id", "--name")
+# Removed from a delegated launch's child environment (and refused when the caller sets it).
+REFUSED_ENV = ("CLAUDE_CODE_SIMPLE",)
 BINDING_FIELDS = ("schema", "id", "workspace", "client", "nonce", "created_at", "expires_at", "approver",
                   "approver_uid", "approver_kind", "approver_model")
 
@@ -366,19 +370,57 @@ def write_launch_record(workspace, client, kind, *, pid=None, starts=None) -> di
 
 
 def launch_flag_problem(extra) -> str:
-    """R49: "" when none of the claude options passed through a delegated launch
-    would skip or widen the permission rules; else the refused option. The whole
-    passthrough is scanned (a `--` included): fail closed."""
+    """R49 (amended): "" when every option passed through a delegated launch is on
+    the allowlist (ALLOWED_FLAGS, ALLOWED_VALUE_OPTIONS with their value, and
+    `--permission-mode default`); else the first refused one. Positional prompt text
+    passes; a lone `--` passes but options after it are still refused (fail closed)."""
     words = [str(word) for word in extra or ()]
-    for index, word in enumerate(words):
+    index = 0
+    while index < len(words):
+        word = words[index]
+        index += 1
+        if word == "--" or not word.startswith("-"):
+            continue
         name, eq, value = word.partition("=")
-        if name in REFUSED_FLAGS:
-            return name
-        if name == "--permission-mode":
-            mode = value if eq else (words[index + 1] if index + 1 < len(words) else "")
-            if mode.lower() == "bypasspermissions":
-                return f"--permission-mode {mode}"
+        if name in ALLOWED_FLAGS and not eq:
+            continue
+        if name in ALLOWED_VALUE_OPTIONS or name == "--permission-mode":
+            if not eq:
+                if index >= len(words):
+                    return word
+                value = words[index]
+                index += 1
+            if name == "--permission-mode" and value != "default":
+                return f"--permission-mode {value}"
+            continue
+        return word
     return ""
+
+
+def launch_env_problem(environ) -> str:
+    """The first REFUSED_ENV variable set in `environ`, or ""."""
+    return next((name for name in REFUSED_ENV if name in environ), "")
+
+
+def _read_record(path: Path) -> dict | None:
+    """A launch record read once through a descriptor that does not follow a link;
+    None when it is missing, a link, not a regular file or not a JSON object."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = None
+            value = json.loads(handle.read())
+    except (OSError, ValueError):
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return value if isinstance(value, dict) else None
 
 
 # The record kind each `via` allows, and its ID prefix.
@@ -409,9 +451,9 @@ def verify_launch(root, env, *, getpid=None, getppid=None, run=None, now=None) -
         path = approval._dirs(root, slug, create=False)["consumed"] / f"{launch_id}.launch"
     except (OSError, ValueError, ws.WorkspaceError):
         return None, "unreadable workspace or client"
-    record = approval._read(path)
+    record = _read_record(path)
     if record is None:
-        return None, "no readable launch record for this client"
+        return None, "no readable launch record for this client (a link is not read)"
     via, kind = record.get("via"), record.get("kind")
     kinds, prefix = _VIA_KINDS.get(via, ((), None))
     if record.get("schema") != LAUNCH_SCHEMA or record.get("id") != launch_id or record.get("client") != slug \

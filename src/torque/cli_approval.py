@@ -199,8 +199,12 @@ def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None,
         launches._tier2_config(workspace, env=env, ancestors=ancestors)
         flag = launches.launch_flag_problem(extra)
         if flag:
-            raise Refusal("launch-flag-refused", f"a delegated launch does not pass {flag} to claude: it would "
-                                                 "skip or widen the permission rules the gate relies on")
+            raise Refusal("launch-flag-refused", f"a delegated launch does not pass {flag} to claude: only "
+                                                 "the allowlisted options go through (R49)")
+        variable = launches.launch_env_problem(os.environ)
+        if variable:
+            raise Refusal("launch-flag-refused", f"a delegated launch does not run with {variable} set; unset it "
+                                                 "and launch again")
     else:
         if binding:
             raise ws.WorkspaceError("--binding goes with --delegated")
@@ -228,6 +232,9 @@ def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None,
     os.environ["TORQUE_CLIENT"] = client_config["slug"]
     os.environ["TORQUE_WORKSPACE"] = str(folder)
     os.environ["TORQUE_LAUNCH"] = record["id"]
+    if delegated:
+        for name in launches.REFUSED_ENV:
+            os.environ.pop(name, None)
     os.chdir(root)
     execvp(AGENT_BINARY, [AGENT_BINARY, *extra])
     return 0
