@@ -266,3 +266,105 @@ def test_lookup_ignores_a_reservation_others_can_write(tmp_path, monkeypatch):
     assert approval.find_by_idempotency_key(root, "Acme", KEY)["id"] == record["id"]
     approval._key_marker(approval._dirs(root, "Acme", create=False), KEY).chmod(0o664)
     assert approval.find_by_idempotency_key(root, "Acme", KEY) is None
+
+
+# --- V2 I2: an idempotent retry revalidates the current request, payload, consent ---
+# and org exactly like a fresh grant before it returns the earlier approval, and the
+# stored approval it returns is validated in full (not only its owner and key).
+
+def _granted_once(root):
+    req = flow_request(root)
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    first = delegated_grant(root, req, idempotency_key=KEY)
+    return req, view, first
+
+
+def _retry(root, req, view, **extra):
+    """The grant call itself, with the earlier view's review (no fresh view)."""
+    kwargs = {"delegated": True, "model_id": MODEL, "request_sha256": view["request_sha256"],
+              "payload_digest": view["payload"]["digest"] or "none", "out": io.StringIO(),
+              "resolve": ORGS.get, "root_owner": FAKE_OWNER, "control_stat": approval._control_stat,
+              "env": {}, "ancestors": lambda: [], "idempotency_key": KEY, **extra}
+    return approval.grant(root, "Acme", req["id"], **kwargs)
+
+
+def test_retry_after_the_request_file_changed_is_refused(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    path = root / "clients/acme/approvals/requests" / f"{req['id']}.json"
+    path.write_text(json.dumps(json.loads(path.read_text()), indent=4), encoding="utf-8")
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view)
+    assert info.value.reason_class == "request-changed"
+
+
+def test_retry_after_the_payload_changed_is_refused(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    flow = root / "force-app/main/default/flows/Case_Escalation.flow-meta.xml"
+    flow.write_text("<Flow>v3</Flow>", encoding="utf-8")
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view)
+    assert info.value.reason_class == "payload-changed"
+
+
+def test_retry_after_consent_became_unusable_is_refused(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+
+    def unusable(workspace, client):
+        raise ws.WorkspaceError("consent was withdrawn")
+    monkeypatch.setattr(approval, "_usable_consent", unusable)
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view)
+    assert info.value.reason_class == "consent-unusable"
+
+
+def test_retry_when_the_org_now_reads_as_production_is_refused(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    dev = ORGS["acme-dev"]
+    now_prod = {"acme-dev": dev._replace(detected_org_type="production", is_production=True)}
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view, resolve=now_prod.get)
+    assert info.value.reason_class == "org-production-or-unknown"
+
+
+def test_an_exact_retry_rechecks_the_review_before_returning(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    calls = []
+    real = approval._check_review
+    monkeypatch.setattr(approval, "_check_review", lambda *a, **k: calls.append(1) or real(*a, **k))
+    assert _retry(root, req, view)["id"] == first["id"] and calls
+
+
+def _stored(root, record):
+    return root / "clients/acme/approvals/granted" / f"{record['id']}.json"
+
+
+@pytest.mark.parametrize("field, value", [("approver_kind", "robot"), ("delegated", "yes"),
+                                          ("schema", "other/1"), ("client", "other"),
+                                          ("request_id", "req-000000000000"), ("org_kind", "production"),
+                                          ("expires_at", "not a time")])
+def test_lookup_refuses_an_invalid_stored_approval(tmp_path, monkeypatch, field, value):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    path = _stored(root, first)
+    record = json.loads(path.read_text())
+    record[field] = value
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert approval.find_by_idempotency_key(root, "Acme", KEY) is None
+
+
+def test_retry_never_returns_an_invalid_stored_approval(tmp_path, monkeypatch):
+    """A lookup that rejects the stored record must not let the publish-race path
+    hand the same tampered file back as the retry's result."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    path = _stored(root, first)
+    record = json.loads(path.read_text())
+    record["approver_kind"] = "robot"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises((delegation.Refusal, ws.WorkspaceError)):
+        _retry(root, req, view)

@@ -1211,7 +1211,11 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
                 raise delegation.Refusal("idempotency-conflict", "this idempotency key was already used for a "
                                                                   "different request or reviewed content; "
                                                                   "nothing was granted")
-            return existing
+            # V2 I2: an exact repeat is returned only after every check below (the
+            # request re-read and re-hashed, the payload derived again, consent and
+            # the org's live classification) passes, exactly as for a fresh grant.
+    else:
+        existing = None
     out = out or sys.stdout
     t = now if now is not None else time.time()
     try:
@@ -1253,6 +1257,8 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
             or req.get("org_kind") not in NONPRODUCTION:
         raise delegation.Refusal("org-production-or-unknown", "delegated approvals are refused for production "
                                                               "and unknown orgs; the consultant grants those")
+    if existing is not None:
+        return existing
     ttl = _ttl(req)
     for line in screen_lines(req, derived, org_id, org_kind, ttl):
         out.write(line + "\n")
@@ -1281,7 +1287,20 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
         raise delegation.Refusal("request-denied", f"{request_id} was denied; ask for a new request")
     record["reviewed_request_sha256"] = request_sha256
     record["idempotency_key"] = idempotency_key
-    return _publish_grant(workspace, client, record)
+    published = _publish_grant(workspace, client, record)
+    if published is not record:
+        # V2 I2: the publish race handed back a file another call wrote. It is
+        # returned only when it is a complete, valid approval for this same review.
+        path = dirs["granted"] / f"{record['id']}.json"
+        if _stored_approval_problem(published, path, config, ws.slug_for(client),
+                                    {"approval_id": record["id"], "request_id": request_id,
+                                     "key": idempotency_key}) \
+                or published.get("reviewed_request_sha256") != request_sha256 \
+                or (published.get("payload_digest") or "none") != payload_digest:
+            raise delegation.Refusal("idempotency-conflict", "the approval already stored under this "
+                                                              "idempotency key is not a valid grant of this "
+                                                              "review; nothing was granted")
+    return published
 
 
 def _publish_grant(workspace, client, record: dict) -> dict:
@@ -1408,11 +1427,43 @@ def find_by_idempotency_key(workspace, client, key, *, config=None, control_stat
             return None
         if _controls_problem(root, dirs["client"], approver, control_stat=control_stat):
             return None
+    if found.get("key") != key or not _valid_id(found.get("approval_id"), "apr-") \
+            or not _valid_id(found.get("request_id"), "req-"):
+        return None
     path = dirs["granted"] / f"{found.get('approval_id')}.json"
     record = _read(path)
-    if record is None or _approver_owned(path, config) or record.get("idempotency_key") != key:
+    if record is None or _approver_owned(path, config) \
+            or _stored_approval_problem(record, path, config, ws.slug_for(client), found):
         return None
     return record
+
+
+def _stored_approval_problem(record: dict, path: Path, config: dict, slug: str, marker: dict) -> str:
+    """V2 I2: why an approval stored under an idempotency key cannot be returned as
+    that key's grant; "" when it can. The whole record is checked, not only its
+    owner and key: the approval schema and every required field, its id and file
+    name, the client, the marker's approval and request ids, the recorded
+    approver identity (a delegated grant by this workspace's approver delegate,
+    never for a production or unknown org) and a well-formed validity window.
+    Expiry is not checked: a lookup reconciles history, and the gate checks
+    expiry when the approval is used."""
+    if not isinstance(record, dict) or record.get("schema") != SCHEMA or any(k not in record for k in REQUIRED) \
+            or record.get("kind") not in KINDS or not _valid_id(record.get("id"), "apr-") \
+            or path.name != f"{record.get('id')}.json" or record.get("client") != slug \
+            or record.get("id") != marker.get("approval_id") or record.get("request_id") != marker.get("request_id") \
+            or record.get("idempotency_key") != marker.get("key") \
+            or not isinstance(record.get("reviewed_request_sha256"), str) or record.get("delegated") is not True:
+        return "malformed approval"
+    identity = _identity_problem(record, config, config.get("approval_verify", "hmac"))
+    if identity:
+        return identity
+    try:
+        granted, expires = _epoch(record["granted_at"]), _epoch(record["expires_at"])
+    except (TypeError, ValueError):
+        return "malformed approval"
+    if expires < granted or expires - granted > TTL_SECONDS[record["kind"]] + SKEW:
+        return "approval window is longer than allowed"
+    return ""
 
 
 def printable(text: str) -> str:
