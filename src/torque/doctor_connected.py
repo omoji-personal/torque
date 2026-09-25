@@ -171,7 +171,7 @@ def approvals_by_kind(root: Path, client: str | None = None) -> dict:
         names = sorted(p.name for p in clients.iterdir() if (p / "client.json").is_file()) if clients.is_dir() else []
     for name in names:
         for row in approval.approval_log(root, name):
-            if row.get("kind") != "approval_grant":
+            if not isinstance(row, dict) or row.get("kind") != "approval_grant":
                 continue
             kind = row.get("approver_kind")
             key = kind if kind in ("human", "ai") else "unrecorded"
@@ -192,9 +192,15 @@ def approval_history(root: Path, client: str | None = None) -> dict:
         names = sorted(p.name for p in clients.iterdir() if (p / "client.json").is_file()) if clients.is_dir() else []
     launches: dict[tuple, int] = {}
     unverified = 0
+    malformed = 0
     identities: dict[tuple, dict] = {}
     for name in names:
         for row in approval.approval_log(root, name):
+            if not _identity_ok(row):
+                # V2-3: a row whose identity values have the wrong types is a
+                # finding (counted, reported), never a crash that aborts doctor.
+                malformed += 1
+                continue
             who = (row.get("approver"), row.get("approver_uid"), row.get("approver_kind"), row.get("approver_model"))
             if row.get("kind") == "launch":
                 if row.get("verified") is True:
@@ -210,7 +216,21 @@ def approval_history(root: Path, client: str | None = None) -> dict:
                                       for (a, u, k, m), n in sorted(launches.items(), key=order)],
                          "unverified": unverified},
             "identities": [{"actor": a, "uid": u, "kind": k, "model": m, "delegated": d, **counts}
-                           for (a, u, k, m, d), counts in sorted(identities.items(), key=order)]}
+                           for (a, u, k, m, d), counts in sorted(identities.items(), key=order)],
+            "malformed": malformed}
+
+
+def _identity_ok(row) -> bool:
+    """V2-3: the identity values an approval-log row may carry. A pre-a16 row that
+    recorded no identity (None values) is fine; a value of the wrong type is not."""
+    if not isinstance(row, dict):
+        return False
+    uid = row.get("approver_uid")
+    return (all(row.get(k) is None or isinstance(row.get(k), str)
+                for k in ("kind", "approver", "approver_kind", "approver_model"))
+            and (uid is None or (type(uid) is int))
+            and (row.get("delegated") is None or type(row.get("delegated")) is bool)
+            and (row.get("verified") is None or type(row.get("verified")) is bool))
 
 
 def _who(item: dict) -> str:
@@ -517,9 +537,13 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
         advice.append(f"approvals by kind could not be counted: {exc}")
     try:
         history = approval_history(root, client if client_view is not None else None)
-    except (OSError, ValueError, KeyError, ws.WorkspaceError, delegation.Refusal) as exc:
+    except (OSError, ValueError, KeyError, TypeError, ws.WorkspaceError, delegation.Refusal) as exc:
         history = None
         advice.append(f"launches and approval identities could not be read from the approval log: {exc}")
+    if history and history.get("malformed"):
+        advice.append(f"{history['malformed']} approval-log rows record an approver identity with malformed "
+                      "values (wrong types); they are left out of the summary. Inspect the client's change "
+                      "records and approvals folders")
     return {"ready": not problems, "problems": problems, "advice": advice, "probes": probes, "checks": checks,
             "approval_verify": verify, "client": client_view, "profile": profile,
             "delegates": {role: delegation.delegate_for(config, role) for role in delegation.ROLES},
@@ -554,6 +578,8 @@ def print_report(result: dict, out=None) -> None:
             kind = ", delegated" if item["delegated"] else ""
             out.write(f"Approval identity: {_who(item)}{kind}): {item['grants']} granted, "
                       f"{item['denials']} denied\n")
+        if history.get("malformed"):
+            out.write(f"Malformed approval-log identities: {history['malformed']}\n")
     for probe in result["probes"]:
         mark = "ok" if probe["got"] == probe["expected"] else "MISMATCH"
         line = f"Probe {probe['route']:<25} expected {probe['expected']:<5} got {probe['got']:<5} {mark}"

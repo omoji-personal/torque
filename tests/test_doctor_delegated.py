@@ -364,3 +364,32 @@ def test_v2_2_delegate_home_rules_pass_doctor_as_the_agent_account(tmp_path, mon
     as_agent(monkeypatch)
     result = doctor_connected.report(root, "Acme")
     assert not any("host permission rules" in p for p in result["problems"]), result["problems"]
+
+
+def test_v2_3_doctor_reports_malformed_historical_identities_without_aborting(tmp_path, monkeypatch):
+    """V2-3: an approval-log row whose identity values have the wrong types (for
+    example approver=["reviewer"]) is a finding, not a TypeError that aborts
+    doctor; well-formed rows are still summarized."""
+    from torque import approval
+    root = delegated_workspace(tmp_path, monkeypatch)
+    good = {"kind": "approval_grant", "approver": "reviewer", "approver_uid": 501, "approver_kind": "ai",
+            "approver_model": MODEL, "delegated": True}
+    rows = [good,
+            {**good, "approver": ["reviewer"]},
+            {**good, "approver_uid": {"uid": 1}},
+            {**good, "approver_model": ["m"], "kind": "approval_deny"},
+            {**good, "delegated": ["yes"]},
+            {"kind": "launch", "verified": True, "approver": {"a": 1}},
+            ["not", "a", "row"]]
+    monkeypatch.setattr(approval, "approval_log", lambda *a, **k: list(rows))
+    history = doctor_connected.approval_history(root, "Acme")
+    assert history["malformed"] == 6
+    assert history["identities"] == [{"actor": "reviewer", "uid": 501, "kind": "ai", "model": MODEL,
+                                      "delegated": True, "grants": 1, "denials": 0}]
+    as_agent(monkeypatch)
+    result = doctor_connected.report(root, "Acme")
+    assert result["approval_history"]["malformed"] == 6
+    assert any("6 approval-log rows" in a for a in result["advice"])
+    out = io.StringIO()
+    doctor_connected.print_report(result, out)
+    assert "Malformed approval-log identities: 6" in out.getvalue()
