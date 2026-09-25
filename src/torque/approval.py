@@ -924,10 +924,15 @@ def _check_review(current_sha: str, derived: dict, request_sha256, payload_diges
 def grant(workspace, client, request_id, *, new_components=(), presence=None, confirm=None, out=None,
           resolve=None, now=None, report=None, audit_trail=None, delegated=False, model_id=None,
           request_sha256=None, payload_digest=None, idempotency_key=None, env=None, ancestors=None,
-          getuid=None, root_owner=None) -> dict:
+          getuid=None, root_owner=None, control_stat=None) -> dict:
     """The consultant's grant, at a real terminal, after reading the call. With
     `delegated`, the workspace's delegated approver's grant instead (tier 2, no
-    terminal; see _grant_delegated)."""
+    terminal; see _grant_delegated). `control_stat`, like `root_owner`, is an
+    injectable override for a caller that cannot make the workspace's control
+    files and folders genuinely belong to another account (fix round 1: a
+    contract or test that needs this fakes ownership for this one call through
+    the parameter, never by swapping the process-global `_control_stat`, which
+    would also change what a concurrent caller in the same process sees)."""
     if delegated:
         if new_components:
             raise ws.WorkspaceError("--new-component belongs to the consultant's production grants; a delegated "
@@ -935,7 +940,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
         return _grant_delegated(workspace, client, request_id, model_id=model_id, request_sha256=request_sha256,
                                 payload_digest=payload_digest, idempotency_key=idempotency_key, out=out,
                                 resolve=resolve, now=now, env=env, ancestors=ancestors, getuid=getuid,
-                                root_owner=root_owner)
+                                root_owner=root_owner, control_stat=control_stat)
     if model_id is not None:
         raise ws.WorkspaceError("--model-id applies only to a delegated grant (--delegated)")
     if idempotency_key is not None:
@@ -1077,7 +1082,7 @@ def _base_record(req: dict, request_id: str, derived: dict, org_id: str, org_kin
 
 
 def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256, payload_digest, idempotency_key,
-                     out, resolve, now, env, ancestors, getuid, root_owner) -> dict:
+                     out, resolve, now, env, ancestors, getuid, root_owner, control_stat) -> dict:
     """A delegated approver's grant: tier 2, no terminal, never for production or an
     unknown org, bound to the request it reviewed, recorded with its kind and
     identity. Every decision comes from the one protected read of workspace.json
@@ -1090,7 +1095,12 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
     (D7), a repeat of the exact same request, reviewed hash and payload digest
     returns the earlier grant instead of making a new one; the agent-session,
     tier 2, R46 control-file/folder and reviewed-hash checks above still run on
-    every call, so an idempotency key never bypasses them."""
+    every call, so an idempotency key never bypasses them. `control_stat`
+    (fix round 1) is `_controls_problem`'s own injectable owner lookup, threaded
+    through rather than defaulted here, so a caller with no way to actually chown
+    the workspace's control files can prove this exact call's R46 check without
+    touching the module-global `_control_stat` that other, unrelated calls in the
+    same process also read."""
     actor, config, root, config_st = delegation._delegated_proof(
         workspace, "approver", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
         root_owner=root_owner)
@@ -1101,7 +1111,8 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
         client_folder = ws.load_client(root, client)[0]
     except (OSError, ws.WorkspaceError) as exc:
         raise delegation.Refusal("request-changed", f"cannot read the client folder: {exc}") from None
-    controls = _controls_problem(root, client_folder, config["approver_uid"], workspace_st=config_st)
+    controls = _controls_problem(root, client_folder, config["approver_uid"], workspace_st=config_st,
+                                 control_stat=control_stat)
     if controls:
         raise delegation.Refusal("not-delegated", controls)
     # The client folder is already known good (the R46 check just read it), so this
@@ -1116,7 +1127,8 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
         # same as a fresh grant. Only an exact repeat (same request, same reviewed
         # hash and payload) returns the earlier grant; anything else about this key
         # is a conflict, never a silent reuse of someone else's review.
-        existing = find_by_idempotency_key(workspace, client, idempotency_key, config=config)
+        existing = find_by_idempotency_key(workspace, client, idempotency_key, config=config,
+                                           control_stat=control_stat)
         if existing is not None:
             if existing.get("request_id") != request_id or existing.get("reviewed_request_sha256") != request_sha256 \
                     or (existing.get("payload_digest") or "none") != payload_digest:
@@ -1251,12 +1263,16 @@ def _reserve_key(dirs: dict, key: str, approval_id: str, request_id: str) -> dic
     return found
 
 
-def find_by_idempotency_key(workspace, client, key, *, config=None) -> dict | None:
+def find_by_idempotency_key(workspace, client, key, *, config=None, control_stat=None) -> dict | None:
     """The approval already granted under `key`, or None when no grant has
     completed for it yet (no reservation, a reservation with no published
     approval, or either file untrustworthy under this workspace's tier 2 rule).
     R46 keeps running here too: a lookup in a tier 2 workspace whose control files
-    or folders belong to the approver account trusts nothing it finds (D7)."""
+    or folders belong to the approver account trusts nothing it finds (D7).
+    `control_stat` (fix round 1) is the same injectable owner lookup
+    `_grant_delegated` threads through when it calls this for an idempotent
+    retry; a standalone lookup (the CLI's `approval lookup`) leaves it at the
+    default, `approval._control_stat`."""
     if not isinstance(key, str) or not IDEMPOTENCY_KEY.fullmatch(key):
         raise ws.WorkspaceError("an idempotency key is 8 to 128 letters, digits and : . _ -")
     config = config if config is not None else _config(workspace)
@@ -1271,7 +1287,7 @@ def find_by_idempotency_key(workspace, client, key, *, config=None) -> dict | No
             root = ws.load_workspace(workspace)[0]
         except (OSError, ws.WorkspaceError):
             return None
-        if _controls_problem(root, dirs["client"], approver):
+        if _controls_problem(root, dirs["client"], approver, control_stat=control_stat):
             return None
     path = dirs["granted"] / f"{found.get('approval_id')}.json"
     record = _read(path)
@@ -1397,17 +1413,26 @@ def _ai_approver(config: dict) -> bool:
 
 
 def _control_stat(path, st=None):
-    """The owner and mode of a control file: `st` when the caller already holds the
-    fstat of a protected read, else lstat (a symlink is seen, never followed)."""
+    """The default owner-and-mode lookup for a control file or folder: `st` when
+    the caller already holds the fstat of a protected read, else lstat (a symlink
+    is seen, never followed). Every caller below takes its own `control_stat`
+    override in place of this (fix round 1); a caller that passes none gets this
+    one, read fresh from the module each time, so a test's monkeypatch of
+    `approval._control_stat` still reaches a call that names no override."""
     return st if st is not None else os.lstat(path)
 
 
-def _control_problem(path, approver, st=None) -> str:
+def _control_problem(path, approver, st=None, *, control_stat=None) -> str:
     """R46: why a control file (workspace.json, a client's consent.json) cannot be
     trusted in a tier 2 workspace; "" when it can. The approver account must not
-    own it, nobody but its owner may write it, and it must be a regular file."""
+    own it, nobody but its owner may write it, and it must be a regular file.
+    `control_stat` (fix round 1), when given, replaces `_control_stat` for this
+    one call only; the default is looked up on the module at call time, not
+    captured at import time, so an unrelated monkeypatch of the global (kept for
+    the gate's own R46 check, which has no call-scoped seam of its own) still
+    applies to a caller that passes no override."""
     try:
-        found = _control_stat(path, st)
+        found = (control_stat or _control_stat)(path, st)
     except OSError:
         return f"cannot read {path}; control files must not be owned or writable by the approver account"
     if not stat.S_ISREG(found.st_mode) or found.st_uid == approver or found.st_mode & 0o022:
@@ -1416,12 +1441,13 @@ def _control_problem(path, approver, st=None) -> str:
     return ""
 
 
-def _folder_problem(path, approver) -> str:
+def _folder_problem(path, approver, *, control_stat=None) -> str:
     """R46 for a folder holding a control file: a real folder (not a link), not the
     approver account's, and, when others can write it, sticky (S_ISVTX), so nobody
-    can rename or replace an entry they do not own."""
+    can rename or replace an entry they do not own. `control_stat`: see
+    `_control_problem`."""
     try:
-        found = _control_stat(path)
+        found = (control_stat or _control_stat)(path)
     except OSError:
         return f"cannot read {path}; control folders must not be owned or writable by the approver account"
     if not stat.S_ISDIR(found.st_mode) or found.st_uid == approver:
@@ -1433,16 +1459,26 @@ def _folder_problem(path, approver) -> str:
     return ""
 
 
-def _controls_problem(root: Path, client_folder: Path, approver, workspace_st=None) -> str:
+def _controls_problem(root: Path, client_folder: Path, approver, workspace_st=None, *, control_stat=None) -> str:
     """R46: the workspace root, clients/ and the client's folder, then workspace.json
     (from `workspace_st`, the fstat of a protected read, when given) and the
-    client's consent.json."""
+    client's consent.json. `control_stat` (fix round 1): an injectable override
+    for the owner lookup every one of those checks makes, in place of mutating
+    the process-global `approval._control_stat`, so one caller (a delegated
+    grant that cannot actually chown the workspace) faking ownership for its own
+    check can never also change what a different, concurrent caller in the same
+    process sees through the untouched default. `_grant_delegated` (the only
+    production caller that needs this) threads its own `control_stat` through
+    here; `_problem` (the gate's R46 check, run when a granted approval is
+    consumed) passes none, because no real caller of the gate needs to fake
+    ownership, only tests do, and they still do it by monkeypatching the
+    default."""
     for folder in (root, root / "clients", client_folder):
-        problem = _folder_problem(folder, approver)
+        problem = _folder_problem(folder, approver, control_stat=control_stat)
         if problem:
             return problem
-    return (_control_problem(root / ws.CONFIG, approver, workspace_st)
-            or _control_problem(client_folder / consent.FILE, approver))
+    return (_control_problem(root / ws.CONFIG, approver, workspace_st, control_stat=control_stat)
+            or _control_problem(client_folder / consent.FILE, approver, control_stat=control_stat))
 
 
 def _granted_layout(path: Path, client: str) -> tuple[Path, Path] | None:

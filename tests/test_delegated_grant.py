@@ -2,6 +2,7 @@ import io
 import json
 import os
 import shlex
+from types import SimpleNamespace
 
 import pytest
 
@@ -608,3 +609,47 @@ def test_delegated_grant_refuses_an_unreadable_request_or_change(tmp_path, monke
     with pytest.raises(delegation.Refusal) as info:
         approval.grant(root, "Acme", req["id"], **kwargs)
     assert info.value.reason_class == "request-changed"
+
+
+# Fix round 1, Important: a delegated grant's own R46 check takes a call-scoped
+# control_stat override, so a caller that cannot make the workspace's control
+# files genuinely belong to another account (contracts.py; this test) never has
+# to swap the process-global approval._control_stat to prove it, which could
+# otherwise mask a real R46 violation for a concurrent in-process caller.
+
+
+def test_control_stat_is_call_scoped_not_a_global_mutation(tmp_path, monkeypatch):
+    """Built without control_owner's monkeypatch: the workspace's control files
+    really are owned by this test process, which is also the named delegated
+    approver (a single-uid test cannot separate them), so the only thing that can
+    make the grant below succeed is the explicit control_stat override. A
+    concurrent-in-process caller checking the same files with no override must
+    still see the truth, proving the override never leaked past this one call."""
+    root = base_workspace(tmp_path, monkeypatch)
+    delegation.set_delegate(root, "approver", ACCOUNT, ME, "ai", geteuid=lambda: 0)
+    ws.set_ai_access(root, "connected", approval="required", verify="owner-uid", approver_uid=ME, presence=YES)
+    letter = tmp_path / "agreement.pdf"
+    letter.write_bytes(b"synthetic agreement")
+    consent.record_consent(root, "Acme", "2026-09-30", letter, ["metadata", "records"], ["acme-dev"], [],
+                           presence=YES, resolve=ORGS.get)
+    consent.sign_off(root, "Acme", "Reviewer", presence=YES)
+    for name in ("requests", "granted", "consumed", "denied"):
+        (root / "clients" / "acme" / "approvals" / name).mkdir(parents=True, exist_ok=True)
+    req = flow_request(root)
+    real = approval._control_stat
+
+    def fake(path, st=None):
+        found = real(path, st)
+        return SimpleNamespace(st_mode=found.st_mode, st_uid=ME + 1)
+
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    record = approval.grant(root, "Acme", req["id"], delegated=True, model_id=MODEL,
+                            request_sha256=view["request_sha256"],
+                            payload_digest=view["payload"]["digest"] or "none",
+                            out=io.StringIO(), resolve=ORGS.get, root_owner=FAKE_OWNER, control_stat=fake, **CLEAN)
+    assert record["delegated"] is True and record["approver_kind"] == "ai"
+    assert approval._control_stat is real, "the grant must not have replaced the process-global lookup"
+    client_folder = ws.load_client(root, "Acme")[0]
+    violation = approval._controls_problem(root, client_folder, ME)
+    assert violation, ("a concurrent caller checking the same files with no override must still see the real, "
+                       "approver-owned state; the fake above must never leak past its one call")

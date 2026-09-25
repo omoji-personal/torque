@@ -70,7 +70,18 @@ def control_owner(monkeypatch, owner=0, only=None):
     root-owned locked layout a real delegated grant needs (D1 + R46); ME + 1 is the
     consultant's own account (the a15 layout, for owner grants at the gate). With
     `only` (a file or folder name), only that one is reported as `owner` and the
-    rest as root. Mode and file type always come from the real file or folder."""
+    rest as root. Mode and file type always come from the real file or folder.
+
+    Fix round 1: `approval.grant`/`_grant_delegated` now take their own call-scoped
+    `control_stat` override instead of needing this monkeypatch (see
+    `delegated_grant`, which reads whatever this function last set and passes it
+    explicitly). This function still monkeypatches the process-global
+    `approval._control_stat`, and stays the source of truth for that: it is the
+    only seam `_problem` (the gate's own R46 check, run when a granted approval
+    is consumed) has, since no real caller of the gate needs to fake ownership,
+    only tests do, and many tests here set up one ownership scenario and then
+    check both a grant and a `consume()` against it in the same test body, so
+    splitting this into two unrelated mechanisms would cost more than it buys."""
     from types import SimpleNamespace
     global _REAL_CONTROL_STAT
     if _REAL_CONTROL_STAT is None:
@@ -116,10 +127,15 @@ def flow_request(root, argv=None, org="acme-dev", cwd=None):
 def delegated_grant(root, req, **extra):
     """The delegated approver's grant of `req`, bound to what `approval show` reported.
     root_owner=FAKE_OWNER stands in for the separate workspace owner (R41) that a
-    single-uid test process cannot have."""
+    single-uid test process cannot have. control_stat (fix round 1) is read from
+    `approval._control_stat` at call time, whatever `control_owner` most recently
+    set it to (the default, root-owned layout from `delegated_workspace`, or a
+    scenario a test reconfigured with a later `control_owner(...)` call): the
+    grant path itself takes this as an explicit, call-scoped parameter now,
+    rather than relying on `_grant_delegated`'s fallback to the global."""
     view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
     kwargs = {"delegated": True, "model_id": MODEL, "request_sha256": view["request_sha256"],
               "payload_digest": view["payload"]["digest"] or "none", "out": io.StringIO(),
-              "resolve": ORGS.get, "root_owner": FAKE_OWNER, **CLEAN}
+              "resolve": ORGS.get, "root_owner": FAKE_OWNER, "control_stat": approval._control_stat, **CLEAN}
     kwargs.update(extra)
     return approval.grant(root, "Acme", req["id"], **kwargs)

@@ -7,19 +7,19 @@ resolution or the recorded consent says so. Each case builds its own throwaway
 tier 2 workspace and calls the real grant code path in torque.approval, never a
 re-implementation. The delegated approver's identity is proven the same way the
 grant code already lets any caller prove it: delegation.set_delegate's
-administrator bypass to name the delegate, approval.grant's own root_owner
-override for R41 (the delegate must be a separate account from the one that
-owns the workspace directory), and a local, restored swap of
-approval._control_stat (R46's own injectable owner lookup) so the workspace's
+administrator bypass to name the delegate, and approval.grant's own per-call
+overrides for R41 (root_owner) and R46 (control_stat), so the workspace's
 control files and folders read as owned by someone other than the single OS
-account a contract run has to work with. Org identity comes from an injectable
-resolver factory (`resolve`), defaulting to this module's own synthetic one;
-the contract never touches $HOME beyond the temporary workspace it creates and
-makes no network call."""
+account a contract run has to work with. Both overrides are call-scoped
+parameters, never a change to the running process's own state: this module
+touches no process-global (fix round 1), so a concurrent caller in the same
+process checking real ownership is never affected by what a contract run fakes
+for itself. Org identity comes from an injectable resolver factory (`resolve`),
+defaulting to this module's own synthetic one; the contract never touches $HOME
+beyond the temporary workspace it creates and makes no network call."""
 from __future__ import annotations
 
 from collections import namedtuple
-from contextlib import contextmanager
 import io
 import json
 import os
@@ -43,32 +43,25 @@ def _org(kind: str):
     return {_ORG: _Org(_ID, kind, kind != "developer", _INSTANCE)}.get
 
 
-@contextmanager
-def _approver_owns_nothing(approver_uid: int):
+def _fake_control_stat(real, approver_uid: int):
     """R46: a delegated grant refuses when the workspace's control files
     (workspace.json, consent.json) or the folders holding them belong to the
     approver account. A contract run has no second OS account to actually chown
-    those to, so for the span of one grant call this swaps
-    `approval._control_stat`, the injectable owner lookup D5/D7 built for
-    exactly this purpose (it returns the stat already in hand from a protected
-    read when given one, else lstats the path itself), for one that reports
-    every control path as owned by a different, fixed uid instead. Mode and
-    file type still come from the real file or folder; only the owner is faked,
-    and the real function is restored before this returns, refusal or not."""
-    from . import approval
-
-    real = approval._control_stat
+    those to, so this builds a one-call `control_stat` override (fix round 1:
+    `approval.grant`'s own parameter for exactly this, threaded through to
+    `_controls_problem`/`_control_problem`/`_folder_problem`) that reports every
+    control path as owned by a different, fixed uid instead. Mode and file type
+    still come from the real file or folder; only the owner is faked. This never
+    touches `approval._control_stat` itself, so it cannot affect any other,
+    concurrent caller in the same process checking real ownership through the
+    untouched default."""
     fake_uid = approver_uid + 1
 
     def fake(path, st=None):
         found = real(path, st)
         return SimpleNamespace(st_mode=found.st_mode, st_uid=fake_uid)
 
-    approval._control_stat = fake
-    try:
-        yield
-    finally:
-        approval._control_stat = real
+    return fake
 
 
 def _workspace(base: Path, consent_kind: str, resolve) -> Path:
@@ -110,9 +103,9 @@ def _case(name: str, consent_kind: str, live_kind: str, resolve) -> dict:
     with which reason class. R41 (the delegate must be a separate account from
     the one that owns the workspace directory) and R46 (the control files and
     folders must not be the approver account's) are satisfied through the same
-    overrides the grant code already accepts for exactly this situation
-    (root_owner, and the temporary _control_stat swap), never by changing what
-    is checked."""
+    per-call overrides the grant code already accepts for exactly this situation
+    (root_owner, control_stat), never by changing what is checked, and never by
+    mutating any state this call does not own."""
     from . import approval, changes
     from .delegation import Refusal
 
@@ -125,12 +118,12 @@ def _case(name: str, consent_kind: str, live_kind: str, resolve) -> dict:
                                       resolve=resolve(consent_kind), cwd=root)
         view = approval.request_view(root, "Contract Client", req["id"], resolve=resolve(consent_kind))
         try:
-            with _approver_owns_nothing(me):
-                approval.grant(root, "Contract Client", req["id"], delegated=True, model_id="contract-model",
-                               request_sha256=view["request_sha256"],
-                               payload_digest=view["payload"]["digest"] or "none",
-                               out=io.StringIO(), resolve=resolve(live_kind), env={}, ancestors=lambda: [],
-                               root_owner=lambda p: me + 1)
+            approval.grant(root, "Contract Client", req["id"], delegated=True, model_id="contract-model",
+                           request_sha256=view["request_sha256"],
+                           payload_digest=view["payload"]["digest"] or "none",
+                           out=io.StringIO(), resolve=resolve(live_kind), env={}, ancestors=lambda: [],
+                           root_owner=lambda p: me + 1,
+                           control_stat=_fake_control_stat(approval._control_stat, me))
         except Refusal as exc:
             return {"case": name, "refused": True, "reason_class": exc.reason_class}
         return {"case": name, "refused": False, "reason_class": None}
