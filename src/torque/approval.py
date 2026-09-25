@@ -2193,8 +2193,20 @@ def _before(since: str | None, at) -> bool:
     (should not happen for a well-formed record) is never filtered out by a
     since cutoff, the same as a15's own comparison already worked (a plain
     string comparison, unchanged from a15 for the change-record rows this
-    filter already covered)."""
-    return bool(since) and bool(at) and at < since
+    filter already covered).
+
+    Fix round 1, item 1: a row's timestamp can come from an agent-writable
+    file (a launch record in approvals/consumed/), so it may not be a string
+    at all (for example a bare number). A comparison against a non-string
+    raises TypeError, not ValueError; caught here so a hostile or corrupt
+    value never crashes the log, and is never filtered out by since either
+    (an unfilterable row is shown, not hidden)."""
+    if not since or not at:
+        return False
+    try:
+        return at < since
+    except TypeError:
+        return False
 
 
 def _log_time(at) -> float:
@@ -2208,11 +2220,59 @@ def _log_time(at) -> float:
     first): comparing the parsed instants instead keeps the sort correct
     regardless of which writer produced a row. A missing or unparseable
     timestamp sorts first, rather than raising or silently landing at the
-    wrong end of the log."""
+    wrong end of the log.
+
+    Fix round 1, item 1: `at` may be a non-string (a launch record's own
+    created_at is agent-writable and untyped on disk); `datetime.fromisoformat`
+    raises TypeError for a non-string argument, not ValueError. Both are
+    caught, so a malformed or hostile value never crashes the sort."""
     try:
         return _epoch(at) if at else float("-inf")
-    except ValueError:
+    except (TypeError, ValueError):
         return float("-inf")
+
+
+def _launch_problem_row(path: Path, message: str, approval_id=None) -> dict:
+    """Fix round 1, item 1: a launch record that cannot be trusted enough to
+    show as evidence at all (unreadable, not a JSON object, or missing/
+    malformed required fields) is shown as this instead of being silently
+    dropped or crashing the log: the row still names its kind and source, a
+    `problem` field names the file and why, and every identity field is null
+    rather than guessed at from untrustworthy content."""
+    return {"change": None, "created_at": None, "kind": "launch", "request_id": None, "approval_id": approval_id,
+            "command": None, "approver": None, "approver_uid": None, "approver_kind": None, "approver_model": None,
+            "delegated": None, "via": None, "verified": False, "reason_class": None, "source": "launch record",
+            "problem": f"{path.name}: {message}"}
+
+
+def _launch_verified(root: Path, config: dict, slug: str, record: dict) -> bool:
+    """R53: a launch row is agent-written evidence (the launching account,
+    including the delegated AI path, writes its own record in
+    approvals/consumed/ once it claims a binding). `verified` is true only
+    when the record's own via is "binding" and the binding it names still
+    passes D11's full binding verification (`launch._checked_binding`:
+    `_read_binding` plus the field and date checks the claim and the gate's
+    own re-check share, using this workspace's current delegate config, the
+    same call-scoped seam those callers use) and the record's own approver
+    fields (nonce, kind, the binding's recorded dates, the approver identity)
+    still agree with what that binding currently says. A presence or probe
+    launch has no binding to check against and is always false, the same
+    self-account trust a15 already gave a presence launch; a forged, stale
+    or non-matching binding reference is false too, never raised: an
+    unverifiable launch is still shown as evidence, only marked, never
+    hidden and never allowed to crash the log on malformed content."""
+    from . import launch as launch_mod
+    if record.get("via") != "binding" or not delegation.delegated_tier2(config):
+        return False
+    try:
+        binding, _created, _expires = launch_mod._checked_binding(root, config, slug, record.get("binding_id"),
+                                                                   time.time())
+    except (delegation.Refusal, TypeError, ValueError, KeyError, AttributeError, OSError):
+        return False
+    approver = {k: binding[k] for k in ("approver", "approver_uid", "approver_kind", "approver_model")}
+    return not (record.get("nonce") != binding["nonce"] or record.get("kind") != binding["approver_kind"]
+               or record.get("binding_created_at") != binding["created_at"]
+               or record.get("binding_expires_at") != binding["expires_at"] or record.get("approver") != approver)
 
 
 def approval_log(workspace, client, since: str | None = None) -> list[dict]:
@@ -2236,7 +2296,20 @@ def approval_log(workspace, client, since: str | None = None) -> list[dict]:
     so an untrustworthy "no denials" state is never mistaken for "nothing was
     denied" here either (the exception is not caught; it reaches the caller
     the same way every other reader of approvals/denied/ in this module
-    lets it)."""
+    lets it).
+
+    A launch record is agent-written evidence, not a decision (fix round 1):
+    it is always shown, never excluded for being unverifiable, but a launch
+    row also carries `via` and `verified` (R53), true only for a `binding`
+    launch whose binding still checks out and whose recorded fields still
+    agree with it; `delegated` reflects `via == "binding"`, not the launch's
+    kind (a human delegate's binding-based launch is still delegated). A
+    `.launch` file this function cannot trust enough to show as a launch at
+    all (unreadable, not a JSON object, or missing/malformed required
+    fields) becomes a `problem` row instead of raising or vanishing: the row
+    still names its kind and source, `problem` names the file and why, and
+    the rest of the log (grants, denials, other launches, setup steps)
+    renders normally around it."""
     root, config = ws.load_workspace(workspace)
     slug = ws.slug_for(client)
     rows = []
@@ -2300,18 +2373,43 @@ def approval_log(workspace, client, since: str | None = None) -> list[dict]:
                      "approver_kind": denial.get("approver_kind"), "approver_model": denial.get("approver_model"),
                      "delegated": True, "source": "decision file"})
     for path in sorted(dirs["consumed"].glob("*.launch")):
+        # Fix round 1, item 1: every step below reads content the launching
+        # account (which, for a delegated AI launch, is the agent) wrote.
+        # Nothing here may raise; a file that cannot be trusted enough to
+        # show as a launch at all becomes a problem row instead.
         record = _read(path)
-        if not record or record.get("kind") not in ("human", "ai"):
+        if not isinstance(record, dict):
+            rows.append(_launch_problem_row(path, "not a readable JSON object"))
             continue
-        if _before(since, record.get("created_at")):
+        kind = record.get("kind")
+        if kind == "probe":
             continue
-        approver = record.get("approver") or {}
-        rows.append({"change": None, "created_at": record.get("created_at"), "kind": "launch",
+        approval_id = record.get("id") if isinstance(record.get("id"), str) else None
+        if kind not in ("human", "ai"):
+            rows.append(_launch_problem_row(path, f"unrecognized launch kind {kind!r}", approval_id))
+            continue
+        created_at = record.get("created_at")
+        if not isinstance(created_at, str) or not created_at:
+            rows.append(_launch_problem_row(path, f"missing or malformed created_at ({created_at!r})",
+                                            approval_id))
+            continue
+        if _before(since, created_at):
+            continue
+        approver = record.get("approver")
+        approver = approver if isinstance(approver, dict) else {}
+        rows.append({"change": None, "created_at": created_at, "kind": "launch",
                      "request_id": None, "approval_id": record.get("id"), "command": None,
                      "approver": approver.get("approver"), "approver_uid": approver.get("approver_uid"),
-                     "approver_kind": record["kind"] if record["kind"] == "human" else approver.get("approver_kind"),
-                     "approver_model": approver.get("approver_model"), "delegated": record["kind"] != "human",
-                     "reason_class": None, "source": "launch record"})
+                     "approver_kind": kind if kind == "human" else approver.get("approver_kind"),
+                     "approver_model": approver.get("approver_model"),
+                     # F8: delegated reflects via, not kind (a human delegate's binding-based
+                     # launch is still a delegated one; only via: presence is the a15 self-
+                     # account, non-delegated case).
+                     "delegated": record.get("via") == "binding", "via": record.get("via"),
+                     # R53: agent-written evidence; verified only for a binding launch whose
+                     # binding still checks out and whose fields still agree with it.
+                     "verified": _launch_verified(root, config, slug, record),
+                     "reason_class": None, "source": "launch record", "problem": None})
     for step in delegation.setup_steps(root):
         if _before(since, step.get("at")):
             continue

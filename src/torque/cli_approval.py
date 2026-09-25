@@ -437,7 +437,7 @@ def _log(p) -> int:
         return 0
     for row in rows:
         ident = row.get("approval_id") or row.get("request_id") or ""
-        line = (f"{row['created_at']} {row['kind']} {ident} {row.get('org_alias') or ''} "
+        line = (f"{row.get('created_at') or ''} {row['kind']} {ident} {row.get('org_alias') or ''} "
                f"{row.get('command') or row.get('reason') or ''}").rstrip()
         kind = row.get("approver_kind")
         if kind:
@@ -448,6 +448,13 @@ def _log(p) -> int:
         tag = _LOG_SOURCE_TAGS.get(row.get("source"))
         if tag:
             line += f" {tag}"
+        # Fix round 1 (R53): a launch row that checked out as agent-written
+        # evidence but did not verify against its binding is marked, unless
+        # it is already a problem row (that tag says enough on its own).
+        if row.get("kind") == "launch" and row.get("verified") is False and not row.get("problem"):
+            line += " [unverified]"
+        if row.get("problem"):
+            line += f" PROBLEM: {row['problem']}"
         print(line)
         for observation in row.get("later_observations") or []:
             link = ("linked: the approval's validated job" if observation.get("linked")
