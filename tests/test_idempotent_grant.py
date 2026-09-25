@@ -414,3 +414,74 @@ def test_v2_3_an_exact_retry_still_returns_the_earlier_grant(tmp_path, monkeypat
     root = delegated_workspace(tmp_path, monkeypatch)
     req, view, first = _granted_once(root)
     assert _retry(root, req, view) == first
+
+
+# V2-4 I2 residual: the retry and the publish-race path compare payload_check and
+# every other binding field the fresh derivation produces, not only the call key,
+# payload digest, argv, folder and org.
+
+def _csv_granted_once(root):
+    (root / "contacts.csv").write_text("LastName\nDoe\n", encoding="utf-8")
+    argv = ["sf", "data", "import", "bulk", "--sobject", "Contact", "--file", "contacts.csv",
+            "--target-org", "acme-dev"]
+    req = flow_request(root, argv=argv)
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    first = delegated_grant(root, req, idempotency_key=KEY)
+    assert first["payload_check"] == "gate" and first["payload_argv"]
+    return req, view, first
+
+
+def _tamper(root, record, **fields):
+    path = _stored(root, record)
+    stored = json.loads(path.read_text())
+    stored.update(fields)
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    return stored
+
+
+def test_v2_4_retry_refuses_a_stored_gate_approval_switched_to_wrapper(tmp_path, monkeypatch):
+    """The reviewer's case: a stored approval switched from gate to wrapper would
+    let the gate skip every payload recheck, so a later CSV change would run
+    unchecked. The retry must refuse it rather than return it."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _csv_granted_once(root)
+    _tamper(root, first, payload_check="wrapper")
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view)
+    assert info.value.reason_class == "idempotency-conflict"
+    (root / "contacts.csv").write_text("LastName\nChanged\n", encoding="utf-8")
+    with pytest.raises(delegation.Refusal):
+        _retry(root, req, view)
+
+
+def test_v2_4_publish_race_refuses_a_stored_gate_approval_switched_to_wrapper(tmp_path, monkeypatch):
+    """The publish-race path (the lookup missed, the winner's file is read back)
+    compares payload_check the same way."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _csv_granted_once(root)
+    _tamper(root, first, payload_check="wrapper")
+    monkeypatch.setattr(approval, "find_by_idempotency_key", lambda *a, **k: None)
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view)
+    assert info.value.reason_class == "idempotency-conflict"
+
+
+@pytest.mark.parametrize("field, value", [
+    ("payload_check", "wrapper"), ("org_kind", "sandbox"), ("change", "chg-000000000000"),
+    ("namespaces", ["other"]), ("validated_job", "0Af000000000001AAA"), ("single_use", False),
+    ("recovery_snapshot", "snap-1"), ("recovery_plan", ["sf", "x"]), ("recovery_snapshot_dir", "/tmp/x"),
+    ("before_state", {"x": 1}), ("manual_recovery", "restore the flow by hand from version control today"),
+    ("new_components", ["Flow:Other"])])
+def test_v2_4_retry_compares_every_derived_binding(tmp_path, monkeypatch, field, value):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    _tamper(root, first, **{field: value})
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view)
+    assert info.value.reason_class == "idempotency-conflict"
+
+
+def test_v2_4_exact_csv_retry_still_returns_the_earlier_grant(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _csv_granted_once(root)
+    assert _retry(root, req, view) == first

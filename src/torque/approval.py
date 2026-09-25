@@ -1631,8 +1631,17 @@ def _stored_approval_problem(record: dict, path: Path, config: dict, slug: str, 
 ORG_ID_18 = re.compile(r"00D[0-9A-Za-z]{15}\Z")
 # V2-3 I2: the fields an idempotent retry compares between the stored approval and
 # the call derived again now (plus the reviewed request hash, compared separately).
-RETRY_BINDINGS = ("kind", "command", "call_key", "command_sha256", "payload_digest", "payload_argv", "cwd",
-                  "org_alias", "org_id_18")
+# V2-4: every binding field `_base_record` writes from the request, the derived call
+# and the org, including payload_check (a gate approval relabeled "wrapper" would
+# skip the gate's payload recheck). Not compared: schema, id, request_id,
+# client and idempotency_key (checked against the marker by
+# `_stored_approval_problem`), the approver identity (checked by `_identity_problem`),
+# reviewed_request_sha256 (compared separately) and granted_at/expires_at (the
+# stored grant's own window).
+RETRY_BINDINGS = ("kind", "change", "command", "call_key", "command_sha256", "payload_digest", "payload_check",
+                  "payload_argv", "cwd", "org_alias", "org_id_18", "org_kind", "before_state", "manual_recovery",
+                  "validated_job", "new_components", "namespaces", "recovery_snapshot", "recovery_plan",
+                  "recovery_snapshot_dir", "single_use")
 
 
 def _stored_fields_problem(record: dict) -> bool:
@@ -1662,7 +1671,8 @@ def _stored_fields_problem(record: dict) -> bool:
 def _retry_binding_mismatch(stored: dict, fresh: dict) -> list[str]:
     """V2-3 I2: the binding fields where a stored approval differs from the record
     this retry would write now."""
-    return [k for k in RETRY_BINDINGS if stored.get(k) != fresh.get(k)]
+    fresh = json.loads(json.dumps({k: fresh.get(k) for k in RETRY_BINDINGS}))
+    return [k for k in RETRY_BINDINGS if k not in stored or stored[k] != fresh[k]]
 
 
 def printable(text: str) -> str:
