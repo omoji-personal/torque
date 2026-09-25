@@ -477,13 +477,105 @@ def test_r46_symlinked_consent_refused_by_the_gate(tmp_path, monkeypatch):
     assert not ok and "consent.json" in why
 
 
-@pytest.mark.parametrize("owner", [ME + 1, 0], ids=["consultant", "root"])
-def test_r46_consultant_or_root_owned_control_files_accepted(tmp_path, monkeypatch, owner):
+def test_r46_root_owned_layout_accepted_for_a_delegated_grant(tmp_path, monkeypatch):
     root = delegated_workspace(tmp_path, monkeypatch)
-    control_owner(monkeypatch, owner=owner)
+    control_owner(monkeypatch, owner=0)
     delegated_grant(root, flow_request(root))
     as_agent(monkeypatch)
     assert consume(root)[0]
+
+
+def test_r46_consultant_layout_accepted_at_the_gate_for_an_owner_grant(tmp_path, monkeypatch):
+    """The a15 layout: the consultant's own account owns the files and folders (0700)."""
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
+    control_owner(monkeypatch, owner=ME + 1)
+    for folder in (root, root / "clients", root / "clients/acme"):
+        folder.chmod(0o700)
+    approval.grant(root, "Acme", flow_request(root)["id"], presence=YES, confirm=lambda: True, out=io.StringIO(),
+                   resolve=ORGS.get)
+    as_agent(monkeypatch)
+    assert consume(root)[0]
+
+
+# Fix round 2: the folders holding the control files (the workspace root, clients/,
+# clients/<slug>) must not be the approver's, and a shared-writable one needs the
+# sticky bit, so nobody can swap a control file between the check and the read.
+
+FOLDERS = ["firm", "clients", "acme"]
+
+
+def _folder(root, name):
+    return {"firm": root, "clients": root / "clients", "acme": root / "clients/acme"}[name]
+
+
+@pytest.mark.parametrize("name", FOLDERS)
+def test_r46_gate_refuses_an_approver_owned_folder(tmp_path, monkeypatch, name):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    assert root.name == "firm"
+    delegated_grant(root, flow_request(root))
+    control_owner(monkeypatch, owner=ME, only=name)
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert not ok and str(_folder(root, name)) in why and "approver account" in why
+
+
+@pytest.mark.parametrize("name", FOLDERS)
+def test_r46_grant_refuses_an_approver_owned_folder(tmp_path, monkeypatch, name):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    control_owner(monkeypatch, owner=ME, only=name)
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req)
+    assert info.value.reason_class == "not-delegated" and str(_folder(root, name)) in str(info.value)
+    assert not list((root / "clients/acme/approvals/granted").glob("apr-*.json"))
+
+
+@pytest.mark.parametrize("name", FOLDERS)
+def test_r46_group_writable_folder_without_sticky_bit_refused(tmp_path, monkeypatch, name):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    delegated_grant(root, req)
+    _folder(root, name).chmod(0o770)
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req)
+    assert info.value.reason_class == "not-delegated" and "sticky" in str(info.value)
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert not ok and str(_folder(root, name)) in why
+
+
+def test_r46_sticky_group_writable_folders_accepted(tmp_path, monkeypatch):
+    """The test program layout: root-owned folders, mode 1770, group torque-test."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    for name in FOLDERS:
+        _folder(root, name).chmod(0o1770)
+    delegated_grant(root, flow_request(root))
+    as_agent(monkeypatch)
+    assert consume(root)[0]
+
+
+def test_r46_symlinked_client_folder_refused(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    delegated_grant(root, flow_request(root))
+    real = tmp_path / "acme-real"
+    (root / "clients/acme").rename(real)
+    (root / "clients/acme").symlink_to(real)
+    assert "not a real folder" in approval._folder_problem(root / "clients/acme", ME)
+    as_agent(monkeypatch)
+    with pytest.raises(ws.WorkspaceError, match="symlink"):
+        consume(root)
+
+
+def test_gate_refuses_an_approval_outside_the_granted_layout(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = delegated_grant(root, flow_request(root))
+    config = ws.load_workspace(root)[1]
+    elsewhere = tmp_path / "x" / "y" / "z"
+    elsewhere.mkdir(parents=True)
+    moved = elsewhere / f"{record['id']}.json"
+    moved.write_text(granted_path(root, record).read_text())
+    as_agent(monkeypatch)
+    assert "layout" in approval._problem(record, moved, config, "acme", approval._epoch(record["granted_at"]))
 
 
 # Fix round 1, minor 1: every failure to read what is being granted is a Refusal.

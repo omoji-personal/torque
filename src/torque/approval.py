@@ -1079,8 +1079,7 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
         client_folder = ws.load_client(root, client)[0]
     except (OSError, ws.WorkspaceError) as exc:
         raise delegation.Refusal("request-changed", f"cannot read the client folder: {exc}") from None
-    controls = _controls_problem(root / ws.CONFIG, client_folder / consent.FILE, config["approver_uid"],
-                                 workspace_st=config_st)
+    controls = _controls_problem(root, client_folder, config["approver_uid"], workspace_st=config_st)
     if controls:
         raise delegation.Refusal("not-delegated", controls)
     if not isinstance(request_sha256, str) or not request_sha256 \
@@ -1204,11 +1203,10 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
         folder = path.parent.stat()
         if folder.st_uid != approver or folder.st_mode & 0o022:
             return "approvals/granted must be owned by the approver account and writable only by it"
-        # clients/<slug>/approvals/granted/<id>.json (see _dirs): the client folder is
-        # three levels up and the workspace root two above that.
-        client_folder = path.parent.parent.parent
-        controls = _controls_problem(client_folder.parent.parent / ws.CONFIG, client_folder / consent.FILE,
-                                     approver)
+        layout = _granted_layout(path, client)
+        if layout is None:
+            return "the approval file is not in the workspace's clients/<client>/approvals/granted layout"
+        controls = _controls_problem(*layout, approver)
         if controls:
             return controls
     elif verify == "hmac":
@@ -1279,9 +1277,48 @@ def _control_problem(path, approver, st=None) -> str:
     return ""
 
 
-def _controls_problem(workspace_json, consent_json, approver, workspace_st=None) -> str:
-    return (_control_problem(workspace_json, approver, workspace_st)
-            or _control_problem(consent_json, approver))
+def _folder_problem(path, approver) -> str:
+    """R46 for a folder holding a control file: a real folder (not a link), not the
+    approver account's, and, when others can write it, sticky (S_ISVTX), so nobody
+    can rename or replace an entry they do not own."""
+    try:
+        found = _control_stat(path)
+    except OSError:
+        return f"cannot read {path}; control folders must not be owned or writable by the approver account"
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid == approver:
+        return (f"{path} is owned by the approver account or is not a real folder; control folders must not be "
+                "owned or writable by the approver account")
+    if found.st_mode & 0o022 and not found.st_mode & stat.S_ISVTX:
+        return (f"{path} is writable by others without the sticky bit; control folders must not be owned or "
+                "writable by the approver account")
+    return ""
+
+
+def _controls_problem(root: Path, client_folder: Path, approver, workspace_st=None) -> str:
+    """R46: the workspace root, clients/ and the client's folder, then workspace.json
+    (from `workspace_st`, the fstat of a protected read, when given) and the
+    client's consent.json."""
+    for folder in (root, root / "clients", client_folder):
+        problem = _folder_problem(folder, approver)
+        if problem:
+            return problem
+    return (_control_problem(root / ws.CONFIG, approver, workspace_st)
+            or _control_problem(client_folder / consent.FILE, approver))
+
+
+def _granted_layout(path: Path, client: str) -> tuple[Path, Path] | None:
+    """(workspace root, client folder) for an approval file at
+    <root>/clients/<client>/approvals/granted/<id>.json, the layout _dirs builds;
+    None when the file is anywhere else, so a layout change cannot point the R46
+    check at other folders."""
+    granted = path.parent
+    approvals = granted.parent
+    folder = approvals.parent
+    clients = folder.parent
+    if granted.name != "granted" or approvals.name != "approvals" or folder.name != client \
+            or clients.name != "clients":
+        return None
+    return clients.parent, folder
 
 
 def _identity_problem(record: dict, config: dict, verify: str) -> str:

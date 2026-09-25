@@ -62,13 +62,15 @@ def delegated_workspace(tmp_path, monkeypatch, *, kind="ai", orgs=("acme-dev",))
 _REAL_CONTROL_STAT = None
 
 
-def control_owner(monkeypatch, owner=ME + 1, only=None):
-    """R46: workspace.json and consent.json must not belong to the approver account.
-    A single-uid test owns every file as ME, which is also the approver, so this
-    reports `owner` for those control files (default ME + 1: the consultant's own
-    account, the a15 layout; 0 simulates the root-owned locked layout). With
-    `only` (a file name), only that file is reported as `owner`; the rest keep the
-    default. Mode and file type come from the real file."""
+def control_owner(monkeypatch, owner=0, only=None):
+    """R46: the control files (workspace.json, consent.json) and the folders holding
+    them (the workspace root, clients/, clients/<slug>) must not belong to the
+    approver account. A single-uid test owns everything as ME, which is also the
+    approver, so this reports `owner` as their owner instead. The default 0 is the
+    root-owned locked layout a real delegated grant needs (D1 + R46); ME + 1 is the
+    consultant's own account (the a15 layout, for owner grants at the gate). With
+    `only` (a file or folder name), only that one is reported as `owner` and the
+    rest as root. Mode and file type always come from the real file or folder."""
     from types import SimpleNamespace
     global _REAL_CONTROL_STAT
     if _REAL_CONTROL_STAT is None:
@@ -77,7 +79,7 @@ def control_owner(monkeypatch, owner=ME + 1, only=None):
 
     def fake(path, st=None):
         found = real(path, st)
-        uid = owner if only is None or os.path.basename(str(path)) == only else ME + 1
+        uid = owner if only is None or os.path.basename(str(path)) == only else 0
         return SimpleNamespace(st_mode=found.st_mode, st_uid=uid)
     monkeypatch.setattr(approval, "_control_stat", fake)
 
