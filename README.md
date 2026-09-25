@@ -13,17 +13,20 @@ account and installs no global command interception or approval-token system by
 default. A firm that wants an AI session to work in client orgs under control can opt a
 workspace into [connected mode](docs/connected-approval.md): the session is bound to one
 client, reads that client's approved orgs, and makes each org write only after the
-consultant approves that exact command from their own terminal. The
+consultant approves that exact command from their own terminal. With a
+[delegated approver](docs/delegated-approver.md), an independent approver account (a person
+or an automated reviewer) grants non-production writes instead, so a session can run
+unattended, and every decision records who made it. The
 catalogue's `qa-token-*` entries only manage legacy QA skip records kept for compatibility;
 no workflow depends on them.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-**Status: development alpha, version 2.0.0a15.** It has not been published to a
+**Status: development alpha, version 2.0.0a16.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
 have offline acceptance coverage; bounded live operations and experimental
 capabilities have separate limits in [validation](docs/validation.md); the
-[alpha 15 record](docs/validation-alpha15.md) covers this build. No
+[alpha 16 record](docs/validation-alpha16.md) covers this build. No
 industry-leadership claim is made.
 
 ## Install and try the offline demo

@@ -63,5 +63,6 @@ def test_private_denylist():
 
 def test_no_em_dashes_in_connected_mode_docs():
     for name in ("docs/connected-approval.md", "docs/validation-alpha15.md",
+                 "docs/delegated-approver.md", "docs/validation-alpha16.md",
                  "src/torque/data/connected/production-approval.md"):
         assert "\u2014" not in (ROOT / name).read_text(encoding="utf-8"), name

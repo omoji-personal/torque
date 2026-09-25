@@ -1,11 +1,35 @@
 # Validation for alpha 16
 
-Alpha 16 adds the delegated approver to connected mode. This file is started during the
-build and completed at release.
+Alpha 16 adds the [delegated approver](delegated-approver.md) to connected mode. This file
+is started during the build and completed at release.
+
+## Review scope
+
+Offline: the full suite on macOS with Python 3.14, the V1 mutation proof below, the
+private name check, and the offline contract from an installed wheel. The CI matrix
+(macOS, Linux and Windows on Python 3.10, 3.12 and 3.14), the external spec-conformance
+review and the live qualification are recorded below when they run.
+
+## Suite results
+
+`python scripts/test-offline.py -q` on 2026-09-25 (macOS, Python 3.14.7): 3329 passed,
+9 skipped, 154 subtests passed (alpha 15's baseline: 2661 passed, 5 skipped). Every
+package self-test passed. The skips: three browser tests that need Playwright installed,
+one Windows-only path test, the private name check (the offline runner does not pass its
+setting; run with plain pytest it passes, see "Public hygiene"), and four tests, in two
+files, that drive the real agent-session check and skip inside an AI session (see "Tests
+that need a plain terminal").
+
+## Public hygiene
+
+`tests/test_public_hygiene.py`, including the private name check against a denylist kept
+outside the repository, and `tests/test_docs_delegated.py` pass with plain pytest. No new
+or changed documentation contains an em dash.
 
 ## Edited a15 tests
 
-Every alpha 15 test passes without edits except one.
+Every alpha 15 test passes without edits except one behavior test and the release-record
+tests the version bump touches.
 
 - `tests/test_gate_connected.py::test_hook_end_to_end`. Its first line set only
   `TORQUE_CLIENT=acme` and expected the hook to bind the session to Acme. Requirement 9
@@ -29,6 +53,14 @@ Every alpha 15 test passes without edits except one.
   ```
 
   The rest of the test, and what it asserts, is unchanged.
+- Release records, edited the way alpha 15 edited alpha 14's. In
+  `tests/test_connected_release.py`, `test_version_is_alpha15` becomes
+  `test_version_is_alpha15_or_later` (the version is 2.0.0a15 or later and matches
+  `pyproject.toml`), and `test_changelog_readme_and_record_for_alpha15` checks that the
+  changelog still has the 2.0.0a15 section and that the README names the current version,
+  instead of requiring 2.0.0a15 to be the newest. In `tests/test_public_hygiene.py`, the
+  no-em-dash list gains `docs/delegated-approver.md` and `docs/validation-alpha16.md`.
+  `tests/test_docs_delegated.py` pins 2.0.0a16.
 
 ## Invariant verification
 
@@ -82,3 +114,42 @@ mutant was reverted with `git checkout -- <file>` and none was committed.
 
 `tests/test_daemon_context.py` (3 tests) drives the real agent-session check in
 subprocesses and skips inside an AI session; it needs one run from a plain terminal.
+
+## Tests that need a plain terminal
+
+`tests/test_delegated_reads.py` (the trace of every path the delegated grant touches) and
+`tests/test_daemon_context.py` (the delegated verbs with no terminal, GUI, keychain or
+`HOME`) drive the real agent-session check in subprocesses and skip inside an AI session.
+They run from a plain terminal or CI:
+
+```sh
+python -m pytest tests/test_delegated_reads.py tests/test_daemon_context.py -v
+```
+
+Result: recorded here when it runs.
+
+## Offline contract from an installed wheel
+
+The wheel built from this tree (`python -m build --wheel`), installed into a fresh virtual
+environment and run from a folder outside the checkout with `HOME` pointed there:
+
+```sh
+python -m torque.contracts delegated-org-refusal --json
+```
+
+2026-09-25: exit 0, `"supported": true`, `"passed": true`; all three cases
+(`live-production`, `live-unknown`, `consent-production`) refused with
+`org-production-or-unknown`.
+
+## Spec conformance
+
+Recorded at review gate V2 (an external review of each requirement against the code and
+tests).
+
+## Live qualification
+
+The live qualification is the test program's Round 0b (a separate approver account
+running as a LaunchDaemon, a delegated setup and lock, and unattended sessions against a
+developer org). It is recorded here when it runs, including the two-account checks the
+offline suite cannot make: the control files readable by the agent account after the
+delegated setup and lock, and the hook run as the agent account.

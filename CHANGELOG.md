@@ -1,5 +1,78 @@
 # Changelog
 
+## 2.0.0a16 - delegated approver, 2026-09-25 (not published to a package index)
+
+Connected work can now run unattended. A tier 2 workspace can name a delegated approver:
+a separate OS account, a person or an automated reviewer, that grants and denies
+non-production writes with no one at a terminal. Every decision records who made it and
+of which kind. The consultant's own grant, default (`full`) mode and build-only mode are
+unchanged.
+
+- `torque workspace delegate --role approver|setup --account A --uid U --kind ai|human`
+  names a delegate (the owner at a real terminal, or root). A delegate must be a separate
+  account, and `workspace.json` must be owned by root or the delegate. Delegated steps need
+  POSIX and tier 2 (`owner-uid`) and refuse inside an AI session.
+- The setup delegate runs the setup steps with `--delegated [--model-id M]`: `workspace
+  ai-access connected`, `approval permissions --write`, `client consent record` and
+  `client consent sign-off`. Each step records its actor.
+- `torque approval show REQ --json` gives the request as parsed data
+  (`torque.approval-request-view/1`). `torque approval grant REQ --delegated --model-id M
+  --request-sha256 S --payload-digest D [--idempotency-key K] --json` grants only what was
+  reviewed, never for a production or unknown org, and refuses requests older than one
+  hour. `torque approval lookup --idempotency-key K` finds an earlier grant.
+  `torque approval deny REQ --delegated --reason-class C --reason TEXT` publishes a denial.
+  A request never ends both granted and denied. Refusals exit 3 with a stable reason class.
+- Every approval record carries `approver`, `approver_uid`, `approver_kind`,
+  `approver_model` and `delegated`, and the gate refuses one without them. In a workspace
+  whose approver delegate is `ai`, the gate and the consultant's grant refuse human-kind
+  approvals, so production work needs a workspace whose approver is a person.
+- `torque approval status REQ --wait SECONDS` waits read-only for the decision: exit 0
+  granted, 20 denied, 21 expired, 22 timeout, 2 usage or workspace error.
+- `torque approval launch-binding` (approver) and `torque launch --delegated --binding
+  lnk-...` (agent account) start a session with no one present. A delegated launch passes
+  only allowlisted `claude` options.
+- `torque approval permissions --write --unattended` writes the unattended profile: no ask
+  rule on routes the gate decides by approval, so an approved write runs under
+  `claude -p`. `--with-hooks` also wires `PostToolUse` and `PostToolUseFailure`, which
+  record each approved call's outcome and exit status (`approval_executed`).
+  `--hook-python` names the hook's interpreter.
+- `torque approval log` adds execution records, delegated decisions, launches and setup
+  steps, each with its approver kind. `torque doctor` shows the profile, delegates, setup
+  steps and grants by kind, and checks the unattended profile's hooks and sidecar.
+- `python -m torque.contracts delegated-org-refusal --json` proves offline, from an
+  installed wheel, that a delegated grant refuses production and unknown orgs.
+- Torque's browser checks the signed-in Username against the alias's username, prints an
+  identity report with `--json` (used by `torque qa`), redacts Salesforce session tokens
+  by shape, and runs headless only under a window a delegated approver granted.
+- Behavior changes:
+  - Launch records bind sessions. The gate binds a connected session to a client only
+    through the launch record `torque launch` writes for that process; `TORQUE_CLIENT`
+    set by hand binds nothing. Relaunch sessions started before the upgrade.
+  - `sf org open` needs an approval in every form, like any other org write.
+  - Approvals granted by 2.0.0a15 lack `approver_kind` and are refused after the upgrade:
+    grant again.
+  - Rerun `torque approval permissions --write` (with the flags you used before) after
+    upgrading: the new deny rules (`torque workspace delegate`,
+    `torque approval launch-binding`) and the new `sf org open` ask rule put existing
+    workspaces in drift.
+  - In a tier 2 workspace the gate refuses approvals when `workspace.json` or a client's
+    `consent.json` belongs to or is writable by the approver account, or when the
+    workspace, `clients/` or the client folder belongs to the approver or is group- or
+    other-writable without the sticky bit.
+  - The consultant's grant reads the request file more strictly (its kind, org alias and
+    creation time must be well formed).
+  - In connected mode, file tools (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) cannot
+    write inside the workspace's `.claude/`, as Bash already could not; copies under
+    `.claude/worktrees/` stay writable.
+  - In connected mode, an `export` (plain or wrapped) before an `sf` command makes it
+    unverifiable, so the host asks.
+  - Outside connected mode, a browser run whose page Username differs from the alias's
+    records `ORG_MISMATCH` and continues.
+- Documentation: [delegated approver](docs/delegated-approver.md), with the provisioning
+  order, folder layout, paths the approver needs, reason classes and limits;
+  [connected mode](docs/connected-approval.md) links it and shows each doctor probe under
+  both profiles; the [alpha 16 record](docs/validation-alpha16.md).
+
 ## 2.0.0a15 - connected mode with per-write approval, 2026-09-24 (not published to a package index)
 
 An opt-in third `ai_access` mode for stage-2 work: an AI session works in one client's

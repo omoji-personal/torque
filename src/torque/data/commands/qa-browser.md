@@ -16,7 +16,7 @@ mechanism. Generic packaged checks and client-specific private tests have differ
 torque browser browser <flow-name> --target-org <org-alias> --workspace <private-path> --client <client-name>
 ```
 
-Add `--headed` when helpful. This native route's single-profile mode uses its configured
+Add `--headed` when helpful, except under a browser window a delegated approver granted: there Torque's browser runs headless only and `--headed` is refused. This native route's single-profile mode uses its configured
 admin authentication; label it admin-only unless a separate intended-user session was
 actually established. For a different user or arbitrary browser task, use the available
 host/browser automation directly or `/qa-multiprofile`; do not claim unsupported native

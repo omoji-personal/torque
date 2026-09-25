@@ -71,31 +71,36 @@ Each "present" step also prints a six-character code the owner types back.
    approver kind. The hook only decides; nothing it allows is run. It exits 3 when
    anything is not ready.
 7. Start the session (present): `torque launch --workspace W --client Acme [-- claude options]`.
-   It binds the session to the client (`TORQUE_CLIENT`, which the hook inherits and the
-   session cannot change) and starts `claude` in the workspace. Use one session per client.
+   It writes a launch record for the process it becomes and starts `claude` in the
+   workspace with `TORQUE_CLIENT` and `TORQUE_LAUNCH` naming that record. The gate binds a
+   call to the client only through that record, and only when it belongs to the hook's own
+   process or one of its nearest ancestors with the same start time; `TORQUE_CLIENT` set by
+   hand binds nothing. Use one session per client. An unattended session starts from a
+   delegated approver's launch binding instead ([delegated approver](delegated-approver.md)).
 
 ### Doctor probes
 
 Six probes run unbound, and with `--client` seven more run bound to that client. The
 bound ones bind the way a launched session does: doctor writes a `probe` launch record
 for its own process, runs the hook with `TORQUE_CLIENT` and `TORQUE_LAUNCH` naming it,
-and removes the record afterwards. The last column applies under the unattended profile.
+and removes the record afterwards. The gate answer is the same under both permission
+profiles; the last two columns show what the host then does under each.
 
-| Probe | Call | Gate answer | Under `claude -p` (unattended) |
-|---|---|---|---|
-| `org_write` | `sf project deploy start` to an org, unbound | deny | refused: the hook denies it, no prompt |
-| `read_unbound` | `sf data query`, unbound | deny | refused: the hook denies it, no prompt |
-| `check_only_unbound` | `sf project deploy validate`, unbound (refused before anything is logged) | deny | refused: the hook denies it, no prompt |
-| `unverifiable` | `python3 doctor_probe.py` | ask | refused: the ask has no one to answer under claude -p |
-| `admin` | `torque approval grant` | deny | refused: the hook denies it, no prompt |
-| `browser_write` | a browser click (`mcp__claude-in-chrome__computer`) | deny | refused: the hook denies it, no prompt |
-| `bound_read` | `sf org display` on an approved org | allow | runs only if a read allow rule covers it; otherwise refused under claude -p |
-| `bound_write_unapproved` | `sf project deploy start` with no approval | deny | refused: the hook denies it, no prompt |
-| `bound_org_outside_consent` | an org the consent does not name | deny | refused: the hook denies it, no prompt |
-| `bound_default_org` | `sf org display` with no `-o` | deny | refused: the hook denies it, no prompt |
-| `bound_other_client` | `torque context` for another client | deny | refused: the hook denies it, no prompt |
-| `bound_unverifiable` | `python3 doctor_probe.py` | ask | refused: the ask has no one to answer under claude -p |
-| `bound_skipped_prompts` | a script with prompts skipped (`bypassPermissions`) | deny | refused: the hook denies it, no prompt |
+| Probe | Call | Gate answer | Interactive | Under `claude -p` (unattended) |
+|---|---|---|---|---|
+| `org_write` | `sf project deploy start` to an org, unbound | deny | refused | refused: the hook denies it, no prompt |
+| `read_unbound` | `sf data query`, unbound | deny | refused | refused: the hook denies it, no prompt |
+| `check_only_unbound` | `sf project deploy validate`, unbound (refused before anything is logged) | deny | refused | refused: the hook denies it, no prompt |
+| `unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
+| `admin` | `torque approval grant` | deny | refused | refused: the hook denies it, no prompt |
+| `browser_write` | a browser click (`mcp__claude-in-chrome__computer`) | deny | refused | refused: the hook denies it, no prompt |
+| `bound_read` | `sf org display` on an approved org | allow | runs | runs only if a read allow rule covers it; otherwise refused under claude -p |
+| `bound_write_unapproved` | `sf project deploy start` with no approval | deny | refused | refused: the hook denies it, no prompt |
+| `bound_org_outside_consent` | an org the consent does not name | deny | refused | refused: the hook denies it, no prompt |
+| `bound_default_org` | `sf org display` with no `-o` | deny | refused | refused: the hook denies it, no prompt |
+| `bound_other_client` | `torque context` for another client | deny | refused | refused: the hook denies it, no prompt |
+| `bound_unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
+| `bound_skipped_prompts` | a script with prompts skipped (`bypassPermissions`) | deny | refused | refused: the hook denies it, no prompt |
 
 Doctor also runs these checks through the configured hooks:
 
@@ -150,7 +155,9 @@ claims the approval once, logs `approval_consume` with the hook's `session_id` a
 `torque approval log --workspace W --client Acme` lists every request, grant, denial and
 use for the reviewer's sample, with the deploy observations recorded later on the same org:
 an observation whose job ID is the approval's validated job is marked linked, any other is
-listed as unlinked.
+listed as unlinked. It also lists each approved call's execution record (how it ended), a
+delegated approver's grants and denials, launches and the recorded setup steps; every row
+names the approver's kind (`human` or `ai`) and where it came from.
 
 What an approval binds: the exact command text (`command_sha256`); the org alias and the
 org ID resolved at grant, which the client's consent must still record for that alias, with
@@ -257,6 +264,18 @@ requires the ID the consent records, a granted window for that org, and the org'
 Domain address (recorded with the consent). The session starts through frontdoor on that
 My Domain, so the login hosts are never needed.
 
+Once the page loads, the run reads the signed-in user's Username from the page itself (a
+same-origin read) and compares it, ignoring case, with the alias's Salesforce CLI
+username; usernames are unique across Salesforce, so a match proves both the org and the
+user. A mismatch or an unreadable username stops a connected run before the flow starts.
+`torque browser ... --json` (which `torque qa` uses) prints an identity report per cell:
+the org and how it was verified, the admin before and after, the user after Login As, and
+whether the admin was restored. No session URL or session ID reaches the output, the run
+folder or the logs. Under a window a delegated approver granted, Torque's browser runs
+headless only: the gate and the browser both refuse `--headed`, and a `DEBUG`, `PWDEBUG`
+or `DEBUG_FILE` setting that could print the session URL or force a visible browser is
+refused before the browser starts.
+
 Every host is enforced below the page: Torque launches the browser with host-resolver
 rules that deny every host name (Salesforce or not, including IP literals, `localhost` and
 names written with a trailing dot) except the approved org's own exact host names (its My
@@ -309,6 +328,9 @@ refuses the request, closes every page and the browser context, and the run stop
   `chmod -R +a "APPROVER allow list,search,readattr,readextattr,readsecurity,read,file_inherit,directory_inherit" W`;
   on Linux use the equivalent `setfacl` entries. The grant is recorded in the change when the
   approval is used, if the approver cannot write the change record.
+  Tier 2 is also what a [delegated approver](delegated-approver.md) needs: an approver
+  account (a person or an automated reviewer) that grants and denies without a terminal,
+  for non-production orgs, so a session can run unattended.
 
 ## What it stops
 

@@ -9,6 +9,8 @@ guard on recognized tool calls, not a sandbox. It has three values:
 - `connected` (with `"approval": "required"`): the session works for one client it was launched
   for, reads that client's approved orgs, and writes to an org only with a per-write approval
   the consultant grants from their own terminal. See [connected mode](connected-approval.md).
+  With tier 2, a [delegated approver](delegated-approver.md) in its own account can grant
+  non-production writes instead, so a session can run unattended.
 
 This page describes build-only mode; connected mode keeps every build-only check that is not
 about org access and applies the client-folder checks to other clients' folders.
