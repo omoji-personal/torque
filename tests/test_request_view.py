@@ -375,3 +375,26 @@ def test_v2_3_an_mcp_manifest_deploy_keeps_its_grant_side_components(tmp_path, m
                                        {"usernameOrAlias": "acme-dev", "manifest": "manifest/package.xml"}),
                                   resolve=ORGS.get, cwd=root)
     assert approval._derive(req)["components"] == []
+
+
+# V2-4: confinement applies only when the running account is the named approver
+# delegate AND that delegate's kind is "ai". A named human approver running the
+# view sees the ordinary a15 view.
+
+def test_v2_4_a_named_human_approver_at_the_running_uid_sees_the_ordinary_view(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
+    config = json.loads((root / "workspace.json").read_text())
+    assert config["delegates"]["approver"]["kind"] == "human"
+    assert config["delegates"]["approver"]["uid"] == os.getuid()
+    req = _outside_payload_request(root)
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    assert view["payload"]["count"] == 1 and view["payload"]["files"][0]["path"].endswith("contacts.csv")
+
+
+def test_v2_4_a_named_ai_approver_at_the_running_uid_is_confined(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch, kind="ai")
+    config = json.loads((root / "workspace.json").read_text())
+    assert config["delegates"]["approver"]["uid"] == os.getuid()
+    req = _outside_payload_request(root)
+    with pytest.raises(ws.WorkspaceError, match="outside the working folder"):
+        approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)

@@ -1014,13 +1014,14 @@ def screen_lines(req: dict, derived: dict, org_id: str, org_kind: str, ttl: int)
 
 def _view_is_delegated(workspace, getuid=None) -> bool:
     """V2-3: the view is on the delegated path when the account running it is the
-    workspace's named approver delegate. Anyone else (the owner reviewing a human
-    request) gets the a15 derivation, without payload-root confinement."""
+    workspace's named approver delegate and (V2-4) that delegate's kind is "ai".
+    Anyone else, including a named human approver, gets the a15 derivation,
+    without payload-root confinement."""
     if not hasattr(os, "getuid") and getuid is None:
         return False
     from . import delegation
     approver = delegation.delegate_for(ws.load_workspace(workspace)[1], "approver")
-    return approver is not None and approver["uid"] == (getuid or os.getuid)()
+    return approver is not None and approver["kind"] == "ai" and approver["uid"] == (getuid or os.getuid)()
 
 
 def request_view(workspace, client, request_id, *, resolve=None, confined=None, getuid=None) -> dict:
