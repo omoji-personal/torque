@@ -19,11 +19,15 @@ unchanged.
   (`torque.approval-request-view/1`). `torque approval grant REQ --delegated --model-id M
   --request-sha256 S --payload-digest D [--idempotency-key K] --json` grants only what was
   reviewed, never for a production or unknown org, and refuses requests older than one
-  hour. The view and the grant read payload files only under the request's working folder
-  and refuse a payload path outside it. A retry with the same idempotency key repeats every
-  check a fresh grant makes (request, payload, consent, org) before returning the earlier
-  grant. `torque approval lookup --idempotency-key K` finds an earlier grant, checking the
-  whole stored record. `torque approval deny REQ --delegated --reason-class C --reason
+  hour. Run by the delegated approver account, the view and the grant read payload files
+  only under the request's working folder (the project's `sfdx-project.json` included,
+  checked before it is opened) and refuse a payload path outside it; run by anyone else,
+  the view derives the request as the consultant's grant does. The view lists the
+  components of a manifest an MCP deploy names. A retry with the same idempotency key
+  repeats every check a fresh grant makes (request, payload, consent, org) and returns the
+  earlier grant only when its call key, payload, folder and org match the call derived
+  again. `torque approval lookup --idempotency-key K` finds an earlier grant, checking the
+  whole stored record, field types included. `torque approval deny REQ --delegated --reason-class C --reason
   TEXT` publishes a denial; a denial is read only when its fields, the delegated approver's
   identity and its request's hash check out, and an unreadable denials folder is an error.
   A request never ends both granted and denied. Refusals exit 3 with a stable reason class.
@@ -48,7 +52,8 @@ unchanged.
   steps, each with its approver kind. `torque doctor` shows the profile, delegates, setup
   steps, grants by kind, verified launches by actor and each approval identity (actor,
   kind, model) with its grant and denial counts, and checks the unattended profile's hooks
-  and sidecar.
+  and sidecar. A log row whose identity values have the wrong types is counted and
+  reported as malformed; doctor still completes.
 - `python -m torque.contracts delegated-org-refusal --json` proves offline, from an
   installed wheel, that a delegated grant refuses production and unknown orgs.
 - Torque's browser checks the signed-in Username against the alias's username, prints an
@@ -82,7 +87,10 @@ unchanged.
     approval's use; it was hashed as a fixed placeholder, or left out of the file set.
   - A permission sidecar that cannot be read or stat'ed, or is invalid, makes the gate deny
     every org route before an approval is used; only a missing sidecar means the
-    interactive profile.
+    interactive profile. A sidecar link that cannot be resolved, or a `.claude` entry that
+    is not a folder, counts as invalid.
+  - A `denied/` entry under a client's approvals that is not a real folder (a file or a
+    link) is a workspace error: `approval status --wait` exits 2, not 22.
   - On Linux, in a tier 2 workspace with a named approver delegate, a request, change
     record, change event or evidence file Torque creates (and each folder it creates for
     them) gets group read (0640, folders 0750) when it has an extended access list, so a

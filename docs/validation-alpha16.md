@@ -175,6 +175,24 @@ Two alpha 16 tests changed with these fixes, because they asserted the old behav
 `test_request_view::test_payload_digest_and_listing_share_one_read_symlink_and_unreadable_parity`
 (an unreadable file now refuses in both readers). Neither existed at `dea2041`.
 
+A second external review (at 7c5d11b) found I1 to I5 partial, I6, M1 and M2 resolved,
+and two new defects. Fix round V2-3 closed them, each with a test written first and seen
+failing:
+
+| item | fix | tests |
+|---|---|---|
+| I1 | The sidecar is read with `lstat`: a link that cannot be resolved, or a `.claude` entry that is not a folder, is invalid (deny before any approval is used); only a missing entry is the interactive profile | test_unattended_gate::test_v2_3_a_dangling_sidecar_symlink_is_invalid_not_absent, ::test_v2_3_a_dangling_sidecar_symlink_denies_an_approved_write_and_consumes_nothing, ::test_v2_3_a_sidecar_under_a_non_directory_is_invalid |
+| I2 | A stored approval's binding fields are checked by type (payload_argv a list of non-empty strings, an 18-character org ID, sha256 call key, command hash, payload digest and reviewed hash, typed flags); an idempotent retry and the publish race return it only when kind, command, call key, command hash, payload digest, payload_argv, working folder, org alias and org ID match the call derived again, else `idempotency-conflict` | test_idempotent_grant::test_v2_3_lookup_refuses_a_stored_approval_with_a_malformed_field (18 cases), ::test_v2_3_retry_refuses_a_stored_approval_bound_to_a_different_call (7 cases), ::test_v2_3_an_exact_retry_still_returns_the_earlier_grant |
+| I3 | The delegated payload-root check tests where `sfdx-project.json` resolves before it is opened; a link to an outside file is refused unread | test_review_binding::test_v2_3_a_project_config_link_to_an_outside_file_is_refused_without_reading_it, ::test_v2_3_a_project_config_link_inside_the_working_folder_is_accepted |
+| I4 | `denied/` is read with `lstat`: a regular file, a link or ENOTDIR is `denial-unreadable` (exit 2); only a missing folder means no denials | test_status_wait::test_v2_3_a_denials_entry_that_is_not_a_folder_is_an_error_not_a_timeout (3 cases), ::test_v2_3_a_missing_denials_folder_is_still_no_denials |
+| I5 | The view reads a path an MCP deploy names as a manifest (its key says manifest, or the file is package.xml) as a manifest and lists its members; grant-side components are unchanged (R44, R64) | test_request_view::test_v2_3_an_mcp_manifest_deploy_view_names_the_manifest_components (2 cases), ::test_v2_3_an_mcp_manifest_deploy_keeps_its_grant_side_components |
+| New: human view | `approval show` confines payloads only when the named approver delegate runs it; a human request with a payload such as `../contacts.csv` shows and grants exactly as in a15, and the delegated view of it refuses | test_request_view::test_v2_3_a_human_request_with_a_payload_above_the_working_folder_shows, ::test_v2_3_a_human_request_shows_in_a_workspace_with_no_delegate, ::test_v2_3_the_delegated_approver_view_of_the_same_request_refuses |
+| New: doctor | Approval-log rows with identity values of the wrong type are counted as malformed and reported; doctor completes | test_doctor_delegated::test_v2_3_doctor_reports_malformed_historical_identities_without_aborting |
+
+One alpha 16 test changed in this round: `test_unattended_gate::test_an_unstatable_sidecar_reads_as_invalid_not_as_absent`
+now denies `lstat` as well as `stat`, since the sidecar check uses `lstat`. It did not
+exist at `dea2041`.
+
 Rulings on the remaining V2 items:
 
 - G01 (starting point): the alpha 15 candidate was merged to main as a commit whose tree
