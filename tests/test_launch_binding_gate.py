@@ -535,3 +535,29 @@ def test_owner_launch_keeps_its_flags(tmp_path, monkeypatch):
     cli_approval.launch(root, "Acme", ["--dangerously-skip-permissions"], execvp=lambda *a: seen.append(a),
                         presence=lambda: Presence(True, ""))
     assert seen and seen[0][1][-1] == "--dangerously-skip-permissions"
+
+
+# V1 invariant gaps (a16 closure).
+
+def test_a_presence_record_naming_a_binding_is_rechecked(tmp_path, monkeypatch, capsys):
+    """G9 (invariant 8): a presence-kind record that names a binding_id goes
+    through the binding re-check, whatever its via says. The binding named
+    here is genuine, but it is not this record's own id."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    record = launched(monkeypatch, root)
+    assert (record["via"], record["kind"]) == ("presence", "human")
+    assert hook(monkeypatch, capsys, root)[0] == 0
+    rewrite(consumed(root) / f"{record['id']}.launch", binding_id=binding["id"])
+    assert unbound(monkeypatch, capsys, root)
+
+
+def test_a_process_started_just_inside_the_expiry_skew_binds(tmp_path, monkeypatch, capsys):
+    """G12 (invariant 17): the upper bound keeps its skew, mirroring
+    test_a_process_started_just_inside_the_skew_binds for the lower bound."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding, record = claimed(monkeypatch, root)
+    late = approval._epoch(binding["expires_at"]) + approval.SKEW - 5
+    text = started_at(monkeypatch, late)
+    rewrite(consumed(root) / f"{record['id']}.launch", pid_started=text)
+    assert hook(monkeypatch, capsys, root)[0] == 0

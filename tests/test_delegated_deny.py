@@ -296,3 +296,53 @@ def test_cli_deny_json_needs_delegated(tmp_path, monkeypatch, capsys):
     code = cli.main(["approval", "deny", req["id"], "--workspace", str(root), "--client", "Acme", "--reason", "no",
                      "--json"])
     assert code == 2 and "--delegated" in capsys.readouterr().err
+
+
+# V1 invariant gaps (a16 closure). Each test below pins one check that the
+# V1 mutation proof showed no other test depends on.
+
+
+@pytest.mark.parametrize("mode", ["full", "build-only"])
+def test_delegated_grant_and_deny_refuse_outside_connected_mode(tmp_path, monkeypatch, mode):
+    """G1 (invariant 3): a workspace still configured for tier 2 (owner-uid, the
+    approver delegate named as approver_uid) but whose ai_access is not
+    connected refuses both delegated steps with tier-2-required."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    config = json.loads((root / "workspace.json").read_text())
+    config["ai_access"] = mode
+    (root / "workspace.json").write_text(json.dumps(config))
+    assert (config["approval_verify"], config["approver_uid"]) == ("owner-uid", ME)
+    with pytest.raises(delegation.Refusal) as grant_info:
+        delegated_grant(root, req)
+    with pytest.raises(delegation.Refusal) as deny_info:
+        deny(root, req)
+    assert (grant_info.value.reason_class, deny_info.value.reason_class) == ("tier-2-required", "tier-2-required")
+    assert not list((root / "clients/acme/approvals/granted").glob("apr-*.json"))
+    assert not list((root / "clients/acme/approvals/denied").glob("dny-*.json"))
+
+
+def test_deny_refuses_an_authentic_grant_even_without_its_decision_marker(tmp_path, monkeypatch):
+    """G6 (invariant 21): the already-granted scan stands on its own. With the
+    decision marker gone (a grant made before markers existed, or a lost
+    marker), the denial is still refused and no denial file is written."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    delegated_grant(root, req)
+    (root / "clients/acme/approvals/granted" / f"decision-{req['id']}.json").unlink()
+    with pytest.raises(delegation.Refusal) as info:
+        deny(root, req)
+    assert info.value.reason_class == "already-granted"
+    assert not list((root / "clients/acme/approvals/denied").glob("dny-*.json"))
+
+
+def test_deny_refuses_on_its_own_r46_check(tmp_path, monkeypatch):
+    """G11 (invariant 16, deny side): an approver-owned consent.json refuses the
+    denial through deny_delegated's own R46 check."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    control_owner(monkeypatch, owner=ME, only="consent.json")
+    with pytest.raises(delegation.Refusal) as info:
+        deny(root, req)
+    assert info.value.reason_class == "not-delegated" and "consent.json" in str(info.value)
+    assert not list((root / "clients/acme/approvals/denied").glob("dny-*.json"))

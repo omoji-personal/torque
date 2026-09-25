@@ -232,3 +232,20 @@ def test_cli_writes_nothing(tmp_path, monkeypatch):
     assert status(root, req, wait="0") == 22
     after = snapshot()
     assert before == after
+
+
+def test_a_denial_wins_over_a_grant_for_the_same_request(tmp_path, monkeypatch):
+    """G10 (invariant 9): decision() reads denied when an authentic grant and an
+    authentic delegated denial both exist for one request. The decision marker
+    and the deny side's grant scan are bypassed to build that state."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    record = delegated_grant(root, req)
+    (root / "clients/acme/approvals/granted" / f"decision-{req['id']}.json").unlink()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(approval, "_granted_for", lambda *a, **k: False)
+        denial = deny(root, req)
+    as_agent(monkeypatch)
+    state, detail = approval.decision(root, "Acme", req["id"])
+    assert (root / "clients/acme/approvals/granted" / f"{record['id']}.json").is_file()
+    assert state == "denied" and detail["id"] == denial["id"]

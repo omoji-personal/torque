@@ -276,3 +276,21 @@ def test_build_only_write_to_a_claude_rules_file_is_unaffected(tmp_path, monkeyp
     allowed, reason = gate.decide("Write", {"file_path": str(root / ".claude" / "rules" / "x.md")}, root,
                                   "build-only", root)
     assert (allowed, reason) == (True, "")
+
+
+# V1 invariant gap G5 (invariant 19, R51): MultiEdit and NotebookEdit into the
+# workspace .claude/ are denied in connected mode, like Write and Edit above.
+
+@pytest.mark.parametrize("tool,target,extra", [
+    ("MultiEdit", permissions.PROFILE_FILE, {"edits": [{"old_string": "a", "new_string": "b"}]}),
+    ("MultiEdit", ".claude/settings.json", {"edits": [{"old_string": "a", "new_string": "b"}]}),
+    ("NotebookEdit", permissions.PROFILE_FILE, {"new_source": "x"}),
+    ("NotebookEdit", ".claude/x.ipynb", {"new_source": "x"}),
+])
+def test_multiedit_and_notebookedit_into_claude_are_denied_through_decide_connected(tmp_path, monkeypatch, tool,
+                                                                                     target, extra):
+    root = unattended_root(tmp_path, monkeypatch)
+    key = gate.PATH_TOOLS[tool]
+    decision = gate_connected.decide_connected(tool, {key: str(root / target), **extra}, root, root,
+                                               env={"TORQUE_CLIENT": "acme"})
+    assert decision.action == "deny"

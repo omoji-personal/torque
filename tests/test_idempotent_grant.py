@@ -227,3 +227,42 @@ def test_cli_grant_idempotency_key_without_delegated_exits_2(tmp_path, monkeypat
     assert cli.main(["approval", "grant", req["id"], "--workspace", str(root), "--client", "Acme",
                      "--idempotency-key", KEY]) == 2
     assert "--idempotency-key" in capsys.readouterr().err
+
+
+# V1 invariant gaps (a16 closure), invariant 7: one approval per key.
+
+def test_a_key_reserved_for_another_request_is_refused_before_publish(tmp_path, monkeypatch):
+    """G2: a key reserved for request A whose grant was never published cannot
+    serve request B. The lookup finds no completed grant, so only the
+    reservation's own request_id stops B from taking A's approval id."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req_a, req_b = flow_request(root), flow_request(root)
+    dirs = approval._dirs(root, "Acme", create=False)
+    approval._reserve_key(dirs, KEY, "apr-aaaaaaaaaaaa", req_a["id"])
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req_b, idempotency_key=KEY)
+    assert info.value.reason_class == "idempotency-conflict"
+    assert granted_files(root) == []
+    assert not (dirs["granted"] / f"decision-{req_b['id']}.json").exists()
+
+
+def test_lookup_needs_the_approval_to_carry_the_same_key(tmp_path, monkeypatch):
+    """G8: a reservation that points at an approval granted under another key
+    is not a grant for this key."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    other = "r1:ax-02:1:4567cdef"
+    record = delegated_grant(root, req, idempotency_key=other)
+    approval._reserve_key(approval._dirs(root, "Acme", create=False), KEY, record["id"], req["id"])
+    assert approval.find_by_idempotency_key(root, "Acme", other)["id"] == record["id"]
+    assert approval.find_by_idempotency_key(root, "Acme", KEY) is None
+
+
+def test_lookup_ignores_a_reservation_others_can_write(tmp_path, monkeypatch):
+    """G8: the reservation file must be the approver account's alone; a marker
+    others can write is not trusted, even when its approval file is."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = delegated_grant(root, flow_request(root), idempotency_key=KEY)
+    assert approval.find_by_idempotency_key(root, "Acme", KEY)["id"] == record["id"]
+    approval._key_marker(approval._dirs(root, "Acme", create=False), KEY).chmod(0o664)
+    assert approval.find_by_idempotency_key(root, "Acme", KEY) is None

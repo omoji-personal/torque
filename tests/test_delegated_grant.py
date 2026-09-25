@@ -653,3 +653,73 @@ def test_control_stat_is_call_scoped_not_a_global_mutation(tmp_path, monkeypatch
     violation = approval._controls_problem(root, client_folder, ME)
     assert violation, ("a concurrent caller checking the same files with no override must still see the real, "
                        "approver-owned state; the fake above must never leak past its one call")
+
+
+# V1 invariant gaps (a16 closure).
+
+def _stat_snapshot(root) -> dict:
+    """Every file under `root` with its content digest, mtime and inode, so a
+    rewrite with identical bytes (or an atomic replace) still shows as a change."""
+    import hashlib
+    out = {}
+    for p in root.rglob("*"):
+        if p.is_file() and not p.is_symlink():
+            st = p.stat()
+            out[p.relative_to(root).as_posix()] = (hashlib.sha256(p.read_bytes()).hexdigest(), st.st_mtime_ns,
+                                                   st.st_ino)
+    return out
+
+
+def test_delegated_grant_writes_only_the_documented_write_set(tmp_path, monkeypatch):
+    """G3 (invariant 14): reads and writes are separate. The files a delegated
+    grant only reads (workspace.json, consent.json, the request, the change
+    record) keep their bytes, mtime and inode; every file that changes or
+    appears matches DELEGATED_WRITES (the decision and idempotency markers
+    live under approvals/granted/ too)."""
+    import fnmatch
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    read_only = ["workspace.json", "clients/acme/consent.json", f"clients/acme/approvals/requests/{req['id']}.json"]
+    before = _stat_snapshot(root)
+    assert all(name in before for name in read_only)
+    record = delegated_grant(root, req, idempotency_key="r1:ax-09:1:89abcdef",
+                             request_sha256=view["request_sha256"], payload_digest=view["payload"]["digest"] or "none")
+    after = _stat_snapshot(root)
+    assert all(after.get(name) == before[name] for name in read_only)
+    touched = {name for name, value in after.items() if before.get(name) != value} | (set(before) - set(after))
+    writes = [p.format(client="acme") for p in approval.DELEGATED_WRITES]
+    assert f"clients/acme/approvals/granted/{record['id']}.json" in touched
+    assert all(any(fnmatch.fnmatchcase(name, p) for p in writes) for name in touched), sorted(touched)
+
+
+def test_r46_grant_refuses_on_its_own_without_a_denied_folder(tmp_path, monkeypatch):
+    """G4 (invariant 16): with no approvals/denied folder, delegated_denials()
+    returns [] before its own R46 check, so only _grant_delegated's own R46
+    refusal stops a grant when the approver owns consent.json."""
+    import shutil
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    shutil.rmtree(root / "clients/acme/approvals/denied")
+    control_owner(monkeypatch, owner=ME, only="consent.json")
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req)
+    assert info.value.reason_class == "not-delegated" and "consent.json" in str(info.value)
+    assert not list((root / "clients/acme/approvals/granted").glob("apr-*.json"))
+
+
+def test_delegated_grant_refused_when_the_request_records_a_production_org(tmp_path, monkeypatch):
+    """G7 (invariant 4): the request's own recorded org_kind refuses a delegated
+    grant even when the live org and the consent entry both say non-production.
+    The request is edited before review, so the reviewed hash still matches."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    path = root / "clients/acme/approvals/requests" / f"{req['id']}.json"
+    item = json.loads(path.read_text())
+    assert item["org_kind"] == "developer"
+    item["org_kind"] = "production"
+    path.write_text(json.dumps(item))
+    with pytest.raises(delegation.Refusal) as info:
+        delegated_grant(root, req)
+    assert info.value.reason_class == "org-production-or-unknown"
+    assert not list((root / "clients/acme/approvals/granted").glob("apr-*.json"))
