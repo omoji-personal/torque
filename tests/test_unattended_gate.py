@@ -39,6 +39,7 @@ def test_approved_write_gets_an_explicit_allow(tmp_path, monkeypatch, capsys):
     code, out = hook(monkeypatch, capsys, root, shlex.join(WRITE))
     decision = json.loads(out.out)["hookSpecificOutput"]
     assert code == 0 and decision["permissionDecision"] == "allow" and record["id"] in decision["permissionDecisionReason"]
+    assert [p.name for p in consumed_files(root)] == [record["id"]]
 
 
 def test_unapproved_write_is_denied_without_a_prompt(tmp_path, monkeypatch, capsys):
@@ -84,7 +85,14 @@ def test_a_read_or_local_call_gets_no_explicit_allow(tmp_path, monkeypatch, caps
     assert code == 0 and out.out == ""
 
 
-def test_a_reset_sidecar_gets_no_explicit_allow_even_for_an_approved_write(tmp_path, monkeypatch, capsys):
+def consumed_files(root):
+    """The consumed approvals' claim markers (launch-record markers excluded)."""
+    return sorted((root / "clients" / "acme" / "approvals" / "consumed").glob("apr-*"))
+
+
+def test_a_reset_sidecar_denies_even_an_approved_write_and_consumes_nothing(tmp_path, monkeypatch, capsys):
+    """V2 I1: an invalid sidecar fails closed. The call is denied, and the
+    approval stays unconsumed (a denied call must not spend it)."""
     root = unattended_root(tmp_path, monkeypatch)
     delegated_grant(root, flow_request(root))
     (root / permissions.PROFILE_FILE).write_text("{}", encoding="utf-8")
@@ -92,7 +100,39 @@ def test_a_reset_sidecar_gets_no_explicit_allow_even_for_an_approved_write(tmp_p
     launched(monkeypatch, root)
     as_agent(monkeypatch)
     code, out = hook(monkeypatch, capsys, root, shlex.join(WRITE))
-    assert code == 0 and out.out == ""
+    assert code == 2 and out.out == "" and "permission profile" in out.err
+    assert consumed_files(root) == []
+
+
+def test_an_unstatable_sidecar_reads_as_invalid_not_as_absent(tmp_path, monkeypatch):
+    """V2 I1: only a missing sidecar means "interactive"; a stat or read error
+    (here EACCES from stat) is "invalid"."""
+    root = unattended_root(tmp_path, monkeypatch)
+    real_stat = os.stat
+    target = str(root / permissions.PROFILE_FILE)
+
+    def denied(path, *a, **k):
+        if str(path) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_stat(path, *a, **k)
+    monkeypatch.setattr(os, "stat", denied)
+    assert permissions.load_profile(root) == "invalid"
+
+
+def test_an_unstatable_sidecar_denies_an_approved_write(tmp_path, monkeypatch, capsys):
+    root = unattended_root(tmp_path, monkeypatch)
+    delegated_grant(root, flow_request(root))
+    launched(monkeypatch, root)
+    as_agent(monkeypatch)
+    monkeypatch.setattr(permissions, "load_sidecar", lambda r: {"schema": None})
+    code, out = hook(monkeypatch, capsys, root, shlex.join(WRITE))
+    assert code == 2 and consumed_files(root) == []
+
+
+def test_a_missing_sidecar_is_still_interactive(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    assert not (root / permissions.PROFILE_FILE).exists()
+    assert permissions.load_profile(root) == "interactive"
 
 
 def browser_grant(root, org="acme-dev"):

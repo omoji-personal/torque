@@ -205,6 +205,12 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     routes = classify(tool_name, tool_input)
     if all(r.kind == "local" and _route_client(r) in (None, bound) for r in routes):
         return Decision("allow", "")
+    from . import permissions
+    if permissions.load_profile(workspace) == "invalid":
+        # V2 I1: fail closed before anything below can consume an approval. A
+        # damaged or unreadable sidecar is never read as the interactive profile.
+        return _deny(f"the permission profile ({permissions.PROFILE_FILE}) is unreadable or invalid. "
+                     "The consultant reruns the permissions setup step.")
     unbound = _deny("no client is bound to this session. The consultant starts it with "
                     "`torque launch --workspace W --client NAME`.")
     config = ws.load_workspace(workspace)[1]

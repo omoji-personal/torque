@@ -237,8 +237,15 @@ def load_sidecar(root) -> dict | None:
     `load_profile` turns into "invalid": fail closed, never treat an unreadable
     sidecar as absent-and-interactive."""
     path = Path(root) / PROFILE_FILE
-    if not path.exists():
+    # V2 I1: only "no such file" means absent. `Path.exists()` also answers False
+    # for a stat that fails (EACCES on the folder, for one), which would have read
+    # an unstatable sidecar as absent-and-interactive.
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
         return None
+    except OSError:
+        return {"schema": None}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
