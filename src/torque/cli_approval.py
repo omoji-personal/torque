@@ -76,10 +76,16 @@ def register(sub) -> None:
     _client_args(lookup)
     lookup.add_argument("--idempotency-key", required=True, help="the key an earlier `grant --idempotency-key` used")
     lookup.add_argument("--json", action="store_true")
-    deny = actions.add_parser("deny", help="consultant only, at a real terminal")
+    deny = actions.add_parser("deny", help="consultant at a real terminal, or the delegated approver (--delegated)")
     deny.add_argument("request_id")
     _client_args(deny)
     deny.add_argument("--reason", required=True)
+    deny.add_argument("--delegated", action="store_true",
+                      help="the workspace's delegated approver is denying (tier 2, non-production only)")
+    deny.add_argument("--reason-class", help="delegated only, required: 2 to 48 lowercase letters, digits "
+                                             "and hyphens (for example: manifest-deny)")
+    deny.add_argument("--model-id", help="delegated only: the AI approver's model identifier")
+    deny.add_argument("--json", action="store_true", help="print the denial record")
     status = actions.add_parser("status", help="show one request and whether it was granted or used")
     status.add_argument("request_id")
     _client_args(status)
@@ -382,6 +388,16 @@ def run(parsed, tail: list[str] | None) -> int:
         return _lookup(parsed)
     if parsed.action == "deny":
         from . import approval
+        if parsed.delegated:
+            record = approval.deny_delegated(parsed.workspace, parsed.client, parsed.request_id,
+                                             parsed.reason_class, model_id=parsed.model_id, reason=parsed.reason)
+            if parsed.json:
+                _print(record)
+                return 0
+            print(f"Denied {record['id']} for {record['request_id']} ({record['reason_class']}).")
+            return 0
+        if parsed.reason_class is not None or parsed.model_id is not None:
+            raise ws.WorkspaceError("--reason-class and --model-id go with --delegated")
         approval.deny(parsed.workspace, parsed.client, parsed.request_id, parsed.reason)
         print(f"Denied {parsed.request_id}.")
         return 0

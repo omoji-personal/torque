@@ -67,6 +67,10 @@ REQUEST_TTL = 3600
 # starting with a letter or digit.
 IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]{7,127}\Z")
 VIEW_SCHEMA = "torque.approval-request-view/1"
+DENIAL_SCHEMA = "torque.denial/1"
+# A delegated denial's reason class (task D9): 2 to 48 lowercase letters, digits
+# and hyphens, starting with a letter or digit.
+REASON_CLASS = re.compile(r"[a-z0-9][a-z0-9-]{1,47}\Z")
 # sf argv[1:3] (or [1:2]) -> the view's normalized operation name.
 _SF_OPERATIONS = {("project", "deploy", "start"): "deploy", ("project", "deploy", "quick"): "deploy",
                   ("project", "deploy", "resume"): "deploy", ("project", "delete"): "delete",
@@ -950,7 +954,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     req, current = load_request_hashed(workspace, client, request_id)
     change_id = req.get("change")
     changes.load_change(workspace, client, change_id)
-    if _denied(workspace, client, change_id, request_id):
+    if _denied(workspace, client, change_id, request_id) or _delegated_denial(workspace, client, request_id):
         raise ws.WorkspaceError(f"{request_id} was denied; ask for a new request")
     config = ws.load_workspace(workspace)[1]
     if _ai_approver(config):
@@ -1143,7 +1147,7 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
         created = _epoch(req["created_at"])
         change_id = req.get("change")
         changes.load_change(workspace, client, change_id)
-        denied = _denied(workspace, client, change_id, request_id)
+        denied = _denied(workspace, client, change_id, request_id) or _delegated_denial(workspace, client, request_id)
     except (OSError, ValueError, TypeError, KeyError, ws.WorkspaceError) as exc:
         raise delegation.Refusal("request-changed", f"the request or its change record cannot be read: {exc}") \
             from None
@@ -1332,6 +1336,137 @@ def deny(workspace, client, request_id, reason, *, presence=None, confirm=None) 
                                           "before_state_event": req.get("before_state_event"),
                                           "manual_recovery": req.get("manual_recovery"),
                                           "validated_job": req.get("validated_job")})
+
+
+def _authentic_grant(path: Path, record: dict, config: dict, client: str) -> bool:
+    """Whether a file under approvals/granted/ is a real grant this workspace's
+    tier 2 approver made: the same record-field, ownership and R46 controls checks
+    the gate applies before consuming a grant (`_problem`), without the time
+    window (F21: an expired-but-genuine grant still counts as "already granted"
+    for the exclusivity rule between a grant and a delegated denial; a time-based
+    check belongs to whether the grant can still be *used*, not whether it was
+    genuinely made)."""
+    if record.get("schema") != SCHEMA or any(k not in record for k in REQUIRED) \
+            or record.get("kind") not in KINDS or not _valid_id(record.get("id"), "apr-") \
+            or path.name != f"{record.get('id')}.json" or record.get("client") != client:
+        return False
+    approver = config.get("approver_uid")
+    if config.get("approval_verify") != "owner-uid" or type(approver) is not int or path.is_symlink():
+        return False
+    try:
+        st, folder = path.lstat(), path.parent.stat()
+    except OSError:
+        return False
+    if _owner_mismatch(st, approver) or _owner_mismatch(folder, approver):
+        return False
+    layout = _granted_layout(path, client)
+    if layout is None or _controls_problem(*layout, approver):
+        return False
+    return not _identity_problem(record, config, "owner-uid")
+
+
+def _granted_for(workspace, client, request_id, config) -> bool:
+    """F21: an authentic grant already exists for this request, checked the same
+    way the gate verifies a grant it is about to consume (ownership, R46
+    controls, record fields), so a forged or approver-unowned file under
+    approvals/granted/ can never itself block a delegated denial."""
+    dirs = _dirs(workspace, client, create=False)
+    slug = ws.slug_for(client)
+    return any(record.get("request_id") == request_id and _authentic_grant(path, record, config, slug)
+              for path, record in _granted(dirs))
+
+
+def deny_delegated(workspace, client, request_id, reason_class, *, model_id, reason, env=None, ancestors=None,
+                   getuid=None, now=None, root_owner=None, control_stat=None) -> dict:
+    """A delegated approver's refusal, published where the waiting session reads it
+    (D10) and the log lists it (D16). A denial passes the same identity and
+    control checks a delegated grant does: agent-session, not-delegated (no
+    delegate, wrong uid, R41 separate-account, workspace.json owner/mode), tier 2
+    (owner-uid, connected, the approver delegate matches config["approver_uid"]),
+    and R46 (the workspace root, clients/, the client folder, workspace.json and
+    consent.json must not belong to or be writable by the approver account).
+    Writes exactly one file the approver owns in approvals/denied/ (mode 0644)
+    and nothing else: no change-record event, no activity.jsonl entry (unlike the
+    consultant's own `deny`, which is a change event and writes no file here).
+
+    F21 / exclusivity: refused with reason class `already-granted` when an
+    authentic grant already exists for this request (`_granted_for`), so a
+    request already granted can never also collect a denial. The matching
+    direction (a request already denied, delegated or not, refuses a later
+    grant) is enforced in `grant`/`_grant_delegated` via `_delegated_denial`.
+    Together the two checks make "granted" and "denied" mutually exclusive once
+    either write has completed and is visible to the other path's check; see the
+    report for the narrow same-instant race this check-then-write pattern does
+    not close (a pre-existing limit shared with the owner `deny` vs. `grant`
+    check, not new to this task). A request may be denied more than once (each
+    denial gets its own id); nothing here treats a repeat denial as a conflict.
+
+    `root_owner` and `control_stat` are the same injectable overrides
+    `grant`/`_grant_delegated` take, for a caller that cannot make the
+    workspace's control files and folders genuinely belong to a separate OS
+    account. Fail closed: an unreadable or malformed request, workspace
+    configuration or control file refuses rather than being treated as absent."""
+    actor, config, root, config_st = delegation._delegated_proof(
+        workspace, "approver", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
+        root_owner=root_owner)
+    if not delegation.delegated_tier2(config):
+        raise delegation.Refusal("tier-2-required", "a delegated denial needs tier 2 (owner-uid) approvals and "
+                                                    "the workspace's approver account as its named approver")
+    try:
+        client_folder = ws.load_client(root, client)[0]
+    except (OSError, ws.WorkspaceError) as exc:
+        raise delegation.Refusal("request-changed", f"cannot read the client folder: {exc}") from None
+    controls = _controls_problem(root, client_folder, config["approver_uid"], workspace_st=config_st,
+                                 control_stat=control_stat)
+    if controls:
+        raise delegation.Refusal("not-delegated", controls)
+    if not isinstance(reason_class, str) or not REASON_CLASS.fullmatch(reason_class):
+        raise ws.WorkspaceError("a reason class is 2 to 48 lowercase letters, digits and hyphens")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ws.WorkspaceError("give a reason")
+    try:
+        req, sha = load_request_hashed(workspace, client, request_id)
+    except ws.WorkspaceError as exc:
+        raise delegation.Refusal("request-changed", str(exc)) from None
+    if _granted_for(workspace, client, request_id, config):
+        raise delegation.Refusal("already-granted", f"{request_id} already has a granted approval; nothing "
+                                                    "was denied")
+    folder = _dirs(workspace, client, create=False)["denied"]
+    if not folder.is_dir():
+        raise ws.WorkspaceError("approvals/denied does not exist; the workspace owner creates it for the "
+                                "approver account")
+    t = now if now is not None else time.time()
+    record = {"schema": DENIAL_SCHEMA, "id": "dny-" + secrets.token_hex(6), "request_id": request_id,
+              "request_sha256": sha, "client": req["client"], "change": req.get("change"),
+              "reason_class": reason_class, "reason": printable(reason.strip())[:500], "approver": actor.account,
+              "approver_uid": actor.uid, "approver_kind": actor.kind, "approver_model": actor.model,
+              "delegated": True, "denied_at": _iso(t)}
+    path = folder / f"{record['id']}.json"
+    ws._write_json(path, record)
+    path.chmod(0o644)
+    return record
+
+
+def delegated_denials(workspace, client, *, config=None) -> list[dict]:
+    """Denials the workspace's delegated approver published (owner verified the
+    same way a grant is: the delegate entry's uid matches config["approver_uid"],
+    and each file is `_approver_owned`, tier 2, not writable by others)."""
+    config = config if config is not None else _config(workspace)
+    item = delegation.delegate_for(config, "approver")
+    folder = _dirs(workspace, client, create=False)["denied"]
+    if item is None or item["uid"] != config.get("approver_uid") or not folder.is_dir():
+        return []
+    out = []
+    for path in sorted(folder.glob("dny-*.json")):
+        record = _read(path)
+        if record and record.get("schema") == DENIAL_SCHEMA and not _approver_owned(path, config) \
+                and path.name == f"{record.get('id')}.json" and record.get("client") == ws.slug_for(client):
+            out.append(record)
+    return out
+
+
+def _delegated_denial(workspace, client, request_id) -> dict | None:
+    return next((d for d in delegated_denials(workspace, client) if d.get("request_id") == request_id), None)
 
 
 def _problem(record: dict, path: Path, config: dict, client: str, now: float) -> str:
