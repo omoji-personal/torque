@@ -3005,9 +3005,15 @@ def _main() -> int:
                                             tool_use_id=event.get("tool_use_id"))
                            for root in connected]
                 worst = max(results, key=lambda r: ("allow", "ask", "deny").index(r.action))
-                if worst.action == "allow" and worst.approved and any(gc.unattended(r) for r in connected):
-                    print(gc.allow_json(f"Connected mode: approval {worst.approved} was used for this call."))
-                    return 0
+                if worst.action == "allow" and worst.approved:
+                    # Tie the explicit allow to the root(s) whose own decision actually
+                    # carries the approval id, not to "any connected root is unattended":
+                    # a second, non-approving connected root's profile must never decide
+                    # whether a different root's approval gets this explicit allow.
+                    approving = [root for root, result in zip(connected, results) if result.approved]
+                    if approving and all(gc.unattended(root) for root in approving):
+                        print(gc.allow_json(f"Connected mode: approval {worst.approved} was used for this call."))
+                        return 0
                 if worst.action == "ask":
                     print(ask_json(worst.reason))
                     return 0

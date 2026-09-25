@@ -6,9 +6,9 @@ import sys
 
 import pytest
 
-from delegated_helpers import (CLEAN, FAKE_OWNER, MODEL, WRITE, as_agent, delegated_grant, delegated_workspace,
+from delegated_helpers import (CLEAN, FAKE_OWNER, MODEL, ORGS, WRITE, as_agent, delegated_grant, delegated_workspace,
                                flow_request, launched)
-from torque import gate, permissions
+from torque import approval, changes, gate, gate_connected, permissions
 
 pytestmark = pytest.mark.skipif(not hasattr(os, "getuid"), reason="tier 2 is POSIX only")
 
@@ -69,5 +69,87 @@ def test_a_sidecar_without_delegation_is_ignored(tmp_path, monkeypatch, capsys):
     config = json.loads((root / "workspace.json").read_text())
     config["delegates"].pop("approver")
     (root / "workspace.json").write_text(json.dumps(config))
-    from torque import gate_connected
     assert gate_connected.unattended(root) is False
+
+
+# Fix round 1 (controller review): gate-level coverage for the explicit-allow guard
+# itself, so that deleting `and worst.approved` in gate.py, or weakening the
+# allow-only condition in decide_connected, is caught by a test.
+
+def test_a_read_or_local_call_gets_no_explicit_allow(tmp_path, monkeypatch, capsys):
+    root = unattended_root(tmp_path, monkeypatch)
+    launched(monkeypatch, root)
+    code, out = hook(monkeypatch, capsys, root, "ls")
+    assert code == 0 and out.out == ""
+
+
+def test_a_reset_sidecar_gets_no_explicit_allow_even_for_an_approved_write(tmp_path, monkeypatch, capsys):
+    root = unattended_root(tmp_path, monkeypatch)
+    delegated_grant(root, flow_request(root))
+    (root / permissions.PROFILE_FILE).write_text("{}", encoding="utf-8")
+    assert gate_connected.unattended(root) is False
+    launched(monkeypatch, root)
+    as_agent(monkeypatch)
+    code, out = hook(monkeypatch, capsys, root, shlex.join(WRITE))
+    assert code == 0 and out.out == ""
+
+
+def browser_grant(root, org="acme-dev"):
+    cid = changes.create_change(root, "Acme", "Layout change", "Add Tier to the Case layout", [], org)["id"]
+    req = approval.create_request(root, "Acme", cid, org, browser_minutes=10,
+                                  purpose="Add Tier to the Case layout", resolve=ORGS.get)
+    return delegated_grant(root, req)
+
+
+def test_a_granted_browser_window_gets_an_explicit_allow_naming_the_window(tmp_path, monkeypatch, capsys):
+    root = unattended_root(tmp_path, monkeypatch)
+    window = browser_grant(root)
+    launched(monkeypatch, root)
+    as_agent(monkeypatch)
+    code, out = hook(monkeypatch, capsys, root, "torque browser run --target-org acme-dev")
+    decision = json.loads(out.out)["hookSpecificOutput"]
+    assert (code == 0 and decision["permissionDecision"] == "allow"
+            and window["id"] in decision["permissionDecisionReason"])
+
+
+# Minor 1 (controller review): the explicit allow must be tied to the root(s) whose
+# own decision actually carries the approval id, not to "any connected root is
+# unattended". Real stacked workspaces are not used here: a second, genuinely
+# unrelated connected root would simply deny the call as unbound (its own
+# TORQUE_CLIENT/TORQUE_LAUNCH never verify for a different workspace root), which
+# would mask the very bug under test. `decide_connected` is faked per root instead,
+# so the two roots' Decision objects are controlled directly: one root actually
+# approved this call (and is not unattended), the other is unattended but did not
+# approve anything.
+
+def test_only_an_approving_root_being_unattended_triggers_the_explicit_allow(tmp_path, monkeypatch, capsys):
+    attended = delegated_workspace(tmp_path / "attended", monkeypatch)  # no sidecar written: stays interactive
+    unattended = unattended_root(tmp_path / "unattended", monkeypatch)
+    assert gate_connected.unattended(attended) is False and gate_connected.unattended(unattended) is True
+    decisions = {attended: gate_connected.Decision("allow", "", "apr-from-attended"),
+                 unattended: gate_connected.Decision("allow", "", None)}
+    monkeypatch.setattr(gate, "_connected_workspaces", lambda cwd, tool_input: [attended, unattended])
+    monkeypatch.setattr(gate_connected, "decide_connected",
+                        lambda tool_name, tool_input, workspace, cwd, **kw: decisions[workspace])
+    code, out = hook(monkeypatch, capsys, attended, "ls")
+    assert code == 0 and out.out == ""
+
+
+def test_a_non_approving_tie_break_winner_never_borrows_another_roots_approval(tmp_path, monkeypatch, capsys):
+    """`worst` is picked by `max(results, ...)`, which keeps the first "allow" seen on
+    a tie. When that first (`worst`) decision itself carries no approval, the call must
+    stay silent even though a later root in the same list did use one and is unattended:
+    printing would have to fall back to `worst.approved` (None) for the reason text,
+    an "approval None was used" message that names no real approval. This is the case
+    `and worst.approved` (kept as the outer guard, alongside the `approving`/`all(...)`
+    scoping added above) protects against."""
+    non_approving = delegated_workspace(tmp_path / "non-approving", monkeypatch)  # not unattended; irrelevant here
+    approving_unattended = unattended_root(tmp_path / "approving-unattended", monkeypatch)
+    decisions = {non_approving: gate_connected.Decision("allow", "", None),
+                 approving_unattended: gate_connected.Decision("allow", "", "apr-from-the-other-root")}
+    monkeypatch.setattr(gate, "_connected_workspaces",
+                        lambda cwd, tool_input: [non_approving, approving_unattended])
+    monkeypatch.setattr(gate_connected, "decide_connected",
+                        lambda tool_name, tool_input, workspace, cwd, **kw: decisions[workspace])
+    code, out = hook(monkeypatch, capsys, non_approving, "ls")
+    assert code == 0 and out.out == ""
