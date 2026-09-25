@@ -197,6 +197,10 @@ def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None,
         # Every presence-free check before anything else is read (agent-session,
         # tier 2, approver delegate, launching account); claim_binding repeats them.
         launches._tier2_config(workspace, env=env, ancestors=ancestors)
+        flag = launches.launch_flag_problem(extra)
+        if flag:
+            raise Refusal("launch-flag-refused", f"a delegated launch does not pass {flag} to claude: it would "
+                                                 "skip or widen the permission rules the gate relies on")
     else:
         if binding:
             raise ws.WorkspaceError("--binding goes with --delegated")
@@ -458,12 +462,10 @@ def _permissions(p) -> int:
 
 def run(parsed, tail: list[str] | None) -> int:
     if parsed.command == "launch":
-        if parsed.binding and not parsed.delegated:
-            raise ws.WorkspaceError("--binding goes with --delegated")
-        if parsed.delegated:
-            if not parsed.binding:
-                raise ws.WorkspaceError("--delegated needs --binding lnk-... from `torque approval launch-binding`")
-            return launch(parsed.workspace, parsed.client, tail or [], delegated=True, binding=parsed.binding)
+        if parsed.delegated or parsed.binding:
+            # launch() checks the --delegated/--binding pairing.
+            return launch(parsed.workspace, parsed.client, tail or [], delegated=parsed.delegated,
+                          binding=parsed.binding)
         return launch(parsed.workspace, parsed.client, tail or [])
     if parsed.action == "launch-binding":
         return _launch_binding(parsed)

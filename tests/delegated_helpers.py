@@ -139,3 +139,14 @@ def delegated_grant(root, req, **extra):
               "resolve": ORGS.get, "root_owner": FAKE_OWNER, "control_stat": approval._control_stat, **CLEAN}
     kwargs.update(extra)
     return approval.grant(root, "Acme", req["id"], **kwargs)
+
+
+def launched(monkeypatch, root, client="Acme"):
+    """A consultant's (presence) launch record for this process, and the session
+    environment `torque launch` would have set (D12: the gate binds only from it)."""
+    from torque import launch
+    record = launch.write_launch_record(root, client, "human")
+    monkeypatch.setenv("TORQUE_CLIENT", record["client"])
+    monkeypatch.setenv("TORQUE_LAUNCH", record["id"])
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    return record

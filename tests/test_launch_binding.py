@@ -479,7 +479,7 @@ def test_launch_process_check_makes_at_most_8_ps_calls(target):
     ps = FakePs({999: (1000, "start 999"), **chain(20)})
     problem = launch.launch_process_problem(target, f"start {target}", getpid=lambda: 999, getppid=lambda: 1000,
                                             run=ps)
-    assert ps.calls <= 8
+    assert ps.calls <= launch.MAX_PS_CALLS == 8
     within = target == 999 or 1000 <= target < 1000 + launch.MAX_ANCESTORS
     assert (problem == "") == within, problem
 

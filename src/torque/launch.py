@@ -34,15 +34,42 @@ NONCE = re.compile(r"[0-9a-f]{32}\Z")
 MAX_PS_CALLS = 8
 MAX_ANCESTORS = 7
 VIA = ("binding", "presence", "probe")
+PS_TIMEOUT = 2
+# R49: claude options a delegated launch refuses, since each would let the session
+# skip or widen the permission rules the gate's deny rules rely on.
+REFUSED_FLAGS = ("--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--settings",
+                 "--setting-sources", "--allowedTools", "--allowed-tools", "--disallowedTools",
+                 "--disallowed-tools", "--add-dir")
 BINDING_FIELDS = ("schema", "id", "workspace", "client", "nonce", "created_at", "expires_at", "approver",
                   "approver_uid", "approver_kind", "approver_model")
 
 
 def _ps(argv: list[str]) -> str:
+    """One `ps` call. Inside a gate call it is charged to the gate's per-call budget
+    (BudgetExceeded past it) and never waits past what is left of it. The C locale
+    keeps `lstart` in the English form `_lstart_epoch` reads."""
+    from . import gate
+    gate._spend()
+    left = gate._remaining()
+    wait = PS_TIMEOUT if left is None else min(PS_TIMEOUT, left)
+    if wait <= 0:
+        raise gate.BudgetExceeded(f"the gate's {gate.GATE_TIME_BUDGET:g}-second time budget for one call ran out")
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=2).stdout
+        return subprocess.run(argv, capture_output=True, text=True, timeout=wait,
+                              env={**os.environ, "LC_ALL": "C"}).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def _lstart_epoch(text) -> float | None:
+    """The epoch of a `ps -o lstart=` start time (local time, one-second
+    precision), or None when it is not one."""
+    if not isinstance(text, str):
+        return None
+    try:
+        return time.mktime(time.strptime(" ".join(text.split()), "%a %b %d %H:%M:%S %Y"))
+    except (ValueError, OverflowError):
+        return None
 
 
 def process_start(pid: int, *, run=None) -> str | None:
@@ -211,10 +238,10 @@ def _read_binding(path: Path, approver: int) -> dict:
     except OSError:
         raise _refuse("binding-invalid", f"cannot read the launch binding {path.stem}") from None
     try:
-        folder = path.parent.stat()
+        folder = path.parent.lstat()
     except OSError:
         raise _refuse("binding-invalid", invalid) from None
-    if approval._owner_mismatch(folder, approver):
+    if not stat.S_ISDIR(folder.st_mode) or approval._owner_mismatch(folder, approver):
         raise _refuse("binding-invalid", invalid)
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -243,25 +270,19 @@ def _read_binding(path: Path, approver: int) -> dict:
     return value
 
 
-def claim_binding(workspace, client, binding_id, *, pid=None, now=None, starts=None, env=None, ancestors=None,
-                  getuid=None, control_stat=None) -> dict:
-    """Consume a launch binding for this process: the checks in `_tier2_config`,
-    then the binding itself (approver-owned, unaltered, for this workspace and
-    client, from the current approver delegate, within its window), then the
-    single-use claim, an O_EXCL approvals/consumed/<binding_id>.launch record.
-    Every refusal is a delegation.Refusal with a reason class."""
+def _checked_binding(root: Path, config: dict, slug: str, binding_id: str, t: float) -> tuple[dict, float, float]:
+    """The binding `binding_id` of this workspace and client, fully verified except
+    for its expiry: `_read_binding` (approver-owned file and folder, no link, one
+    descriptor), then its fields (shape, nonce, this workspace and client, the
+    current approver delegate and model) and its dates (not in the future, window
+    within BINDING_TTL_MAX + SKEW). Shared by the claim and by the gate's re-check
+    (F8). Returns (binding, created, expires) as epochs."""
     from . import approval, delegation
-    root, config, folder = _tier2_config(workspace, env=env, ancestors=ancestors, getuid=getuid,
-                                         control_stat=control_stat, client=client)
-    if not isinstance(binding_id, str) or not BINDING_ID.fullmatch(binding_id):
-        # Never let near a path.
-        raise _refuse("binding-invalid", "a launch binding ID looks like lnk-0123456789ab")
-    slug = folder.name
-    approver = config["approver_uid"]
     item = delegation.delegate_for(config, "approver")
-    dirs = approval._dirs(root, client, create=False)
-    path = dirs["granted"] / f"{binding_id}.json"
-    binding = _read_binding(path, approver)
+    if item is None:
+        raise _refuse("not-delegated", "this workspace names no approver delegate")
+    path = approval._dirs(root, slug, create=False)["granted"] / f"{binding_id}.json"
+    binding = _read_binding(path, config["approver_uid"])
     if binding.get("schema") != BINDING_SCHEMA or binding.get("id") != binding_id \
             or any(key not in binding for key in BINDING_FIELDS) \
             or not isinstance(binding.get("nonce"), str) or not NONCE.fullmatch(binding["nonce"]):
@@ -279,12 +300,32 @@ def claim_binding(workspace, client, binding_id, *, pid=None, now=None, starts=N
         created, expires = approval._epoch(binding["created_at"]), approval._epoch(binding["expires_at"])
     except (TypeError, ValueError):
         raise _refuse("binding-invalid", "malformed launch binding") from None
-    t = now if now is not None else time.time()
     if created > t + approval.SKEW:
         raise _refuse("binding-invalid", "the launch binding is dated in the future")
     if expires < created or expires - created > BINDING_TTL_MAX + approval.SKEW:
         raise _refuse("binding-invalid", f"the launch binding's window is longer than {BINDING_TTL_MAX // 60} "
                                          "minutes")
+    return binding, created, expires
+
+
+def claim_binding(workspace, client, binding_id, *, pid=None, now=None, starts=None, env=None, ancestors=None,
+                  getuid=None, control_stat=None) -> dict:
+    """Consume a launch binding for this process: the checks in `_tier2_config`,
+    then the binding itself (approver-owned, unaltered, for this workspace and
+    client, from the current approver delegate, within its window), then the
+    single-use claim, an O_EXCL approvals/consumed/<binding_id>.launch record.
+    Every refusal is a delegation.Refusal with a reason class."""
+    from . import approval
+    root, config, folder = _tier2_config(workspace, env=env, ancestors=ancestors, getuid=getuid,
+                                         control_stat=control_stat, client=client)
+    if not isinstance(binding_id, str) or not BINDING_ID.fullmatch(binding_id):
+        # Never let near a path.
+        raise _refuse("binding-invalid", "a launch binding ID looks like lnk-0123456789ab")
+    slug = folder.name
+    dirs = approval._dirs(root, client, create=False)
+    t = now if now is not None else time.time()
+    binding, _, expires = _checked_binding(root, config, slug, binding_id, t)
+    kind = binding["approver_kind"]
     if t > expires:
         raise _refuse("binding-expired", "the launch binding expired; ask the approver for a new one")
     pid = pid if pid is not None else os.getpid()
@@ -322,3 +363,129 @@ def write_launch_record(workspace, client, kind, *, pid=None, starts=None) -> di
     if not _write_record(dirs, record):
         raise ws.WorkspaceError("could not write the launch record; try again")
     return record
+
+
+def launch_flag_problem(extra) -> str:
+    """R49: "" when none of the claude options passed through a delegated launch
+    would skip or widen the permission rules; else the refused option. The whole
+    passthrough is scanned (a `--` included): fail closed."""
+    words = [str(word) for word in extra or ()]
+    for index, word in enumerate(words):
+        name, eq, value = word.partition("=")
+        if name in REFUSED_FLAGS:
+            return name
+        if name == "--permission-mode":
+            mode = value if eq else (words[index + 1] if index + 1 < len(words) else "")
+            if mode.lower() == "bypasspermissions":
+                return f"--permission-mode {mode}"
+    return ""
+
+
+# The record kind each `via` allows, and its ID prefix.
+_VIA_KINDS = {"presence": (("human",), "launch-"), "probe": (("probe",), "probe-"),
+              "binding": (("ai", "human"), "lnk-")}
+
+
+def verify_launch(root, env, *, getpid=None, getppid=None, run=None, now=None) -> tuple[str | None, str]:
+    """(the bound client slug, "") when `env` names, by TORQUE_LAUNCH, a launch record
+    for its TORQUE_CLIENT and this workspace whose process is this one or one of its
+    nearest ancestors with the same start time (`launch_process_problem`, at most
+    MAX_PS_CALLS `ps` calls; skipped on Windows, F45) and, whenever the record names
+    a binding (F8), whose approver binding still verifies in full and was claimed by
+    a process started inside its window (R48); else (None, why). Nothing unreadable
+    binds. `getpid`, `getppid`, `run` and `now` are test seams. A gate call past its
+    time budget raises gate.BudgetExceeded (the gate then blocks the call)."""
+    from . import approval
+    launch_id, client = env.get("TORQUE_LAUNCH"), env.get("TORQUE_CLIENT")
+    if not launch_id or not client:
+        return None, "no launch record"
+    if not isinstance(launch_id, str) or not LAUNCH_ID.fullmatch(launch_id):
+        return None, "malformed launch ID"
+    try:
+        slug = ws.slug_for(client)
+        root = Path(os.path.realpath(root))
+        ws.load_workspace(root)
+        folder = ws.load_client(root, slug)[0]
+        path = approval._dirs(root, slug, create=False)["consumed"] / f"{launch_id}.launch"
+    except (OSError, ValueError, ws.WorkspaceError):
+        return None, "unreadable workspace or client"
+    record = approval._read(path)
+    if record is None:
+        return None, "no readable launch record for this client"
+    via, kind = record.get("via"), record.get("kind")
+    kinds, prefix = _VIA_KINDS.get(via, ((), None))
+    if record.get("schema") != LAUNCH_SCHEMA or record.get("id") != launch_id or record.get("client") != slug \
+            or record.get("workspace") != str(root) or kind not in kinds or not launch_id.startswith(prefix):
+        return None, "the launch record is not for this client and workspace"
+    try:
+        record_created = approval._epoch(record.get("created_at"))
+    except (TypeError, ValueError):
+        return None, "malformed launch record"
+    if os.name != "nt":
+        why = launch_process_problem(record.get("pid"), record.get("pid_started"), getpid=getpid,
+                                     getppid=getppid, run=run)
+        if why:
+            return None, why
+    if via == "binding" or "binding_id" in record:
+        why = _binding_problem(root, folder, slug, record, record_created, now)
+        if why:
+            return None, why
+    return slug, ""
+
+
+def _binding_problem(root: Path, folder: Path, slug: str, record: dict, record_created: float, now) -> str:
+    """Why a binding-based launch record no longer binds; "" when it does."""
+    from . import approval, delegation
+    launch_id = record["id"]
+    if record.get("binding_id") != launch_id:
+        return "the launch record names a different binding, or none"
+    if record.get("via") != "binding" or not BINDING_ID.fullmatch(launch_id) or not hasattr(os, "getuid"):
+        return "a binding-based launch record needs a binding launch in a tier 2 workspace"
+    try:
+        config, config_st = delegation._read_protected_config(root)
+    except ws.WorkspaceError:
+        return "cannot read workspace.json to re-check the launch binding"
+    if not delegation.delegated_tier2(config):
+        return "the workspace no longer has a delegated approver for this launch's binding"
+    controls = approval._controls_problem(root, folder, config["approver_uid"], workspace_st=config_st)
+    if controls:
+        return controls
+    t = now if now is not None else time.time()
+    try:
+        binding, created, expires = _checked_binding(root, config, slug, launch_id, t)
+    except ws.WorkspaceError as exc:
+        return f"the launch's approver binding does not verify: {exc}"
+    approver = {k: binding[k] for k in ("approver", "approver_uid", "approver_kind", "approver_model")}
+    if record.get("nonce") != binding["nonce"] or record.get("kind") != binding["approver_kind"] \
+            or record.get("binding_created_at") != binding["created_at"] \
+            or record.get("binding_expires_at") != binding["expires_at"] or record.get("approver") != approver:
+        return "the launch record does not match its approver binding"
+    # A claim is made inside the binding's window (a late re-claim after deleting
+    # the consumed marker is not).
+    if record_created > min(created + BINDING_TTL_MAX, expires) + approval.SKEW:
+        return "the launch record was made after its binding's window"
+    if os.name != "nt":
+        # R48: the claiming process started after the binding was created (a session
+        # already running cannot adopt it) and within its window. The start time is
+        # the one `ps` just confirmed, not the record's word.
+        begun = _lstart_epoch(record.get("pid_started"))
+        if begun is None:
+            return "the launch record's process start time cannot be read"
+        if begun < created - approval.SKEW:
+            return "the launch's process started before its binding was created"
+        if begun > expires + approval.SKEW:
+            return "the launch's process started after its binding expired"
+    return ""
+
+
+def bound_env(environ, root, **kw) -> dict:
+    """A copy of `environ` whose TORQUE_CLIENT is the verified slug when its launch
+    record verifies (`verify_launch`), and absent otherwise: the gate binds a
+    session only from its launch record, never from TORQUE_CLIENT alone."""
+    env = dict(environ)
+    slug, _ = verify_launch(root, env, **kw)
+    if slug is None:
+        env.pop("TORQUE_CLIENT", None)
+    else:
+        env["TORQUE_CLIENT"] = slug
+    return env

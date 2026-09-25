@@ -2995,8 +2995,10 @@ def _main() -> int:
             if connected:
                 # Imported only here: a workspace without connected mode never loads it.
                 from .gate_connected import ask_json, decide_connected
+                from . import launch as launches
+                # Requirement 9: a session is bound to a client only by its launch record.
                 results = [decide_connected(str(event.get("tool_name", "")), tool_input, root, cwd,
-                                            env=os.environ, permission_mode=event.get("permission_mode"),
+                                            env=launches.bound_env(os.environ, root), permission_mode=event.get("permission_mode"),
                                             session_id=event.get("session_id"),
                                             tool_use_id=event.get("tool_use_id"))
                            for root in connected]
