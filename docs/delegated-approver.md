@@ -415,6 +415,11 @@ Under the unattended profile doctor also requires the gate hook under `PostToolU
 `.claude/settings.json`. Any later edit to `settings.json`, even a legitimate one, shows as
 drift: rewrite the rules with the command doctor prints (it keeps `--unattended`).
 
+Doctor also summarizes the approval log (`approval_history` in `--json`): each verified
+launch record's actor (account, uid, kind and model) with a count, the number of launches
+that are not verified, and each approval identity (actor, uid, kind, model, delegated or
+not) with its grant and denial counts.
+
 ## Execution records
 
 With the hook also wired under `PostToolUse` and `PostToolUseFailure`, each call that used

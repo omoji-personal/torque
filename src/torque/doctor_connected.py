@@ -179,6 +179,45 @@ def approvals_by_kind(root: Path, client: str | None = None) -> dict:
     return counts
 
 
+def approval_history(root: Path, client: str | None = None) -> dict:
+    """V2 M1 (requirement 19): who has approved and launched, from the approval
+    log: verified launch records grouped by actor (account, uid, kind, model),
+    the count of launches that are not verified, and each approval identity
+    with its grant and denial counts. For `client`, or every client."""
+    from . import approval
+    if client:
+        names = [client]
+    else:
+        clients = root / "clients"
+        names = sorted(p.name for p in clients.iterdir() if (p / "client.json").is_file()) if clients.is_dir() else []
+    launches: dict[tuple, int] = {}
+    unverified = 0
+    identities: dict[tuple, dict] = {}
+    for name in names:
+        for row in approval.approval_log(root, name):
+            who = (row.get("approver"), row.get("approver_uid"), row.get("approver_kind"), row.get("approver_model"))
+            if row.get("kind") == "launch":
+                if row.get("verified") is True:
+                    launches[who] = launches.get(who, 0) + 1
+                else:
+                    unverified += 1
+            elif row.get("kind") in ("approval_grant", "approval_deny"):
+                key = (*who, bool(row.get("delegated")))
+                item = identities.setdefault(key, {"grants": 0, "denials": 0})
+                item["grants" if row["kind"] == "approval_grant" else "denials"] += 1
+    order = lambda item: tuple(str(v) for v in item[0])
+    return {"launches": {"verified": [{"actor": a, "uid": u, "kind": k, "model": m, "count": n}
+                                      for (a, u, k, m), n in sorted(launches.items(), key=order)],
+                         "unverified": unverified},
+            "identities": [{"actor": a, "uid": u, "kind": k, "model": m, "delegated": d, **counts}
+                           for (a, u, k, m, d), counts in sorted(identities.items(), key=order)]}
+
+
+def _who(item: dict) -> str:
+    model = f", model {item['model']}" if item.get("model") else ""
+    return f"{item.get('actor')} (uid {item.get('uid')}, {item.get('kind')}{model}"
+
+
 def _hook_entries(root: Path) -> dict[str, list[tuple[str, str]]]:
     """(matcher, command) for each torque.gate hook, per event, from the workspace's
     settings.json and settings.local.json."""
@@ -476,10 +515,15 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
     except (OSError, ValueError, KeyError, ws.WorkspaceError) as exc:
         by_kind = None
         advice.append(f"approvals by kind could not be counted: {exc}")
+    try:
+        history = approval_history(root, client if client_view is not None else None)
+    except (OSError, ValueError, KeyError, ws.WorkspaceError, delegation.Refusal) as exc:
+        history = None
+        advice.append(f"launches and approval identities could not be read from the approval log: {exc}")
     return {"ready": not problems, "problems": problems, "advice": advice, "probes": probes, "checks": checks,
             "approval_verify": verify, "client": client_view, "profile": profile,
             "delegates": {role: delegation.delegate_for(config, role) for role in delegation.ROLES},
-            "setup_steps": setup_steps(root), "approvals_by_kind": by_kind}
+            "setup_steps": setup_steps(root), "approvals_by_kind": by_kind, "approval_history": history}
 
 
 def print_report(result: dict, out=None) -> None:
@@ -500,6 +544,16 @@ def print_report(result: dict, out=None) -> None:
     counts = result.get("approvals_by_kind")
     if counts is not None:
         out.write("Approvals by kind: " + ", ".join(f"{kind} {n}" for kind, n in counts.items()) + "\n")
+    history = result.get("approval_history")
+    if history is not None:
+        for item in history["launches"]["verified"]:
+            out.write(f"Verified launch: {_who(item)}): {item['count']}\n")
+        if history["launches"]["unverified"]:
+            out.write(f"Unverified launches: {history['launches']['unverified']}\n")
+        for item in history["identities"]:
+            kind = ", delegated" if item["delegated"] else ""
+            out.write(f"Approval identity: {_who(item)}{kind}): {item['grants']} granted, "
+                      f"{item['denials']} denied\n")
     for probe in result["probes"]:
         mark = "ok" if probe["got"] == probe["expected"] else "MISMATCH"
         line = f"Probe {probe['route']:<25} expected {probe['expected']:<5} got {probe['got']:<5} {mark}"

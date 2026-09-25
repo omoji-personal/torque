@@ -308,3 +308,36 @@ def test_interactive_drift_command_has_no_unattended_flag(tmp_path, monkeypatch)
     problems = _rewrite_lines(doctor_connected.report(root, "Acme")["problems"])
     assert problems and all(f"--workspace {root} --write --with-hooks" in p for p in problems)
     assert not any("--unattended" in p for p in problems)
+
+
+# --- V2 M1 (requirement 19): doctor summarizes verified launches and the approval ---
+# identities (actor, kind, model) recorded in the approval log.
+
+def test_doctor_summarizes_verified_launches_and_approval_identities(tmp_path, monkeypatch):
+    from delegated_helpers import ACCOUNT, ME
+    from torque import approval, launch
+    root = delegated_workspace(tmp_path, monkeypatch)
+    permissions.write_settings(root, profile="unattended", with_hooks=True, delegated=True, model_id=MODEL,
+                               root_owner=FAKE_OWNER, **CLEAN)
+    delegated_grant(root, flow_request(root))
+    approval.deny_delegated(root, "Acme", flow_request(root)["id"], "manifest-deny", model_id=MODEL,
+                            reason="entry says deny", root_owner=FAKE_OWNER, control_stat=approval._control_stat,
+                            **CLEAN)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, root_owner=FAKE_OWNER, **CLEAN)
+    launch.write_launch_record(root, "Acme", "human")   # a presence launch: never verified
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cfg"))
+    as_agent(monkeypatch)
+    launch.claim_binding(root, "Acme", binding["id"], **CLEAN)
+    result = doctor_connected.report(root, "Acme")
+    history = result["approval_history"]
+    assert history["launches"]["verified"] == [{"actor": ACCOUNT, "uid": ME, "kind": "ai", "model": MODEL,
+                                                "count": 1}]
+    assert history["launches"]["unverified"] == 1
+    assert history["identities"] == [{"actor": ACCOUNT, "uid": ME, "kind": "ai", "model": MODEL,
+                                      "delegated": True, "grants": 1, "denials": 1}]
+    out = io.StringIO()
+    doctor_connected.print_report(result, out)
+    text = out.getvalue()
+    assert f"Verified launch: {ACCOUNT} (uid {ME}, ai, model {MODEL}): 1" in text
+    assert "Unverified launches: 1" in text
+    assert f"Approval identity: {ACCOUNT} (uid {ME}, ai, model {MODEL}, delegated): 1 granted, 1 denied" in text
