@@ -38,6 +38,7 @@ FIXED_DENY_RULES = (
     "Bash(torque approval permissions *--write*)",
     "Bash(torque client consent record:*)", "Bash(torque client consent sign-off:*)",
     "Bash(torque client consent suspend:*)", "Bash(torque launch:*)", "Bash(torque workspace ai-access:*)",
+    "Bash(torque workspace delegate:*)",
     "Bash(sf alias set:*)", "Bash(sf alias unset:*)", "Bash(sf config set:*)", "Bash(sf config unset:*)",
     "Edit(/workspace.json)", "Edit(/clients/*/consent.json)", "Edit(/clients/*/consent-evidence/**)",
     "Edit(/clients/*/approvals/**)", "Edit(/.claude/**)",

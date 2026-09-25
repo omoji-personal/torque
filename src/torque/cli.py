@@ -17,6 +17,7 @@ import subprocess
 
 from . import __version__
 from . import cli_approval
+from . import delegation
 from . import workspace as ws
 
 DELEGATES = {
@@ -86,6 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
     ai_access.add_argument("--approver-uid", type=int, help="owner-uid verification: the approver account's uid")
     ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
     ai_access.add_argument("--json", action="store_true")
+    delegate_p = work_sub.add_parser("delegate", help="name a delegated approver or setup delegate; the owner "
+                                                       "at a real terminal, or an administrator provisioning "
+                                                       "the workspace, runs this")
+    delegate_p.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
+    delegate_p.add_argument("--role", required=True, choices=delegation.ROLES)
+    delegate_p.add_argument("--account", required=True, help="the delegate's OS account name")
+    delegate_p.add_argument("--uid", required=True, type=int, help="the delegate account's numeric uid")
+    delegate_p.add_argument("--kind", required=True, choices=delegation.KINDS)
+    delegate_p.add_argument("--json", action="store_true")
     demo = sub.add_parser("demo", help="create an offline synthetic consulting workspace; no org needed")
     demo.add_argument("path")
     demo.add_argument("--json", action="store_true")
@@ -858,6 +868,13 @@ def main(argv: list[str] | None = None) -> int:
                                  **({"approval": parsed.approval} if parsed.approval else {})})
                 else:
                     print(shown)
+            elif parsed.action == "delegate":
+                root = delegation.set_delegate(parsed.path, parsed.role, parsed.account, parsed.uid, parsed.kind)
+                config = ws.load_workspace(root)[1]
+                if parsed.json:
+                    _print_json({"workspace": str(root), "delegates": config["delegates"]})
+                else:
+                    print(f"{parsed.role} delegate: {parsed.account} (uid {parsed.uid}, {parsed.kind})")
             else:
                 from .template_updates import update_templates
                 report = update_templates(Path(parsed.path), check=parsed.check)

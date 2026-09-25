@@ -342,7 +342,7 @@ def _torque(rest: list[str], detail: str) -> Route:
     org = orgs[0] if len(orgs) == 1 else None
     if len(orgs) > 1:
         return Route("no_org", None, detail + " (names more than one org)", client)
-    if head == "launch" or (head == "workspace" and sub == "ai-access"):
+    if head == "launch" or (head == "workspace" and sub in ("ai-access", "delegate")):
         return Route("admin", None, detail, client)
     if head == "approval":
         if sub in ("grant", "deny") or (sub == "permissions" and "--write" in rest):
