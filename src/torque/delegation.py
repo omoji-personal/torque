@@ -157,14 +157,19 @@ def _read_protected_config(root: Path) -> tuple[dict, os.stat_result]:
     except OSError:
         raise Refusal("not-delegated", f"cannot read {path} to verify the delegate") from None
     try:
-        st = os.fstat(fd)
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            raise Refusal("not-delegated", f"cannot read {path} to verify the delegate") from None
         if not stat.S_ISREG(st.st_mode):
             raise Refusal("not-delegated", f"{path} must be a regular file, not a symlink or special file")
-        with os.fdopen(fd, "r", encoding="utf-8") as handle:
-            fd = None  # fdopen now owns the descriptor; do not close it twice
-            text = handle.read()
-    except OSError:
-        raise Refusal("not-delegated", f"cannot read {path} to verify the delegate") from None
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                fd = None  # fdopen now owns the descriptor; do not close it twice
+                text = handle.read()
+        except (OSError, ValueError):
+            # ValueError also covers UnicodeDecodeError: invalid UTF-8 bytes.
+            raise Refusal("not-delegated", f"cannot read {path} to verify the delegate") from None
     finally:
         if fd is not None:
             os.close(fd)

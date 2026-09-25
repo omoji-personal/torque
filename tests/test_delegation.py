@@ -204,6 +204,17 @@ def test_delegated_actor_refuses_a_missing_workspace_json(root):
     assert info.value.reason_class == "not-delegated"
 
 
+# Fix round 2, Important: invalid UTF-8 bytes in workspace.json must also
+# surface as Refusal("not-delegated", ...), not a raw UnicodeDecodeError.
+
+def test_delegated_actor_refuses_invalid_utf8_workspace_json(root):
+    delegation.set_delegate(root, "setup", ACCOUNT, ME, "ai", geteuid=ROOT)
+    (root / "workspace.json").write_bytes(b"\xff\xfe\x00not valid utf-8 \x80\x81")
+    with pytest.raises(delegation.Refusal) as info:
+        delegation.delegated_actor(root, "setup", model_id="m-1", require_tier2=False, **CLEAN)
+    assert info.value.reason_class == "not-delegated"
+
+
 # Minor 2: an existing but non-dict "delegates" value fails closed with
 # WorkspaceError, not a bare TypeError/ValueError from dict(...).
 
