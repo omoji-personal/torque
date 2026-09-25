@@ -58,7 +58,7 @@ features, or a sandbox of a licensed org.
 - **Programs.** Program, ProgramEnrollment, Benefit, BenefitSchedule, BenefitSession,
   BenefitAssignment, BenefitDisbursement.
 - **Grantmaking** (separate license, funder side): FundingOpportunity, ApplicationForm
-  (use this; IndividualApplication gets no new enhancements), FundingAward,
+  (use this; IndividualApplication appears to receive no new enhancements, **verify**), FundingAward,
   FundingAwardRequirement, FundingDisbursement.
 - **Volunteers** (API 64+): VolunteerInitiative, JobPosition, JobPositionShift,
   JobPositionAssignment.

@@ -58,7 +58,7 @@ participant puts the person on every future roster.
 
 ### Access
 
-PMM ships three permission sets: `PMM: Manage`, `PMM: Deliver`, `PMM: View`. Program and
+PMM ships three permission sets: `PMM : Manage`, `PMM : Deliver`, `PMM : View` (API names PMDM_Manage, PMDM_Deliver, PMDM_View). Program and
 case data is often sensitive; review sharing and field-level security by team.
 
 Checks:

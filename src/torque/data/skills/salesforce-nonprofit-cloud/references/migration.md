@@ -28,8 +28,8 @@ Raise these in discovery; each changes the design or every number.
 7. **Rollups become calendar-year DPE output.** CRLP filter groups and fiscal-year
    rollups have no equivalent; rebuild fiscal reporting on GiftTransaction or a custom
    rollup, and expect donor totals to differ.
-8. **Grantmaking has no application-to-award automation,** and IndividualApplication is
-   frozen; budget both for Outbound Funds clients.
+8. **Grantmaking has no application-to-award automation,** and IndividualApplication appears
+   frozen (**verify**); budget both for Outbound Funds clients.
 9. **Seasonal addresses are supported** (ContactPointAddress), contrary to some partner
    material.
 

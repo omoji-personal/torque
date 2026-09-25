@@ -114,7 +114,7 @@
 49. **`ProgramEnrollment.IsActive` defaults to false,** so imported enrollees count as
     zero. Check: `SELECT IsActive, COUNT(Id) FROM ProgramEnrollment GROUP BY IsActive`.
 50. **No Data Import Wizard, no application-to-award automation, and IndividualApplication
-    is frozen.** Check: plan loaders and award automation explicitly.
+    appears frozen (**verify**).** Check: plan loaders and award automation explicitly.
 
 ## Carry-over
 
