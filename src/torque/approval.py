@@ -359,6 +359,45 @@ def _dirs(workspace, client, create: bool = True) -> dict[str, Path]:
     return out
 
 
+# Task D19 (spec requirement 16): the paths the delegated approver account
+# needs, so an operator can set its file ownership and modes separately from
+# the agent's. Patterns are relative to the workspace root, matched with
+# fnmatch; {client} is one client's slug and {cwd} is the request's working
+# folder (relative to the workspace when it is inside one, which it need not
+# be: a real sf project checkout is usually outside the workspace entirely).
+# The full table, with the reason for each entry, is
+# docs/delegated-approver.md, "Paths the approver account needs".
+#
+# Traced against the code as it stands after D1-D18, not copied from the plan:
+# `_grant_delegated`, `deny_delegated`, `launch.create_binding` and the
+# delegated lookup/denial readers they call (`find_by_idempotency_key`,
+# `delegated_denials`, `_granted_for`) between them open every path below and
+# nothing else outside it. `workspace.json` and `clients/{client}/consent.json`
+# are read for content (R46 only stats their ownership and mode, which needs
+# no read access at all); `clients/{client}/changes` and `{cwd}` are bare
+# because path resolution into them needs the folder itself traversable even
+# though nothing here lists them directly (`clients/{client}/changes/*` covers
+# `changes/<id>/change.json`, read for a request's own change and to check for
+# an owner denial; `clients/{client}/changes/**` covers that change's
+# `events/*.json`, read the same way, and reaches deeper than the request
+# needs but costs the approver nothing extra to have). `consent-evidence/*`
+# (the plan's draft list) is not read by any of these calls; consent.json
+# alone decides whether a grant, deny or launch binding may proceed, so it is
+# left out here to keep the approver's grant to exactly the files it opens.
+# The delegated grant never writes a change-record event or activity.jsonl
+# entry (the agent does, when it consumes the approval or claims a binding),
+# so `changes/` and activity.jsonl are not writes here; a request is read by
+# its exact file name only (never listed), so the bare `requests/` folder is
+# not a pattern either, and `consumed/` (the agent's claim markers) is never
+# opened by the approver at all.
+DELEGATED_READS = ("workspace.json", "clients/{client}/client.json", "clients/{client}/consent.json",
+                   "clients/{client}/changes", "clients/{client}/changes/*", "clients/{client}/changes/**",
+                   "clients/{client}/approvals/requests/*.json", "clients/{client}/approvals/granted",
+                   "clients/{client}/approvals/granted/*", "clients/{client}/approvals/denied",
+                   "clients/{client}/approvals/denied/*", "{cwd}", "{cwd}/**")
+DELEGATED_WRITES = ("clients/{client}/approvals/granted/*", "clients/{client}/approvals/denied/*")
+
+
 def _resolver(resolve):
     if resolve is not None:
         return resolve
