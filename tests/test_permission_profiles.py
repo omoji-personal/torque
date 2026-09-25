@@ -152,28 +152,53 @@ def test_cli_permissions_unattended_print_without_write(capsys, tmp_path, monkey
     assert printed == {"permissions": permissions.generate("unattended")}
 
 
-def test_cli_permissions_write_unattended_delegated_refuses_an_agent_session(capsys, tmp_path, monkeypatch):
+AGENT_CASES = {"env-claudecode": ({"CLAUDECODE": "1"}, []),
+               "env-entrypoint": ({"CLAUDE_CODE_ENTRYPOINT": "cli"}, []),
+               "ancestor": ({}, [(4242, "/usr/local/bin/claude")])}
+
+
+@pytest.mark.parametrize("case", sorted(AGENT_CASES))
+def test_cli_permissions_write_unattended_delegated_refuses_an_agent_session(case, capsys, tmp_path, monkeypatch):
     """The CLI wires --unattended, --with-hooks, --delegated, --model-id and
-    --hook-python through to permissions.write_settings. This real pytest
-    process genuinely has CLAUDECODE set (an actual Claude Code session), so a
-    --delegated call here hits the agent-session refusal; fix round 1 (item 1)
-    now guarantees that refusal fires before any tier-2 decision, even though
-    this workspace is not tier 2 either, so this is a live, end-to-end
-    confirmation of that ordering through the real CLI (the tier-2-required
-    class itself is covered directly, without needing a real terminal, by
-    test_unattended_needs_a_delegated_tier2_workspace above, on the owner
-    path with an injected presence). No CLI flag can fake presence or a
+    --hook-python through to permissions.write_settings, and a --delegated call
+    inside an AI session refuses with reason class agent-session before any
+    delegate or tier-2 decision (fix round 1, item 1): this workspace names no
+    setup delegate and is not tier 2, so either later check would refuse with a
+    different class. V2-5: the session is injected (an agent environment marker,
+    or a `claude` ancestor with no marker) instead of taken from the process
+    running pytest, which is an AI session locally but not in CI, where this
+    test used to see not-delegated. No CLI flag can fake presence or a
     delegate's caller proof (Claude never approves its own writes, common.md),
     so the delegated *success* path stays a Python-API-level test
-    (test_delegated_unattended_write_with_hooks above), matching
-    task-D2-report.md's precedent that the CLI's own delegated write is
-    verified by hand, not by an in-session automated test."""
-    from torque import cli
+    (test_delegated_unattended_write_with_hooks above)."""
+    from torque import cli, presence
     root = base_workspace(tmp_path, monkeypatch)
+    env, ancestors = AGENT_CASES[case]
+    for name in presence.AGENT_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(presence, "_process_ancestors", lambda: list(ancestors))
     code = cli.main(["approval", "permissions", "--workspace", str(root), "--write", "--unattended",
                      "--with-hooks", "--delegated", "--model-id", MODEL, "--hook-python", "/usr/bin/python3"])
     assert code == 3
-    assert "agent session" in capsys.readouterr().err
+    assert "refused (agent-session)" in capsys.readouterr().err
+
+
+def test_cli_permissions_write_delegated_outside_a_session_reaches_the_delegate_check(capsys, tmp_path, monkeypatch):
+    """V2-5, the control for the test above (and what CI printed): with no agent
+    marker and no `claude` ancestor, the same command gets past the agent-session
+    check and refuses at the next one, because this workspace names no setup
+    delegate. Together the two prove the agent-session check comes first."""
+    from torque import cli, presence
+    root = base_workspace(tmp_path, monkeypatch)
+    for name in presence.AGENT_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(presence, "_process_ancestors", lambda: [])
+    code = cli.main(["approval", "permissions", "--workspace", str(root), "--write", "--unattended",
+                     "--with-hooks", "--delegated", "--model-id", MODEL, "--hook-python", "/usr/bin/python3"])
+    assert code == 3
+    assert "refused (not-delegated): this workspace names no setup delegate" in capsys.readouterr().err
 
 
 # --- Fix round 1 (coordinator review): items 1, 2, 3, 5, 6, 7. Item 4 is a
