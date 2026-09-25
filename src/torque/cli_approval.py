@@ -94,6 +94,9 @@ def register_consent(client_sub) -> None:
                         help="metadata, records, debug_logs or local_artifacts (repeatable)")
     record.add_argument("--org", action="append", required=True, help="an approved org alias (repeatable)")
     record.add_argument("--suspend-contact", action="append", default=[], help="who can suspend access")
+    record.add_argument("--delegated", action="store_true",
+                        help="the workspace's setup delegate is running this, not the consultant")
+    record.add_argument("--model-id", help="delegated only: the AI reviewer's model identifier")
     record.add_argument("--json", action="store_true")
     show = actions.add_parser("show")
     _client_args(show)
@@ -101,6 +104,9 @@ def register_consent(client_sub) -> None:
     sign_off = actions.add_parser("sign-off", help="consultant only: record the second reviewer's sign-off")
     _client_args(sign_off)
     sign_off.add_argument("--reviewer", required=True)
+    sign_off.add_argument("--delegated", action="store_true",
+                          help="the workspace's setup delegate is running this, not the consultant")
+    sign_off.add_argument("--model-id", help="delegated only: the AI reviewer's model identifier")
     suspend = actions.add_parser("suspend", help="consultant only: stop connected work for this client")
     _client_args(suspend)
 
@@ -313,9 +319,9 @@ def run_consent(p) -> int:
     action = p.consent_action
     if action == "record":
         item = consent.record_consent(p.workspace, p.client, p.agreed_on, p.evidence, p.data, p.org,
-                                      p.suspend_contact)
+                                      p.suspend_contact, delegated=p.delegated, model_id=p.model_id)
     elif action == "sign-off":
-        item = consent.sign_off(p.workspace, p.client, p.reviewer)
+        item = consent.sign_off(p.workspace, p.client, p.reviewer, delegated=p.delegated, model_id=p.model_id)
     elif action == "suspend":
         item = consent.suspend(p.workspace, p.client)
     else:

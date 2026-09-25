@@ -86,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
                            help="connected mode only: hmac (same OS account) or owner-uid (separate approver account)")
     ai_access.add_argument("--approver-uid", type=int, help="owner-uid verification: the approver account's uid")
     ai_access.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
+    ai_access.add_argument("--delegated", action="store_true",
+                           help="the workspace's setup delegate is running this, not the owner")
+    ai_access.add_argument("--model-id", help="delegated only: the AI reviewer's model identifier")
     ai_access.add_argument("--json", action="store_true")
     delegate_p = work_sub.add_parser("delegate", help="name a delegated approver or setup delegate; the owner "
                                                        "at a real terminal, or an administrator provisioning "
@@ -861,7 +864,8 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"workspace": str(path), "org_calls": False}) if parsed.json else print(path)
             elif parsed.action == "ai-access":
                 root = ws.set_ai_access(parsed.path, parsed.mode, parsed.approval, parsed.verify,
-                                        parsed.approver_uid)
+                                        parsed.approver_uid, delegated=parsed.delegated,
+                                        model_id=parsed.model_id)
                 shown = "connected (approval required)" if parsed.mode == "connected" else parsed.mode
                 if parsed.json:
                     _print_json({"workspace": str(root), "ai_access": parsed.mode,
@@ -982,6 +986,16 @@ def main(argv: list[str] | None = None) -> int:
         elif parsed.command == "workflows":
             return _workflows(parsed)
         return 0
+    except delegation.Refusal as exc:
+        # F37: a delegated setup verb (workspace ai-access, client consent record
+        # or sign-off) refuses the same way cli_approval's delegated grant/deny
+        # will: exit 3, with --json a machine-readable reason_class and message,
+        # instead of falling into the generic WorkspaceError exit 2 below.
+        if getattr(locals().get("parsed"), "json", False):
+            _print_json({"reason_class": exc.reason_class, "message": str(exc)})
+        else:
+            print(f"torque: {exc}", file=sys.stderr)
+        return 3
     except (ws.WorkspaceError, OSError, ValueError) as exc:
         print(f"torque: {exc}", file=sys.stderr)
         return 2

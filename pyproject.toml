@@ -66,3 +66,12 @@ jsc_ai_prompt_regression = ["fixtures/*/*.txt", "fixtures/*/*.json"]
 testpaths = ["tests", "packages"]
 addopts = "--import-mode=importlib"
 norecursedirs = [".git", ".venv", ".venv-continuation", "local", "work", "build", "dist", "node_modules"]
+# tests/delegated_helpers.py (D2 and later: D5, D9, D11) is a plain shared
+# helper module beside the tests, not a package and not under src/. Under
+# --import-mode=importlib pytest does not add a test file's own directory to
+# sys.path, so it is otherwise unimportable by name; a tests/conftest.py doing
+# the same sys.path insert collides at plugin-registration time with
+# packages/memory/tests/conftest.py (both resolve to the same "tests.conftest"
+# plugin name under this layout), so this uses pytest's own pythonpath option
+# instead.
+pythonpath = ["tests"]

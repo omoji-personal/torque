@@ -184,10 +184,14 @@ def _read_protected_config(root: Path) -> tuple[dict, os.stat_result]:
     return config, st
 
 
-def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getuid=None, env=None,
-                    ancestors=None, root_owner=None) -> Actor:
-    """Prove the caller is this workspace's delegate for `role`, outside any AI
-    session. Raises Refusal with a reason class otherwise."""
+def _delegated_actor_and_config(workspace, role, *, model_id=None, require_tier2=True, getuid=None, env=None,
+                                ancestors=None, root_owner=None) -> tuple[Actor, dict, Path]:
+    """The identity proof behind `delegated_actor`, also handing back the
+    workspace root and the config it was proven against: a caller with its own
+    follow-up read of workspace.json (D2's `set_ai_access`, building the update
+    after the identity check) reuses this single protected read instead of a
+    second, separately timed one. Same Refusal/reason-class contract as
+    `delegated_actor`."""
     from .presence import agent_reason
     if not hasattr(os, "getuid"):
         raise Refusal("tier-2-required", "delegated steps need tier 2 approvals (not available on Windows)")
@@ -222,4 +226,15 @@ def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getui
         if role == "approver" and config.get("approver_uid") != item["uid"]:
             raise Refusal("not-delegated", "the delegated approver must be the workspace's approver account "
                                            "(approver_uid)")
-    return Actor(item["kind"], item["account"], uid, _model(item["kind"], model_id), "delegate")
+    actor = Actor(item["kind"], item["account"], uid, _model(item["kind"], model_id), "delegate")
+    return actor, config, root
+
+
+def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getuid=None, env=None,
+                    ancestors=None, root_owner=None) -> Actor:
+    """Prove the caller is this workspace's delegate for `role`, outside any AI
+    session. Raises Refusal with a reason class otherwise."""
+    actor, _config, _root = _delegated_actor_and_config(workspace, role, model_id=model_id,
+                                                        require_tier2=require_tier2, getuid=getuid, env=env,
+                                                        ancestors=ancestors, root_owner=root_owner)
+    return actor

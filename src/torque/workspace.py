@@ -284,14 +284,30 @@ def _owner_uid_supported() -> bool:
 
 
 def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
-                  verify: str | None = None, approver_uid: int | None = None, presence=None) -> Path:
-    """Set the workspace ai_access mode. Only the owner calls this; an AI session
-    has its own edits to workspace.json blocked by the gate. Connected mode needs
-    approval="required" and a person at a real terminal (presence)."""
+                  verify: str | None = None, approver_uid: int | None = None, presence=None, *,
+                  delegated: bool = False, model_id: str | None = None, env=None, ancestors=None,
+                  getuid=None, root_owner=None) -> Path:
+    """Set the workspace ai_access mode. Ordinarily only the owner calls this, at a
+    real terminal; an AI session has its own edits to workspace.json blocked by the
+    gate. Connected mode needs approval="required" and a person at a real terminal
+    (presence).
+
+    A connected workspace's named setup delegate may instead switch to connected
+    mode without a terminal (`delegated=True`): the caller's identity comes from
+    `delegation.delegated_actor`, an OS-account proof, not from presence. A
+    delegated switch always sets tier 2 (`verify="owner-uid"`); anything else
+    refuses with reason class "tier-2-required". The delegate's identity is
+    recorded as `config["ai_access_changed_by"]`. `root_owner`, like `env`,
+    `ancestors` and `getuid`, is an injectable override of
+    `delegation.delegated_actor`'s own default, for tests that cannot create a
+    second real OS account."""
     if mode not in AI_ACCESS_MODES:
         raise WorkspaceError(f"unknown ai_access mode: {mode}")
     if mode != "connected" and (approval is not None or verify is not None or approver_uid is not None):
         raise WorkspaceError("--approval, --verify and --approver-uid apply only to connected mode")
+    if delegated and mode != "connected":
+        raise WorkspaceError("a delegated setup only sets connected mode")
+    actor = None
     if mode == "connected":
         if approval not in APPROVAL_VALUES:
             raise WorkspaceError("connected mode needs --approval required")
@@ -304,17 +320,34 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
             raise WorkspaceError("owner-uid verification needs --approver-uid, the approver account's numeric uid")
         if verify == "hmac" and approver_uid is not None:
             raise WorkspaceError("--approver-uid applies only to owner-uid verification")
-        injected = presence is not None
-        if presence is None:
-            from .presence import operator_present as presence
-        check = presence()
-        if not check.ok:
-            raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
-        if not injected:
-            from .presence import confirm_code
-            if not confirm_code():
-                raise WorkspaceError("the confirmation code did not match; nothing was changed")
-    root, config = load_workspace(workspace)
+        if delegated:
+            from . import delegation
+            if verify != "owner-uid":
+                raise delegation.Refusal("tier-2-required", "a delegated setup uses tier 2: --verify owner-uid "
+                                                            "--approver-uid UID")
+            # The identity proof reads workspace.json once through the protected,
+            # single-descriptor reader (delegation._read_protected_config) and
+            # hands the config back, so the update below reuses it rather than a
+            # second, separately timed, plain path-based reopen.
+            actor, delegated_config, delegated_root = delegation._delegated_actor_and_config(
+                workspace, "setup", model_id=model_id, require_tier2=False, getuid=getuid, env=env,
+                ancestors=ancestors, root_owner=root_owner)
+        else:
+            injected = presence is not None
+            if presence is None:
+                from .presence import operator_present as presence
+            check = presence()
+            if not check.ok:
+                raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
+            if not injected:
+                from .presence import confirm_code
+                if not confirm_code():
+                    raise WorkspaceError("the confirmation code did not match; nothing was changed")
+    if delegated:
+        root, config = delegated_root, delegated_config
+        _inside(root, root / "clients")
+    else:
+        root, config = load_workspace(workspace)
     config["ai_access"] = mode
     for key in ("approval", "approval_verify", "approver_uid"):
         config.pop(key, None)
@@ -324,7 +357,17 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
         if verify == "owner-uid":
             config["approver_uid"] = approver_uid
     config["ai_access_changed_at"] = _now()
-    _atomic_replace_text(_inside(root, root / CONFIG), json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    if mode == "connected" and delegated:
+        config["ai_access_changed_by"] = actor.as_dict()
+    else:
+        config.pop("ai_access_changed_by", None)
+    config_path = _inside(root, root / CONFIG)
+    _atomic_replace_text(config_path, json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    if delegated and os.name != "nt":
+        # F12: a file the setup delegate's own uid wrote defaults to 0600 (mkstemp),
+        # unreadable to the different account the gate and hooks later run as.
+        # 0644 lets that account read it; the harness chowns it to root afterward.
+        config_path.chmod(0o644)
     _connected_rule(root, mode == "connected")
     return root
 
