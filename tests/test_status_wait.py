@@ -62,10 +62,16 @@ def test_owner_denial_event_is_denied(tmp_path, monkeypatch):
 
 
 def test_expired_request_and_expired_grant(tmp_path, monkeypatch):
+    # R47 (fix round 1): a request with no decision yet is expired only past
+    # REQUEST_TTL + SKEW, the same tolerance the grant path itself gives a
+    # request dated up to SKEW seconds in the future or right at its boundary,
+    # so the waiter never abandons a request the grant path could still accept.
     root = delegated_workspace(tmp_path, monkeypatch)
     req = flow_request(root)
-    later = approval._epoch(req["created_at"]) + approval.REQUEST_TTL + 1
+    later = approval._epoch(req["created_at"]) + approval.REQUEST_TTL + approval.SKEW + 1
     assert approval.decision(root, "Acme", req["id"], now=later)[0] == "expired"
+    still_pending = approval._epoch(req["created_at"]) + approval.REQUEST_TTL + approval.SKEW - 1
+    assert approval.decision(root, "Acme", req["id"], now=still_pending)[0] == "pending"
     other = flow_request(root)
     record = delegated_grant(root, other)
     as_agent(monkeypatch)

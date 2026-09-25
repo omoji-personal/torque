@@ -2236,10 +2236,14 @@ def decision(workspace, client, request_id, *, now=None, config=None) -> tuple[s
     but fails any of those (forged, unowned, malformed, wrong client) is never
     read as granted; it falls through exactly as if it were not there.
 
-    F11: a request whose own REQUEST_TTL (plus SKEW) has passed with no
-    surviving, unused grant is `expired`, the same as a genuine grant whose own
-    TTL expired before it was used. A grant that was used before it expired is
-    still `granted` (it happened), even if it has since expired.
+    F11 / R47 (fix round 1): a request whose own REQUEST_TTL plus SKEW has
+    passed with no surviving, unused grant is `expired`, the same tolerance the
+    grant path itself gives a request (`_grant_delegated` accepts a request up
+    to SKEW seconds in the future and refuses only past `created + REQUEST_TTL
+    + SKEW`), so the waiter never calls a request expired while the grant path
+    could still accept and grant it. A genuine grant whose own TTL expired
+    unused is `expired` too. A grant that was used before it expired is still
+    `granted` (it happened), even if it has since expired.
 
     Reads only approvals bound to this exact `request_id`; a grant or denial
     for a different request in the same client is skipped, never reported."""
@@ -2271,7 +2275,11 @@ def decision(workspace, client, request_id, *, now=None, config=None) -> tuple[s
         return "granted", {"approval_id": record["id"], "expires_at": record["expires_at"], "used": used,
                            "approver": record.get("approver"), "approver_kind": record.get("approver_kind")}
     created = req.get("created_at")
-    if expired or (created and now > _epoch(created) + REQUEST_TTL):
+    # R47 (fix round 1): + SKEW matches the grant path's own tolerance for a
+    # request's age (_grant_delegated refuses only past created + REQUEST_TTL +
+    # SKEW), so the waiter never reports "expired" for a request the grant path
+    # could still accept and grant.
+    if expired or (created and now > _epoch(created) + REQUEST_TTL + SKEW):
         return "expired", {"why": "the approval's window ended unused" if expired else "the request is older "
                                                                                       "than one hour"}
     return "pending", {}
