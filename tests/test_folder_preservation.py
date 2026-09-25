@@ -16,7 +16,8 @@ from torque import workspace as ws
 pytestmark = pytest.mark.skipif(not hasattr(os, "getuid"), reason="tier 2 is POSIX only")
 FOLDERS = ("clients/acme/approvals", "clients/acme/approvals/requests", "clients/acme/approvals/granted",
            "clients/acme/approvals/denied", "clients/acme/approvals/consumed", "clients/acme/changes",
-           "clients/acme/cases", "clients/acme/cases/cx-04", ".claude", ".claude/rules")
+           "clients/acme/cases", "clients/acme/cases/cx-04", "clients/acme/consent-evidence", ".claude",
+           ".claude/rules")
 
 
 def identity(root):
