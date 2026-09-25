@@ -85,7 +85,7 @@ def register(sub) -> None:
     deny.add_argument("--reason-class", help="delegated only, required: 2 to 48 lowercase letters, digits "
                                              "and hyphens (for example: manifest-deny)")
     deny.add_argument("--model-id", help="delegated only: the AI approver's model identifier")
-    deny.add_argument("--json", action="store_true", help="print the denial record")
+    deny.add_argument("--json", action="store_true", help="delegated only: print the denial record")
     status = actions.add_parser("status", help="show one request and whether it was granted or used")
     status.add_argument("request_id")
     _client_args(status)
@@ -396,8 +396,8 @@ def run(parsed, tail: list[str] | None) -> int:
                 return 0
             print(f"Denied {record['id']} for {record['request_id']} ({record['reason_class']}).")
             return 0
-        if parsed.reason_class is not None or parsed.model_id is not None:
-            raise ws.WorkspaceError("--reason-class and --model-id go with --delegated")
+        if parsed.reason_class is not None or parsed.model_id is not None or parsed.json:
+            raise ws.WorkspaceError("--reason-class, --model-id and --json go with --delegated")
         approval.deny(parsed.workspace, parsed.client, parsed.request_id, parsed.reason)
         print(f"Denied {parsed.request_id}.")
         return 0
