@@ -15,8 +15,9 @@ def expected_files():
             if path.name == "torque-marketing.md":
                 continue
             result[f"{target}/{path.name}"] = path.read_bytes()
-    for path in sorted((ROOT / ".agents/skills").glob("*/SKILL.md")):
-        result[f"skills/{path.parent.name}/SKILL.md"] = path.read_bytes()
+    skills = ROOT / ".agents/skills"
+    for path in sorted([*skills.glob("*/SKILL.md"), *skills.glob("*/references/*.md")]):
+        result["skills/" + path.relative_to(skills).as_posix()] = path.read_bytes()
     return result
 
 

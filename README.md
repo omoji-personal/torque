@@ -22,11 +22,12 @@ no workflow depends on them.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-**Status: development alpha, version 2.0.0a16.** It has not been published to a
+**Status: development alpha, version 2.0.0a17.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
 have offline acceptance coverage; bounded live operations and experimental
 capabilities have separate limits in [validation](docs/validation.md); the
-[alpha 16 record](docs/validation-alpha16.md) covers this build. No
+[alpha 16 record](docs/validation-alpha16.md) covers the runtime, and the
+[alpha 17 record](docs/validation-alpha17.md) covers the knowledge skills added since. No
 industry-leadership claim is made.
 
 ## Install and try the offline demo
@@ -86,6 +87,7 @@ maintain it during work. There is no mandatory lifecycle or form to complete.
 | Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original JSC command mappings |
 | Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs |
 | Org and metadata investigation | `torque advisory`; use current official Salesforce CLI, skills and MCP tools alongside it |
+| Platform knowledge | Five [skills](docs/skills.md): architecture, Code Analyzer and SOQL review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
 | Deploy, data operations and scoped recovery | `torque deploy`, `torque data`, `torque org`, `torque recover` |
 | QA, debug logs, browser flows, lessons and probes | `torque qa`, `logs`, `browser`, `lesson`, `probes`; coverage and limits depend on the configured adapter |
 | Meeting preparation and prompt contracts | Optional `torque meeting` and `ai-regression`; live model-provider behavior remains experimental |

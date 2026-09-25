@@ -48,7 +48,7 @@ def main():
         call("workspace", "init", str(private), "--name", "Synthetic consulting firm", "--profile", "solution-lead")
         assert (private / "AGENTS.md").is_file()
         assert len(list((private / ".claude/commands").glob("*.md"))) == len(rows)
-        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 3
+        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 5
         assert "Salesforce Solution Lead" in (private / "profile.md").read_text(encoding="utf-8")
         for client in ("alpha", "beta"):
             call("client", "add", client, "--workspace", str(private), "--org", f"synthetic-{client}")

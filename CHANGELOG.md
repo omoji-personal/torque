@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.0.0a17 - nonprofit knowledge skills, 2026-09-25 (not published to a package index)
+
+Knowledge skills only; no command, gate or runtime behavior changes.
+
+- `salesforce-npsp`: NPSP with the Program Management Module and Outbound Funds. First
+  read-only checks for an unfamiliar org, the data model, households, TDTM handlers and
+  bypasses, customizable rollups and their jobs, enhanced recurring donations, payments,
+  GAU allocations, soft credits, gift entry and data import, PMM objects, attendance and
+  rollup gates, flows on NPSP objects, and 40 gotchas each with an org check.
+- `salesforce-nonprofit-cloud`: Nonprofit Cloud Fundraising, Program and Case Management,
+  Grantmaking, Volunteer and Outcome Management, Person Accounts and households, Data
+  Processing Engine rollups, gift entry, licenses and permission sets, metadata versus
+  UI-only setup, 50 gotchas with checks, and NPSP to Nonprofit Cloud migration: object
+  map, features with no equivalent, design-changing findings, load sequence and
+  reconciliation checks. Unconfirmed claims are marked "verify".
+- Six flow-building lessons in the NPSP skill: a handled fault on a collection create
+  can partially save; flow `DATEVALUE()` on a date/time uses GMT; subflow elements have no
+  fault connector; newly deployed custom fields have no field-level security until
+  granted; never deploy subscriber copies of managed custom metadata records; Flow
+  Builder debug runs commit unless rollback mode is on.
+- Skills can now ship `references/*.md` files. `scripts/sync-workflows.py`, the wheel's
+  package data and the source distribution include them; `torque workspace init` and
+  `torque workspace upgrade` install them with the skill.
+- [docs/skills.md](docs/skills.md) lists the five packaged skills.
+
 ## 2.0.0a16 - delegated approver, 2026-09-25 (not published to a package index)
 
 Connected work can now run unattended. A tier 2 workspace can name a delegated approver:
