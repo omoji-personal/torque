@@ -836,6 +836,7 @@ def main(argv: list[str] | None = None) -> int:
     global INVOCATION
     args = list(sys.argv[1:] if argv is None else argv)
     INVOCATION = ("torque", list(args))
+    parsed = None
     try:
         if args and args[0] in PUBLIC_ROUTES:
             delegate, prefix = PUBLIC_ROUTES[args[0]]
@@ -991,7 +992,7 @@ def main(argv: list[str] | None = None) -> int:
         # or sign-off) refuses the same way cli_approval's delegated grant/deny
         # will: exit 3, with --json a machine-readable reason_class and message,
         # instead of falling into the generic WorkspaceError exit 2 below.
-        if getattr(locals().get("parsed"), "json", False):
+        if getattr(parsed, "json", False):
             _print_json({"reason_class": exc.reason_class, "message": str(exc)})
         else:
             print(f"torque: {exc}", file=sys.stderr)

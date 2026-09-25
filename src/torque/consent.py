@@ -54,6 +54,13 @@ def _actor(workspace, presence, confirm, delegated, model_id, env, ancestors, ge
 
 
 def _path(workspace, client) -> tuple[Path, Path]:
+    """The client's consent.json path. This reads workspace.json again here, by
+    plain path (ws.load_client -> ws.load_workspace), only to resolve the
+    workspace root and confirm the client folder exists. On the delegated
+    path this runs after `_actor` has already proven the caller's identity and
+    tier 2 from delegation.py's protected, single-descriptor read
+    (delegation.delegated_actor / _delegated_actor_and_config); nothing here is
+    authorized from this second read, it only locates a path."""
     folder, _, _ = ws.load_client(workspace, client)
     return folder, ws._inside(folder, folder / FILE)
 
@@ -98,6 +105,8 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
     reviewer signs off. `delegated=True`: the workspace's setup delegate is
     recording this in place of the consultant at a real terminal; the record
     gains `recorded_by_actor` (the delegate's identity and kind)."""
+    if model_id is not None and not delegated:
+        raise ws.WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
     actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
     if not isinstance(agreed_on, str) or not _DATE.fullmatch(agreed_on):
         raise ws.WorkspaceError("agreed_on must be YYYY-MM-DD")
@@ -159,6 +168,8 @@ def sign_off(workspace, client, reviewer: str, presence=None, *, delegated: bool
     not lift a suspension (record the agreement again for that). `delegated=True`:
     the workspace's setup delegate signs off in place of the consultant; the
     reviewer entry gains `signed_off_by` (the delegate's identity and kind)."""
+    if model_id is not None and not delegated:
+        raise ws.WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
     if not isinstance(reviewer, str) or not reviewer.strip():
         raise ws.WorkspaceError("name the second reviewer")
 

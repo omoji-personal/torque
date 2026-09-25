@@ -303,6 +303,8 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
     second real OS account."""
     if mode not in AI_ACCESS_MODES:
         raise WorkspaceError(f"unknown ai_access mode: {mode}")
+    if model_id is not None and not delegated:
+        raise WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
     if mode != "connected" and (approval is not None or verify is not None or approver_uid is not None):
         raise WorkspaceError("--approval, --verify and --approver-uid apply only to connected mode")
     if delegated and mode != "connected":
@@ -368,26 +370,44 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
         # unreadable to the different account the gate and hooks later run as.
         # 0644 lets that account read it; the harness chowns it to root afterward.
         config_path.chmod(0o644)
-    _connected_rule(root, mode == "connected")
+    _connected_rule(root, mode == "connected", delegated=delegated)
     return root
 
 
 CONNECTED_RULE = "production-approval.md"
 
 
-def _connected_rule(root: Path, present: bool) -> None:
+def _connected_rule(root: Path, present: bool, *, delegated: bool = False) -> None:
     """Materialize the "propose, do not act" rule in a connected workspace, and
-    remove it when the workspace leaves connected mode."""
+    remove it when the workspace leaves connected mode.
+
+    On the delegated setup path (F12 fix round 1), the rule file and the
+    directories this step writes into relax to world-readable, the same reason
+    workspace.json and consent.json do: the setup delegate's own uid wrote them
+    (mkdir's default mode, or a preexisting 0700 from `_materialize_workflows`),
+    unreadable to the different account the gate and hooks later run as; the
+    harness chowns them to root afterward. `.claude/rules` always relaxes on
+    this path (this step always writes into it); `.claude` itself relaxes only
+    when this call is the one that created it, so a preexisting `.claude`
+    directory's mode is never weakened as a side effect. The owner path is
+    unchanged."""
     target = _inside(root, root / ".claude" / "rules" / CONNECTED_RULE)
     if not present:
         target.unlink(missing_ok=True)
         return
     text = resources.files("torque").joinpath("data", "connected", CONNECTED_RULE).read_text(encoding="utf-8")
+    claude_dir = target.parent.parent
+    claude_existed = claude_dir.exists()
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if target.exists():
         _atomic_replace_text(target, text)
     else:
         atomic_write_new(target, text)
+    if delegated and os.name != "nt":
+        target.chmod(0o644)
+        target.parent.chmod(0o755)
+        if not claude_existed:
+            claude_dir.chmod(0o755)
 
 
 @contextmanager
