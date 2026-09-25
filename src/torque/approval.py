@@ -71,6 +71,14 @@ DENIAL_SCHEMA = "torque.denial/1"
 # A delegated denial's reason class (task D9): 2 to 48 lowercase letters, digits
 # and hyphens, starting with a letter or digit.
 REASON_CLASS = re.compile(r"[a-z0-9][a-z0-9-]{1,47}\Z")
+# `approval status --wait`'s own exit contract (task D10, spec requirement 21):
+# granted, denied, expired and timeout each get a distinct code so an
+# unattended agent session can branch on the result without parsing text.
+# Anything else (a bad --wait value, an R46 violation, an unreadable denial
+# file) is a plain usage or workspace error, exit 2, never one of these four.
+WAIT_CODES = {"granted": 0, "denied": 20, "expired": 21, "timeout": 22}
+# The most seconds `approval status --wait` may be told to poll for.
+WAIT_MAX = 3600
 # sf argv[1:3] (or [1:2]) -> the view's normalized operation name.
 _SF_OPERATIONS = {("project", "deploy", "start"): "deploy", ("project", "deploy", "quick"): "deploy",
                   ("project", "deploy", "resume"): "deploy", ("project", "delete"): "delete",
@@ -2204,3 +2212,96 @@ def approval_log(workspace, client, since: str | None = None) -> list[dict]:
                     if j.get("target_org") == event.get("org_alias") and j["created_at"] >= event["created_at"]]
             rows.append(row)
     return sorted(rows, key=lambda r: r["created_at"])
+
+
+def decision(workspace, client, request_id, *, now=None, config=None) -> tuple[str, dict]:
+    """Where a request stands, for the waiter (task D10, spec requirement 21) and
+    any other read-only caller: `granted`, `denied`, `expired` or `pending`.
+    Read-only throughout, so the agent account can run it directly: nothing here
+    claims, consumes or writes a file (no `_claim`, no `_activity`, no grant or
+    denial is ever created).
+
+    A denial always wins over a grant, and is trusted only through the same two
+    fail-closed readers everything else in this module uses: the delegated
+    approver's file (`_delegated_denial`, which runs R46 and raises
+    `delegation.Refusal` on an unreadable/malformed denial file or a workspace
+    whose control files could have been forged by the approver account, rather
+    than silently reporting "no denial") and the consultant's own change-record
+    `approval_deny` event. Neither is a bare file existence check.
+
+    A grant is trusted only when it passes the exact authenticity checks the
+    gate applies before consuming it (`_problem`): record shape, ownership,
+    R46 on the workspace's control files and folders, and the signature or
+    delegated-identity rule. A record that merely sits in approvals/granted/
+    but fails any of those (forged, unowned, malformed, wrong client) is never
+    read as granted; it falls through exactly as if it were not there.
+
+    F11: a request whose own REQUEST_TTL (plus SKEW) has passed with no
+    surviving, unused grant is `expired`, the same as a genuine grant whose own
+    TTL expired before it was used. A grant that was used before it expired is
+    still `granted` (it happened), even if it has since expired.
+
+    Reads only approvals bound to this exact `request_id`; a grant or denial
+    for a different request in the same client is skipped, never reported."""
+    now = now if now is not None else time.time()
+    config = config if config is not None else _config(workspace)
+    req = load_request(workspace, client, request_id)
+    slug = ws.slug_for(client)
+    denial = _delegated_denial(workspace, client, request_id)
+    if denial:
+        return "denied", {k: denial.get(k) for k in ("id", "reason_class", "reason", "approver", "approver_kind",
+                                                       "approver_model", "denied_at")}
+    events = changes.get_change(workspace, client, req["change"])["events"]
+    owner = next((e for e in events if e["kind"] == "approval_deny" and e.get("request_id") == request_id), None)
+    if owner:
+        return "denied", {"reason_class": "owner-denied", "reason": owner.get("reason"),
+                          "approver": owner.get("approver"), "approver_kind": "human"}
+    dirs = _dirs(workspace, client, create=False)
+    expired = False
+    for path, record in _granted(dirs):
+        if record.get("request_id") != request_id:
+            continue
+        used = (dirs["consumed"] / str(record.get("id"))).is_file()
+        problem = _problem(record, path, config, slug, now)
+        if problem == "approval expired" and not used:
+            expired = True
+            continue
+        if problem and not (used and problem == "approval expired"):
+            continue
+        return "granted", {"approval_id": record["id"], "expires_at": record["expires_at"], "used": used,
+                           "approver": record.get("approver"), "approver_kind": record.get("approver_kind")}
+    created = req.get("created_at")
+    if expired or (created and now > _epoch(created) + REQUEST_TTL):
+        return "expired", {"why": "the approval's window ended unused" if expired else "the request is older "
+                                                                                      "than one hour"}
+    return "pending", {}
+
+
+def wait_for_decision(workspace, client, request_id, seconds, *, poll=1.0, clock=time.time,
+                      sleep=time.sleep) -> tuple[str, dict]:
+    """Bounded polling for `decision()` (spec requirement 21): an unattended agent
+    session waiting on a pending request gets `granted`, `denied` or `expired`
+    as soon as `decision()` reports one; a still-`pending` request is checked
+    again, no more often than every `poll` seconds, until `seconds` have
+    elapsed, then `timeout`. Never a busy loop: every `sleep` call between reads
+    is for a strictly positive duration (the deadline check above it already
+    returns before `sleep` could ever be asked for zero or a negative wait), and
+    the loop only ever re-reads `decision()`, never writes anything.
+
+    Raises `ws.WorkspaceError` for `seconds` outside 0 to WAIT_MAX (a usage
+    error, not one of `granted`/`denied`/`expired`/`timeout`). Propagates
+    `delegation.Refusal` from `decision()` unchanged: an R46 violation or an
+    unreadable denial file is not a decision this function can make, so it is
+    not silently folded into `pending` or `timeout`; see
+    `cli_approval._status` for how `approval status --wait` turns that into
+    its own exit 2 rather than any of WAIT_CODES."""
+    if type(seconds) is not int or not 0 <= seconds <= WAIT_MAX:
+        raise ws.WorkspaceError(f"--wait takes 0 to {WAIT_MAX} seconds")
+    deadline = clock() + seconds
+    while True:
+        state, detail = decision(workspace, client, request_id, now=clock())
+        if state != "pending":
+            return state, detail
+        if clock() >= deadline:
+            return "timeout", {"waited_seconds": seconds}
+        sleep(min(poll, max(0.0, deadline - clock())) or poll)

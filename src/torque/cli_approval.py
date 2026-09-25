@@ -89,6 +89,10 @@ def register(sub) -> None:
     status = actions.add_parser("status", help="show one request and whether it was granted or used")
     status.add_argument("request_id")
     _client_args(status)
+    status.add_argument("--wait", type=int, metavar="SECONDS",
+                        help="poll (read-only, no busy loop) until the request is granted, denied or expired, "
+                             "or SECONDS elapse; exits granted 0, denied 20, expired 21, timeout 22, usage or "
+                             "workspace errors 2 (0 to 3600)")
     status.add_argument("--json", action="store_true")
     show = actions.add_parser("show", help="the normalized request view an automated approver reads")
     show.add_argument("request_id")
@@ -287,8 +291,37 @@ def _lookup(p) -> int:
     return 0
 
 
+def _wait_line(state: str, detail: dict) -> str:
+    if state == "granted":
+        return f"granted {detail.get('approval_id')}"
+    if state == "denied":
+        return f"denied ({detail.get('reason_class')}): {detail.get('reason')}"
+    if state == "expired":
+        return f"expired: {detail.get('why')}"
+    return f"timeout after {detail.get('waited_seconds')} s; wait again, do not write"
+
+
 def _status(p) -> int:
     from . import approval
+    if p.wait is not None:
+        from . import delegation
+        try:
+            state, detail = approval.wait_for_decision(p.workspace, p.client, p.request_id, p.wait)
+        except delegation.Refusal as exc:
+            # D10 / spec requirement 21: --wait's own exit contract is granted 0,
+            # denied 20, expired 21, timeout 22, usage or workspace errors 2. A
+            # Refusal here (an R46 violation, an unreadable denial file, no
+            # approver delegate) is none of those four states; report it as a
+            # plain workspace error (exit 2, via cli.main's generic handler)
+            # rather than through the grant/deny verbs' own exit-3 refusal
+            # convention, and never let it be read as granted.
+            raise ws.WorkspaceError(str(exc)) from exc
+        view = {"request_id": p.request_id, "state": state, "detail": detail}
+        if p.json:
+            _print(view)
+        else:
+            print(_wait_line(state, detail))
+        return approval.WAIT_CODES[state]
     req = approval.load_request(p.workspace, p.client, p.request_id)
     granted = [a for a in approval.list_approvals(p.workspace, p.client) if a["request_id"] == p.request_id]
     view = {k: req.get(k) for k in ("id", "change", "kind", "command", "org_alias", "org_id_18", "org_kind",
