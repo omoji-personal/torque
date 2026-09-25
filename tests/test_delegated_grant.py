@@ -241,7 +241,7 @@ def test_gate_refuses_a_record_without_a_kind(tmp_path, monkeypatch):
 @pytest.mark.parametrize("field", ["approver", "approver_uid", "approver_kind", "approver_model", "delegated"])
 def test_gate_refuses_a_human_record_missing_an_identity_field(tmp_path, monkeypatch, field):
     """F10: the gate refuses a record missing any identity field, approver_model included."""
-    root = delegated_workspace(tmp_path, monkeypatch)
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
     record = approval.grant(root, "Acme", flow_request(root)["id"], presence=YES, confirm=lambda: True,
                             out=io.StringIO(), resolve=ORGS.get)
     assert "approver_model" in approval.REQUIRED
@@ -269,7 +269,7 @@ def test_gate_refuses_an_inconsistent_delegated_record(tmp_path, monkeypatch, ch
 
 
 def test_gate_refuses_a_human_record_naming_a_model(tmp_path, monkeypatch):
-    root = delegated_workspace(tmp_path, monkeypatch)
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
     record = approval.grant(root, "Acme", flow_request(root)["id"], presence=YES, confirm=lambda: True,
                             out=io.StringIO(), resolve=ORGS.get)
     granted_path(root, record).write_text(json.dumps({**record, "approver_model": MODEL}))
@@ -279,7 +279,7 @@ def test_gate_refuses_a_human_record_naming_a_model(tmp_path, monkeypatch):
 
 
 def test_owner_grant_keeps_presence_code_and_kind_human(tmp_path, monkeypatch):
-    root = delegated_workspace(tmp_path, monkeypatch)
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
     req = flow_request(root)
     with pytest.raises(ws.WorkspaceError, match="real terminal"):
         approval.grant(root, "Acme", req["id"], presence=lambda: Presence(False, "no terminal"),
@@ -346,3 +346,69 @@ def test_cli_review_flags_need_delegated(tmp_path, monkeypatch, capsys):
     code = cli.main(["approval", "grant", req["id"], "--workspace", str(root), "--client", "Acme",
                      "--model-id", MODEL])
     assert code == 2 and "--delegated" in capsys.readouterr().err
+
+
+# Controller ruling R45: with an AI approver delegate, the approver account is the
+# AI's, so no human-kind (owner) approval is accepted from it, at grant or in the gate.
+
+
+def owner_grant(root, req):
+    return approval.grant(root, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(),
+                          resolve=ORGS.get)
+
+
+def test_r45_owner_grant_refused_in_an_ai_approver_workspace(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    with pytest.raises(delegation.Refusal) as info:
+        owner_grant(root, flow_request(root))
+    assert info.value.reason_class == "human-grant-needs-human-approver"
+    assert "approver is a person" in str(info.value)
+    assert not list((root / "clients/acme/approvals/granted").glob("apr-*.json"))
+
+
+def test_r45_gate_refuses_a_hand_written_human_record_in_an_ai_approver_workspace(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = delegated_grant(root, flow_request(root))
+    forged = {**record, "approver_kind": "human", "approver_model": None, "delegated": False}
+    forged.pop("reviewed_request_sha256")
+    forged.pop("idempotency_key")
+    granted_path(root, record).write_text(json.dumps(forged))
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert not ok and "approver is a person" in why
+
+
+@pytest.mark.parametrize("delegate", [None, "human"])
+def test_r45_human_path_unchanged_without_an_ai_approver(tmp_path, monkeypatch, delegate):
+    if delegate is None:
+        root = delegated_workspace(tmp_path, monkeypatch)
+        config = json.loads((root / "workspace.json").read_text())
+        config["delegates"].pop("approver")
+        (root / "workspace.json").write_text(json.dumps(config))
+    else:
+        root = delegated_workspace(tmp_path, monkeypatch, kind=delegate)
+    record = owner_grant(root, flow_request(root))
+    assert (record["approver_kind"], record["delegated"]) == ("human", False)
+    as_agent(monkeypatch)
+    assert consume(root)[0]
+
+
+def test_r45_ai_delegated_grant_still_accepted_for_non_production(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    record = delegated_grant(root, flow_request(root))
+    assert (record["approver_kind"], record["org_kind"]) == ("ai", "developer")
+    as_agent(monkeypatch)
+    ok, why = consume(root)
+    assert ok and why == record["id"]
+
+
+@pytest.mark.parametrize("delegates", [{"approver": {"kind": "ai"}}, {"approver": "ai"}, ["approver"]])
+def test_r45_malformed_approver_delegate_fails_closed(tmp_path, monkeypatch, delegates):
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
+    req = flow_request(root)
+    config = json.loads((root / "workspace.json").read_text())
+    config["delegates"] = delegates
+    (root / "workspace.json").write_text(json.dumps(config))
+    with pytest.raises(delegation.Refusal) as info:
+        owner_grant(root, req)
+    assert info.value.reason_class == "human-grant-needs-human-approver"

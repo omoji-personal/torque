@@ -930,6 +930,8 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     if _denied(workspace, client, change_id, request_id):
         raise ws.WorkspaceError(f"{request_id} was denied; ask for a new request")
     config = ws.load_workspace(workspace)[1]
+    if _ai_approver(config):
+        raise delegation.Refusal("human-grant-needs-human-approver", HUMAN_GRANT_REFUSAL)
     item = _usable_consent(workspace, client)
     derived = _derive(req, _extra_namespaces(workspace))
     org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
@@ -1210,6 +1212,26 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
     return ""
 
 
+HUMAN_GRANT_REFUSAL = ("this workspace's approver account belongs to an AI delegate, so it takes no owner "
+                       "(human) approvals; production approvals need a workspace whose approver is a person")
+
+
+def _ai_approver(config: dict) -> bool:
+    """R45: the workspace names an AI approver delegate, so its approver account is
+    the AI's, and a human-kind record from that account cannot be told from a forged
+    one. Such a workspace takes no owner (human) approvals. Fails closed: an
+    approver entry (or delegates value) that cannot be read counts as AI."""
+    delegates = config.get("delegates")
+    if delegates is None:
+        return False
+    if not isinstance(delegates, dict):
+        return True
+    if "approver" not in delegates:
+        return False
+    item = delegation.delegate_for(config, "approver")
+    return item is None or item["kind"] == "ai"
+
+
 def _identity_problem(record: dict, config: dict, verify: str) -> str:
     """The gate's acceptance rule for who granted an approval: a recorded kind on
     every record; a human (owner) grant names no model; an AI or other delegated
@@ -1225,6 +1247,8 @@ def _identity_problem(record: dict, config: dict, verify: str) -> str:
     if not is_delegated:
         if kind != "human":
             return "an AI approval must come from the workspace's delegated approver"
+        if _ai_approver(config):
+            return HUMAN_GRANT_REFUSAL
         return ""
     item = delegation.delegate_for(config, "approver")
     if verify != "owner-uid" or not delegation.delegated_tier2(config) or item is None \

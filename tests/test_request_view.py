@@ -113,7 +113,8 @@ def test_grant_screen_stays_byte_identical_to_a15_with_the_same_control_characte
     both the view and grant()) must not change that output."""
     import io
     from torque.presence import Presence
-    root = delegated_workspace(tmp_path, monkeypatch)
+    # R45: an owner grant needs a workspace whose approver is a person.
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
     argv = ["sf", "data", "update", "record", "-s", "Account", "-i", "001000000000001AAA",
             "-v", "Name=A\x1b[2K‮Evil\rName=B", "-o", "acme-dev"]
     req = flow_request(root, argv)
