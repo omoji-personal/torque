@@ -381,16 +381,14 @@ def _connected_rule(root: Path, present: bool, *, delegated: bool = False) -> No
     """Materialize the "propose, do not act" rule in a connected workspace, and
     remove it when the workspace leaves connected mode.
 
-    On the delegated setup path (F12 fix round 1), the rule file and the
-    directories this step writes into relax to world-readable, the same reason
-    workspace.json and consent.json do: the setup delegate's own uid wrote them
-    (mkdir's default mode, or a preexisting 0700 from `_materialize_workflows`),
-    unreadable to the different account the gate and hooks later run as; the
-    harness chowns them to root afterward. `.claude/rules` always relaxes on
-    this path (this step always writes into it); `.claude` itself relaxes only
-    when this call is the one that created it, so a preexisting `.claude`
-    directory's mode is never weakened as a side effect. The owner path is
-    unchanged."""
+    On the delegated setup path (F12 fix round 1), the rule file relaxes to
+    world-readable, the same reason workspace.json and consent.json do: the
+    setup delegate's own uid wrote it, unreadable to the different account
+    the gate and hooks later run as; the harness chowns it to root
+    afterward. `.claude/rules` and `.claude` each relax only when this call
+    is the one that created them (R55, spec requirement 22): a preexisting
+    directory's mode, whichever step wrote it, is never weakened as a side
+    effect of this one. The owner path is unchanged."""
     target = _inside(root, root / ".claude" / "rules" / CONNECTED_RULE)
     if not present:
         target.unlink(missing_ok=True)
@@ -398,6 +396,7 @@ def _connected_rule(root: Path, present: bool, *, delegated: bool = False) -> No
     text = resources.files("torque").joinpath("data", "connected", CONNECTED_RULE).read_text(encoding="utf-8")
     claude_dir = target.parent.parent
     claude_existed = claude_dir.exists()
+    rules_existed = target.parent.exists()
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if target.exists():
         _atomic_replace_text(target, text)
@@ -405,7 +404,8 @@ def _connected_rule(root: Path, present: bool, *, delegated: bool = False) -> No
         atomic_write_new(target, text)
     if delegated and os.name != "nt":
         target.chmod(0o644)
-        target.parent.chmod(0o755)
+        if not rules_existed:
+            target.parent.chmod(0o755)
         if not claude_existed:
             claude_dir.chmod(0o755)
 

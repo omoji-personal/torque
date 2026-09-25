@@ -10,13 +10,13 @@ import pytest
 
 from delegated_helpers import (ACCOUNT, CLEAN, FAKE_OWNER, ME, MODEL, ORGS, WRITE, YES, as_agent, delegated_grant,
                                delegated_workspace, flow_request, launched)
-from torque import approval, changes, consent, delegation, doctor_connected, execution, launch
+from torque import approval, changes, consent, delegation, doctor_connected, execution, launch, permissions
 from torque import workspace as ws
 
 pytestmark = pytest.mark.skipif(not hasattr(os, "getuid"), reason="tier 2 is POSIX only")
 FOLDERS = ("clients/acme/approvals", "clients/acme/approvals/requests", "clients/acme/approvals/granted",
            "clients/acme/approvals/denied", "clients/acme/approvals/consumed", "clients/acme/changes",
-           "clients/acme/cases", "clients/acme/cases/cx-04")
+           "clients/acme/cases", "clients/acme/cases/cx-04", ".claude", ".claude/rules")
 
 
 def identity(root):
@@ -77,6 +77,32 @@ def test_no_flow_deletes_recreates_or_re_modes_a_folder(tmp_path, monkeypatch):
     approval.decision(root, "Acme", req["id"])
     approval.approval_log(root, "Acme")
     doctor_connected.report(root, "Acme", live=True, resolve=ORGS.get)
+
+    # R55 (spec requirement 22), part (c): the delegated setup steps
+    # themselves (ai-access, permissions write with hooks, consent record,
+    # sign-off), the ones that write into .claude, .claude/rules and
+    # clients/acme/consent.json. getuid=lambda: ME keeps proving this account
+    # is the workspace's named setup delegate even though as_agent above
+    # mocked the real os.getuid() to ME + 1; that mismatch (ME + 1 != the
+    # real, on-disk owner of .claude, which is ME, this same process, from
+    # delegated_workspace()'s init) is deliberate here, the same way
+    # test_settings_dir_chmod_skipped_when_not_owned_by_the_real_caller
+    # proves it: it is what makes write_settings' own ownership-gated
+    # .claude relax (permissions.py, "Fix round 1, minor 4", a separate,
+    # already-reviewed rule from R55's) correctly skip a folder this
+    # delegate does not really own, matching a real deployment where
+    # .claude was provisioned by a different account than the one now
+    # running this step.
+    setup_kwargs = {"model_id": MODEL, "root_owner": FAKE_OWNER, "getuid": lambda: ME, **CLEAN}
+    ws.set_ai_access(root, "connected", approval="required", verify="owner-uid", approver_uid=ME, delegated=True,
+                     **setup_kwargs)
+    permissions.write_settings(root, profile="unattended", with_hooks=True, delegated=True, **setup_kwargs)
+    letter2 = tmp_path / "agreement2.pdf"
+    letter2.write_bytes(b"synthetic agreement 2")
+    consent.record_consent(root, "Acme", "2026-09-30", letter2, ["metadata", "records"], ["acme-dev"], ["Contact"],
+                           resolve=ORGS.get, delegated=True, **setup_kwargs)
+    consent.sign_off(root, "Acme", "Second Model Reviewer", delegated=True, **setup_kwargs)
+    assert not consent.consent_problems(consent.load_consent(root, "Acme"))
 
     # F35: also exercise the owner grant and a consent sign-off. An owner
     # (presence) grant is refused outright while the approver delegate is an

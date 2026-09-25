@@ -101,13 +101,37 @@ def test_owner_path_file_modes_are_unchanged(root):
 # --- Fix round 1 ---
 
 
-def test_delegated_mode_switch_relaxes_the_connected_rule_and_rules_dir_modes(root):
-    """Fix round 1 finding 1: the rule file and .claude/rules (which already
-    existed at 0700, from _materialize_workflows during init) relax to
-    world-readable on the delegated path, so the agent account can load it."""
+def test_delegated_mode_switch_relaxes_the_connected_rule_file(root):
+    """Fix round 1 finding 1: the rule file relaxes to world-readable on the
+    delegated path, so the agent account can load it."""
     switch(root)
     rule = root / ".claude" / "rules" / "production-approval.md"
     assert rule.stat().st_mode & 0o777 == 0o644
+
+
+def test_delegated_mode_switch_leaves_a_preexisting_rules_dir_at_a_non_default_mode(root):
+    """R55 (spec requirement 22), test (a): .claude/rules already exists from
+    init (0700, from _materialize_workflows). An operator's own chmod (0750,
+    neither the 0700 init gave it nor the 0755 a freshly created folder gets)
+    must survive a delegated ai-access switch untouched: whether this call
+    created the folder decides whether its mode changes, nothing else does.
+    (Fix round 1 finding 1 had this unconditional: see
+    test_delegated_mode_switch_relaxes_a_freshly_created_rules_dir below for
+    the case this call did create the folder, where 0755 is still correct.)"""
+    os.chmod(root / ".claude" / "rules", 0o750)
+    before = (root / ".claude" / "rules").stat()
+    switch(root)
+    after = (root / ".claude" / "rules").stat()
+    assert (after.st_ino, after.st_mode, after.st_gid) == (before.st_ino, before.st_mode, before.st_gid)
+
+
+def test_delegated_mode_switch_relaxes_a_freshly_created_rules_dir(root):
+    """R55, test (b): when this step is the one that creates .claude/rules
+    (.claude itself already exists from init), the newly created folder still
+    relaxes to 0755, exactly as before the fix; only a folder that already
+    existed is left alone."""
+    shutil.rmtree(root / ".claude" / "rules")
+    switch(root)
     assert (root / ".claude" / "rules").stat().st_mode & 0o777 == 0o755
 
 
