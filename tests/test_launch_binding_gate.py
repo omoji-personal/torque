@@ -447,7 +447,9 @@ HARNESS = ["-p", "--input-format", "stream-json", "--output-format", "stream-jso
     ["--bare"], ["--safe-mode"], ["--permission-prompt-tool", "mcp__x__y"], ["--mcp-config", "m.json"],
     ["--plugin-dir", "p"], ["--agents", "{}"], ["--worktree"], ["--some-future-flag"], ["-x"], ["-"],
     ["--permission-mode", "acceptEdits"], ["--permission-mode=acceptEdits"], ["--permission-mode=plan"],
-    ["--permission-mode"], ["--verbose=true"], ["--", "--bare"], ["prompt text", "--", "-x"]])
+    ["--permission-mode"], ["--verbose=true"], ["--", "--bare"], ["prompt text", "--", "-x"],
+    ["--model", "--dangerously-skip-permissions"], ["--session-id", "--settings"],
+    ["--name", "--permission-mode=bypassPermissions"], ["--append-system-prompt", "-x"], ["--model"]])
 def test_delegated_launch_refuses_anything_off_the_allowlist(tmp_path, monkeypatch, flags):
     assert launch.launch_flag_problem(["-p", *flags])
     root = delegated_workspace(tmp_path, monkeypatch)
@@ -465,7 +467,7 @@ def test_delegated_launch_refuses_anything_off_the_allowlist(tmp_path, monkeypat
 @pytest.mark.parametrize("flags", [
     HARNESS, ["--print", "summarize this"], ["-p", "--permission-mode=default"], ["--include-partial-messages"],
     ["--replay-user-messages"], ["--model", "m"], ["--model=m"], ["--fallback-model", "m"], ["--effort", "high"],
-    ["--append-system-prompt", "--be brief"], ["--max-budget-usd", "5"], ["--json-schema", "{}"],
+    ["--append-system-prompt=--be brief"], ["--model=-x"], ["--name=-run"], ["--max-budget-usd", "5"], ["--json-schema", "{}"],
     ["--session-id", "0f0e"], ["--name", "run"], ["--no-session-persistence"], ["-p", "--", "plain prompt"]])
 def test_delegated_launch_passes_allowlisted_options(flags):
     assert launch.launch_flag_problem(flags) == ""

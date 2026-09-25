@@ -372,7 +372,8 @@ def write_launch_record(workspace, client, kind, *, pid=None, starts=None) -> di
 def launch_flag_problem(extra) -> str:
     """R49 (amended): "" when every option passed through a delegated launch is on
     the allowlist (ALLOWED_FLAGS, ALLOWED_VALUE_OPTIONS with their value, and
-    `--permission-mode default`); else the first refused one. Positional prompt text
+    `--permission-mode default`); else the first refused one. A value given as the
+    next word must not start with "-" (use `--opt=value` for that). Positional prompt text
     passes; a lone `--` passes but options after it are still refused (fail closed)."""
     words = [str(word) for word in extra or ()]
     index = 0
@@ -386,7 +387,9 @@ def launch_flag_problem(extra) -> str:
             continue
         if name in ALLOWED_VALUE_OPTIONS or name == "--permission-mode":
             if not eq:
-                if index >= len(words):
+                # A separate value never starts with "-" (it could be an option claude
+                # parses as one); such a value goes in the `--opt=value` form.
+                if index >= len(words) or words[index].startswith("-"):
                     return word
                 value = words[index]
                 index += 1
