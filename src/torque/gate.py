@@ -2465,6 +2465,12 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
         if write and _targets_guarded_file(target.as_posix()):
             return False, ("Build-only mode: only the owner changes workspace.json, the hook configuration, or a "
                            "client's consent and approval records.")
+        if write and _is_within(target, claude_dir):
+            # R51: the same protection _token_targets_claude_dir already gives a Bash
+            # write to anything under .claude/ (the hook configuration directory,
+            # including the connected-mode permission profile sidecar), for the file
+            # tools (Write, Edit, MultiEdit, NotebookEdit) that reach this branch.
+            return False, "Build-only mode: only the owner changes the .claude hook configuration directory."
         if write and (_is_within(target, _package_dir())
                       or _TORQUE_INSTALL_RE.search(target.as_posix())):
             return False, ("Build-only mode: the installed Torque package enforces this mode; "

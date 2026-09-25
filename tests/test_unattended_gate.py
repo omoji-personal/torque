@@ -153,3 +153,34 @@ def test_a_non_approving_tie_break_winner_never_borrows_another_roots_approval(t
                         lambda tool_name, tool_input, workspace, cwd, **kw: decisions[workspace])
     code, out = hook(monkeypatch, capsys, non_approving, "ls")
     assert code == 0 and out.out == ""
+
+
+# Fix round 2 (controller ruling R51): in connected mode, a file-write tool
+# (Write/Edit/MultiEdit/NotebookEdit -- every PATH_TOOLS tool) targeting
+# `.claude/torque-permissions.json` must be denied exactly as a Bash write to it
+# already is. `decide_connected` calls `gate._decide(...)` before any of its own
+# org-specific routing, so these go straight through that shared path.
+
+def test_write_to_the_sidecar_is_denied_through_decide_connected(tmp_path, monkeypatch):
+    root = unattended_root(tmp_path, monkeypatch)
+    target = str(root / permissions.PROFILE_FILE)
+    decision = gate_connected.decide_connected("Write", {"file_path": target, "content": "{}"}, root, root,
+                                               env={"TORQUE_CLIENT": "acme"})
+    assert decision.action == "deny"
+
+
+def test_edit_to_the_sidecar_is_denied_through_decide_connected(tmp_path, monkeypatch):
+    root = unattended_root(tmp_path, monkeypatch)
+    target = str(root / permissions.PROFILE_FILE)
+    decision = gate_connected.decide_connected(
+        "Edit", {"file_path": target, "old_string": "a", "new_string": "b"}, root, root,
+        env={"TORQUE_CLIENT": "acme"})
+    assert decision.action == "deny"
+
+
+def test_a_relative_traversal_path_to_the_sidecar_is_denied_through_decide_connected(tmp_path, monkeypatch):
+    root = unattended_root(tmp_path, monkeypatch)
+    decision = gate_connected.decide_connected(
+        "Write", {"file_path": "./.claude/../.claude/torque-permissions.json", "content": "{}"}, root, root,
+        env={"TORQUE_CLIENT": "acme"})
+    assert decision.action == "deny"
