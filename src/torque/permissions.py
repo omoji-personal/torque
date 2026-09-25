@@ -17,7 +17,8 @@ SF_WRITE_PREFIXES = (
     "sf project deploy start", "sf project deploy quick", "sf project deploy resume", "sf project delete",
     "sf project reset", "sf data create", "sf data update", "sf data upsert", "sf data delete",
     "sf data import", "sf apex run", "sf org assign", "sf org create", "sf org delete", "sf org refresh",
-    "sf package install", "sf package uninstall", "sf api request", "sf community publish", "sf agent",
+    "sf org open", "sf package install", "sf package uninstall", "sf api request", "sf community publish",
+    "sf agent",
     "sfdx",
 )
 TORQUE_WRITE_PREFIXES = ("torque deploy", "torque data", "torque org", "torque recover", "torque revert",

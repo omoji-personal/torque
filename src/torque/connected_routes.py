@@ -45,8 +45,10 @@ SF_LOCAL = {("project", "generate"), ("project", "convert"), ("project", "list",
             ("version",), ("help",), ("commands",), ("whatsnew",), ("which",), ("search",), ("info",),
             ("doctor",), ("autocomplete",), ("alias", "list"), ("config", "list"), ("config", "get"),
             ("env", "list"), ("plugins",), ("plugins", "inspect")}
-# Login and browser sessions: the gate cannot tell what they do.
-SF_ASK = {("org", "login"), ("org", "logout"), ("org", "open"), ("plugins", "install"), ("plugins", "link"),
+# Login and browser sessions: the gate cannot tell what they do. `org open` is not
+# here: it mints a session URL (an org write, D17), so it falls through to the
+# default rule below, "anything else with an org flag is a write".
+SF_ASK = {("org", "login"), ("org", "logout"), ("plugins", "install"), ("plugins", "link"),
           ("plugins", "update"), ("plugins", "uninstall"), ("plugins", "reset"), ("update",)}
 # Changing an alias or the default org would move an approved command to another org.
 SF_ADMIN = {("alias", "set"), ("alias", "unset"), ("config", "set"), ("config", "unset")}
