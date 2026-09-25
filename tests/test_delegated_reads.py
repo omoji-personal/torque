@@ -128,8 +128,7 @@ def test_the_grant_touches_only_documented_paths(tmp_path, monkeypatch):
     report = json.loads(run.stdout.splitlines()[-1])
     seen, runtime = report["seen"], [os.path.realpath(p) for p in report["runtime"]]
     cwd = case.relative_to(root).as_posix()
-    reads = [p.format(client="acme", cwd=cwd) for p in approval.DELEGATED_READS]
-    writes = [p.format(client="acme", cwd=cwd) for p in approval.DELEGATED_WRITES]
+    reads, writes = approval.delegated_path_patterns("acme", cwd)
     inside = [(kind, os.path.relpath(os.path.realpath(path), root)) for kind, path in seen
               if under(os.path.realpath(path), str(root))]
     assert not [p for kind, p in inside if kind == "mkdir"]

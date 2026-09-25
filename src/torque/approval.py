@@ -25,7 +25,7 @@ import hmac
 import json
 import re
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import secrets
 import shlex
 import stat
@@ -471,8 +471,30 @@ DELEGATED_READS = ("workspace.json", "clients", "clients/{client}", "clients/{cl
                    "clients/{client}/approvals/requests", "clients/{client}/approvals/requests/*.json",
                    "clients/{client}/approvals/granted", "clients/{client}/approvals/granted/*",
                    "clients/{client}/approvals/consumed", "clients/{client}/approvals/denied",
-                   "clients/{client}/approvals/denied/*", "{cwd}", "{cwd}/**")
+                   "clients/{client}/approvals/denied/*", "{cwd_parent}", "{cwd}", "{cwd}/**")
 DELEGATED_WRITES = ("clients/{client}/approvals/granted/*", "clients/{client}/approvals/denied/*")
+# V2-5: `{cwd_parent}` is each folder on the way to the working folder (for
+# clients/acme/cases/ax-01: clients, clients/acme, clients/acme/cases). The
+# payload-root check (V2 I3, `_outside`) resolves links in `{cwd}` with
+# os.path.realpath, which lstats every one of them; that resolution is what
+# stops a payload path from escaping the working folder through a link, so it
+# stays. It is an lstat only (no folder is listed or opened), and the approver
+# already needs search access on each of these folders to reach `{cwd}` at all.
+
+
+def delegated_path_patterns(client: str, cwd: str) -> tuple[list[str], list[str]]:
+    """DELEGATED_READS and DELEGATED_WRITES for one client folder name and one
+    working folder (relative to the workspace, or absolute), as fnmatch patterns:
+    `{client}` and `{cwd}` filled in, and `{cwd_parent}` expanded into one exact
+    path per folder on the way to `cwd` (never the workspace or file-system root)."""
+    parents = [p.as_posix() for p in reversed(PurePosixPath(cwd).parents) if str(p) not in (".", "/")]
+    reads = []
+    for pattern in DELEGATED_READS:
+        if pattern == "{cwd_parent}":
+            reads += parents
+        else:
+            reads.append(pattern.format(client=client, cwd=cwd))
+    return reads, [p.format(client=client, cwd=cwd) for p in DELEGATED_WRITES]
 
 
 def _resolver(resolve):

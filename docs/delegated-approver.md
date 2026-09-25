@@ -193,6 +193,7 @@ request's working folder, which is often outside the workspace.
 | `clients/{client}/approvals/consumed` | read (stat) | Path resolution only; the approver never opens anything inside it |
 | `clients/{client}/approvals/denied` | read | Listed for an existing denial before a grant |
 | `clients/{client}/approvals/denied/*` | read, write | Delegated denials (`dny-*.json`, 0644) |
+| `{cwd_parent}` | read (stat) | Each folder on the way to `{cwd}` (for `clients/acme/cases/ax-01`: `clients/acme/cases` and the folders above it), checked without following links while links in `{cwd}` are resolved for the payload-root check below; never listed or opened |
 | `{cwd}` | read (stat) | The working folder must exist |
 | `{cwd}/**` | read | The project files, read to derive the payload digest again |
 
