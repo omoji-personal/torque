@@ -906,6 +906,18 @@ def live_deploy_report(job_id: str, org: str) -> dict | None:
     return result if isinstance(result, dict) else None
 
 
+def _check_review(current_sha: str, derived: dict, request_sha256, payload_digest) -> None:
+    """The grant covers exactly what was reviewed: the request file's bytes and the
+    digest over the payload file set and contents. Either differing refuses. Either
+    argument left None (the a15 owner call, before this task) skips its check."""
+    if request_sha256 is not None and request_sha256 != current_sha:
+        raise delegation.Refusal("request-changed", "the request file changed after it was reviewed; nothing "
+                                                    "was granted")
+    if payload_digest is not None and payload_digest != (derived["payload_digest"] or "none"):
+        raise delegation.Refusal("payload-changed", "the files this call uses changed after they were reviewed; "
+                                                    "nothing was granted")
+
+
 def grant(workspace, client, request_id, *, new_components=(), presence=None, confirm=None, out=None,
           resolve=None, now=None, report=None, audit_trail=None, delegated=False, model_id=None,
           request_sha256=None, payload_digest=None, idempotency_key=None, env=None, ancestors=None,
@@ -925,7 +937,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
         raise ws.WorkspaceError("--model-id applies only to a delegated grant (--delegated)")
     _require_operator(presence)
     out = out or sys.stdout
-    req = load_request(workspace, client, request_id)
+    req, current = load_request_hashed(workspace, client, request_id)
     change_id = req.get("change")
     changes.load_change(workspace, client, change_id)
     if _denied(workspace, client, change_id, request_id):
@@ -935,6 +947,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
         raise delegation.Refusal("human-grant-needs-human-approver", HUMAN_GRANT_REFUSAL)
     item = _usable_consent(workspace, client)
     derived = _derive(req, _extra_namespaces(workspace))
+    _check_review(current, derived, request_sha256, payload_digest)
     org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
     derived = _bind_recovery(derived, workspace, client, req["org_alias"], org_id)
     new_components = [c for c in new_components if isinstance(c, str) and c]
@@ -1089,7 +1102,7 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
     out = out or sys.stdout
     t = now if now is not None else time.time()
     try:
-        req, _current = load_request_hashed(workspace, client, request_id)
+        req, current = load_request_hashed(workspace, client, request_id)
         created = _epoch(req["created_at"])
         change_id = req.get("change")
         changes.load_change(workspace, client, change_id)
@@ -1112,6 +1125,7 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
         derived = _derive(req, _extra_namespaces(workspace, config))
     except (OSError, ValueError, TypeError, KeyError, ws.WorkspaceError) as exc:
         raise delegation.Refusal("request-changed", f"the request's call cannot be derived: {exc}") from None
+    _check_review(current, derived, request_sha256, payload_digest)
     entry = consent.approved_org(item, req["org_alias"]) or {}
     try:
         org_id, org_kind = _org_identity(item, req["org_alias"], resolve)

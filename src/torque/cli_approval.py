@@ -61,9 +61,11 @@ def register(sub) -> None:
     grant.add_argument("--delegated", action="store_true",
                        help="the workspace's delegated approver is granting (tier 2, non-production orgs only)")
     grant.add_argument("--model-id", help="delegated only: the AI approver's model identifier")
-    grant.add_argument("--request-sha256", help="delegated only: request_sha256 from `approval show --json`")
-    grant.add_argument("--payload-digest", help="delegated only: payload.digest from `approval show --json` "
-                                                "(\"none\" when it has none)")
+    grant.add_argument("--request-sha256", help="bind this grant to the reviewed request_sha256 from "
+                                                "`approval show --json` (delegated: required)")
+    grant.add_argument("--payload-digest", help="bind this grant to the reviewed payload.digest from "
+                                                "`approval show --json` (\"none\" when it has none; "
+                                                "delegated: required)")
     grant.add_argument("--json", action="store_true",
                        help="print the approval record; the review screen goes to stderr")
     deny = actions.add_parser("deny", help="consultant only, at a real terminal")
@@ -229,9 +231,8 @@ def _request(p, tail) -> int:
 
 def _grant(p) -> int:
     from . import approval
-    if not p.delegated and (p.model_id is not None or p.request_sha256 is not None
-                            or p.payload_digest is not None):
-        raise ws.WorkspaceError("--model-id, --request-sha256 and --payload-digest go with --delegated")
+    if not p.delegated and p.model_id is not None:
+        raise ws.WorkspaceError("--model-id goes with --delegated")
     # F6: with --json, stdout carries only the record; the review screen goes to stderr.
     out = sys.stderr if p.json else None
     if p.delegated:
@@ -239,8 +240,11 @@ def _grant(p) -> int:
                                 delegated=True, model_id=p.model_id, request_sha256=p.request_sha256,
                                 payload_digest=p.payload_digest)
     else:
+        # D6: the owner may also name the reviewed request's SHA-256 and payload digest
+        # (from `approval show --json`), binding this grant to exactly what was reviewed.
         record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component, out=out,
-                                report=approval.live_deploy_report, audit_trail=p.audit_trail)
+                                report=approval.live_deploy_report, audit_trail=p.audit_trail,
+                                request_sha256=p.request_sha256, payload_digest=p.payload_digest)
     if p.json:
         _print(record)
         return 0
