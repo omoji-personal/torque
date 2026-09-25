@@ -108,14 +108,18 @@ def test_an_unstatable_sidecar_reads_as_invalid_not_as_absent(tmp_path, monkeypa
     """V2 I1: only a missing sidecar means "interactive"; a stat or read error
     (here EACCES from stat) is "invalid"."""
     root = unattended_root(tmp_path, monkeypatch)
-    real_stat = os.stat
+    real_stat, real_lstat = os.stat, os.lstat
     target = str(root / permissions.PROFILE_FILE)
 
-    def denied(path, *a, **k):
-        if str(path) == target:
-            raise PermissionError(13, "Permission denied", str(path))
-        return real_stat(path, *a, **k)
-    monkeypatch.setattr(os, "stat", denied)
+    def denying(real):
+        def denied(path, *a, **k):
+            if str(path) == target:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *a, **k)
+        return denied
+    # V2-3 I1: load_sidecar now uses lstat; deny both so the test still pins EACCES.
+    monkeypatch.setattr(os, "stat", denying(real_stat))
+    monkeypatch.setattr(os, "lstat", denying(real_lstat))
     assert permissions.load_profile(root) == "invalid"
 
 
@@ -334,3 +338,39 @@ def test_multiedit_and_notebookedit_into_claude_are_denied_through_decide_connec
     decision = gate_connected.decide_connected(tool, {key: str(root / target), **extra}, root, root,
                                                env={"TORQUE_CLIENT": "acme"})
     assert decision.action == "deny"
+
+
+def test_v2_3_a_dangling_sidecar_symlink_is_invalid_not_absent(tmp_path, monkeypatch):
+    """V2-3 I1: a directory entry that exists but cannot be resolved is not "no
+    sidecar". Only a truly missing entry reads as interactive."""
+    root = unattended_root(tmp_path, monkeypatch)
+    sidecar = root / permissions.PROFILE_FILE
+    sidecar.unlink()
+    sidecar.symlink_to(tmp_path / "nowhere.json")
+    assert permissions.load_profile(root) == "invalid"
+
+
+def test_v2_3_a_dangling_sidecar_symlink_denies_an_approved_write_and_consumes_nothing(tmp_path, monkeypatch,
+                                                                                       capsys):
+    root = unattended_root(tmp_path, monkeypatch)
+    delegated_grant(root, flow_request(root))
+    sidecar = root / permissions.PROFILE_FILE
+    sidecar.unlink()
+    sidecar.symlink_to(tmp_path / "nowhere.json")
+    launched(monkeypatch, root)
+    as_agent(monkeypatch)
+    code, out = hook(monkeypatch, capsys, root, shlex.join(WRITE))
+    assert code == 2 and out.out == ""
+    assert consumed_files(root) == []
+
+
+def test_v2_3_a_sidecar_under_a_non_directory_is_invalid(tmp_path, monkeypatch):
+    """A structural error on the path (the .claude entry is a regular file) is
+    not a missing sidecar either."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    claude_dir = root / ".claude"
+    if claude_dir.exists():
+        import shutil
+        shutil.rmtree(claude_dir)
+    claude_dir.write_text("not a folder", encoding="utf-8")
+    assert permissions.load_profile(root) == "invalid"

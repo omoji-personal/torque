@@ -269,9 +269,14 @@ def load_sidecar(root) -> dict | None:
     # V2 I1: only "no such file" means absent. `Path.exists()` also answers False
     # for a stat that fails (EACCES on the folder, for one), which would have read
     # an unstatable sidecar as absent-and-interactive.
+    # V2-3 I1: lstat, not stat. A dangling symlink is a directory entry that
+    # exists but cannot be resolved; stat would raise FileNotFoundError for it
+    # and read it as absent. Only FileNotFoundError from lstat (no entry at all)
+    # is absent; ENOTDIR (a path component is not a folder) is a structural
+    # error, so invalid.
     try:
-        os.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
+        os.lstat(path)
+    except FileNotFoundError:
         return None
     except OSError:
         return {"schema": None}
