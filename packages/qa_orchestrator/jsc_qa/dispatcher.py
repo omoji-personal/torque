@@ -904,6 +904,39 @@ def _discover_available_flows(browser_tests_dir, library_dir) -> list[str]:
         )
 
 
+_IDENTITY_KEYS = ("org_id_18", "org_verified_by", "admin_before", "admin_username", "user_after_login_as",
+                  "admin_restored", "restored", "status")
+
+
+def _browser_identities(stdout: str) -> tuple[list[dict], list[str], str]:
+    """From `jsc-browser-tests ... --json` output: each cell's identity report, one
+    readable line per cell, and a redacted tail of the output. Only the identity keys
+    are kept; the output is redacted again here, so no session URL is carried on."""
+    from jsc_browser_tests.diagnostics import redact
+    raw = redact(stdout or "")[-1000:]
+    try:
+        cells = json.loads(stdout or "")
+    except ValueError:
+        cells = None
+    if not isinstance(cells, list):
+        return [], ["identity: not reported (the browser route printed no results)"], raw
+    identities, lines = [], []
+    for item in cells:
+        if not isinstance(item, dict):
+            continue
+        found = item.get("identity") if isinstance(item.get("identity"), dict) else {}
+        entry = redact({"flow": item.get("flow"), "profile": item.get("profile"), "cell_status": item.get("status"),
+                        **{key: found.get(key) for key in _IDENTITY_KEYS}})
+        identities.append(entry)
+        verified = " (verified by username)" if entry["org_verified_by"] == "username" else " (not verified)"
+        lines.append(
+            f"identity {entry['profile']}: org {entry['org_id_18']}{verified}, admin before "
+            f"{entry['admin_before']} ({entry['admin_username']}), user after Login As "
+            f"{entry['user_after_login_as']}, admin restored {entry['admin_restored']}, "
+            f"restored {entry['restored']}, status {entry['status']}")
+    return identities, lines or ["identity: not reported (no browser cells)"], raw
+
+
 def dispatch_funct_pl(target_org: str, change_description: str) -> DispatchResult:
     """Funct-Pl surface: invoke browser_tests CLI if a library flow matches; else manual guidance.
 
@@ -953,7 +986,7 @@ def dispatch_funct_pl(target_org: str, change_description: str) -> DispatchResul
     flow_name = matched[0]
     cmd = [
         sys.executable, "-m", "jsc_browser_tests.cli",
-        "browser", flow_name, "--target-org", target_org,
+        "browser", flow_name, "--target-org", target_org, "--json",
     ]
     env_setup = f"PYTHONPATH={browser_tests_dir} "
     try:
@@ -972,13 +1005,14 @@ def dispatch_funct_pl(target_org: str, change_description: str) -> DispatchResul
             invocation_command=env_setup + " ".join(cmd),
         )
     status = "PASS" if proc.returncode == 0 else "FAIL"
+    identities, lines, raw = _browser_identities(proc.stdout)
     return DispatchResult(
         surface="Funct-Pl", status=status,
-        detail=f"jsc-browser-tests browser {flow_name} exit {proc.returncode}",
+        detail="\n".join([f"jsc-browser-tests browser {flow_name} exit {proc.returncode}", *lines]),
         duration_seconds=time.monotonic() - t0,
         invocation_command=env_setup + " ".join(cmd),
-        raw_output=proc.stdout[-1000:],
-        metadata={"flow_name": flow_name},
+        raw_output=raw,
+        metadata={"flow_name": flow_name, "identity": identities},
     )
 
 
@@ -1039,7 +1073,7 @@ def dispatch_multi_prof(target_org: str, change_description: str) -> DispatchRes
     flow_name = matched[0]
     cmd = [
         sys.executable, "-m", "jsc_browser_tests.cli",
-        "multiprofile", flow_name, "--target-org", target_org,
+        "multiprofile", flow_name, "--target-org", target_org, "--json",
     ]
     env_setup = f"PYTHONPATH={browser_tests_dir} "
     try:
@@ -1058,13 +1092,14 @@ def dispatch_multi_prof(target_org: str, change_description: str) -> DispatchRes
             invocation_command=env_setup + " ".join(cmd),
         )
     status = "PASS" if proc.returncode == 0 else "FAIL"
+    identities, lines, raw = _browser_identities(proc.stdout)
     return DispatchResult(
         surface="Multi-Prof", status=status,
-        detail=f"jsc-browser-tests multiprofile {flow_name} exit {proc.returncode}",
+        detail="\n".join([f"jsc-browser-tests multiprofile {flow_name} exit {proc.returncode}", *lines]),
         duration_seconds=time.monotonic() - t0,
         invocation_command=env_setup + " ".join(cmd),
-        raw_output=proc.stdout[-1000:],
-        metadata={"flow_name": flow_name},
+        raw_output=raw,
+        metadata={"flow_name": flow_name, "identity": identities},
     )
 
 

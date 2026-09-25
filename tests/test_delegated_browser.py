@@ -5,7 +5,9 @@ import os
 
 import pytest
 
-from delegated_helpers import ORGS, as_agent, delegated_grant, delegated_workspace
+import io
+
+from delegated_helpers import ME, ORGS, YES, as_agent, control_owner, delegated_grant, delegated_workspace
 from torque import approval, browser_guard, changes, gate_connected as gc
 
 pytestmark = pytest.mark.skipif(not hasattr(os, "getuid"), reason="tier 2 is POSIX only")
@@ -59,7 +61,7 @@ def test_delegated_window_marks_the_browser_guard_delegated(tmp_path, monkeypatc
     assert guard.expires_at == approval._epoch(record["expires_at"])
 
 
-@pytest.mark.parametrize("flag", ["--headed", "--head", "--hea"])
+@pytest.mark.parametrize("flag", ["--headed", "--head", "--hea", "--headed=true"])
 def test_gate_refuses_a_visible_browser_under_a_delegated_window(tmp_path, monkeypatch, flag):
     root = delegated_workspace(tmp_path, monkeypatch)
     record = delegated_grant(root, window(root))
@@ -78,3 +80,49 @@ def test_headed_is_read_from_the_browser_routes_only():
     assert not route.headed
     [route] = classify_bash("torque browser multiprofile visit --target-org acme-dev -- --headed")
     assert not route.headed  # after --, not an option of the route
+
+
+def test_a_human_window_still_allows_a_visible_browser(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch, kind="human")
+    control_owner(monkeypatch, owner=ME + 1)  # the a15 layout for an owner (presence) grant
+    record = approval.grant(root, "Acme", window(root)["id"], presence=YES, confirm=lambda: True,
+                            out=io.StringIO(), resolve=ORGS.get)
+    assert record["delegated"] is False and record["kind"] == "browser"
+    as_agent(monkeypatch)
+    decision = run(root, "torque browser browser visit --target-org acme-dev --headed")
+    assert decision.action == "allow" and decision.approved == record["id"]
+
+
+EXPORTED = [
+    "export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "export DEBUG=pw:protocol && torque browser browser visit --target-org acme-dev",
+    "DEBUG=pw:api; export DEBUG; torque browser browser visit --target-org acme-dev",
+    "export PWDEBUG=1; torque browser browser visit --target-org acme-dev",
+    "declare -x DEBUG_FILE=/tmp/pw.log; torque browser browser visit --target-org acme-dev",
+    "typeset -x PLAYWRIGHT_BROWSERS_PATH=/tmp/b; torque qa run 'Visit saves' --org acme-dev",
+    "declare -gx DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "set -a; DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "set -o allexport; DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "export ANYTHING=1; torque browser browser visit --target-org acme-dev",
+]
+
+
+@pytest.mark.parametrize("command", EXPORTED)
+def test_a_browser_route_after_an_exported_variable_is_unverifiable(command):
+    from torque.connected_routes import classify_bash
+    kinds = [r.kind for r in classify_bash(command) if r.org]
+    assert kinds == ["unverifiable"]
+
+
+def test_an_export_after_the_browser_route_does_not_change_it():
+    from torque.connected_routes import classify_bash
+    routes = classify_bash("torque browser browser visit --target-org acme-dev; export DEBUG=pw:api")
+    assert [r.kind for r in routes if r.org] == ["browser_write"]
+
+
+@pytest.mark.parametrize("command", EXPORTED[:4])
+def test_gate_does_not_allow_a_browser_route_after_an_export_even_in_a_window(tmp_path, monkeypatch, command):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    delegated_grant(root, window(root))
+    as_agent(monkeypatch)
+    assert run(root, command).action != "allow"

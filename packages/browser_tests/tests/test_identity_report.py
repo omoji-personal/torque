@@ -159,12 +159,16 @@ def test_guarded_route_fails_closed_when_the_username_cannot_be_read(monkeypatch
 
 
 @pytest.mark.parametrize("guarded", [False, True])
-def test_a_username_mismatch_stops_the_run(monkeypatch, tmp_path, guarded):
-    """Another org (or another user) behind the page: its username is not the alias's."""
+def test_a_username_mismatch_stops_a_guarded_run_and_is_reported_elsewhere(monkeypatch, tmp_path, guarded):
+    """Another org (or another user) behind the page: its username is not the alias's.
+    A connected run stops; elsewhere the a15 behavior stands and the report says so."""
     stub(monkeypatch, guarded=guarded, username="admin@acme-prod.example")
     ran = fake_cell(monkeypatch)
     result = run(tmp_path)
-    assert ran == [] and result.overall_status == "INCOMPLETE"
+    if guarded:
+        assert ran == [] and result.overall_status == "INCOMPLETE"
+    else:
+        assert ran == ["standard"] and result.overall_status == "PASS"
     report = runner.identity_report(result)
     assert report["org_id_18"] is None and report["status"] == "ORG_MISMATCH"
 
@@ -330,3 +334,98 @@ def test_session_urls_are_removed_whole(text):
 def test_ordinary_urls_are_left_alone():
     url = "https://x.lightning.force.com/lightning/r/Contact/003000000000001AAA/view"
     assert redact(url) == url
+
+
+# Playwright debug output prints the navigated frontdoor URL (DEBUG=pw:api, pw:protocol,
+# DEBUG_FILE), and PWDEBUG forces a visible browser: a connected run refuses to start.
+
+DEBUG_ENVS = [{"PWDEBUG": "1"}, {"DEBUG": "pw:api"}, {"DEBUG": "other,pw:protocol"}, {"DEBUG_FILE": "/tmp/pw.log"}]
+
+
+def clear_debug_env(monkeypatch):
+    for name in ("PWDEBUG", "DEBUG", "DEBUG_FILE"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("env", DEBUG_ENVS)
+def test_connected_run_refuses_playwright_debug_before_playwright_starts(monkeypatch, tmp_path, env):
+    stub(monkeypatch, guarded=True)
+    clear_debug_env(monkeypatch)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(auth, "in_connected_mode", lambda: True)
+    started = []
+    api = types.ModuleType("playwright.async_api")
+    api.async_playwright = lambda: started.append(1)
+    monkeypatch.setitem(sys.modules, "playwright.async_api", api)
+    ran = fake_cell(monkeypatch)
+    result = run(tmp_path)
+    assert started == [] and ran == [] and result.overall_status == "INCOMPLETE"
+    assert next(iter(env)) in result.error
+
+
+@pytest.mark.parametrize("env", DEBUG_ENVS)
+def test_unconnected_run_keeps_a15_debugging(monkeypatch, tmp_path, env):
+    stub(monkeypatch)
+    clear_debug_env(monkeypatch)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(auth, "in_connected_mode", lambda: False)
+    ran = fake_cell(monkeypatch)
+    assert run(tmp_path).overall_status == "PASS" and ran == ["standard"]
+
+
+def test_other_debug_namespaces_are_not_refused(monkeypatch):
+    clear_debug_env(monkeypatch)
+    monkeypatch.setenv("DEBUG", "express:*")
+    assert auth.debug_env_problem() is None
+
+
+def test_preflight_refuses_playwright_debug_in_connected_mode(monkeypatch):
+    from jsc_browser_tests import suite
+    clear_debug_env(monkeypatch)
+    monkeypatch.setenv("PWDEBUG", "1")
+    monkeypatch.setattr(auth, "in_connected_mode", lambda: True)
+    monkeypatch.setattr(auth, "get_admin_auth", lambda *_: pytest.fail("no auth before the check"))
+    api = types.ModuleType("playwright.async_api")
+    api.async_playwright = lambda: pytest.fail("playwright must not start")
+    monkeypatch.setitem(sys.modules, "playwright.async_api", api)
+    config = {"profiles": ["admin", "standard"], "seed": {"users": {"standard": {"user_id": USER}}},
+              "sf": object(), "target_org": "acme-dev"}
+    with pytest.raises(auth.AuthError, match="PWDEBUG"):
+        asyncio.run(suite._live_preflight(config))
+
+
+@pytest.mark.parametrize("env", DEBUG_ENVS)
+def test_guarded_session_refuses_playwright_debug_before_launching(monkeypatch, env):
+    clear_debug_env(monkeypatch)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    chromium, _, message = guarded_session(monkeypatch, delegated=False, headed=False)
+    assert chromium.launches == [] and next(iter(env)) in message
+
+
+# Salesforce session tokens by value shape, and more credential names.
+
+TOKEN = "00D000000000003!AQ8AQFakeSyntheticToken.value_x-y"
+
+
+@pytest.mark.parametrize("text", [
+    f'{{"status": 0, "result": {{"accessToken": "{TOKEN}", "id": "{ORG}"}}}}',
+    f'"accessToken":"{TOKEN}"',
+    f"https://x.my.salesforce.com/sid/{TOKEN}/home",
+    f"token 00D000000000003AAA%21AQ8AQsynthetic.value",
+    f"sessionid={TOKEN.replace('!', 'x')}",
+    f"session_id=abc.def-synthetic",
+    f"SessionId%3Dabc.def-synthetic",
+])
+def test_session_tokens_and_names_are_redacted(text):
+    out = redact(text)
+    for secret in (TOKEN, "AQ8AQ", "abc.def-synthetic", "synthetic.value"):
+        assert secret not in out, out
+    assert "REDACTED" in out.upper()
+
+
+def test_org_and_record_ids_are_not_tokens():
+    text = f"org {ORG} user {ADMIN} record 003000000000001AAA!"
+    assert redact(text) == text

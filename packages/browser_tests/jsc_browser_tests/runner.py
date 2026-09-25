@@ -230,6 +230,13 @@ async def run_flow_variation(
         result.side_effects["identity_status"] = "NOT_CHECKED"
         return result
 
+    try:
+        auth.refuse_debug_env_when_connected()
+    except auth.AuthError as exc:
+        result.error = exception_detail(exc)
+        result.side_effects["identity_status"] = "NOT_CHECKED"
+        return result
+
     from playwright.async_api import async_playwright
     from .sf_client import SfClient
     from .flow_spec import FlowCtx
@@ -312,8 +319,8 @@ async def run_flow_variation(
 async def _verify_org_by_username(page, identity: dict, admin_auth, user_id: str, *, strict: bool) -> None:
     """Before Login As, read the page user's Username in the page and compare it with the
     username sf resolves for the alias. Usernames are globally unique, so a match proves
-    the org and the user. A mismatch stops the run. An unreadable username stops a
-    connected (guarded) run; elsewhere it is recorded as not checked, never as a match."""
+    the org and the user. A mismatch or an unreadable username stops a connected
+    (guarded) run; elsewhere (a15 behavior) it is recorded, never as a match."""
     expected = getattr(admin_auth, "username", "") or ""
     try:
         if not expected:
@@ -327,7 +334,9 @@ async def _verify_org_by_username(page, identity: dict, admin_auth, user_id: str
     identity["observed_username"] = observed
     if observed.casefold() != expected.casefold():
         identity["org_status"] = "MISMATCH"
-        raise auth.AuthError("The browser's user is not the org alias's user; flow was not executed")
+        if strict:
+            raise auth.AuthError("The browser's user is not the org alias's user; flow was not executed")
+        return
     identity.update(org_status="MATCHED", observed_org_id_18=admin_auth.org_id_18, org_verified_by="username")
 
 

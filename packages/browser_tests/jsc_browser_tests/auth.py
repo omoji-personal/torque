@@ -82,6 +82,8 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
             guard = connected_guard(admin_auth.target_org)
         except GuardRefused as exc:
             raise AuthError(f"connected mode: {exc}") from None
+    if guard is not None and debug_env_problem():
+        raise AuthError("connected mode: " + debug_env_problem())
     if guard is not None and getattr(guard, "delegated", True) and headed:
         raise AuthError("connected mode: a browser window granted by a delegated approver runs headless "
                         "only; run without --headed")
@@ -146,6 +148,39 @@ async def close_session(sess) -> None:
         except Exception: pass
         try: await sess.browser.close()
         except Exception: pass
+
+
+def debug_env_problem(env=None) -> str | None:
+    """Playwright settings that would print the navigated frontdoor URL (DEBUG with a pw:
+    namespace, DEBUG_FILE) or force a visible browser (PWDEBUG), else None."""
+    import os
+    env = os.environ if env is None else env
+    found = [name for name in ("PWDEBUG", "DEBUG_FILE") if env.get(name)]
+    if "pw:" in (env.get("DEBUG") or ""):
+        found.insert(0, "DEBUG")
+    if not found:
+        return None
+    return (f"{', '.join(found)} is set; Playwright debugging prints the session URL or opens a visible "
+            "browser, so a connected run does not start with it. Unset it and run again")
+
+
+def in_connected_mode() -> bool:
+    """This run is in a connected Torque workspace (or that cannot be ruled out)."""
+    try:
+        from jsc_revert.wrappers import _common
+    except ImportError:
+        return False
+    try:
+        return _common._connected_scope() is not None
+    except _common.IndeterminateScope:
+        return True
+
+
+def refuse_debug_env_when_connected() -> None:
+    """Call before Playwright starts: its driver reads these variables when it starts."""
+    problem = debug_env_problem()
+    if problem and in_connected_mode():
+        raise AuthError("connected mode: " + problem)
 
 
 def cdp_endpoint_from_env() -> str | None:

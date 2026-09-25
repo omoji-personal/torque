@@ -518,6 +518,26 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     return routes
 
 
+def _exports(words: list[str]) -> bool:
+    """The segment puts variables into the environment of later commands: `export`,
+    `declare -x`/`typeset -x`/`local -x`/`readonly -x` (flags combined or not), or
+    `set -a`/`set -o allexport` (every later assignment is exported)."""
+    while words and words[0] in _KEYWORDS:
+        words = words[1:]
+    if not words:
+        return False
+    head, flags = words[0], [w for w in words[1:] if w.startswith(("-", "+")) and w not in ("-", "--")]
+    if head == "export":
+        return True
+    if head in ("declare", "typeset", "local", "readonly"):
+        return any(f.startswith("-") and "x" in f[1:] for f in flags)
+    if head == "set":
+        rest = words[1:]
+        return any(f.startswith("-") and not f.startswith("--") and "a" in f[1:] for f in flags) or any(
+            rest[i] == "-o" and i + 1 < len(rest) and rest[i + 1] == "allexport" for i in range(len(rest)))
+    return False
+
+
 def classify_bash(command: str, _depth: int = 0) -> list[Route]:
     """Routes for one shell command string, in order, without duplicates."""
     if _depth > 8:
@@ -531,8 +551,17 @@ def classify_bash(command: str, _depth: int = 0) -> list[Route]:
         segments = [g._without_redirections(toks) for toks, _ in g._segments_with_separators(text) if toks]
     else:
         segments = parsed[0]
+    exported = False
     for words in segments:
-        routes.extend(_segment(words, _depth))
+        found = _segment(words, _depth)
+        if exported:
+            # An exported variable (DEBUG=pw:api prints the session URL, PWDEBUG forces a
+            # visible browser, SF_* can point an alias at another org) reaches every later
+            # program of the shell, so the gate cannot check what they do.
+            found = [Route("unverifiable", r.org, r.detail + " (after an exported variable)", r.client)
+                     if r.kind in ("read", "check_only", "org_write", "browser_write") else r for r in found]
+        routes.extend(found)
+        exported = exported or _exports(words)
     for nested in g._direct_substitutions(text):
         routes.extend(r for r in classify_bash(nested, _depth + 1) if r.kind != "local")
     return list(dict.fromkeys(routes)) or [Route("local", None, "")]
