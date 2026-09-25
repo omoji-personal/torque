@@ -151,13 +151,12 @@ async def close_session(sess) -> None:
 
 
 def debug_env_problem(env=None) -> str | None:
-    """Playwright settings that would print the navigated frontdoor URL (DEBUG with a pw:
-    namespace, DEBUG_FILE) or force a visible browser (PWDEBUG), else None."""
+    """Playwright settings that would print the navigated frontdoor URL (DEBUG, DEBUG_FILE)
+    or force a visible browser (PWDEBUG), else None. Any non-empty DEBUG counts: Node's
+    debug module turns Playwright's pw:* logs on for *, pw*, p* and other patterns."""
     import os
     env = os.environ if env is None else env
-    found = [name for name in ("PWDEBUG", "DEBUG_FILE") if env.get(name)]
-    if "pw:" in (env.get("DEBUG") or ""):
-        found.insert(0, "DEBUG")
+    found = [name for name in ("DEBUG", "PWDEBUG", "DEBUG_FILE") if env.get(name)]
     if not found:
         return None
     return (f"{', '.join(found)} is set; Playwright debugging prints the session URL or opens a visible "

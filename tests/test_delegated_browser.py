@@ -104,6 +104,19 @@ EXPORTED = [
     "set -a; DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
     "set -o allexport; DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
     "export ANYTHING=1; torque browser browser visit --target-org acme-dev",
+    "command export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "builtin export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "command declare -x DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "builtin typeset -x PWDEBUG=1; torque browser browser visit --target-org acme-dev",
+    "command builtin export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "exec export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "time export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "time -p export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "nohup export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "nice -n 5 export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "command set -a; DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "noglob export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
+    "X=1 export DEBUG=pw:api; torque browser browser visit --target-org acme-dev",
 ]
 
 
@@ -120,7 +133,7 @@ def test_an_export_after_the_browser_route_does_not_change_it():
     assert [r.kind for r in routes if r.org] == ["browser_write"]
 
 
-@pytest.mark.parametrize("command", EXPORTED[:4])
+@pytest.mark.parametrize("command", EXPORTED[:4] + EXPORTED[10:13])
 def test_gate_does_not_allow_a_browser_route_after_an_export_even_in_a_window(tmp_path, monkeypatch, command):
     root = delegated_workspace(tmp_path, monkeypatch)
     delegated_grant(root, window(root))

@@ -339,7 +339,9 @@ def test_ordinary_urls_are_left_alone():
 # Playwright debug output prints the navigated frontdoor URL (DEBUG=pw:api, pw:protocol,
 # DEBUG_FILE), and PWDEBUG forces a visible browser: a connected run refuses to start.
 
-DEBUG_ENVS = [{"PWDEBUG": "1"}, {"DEBUG": "pw:api"}, {"DEBUG": "other,pw:protocol"}, {"DEBUG_FILE": "/tmp/pw.log"}]
+# Node's debug module turns pw:* on for DEBUG=*, pw* or p* too, so any DEBUG is refused.
+DEBUG_ENVS = [{"PWDEBUG": "1"}, {"DEBUG": "pw:api"}, {"DEBUG": "other,pw:protocol"}, {"DEBUG_FILE": "/tmp/pw.log"},
+              {"DEBUG": "*"}, {"DEBUG": "pw*"}, {"DEBUG": "p*"}, {"DEBUG": "foo"}]
 
 
 def clear_debug_env(monkeypatch):
@@ -375,9 +377,9 @@ def test_unconnected_run_keeps_a15_debugging(monkeypatch, tmp_path, env):
     assert run(tmp_path).overall_status == "PASS" and ran == ["standard"]
 
 
-def test_other_debug_namespaces_are_not_refused(monkeypatch):
+def test_no_debug_setting_is_no_problem(monkeypatch):
     clear_debug_env(monkeypatch)
-    monkeypatch.setenv("DEBUG", "express:*")
+    monkeypatch.setenv("DEBUG", "")
     assert auth.debug_env_problem() is None
 
 
@@ -418,6 +420,10 @@ TOKEN = "00D000000000003!AQ8AQFakeSyntheticToken.value_x-y"
     f"sessionid={TOKEN.replace('!', 'x')}",
     f"session_id=abc.def-synthetic",
     f"SessionId%3Dabc.def-synthetic",
+    f"{{'accessToken': '{TOKEN}', 'instanceUrl': 'https://x'}}",
+    f"{{'refresh_token': 'abc.def-synthetic'}}",
+    f"session_id: abc.def-synthetic",
+    f"token 00D000000000003AAA%2521AQ8AQsynthetic.value",
 ])
 def test_session_tokens_and_names_are_redacted(text):
     out = redact(text)

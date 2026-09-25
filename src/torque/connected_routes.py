@@ -519,11 +519,18 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
 
 
 def _exports(words: list[str]) -> bool:
-    """The segment puts variables into the environment of later commands: `export`,
+    """The segment puts variables into the environment of later commands (after any
+    keywords, assignments and wrapper words such as command, builtin or time): `export`,
     `declare -x`/`typeset -x`/`local -x`/`readonly -x` (flags combined or not), or
     `set -a`/`set -o allexport` (every later assignment is exported)."""
-    while words and words[0] in _KEYWORDS:
-        words = words[1:]
+    while words:
+        if g._basename(words[0]) in BENIGN_WRAPPERS:
+            # `command export ...`, `builtin declare -x ...`, `time -p export ...`
+            words = _strip_benign(g._basename(words[0]), words)
+        elif words[0] in _KEYWORDS or _ASSIGN_RE.match(words[0]):
+            words = words[1:]
+        else:
+            break
     if not words:
         return False
     head, flags = words[0], [w for w in words[1:] if w.startswith(("-", "+")) and w not in ("-", "--")]
