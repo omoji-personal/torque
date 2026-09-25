@@ -1791,15 +1791,18 @@ def delegated_denials(workspace, client, *, config=None, control_stat=None) -> l
     # V2 I4: only a folder that does not exist means "no denials"; one that cannot
     # be stat'ed or listed is an error (`Path.is_dir()` and `glob` would both have
     # read it as empty).
+    # V2-3 I4: lstat, and only FileNotFoundError is "no denials". ENOTDIR (a
+    # parent is not a folder) and a denied/ entry that is not a real folder
+    # (a regular file, a link) are structural errors, never an empty folder.
     try:
-        folder_st = os.stat(folder)
-    except (FileNotFoundError, NotADirectoryError):
+        folder_st = os.lstat(folder)
+    except FileNotFoundError:
         return []
     except OSError as exc:
         raise delegation.Refusal("denial-unreadable", f"{folder} cannot be read ({exc.strerror or exc}); "
                                                       "nothing was decided") from None
     if not stat.S_ISDIR(folder_st.st_mode):
-        return []
+        raise delegation.Refusal("denial-unreadable", f"{folder} exists but is not a folder; nothing was decided")
     approver = config.get("approver_uid")
     if config.get("approval_verify") == "owner-uid" and type(approver) is int:
         try:

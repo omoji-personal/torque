@@ -297,3 +297,36 @@ def test_a_valid_denial_still_reads_as_denied(tmp_path, monkeypatch):
     deny(root, req)
     as_agent(monkeypatch)
     assert approval.decision(root, "Acme", req["id"])[0] == "denied"
+
+
+@pytest.mark.parametrize("shape", ["file", "dangling-link", "link-to-folder"])
+def test_v2_3_a_denials_entry_that_is_not_a_folder_is_an_error_not_a_timeout(tmp_path, monkeypatch, capsys, shape):
+    """V2-3 I4: a denied/ entry that exists but is not a real folder is a
+    workspace error (exit 2), never "no denials" (pending, then timeout 22)."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    folder = ws.load_client(root, "Acme")[0] / "approvals" / "denied"
+    folder.rmdir()
+    if shape == "file":
+        folder.write_text("not a folder", encoding="utf-8")
+    elif shape == "dangling-link":
+        folder.symlink_to(tmp_path / "nowhere")
+    else:
+        (tmp_path / "elsewhere").mkdir()
+        folder.symlink_to(tmp_path / "elsewhere")
+    as_agent(monkeypatch)
+    # A link is already refused by the workspace path check (WorkspaceError);
+    # a regular file must be refused too, as denial-unreadable.
+    with pytest.raises((delegation.Refusal, ws.WorkspaceError)) as info:
+        approval.decision(root, "Acme", req["id"])
+    if shape == "file":
+        assert info.value.reason_class == "denial-unreadable"
+    assert status(root, req) == 2
+
+
+def test_v2_3_a_missing_denials_folder_is_still_no_denials(tmp_path, monkeypatch, capsys):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    (ws.load_client(root, "Acme")[0] / "approvals" / "denied").rmdir()
+    as_agent(monkeypatch)
+    assert status(root, req) == 22
