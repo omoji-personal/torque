@@ -291,3 +291,87 @@ def test_an_mcp_write_without_an_object_or_target_has_no_components(tmp_path, mo
     view = mcp_view(root, "mcp__salesforce__execute_anonymous", {"usernameOrAlias": "acme-dev",
                                                                  "code": "System.debug(1);"})
     assert view["components"] == []
+
+
+def _outside_payload_request(root):
+    """A request whose payload sits one folder above the working folder, as an
+    ordinary human request often does (a15 accepts it)."""
+    from delegated_helpers import ORGS as _ORGS
+    project = root / "project"
+    project.mkdir()
+    (root / "contacts.csv").write_text("LastName\nDoe\n", encoding="utf-8")
+    cid = changes.create_change(root, "Acme", "Contacts", "Load contacts", [], "acme-dev")["id"]
+    argv = ["sf", "data", "import", "bulk", "--sobject", "Contact", "--file", "../contacts.csv",
+            "--target-org", "acme-dev"]
+    return approval.create_request(root, "Acme", cid, "acme-dev", argv=argv, resolve=_ORGS.get, cwd=project)
+
+
+def test_v2_3_a_human_request_with_a_payload_above_the_working_folder_shows(tmp_path, monkeypatch):
+    """V2-3: payload-root confinement is the delegated path's rule only. The
+    owner (not the named approver account) sees an ordinary human request whose
+    payload is ../contacts.csv exactly as a15's grant accepts it, and grants it."""
+    import io
+    from delegated_helpers import YES, as_agent
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = _outside_payload_request(root)
+    as_agent(monkeypatch)  # a different account from the named approver delegate
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    assert view["payload"]["count"] == 1 and view["payload"]["files"][0]["path"].endswith("contacts.csv")
+
+
+def test_v2_3_a_human_request_shows_in_a_workspace_with_no_delegate(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    config = json.loads((root / "workspace.json").read_text())
+    config.pop("delegates", None)
+    (root / "workspace.json").write_text(json.dumps(config))
+    req = _outside_payload_request(root)
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    assert view["payload"]["count"] == 1
+    import io
+    from delegated_helpers import YES
+    record = approval.grant(root, "Acme", req["id"], presence=YES, confirm=lambda: True, out=io.StringIO(),
+                            resolve=ORGS.get, request_sha256=view["request_sha256"],
+                            payload_digest=view["payload"]["digest"])
+    assert record["approver_kind"] == "human" and record["payload_digest"] == view["payload"]["digest"]
+
+
+def test_v2_3_the_delegated_approver_view_of_the_same_request_refuses(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = _outside_payload_request(root)
+    with pytest.raises(ws.WorkspaceError, match="outside the working folder"):
+        approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+
+
+MANIFEST = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<Package xmlns="http://soap.sforce.com/2006/04/metadata">'
+            '<types><members>Case_Escalation</members><name>Flow</name></types>'
+            '<version>61.0</version></Package>\n')
+
+
+@pytest.mark.parametrize("args", [
+    {"usernameOrAlias": "acme-dev", "manifest": "manifest/package.xml"},
+    {"usernameOrAlias": "acme-dev", "manifestPath": "manifest/package.xml"},
+])
+def test_v2_3_an_mcp_manifest_deploy_view_names_the_manifest_components(tmp_path, monkeypatch, args):
+    """V2-3 I5: a manifest the MCP deploy names is read as a manifest for the
+    view (its members), not as a source folder (File:.../package.xml)."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    flow_request(root)
+    (root / "manifest").mkdir()
+    (root / "manifest" / "package.xml").write_text(MANIFEST, encoding="utf-8")
+    view = mcp_view(root, "mcp__salesforce__deploy_metadata", args)
+    assert view["components"] == ["Flow:Case_Escalation"]
+
+
+def test_v2_3_an_mcp_manifest_deploy_keeps_its_grant_side_components(tmp_path, monkeypatch):
+    """R44/R64: only the view changes; the derived (grant-side) components stay []."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    flow_request(root)
+    (root / "manifest").mkdir()
+    (root / "manifest" / "package.xml").write_text(MANIFEST, encoding="utf-8")
+    cid = changes.create_change(root, "Acme", "MCP write", "Records change", [], "acme-dev")["id"]
+    req = approval.create_request(root, "Acme", cid, "acme-dev",
+                                  mcp=("mcp__salesforce__deploy_metadata",
+                                       {"usernameOrAlias": "acme-dev", "manifest": "manifest/package.xml"}),
+                                  resolve=ORGS.get, cwd=root)
+    assert approval._derive(req)["components"] == []

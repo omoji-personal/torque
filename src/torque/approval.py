@@ -937,11 +937,30 @@ def mcp_view_components(mcp: dict | None, cwd) -> list[str]:
         field = _mcp_value(tool_input, MCP_EXTERNAL_KEYS)
         return [f"Record:{sobject}:{record}" if record else
                 f"Record:{sobject}:external:{field}" if field else f"Record:{sobject}"]
-    paths = list(dict.fromkeys(_mcp_paths(tool_input)))
+    paths = list(dict.fromkeys(_mcp_keyed_paths(tool_input)))
     if not paths or cwd is None:
         return []
-    argv = ["sf", "project", "deploy", "start", *[a for p in paths for a in ("--source-dir", p)]]
+    # V2-3 I5: a path the input names as a manifest (its key says so, or the file
+    # is package.xml) is read as a manifest, so the view lists its members.
+    argv = ["sf", "project", "deploy", "start",
+            *[a for key, p in paths
+              for a in (("--manifest" if "manifest" in key.casefold() or Path(p).name == "package.xml"
+                         else "--source-dir"), p)]]
     return sorted(set(before_state.deploy_components(argv, Path(cwd))))
+
+
+def _mcp_keyed_paths(value, depth: int = 0) -> list[tuple[str, str]]:
+    """`_mcp_paths` with the input key each path came from (view only)."""
+    out = []
+    if isinstance(value, dict) and depth < 4:
+        for key, item in value.items():
+            if isinstance(key, str) and MCP_PATH_KEY.search(key):
+                out += [(key, v) for v in (item if isinstance(item, list) else [item]) if isinstance(v, str) and v]
+            out += _mcp_keyed_paths(item, depth + 1)
+    elif isinstance(value, list) and depth < 4:
+        for item in value:
+            out += _mcp_keyed_paths(item, depth + 1)
+    return out
 
 
 def payload_listing(argv: list[str] | None, cwd) -> list[dict]:
@@ -993,13 +1012,29 @@ def screen_lines(req: dict, derived: dict, org_id: str, org_kind: str, ttl: int)
     return [printable(line) for line in lines]
 
 
-def request_view(workspace, client, request_id, *, resolve=None) -> dict:
+def _view_is_delegated(workspace, getuid=None) -> bool:
+    """V2-3: the view is on the delegated path when the account running it is the
+    workspace's named approver delegate. Anyone else (the owner reviewing a human
+    request) gets the a15 derivation, without payload-root confinement."""
+    if not hasattr(os, "getuid") and getuid is None:
+        return False
+    from . import delegation
+    approver = delegation.delegate_for(ws.load_workspace(workspace)[1], "approver")
+    return approver is not None and approver["uid"] == (getuid or os.getuid)()
+
+
+def request_view(workspace, client, request_id, *, resolve=None, confined=None, getuid=None) -> dict:
     """The parsed, normalized request an automated approver matches and reviews.
     Everything is derived again from the request's command; the org is resolved
-    live and must still match the consent."""
+    live and must still match the consent. `confined` (V2 I3) limits payload
+    reads to the request's working folder; by default it applies only when the
+    named approver delegate runs the view (the delegated grant confines again
+    itself), so a human request's view matches what the human grant accepts."""
     req, sha = load_request_hashed(workspace, client, request_id)
     item = _usable_consent(workspace, client)
-    derived = _derive(req, _extra_namespaces(workspace), confined=True)
+    if confined is None:
+        confined = _view_is_delegated(workspace, getuid)
+    derived = _derive(req, _extra_namespaces(workspace), confined=confined)
     org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
     kind = req["kind"]
     minutes = req.get("browser_minutes") if kind == "browser" else None
