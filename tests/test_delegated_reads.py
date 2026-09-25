@@ -32,6 +32,7 @@ pytestmark = [pytest.mark.skipif(not hasattr(os, "getuid"), reason="tier 2 is PO
 SCRIPT = r"""
 import io, json, os, sys
 from collections import namedtuple
+from pathlib import Path
 root, req_id, sha, digest = sys.argv[1:5]
 seen = []
 def hook(event, args):
@@ -42,6 +43,39 @@ def hook(event, args):
     elif event == "os.mkdir":
         seen.append(["mkdir", str(args[0])])
 sys.addaudithook(hook)
+# Fix round 1: sys.addaudithook raises no event at all for os.stat, os.lstat,
+# os.access or the Path methods built on them in this Python (verified
+# empirically), so R46's ownership/mode checks (all lstat-only, never a
+# content read) and ws._inside's Path.is_symlink walk were invisible to the
+# trace above. Wrapped here instead, recording the path before calling the
+# real function; a call may be recorded twice when a wrapped Path method
+# reaches a wrapped os function internally, which only duplicates an already-
+# matched entry and changes no assertion below.
+def _record(path):
+    if isinstance(path, (str, bytes, os.PathLike)):
+        seen.append(["stat", str(path)])
+_real_stat, _real_lstat, _real_access = os.stat, os.lstat, os.access
+def _stat(path, *a, **kw):
+    _record(path)
+    return _real_stat(path, *a, **kw)
+def _lstat(path, *a, **kw):
+    _record(path)
+    return _real_lstat(path, *a, **kw)
+def _access(path, *a, **kw):
+    _record(path)
+    return _real_access(path, *a, **kw)
+os.stat, os.lstat, os.access = _stat, _lstat, _access
+_real_path_stat, _real_path_lstat, _real_path_is_symlink = Path.stat, Path.lstat, Path.is_symlink
+def _path_stat(self, *a, **kw):
+    _record(self)
+    return _real_path_stat(self, *a, **kw)
+def _path_lstat(self, *a, **kw):
+    _record(self)
+    return _real_path_lstat(self, *a, **kw)
+def _path_is_symlink(self, *a, **kw):
+    _record(self)
+    return _real_path_is_symlink(self, *a, **kw)
+Path.stat, Path.lstat, Path.is_symlink = _path_stat, _path_lstat, _path_is_symlink
 from torque import approval
 Org = namedtuple("Org", "org_id_18 detected_org_type is_production instance_url")
 orgs = {"acme-dev": Org("00D000000000003AAA", "developer", False, "https://acme-dev.develop.my.salesforce.com")}

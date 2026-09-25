@@ -371,29 +371,45 @@ def _dirs(workspace, client, create: bool = True) -> dict[str, Path]:
 # Traced against the code as it stands after D1-D18, not copied from the plan:
 # `_grant_delegated`, `deny_delegated`, `launch.create_binding` and the
 # delegated lookup/denial readers they call (`find_by_idempotency_key`,
-# `delegated_denials`, `_granted_for`) between them open every path below and
-# nothing else outside it. `workspace.json` and `clients/{client}/consent.json`
-# are read for content (R46 only stats their ownership and mode, which needs
-# no read access at all); `clients/{client}/changes` and `{cwd}` are bare
-# because path resolution into them needs the folder itself traversable even
-# though nothing here lists them directly (`clients/{client}/changes/*` covers
+# `delegated_denials`, `_granted_for`) between them open, scandir, stat or
+# lstat every path below and nothing else outside it (fix round 1: the trace
+# was widened past `open`/`scandir`/`listdir`/`mkdir` to also cover
+# `stat`/`lstat`/`access`, none of which raise a `sys.audit` event in this
+# Python; see `tests/test_delegated_reads.py`). `workspace.json` and
+# `clients/{client}/consent.json` are read for content; R46
+# (`_controls_problem`/`_folder_problem`/`_control_problem`) additionally
+# lstats every one of the bare folders below on every delegated grant, deny,
+# `create_binding` and lookup call, to confirm none of them belongs to or is
+# writable by the approver account, and `ws._inside` (used throughout
+# `workspace.py`/`changes.py` to keep a path inside its root) lstats the same
+# folders again through `Path.is_symlink()` while resolving `clients/{client}`,
+# `clients/{client}/changes` and each `approvals/*` subfolder: `clients`,
+# `clients/{client}`, `clients/{client}/changes`, `clients/{client}/approvals`,
+# `clients/{client}/approvals/requests`, `clients/{client}/approvals/consumed`
+# and `{cwd}` are bare read patterns for exactly this reason, not merely
+# incidental traversal permission (`clients/{client}/changes/*` covers
 # `changes/<id>/change.json`, read for a request's own change and to check for
 # an owner denial; `clients/{client}/changes/**` covers that change's
 # `events/*.json`, read the same way, and reaches deeper than the request
-# needs but costs the approver nothing extra to have). `consent-evidence/*`
-# (the plan's draft list) is not read by any of these calls; consent.json
-# alone decides whether a grant, deny or launch binding may proceed, so it is
-# left out here to keep the approver's grant to exactly the files it opens.
-# The delegated grant never writes a change-record event or activity.jsonl
-# entry (the agent does, when it consumes the approval or claims a binding),
-# so `changes/` and activity.jsonl are not writes here; a request is read by
-# its exact file name only (never listed), so the bare `requests/` folder is
-# not a pattern either, and `consumed/` (the agent's claim markers) is never
-# opened by the approver at all.
-DELEGATED_READS = ("workspace.json", "clients/{client}/client.json", "clients/{client}/consent.json",
-                   "clients/{client}/changes", "clients/{client}/changes/*", "clients/{client}/changes/**",
-                   "clients/{client}/approvals/requests/*.json", "clients/{client}/approvals/granted",
-                   "clients/{client}/approvals/granted/*", "clients/{client}/approvals/denied",
+# needs but costs the approver nothing extra to have; `approvals/granted` and
+# `approvals/denied` are bare read patterns too, both lstat'd the same way and
+# also scandir'd, listed separately below alongside their own `*` write
+# patterns). `consent-evidence/*` (the plan's draft list) is not read by any
+# of these calls; consent.json alone decides whether a grant, deny or launch
+# binding may proceed, so it is left out here to keep the approver's grant to
+# exactly the files and folders it touches. The delegated grant never writes a
+# change-record event or activity.jsonl entry (the agent does, when it
+# consumes the approval or claims a binding), so `changes/` and
+# activity.jsonl are not writes here; a request is read by its exact file
+# name only (never listed), and `consumed/` (the agent's claim markers) is
+# never opened for content by the approver, so both stay off the write tuple
+# even though their bare folders are lstat'd (read) above.
+DELEGATED_READS = ("workspace.json", "clients", "clients/{client}", "clients/{client}/client.json",
+                   "clients/{client}/consent.json", "clients/{client}/changes", "clients/{client}/changes/*",
+                   "clients/{client}/changes/**", "clients/{client}/approvals",
+                   "clients/{client}/approvals/requests", "clients/{client}/approvals/requests/*.json",
+                   "clients/{client}/approvals/granted", "clients/{client}/approvals/granted/*",
+                   "clients/{client}/approvals/consumed", "clients/{client}/approvals/denied",
                    "clients/{client}/approvals/denied/*", "{cwd}", "{cwd}/**")
 DELEGATED_WRITES = ("clients/{client}/approvals/granted/*", "clients/{client}/approvals/denied/*")
 
