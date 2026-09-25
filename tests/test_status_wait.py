@@ -249,3 +249,51 @@ def test_a_denial_wins_over_a_grant_for_the_same_request(tmp_path, monkeypatch):
     state, detail = approval.decision(root, "Acme", req["id"])
     assert (root / "clients/acme/approvals/granted" / f"{record['id']}.json").is_file()
     assert state == "denied" and detail["id"] == denial["id"]
+
+
+# --- V2 I4: denial loading fails closed. An unreadable denials folder and a denial ---
+# whose fields, approver identity or request binding do not check out are errors
+# (exit 2), never "no denial" (pending, then timeout 22) and never denied (20).
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads any folder")
+def test_an_unreadable_denials_folder_is_an_error_not_a_timeout(tmp_path, monkeypatch, capsys):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    folder = ws.load_client(root, "Acme")[0] / "approvals" / "denied"
+    as_agent(monkeypatch)
+    folder.chmod(0)
+    try:
+        with pytest.raises(delegation.Refusal) as info:
+            approval.decision(root, "Acme", req["id"])
+        code = status(root, req)
+    finally:
+        folder.chmod(0o755)
+    assert info.value.reason_class == "denial-unreadable" and code == 2
+
+
+@pytest.mark.parametrize("field, value", [("approver_kind", "robot"), ("delegated", False),
+                                          ("request_sha256", "wrong"), ("request_sha256", "sha256:" + "0" * 64),
+                                          ("approver_uid", "1"), ("approver", "someone-else"),
+                                          ("approver_model", None), ("reason_class", 5), ("reason", ""),
+                                          ("id", "dny-bad"), ("request_id", 7), ("denied_at", "not a time")])
+def test_an_invalid_denial_is_an_error_not_denied(tmp_path, monkeypatch, capsys, field, value):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    record = deny(root, req)
+    path = ws.load_client(root, "Acme")[0] / "approvals" / "denied" / f"{record['id']}.json"
+    data = json.loads(path.read_text())
+    data[field] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+    as_agent(monkeypatch)
+    with pytest.raises(delegation.Refusal) as info:
+        approval.decision(root, "Acme", req["id"])
+    assert info.value.reason_class == "denial-unreadable"
+    assert status(root, req) == 2
+
+
+def test_a_valid_denial_still_reads_as_denied(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req = flow_request(root)
+    deny(root, req)
+    as_agent(monkeypatch)
+    assert approval.decision(root, "Acme", req["id"])[0] == "denied"

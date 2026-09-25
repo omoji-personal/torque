@@ -19,6 +19,7 @@ Design and limits: docs/connected-approval.md."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import fnmatch
 import hashlib
 import hmac
 import json
@@ -1722,12 +1723,28 @@ def delegated_denials(workspace, client, *, config=None, control_stat=None) -> l
     names as approver (for example: workspace.json was edited to name a
     different approver_uid than the one that actually wrote the file), is still
     filtered out silently: it is simply not an authentic denial from the account
-    currently named, not evidence the control files cannot be trusted."""
+    currently named, not evidence the control files cannot be trusted.
+
+    V2 I4: a denied/ folder that exists but cannot be stat'ed or listed raises
+    `denial-unreadable`, and so does an approver-owned denial whose fields,
+    file name or recorded identity do not check out (`_denial_problem`)."""
     config = config if config is not None else _config(workspace)
     item = delegation.delegate_for(config, "approver")
     dirs = _dirs(workspace, client, create=False)
     folder = dirs["denied"]
-    if item is None or item["uid"] != config.get("approver_uid") or not folder.is_dir():
+    if item is None or item["uid"] != config.get("approver_uid"):
+        return []
+    # V2 I4: only a folder that does not exist means "no denials"; one that cannot
+    # be stat'ed or listed is an error (`Path.is_dir()` and `glob` would both have
+    # read it as empty).
+    try:
+        folder_st = os.stat(folder)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    except OSError as exc:
+        raise delegation.Refusal("denial-unreadable", f"{folder} cannot be read ({exc.strerror or exc}); "
+                                                      "nothing was decided") from None
+    if not stat.S_ISDIR(folder_st.st_mode):
         return []
     approver = config.get("approver_uid")
     if config.get("approval_verify") == "owner-uid" and type(approver) is int:
@@ -1739,21 +1756,78 @@ def delegated_denials(workspace, client, *, config=None, control_stat=None) -> l
         controls = _controls_problem(root, dirs["client"], approver, control_stat=control_stat)
         if controls:
             raise delegation.Refusal("not-delegated", controls)
+    try:
+        names = sorted(entry.name for entry in os.scandir(folder))
+    except OSError as exc:
+        raise delegation.Refusal("denial-unreadable", f"{folder} cannot be listed ({exc.strerror or exc}); "
+                                                      "nothing was decided") from None
     out = []
-    for path in sorted(folder.glob("dny-*.json")):
+    slug = ws.slug_for(client)
+    for path in [folder / n for n in names if fnmatch.fnmatch(n, "dny-*.json")]:
         record = _read(path)
         if record is None or record.get("schema") != DENIAL_SCHEMA or any(k not in record for k in DENIAL_REQUIRED):
             raise delegation.Refusal("denial-unreadable",
                                      f"{path} exists but cannot be trusted as a denial; nothing was decided")
-        if not _approver_owned(path, config) and path.name == f"{record.get('id')}.json" \
-                and record.get("client") == ws.slug_for(client):
-            out.append(record)
+        if _approver_owned(path, config):
+            continue
+        problem = _denial_problem(record, path, item, slug)
+        if problem:
+            raise delegation.Refusal("denial-unreadable", f"{path} is not a valid denial ({problem}); nothing "
+                                                          "was decided")
+        out.append(record)
     return out
 
 
+SHA256_TEXT = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+def _denial_problem(record: dict, path: Path, item: dict, slug: str) -> str:
+    """V2 I4: why an approver-owned denial file is not a valid denial; "" when it
+    is. Every field has its type, and the recorded identity is the workspace's
+    delegated approver's (same account, uid and kind, `delegated` true, a model
+    for an AI approver and none for a person)."""
+    kind, model = record.get("approver_kind"), record.get("approver_model")
+    if not _valid_id(record.get("id"), "dny-") or path.name != f"{record['id']}.json":
+        return "its id does not match the file name"
+    if not _valid_id(record.get("request_id"), "req-") or record.get("client") != slug:
+        return "its request or client is not this one"
+    if not isinstance(record.get("request_sha256"), str) or not SHA256_TEXT.fullmatch(record["request_sha256"]):
+        return "its request_sha256 is not a SHA-256"
+    if record.get("change") is not None and not isinstance(record.get("change"), str):
+        return "its change is not a change id"
+    if not isinstance(record.get("reason_class"), str) or not REASON_CLASS.fullmatch(record["reason_class"]) \
+            or not isinstance(record.get("reason"), str) or not record["reason"].strip():
+        return "its reason class or reason is missing"
+    if record.get("delegated") is not True or kind != item["kind"] or type(record.get("approver_uid")) is not int \
+            or record.get("approver_uid") != item["uid"] or record.get("approver") != item["account"]:
+        return "it was not recorded by the workspace's delegated approver"
+    if (kind == "ai" and (not isinstance(model, str) or not delegation.MODEL_RE.fullmatch(model))) \
+            or (kind == "human" and model is not None):
+        return "its approver model does not match the approver's kind"
+    try:
+        _epoch(record.get("denied_at"))
+    except (TypeError, ValueError):
+        return "its denied_at is not a time"
+    return ""
+
+
 def _delegated_denial(workspace, client, request_id, *, control_stat=None) -> dict | None:
-    return next((d for d in delegated_denials(workspace, client, control_stat=control_stat)
-                if d.get("request_id") == request_id), None)
+    """The delegated denial of `request_id`, or None. V2 I4: a denial is bound to
+    the request file it reviewed; one whose request_sha256 is not the request's
+    current SHA-256 is an error, never read as this request's denial."""
+    found = next((d for d in delegated_denials(workspace, client, control_stat=control_stat)
+                  if d.get("request_id") == request_id), None)
+    if found is None:
+        return None
+    try:
+        current = load_request_hashed(workspace, client, request_id)[1]
+    except ws.WorkspaceError as exc:
+        raise delegation.Refusal("denial-unreadable", f"the denial of {request_id} cannot be checked against "
+                                                      f"its request: {exc}") from None
+    if found.get("request_sha256") != current:
+        raise delegation.Refusal("denial-unreadable", f"the denial of {request_id} was not made for the request "
+                                                      "file as it stands; nothing was decided")
+    return found
 
 
 def _problem(record: dict, path: Path, config: dict, client: str, now: float) -> str:
