@@ -97,7 +97,9 @@ unchanged.
     default access list entry for the approver is not masked. Elsewhere the modes stay
     0600 and 0700.
 - Documentation: [delegated approver](docs/delegated-approver.md), with the provisioning
-  order, folder layout, paths the approver needs, reason classes and limits;
+  order, folder layout, paths the approver needs (each folder on the way to the request's
+  working folder included: resolving links there checks it without following them), reason
+  classes and limits;
   [connected mode](docs/connected-approval.md) links it and shows each doctor probe under
   both profiles; the [alpha 16 record](docs/validation-alpha16.md).
 

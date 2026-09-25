@@ -209,6 +209,18 @@ first and seen failing:
 
 No existing test changed in this round.
 
+Fix round V2-5 fixed three tests that skip or pass differently inside an AI session and
+failed in CI (Linux and macOS). No runtime behavior changed:
+
+| item | fix | tests |
+|---|---|---|
+| ACL names | The Linux access-list test read `getfacl` without `-n`, so CI printed uid 65534 as `nobody`. It now reads numeric ids and checks the approver entry's effective permission: `---` before the mask opens, `r--` after | test_default_acl::test_real_default_acl_entry_reaches_a_new_file, ::test_approver_entry_reads_getfacl_numeric_output |
+| Read set | The delegated grant lstats each folder on the way to the working folder (`clients/acme/cases` in the trace) while `os.path.realpath` resolves links for the payload-root check (V2 I3). The check stays; `DELEGATED_READS` gains `{cwd_parent}`, expanded by `approval.delegated_path_patterns` into exactly those folders, and the docs table lists it. The trace test stays strict | test_delegated_reads::test_the_grant_touches_only_documented_paths, test_delegated_path_patterns (4 tests) |
+| Session order | The CLI test for `approval permissions --write --delegated` took its AI session from the process running pytest, which CI is not. The session is now injected (either environment marker, or a `claude` ancestor alone), and a control with neither reaches `not-delegated`, proving the agent-session check runs first. The code order was already right | test_permission_profiles::test_cli_permissions_write_unattended_delegated_refuses_an_agent_session (3 cases), ::test_cli_permissions_write_delegated_outside_a_session_reaches_the_delegate_check |
+
+Three alpha 16 tests changed in this round (the first test named in each row), none of
+which existed at `dea2041`.
+
 Rulings on the remaining V2 items:
 
 - G01 (starting point): the alpha 15 candidate was merged to main as a commit whose tree
