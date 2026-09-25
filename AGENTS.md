@@ -4,7 +4,7 @@ Torque continues the working JusticeserverClaude framework. Preserve its practic
 
 Use README.md and docs/continuation.md for the current implementation contract. No default global CLI interception or tool-specific approval tokens. Use existing Salesforce access and the user's actual authorization for real operations. Never silently select another client or org. Keep client data, auth, logs and recovery artifacts in the selected private workspace, outside tracked source. Report observed, asserted, unknown and untested outcomes distinctly.
 
-Use the relevant recipe from `torque workflows show NAME` and the task-specific guidance under `.claude/rules/`. Review skills live under `.agents/skills/`; technical worker roles are in `.claude/agents/`. The host chooses the model. No separate model-tier escalation system is required.
+Use the relevant recipe from `torque workflows show NAME` and the task-specific guidance under `.claude/rules/`. Review and nonprofit knowledge skills live under `.agents/skills/` ([list](docs/skills.md)); technical worker roles are in `.claude/agents/`. The host chooses the model. No separate model-tier escalation system is required.
 
 Source Justiceserver workspace is read-only during this migration. Do not import its customer records, credentials, internal Trello, managed-package source, private documents or org mappings into Torque. Preserve useful workflows and generic implementations; synthetic examples must be clearly identified.
 

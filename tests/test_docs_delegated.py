@@ -43,22 +43,23 @@ def test_doc_shows_each_probe_answer_under_claude_p():
         assert answer in text, answer
 
 
-def test_version_is_alpha16():
-    assert torque.__version__ == "2.0.0a16"
-    assert 'version = "2.0.0a16"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+def test_version_is_alpha16_or_later():
+    import re
+    assert re.fullmatch(r"2\.0\.0a(\d+)", torque.__version__) and int(torque.__version__[6:]) >= 16
+    assert f'version = "{torque.__version__}"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_changelog_readme_and_record_for_alpha16():
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    top = changelog.split("\n## ", 2)[1]
-    assert top.startswith("2.0.0a16 - delegated approver, ")
-    flat = " ".join(top.split())
+    section = changelog.split("\n## 2.0.0a16 - ", 1)[1].split("\n## ", 1)[0]
+    assert section.startswith("delegated approver, ")
+    flat = " ".join(section.split())
     assert "torque approval permissions" in flat and "--write" in flat
     assert "approver_kind" in flat and "sf org open" in flat
     record = (ROOT / "docs" / "validation-alpha16.md").read_text(encoding="utf-8")
     assert "## Edited a15 tests" in record and "## Invariant verification" in record and "Round 0b" in record
     readme = (ROOT / "README.md").read_text(encoding="utf-8").split("\n## ", 1)[0]
-    assert "2.0.0a16" in readme and "delegated-approver.md" in readme
+    assert torque.__version__ in readme and "delegated-approver.md" in readme
     connected = (ROOT / "docs" / "connected-approval.md").read_text(encoding="utf-8")
     assert "delegated-approver.md" in connected
 
