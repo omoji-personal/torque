@@ -66,8 +66,16 @@ def register(sub) -> None:
     grant.add_argument("--payload-digest", help="bind this grant to the reviewed payload.digest from "
                                                 "`approval show --json` (\"none\" when it has none; "
                                                 "delegated: required)")
+    grant.add_argument("--idempotency-key", help="delegated: a retry with this same key, request, "
+                                                 "--request-sha256 and --payload-digest returns the earlier "
+                                                 "grant instead of making a new one (8 to 128 letters, digits "
+                                                 "and : . _ -)")
     grant.add_argument("--json", action="store_true",
                        help="print the approval record; the review screen goes to stderr")
+    lookup = actions.add_parser("lookup", help="find an earlier delegated grant by its idempotency key")
+    _client_args(lookup)
+    lookup.add_argument("--idempotency-key", required=True, help="the key an earlier `grant --idempotency-key` used")
+    lookup.add_argument("--json", action="store_true")
     deny = actions.add_parser("deny", help="consultant only, at a real terminal")
     deny.add_argument("request_id")
     _client_args(deny)
@@ -238,13 +246,14 @@ def _grant(p) -> int:
     if p.delegated:
         record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component, out=out,
                                 delegated=True, model_id=p.model_id, request_sha256=p.request_sha256,
-                                payload_digest=p.payload_digest)
+                                payload_digest=p.payload_digest, idempotency_key=p.idempotency_key)
     else:
         # D6: the owner may also name the reviewed request's SHA-256 and payload digest
         # (from `approval show --json`), binding this grant to exactly what was reviewed.
         record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component, out=out,
                                 report=approval.live_deploy_report, audit_trail=p.audit_trail,
-                                request_sha256=p.request_sha256, payload_digest=p.payload_digest)
+                                request_sha256=p.request_sha256, payload_digest=p.payload_digest,
+                                idempotency_key=p.idempotency_key)
     if p.json:
         _print(record)
         return 0
@@ -254,6 +263,21 @@ def _grant(p) -> int:
     else:
         print("The agent may now run exactly:")
         print(f"  {approval.printable(record['command'])}")
+    return 0
+
+
+def _lookup(p) -> int:
+    """D7: find an earlier delegated grant by its idempotency key. Exit 0 and the
+    record when one is found, exit 1 and nothing on stdout when none is."""
+    from . import approval
+    record = approval.find_by_idempotency_key(p.workspace, p.client, p.idempotency_key)
+    if record is None:
+        return 1
+    if p.json:
+        _print(record)
+        return 0
+    print(f"{record['id']} for {record['request_id']}, granted {record['granted_at']}, "
+          f"until {record['expires_at']}.")
     return 0
 
 
@@ -354,6 +378,8 @@ def run(parsed, tail: list[str] | None) -> int:
         return _request(parsed, tail)
     if parsed.action == "grant":
         return _grant(parsed)
+    if parsed.action == "lookup":
+        return _lookup(parsed)
     if parsed.action == "deny":
         from . import approval
         approval.deny(parsed.workspace, parsed.client, parsed.request_id, parsed.reason)

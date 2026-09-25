@@ -63,6 +63,9 @@ REQUIRED = ("schema", "id", "request_id", "client", "change", "kind", "command",
 WRAPPER_WINDOW = 120
 _ID_CHARS = set("0123456789abcdef")
 REQUEST_TTL = 3600
+# An idempotency key a caller supplies (task D7): 8 to 128 letters, digits and : . _ -,
+# starting with a letter or digit.
+IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]{7,127}\Z")
 VIEW_SCHEMA = "torque.approval-request-view/1"
 # sf argv[1:3] (or [1:2]) -> the view's normalized operation name.
 _SF_OPERATIONS = {("project", "deploy", "start"): "deploy", ("project", "deploy", "quick"): "deploy",
@@ -1081,7 +1084,11 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
     change record is the agent's; the gate logs the grant when the approval is used).
     Every refusal is a delegation.Refusal with a reason class: an unreadable,
     future-dated or underivable request or change record is `request-changed`; a
-    request past the request TTL is `request-expired`."""
+    request past the request TTL is `request-expired`. With `idempotency_key`
+    (D7), a repeat of the exact same request, reviewed hash and payload digest
+    returns the earlier grant instead of making a new one; the agent-session,
+    tier 2, R46 control-file/folder and reviewed-hash checks above still run on
+    every call, so an idempotency key never bypasses them."""
     actor, config, root, config_st = delegation._delegated_proof(
         workspace, "approver", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
         root_owner=root_owner)
@@ -1095,10 +1102,26 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
     controls = _controls_problem(root, client_folder, config["approver_uid"], workspace_st=config_st)
     if controls:
         raise delegation.Refusal("not-delegated", controls)
+    # The client folder is already known good (the R46 check just read it), so this
+    # cannot fail where the earlier try/except above needed to catch it.
+    dirs = _dirs(workspace, client, create=False)
     if not isinstance(request_sha256, str) or not request_sha256 \
             or not isinstance(payload_digest, str) or not payload_digest:
         raise delegation.Refusal("request-changed", "a delegated grant names the reviewed request's SHA-256 and "
                                                     "payload digest (--request-sha256, --payload-digest)")
+    if idempotency_key is not None:
+        # The R46 controls check above already ran, so a lookup here is trusted the
+        # same as a fresh grant. Only an exact repeat (same request, same reviewed
+        # hash and payload) returns the earlier grant; anything else about this key
+        # is a conflict, never a silent reuse of someone else's review.
+        existing = find_by_idempotency_key(workspace, client, idempotency_key, config=config)
+        if existing is not None:
+            if existing.get("request_id") != request_id or existing.get("reviewed_request_sha256") != request_sha256 \
+                    or (existing.get("payload_digest") or "none") != payload_digest:
+                raise delegation.Refusal("idempotency-conflict", "this idempotency key was already used for a "
+                                                                  "different request or reviewed content; "
+                                                                  "nothing was granted")
+            return existing
     out = out or sys.stdout
     t = now if now is not None else time.time()
     try:
@@ -1144,6 +1167,16 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
                           approver={"approver": actor.account, "approver_uid": actor.uid,
                                     "approver_kind": actor.kind, "approver_model": actor.model,
                                     "delegated": True})
+    if idempotency_key is not None:
+        # Two callers racing for the same key agree on one approval_id here (the
+        # atomic step); a key reserved earlier for a different request is the same
+        # idempotency-conflict as finding a completed grant for one above.
+        reserved = _reserve_key(dirs, idempotency_key, record["id"], request_id)
+        if reserved["request_id"] != request_id:
+            raise delegation.Refusal("idempotency-conflict", "this idempotency key was already used for a "
+                                                              "different request or reviewed content; "
+                                                              "nothing was granted")
+        record["id"] = reserved["approval_id"]
     record["reviewed_request_sha256"] = request_sha256
     record["idempotency_key"] = idempotency_key
     return _publish_grant(workspace, client, record)
@@ -1151,10 +1184,89 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
 
 def _publish_grant(workspace, client, record: dict) -> dict:
     """Write a delegated grant's approval file, readable by the agent account's gate
-    (0644, owned by the approver account that runs this)."""
+    (0644, owned by the approver account that runs this). Two grants that raced to
+    the same reserved id (D7's idempotent retry) both try to publish it; the loser's
+    write fails because the winner's file already exists, and it reads that file
+    back instead of raising, returning it when it is the same idempotent grant."""
     path = _dirs(workspace, client, create=False)["granted"] / f"{record['id']}.json"
-    ws._write_json(path, record)
+    try:
+        ws._write_json(path, record)
+    except ws.WorkspaceError:
+        existing = _read(path)
+        if existing is not None and record.get("idempotency_key") is not None \
+                and existing.get("idempotency_key") == record["idempotency_key"]:
+            return existing
+        raise
     path.chmod(0o644)
+    return record
+
+
+def _approver_owned(path: Path, config: dict) -> str:
+    """"" when the file and its folder belong to the tier 2 approver account and no
+    one else can write them; otherwise why not. Shared by the gate's owner-uid
+    ownership check (F28) and D7's idempotency-marker/record lookup."""
+    approver = config.get("approver_uid")
+    if config.get("approval_verify") != "owner-uid" or type(approver) is not int:
+        return "not a tier 2 workspace"
+    try:
+        st, folder = path.lstat(), path.parent.stat()
+    except OSError:
+        return "missing"
+    if path.is_symlink() or st.st_uid != approver or st.st_mode & 0o022:
+        return "not owned by the approver account, or writable by others"
+    if folder.st_uid != approver or folder.st_mode & 0o022:
+        return "its folder is not the approver account's"
+    return ""
+
+
+def _key_marker(dirs: dict, key: str) -> Path:
+    """The reservation file for an idempotency key: a name derived from the key
+    itself (never the key in the clear in a file name), under approvals/granted so
+    it shares that folder's tier 2 ownership."""
+    return dirs["granted"] / ("idem-" + hashlib.sha256(key.encode()).hexdigest()[:32] + ".json")
+
+
+def _reserve_key(dirs: dict, key: str, approval_id: str, request_id: str) -> dict:
+    """Claim `key` for `approval_id`/`request_id`, or return whoever claimed it
+    first. The claim is the atomic step (O_EXCL): two callers racing for the same
+    key agree on one approval_id without a lock."""
+    marker = _key_marker(dirs, key)
+    value = {"key": key, "approval_id": approval_id, "request_id": request_id}
+    if _exclusive(marker, value):
+        marker.chmod(0o644)
+        return value
+    found = _read(marker)
+    if not found or found.get("key") != key or not _valid_id(found.get("approval_id"), "apr-"):
+        raise ws.WorkspaceError(f"the idempotency marker for {key} is unreadable; nothing was granted")
+    return found
+
+
+def find_by_idempotency_key(workspace, client, key, *, config=None) -> dict | None:
+    """The approval already granted under `key`, or None when no grant has
+    completed for it yet (no reservation, a reservation with no published
+    approval, or either file untrustworthy under this workspace's tier 2 rule).
+    R46 keeps running here too: a lookup in a tier 2 workspace whose control files
+    or folders belong to the approver account trusts nothing it finds (D7)."""
+    if not isinstance(key, str) or not IDEMPOTENCY_KEY.fullmatch(key):
+        raise ws.WorkspaceError("an idempotency key is 8 to 128 letters, digits and : . _ -")
+    config = config if config is not None else _config(workspace)
+    dirs = _dirs(workspace, client, create=False)
+    marker = _key_marker(dirs, key)
+    found = _read(marker)
+    if not found or _approver_owned(marker, config):
+        return None
+    approver = config.get("approver_uid")
+    if config.get("approval_verify") == "owner-uid" and type(approver) is int:
+        try:
+            root = ws.load_workspace(workspace)[0]
+        except (OSError, ws.WorkspaceError):
+            return None
+        if _controls_problem(root, dirs["client"], approver):
+            return None
+    path = dirs["granted"] / f"{found.get('approval_id')}.json"
+    record = _read(path)
+    if record is None or _approver_owned(path, config) or record.get("idempotency_key") != key:
+        return None
     return record
 
 
@@ -1212,11 +1324,12 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
             return "owner-uid approvals are not supported on this platform"
         if type(approver) is not int or approver == os.getuid():
             return "tier 2 needs a separate approver account; approver_uid is this account"
-        if st.st_uid != approver or st.st_mode & 0o022:
-            return "the approval file's owner is not the approver account, or others can write it"
-        folder = path.parent.stat()
-        if folder.st_uid != approver or folder.st_mode & 0o022:
-            return "approvals/granted must be owned by the approver account and writable only by it"
+        # F28: the file-and-folder ownership check is the same rule D7's idempotency
+        # lookup trusts a marker or a granted file by (_approver_owned); do not
+        # duplicate it here.
+        if _approver_owned(path, config):
+            return ("the approval file's owner (or its approvals/granted folder's owner) is not the approver "
+                    "account, or others can write it")
         layout = _granted_layout(path, client)
         if layout is None:
             return "the approval file is not in the workspace's clients/<client>/approvals/granted layout"
