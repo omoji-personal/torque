@@ -2187,8 +2187,58 @@ def list_requests(workspace, client) -> list[dict]:
     return out
 
 
+def _before(since: str | None, at) -> bool:
+    """F24: since filters every row type in approval_log by its own timestamp,
+    not only the change-record events. A row with no timestamp of its own
+    (should not happen for a well-formed record) is never filtered out by a
+    since cutoff, the same as a15's own comparison already worked (a plain
+    string comparison, unchanged from a15 for the change-record rows this
+    filter already covered)."""
+    return bool(since) and bool(at) and at < since
+
+
+def _log_time(at) -> float:
+    """The sort key for one approval_log row (oldest first): the row's own
+    created_at parsed to an epoch, not a raw string comparison. The rows this
+    function merges come from more than one writer (`_iso`, always seconds
+    precision; `changes._append` and `ws._now()`, which include microseconds
+    whenever the instant has any), so two ISO strings for the same second can
+    disagree lexically ("...:35.303329+00:00" sorts after "...:35+00:00", a
+    "." comparing greater than a "+", even when the microsecond instant came
+    first): comparing the parsed instants instead keeps the sort correct
+    regardless of which writer produced a row. A missing or unparseable
+    timestamp sorts first, rather than raising or silently landing at the
+    wrong end of the log."""
+    try:
+        return _epoch(at) if at else float("-inf")
+    except ValueError:
+        return float("-inf")
+
+
 def approval_log(workspace, client, since: str | None = None) -> list[dict]:
-    """Approval events across the client's changes, oldest first, for the reviewer's sample."""
+    """Approval activity across the client, oldest first, for the reviewer's
+    sample (spec requirements 19 and 23): change-record events (a15, plus
+    approval_executed's outcome), delegated decisions not yet reflected in a
+    change record, launches and workspace setup steps. Every row carries
+    approver_kind, approver_uid, approver_model, delegated, reason_class and
+    its source: "change record", "decision file", "launch record" or
+    "workspace setup". `since` (F24) filters every row type by its own
+    timestamp.
+
+    A decision file is trusted only the way the gate itself would trust it: a
+    grant is shown only when it passes the same authenticity checks the gate
+    applies before consuming one (`_authentic_grant`: record shape, ownership,
+    R46 on the workspace's control files, the delegated-identity rule), so a
+    forged, unowned or malformed file under approvals/granted/ is never shown
+    as an approver's decision, exactly as it could never be consumed; a
+    denial is read only through `delegated_denials`, which raises rather than
+    silently reporting none on an R46 violation or an unreadable denial file,
+    so an untrustworthy "no denials" state is never mistaken for "nothing was
+    denied" here either (the exception is not caught; it reaches the caller
+    the same way every other reader of approvals/denied/ in this module
+    lets it)."""
+    root, config = ws.load_workspace(workspace)
+    slug = ws.slug_for(client)
     rows = []
     for change in changes.list_changes(workspace, client):
         item = changes.get_change(workspace, client, change["id"])
@@ -2196,11 +2246,14 @@ def approval_log(workspace, client, since: str | None = None) -> list[dict]:
         for event in item["events"]:
             if event["kind"] not in changes.APPROVAL_KINDS and event["kind"] != changes.BEFORE_STATE_KIND:
                 continue
-            if since and event["created_at"] < since:
+            if _before(since, event["created_at"]):
                 continue
             row = {"change": change["id"], **{k: event.get(k) for k in (
                 "created_at", "kind", "request_id", "approval_id", "command", "org_alias", "org_id_18", "org_kind",
-                "approver", "approver_kind", "session_id", "tool_use_id", "reason")}}
+                "approver", "approver_kind", "session_id", "tool_use_id", "reason")},
+                   "approver_uid": event.get("approver_uid"), "approver_model": event.get("approver_model"),
+                   "delegated": event.get("delegated"), "reason_class": event.get("reason_class"),
+                   "source": "change record"}
             if event["kind"] == "approval_consume":
                 # Linked only by job ID (the validated job a quick deploy promotes); other
                 # observations on the org after the use are listed as unlinked.
@@ -2210,8 +2263,64 @@ def approval_log(workspace, client, since: str | None = None) -> list[dict]:
                      "linked": bool(event.get("validated_job")) and j.get("job_id") == event.get("validated_job")}
                     for j in jobs
                     if j.get("target_org") == event.get("org_alias") and j["created_at"] >= event["created_at"]]
+            elif event["kind"] == "approval_executed":
+                # R52 (F46): outcome and exit_status, for this kind only; every
+                # other kind's rows keep exactly their a15 keys and values.
+                row["outcome"] = event.get("outcome")
+                row["exit_status"] = event.get("exit_status")
             rows.append(row)
-    return sorted(rows, key=lambda r: r["created_at"])
+    dirs = _dirs(workspace, client, create=False)
+    logged = {r.get("approval_id") for r in rows if r["kind"] == "approval_grant"}
+    for path, record in _granted(dirs):
+        if not record.get("delegated") or record.get("id") in logged:
+            continue
+        if _before(since, record.get("granted_at")):
+            continue
+        if not _authentic_grant(path, record, config, slug):
+            # Never shown as an approver's grant unless it passes the same
+            # authenticity checks the gate itself applies before consuming
+            # one: a forged, unowned or malformed file falls through exactly
+            # as if it were not there, the same as a grant the gate refuses.
+            continue
+        rows.append({"change": record.get("change"), "created_at": record.get("granted_at"),
+                     "kind": "approval_grant", "request_id": record.get("request_id"),
+                     "approval_id": record.get("id"), "command": record.get("command"),
+                     "org_alias": record.get("org_alias"), "org_id_18": record.get("org_id_18"),
+                     "org_kind": record.get("org_kind"), "approver": record.get("approver"),
+                     "approver_uid": record.get("approver_uid"), "approver_kind": record.get("approver_kind"),
+                     "approver_model": record.get("approver_model"), "delegated": True,
+                     "reason_class": None, "source": "decision file"})
+    for denial in delegated_denials(workspace, client, config=config):
+        if _before(since, denial.get("denied_at")):
+            continue
+        rows.append({"change": denial.get("change"), "created_at": denial.get("denied_at"), "kind": "approval_deny",
+                     "request_id": denial.get("request_id"), "approval_id": None, "command": None,
+                     "reason": denial.get("reason"), "reason_class": denial.get("reason_class"),
+                     "approver": denial.get("approver"), "approver_uid": denial.get("approver_uid"),
+                     "approver_kind": denial.get("approver_kind"), "approver_model": denial.get("approver_model"),
+                     "delegated": True, "source": "decision file"})
+    for path in sorted(dirs["consumed"].glob("*.launch")):
+        record = _read(path)
+        if not record or record.get("kind") not in ("human", "ai"):
+            continue
+        if _before(since, record.get("created_at")):
+            continue
+        approver = record.get("approver") or {}
+        rows.append({"change": None, "created_at": record.get("created_at"), "kind": "launch",
+                     "request_id": None, "approval_id": record.get("id"), "command": None,
+                     "approver": approver.get("approver"), "approver_uid": approver.get("approver_uid"),
+                     "approver_kind": record["kind"] if record["kind"] == "human" else approver.get("approver_kind"),
+                     "approver_model": approver.get("approver_model"), "delegated": record["kind"] != "human",
+                     "reason_class": None, "source": "launch record"})
+    for step in delegation.setup_steps(root):
+        if _before(since, step.get("at")):
+            continue
+        rows.append({"change": None, "created_at": step.get("at"), "kind": "setup", "request_id": None,
+                     "approval_id": None, "command": step["step"], "approver": step.get("account"),
+                     "approver_uid": step.get("uid"), "approver_kind": step.get("kind"),
+                     "approver_model": step.get("model"), "delegated": step.get("via") == "delegate",
+                     "reason_class": None, "source": "workspace setup"})
+    return sorted(rows, key=lambda r: _log_time(r["created_at"]))
 
 
 def decision(workspace, client, request_id, *, now=None, config=None) -> tuple[str, dict]:

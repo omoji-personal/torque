@@ -423,6 +423,12 @@ def _list(p) -> int:
     return 0
 
 
+# Source tags printed at the end of a `_log` text line, for every row source
+# except "change record" (a15's own rows carry none, so a15 output is unchanged).
+_LOG_SOURCE_TAGS = {"decision file": "[from decision file]", "launch record": "[launch]",
+                    "workspace setup": "[setup]"}
+
+
 def _log(p) -> int:
     from . import approval
     rows = approval.approval_log(p.workspace, p.client, p.since)
@@ -431,8 +437,18 @@ def _log(p) -> int:
         return 0
     for row in rows:
         ident = row.get("approval_id") or row.get("request_id") or ""
-        print(f"{row['created_at']} {row['kind']} {ident} {row.get('org_alias') or ''} "
-              f"{row.get('command') or row.get('reason') or ''}".rstrip())
+        line = (f"{row['created_at']} {row['kind']} {ident} {row.get('org_alias') or ''} "
+               f"{row.get('command') or row.get('reason') or ''}").rstrip()
+        kind = row.get("approver_kind")
+        if kind:
+            who = f" ({kind} {row.get('approver') or ''}".rstrip()
+            if row.get("approver_model"):
+                who += f", {row['approver_model']}"
+            line += who + ")"
+        tag = _LOG_SOURCE_TAGS.get(row.get("source"))
+        if tag:
+            line += f" {tag}"
+        print(line)
         for observation in row.get("later_observations") or []:
             link = ("linked: the approval's validated job" if observation.get("linked")
                     else "not linked to this approval (same org, later)")

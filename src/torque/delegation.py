@@ -249,3 +249,39 @@ def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getui
                                                         require_tier2=require_tier2, getuid=getuid, env=env,
                                                         ancestors=ancestors, root_owner=root_owner)
     return actor
+
+
+def setup_steps(root: Path) -> list[dict]:
+    """Who performed each recorded workspace setup step, and how: naming the
+    delegates, setting the AI access mode, writing the permission rules, and
+    each client's consent record and sign-off. Each row is {"step", "at",
+    "kind", "account", "uid", "model", "via"}; a step done before a16
+    recorded no actor and is not listed.
+
+    F25: this lives here, not in doctor_connected (which imports it from
+    here), so that approval.py's log (task D16) can read it without
+    importing doctor_connected: a lower-level module (the approval store)
+    does not depend on a higher-level one (the doctor), even lazily."""
+    from . import consent, permissions
+    steps = []
+    config = ws.load_workspace(root)[1]
+    for step, actor, at in (("delegates", config.get("delegates_changed_by"), config.get("delegates_changed_at")),
+                            ("ai-access", config.get("ai_access_changed_by"), config.get("ai_access_changed_at"))):
+        if isinstance(actor, dict):
+            steps.append({"step": step, "at": at, **actor})
+    sidecar = permissions.load_sidecar(root) or {}
+    if isinstance(sidecar.get("written_by"), dict):
+        steps.append({"step": "permissions", "at": sidecar.get("written_at"), **sidecar["written_by"]})
+    for folder in sorted((root / "clients").iterdir()) if (root / "clients").is_dir() else []:
+        try:
+            item = consent.load_consent(root, folder.name)
+        except (OSError, ws.WorkspaceError):
+            continue
+        if item and isinstance(item.get("recorded_by_actor"), dict):
+            steps.append({"step": f"consent-record:{folder.name}", "at": item.get("recorded_at"),
+                          **item["recorded_by_actor"]})
+        reviewer = (item or {}).get("reviewer") or {}
+        if isinstance(reviewer.get("signed_off_by"), dict):
+            steps.append({"step": f"consent-sign-off:{folder.name}", "at": reviewer.get("signed_off_at"),
+                          **reviewer["signed_off_by"]})
+    return steps
