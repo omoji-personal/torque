@@ -62,6 +62,7 @@ def create_change(workspace: str | Path, client: str, title: str, outcome: str,
               "title": title, "outcome": outcome, "created_at": ws._now(),
               "planned_org": org, "criteria": [{"id": f"AC{i + 1}", "text": text}
                                                 for i, text in enumerate(criteria)]}
+    existed = directory.exists()
     directory.mkdir(mode=0o700, exist_ok=True)
     pending = ws._inside(directory, directory / (".pending-" + uuid4().hex))
     pending.mkdir(mode=0o700)
@@ -69,6 +70,9 @@ def create_change(workspace: str | Path, client: str, title: str, outcome: str,
         (pending / "events").mkdir(mode=0o700)
         (pending / "evidence").mkdir(mode=0o700)
         ws._write_json(pending / "change.json", record)
+        # V2 I6: the delegated approver reads change records.
+        ws.share_with_approver(workspace, *([] if existed else [directory]), pending, pending / "events",
+                               pending / "evidence", pending / "change.json")
         pending.rename(directory / identifier)
     finally:
         if pending.exists():
@@ -118,6 +122,7 @@ def _capture_file(root: Path, source: str | Path) -> dict:
     if not path.is_file():
         raise ws.WorkspaceError(f"evidence file does not exist: {path}")
     directory = ws._inside(root, root / "evidence")
+    existed = directory.exists()
     directory.mkdir(mode=0o700, exist_ok=True)
     suffix = re.sub(r"[^A-Za-z0-9.]", "", path.suffix)[:16]
     name = uuid4().hex + suffix
@@ -132,13 +137,20 @@ def _capture_file(root: Path, source: str | Path) -> dict:
     except OSError:
         target.unlink(missing_ok=True)
         raise
+    ws.share_with_approver(_workspace_of(root), *([] if existed else [directory]), target)
     return {"path": "evidence/" + name, "name": path.name,
             "sha256": digest.hexdigest(), "bytes": target.stat().st_size,
             "meaning": "Captured bytes; this alone does not verify the claim."}
 
 
+def _workspace_of(root: Path) -> Path:
+    """The workspace holding a change folder (<workspace>/clients/<slug>/changes/<id>)."""
+    return root.parent.parent.parent.parent
+
+
 def _append(root: Path, record: dict, event: dict) -> dict:
     directory = ws._inside(root, root / "events")
+    existed = directory.exists()
     directory.mkdir(mode=0o700, exist_ok=True)
     at = datetime.now(timezone.utc)
     identifier = at.strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:12]
@@ -146,6 +158,7 @@ def _append(root: Path, record: dict, event: dict) -> dict:
              "change": record["id"], "client": record["client"],
              "created_at": at.isoformat(), **event}
     ws._write_json(ws._inside(root, directory / f"{identifier}.json"), value)
+    ws.share_with_approver(_workspace_of(root), *([] if existed else [directory]), directory / f"{identifier}.json")
     return value
 
 
@@ -225,9 +238,11 @@ def verify_deploy(workspace: str | Path, client: str, identifier: str, org: str,
     evidence = None
     if raw:
         evidence_dir = ws._inside(root, root / "evidence")
+        existed = evidence_dir.exists()
         evidence_dir.mkdir(mode=0o700, exist_ok=True)
         path = ws._inside(root, evidence_dir / (uuid4().hex + ".json"))
         ws.atomic_write_new(path, raw)
+        ws.share_with_approver(_workspace_of(root), *([] if existed else [evidence_dir]), path)
         evidence = {"path": str(path.relative_to(root)), "name": "metadata-api-report.json",
                     "sha256": hashlib.sha256(raw.encode()).hexdigest(), "bytes": path.stat().st_size,
                     "meaning": "Metadata API report from this exact read; technical scope only."}

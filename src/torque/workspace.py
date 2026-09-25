@@ -88,6 +88,53 @@ def atomic_write_new(path: Path, text: str) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+# V2 I6: the extended attribute holding a file's POSIX access list (Linux). It
+# exists only when the file has more than the three mode-bit entries, for example
+# when its folder carries a default entry for the approver account.
+ACL_XATTR = "system.posix_acl_access"
+
+
+def open_acl_mask(path) -> None:
+    """V2 I6: on a file or folder with an extended POSIX access list, add group
+    read (and search, for a folder) to its mode bits. With an access list, the
+    group bits are the access-list mask, and a file created 0600 (a folder 0700)
+    in a folder with a default entry gets an empty mask, which hides that entry.
+    Adding the bits sets the mask; who may read is still decided by the entries
+    the default access list gave the path (the owning group's entry included),
+    never by the bits alone. No-op where `os.getxattr` does not exist (macOS,
+    Windows), for a path without an extended access list, and for a link."""
+    getxattr = getattr(os, "getxattr", None)
+    if getxattr is None or os.name == "nt":
+        return
+    try:
+        found = os.lstat(path)
+        if stat.S_ISLNK(found.st_mode):
+            return
+        getxattr(path, ACL_XATTR, follow_symlinks=False)
+    except OSError:
+        return
+    bits = 0o050 if stat.S_ISDIR(found.st_mode) else 0o040
+    os.chmod(path, (found.st_mode & 0o7777) | bits)
+
+
+def share_with_approver(workspace, *paths) -> None:
+    """V2 I6: `open_acl_mask` on each path the delegated approver reads (the
+    agent's requests and change records and the folders Torque creates for
+    them), only in a delegated tier 2 workspace. A workspace without a delegated
+    approver, macOS and Windows keep the private 0600 and 0700 modes."""
+    if getattr(os, "getxattr", None) is None or os.name == "nt" or not paths:
+        return
+    from . import delegation
+    try:
+        config = load_workspace(workspace)[1]
+    except (OSError, WorkspaceError):
+        return
+    if not delegation.delegated_tier2(config):
+        return
+    for path in paths:
+        open_acl_mask(path)
+
+
 def _atomic_replace_text(path: Path, text: str) -> None:
     """Replace an explicitly managed private file without exposing a partial write."""
     fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)

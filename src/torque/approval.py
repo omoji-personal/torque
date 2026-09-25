@@ -398,11 +398,20 @@ def _dirs(workspace, client, create: bool = True) -> dict[str, Path]:
     folder, _, _ = ws.load_client(workspace, client)
     base = ws._inside(folder, folder / "approvals")
     out = {"client": folder, "base": base}
+    created = []
+    base_existed = not create or base.exists()
     for name in ("requests", "granted", "consumed"):
         out[name] = ws._inside(folder, base / name)
         if create:
+            existed = out[name].exists()
             out[name].mkdir(mode=0o700, parents=True, exist_ok=True)
+            if not existed and name != "granted":
+                created.append(out[name])
     out["denied"] = ws._inside(folder, base / "denied")
+    if created:
+        # V2 I6: folders the delegated approver reads through a default access
+        # list entry (never an existing folder: requirement 22).
+        ws.share_with_approver(workspace, *([] if base_existed else [base]), *created)
     return out
 
 
@@ -779,6 +788,7 @@ def create_request(workspace, client, change_id, org_alias, *, argv=None, mcp=No
               "validated_job": validated_job, "created_at": _iso(time.time())}
     dirs = _dirs(workspace, client)
     ws._write_json(dirs["requests"] / f"{ident}.json", record)
+    ws.share_with_approver(workspace, dirs["requests"] / f"{ident}.json")
     changes.append_approval_event(workspace, client, change_id, "approval_request",
                                   {"request_id": ident, "command": derived["command"], "request_kind": kind,
                                    "command_sha256": derived["command_sha256"],
@@ -1823,8 +1833,12 @@ SHA256_TEXT = re.compile(r"sha256:[0-9a-f]{64}\Z")
 def _denial_problem(record: dict, path: Path, item: dict, slug: str) -> str:
     """V2 I4: why an approver-owned denial file is not a valid denial; "" when it
     is. Every field has its type, and the recorded identity is the workspace's
-    delegated approver's (same account, uid and kind, `delegated` true, a model
-    for an AI approver and none for a person)."""
+    delegated approver's (same account and uid, `delegated` true, a known kind,
+    a model for an AI approver and none for a person). The kind is checked for
+    consistency with the record's own model, not against the delegate's current
+    kind: a denial stays history when the same account's delegate kind is later
+    changed (a person replacing an automated reviewer), and the file's ownership
+    already ties it to the approver account."""
     kind, model = record.get("approver_kind"), record.get("approver_model")
     if not _valid_id(record.get("id"), "dny-") or path.name != f"{record['id']}.json":
         return "its id does not match the file name"
@@ -1837,8 +1851,9 @@ def _denial_problem(record: dict, path: Path, item: dict, slug: str) -> str:
     if not isinstance(record.get("reason_class"), str) or not REASON_CLASS.fullmatch(record["reason_class"]) \
             or not isinstance(record.get("reason"), str) or not record["reason"].strip():
         return "its reason class or reason is missing"
-    if record.get("delegated") is not True or kind != item["kind"] or type(record.get("approver_uid")) is not int \
-            or record.get("approver_uid") != item["uid"] or record.get("approver") != item["account"]:
+    if record.get("delegated") is not True or kind not in delegation.KINDS \
+            or type(record.get("approver_uid")) is not int or record.get("approver_uid") != item["uid"] \
+            or record.get("approver") != item["account"]:
         return "it was not recorded by the workspace's delegated approver"
     if (kind == "ai" and (not isinstance(model, str) or not delegation.MODEL_RE.fullmatch(model))) \
             or (kind == "human" and model is not None):
