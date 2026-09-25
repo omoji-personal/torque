@@ -368,3 +368,49 @@ def test_retry_never_returns_an_invalid_stored_approval(tmp_path, monkeypatch):
     path.write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises((delegation.Refusal, ws.WorkspaceError)):
         _retry(root, req, view)
+
+
+# V2-3 I2: stored approvals are validated by field type, not presence only, and
+# an idempotent retry compares the stored bindings with the freshly derived call.
+
+@pytest.mark.parametrize("field, value", [
+    ("payload_argv", "sf project deploy start"), ("payload_argv", [1, 2]), ("payload_argv", []),
+    ("payload_argv", ["sf", ""]), ("org_id_18", None), ("org_id_18", ""), ("org_id_18", "not-an-org-id"),
+    ("org_id_18", 7), ("call_key", None), ("call_key", "sha256:short"), ("command_sha256", 5),
+    ("command", ["sf"]), ("payload_digest", 12), ("cwd", 3), ("org_alias", ""), ("change", None),
+    ("single_use", "yes"), ("payload_check", 1)])
+def test_v2_3_lookup_refuses_a_stored_approval_with_a_malformed_field(tmp_path, monkeypatch, field, value):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    path = _stored(root, first)
+    record = json.loads(path.read_text())
+    record[field] = value
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert approval.find_by_idempotency_key(root, "Acme", KEY) is None
+
+
+@pytest.mark.parametrize("field, value", [
+    ("call_key", "sha256:" + "a" * 64), ("command_sha256", "sha256:" + "b" * 64),
+    ("payload_digest", "sha256:" + "c" * 64), ("org_id_18", "00D000000000009AAA"),
+    ("payload_argv", ["sf", "project", "deploy", "start", "--metadata", "Flow:Other", "--target-org", "acme-dev"]),
+    ("command", "sf project deploy start --metadata Flow:Other --target-org acme-dev"),
+    ("reviewed_request_sha256", "sha256:" + "d" * 64)])
+def test_v2_3_retry_refuses_a_stored_approval_bound_to_a_different_call(tmp_path, monkeypatch, field, value):
+    """A well-formed stored approval whose bindings (call key, payload digest,
+    org, argv) differ from the call derived again now is not this review's
+    grant; the retry refuses instead of returning it."""
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    path = _stored(root, first)
+    record = json.loads(path.read_text())
+    record[field] = value
+    path.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(delegation.Refusal) as info:
+        _retry(root, req, view)
+    assert info.value.reason_class == "idempotency-conflict"
+
+
+def test_v2_3_an_exact_retry_still_returns_the_earlier_grant(tmp_path, monkeypatch):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    req, view, first = _granted_once(root)
+    assert _retry(root, req, view) == first

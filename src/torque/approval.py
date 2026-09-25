@@ -1374,16 +1374,23 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
             or req.get("org_kind") not in NONPRODUCTION:
         raise delegation.Refusal("org-production-or-unknown", "delegated approvals are refused for production "
                                                               "and unknown orgs; the consultant grants those")
-    if existing is not None:
-        return existing
     ttl = _ttl(req)
-    for line in screen_lines(req, derived, org_id, org_kind, ttl):
-        out.write(line + "\n")
-    out.flush()
     record = _base_record(req, request_id, derived, org_id, org_kind, t=t, ttl=ttl,
                           approver={"approver": actor.account, "approver_uid": actor.uid,
                                     "approver_kind": actor.kind, "approver_model": actor.model,
                                     "delegated": True})
+    if existing is not None:
+        # V2-3 I2: the stored grant is returned only when it binds exactly the call
+        # derived again now (call key, payload, argv, folder, org), not only the
+        # same request id and reviewed hashes.
+        if _retry_binding_mismatch(existing, record) or existing.get("reviewed_request_sha256") != current:
+            raise delegation.Refusal("idempotency-conflict", "the approval stored under this idempotency key "
+                                                              "binds a different call than this request now "
+                                                              "derives; nothing was granted")
+        return existing
+    for line in screen_lines(req, derived, org_id, org_kind, ttl):
+        out.write(line + "\n")
+    out.flush()
     if idempotency_key is not None:
         # Two callers racing for the same key agree on one approval_id here (the
         # atomic step); a key reserved earlier for a different request is the same
@@ -1413,7 +1420,8 @@ def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256,
                                     {"approval_id": record["id"], "request_id": request_id,
                                      "key": idempotency_key}) \
                 or published.get("reviewed_request_sha256") != request_sha256 \
-                or (published.get("payload_digest") or "none") != payload_digest:
+                or (published.get("payload_digest") or "none") != payload_digest \
+                or _retry_binding_mismatch(published, record):
             raise delegation.Refusal("idempotency-conflict", "the approval already stored under this "
                                                               "idempotency key is not a valid grant of this "
                                                               "review; nothing was granted")
@@ -1571,6 +1579,8 @@ def _stored_approval_problem(record: dict, path: Path, config: dict, slug: str, 
             or record.get("idempotency_key") != marker.get("key") \
             or not isinstance(record.get("reviewed_request_sha256"), str) or record.get("delegated") is not True:
         return "malformed approval"
+    if _stored_fields_problem(record):
+        return "malformed approval"
     identity = _identity_problem(record, config, config.get("approval_verify", "hmac"))
     if identity:
         return identity
@@ -1581,6 +1591,43 @@ def _stored_approval_problem(record: dict, path: Path, config: dict, slug: str, 
     if expires < granted or expires - granted > TTL_SECONDS[record["kind"]] + SKEW:
         return "approval window is longer than allowed"
     return ""
+
+
+ORG_ID_18 = re.compile(r"00D[0-9A-Za-z]{15}\Z")
+# V2-3 I2: the fields an idempotent retry compares between the stored approval and
+# the call derived again now (plus the reviewed request hash, compared separately).
+RETRY_BINDINGS = ("kind", "command", "call_key", "command_sha256", "payload_digest", "payload_argv", "cwd",
+                  "org_alias", "org_id_18")
+
+
+def _stored_fields_problem(record: dict) -> bool:
+    """V2-3 I2: True when a stored approval's binding fields do not have the types
+    and shapes a grant writes (presence alone is not enough)."""
+    def text(value) -> bool:
+        return isinstance(value, str) and bool(value)
+
+    def sha(value) -> bool:
+        return isinstance(value, str) and SHA256_TEXT.fullmatch(value) is not None
+    argv = record.get("payload_argv")
+    argv_ok = argv is None or (isinstance(argv, list) and bool(argv) and all(text(a) for a in argv))
+    if not (text(record.get("command")) and text(record.get("change")) and text(record.get("org_alias"))
+            and isinstance(record.get("org_id_18"), str) and ORG_ID_18.fullmatch(record["org_id_18"])
+            and type(record.get("single_use")) is bool and argv_ok
+            and (record.get("payload_digest") is None or sha(record.get("payload_digest")))
+            and sha(record.get("reviewed_request_sha256"))):
+        return True
+    if record["kind"] == "browser":
+        return any(record.get(k) is not None for k in ("call_key", "command_sha256", "payload_argv", "cwd"))
+    if record["kind"] == "command" and argv is None:
+        return True
+    return not (sha(record.get("call_key")) and sha(record.get("command_sha256")) and text(record.get("cwd"))
+                and record.get("payload_check") in ("gate", "wrapper"))
+
+
+def _retry_binding_mismatch(stored: dict, fresh: dict) -> list[str]:
+    """V2-3 I2: the binding fields where a stored approval differs from the record
+    this retry would write now."""
+    return [k for k in RETRY_BINDINGS if stored.get(k) != fresh.get(k)]
 
 
 def printable(text: str) -> str:
