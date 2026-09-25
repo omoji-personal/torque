@@ -5,7 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 
-from torque import consent, delegation, workspace as ws
+from torque import approval, changes, consent, delegation, workspace as ws
 from torque.presence import Presence
 
 YES = lambda: Presence(True, "")
@@ -74,3 +74,13 @@ def within(names, patterns) -> bool:
 def as_agent(monkeypatch):
     """Make gate checks see a separate agent account (uid ME + 1)."""
     monkeypatch.setattr(os, "getuid", lambda: ME + 1)
+
+
+def flow_request(root, argv=None, org="acme-dev", cwd=None):
+    project = Path(cwd) if cwd else Path(root)
+    cid = changes.create_change(root, "Acme", "Flow fix", "Cases escalate", [], org)["id"]
+    flows = project / "force-app" / "main" / "default" / "flows"
+    flows.mkdir(parents=True, exist_ok=True)
+    (flows / "Case_Escalation.flow-meta.xml").write_text("<Flow>v2</Flow>", encoding="utf-8")
+    return approval.create_request(root, "Acme", cid, org, argv=list(argv or WRITE), resolve=ORGS.get,
+                                   cwd=project)

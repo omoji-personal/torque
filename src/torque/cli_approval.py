@@ -66,6 +66,10 @@ def register(sub) -> None:
     status.add_argument("request_id")
     _client_args(status)
     status.add_argument("--json", action="store_true")
+    show = actions.add_parser("show", help="the normalized request view an automated approver reads")
+    show.add_argument("request_id")
+    _client_args(show)
+    show.add_argument("--json", action="store_true")
     listing = actions.add_parser("list", help="list requests and approvals")
     _client_args(listing)
     listing.add_argument("--json", action="store_true")
@@ -246,6 +250,17 @@ def _status(p) -> int:
     return 0
 
 
+def _show(p) -> int:
+    from . import approval
+    view = approval.request_view(p.workspace, p.client, p.request_id)
+    if p.json:
+        _print(view)
+        return 0
+    for line in view["screen"]:
+        print(line)
+    return 0
+
+
 def _list(p) -> int:
     from . import approval
     view = {"requests": approval.list_requests(p.workspace, p.client),
@@ -321,6 +336,8 @@ def run(parsed, tail: list[str] | None) -> int:
         return 0
     if parsed.action == "status":
         return _status(parsed)
+    if parsed.action == "show":
+        return _show(parsed)
     if parsed.action == "list":
         return _list(parsed)
     if parsed.action == "log":

@@ -344,14 +344,21 @@ RECORD_WRITES = (("data", "update", "record"), ("data", "delete", "record"), ("d
 
 
 def write_components(argv: list[str], cwd: Path) -> list[str]:
-    """What a write changes, when Torque can list it: deploy components, or one
-    record (Record:Object:Id). Empty means it cannot be listed (anonymous Apex, bulk
-    loads, a deploy with no selector), so only a written recovery path covers it."""
+    """What a write changes, when Torque can list it: deploy components, one record
+    (Record:Object:Id), or an upsert's object and external ID field
+    (Record:Object:external:Field, both flag spellings). Empty means it cannot be
+    listed (anonymous Apex, bulk loads, a deploy with no selector), so only a
+    written recovery path covers it."""
     words = [w for w in argv[1:] if not w.startswith("-")][:3]
     if tuple(words) in RECORD_WRITES:
         sobject = argv_flags.values(argv, ("-s", "--sobject"))
+        if not sobject:
+            return []
+        if words[1] == "upsert":
+            field = argv_flags.values(argv, ("-i", "--external-id"))
+            return [f"Record:{sobject[0]}:external:{field[0]}"] if field else []
         record_id = argv_flags.values(argv, ("-i", "--record-id"))
-        return [f"Record:{sobject[0]}:{record_id[0]}"] if sobject and record_id else []
+        return [f"Record:{sobject[0]}:{record_id[0]}"] if record_id else []
     if any(tok in ("deploy", "force:source:deploy", "force:mdapi:deploy") for tok in argv[1:4]):
         return list(dict.fromkeys(deploy_components(argv, cwd) + destructive_components(argv, cwd)))
     return []

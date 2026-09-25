@@ -61,6 +61,20 @@ REQUIRED = ("schema", "id", "request_id", "client", "change", "kind", "command",
             "expires_at", "single_use")
 WRAPPER_WINDOW = 120
 _ID_CHARS = set("0123456789abcdef")
+REQUEST_TTL = 3600
+VIEW_SCHEMA = "torque.approval-request-view/1"
+# sf argv[1:3] (or [1:2]) -> the view's normalized operation name.
+_SF_OPERATIONS = {("project", "deploy", "start"): "deploy", ("project", "deploy", "quick"): "deploy",
+                  ("project", "deploy", "resume"): "deploy", ("project", "delete"): "delete",
+                  ("data", "create"): "data create", ("data", "update"): "data update",
+                  ("data", "upsert"): "data upsert", ("data", "import"): "data import",
+                  ("data", "delete"): "delete", ("apex", "run"): "apex run", ("org", "open"): "org open"}
+# Legacy sfdx word -> the view's normalized operation name.
+_SFDX_OPERATIONS = {"force:source:deploy": "deploy", "force:mdapi:deploy": "deploy", "force:source:push": "deploy",
+                    "force:data:record:create": "data create", "force:data:record:update": "data update",
+                    "force:data:record:delete": "delete", "force:apex:execute": "apex run",
+                    "force:org:open": "org open"}
+_TORQUE_OPERATIONS = {"deploy": "deploy", "recover": "recover", "revert": "revert"}
 
 
 def _iso(t: float) -> str:
@@ -306,6 +320,7 @@ def _dirs(workspace, client, create: bool = True) -> dict[str, Path]:
         out[name] = ws._inside(folder, base / name)
         if create:
             out[name].mkdir(mode=0o700, parents=True, exist_ok=True)
+    out["denied"] = ws._inside(folder, base / "denied")
     return out
 
 
@@ -639,6 +654,131 @@ def load_request(workspace, client, request_id) -> dict:
     return req
 
 
+def load_request_hashed(workspace, client, request_id) -> tuple[dict, str]:
+    """The request and the SHA-256 of the exact bytes it was read from."""
+    if not _valid_id(request_id, "req-"):
+        raise ws.WorkspaceError("a request ID looks like req-0123456789ab")
+    path = _dirs(workspace, client, create=False)["requests"] / f"{request_id}.json"
+    try:
+        raw = path.read_bytes()
+        req = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise ws.WorkspaceError(f"no readable request {request_id} for this client") from exc
+    if not isinstance(req, dict) or req.get("schema") != REQUEST_SCHEMA or req.get("id") != request_id \
+            or req.get("client") != ws.slug_for(client):
+        raise ws.WorkspaceError(f"invalid request file: {path}")
+    return req, "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def request_sha256_of(workspace, client, request_id) -> str:
+    return load_request_hashed(workspace, client, request_id)[1]
+
+
+def operation_for(kind: str, argv: list[str] | None, mcp: dict | None) -> str:
+    """The view's normalized operation name for a request: one of `deploy`,
+    `data create/update/upsert/import`, `delete`, `apex run`, `recover`, `revert`,
+    `org open`, `browser window`, `mcp:<tool>` or `other:<words>`."""
+    if kind == "browser":
+        return "browser window"
+    if kind == "mcp":
+        return "mcp:" + str((mcp or {}).get("tool_name"))
+    words = [w for w in (argv or [])[1:] if not w.startswith("-")]
+    head = os.path.basename((argv or [""])[0])
+    if head in ("torque", "jsc") or (argv and command_words(shlex.join(argv))):
+        found = command_words(shlex.join(argv))
+        rest = [w for w in (found[1] if found else words) if not w.startswith("-")]
+        if rest and rest[0] in _TORQUE_OPERATIONS:
+            return _TORQUE_OPERATIONS[rest[0]]
+        if rest[:1] == ["data"] and len(rest) > 1:
+            return "delete" if rest[1] == "delete" else f"data {rest[1]}"
+        return "other:" + " ".join(rest[:3])
+    if head == "sfdx" and words:
+        return _SFDX_OPERATIONS.get(words[0], "other:" + words[0])
+    for size in (3, 2):
+        if tuple(words[:size]) in _SF_OPERATIONS:
+            return _SF_OPERATIONS[tuple(words[:size])]
+    return "other:" + " ".join(words[:3])
+
+
+def view_components(argv: list[str] | None, cwd) -> list[str]:
+    """What a command changes, normalized (sorted, unique): deploy components,
+    Record:Object:Id, Record:Object:external:Field for an upsert, or (when the
+    write names no component Torque can list) Record:Object:where:CLAUSE."""
+    if not argv:
+        return []
+    found = before_state.write_components(list(argv), Path(cwd))
+    if not found:
+        sobject = argv_flags.values(argv, ("-s", "--sobject"))
+        where = argv_flags.values(argv, ("-w", "--where"))
+        if sobject and where:
+            found = [f"Record:{sobject[0]}:where:{' '.join(where[0].split())}"]
+    return sorted(set(found))
+
+
+def payload_listing(argv: list[str] | None, cwd) -> list[dict]:
+    """Every payload file, path relative to cwd and its own sha256, sorted by path."""
+    if not argv:
+        return []
+    files = payload_files(list(argv), Path(cwd), capped=False) or []
+    out = []
+    for path in files:
+        try:
+            name = path.relative_to(Path(cwd)).as_posix()
+        except ValueError:
+            name = path.as_posix()
+        out.append({"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    return sorted(out, key=lambda f: f["path"])
+
+
+def _screen_lines(req: dict, derived: dict, org_id: str, org_kind: str, kind_line: str,
+                  *, middle: list[str] = ()) -> list[str]:
+    """The lines every approval screen shares: client, org, kind, call, working
+    folder and components, then (with room in `middle` for the grant screen's own
+    New/Check-only/Before rows) namespaces and payload."""
+    return [f"Client:      {req['client']}    Change: {req.get('change')}",
+            f"Org:         {req['org_alias']}  {org_id}  {org_kind.upper()}",
+            kind_line,
+            f"Call:        {derived['command']}",
+            f"Working in:  {derived['cwd'] or 'n/a'}",
+            f"Components:  {', '.join(derived['components']) or 'not listed'}",
+            *middle,
+            f"Namespaces:  {', '.join(derived['namespaces']) or 'none'}",
+            f"Payload:     {derived['payload_digest'] or 'n/a'} ({derived['payload_files']} files)"]
+
+
+def screen_lines(req: dict, derived: dict, org_id: str, org_kind: str, ttl: int) -> list[str]:
+    """What a delegated approver reviews: the grant screen without the terminal prompt."""
+    kind_line = f"Kind:        {req['kind']}; valid {ttl // 60} minutes"
+    return [*_screen_lines(req, derived, org_id, org_kind, kind_line),
+            f"Purpose:     {printable(req.get('purpose') or 'n/a')}"]
+
+
+def request_view(workspace, client, request_id, *, resolve=None) -> dict:
+    """The parsed, normalized request an automated approver matches and reviews.
+    Everything is derived again from the request's command; the org is resolved
+    live and must still match the consent."""
+    req, sha = load_request_hashed(workspace, client, request_id)
+    item = _usable_consent(workspace, client)
+    derived = _derive(req, _extra_namespaces(workspace))
+    org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
+    kind = req["kind"]
+    minutes = req.get("browser_minutes") if kind == "browser" else None
+    ttl = min(TTL_SECONDS[kind], int(minutes) * 60) if minutes else TTL_SECONDS[kind]
+    argv = derived.get("payload_argv") if kind == "command" else None
+    cwd = derived.get("cwd")
+    return {"schema": VIEW_SCHEMA, "request_id": request_id, "request_sha256": sha, "client": req["client"],
+            "change": req.get("change"), "kind": kind, "operation": operation_for(kind, argv, req.get("mcp")),
+            "org_alias": req["org_alias"], "org_id_18": org_id, "org_kind": org_kind,
+            "components": view_components(argv, cwd) if argv else [], "cwd": cwd,
+            "payload": {"digest": derived["payload_digest"], "count": derived["payload_files"],
+                        "files": payload_listing(derived.get("payload_argv"), cwd) if cwd else []},
+            "purpose": req.get("purpose"), "browser_minutes": minutes,
+            "before_state_event": req.get("before_state_event"), "manual_recovery": req.get("manual_recovery"),
+            "validated_job": req.get("validated_job"), "created_at": req.get("created_at"),
+            "expires_at": _iso(_epoch(req["created_at"]) + REQUEST_TTL) if req.get("created_at") else None,
+            "screen": screen_lines(req, derived, org_id, org_kind, ttl)}
+
+
 def _require_operator(presence, confirm=None, typed: bool = False) -> None:
     """A person at a real terminal outside the session; with `typed` (and no injected
     presence check), a typed code too."""
@@ -772,22 +912,17 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
             job_line += f" {status}" + ("" if result.get("checkOnly", True) else " (NOT a check-only job)")
     drift = _audit_changes(_audit_trail_rows(audit_trail), derived["components"], before["captured_at"]) \
         if audit_trail and before else []
+    kind_line = (f"Kind:        {kind}; valid {ttl // 60} minutes"
+                + ("; single use" if kind != "browser" else "; every browser action in the window"))
+    middle = [f"New:         {', '.join(new_components) or 'none declared'}",
+              f"Check-only:  {job_line}",
+              "Before:      " + (f"{before['path']} ({len(before['files'])} files, {before.get('how') or 'recorded'}, "
+                                 f"captured {before['captured_at']}"
+                                 + (f" from {before['org_id_18']})" if before.get("org_id_18")
+                                    else "; org not verified)")
+                                 if before else recovery or ("not required" if org_kind != "production" else "n/a"))]
     lines = [
-        f"Client:      {req['client']}    Change: {change_id}",
-        f"Org:         {req['org_alias']}  {org_id}  {org_kind.upper()}",
-        f"Kind:        {kind}; valid {ttl // 60} minutes" + ("; single use" if kind != "browser" else
-                                                             "; every browser action in the window"),
-        f"Call:        {derived['command']}",
-        f"Working in:  {derived['cwd'] or 'n/a'}",
-        f"Components:  {', '.join(derived['components']) or 'not listed'}",
-        f"New:         {', '.join(new_components) or 'none declared'}",
-        f"Check-only:  {job_line}",
-        "Before:      " + (f"{before['path']} ({len(before['files'])} files, {before.get('how') or 'recorded'}, "
-                           f"captured {before['captured_at']}"
-                           + (f" from {before['org_id_18']})" if before.get("org_id_18") else "; org not verified)")
-                           if before else recovery or ("not required" if org_kind != "production" else "n/a")),
-        f"Namespaces:  {', '.join(derived['namespaces']) or 'none'}",
-        f"Payload:     {derived['payload_digest'] or 'n/a'} ({derived['payload_files']} files)",
+        *_screen_lines(req, derived, org_id, org_kind, kind_line, middle=middle),
         *([f"Recovery:    snapshot {derived['recovery_snapshot']} will run: "
            f"{shlex.join(derived['recovery_plan']) if derived['recovery_plan'] else 'NOTHING (no plan)'}"]
           if derived.get("recovery_snapshot") else []),
