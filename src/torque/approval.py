@@ -30,7 +30,7 @@ import shlex
 import sys
 import time
 
-from . import argv_flags, before_state, changes, consent, workspace as ws
+from . import argv_flags, before_state, changes, consent, delegation, workspace as ws
 from .connected_routes import classify_bash, is_simple
 from .namespaces import find_namespaces
 
@@ -57,8 +57,8 @@ MIN_PURPOSE_CHARS = 10
 NONPRODUCTION = ("sandbox", "developer", "scratch")
 REQUIRED = ("schema", "id", "request_id", "client", "change", "kind", "command", "call_key", "command_sha256",
             "payload_digest", "payload_argv", "payload_check", "cwd", "org_alias", "org_id_18", "org_kind",
-            "before_state", "manual_recovery", "validated_job", "approver", "approver_uid", "granted_at",
-            "expires_at", "single_use")
+            "before_state", "manual_recovery", "validated_job", "approver", "approver_uid", "approver_kind",
+            "approver_model", "delegated", "granted_at", "expires_at", "single_use")
 WRAPPER_WINDOW = 120
 _ID_CHARS = set("0123456789abcdef")
 REQUEST_TTL = 3600
@@ -598,8 +598,11 @@ def recovery_problem(approved: dict, snapshot_dir, plan: list[str]) -> str:
     return ""
 
 
-def _extra_namespaces(workspace) -> tuple[str, ...]:
-    config = ws.load_workspace(workspace)[1]
+def _extra_namespaces(workspace, config: dict | None = None) -> tuple[str, ...]:
+    """Namespaces workspace.json adds to the managed-package list. The delegated
+    grant passes the config its caller proof already read (one protected read)."""
+    if config is None:
+        config = ws.load_workspace(workspace)[1]
     extra = config.get("managed_namespaces")
     return tuple(n for n in extra if isinstance(n, str)) if isinstance(extra, list) else ()
 
@@ -903,8 +906,22 @@ def live_deploy_report(job_id: str, org: str) -> dict | None:
 
 
 def grant(workspace, client, request_id, *, new_components=(), presence=None, confirm=None, out=None,
-          resolve=None, now=None, report=None, audit_trail=None) -> dict:
-    """The consultant's grant, at a real terminal, after reading the call."""
+          resolve=None, now=None, report=None, audit_trail=None, delegated=False, model_id=None,
+          request_sha256=None, payload_digest=None, idempotency_key=None, env=None, ancestors=None,
+          getuid=None, root_owner=None) -> dict:
+    """The consultant's grant, at a real terminal, after reading the call. With
+    `delegated`, the workspace's delegated approver's grant instead (tier 2, no
+    terminal; see _grant_delegated)."""
+    if delegated:
+        if new_components:
+            raise ws.WorkspaceError("--new-component belongs to the consultant's production grants; a delegated "
+                                    "grant never covers production")
+        return _grant_delegated(workspace, client, request_id, model_id=model_id, request_sha256=request_sha256,
+                                payload_digest=payload_digest, idempotency_key=idempotency_key, out=out,
+                                resolve=resolve, now=now, env=env, ancestors=ancestors, getuid=getuid,
+                                root_owner=root_owner)
+    if model_id is not None:
+        raise ws.WorkspaceError("--model-id applies only to a delegated grant (--delegated)")
     _require_operator(presence)
     out = out or sys.stdout
     req = load_request(workspace, client, request_id)
@@ -988,22 +1005,14 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     if not confirm():
         raise ws.WorkspaceError("the confirmation code did not match; nothing was granted")
     t = now if now is not None else time.time()
-    record = {"schema": SCHEMA, "id": "apr-" + secrets.token_hex(6), "request_id": request_id,
-              "client": req["client"], "change": change_id, "kind": kind, "command": derived["command"],
-              "call_key": derived["call_key"], "command_sha256": derived["command_sha256"],
-              "payload_digest": derived["payload_digest"], "payload_check": derived["payload_check"],
-              "payload_argv": derived["payload_argv"], "cwd": derived["cwd"], "org_alias": req["org_alias"],
-              "org_id_18": org_id, "org_kind": org_kind,
-              "before_state": ({"event_id": before["event_id"], "sha256": before["sha256"], "path": before["path"],
-                                "captured_at": before["captured_at"], "how": before.get("how"),
-                                "org_id_18": before.get("org_id_18"), "job": before.get("job")}
-                               if before else None),
-              "manual_recovery": recovery, "validated_job": req.get("validated_job"),
-              "new_components": new_components, "namespaces": derived["namespaces"],
-              "recovery_snapshot": derived.get("recovery_snapshot"), "recovery_plan": derived.get("recovery_plan"),
-              "recovery_snapshot_dir": derived.get("recovery_snapshot_dir"),
-              "approver": _user(), "approver_uid": os.getuid() if hasattr(os, "getuid") else None,
-              "granted_at": _iso(t), "expires_at": _iso(t + ttl), "single_use": kind != "browser"}
+    record = _base_record(
+        req, request_id, derived, org_id, org_kind, t=t, ttl=ttl,
+        before_state=({"event_id": before["event_id"], "sha256": before["sha256"], "path": before["path"],
+                       "captured_at": before["captured_at"], "how": before.get("how"),
+                       "org_id_18": before.get("org_id_18"), "job": before.get("job")} if before else None),
+        manual_recovery=recovery, new_components=new_components,
+        approver={"approver": _user(), "approver_uid": os.getuid() if hasattr(os, "getuid") else None,
+                  "approver_kind": "human", "approver_model": None, "delegated": False})
     verify = config.get("approval_verify", "hmac")
     if verify == "owner-uid":
         if not hasattr(os, "getuid") or os.getuid() != config.get("approver_uid"):
@@ -1026,6 +1035,94 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     return record
 
 
+def _base_record(req: dict, request_id: str, derived: dict, org_id: str, org_kind: str, *, t: float, ttl: int,
+                 approver: dict, before_state=None, manual_recovery=None, new_components=()) -> dict:
+    """The approval record both grant paths write (F28), in the a15 field order. The
+    identity block `approver` names approver, approver_uid, approver_kind,
+    approver_model and delegated."""
+    kind = req["kind"]
+    return {"schema": SCHEMA, "id": "apr-" + secrets.token_hex(6), "request_id": request_id,
+            "client": req["client"], "change": req.get("change"), "kind": kind, "command": derived["command"],
+            "call_key": derived["call_key"], "command_sha256": derived["command_sha256"],
+            "payload_digest": derived["payload_digest"], "payload_check": derived["payload_check"],
+            "payload_argv": derived["payload_argv"], "cwd": derived["cwd"], "org_alias": req["org_alias"],
+            "org_id_18": org_id, "org_kind": org_kind, "before_state": before_state,
+            "manual_recovery": manual_recovery, "validated_job": req.get("validated_job"),
+            "new_components": list(new_components), "namespaces": derived["namespaces"],
+            "recovery_snapshot": derived.get("recovery_snapshot"), "recovery_plan": derived.get("recovery_plan"),
+            "recovery_snapshot_dir": derived.get("recovery_snapshot_dir"),
+            **{k: approver[k] for k in ("approver", "approver_uid", "approver_kind", "approver_model", "delegated")},
+            "granted_at": _iso(t), "expires_at": _iso(t + ttl), "single_use": kind != "browser"}
+
+
+def _grant_delegated(workspace, client, request_id, *, model_id, request_sha256, payload_digest, idempotency_key,
+                     out, resolve, now, env, ancestors, getuid, root_owner) -> dict:
+    """A delegated approver's grant: tier 2, no terminal, never for production or an
+    unknown org, bound to the request it reviewed, recorded with its kind and
+    identity. Every decision comes from the one protected read of workspace.json
+    the caller proof made. Writes only the approval file (the change record is the
+    agent's; the gate logs the grant when the approval is used). Every refusal is a
+    delegation.Refusal with a reason class."""
+    actor, config, _root = delegation._delegated_actor_and_config(
+        workspace, "approver", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
+        root_owner=root_owner)
+    if not delegation.delegated_tier2(config):
+        raise delegation.Refusal("tier-2-required", "a delegated grant needs tier 2 (owner-uid) approvals and "
+                                                    "the workspace's approver account as its named approver")
+    if not isinstance(request_sha256, str) or not request_sha256 \
+            or not isinstance(payload_digest, str) or not payload_digest:
+        raise delegation.Refusal("request-changed", "a delegated grant names the reviewed request's SHA-256 and "
+                                                    "payload digest (--request-sha256, --payload-digest)")
+    out = out or sys.stdout
+    t = now if now is not None else time.time()
+    req, _current = load_request_hashed(workspace, client, request_id)
+    created = _epoch(req["created_at"])
+    if created > t + SKEW:
+        raise ws.WorkspaceError(f"{request_id} is dated in the future; nothing was granted")
+    if t > created + REQUEST_TTL + SKEW:
+        raise delegation.Refusal("request-expired", f"{request_id} is older than {REQUEST_TTL // 60} minutes; "
+                                                    "ask for a new request")
+    change_id = req.get("change")
+    changes.load_change(workspace, client, change_id)
+    if _denied(workspace, client, change_id, request_id):
+        raise delegation.Refusal("request-denied", f"{request_id} was denied; ask for a new request")
+    try:
+        item = _usable_consent(workspace, client)
+    except ws.WorkspaceError as exc:
+        raise delegation.Refusal("consent-unusable", str(exc)) from None
+    derived = _derive(req, _extra_namespaces(workspace, config))
+    entry = consent.approved_org(item, req["org_alias"]) or {}
+    try:
+        org_id, org_kind = _org_identity(item, req["org_alias"], resolve)
+    except (ws.WorkspaceError, OSError, ValueError) as exc:
+        raise delegation.Refusal("org-production-or-unknown", "delegated approvals need an org identified live "
+                                                              f"as non-production: {exc}") from None
+    if org_kind not in NONPRODUCTION or entry.get("kind") not in NONPRODUCTION \
+            or req.get("org_kind") not in NONPRODUCTION:
+        raise delegation.Refusal("org-production-or-unknown", "delegated approvals are refused for production "
+                                                              "and unknown orgs; the consultant grants those")
+    ttl = _ttl(req)
+    for line in screen_lines(req, derived, org_id, org_kind, ttl):
+        out.write(line + "\n")
+    out.flush()
+    record = _base_record(req, request_id, derived, org_id, org_kind, t=t, ttl=ttl,
+                          approver={"approver": actor.account, "approver_uid": actor.uid,
+                                    "approver_kind": actor.kind, "approver_model": actor.model,
+                                    "delegated": True})
+    record["reviewed_request_sha256"] = request_sha256
+    record["idempotency_key"] = idempotency_key
+    return _publish_grant(workspace, client, record)
+
+
+def _publish_grant(workspace, client, record: dict) -> dict:
+    """Write a delegated grant's approval file, readable by the agent account's gate
+    (0644, owned by the approver account that runs this)."""
+    path = _dirs(workspace, client, create=False)["granted"] / f"{record['id']}.json"
+    ws._write_json(path, record)
+    path.chmod(0o644)
+    return record
+
+
 def printable(text: str) -> str:
     """text with every non-printable character (control, escape, bidirectional
     formatting) shown as an escape, so the screen shows what will run."""
@@ -1039,7 +1136,10 @@ def _log_grant(workspace, client, record: dict) -> None:
                                    "command": record["command"], "command_sha256": record.get("command_sha256"),
                                    "payload_digest": record.get("payload_digest"), "org_alias": record["org_alias"],
                                    "org_id_18": record["org_id_18"], "org_kind": record["org_kind"],
-                                   "approver": record["approver"], "granted_at": record["granted_at"],
+                                   "approver": record["approver"], "approver_uid": record.get("approver_uid"),
+                                   "approver_kind": record.get("approver_kind"),
+                                   "approver_model": record.get("approver_model"),
+                                   "delegated": record.get("delegated"), "granted_at": record["granted_at"],
                                    "expires_at": record["expires_at"], "before_state": record["before_state"],
                                    "manual_recovery": record["manual_recovery"],
                                    "validated_job": record["validated_job"]})
@@ -1094,6 +1194,9 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
             return "approval signature does not verify"
     else:
         return "unknown approval verification in workspace.json"
+    identity = _identity_problem(record, config, verify)
+    if identity:
+        return identity
     try:
         granted, expires = _epoch(record["granted_at"]), _epoch(record["expires_at"])
     except (TypeError, ValueError):
@@ -1104,6 +1207,31 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
         return "approval window is longer than allowed"
     if now > expires:
         return "approval expired"
+    return ""
+
+
+def _identity_problem(record: dict, config: dict, verify: str) -> str:
+    """The gate's acceptance rule for who granted an approval: a recorded kind on
+    every record; a human (owner) grant names no model; an AI or other delegated
+    grant only in a tier 2 workspace whose delegated approver (same account, same
+    kind) made it, and never for a production or unknown org."""
+    kind, is_delegated, model = record.get("approver_kind"), record.get("delegated"), record.get("approver_model")
+    if kind not in delegation.KINDS or type(is_delegated) is not bool:
+        return "malformed approval"
+    if kind == "ai" and (not isinstance(model, str) or not delegation.MODEL_RE.fullmatch(model)):
+        return "malformed approval"
+    if kind == "human" and model is not None:
+        return "malformed approval"
+    if not is_delegated:
+        if kind != "human":
+            return "an AI approval must come from the workspace's delegated approver"
+        return ""
+    item = delegation.delegate_for(config, "approver")
+    if verify != "owner-uid" or not delegation.delegated_tier2(config) or item is None \
+            or item["kind"] != kind or record.get("approver_uid") != item["uid"]:
+        return "a delegated approval needs a tier 2 workspace whose delegated approver made it"
+    if record.get("org_kind") not in NONPRODUCTION:
+        return "a delegated approval is never valid for a production or unknown org"
     return ""
 
 
@@ -1151,7 +1279,9 @@ def _log_use(workspace, client, record: dict, session_id, tool_use_id) -> None:
         "approval_id": record["id"], "request_id": record["request_id"], "command": record["command"],
         "command_sha256": record.get("command_sha256"), "payload_digest": record.get("payload_digest"),
         "org_alias": record["org_alias"], "org_id_18": record["org_id_18"], "org_kind": record["org_kind"],
-        "approver": record.get("approver"), "before_state": record.get("before_state"),
+        "approver": record.get("approver"), "approver_uid": record.get("approver_uid"),
+        "approver_kind": record.get("approver_kind"), "approver_model": record.get("approver_model"),
+        "delegated": record.get("delegated"), "before_state": record.get("before_state"),
         "manual_recovery": record.get("manual_recovery"), "validated_job": record.get("validated_job"),
         "granted_at": record.get("granted_at"), "expires_at": record.get("expires_at"),
         "session_id": session_id, "tool_use_id": tool_use_id})
@@ -1174,6 +1304,8 @@ def _binding_problem(workspace, client, record: dict) -> str:
     entry = consent.approved_org(item, record.get("org_alias"))
     if entry is None or entry.get("org_id_18") != record.get("org_id_18"):
         return "the client's consent no longer names the org ID this approval was granted for"
+    if record.get("delegated") is not False and entry.get("kind") not in NONPRODUCTION:
+        return "a delegated approval is never valid for a production or unknown org"
     return ""
 
 

@@ -2,6 +2,7 @@
 from collections import namedtuple
 import fnmatch
 import hashlib
+import io
 import os
 from pathlib import Path
 
@@ -84,3 +85,15 @@ def flow_request(root, argv=None, org="acme-dev", cwd=None):
     (flows / "Case_Escalation.flow-meta.xml").write_text("<Flow>v2</Flow>", encoding="utf-8")
     return approval.create_request(root, "Acme", cid, org, argv=list(argv or WRITE), resolve=ORGS.get,
                                    cwd=project)
+
+
+def delegated_grant(root, req, **extra):
+    """The delegated approver's grant of `req`, bound to what `approval show` reported.
+    root_owner=FAKE_OWNER stands in for the separate workspace owner (R41) that a
+    single-uid test process cannot have."""
+    view = approval.request_view(root, "Acme", req["id"], resolve=ORGS.get)
+    kwargs = {"delegated": True, "model_id": MODEL, "request_sha256": view["request_sha256"],
+              "payload_digest": view["payload"]["digest"] or "none", "out": io.StringIO(),
+              "resolve": ORGS.get, "root_owner": FAKE_OWNER, **CLEAN}
+    kwargs.update(extra)
+    return approval.grant(root, "Acme", req["id"], **kwargs)

@@ -51,13 +51,21 @@ def register(sub) -> None:
     request.add_argument("--mcp", metavar="TOOL", help="request one MCP tool call (mcp__server__tool)")
     request.add_argument("--input", help="the MCP call's input as JSON")
     request.add_argument("--json", action="store_true")
-    grant = actions.add_parser("grant", help="consultant only, at a real terminal")
+    grant = actions.add_parser("grant", help="consultant at a real terminal, or the delegated approver (--delegated)")
     grant.add_argument("request_id")
     _client_args(grant)
     grant.add_argument("--new-component", action="append", default=[], metavar="TYPE:NAME",
                        help="a component the deploy creates, so no before-state can hold it")
     grant.add_argument("--audit-trail", metavar="FILE",
                        help="Setup Audit Trail rows (sf data query --json output) to compare with the before-state")
+    grant.add_argument("--delegated", action="store_true",
+                       help="the workspace's delegated approver is granting (tier 2, non-production orgs only)")
+    grant.add_argument("--model-id", help="delegated only: the AI approver's model identifier")
+    grant.add_argument("--request-sha256", help="delegated only: request_sha256 from `approval show --json`")
+    grant.add_argument("--payload-digest", help="delegated only: payload.digest from `approval show --json` "
+                                                "(\"none\" when it has none)")
+    grant.add_argument("--json", action="store_true",
+                       help="print the approval record; the review screen goes to stderr")
     deny = actions.add_parser("deny", help="consultant only, at a real terminal")
     deny.add_argument("request_id")
     _client_args(deny)
@@ -221,8 +229,21 @@ def _request(p, tail) -> int:
 
 def _grant(p) -> int:
     from . import approval
-    record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component,
-                            report=approval.live_deploy_report, audit_trail=p.audit_trail)
+    if not p.delegated and (p.model_id is not None or p.request_sha256 is not None
+                            or p.payload_digest is not None):
+        raise ws.WorkspaceError("--model-id, --request-sha256 and --payload-digest go with --delegated")
+    # F6: with --json, stdout carries only the record; the review screen goes to stderr.
+    out = sys.stderr if p.json else None
+    if p.delegated:
+        record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component, out=out,
+                                delegated=True, model_id=p.model_id, request_sha256=p.request_sha256,
+                                payload_digest=p.payload_digest)
+    else:
+        record = approval.grant(p.workspace, p.client, p.request_id, new_components=p.new_component, out=out,
+                                report=approval.live_deploy_report, audit_trail=p.audit_trail)
+    if p.json:
+        _print(record)
+        return 0
     print(f"Granted {record['id']}, valid until {record['expires_at']}.")
     if record["kind"] == "browser":
         print(f"Browser changes in {record['org_alias']} are allowed until then.")

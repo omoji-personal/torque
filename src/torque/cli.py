@@ -993,9 +993,9 @@ def main(argv: list[str] | None = None) -> int:
         # will: exit 3, with --json a machine-readable reason_class and message,
         # instead of falling into the generic WorkspaceError exit 2 below.
         if getattr(parsed, "json", False):
-            _print_json({"reason_class": exc.reason_class, "message": str(exc)})
+            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc)})
         else:
-            print(f"torque: {exc}", file=sys.stderr)
+            print(f"torque: refused ({exc.reason_class}): {exc}", file=sys.stderr)
         return 3
     except (ws.WorkspaceError, OSError, ValueError) as exc:
         print(f"torque: {exc}", file=sys.stderr)
