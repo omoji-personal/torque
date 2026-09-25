@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 
 from . import workspace as ws
 
@@ -85,9 +86,11 @@ def delegated_tier2(config: dict) -> bool:
 
 
 def set_delegate(workspace, role, account, uid, kind, *, presence=None, confirm=None, geteuid=None,
-                 lookup=None) -> Path:
+                 getuid=None, lookup=None) -> Path:
     """Name a delegate. The owner at a real terminal, or an administrator (uid 0)
-    provisioning the workspace, may do this; nothing else can."""
+    provisioning the workspace, may do this; nothing else can. Controller ruling
+    R41: outside the administrator path, the delegate must be a separate OS
+    account from the one naming it (an account cannot delegate to itself)."""
     if role not in ROLES:
         raise ws.WorkspaceError(f"unknown delegate role {role!r}; choose approver or setup")
     if kind not in KINDS:
@@ -103,7 +106,10 @@ def set_delegate(workspace, role, account, uid, kind, *, presence=None, confirm=
         raise ws.WorkspaceError(f"no OS account named {account!r}") from None
     if real != uid:
         raise ws.WorkspaceError(f"{account} has uid {real}, not {uid}")
-    if (geteuid or os.geteuid)() == 0:
+    is_administrator = (geteuid or os.geteuid)() == 0
+    if not is_administrator and uid == (getuid or os.getuid)():
+        raise Refusal("not-delegated", "a delegate must be a separate OS account from the one naming it")
+    if is_administrator:
         actor = Actor("human", "root", 0, None, "administrator")
     else:
         from .presence import require_presence
@@ -111,7 +117,10 @@ def set_delegate(workspace, role, account, uid, kind, *, presence=None, confirm=
                          error=ws.WorkspaceError)
         actor = human_actor()
     root, config = ws.load_workspace(workspace)
-    delegates = dict(config.get("delegates") or {})
+    existing = config.get("delegates")
+    if existing is not None and not isinstance(existing, dict):
+        raise ws.WorkspaceError('workspace.json has an invalid "delegates" value; expected an object')
+    delegates = dict(existing or {})
     delegates[role] = {"account": account, "uid": uid, "kind": kind}
     config["delegates"] = delegates
     config["delegates_changed_at"] = ws._now()
@@ -132,8 +141,46 @@ def _model(kind: str, model_id) -> str | None:
     return None
 
 
+def _read_protected_config(root: Path) -> tuple[dict, os.stat_result]:
+    """Open workspace.json once, and read its owner/mode and its content from
+    that same descriptor: a swap of the file in between (a TOCTOU race) then
+    cannot substitute a different file for either half of the check. A
+    missing, unreadable, non-regular, symlinked or malformed file refuses;
+    nothing unreadable is treated as absent-and-allowed (fail closed)."""
+    try:
+        path = ws._inside(root, root / ws.CONFIG)
+    except ws.WorkspaceError as exc:
+        raise Refusal("not-delegated", str(exc)) from None
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        raise Refusal("not-delegated", f"cannot read {path} to verify the delegate") from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Refusal("not-delegated", f"{path} must be a regular file, not a symlink or special file")
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = None  # fdopen now owns the descriptor; do not close it twice
+            text = handle.read()
+    except OSError:
+        raise Refusal("not-delegated", f"cannot read {path} to verify the delegate") from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+    try:
+        config = json.loads(text)
+    except ValueError:
+        raise Refusal("not-delegated", f"invalid workspace configuration: {path}") from None
+    try:
+        ws._validate_config(config, path)
+    except ws.WorkspaceError:
+        raise Refusal("not-delegated", f"invalid workspace configuration: {path}") from None
+    return config, st
+
+
 def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getuid=None, env=None,
-                    ancestors=None) -> Actor:
+                    ancestors=None, root_owner=None) -> Actor:
     """Prove the caller is this workspace's delegate for `role`, outside any AI
     session. Raises Refusal with a reason class otherwise."""
     from .presence import agent_reason
@@ -142,7 +189,8 @@ def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getui
     why = agent_reason(env, ancestors)
     if why:
         raise Refusal("agent-session", f"a delegated step never runs inside an AI session: {why}")
-    root, config = ws.load_workspace(workspace)
+    root = Path(workspace).expanduser().resolve()
+    config, st = _read_protected_config(root)
     item = delegate_for(config, role)
     if item is None:
         raise Refusal("not-delegated", f"this workspace names no {role} delegate")
@@ -150,9 +198,14 @@ def delegated_actor(workspace, role, *, model_id=None, require_tier2=True, getui
     if uid != item["uid"]:
         raise Refusal("not-delegated", f"this account (uid {uid}) is not the workspace's {role} delegate "
                                        f"({item['account']}, uid {item['uid']})")
-    path = root / ws.CONFIG
-    st = path.lstat()
-    if path.is_symlink() or st.st_uid not in (0, item["uid"]) or st.st_mode & 0o022:
+    # R41: a delegate that is the same account as the one that owns the
+    # workspace directory (ordinarily the consultant's own account, the one
+    # an AI session also runs under) is not a genuinely separate account.
+    owner = (root_owner or (lambda p: p.stat().st_uid))(root)
+    if owner == uid:
+        raise Refusal("not-delegated", "a delegate must be a separate OS account from the one that owns "
+                                       "the workspace directory")
+    if st.st_uid not in (0, item["uid"]) or st.st_mode & 0o022:
         raise Refusal("not-delegated", "workspace.json must be owned by root or the delegate and writable by "
                                        "no one else")
     if require_tier2:

@@ -259,12 +259,21 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
     return root
 
 
+def _validate_config(config: dict, path: Path) -> dict:
+    """The workspace.json schema check, factored out so a caller that already
+    holds a parsed dict from its own protected read (delegation.py's
+    single-descriptor read, avoiding a TOCTOU between reading and checking the
+    file) can reuse this instead of a second, separately-worded copy."""
+    if (not isinstance(config, dict) or config.get("schema") != "torque.workspace/1"
+            or not isinstance(config.get("name"), str) or not config["name"].strip()
+            or config.get("profile") not in PROFILES):
+        raise WorkspaceError(f"invalid workspace configuration: {path}")
+    return config
+
+
 def load_workspace(path: str | Path) -> tuple[Path, dict]:
     root = Path(path).expanduser().resolve()
-    config = _read_json(_inside(root, root / CONFIG))
-    if (config.get("schema") != "torque.workspace/1" or not isinstance(config.get("name"), str)
-            or not config["name"].strip() or config.get("profile") not in PROFILES):
-        raise WorkspaceError(f"invalid workspace configuration: {root / CONFIG}")
+    config = _validate_config(_read_json(_inside(root, root / CONFIG)), root / CONFIG)
     _inside(root, root / "clients")
     return root, config
 
