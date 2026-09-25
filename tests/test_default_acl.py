@@ -136,12 +136,40 @@ def test_real_default_acl_entry_reaches_a_new_file(tmp_path):
         pytest.skip("the file system does not support access lists")
     path = folder / "request.json"
     ws.atomic_write_new(path, "{}\n")
-    before = subprocess.run(["getfacl", "-p", str(path)], capture_output=True, text=True).stdout
-    assert "mask::---" in before
+    before = getfacl(path)
+    assert "mask::---" in before and approver_entry(before) == ("r-x", "---")
     ws.open_acl_mask(path)
-    after = subprocess.run(["getfacl", "-p", str(path)], capture_output=True, text=True).stdout
-    assert "mask::r--" in after and "user:65534:r-x" in after and "other::---" in after
+    after = getfacl(path)
+    # The approver's default entry (r-x) now reaches the file as read only: the
+    # mask Torque opened is r--, and the entry's effective permission is r--.
+    assert "mask::r--" in after and "other::---" in after and approver_entry(after) == ("r-x", "r--")
     sub = folder / "events"
     sub.mkdir(mode=0o700)
     ws.open_acl_mask(sub)
-    assert "mask::r-x" in subprocess.run(["getfacl", "-p", str(sub)], capture_output=True, text=True).stdout
+    assert "mask::r-x" in getfacl(sub)
+
+
+def getfacl(path) -> str:
+    """V2-5: numeric ids (-n), so the uid 65534 entry reads the same whether or
+    not the host names that uid (CI's Linux prints it as `nobody` otherwise)."""
+    return subprocess.run(["getfacl", "-n", "-p", str(path)], capture_output=True, text=True, check=True).stdout
+
+
+def approver_entry(listing: str) -> tuple[str, str]:
+    """The uid 65534 entry's (permission, effective permission); getfacl prints
+    `#effective:` only when the mask removes a bit, else the two are equal."""
+    for line in listing.splitlines():
+        if line.startswith("user:65534:"):
+            perms, _, rest = line[len("user:65534:"):].partition("#effective:")
+            return perms.strip(), (rest.strip() or perms.strip())
+    raise AssertionError(f"no user:65534 entry in:\n{listing}")
+
+
+def test_approver_entry_reads_getfacl_numeric_output():
+    """V2-5: the parser the Linux-only test above relies on, checked everywhere
+    against the shapes getfacl -n prints (a tab before `#effective:`)."""
+    listing = "# file: request.json\nuser::rw-\nuser:65534:r-x\t#effective:r--\ngroup::---\nmask::r--\n"
+    assert approver_entry(listing) == ("r-x", "r--")
+    assert approver_entry("user:65534:r--\nmask::r--\n") == ("r--", "r--")
+    with pytest.raises(AssertionError):
+        approver_entry("user:nobody:r-x\t#effective:r--\n")
