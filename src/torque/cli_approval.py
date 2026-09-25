@@ -79,6 +79,14 @@ def register(sub) -> None:
     permissions = actions.add_parser("permissions", help="print (or, owner only, write) the host permission rules")
     permissions.add_argument("--workspace", required=True)
     permissions.add_argument("--write", action="store_true", help="merge into WORKSPACE/.claude/settings.json")
+    permissions.add_argument("--unattended", action="store_true",
+                             help="the unattended profile: no ask rule for a route the gate itself decides")
+    permissions.add_argument("--with-hooks", action="store_true",
+                             help="with --write: also wire the torque.gate hook (PreToolUse, PostToolUse, "
+                                  "PostToolUseFailure)")
+    permissions.add_argument("--delegated", action="store_true",
+                             help="the workspace's setup delegate is running this, not the consultant")
+    permissions.add_argument("--model-id", help="delegated only: the AI setup delegate's model identifier")
     launch = sub.add_parser("launch", help="connected mode: start an AI session bound to one client (owner only)")
     _client_args(launch)
 
@@ -283,11 +291,13 @@ def _require(p, tail) -> int:
 
 def _permissions(p) -> int:
     from . import permissions
+    profile = "unattended" if p.unattended else "interactive"
     if p.write:
-        path = permissions.write_settings(p.workspace)
+        path = permissions.write_settings(p.workspace, profile=profile, with_hooks=p.with_hooks,
+                                          delegated=p.delegated, model_id=p.model_id)
         print(f"Wrote the connected-mode permission rules to {path}")
         return 0
-    _print({"permissions": permissions.generate()})
+    _print({"permissions": permissions.generate(profile)})
     return 0
 
 
