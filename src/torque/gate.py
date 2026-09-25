@@ -2979,11 +2979,30 @@ def main() -> int:
         watchdog.cancel()
 
 
+# The events after a call runs (D14). The same hook command handles all three.
+POST_EVENTS = ("PostToolUse", "PostToolUseFailure")
+
+
+def _post_event(event: dict) -> int:
+    """Always 0: a hook after the call cannot undo it, so it never blocks."""
+    try:
+        # Imported only here: a PreToolUse call never loads it.
+        from .execution import handle
+        return handle(event, os.environ)
+    except Exception as exc:
+        print(f"Connected mode: the execution record could not be written ({exc}).", file=sys.stderr)
+        return 0
+
+
 def _main() -> int:
     try:
         event = json.loads(sys.stdin.read())
         if not isinstance(event, dict):
             raise ValueError("hook input must be a JSON object")
+        if event.get("hook_event_name") in POST_EVENTS:
+            # F2: dispatch only on the parsed event name. A post-call event never
+            # blocks (the call already ran); it only records how an approved call ended.
+            return _post_event(event)
         if "tool_name" not in event:
             raise ValueError("hook input has no tool_name")
         cwd = Path(os.path.realpath(str(event.get("cwd") or ".")))

@@ -21,7 +21,8 @@ _CHANGE_ID = re.compile(r"chg-[a-f0-9]{12}\Z")
 _EVENT_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 _RESULTS = ("pass", "fail", "unknown", "not_run")
 # Connected-mode approval events, written by Torque's approval code (basis "torque_approval").
-APPROVAL_KINDS = ("approval_request", "approval_grant", "approval_deny", "approval_consume")
+# approval_executed (a16, D14): the approved call ran, and how it ended (the post-call hook).
+APPROVAL_KINDS = ("approval_request", "approval_grant", "approval_deny", "approval_consume", "approval_executed")
 # An independent before-state captured for a production approval (basis "torque_before_state").
 BEFORE_STATE_KIND = "before_state"
 _TORQUE_BASIS = {**{kind: "torque_approval" for kind in APPROVAL_KINDS}, BEFORE_STATE_KIND: "torque_before_state"}
@@ -161,6 +162,7 @@ APPROVAL_EVENT_FIELDS = {
     "approval_consume": ("approval_id", "request_id", "command", "command_sha256", "payload_digest", "org_alias",
                          "org_id_18", "org_kind", "approver", "before_state", "manual_recovery", "validated_job",
                          "granted_at", "expires_at", "session_id", "tool_use_id"),
+    "approval_executed": ("approval_id", "tool_use_id", "outcome"),
 }
 
 
