@@ -19,8 +19,13 @@ unchanged.
   (`torque.approval-request-view/1`). `torque approval grant REQ --delegated --model-id M
   --request-sha256 S --payload-digest D [--idempotency-key K] --json` grants only what was
   reviewed, never for a production or unknown org, and refuses requests older than one
-  hour. `torque approval lookup --idempotency-key K` finds an earlier grant.
-  `torque approval deny REQ --delegated --reason-class C --reason TEXT` publishes a denial.
+  hour. The view and the grant read payload files only under the request's working folder
+  and refuse a payload path outside it. A retry with the same idempotency key repeats every
+  check a fresh grant makes (request, payload, consent, org) before returning the earlier
+  grant. `torque approval lookup --idempotency-key K` finds an earlier grant, checking the
+  whole stored record. `torque approval deny REQ --delegated --reason-class C --reason
+  TEXT` publishes a denial; a denial is read only when its fields, the delegated approver's
+  identity and its request's hash check out, and an unreadable denials folder is an error.
   A request never ends both granted and denied. Refusals exit 3 with a stable reason class.
 - Every approval record carries `approver`, `approver_uid`, `approver_kind`,
   `approver_model` and `delegated`, and the gate refuses one without them. In a workspace
@@ -38,7 +43,9 @@ unchanged.
   `--hook-python` names the hook's interpreter.
 - `torque approval log` adds execution records, delegated decisions, launches and setup
   steps, each with its approver kind. `torque doctor` shows the profile, delegates, setup
-  steps and grants by kind, and checks the unattended profile's hooks and sidecar.
+  steps, grants by kind, verified launches by actor and each approval identity (actor,
+  kind, model) with its grant and denial counts, and checks the unattended profile's hooks
+  and sidecar.
 - `python -m torque.contracts delegated-org-refusal --json` proves offline, from an
   installed wheel, that a delegated grant refuses production and unknown orgs.
 - Torque's browser checks the signed-in Username against the alias's username, prints an
@@ -68,6 +75,16 @@ unchanged.
     unverifiable, so the host asks.
   - Outside connected mode, a browser run whose page Username differs from the alias's
     records `ORG_MISMATCH` and continues.
+  - A payload file or folder that cannot be read refuses the request, the grant or the
+    approval's use; it was hashed as a fixed placeholder, or left out of the file set.
+  - A permission sidecar that cannot be read or stat'ed, or is invalid, makes the gate deny
+    every org route before an approval is used; only a missing sidecar means the
+    interactive profile.
+  - On Linux, in a tier 2 workspace with a named approver delegate, a request, change
+    record, change event or evidence file Torque creates (and each folder it creates for
+    them) gets group read (0640, folders 0750) when it has an extended access list, so a
+    default access list entry for the approver is not masked. Elsewhere the modes stay
+    0600 and 0700.
 - Documentation: [delegated approver](docs/delegated-approver.md), with the provisioning
   order, folder layout, paths the approver needs, reason classes and limits;
   [connected mode](docs/connected-approval.md) links it and shows each doctor probe under

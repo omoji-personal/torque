@@ -143,7 +143,7 @@ or through reopening step 4.
 | `clients/acme/approvals/` | root, group of the agent account | 1770 (sticky) | The agent writes `activity.jsonl` here; the sticky bit keeps it from renaming the approver's folders |
 | `clients/acme/approvals/granted/` | the approver | 0750, group of the agent account | Grants, launch bindings, decision and idempotency markers; the agent reads through the group |
 | `clients/acme/approvals/denied/` | the approver | 0750, group of the agent account | Delegated denials |
-| `clients/acme/approvals/requests/`, `approvals/consumed/`, `clients/acme/changes/` | the agent account | 0700 | Requests, claim markers and launch records, change records; the approver reads them through its access list |
+| `clients/acme/approvals/requests/`, `approvals/consumed/`, `clients/acme/changes/` | the agent account | 0700 (0750 on Linux with a default access list entry, see below) | Requests, claim markers and launch records, change records; the approver reads them through its access list |
 
 The approver needs read access to the workspace. On macOS an inherited access list does
 it:
@@ -153,11 +153,16 @@ chmod -R +a "APPROVER allow list,search,readattr,readextattr,readsecurity,read,f
 ```
 
 On Linux the equivalent is `setfacl -R -m u:APPROVER:rX W` plus a default entry
-(`setfacl -R -d -m u:APPROVER:rX W`). A Linux default entry is masked by the mode a file is
-created with, and Torque creates the agent's requests and change records 0600 in 0700
-folders, so on Linux the approver cannot read files the agent creates later through a
-default entry alone. The layout here targets macOS, where access lists are not masked
-by mode bits.
+(`setfacl -R -d -m u:APPROVER:rX W`). A Linux default entry is masked by the group bits of
+the mode a file is created with. In a tier 2 workspace with a named approver delegate,
+Torque therefore adds group read to each request, change record, change event and evidence
+file it creates (0640) and group read and search to each folder it creates for them (0750),
+but only when the new file or folder has an extended access list. With an access list the
+group bits are only its mask: who can read is still decided by the entries the default
+access list gave the path, so the default entries should name only the approver and the
+agent's own group. A folder that already exists keeps its mode. macOS, where access lists
+are not masked by mode bits, and a workspace without a delegated approver keep 0600 and
+0700.
 
 Only read-only access list entries belong on the control folders: Torque checks their mode
 bits, not their access lists. The workspace must also sit under folders the approver
@@ -190,6 +195,13 @@ request's working folder, which is often outside the workspace.
 | `clients/{client}/approvals/denied/*` | read, write | Delegated denials (`dny-*.json`, 0644) |
 | `{cwd}` | read (stat) | The working folder must exist |
 | `{cwd}/**` | read | The project files, read to derive the payload digest again |
+
+The working folder is the only payload root. The view (`approval show --json`) and the
+delegated grant check every payload path first (named files and folders, a tree-import
+plan and the data files it names, and the package folders in `sfdx-project.json`), links
+resolved, and refuse a request with any of them outside `{cwd}` before reading one
+(`request-changed`). A payload file or folder that cannot be read refuses the same way; it
+is never hashed as a placeholder or left out of the file set.
 
 The bare folders are read because each call checks their owner and mode (the control
 check) and resolves paths without following links; the approver needs search access on
@@ -276,7 +288,12 @@ A daemon that retries after a crash passes the same `--idempotency-key` (8 to 12
 letters, digits and `: . _ -`, starting with a letter or digit). A repeat with the same
 key, request, reviewed hash and payload digest returns the earlier grant instead of making
 a second one. The same key with anything else is refused (`idempotency-conflict`). Every
-identity and control check still runs on a retry. To find a grant without granting:
+identity and control check still runs on a retry, and so does every check a fresh grant
+makes: the request is read and hashed again, the payload derived again, and consent and the
+org's live classification checked again before the earlier grant is returned. The stored
+grant is returned only when the whole record checks out (schema and fields, its id and
+request, the client, and the delegated approver's identity); `lookup` checks it the same
+way and otherwise prints nothing. To find a grant without granting:
 
 ```sh
 torque approval lookup --workspace W --client Acme --idempotency-key KEY --json
@@ -319,7 +336,7 @@ writes nothing.
 | 20 | denied |
 | 21 | expired |
 | 22 | timeout: wait again, never write |
-| 2 | usage or workspace error, including an unreadable denial file or a control-file problem |
+| 2 | usage or workspace error, including an unreadable `approvals/denied/` folder or denial file, an invalid denial, or a control-file problem |
 
 A denial always wins over a grant. The consultant's own denial reports reason class
 `owner-denied`. A request is expired an hour (plus 60 seconds of skew) after it was made
@@ -379,7 +396,10 @@ the gate decides by approval (Salesforce CLI and Torque write routes and browser
 The interpreter and runner ask rules stay. The profile is recorded in the sidecar
 `.claude/torque-permissions.json` (`torque.permissions/1`: `profile`, `written_at`,
 `written_by`, `settings_sha256`, `hook_python`) and is honored only in a tier 2 workspace
-whose approver is a named delegate.
+whose approver is a named delegate. Only a missing sidecar means the interactive profile.
+One that cannot be read (or stat'ed), is not a JSON object or names an unknown schema or
+profile is invalid: the gate denies every org route for the workspace, before any approval
+is used, until the permissions step is run again.
 
 What the gate decides under the unattended profile:
 
@@ -461,14 +481,14 @@ otherwise `torque: refused (CLASS): MESSAGE`.
 | `not-delegated` | No delegate for the role, the wrong account, a delegate that owns the workspace folder or is the naming account, `workspace.json` not owned by root or the delegate or writable by others, a missing or unexpected `--model-id`, a control file or folder owned by or writable by the approver, a missing or wrongly owned `approvals/granted/`, or a launch from the approver account | Fix the layout (see "Folders, owners and modes") or the account |
 | `tier-2-required` | Windows, tier 1, not connected, or an approver delegate that is not the `approver_uid` account | Set tier 2 with a named approver delegate |
 | `org-production-or-unknown` | The org is production or unknown live, in the consent or in the request | The consultant grants it |
-| `request-changed` | The request file differs from `--request-sha256`, the review hashes are missing, or the request or its change cannot be read, is dated in the future or cannot be derived | Review the request again |
+| `request-changed` | The request file differs from `--request-sha256`, the review hashes are missing, or the request or its change cannot be read, is dated in the future or cannot be derived (including a payload file that cannot be read or a payload path outside the working folder) | Review the request again |
 | `payload-changed` | The files the call uses differ from `--payload-digest` | Review the request again |
 | `request-expired` | The request is older than one hour | The session makes a new request |
 | `request-denied` | The request was denied, or a denial claimed the decision first | The session makes a new request |
 | `consent-unusable` | The consent is missing, pending, suspended or does not cover the org | Fix the consent |
 | `idempotency-conflict` | The key was used for another request or other reviewed content | Use a new key |
 | `already-granted` | A denial for a request that already has a grant | Nothing: the grant stands |
-| `denial-unreadable` | A file in `approvals/denied/` cannot be read or is malformed | Remove it (see "Runbook"); every grant for the client is refused until then |
+| `denial-unreadable` | `approvals/denied/` or a file in it cannot be read, a denial is malformed, was not recorded by the delegated approver (its account and uid, `delegated` true, a model that matches its kind), or does not carry its request file's current `request_sha256` | Remove it (see "Runbook"); every grant for the client is refused until then |
 | `human-grant-needs-human-approver` | A consultant grant in a workspace whose approver delegate is `ai` (the gate refuses such a record too) | Use a workspace whose approver is a person for production work |
 | `launch-flag-refused` | A delegated launch passes a `claude` option off the allowlist, or `CLAUDE_CODE_SIMPLE` is set | Remove it |
 | `binding-missing` | No launch binding with that ID for the client | Ask the approver for one |
@@ -582,9 +602,6 @@ What it cannot stop:
   time. In a daylight-saving fall-back hour a start time can be read an hour off; the
   launch is then refused, and never bound more than 60 seconds plus one hour outside its
   binding. Log rows written within the same second may sort in either order.
-- **Linux read access.** Default access list entries do not reach the agent's new
-  requests and change records (see "Folders, owners and modes"); the layout here targets
-  macOS.
 - **Windows.** There is no tier 2, so there are no delegated steps and no launch bindings.
   The process checks on launch records are skipped: naming any existing presence or probe
   record binds.

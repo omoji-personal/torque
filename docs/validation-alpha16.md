@@ -12,13 +12,15 @@ review and the live qualification are recorded below when they run.
 
 ## Suite results
 
-`python scripts/test-offline.py -q` on 2026-09-25 (macOS, Python 3.14.7): 3329 passed,
-9 skipped, 154 subtests passed (alpha 15's baseline: 2661 passed, 5 skipped). Every
-package self-test passed. The skips: three browser tests that need Playwright installed,
-one Windows-only path test, the private name check (the offline runner does not pass its
-setting; run with plain pytest it passes, see "Public hygiene"), and four tests, in two
-files, that drive the real agent-session check and skip inside an AI session (see "Tests
-that need a plain terminal").
+`python scripts/test-offline.py -q` on 2026-09-25 (macOS, Python 3.14.7), after the V2
+fix round: 3377 passed, 10 skipped, 154 subtests passed (alpha 15's baseline: 2661
+passed, 5 skipped). Every package self-test passed. The skips: three browser tests that
+need Playwright installed, one Windows-only path test, one Linux-only access list test
+(`tests/test_default_acl.py::test_real_default_acl_entry_reaches_a_new_file`), the
+private name check (the offline runner does not pass its setting; run with plain pytest
+it passes, see "Public hygiene"), and four tests, in two files, that drive the real
+agent-session check and skip inside an AI session (see "Tests that need a plain
+terminal").
 
 ## Public hygiene
 
@@ -29,7 +31,13 @@ or changed documentation contains an em dash.
 ## Edited a15 tests
 
 Every alpha 15 test passes without edits except one behavior test and the release-record
-tests the version bump touches.
+tests the version bump touches. Reconciled against `git diff --stat dea2041 -- tests/`:
+five files that existed at `dea2041` differ. Three of them edit existing tests (the four
+tests below). The other two only add new tests and change no existing one:
+`tests/test_approval.py` gains
+`test_production_upsert_still_refused_outright_not_bypassable_via_new_component` and
+`tests/test_before_state.py` gains `test_write_components_upsert_matches_a15_both_spellings`
+(both R44 regressions). Every other changed file under `tests/` is new in alpha 16.
 
 - `tests/test_gate_connected.py::test_hook_end_to_end`. Its first line set only
   `TORQUE_CLIENT=acme` and expected the hook to bind the session to Acme. Requirement 9
@@ -120,7 +128,9 @@ subprocesses and skips inside an AI session; it needs one run from a plain termi
 `tests/test_delegated_reads.py` (the trace of every path the delegated grant touches) and
 `tests/test_daemon_context.py` (the delegated verbs with no terminal, GUI, keychain or
 `HOME`) drive the real agent-session check in subprocesses and skip inside an AI session.
-They run from a plain terminal or CI:
+The trace test was widened in the V2 fix round: it also fails on any access outside the
+workspace other than the interpreter's own files and a stat of a folder above the
+workspace. They run from a plain terminal or CI:
 
 ```sh
 python -m pytest tests/test_delegated_reads.py tests/test_daemon_context.py -v
@@ -143,8 +153,39 @@ python -m torque.contracts delegated-org-refusal --json
 
 ## Spec conformance
 
-Recorded at review gate V2 (an external review of each requirement against the code and
-tests).
+Review gate V2, an external review of each requirement and global constraint against the
+code and tests at e8e352b, found 16 of 23 requirements conforming and 7 partial (3, 10,
+13, 14, 16, 19, 23), no Critical finding, six Important and three Minor. The accepted
+items were fixed in one round, each with a test written first and seen failing:
+
+| item | fix | tests |
+|---|---|---|
+| I1 (req. 10, fail closed) | Only a missing permission sidecar is the interactive profile; one that cannot be read or stat'ed, or is invalid, makes the gate deny every org route before an approval is used | test_unattended_gate::test_a_reset_sidecar_denies_even_an_approved_write_and_consumes_nothing, ::test_an_unstatable_sidecar_reads_as_invalid_not_as_absent, ::test_an_unstatable_sidecar_denies_an_approved_write, ::test_a_missing_sidecar_is_still_interactive |
+| I2 (req. 3, 14; G06, G08) | An idempotent retry repeats every fresh-grant check (request re-read and hashed, payload derived, consent, live org class) before returning the earlier grant; the lookup and the publish race validate the whole stored record | test_idempotent_grant::test_retry_after_the_request_file_changed_is_refused, ::test_retry_after_the_payload_changed_is_refused, ::test_retry_after_consent_became_unusable_is_refused, ::test_retry_when_the_org_now_reads_as_production_is_refused, ::test_an_exact_retry_rechecks_the_review_before_returning, ::test_lookup_refuses_an_invalid_stored_approval (7 cases), ::test_retry_never_returns_an_invalid_stored_approval |
+| I3 (req. 14, 16) | An unreadable payload file or folder refuses (no placeholder hash, no skipped entry); the delegated view and grant refuse a payload path outside the working folder before reading it; the trace test fails on any access outside the workspace other than the interpreter's own files | test_review_binding::test_an_unreadable_payload_file_refuses_instead_of_hashing_a_constant, ::test_an_unreadable_payload_folder_is_not_skipped, ::test_payload_root_check, ::test_a_delegated_grant_never_reads_a_payload_outside_the_working_folder; test_delegated_reads::test_the_grant_touches_only_documented_paths (plain terminal) |
+| I4 (req. 23; G08, G13) | An unreadable denials folder and an invalid denial (field types, id and file name, client, the approver's account and uid, `delegated` true, model matching kind, the request's current hash) are errors, exit 2 | test_status_wait::test_an_unreadable_denials_folder_is_an_error_not_a_timeout, ::test_an_invalid_denial_is_an_error_not_denied (12 cases), ::test_a_valid_denial_still_reads_as_denied |
+| I5 (req. 13) | The view names the object and external ID field of a bulk upsert (long, short and legacy spellings) and the object, record or deployed components of an MCP write | test_request_view::test_bulk_upserts_normalize_to_object_and_external_field, ::test_legacy_bulk_upsert_names_object_and_external_field, ::test_mcp_write_views_name_their_object_or_target (4 cases), ::test_an_mcp_write_without_an_object_or_target_has_no_components |
+| I6 (limit R58) | On Linux, in a delegated tier 2 workspace, files and folders the approver reads open their access-list mask (0640, 0750) when they carry an extended access list | test_default_acl (6 simulated; 1 real `setfacl` test on Linux only) |
+| M1 (req. 19) | Doctor summarizes verified launches by actor and each approval identity with its grant and denial counts | test_doctor_delegated::test_doctor_summarizes_verified_launches_and_approval_identities |
+| M2 | The edited-test list above reconciled with the diff against `dea2041` | this record |
+
+Two alpha 16 tests changed with these fixes, because they asserted the old behavior:
+`test_unattended_gate::test_a_reset_sidecar_gets_no_explicit_allow_even_for_an_approved_write`
+(renamed, now requires a denial) and
+`test_request_view::test_payload_digest_and_listing_share_one_read_symlink_and_unreadable_parity`
+(an unreadable file now refuses in both readers). Neither existed at `dea2041`.
+
+Rulings on the remaining V2 items:
+
+- G01 (starting point): the alpha 15 candidate was merged to main as a commit whose tree
+  is identical to the candidate's, so alpha 16, built on the candidate, merges on top of
+  main with no rebase.
+- G02 (public names): legacy predecessor names in provenance and package-migration
+  records are permitted by the maintainer. The private name check covers client names
+  and passes.
+- G07 (edited alpha 15 tests): the edits listed under "Edited a15 tests" stand.
+- G09, G14, G16 (test-first evidence, em dash checks before every commit, commit
+  trailers): process evidence, recorded here; no code change.
 
 ## Live qualification
 
