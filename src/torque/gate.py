@@ -2995,6 +2995,7 @@ def _main() -> int:
             if connected:
                 # Imported only here: a workspace without connected mode never loads it.
                 from .gate_connected import ask_json, decide_connected
+                from . import gate_connected as gc
                 from . import launch as launches
                 # Requirement 9: a session is bound to a client only by its launch record.
                 results = [decide_connected(str(event.get("tool_name", "")), tool_input, root, cwd,
@@ -3004,6 +3005,9 @@ def _main() -> int:
                                             tool_use_id=event.get("tool_use_id"))
                            for root in connected]
                 worst = max(results, key=lambda r: ("allow", "ask", "deny").index(r.action))
+                if worst.action == "allow" and worst.approved and any(gc.unattended(r) for r in connected):
+                    print(gc.allow_json(f"Connected mode: approval {worst.approved} was used for this call."))
+                    return 0
                 if worst.action == "ask":
                     print(ask_json(worst.reason))
                     return 0
