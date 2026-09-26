@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0a18 - browser session restoration (candidate, not published)
+
+- Return to Lightning after Logout As before observing the original browser user.
+  Classic landing pages lack the identity provider used by that check. A fresh user-ID
+  match is still required; returning to Lightning alone never proves restoration.
+- Include the redacted preflight failure in every unexecuted cell's JSON result.
+  With `--json`, print the artifact directory on stderr so stdout remains JSON.
+- Regression coverage models a Classic landing page, both logout selectors, an
+  identity mismatch and redacted failure details. Live browser acceptance remains
+  required for the target org.
+
 ## 2.0.0a17 - nonprofit knowledge skills, 2026-09-25 (not published to a package index)
 
 Knowledge skills only; no command, gate or runtime behavior changes.

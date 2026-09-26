@@ -168,6 +168,31 @@ def test_run_suite_runs_preflight_and_records_it():
     m = json.loads(open(mpath, encoding="utf-8").read())
     assert m["preflight"] == {"standard": "PASS"}
 
+def test_failed_preflight_reason_reaches_every_cell():
+    import asyncio, os, tempfile
+    from jsc_browser_tests.suite import run_suite
+    from jsc_browser_tests.sf_client import FakeSfClient
+    from jsc_browser_tests.library.smoke_login import FLOW as SMOKE
+    async def failing_pre(cfg):
+        return {"standard": "FAIL", "preflight_error":
+                "AuthError: Login As did not establish the requested browser user"}
+    seen = []
+    d = tempfile.mkdtemp(prefix="jsc-prefail-")
+    class _O:
+        detected_org_type = "sandbox"
+    asyncio.run(run_suite({
+        "sf": FakeSfClient(), "org_info": _O(), "flows": [SMOKE], "profiles": ["admin"],
+        "manifest_path": os.path.join(d, "m.json"), "audit_log": os.path.join(d, "a.log"),
+        "run_dir": d, "runid": "TEST-prefail", "preflight": failing_pre, "on_result": seen.append,
+        "seed": {"users": {"standard": {"user_id": "005x"}}}}))
+    assert seen and all(r.overall_status == "INCOMPLETE" for r in seen)
+    assert all("Login As did not establish" in r.error and "standard=FAIL" in r.error for r in seen)
+
+def test_failed_preflight_detail_is_redacted():
+    from jsc_browser_tests.suite import _not_executed
+    text = _not_executed({"preflight_error": "x https://a.my.salesforce.com/secur/frontdoor.jsp?sid=00D000000000001!AQzz"})
+    assert "sid=00D" not in text and text.startswith("Not executed: browser preflight failed: ")
+
 def test_run_suite_detects_leak_survivor_exit_4():
     import asyncio, os, tempfile
     from jsc_browser_tests.suite import run_suite

@@ -836,7 +836,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "825057fc4b72e77ba412b6e409d7b13332b4507f72a412f8f4e1d6900466976b",
+      "destination_sha256": "0d04bfcde63fe3a7c5e1fd7f6814fca40978a61c3dd9ade462c89798e0a0309c",
       "adapted": true
     },
     {
@@ -854,7 +854,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/suite.py",
       "source_sha256": "40e81f606e0e88b7862ca72367b2662a192ec9be8a0af567979f1c41893de125",
       "source_tracked": true,
-      "destination_sha256": "cf9560f5525737092bceea8c7fc71d2b46456ee87595d144c92e946c16ebb7f7",
+      "destination_sha256": "290d95e7210a18ff43a1690a9cf8af503dad3f2f9a6e3b683d9eb1a3f9bfd98d",
       "adapted": true
     },
     {
@@ -899,7 +899,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
       "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
       "source_tracked": true,
-      "destination_sha256": "7d4003e9f20b4977b68de58e9687f50c3b9a9c4355f7cb159d6ddad761eecdca",
+      "destination_sha256": "98235f9eeb82b70abb46e715b3f7026a55240185688f5ccf5fa3cb0ed53f3196",
       "adapted": true
     },
     {
@@ -980,7 +980,7 @@
       "source_path": "packages/browser_tests/tests/test_matrix.py",
       "source_sha256": "9244ab6248e134e0b63631e98b0bd872b1e06938412b0c41e3ee920fb2f64c5b",
       "source_tracked": true,
-      "destination_sha256": "84745250a2c1394649f083f317c5b434f2ca425f621c18d722cb35313dbb2b4d",
+      "destination_sha256": "86932f938bfb226513824156549aa9a1ed40b38c1e5e6c429d9084c8c314dcce",
       "adapted": true
     },
     {
@@ -1615,6 +1615,11 @@
       "path": "packages/revert/tests/test_data_create_evidence.py",
       "origin": "authored for Torque continuation live acceptance fixes",
       "destination_sha256": "3db1052d6d149d321614b1fb822a5f15d578cbb68e856fe541c2a290e2da16ed"
+    },
+    {
+      "path": "packages/browser_tests/tests/test_logout_classic_landing.py",
+      "destination_sha256": "faf5d4b08d7c2ea431e68f050e0da09a762b6ea458b9aaae238ff260b8190aa8",
+      "origin": "authored for Torque browser session restoration"
     }
   ],
   "selection_excludes": [
