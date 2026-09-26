@@ -22,13 +22,14 @@ no workflow depends on them.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-**Status: development alpha, version 2.0.0a17.** It has not been published to a
+**Status: development alpha, version 2.0.0a18.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
 have offline acceptance coverage; bounded live operations and experimental
 capabilities have separate limits in [validation](docs/validation.md); the
 [alpha 16 record](docs/validation-alpha16.md) covers the runtime, and the
-[alpha 17 record](docs/validation-alpha17.md) covers the knowledge skills added since. No
-industry-leadership claim is made.
+[alpha 17 record](docs/validation-alpha17.md) covers the knowledge skills added since.
+The [alpha 18 record](docs/validation-alpha18.md) covers browser restoration and failure
+diagnostics. No industry-leadership claim is made.
 
 ## Install and try the offline demo
 

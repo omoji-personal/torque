@@ -112,6 +112,14 @@ async def _live_preflight(config):
             await auth.close_session(sess)
 
 
+def _not_executed(preflight_results: dict) -> str:
+    """Why no cell ran, with the preflight's own (redacted) reason and each role's result,
+    so --json and the console show the cause, not only that the preflight failed."""
+    roles = ", ".join(f"{k}={v}" for k, v in preflight_results.items() if k != "preflight_error")
+    reason = preflight_results.get("preflight_error") or "a role did not pass"
+    return redact("Not executed: browser preflight failed: " + str(reason) + (f" ({roles})" if roles else ""))
+
+
 async def run_suite(config) -> int:
     """End-to-end: write-gate -> expand cells -> run each (via cell_executor) ->
     score -> manifest/report -> exit code. Returns the exit code.
@@ -184,7 +192,8 @@ async def run_suite(config) -> int:
             if stopped:
                 fr = FlowResult(flow_name=cell.flow.spec.name, profile=cell.profile,
                                 target_org=target_org, overall_status="INCOMPLETE",
-                                error="Not executed: browser preflight or session restoration failed")
+                                error=_not_executed(preflight_results) if preflight_failed else
+                                "Not executed: browser session restoration failed in an earlier cell")
             else:
                 try:
                     fr = await executor(cell, cell_config)

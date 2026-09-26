@@ -146,8 +146,9 @@ def _run_flow_with_profiles(
     runid = new_runid()
     run_dir = artifact_child(state_dir("qa-tests"), target_org, f"{runid}-{flow.name}")
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if not as_json:
-        print(f"Run dir: {run_dir}")
+    # With --json, stdout stays pure JSON; the run folder (manifest.json with the preflight
+    # detail, screenshots) is still named, on stderr.
+    print(f"Run dir: {run_dir}", file=sys.stderr if as_json else sys.stdout)
     results = []
 
     def record(result):
