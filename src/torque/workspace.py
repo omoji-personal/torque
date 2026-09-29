@@ -20,6 +20,7 @@ AI_ACCESS_MODES = ("full", "build-only", "connected")
 APPROVAL_VALUES = ("required",)
 APPROVAL_VERIFY = ("hmac", "owner-uid")
 CONFIG = "workspace.json"
+MAINTENANCE_FLAG = ".torque/maintenance"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 
 
@@ -349,6 +350,13 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
     return root, config
 
 
+def require_writable(root: Path) -> None:
+    """Refuse record writes while an administrator holds the workspace in maintenance."""
+    if (root / MAINTENANCE_FLAG).exists():
+        raise WorkspaceError(f"workspace is in maintenance ({MAINTENANCE_FLAG} exists); "
+                             "writes are paused until it is removed")
+
+
 def _owner_uid_supported() -> bool:
     """Tier 2 checks file ownership by numeric uid, which Windows does not have."""
     return hasattr(os, "getuid")
@@ -519,6 +527,7 @@ def _client_creation_lock(root: Path):
 
 def add_client(workspace: str | Path, name: str, org: str | None = None) -> Path:
     root, _ = load_workspace(workspace)
+    require_writable(root)
     slug = slug_for(name)
     if org is not None and (not org.strip() or any(c in org for c in "\r\n\0")):
         raise WorkspaceError("org alias must be nonempty and on one line")
@@ -575,6 +584,7 @@ def load_client(workspace: str | Path, name: str) -> tuple[Path, dict, dict]:
 def add_session(workspace: str | Path, client_name: str, summary: str,
                 status: str = "prepared", evidence: str | Path | None = None) -> dict:
     client, _, config = load_client(workspace, client_name)
+    require_writable(client.parent.parent)
     if not summary.strip():
         raise WorkspaceError("session summary must be nonempty")
     if status not in STATUSES:

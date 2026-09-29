@@ -57,6 +57,7 @@ def create_change(workspace: str | Path, client: str, title: str, outcome: str,
     if org is not None and not _org(org):
         raise ws.WorkspaceError("org must be one explicit alias, username or ID")
     directory, config = _directory(workspace, client)
+    ws.require_writable(directory.parent.parent.parent)
     identifier = "chg-" + uuid4().hex[:12]
     record = {"schema": "torque.change/1", "id": identifier, "client": config["slug"],
               "title": title, "outcome": outcome, "created_at": ws._now(),
@@ -149,6 +150,7 @@ def _workspace_of(root: Path) -> Path:
 
 
 def _append(root: Path, record: dict, event: dict) -> dict:
+    ws.require_writable(_workspace_of(root))
     directory = ws._inside(root, root / "events")
     existed = directory.exists()
     directory.mkdir(mode=0o700, exist_ok=True)
