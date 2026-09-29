@@ -728,11 +728,11 @@ def _writable_engagement(folder: Path, config: dict) -> None:
 
 `client_output_path`: add `*, kind: str = "client"`; first line `client, _, _ = load_engagement(workspace, client_name, kind)`.
 
-`_change_context(workspace, client_name, client, kind="client")`: pass `kind=kind` to `list_changes` and `get_change` (added in Task 6), and in `show_command` replace `"--client", client.name` with `"--" + kind, client.name`.
+`_change_context(workspace, client_name, client, kind="client")`: pass `engagement_kind=kind` to `list_changes` and `get_change` (added in Task 6), and in `show_command` replace `"--client", client.name` with `"--" + kind, client.name`.
 
 `get_context`: add `*, kind: str = "client"`; use `load_engagement(workspace, client_name, kind)`, pass `kind` to `_change_context` and `list_sessions`.
 
-`render_handoff`: add `*, kind: str = "client"`; use `load_engagement`, `list_sessions(..., kind=kind)`, `list_changes(..., kind=kind)` and `render_change(..., kind=kind)`; replace `f"Configured org: {client.get('org') or 'not specified'}"` with `f"Configured org: {client.get('org') or 'not specified'}" if kind == "client" else f"Initiative state: {client['state']}"`, and the empty message with `f"No session entries have been recorded for this {kind}."` (clients keep the exact existing sentence because `kind` is `client`).
+`render_handoff`: add `*, kind: str = "client"`; use `load_engagement`, `list_sessions(..., kind=kind)`, `list_changes(..., engagement_kind=kind)` and `render_change(..., engagement_kind=kind)`; replace `f"Configured org: {client.get('org') or 'not specified'}"` with `f"Configured org: {client.get('org') or 'not specified'}" if kind == "client" else f"Initiative state: {client['state']}"`, and the empty message with `f"No session entries have been recorded for this {kind}."` (clients keep the exact existing sentence because `kind` is `client`).
 
 Task 6 adds the `kind` keyword to the change functions; land Tasks 5 and 6 in one commit if a test run between them fails on the missing keyword.
 
@@ -758,7 +758,7 @@ git commit -m "feat(workspace): sessions, context and handoff for initiatives"
 
 **Interfaces:**
 - Consumes: `ws.load_engagement`, `engagements.require`.
-- Produces: every public function above gains `*, kind: str = "client"`. Initiative change records and events carry `"initiative": slug` instead of `"client": slug`. `verify_deploy` and `append_approval_event` call `engagements.require(kind, ...)` and refuse initiatives.
+- Produces: every public function above gains `*, engagement_kind: str = "client"` (not `kind`: `add_note` and `append_approval_event` already take a `kind` for the note or event type). Initiative change records and events carry `"initiative": slug` instead of `"client": slug`. `verify_deploy` and `append_approval_event` call `engagements.require(kind, ...)` and refuse initiatives.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -781,23 +781,23 @@ def root(tmp_path):
 
 def test_initiative_change_lifecycle(root):
     item = changes.create_change(root, "Plan", "Pilot VM", "Work stays off laptops", ["Controls pass"],
-                                 kind="initiative")
+                                 engagement_kind="initiative")
     assert item["initiative"] == "plan" and "client" not in item
-    changes.add_note(root, "Plan", item["id"], "use one team VM", "decision", kind="initiative")
-    detail = changes.get_change(root, "Plan", item["id"], kind="initiative")
+    changes.add_note(root, "Plan", item["id"], "use one team VM", "decision", engagement_kind="initiative")
+    detail = changes.get_change(root, "Plan", item["id"], engagement_kind="initiative")
     assert detail["events"][-1]["initiative"] == "plan"
-    assert [c["id"] for c in changes.list_changes(root, "Plan", kind="initiative")] == [item["id"]]
+    assert [c["id"] for c in changes.list_changes(root, "Plan", engagement_kind="initiative")] == [item["id"]]
     assert changes.list_changes(root, "Alpha") == []
-    assert "Pilot VM" in changes.render_change(root, "Plan", item["id"], kind="initiative")
+    assert "Pilot VM" in changes.render_change(root, "Plan", item["id"], engagement_kind="initiative")
 
 
 def test_verify_deploy_and_approvals_are_client_only(root):
-    item = changes.create_change(root, "Plan", "T", "O", kind="initiative")
+    item = changes.create_change(root, "Plan", "T", "O", engagement_kind="initiative")
     with pytest.raises(ws.WorkspaceError, match="clients only"):
         changes.verify_deploy(root, "Plan", item["id"], "some-org", "0Af000000000001AAA", [], None,
-                              kind="initiative")
+                              engagement_kind="initiative")
     with pytest.raises(ws.WorkspaceError, match="clients only"):
-        changes.append_approval_event(root, "Plan", item["id"], "approval_request", {}, kind="initiative")
+        changes.append_approval_event(root, "Plan", item["id"], "approval_request", {}, engagement_kind="initiative")
 
 
 def test_a_client_change_is_unchanged(root):
@@ -813,8 +813,8 @@ Expected: FAIL (`unexpected keyword argument 'kind'`).
 - [ ] **Step 3: Implement**
 
 ```python
-def _directory(workspace: str | Path, client: str, kind: str = "client") -> tuple[Path, dict]:
-    root, _, config = ws.load_engagement(workspace, client, kind)
+def _directory(workspace: str | Path, client: str, engagement_kind: str = "client") -> tuple[Path, dict]:
+    root, _, config = ws.load_engagement(workspace, client, engagement_kind)
     return ws._inside(root, root / "changes"), config
 
 
@@ -822,17 +822,17 @@ def _owner_key(record: dict) -> str:
     return "initiative" if "initiative" in record else "client"
 ```
 
-- `create_change(..., org=None, *, kind="client")`: `directory, config = _directory(workspace, client, kind)`; in `record` replace `"client": config["slug"],` with `kind: config["slug"],`; keep the Task 2 `require_writable` line and add `if config.get("state") == "archived": raise ws.WorkspaceError("this engagement is archived; reopen it before recording new work")`.
-- `load_change(workspace, client, identifier, *, kind="client")`: `_directory(workspace, client, kind)`; validation `record.get(kind) != config["slug"]`.
-- `list_changes(workspace, client, *, kind="client")`: `_directory(workspace, client, kind)` and `load_change(workspace, client, p.name, kind=kind)`.
+- `create_change(..., org=None, *, engagement_kind="client")`: `directory, config = _directory(workspace, client, engagement_kind)`; in `record` replace `"client": config["slug"],` with `engagement_kind: config["slug"],`; keep the Task 2 `require_writable` line and add `if config.get("state") == "archived": raise ws.WorkspaceError("this engagement is archived; reopen it before recording new work")`.
+- `load_change(workspace, client, identifier, *, engagement_kind="client")`: `_directory(workspace, client, engagement_kind)`; validation `record.get(engagement_kind) != config["slug"]`.
+- `list_changes(workspace, client, *, engagement_kind="client")`: `_directory(workspace, client, engagement_kind)` and `load_change(workspace, client, p.name, engagement_kind=engagement_kind)`.
 - `_append`: replace `"client": record["client"],` with `_owner_key(record): record[_owner_key(record)],`.
 - `_events`: replace `event.get("client") != record["client"]` with `event.get(_owner_key(record)) != record[_owner_key(record)]`.
-- `add_note`, `add_check`, `get_change`, `render_change`: add `*, kind="client"` and pass `kind=kind` to every `load_change`/`list_changes`/`_directory` call inside them.
-- `verify_deploy(..., *, kind="client")` and `append_approval_event(..., *, kind="client")`: first line
+- `add_note`, `add_check`, `get_change`, `render_change`: add `*, engagement_kind="client"` and pass `engagement_kind=engagement_kind` to every `load_change`/`list_changes`/`_directory` call inside them.
+- `verify_deploy(..., *, engagement_kind="client")` and `append_approval_event(..., *, engagement_kind="client")`: first line
 
 ```python
     from .engagements import require
-    require(kind, "verify_deploy")   # in append_approval_event: require(kind, "approvals")
+    require(engagement_kind, "verify_deploy")   # in append_approval_event: require(engagement_kind, "approvals")
 ```
 
 - [ ] **Step 4: Run tests**
@@ -1000,7 +1000,7 @@ In `main`, add before `elif parsed.command == "change":`:
 
 In `main`, wherever `context`, `session` and `handoff` call `ws.*` with `parsed.client`, use `name, kind = _scope(parsed)` and pass `name` plus `kind=kind` (for `get_context`, `add_session`, `list_sessions`, `render_handoff`, `client_output_path`). The text output line `print(f"Configured org: {context['client'].get('org') or 'not specified'}")` becomes conditional on `kind == "client"`.
 
-In `_change`, set `name, kind = _scope(args)`, `common = (args.workspace, name)`, and pass `kind=kind` to every `changes.*` and `ws.client_output_path` call.
+In `_change`, set `name, kind = _scope(args)`, `common = (args.workspace, name)`, and pass `engagement_kind=kind` to every `changes.*` call and `kind=kind` to `ws.client_output_path`.
 
 - [ ] **Step 4: Run tests**
 
