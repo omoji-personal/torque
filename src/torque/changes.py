@@ -115,11 +115,9 @@ def _capture_file(root: Path, source: str | Path) -> dict:
     if raw.is_symlink():
         raise ws.WorkspaceError("evidence source must not be a symlink")
     path = raw.resolve()
-    # This change's client may use shared firm artifacts, but never another client.
-    client = root.parent.parent
-    clients = client.parent
-    if clients in path.parents and client not in path.parents:
-        raise ws.WorkspaceError("evidence belongs to a different client")
+    # This change's engagement may use shared firm artifacts, but never another engagement.
+    if ws.foreign_engagement(root.parent.parent, path):
+        raise ws.WorkspaceError("evidence belongs to a different client or initiative")
     if not path.is_file():
         raise ws.WorkspaceError(f"evidence file does not exist: {path}")
     directory = ws._inside(root, root / "evidence")

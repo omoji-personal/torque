@@ -57,6 +57,17 @@ def _inside(root: Path, path: Path) -> Path:
     return path
 
 
+ENGAGEMENT_FOLDERS = ("clients", "initiatives")
+
+
+def foreign_engagement(own: Path, path: Path) -> bool:
+    """path lies inside another client or initiative of own's workspace."""
+    root = own.parent.parent
+    if own == path or own in path.parents:
+        return False
+    return any((root / folder) in path.parents for folder in ENGAGEMENT_FOLDERS)
+
+
 def _read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -594,9 +605,8 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
         path = Path(evidence).expanduser().resolve()
         if not path.is_file():
             raise WorkspaceError(f"evidence is not a readable file: {path}")
-        clients_dir = client.parent
-        if clients_dir in path.parents and client not in path.parents:
-            raise WorkspaceError("evidence belongs to a different client")
+        if foreign_engagement(client, path):
+            raise WorkspaceError("evidence belongs to a different client or initiative")
         try:
             digest = _file_hash(path)
         except OSError as exc:
@@ -651,8 +661,8 @@ def _session_evidence(client: Path, evidence: object) -> str:
     path = Path(evidence["path"])
     try:
         resolved = path.resolve()
-        if client.parent in resolved.parents and client not in resolved.parents:
-            raise WorkspaceError("session evidence belongs to a different client")
+        if foreign_engagement(client, resolved):
+            raise WorkspaceError("session evidence belongs to a different client or initiative")
         if path != resolved:
             return "unavailable"  # A saved canonical reference now traverses a symlink.
         return "matches_reference" if _file_hash(path) == evidence["sha256"] else "changed"
@@ -733,8 +743,9 @@ def client_output_path(workspace: str | Path, client_name: str, destination: str
     client, _, _ = load_client(workspace, client_name)
     output = Path(destination).expanduser().absolute()
     resolved = output.resolve()
-    if client.parent in resolved.parents and client not in resolved.parents:
-        raise WorkspaceError("handoff output belongs to a different client; choose this client's directory or an explicit export outside clients/")
+    if foreign_engagement(client, resolved):
+        raise WorkspaceError("handoff output belongs to a different client or initiative; choose this "
+                             "engagement's directory or an explicit export outside clients/ and initiatives/")
     return output
 
 
