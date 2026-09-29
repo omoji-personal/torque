@@ -66,6 +66,17 @@ def _read_json(path: Path) -> dict:
     return value
 
 
+def _fsync_dir(directory: Path) -> None:
+    """Make a rename or link in directory durable. Windows has no directory fsync."""
+    if os.name == "nt":
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write_new(path: Path, text: str) -> None:
     """Publish one complete private file atomically, without replacing an existing file."""
     if not path.parent.is_dir():
@@ -84,6 +95,7 @@ def atomic_write_new(path: Path, text: str) -> None:
             os.link(temporary, path)
         except FileExistsError as exc:
             raise WorkspaceError(f"file already exists; choose a new path: {path}") from exc
+        _fsync_dir(path.parent)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -136,14 +148,26 @@ def share_with_approver(workspace, *paths) -> None:
 
 
 def _atomic_replace_text(path: Path, text: str) -> None:
-    """Replace an explicitly managed private file without exposing a partial write."""
+    """Replace an explicitly managed file without exposing a partial write. An
+    existing file keeps its mode and group (a shared record stays shared)."""
+    try:
+        existing = os.stat(path)
+    except FileNotFoundError:
+        existing = None
     fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
+        if existing is not None and os.name != "nt":
+            os.chmod(temporary, stat.S_IMODE(existing.st_mode))
+            try:
+                os.chown(temporary, -1, existing.st_gid)
+            except PermissionError:
+                pass
         os.replace(temporary, path)
+        _fsync_dir(path.parent)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
