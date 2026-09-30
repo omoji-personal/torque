@@ -603,10 +603,26 @@ def load_client(workspace: str | Path, name: str) -> tuple[Path, dict, dict]:
     return client, firm, config
 
 
+def load_engagement(workspace: str | Path, name: str, kind: str = "client") -> tuple[Path, dict, dict]:
+    """A client (existing records) or an initiative (engagements module)."""
+    if kind == "client":
+        return load_client(workspace, name)
+    from .engagements import load_initiative, require
+    require(kind, "sessions")
+    return load_initiative(workspace, name)
+
+
+def _writable_engagement(folder: Path, config: dict) -> None:
+    require_writable(folder.parent.parent)
+    if config.get("state") == "archived":
+        raise WorkspaceError("this engagement is archived; reopen it before recording new work")
+
+
 def add_session(workspace: str | Path, client_name: str, summary: str,
-                status: str = "prepared", evidence: str | Path | None = None) -> dict:
-    client, _, config = load_client(workspace, client_name)
-    require_writable(client.parent.parent)
+                status: str = "prepared", evidence: str | Path | None = None, *,
+                kind: str = "client") -> dict:
+    client, _, config = load_engagement(workspace, client_name, kind)
+    _writable_engagement(client, config)
     if not summary.strip():
         raise WorkspaceError("session summary must be nonempty")
     if status not in STATUSES:
@@ -627,7 +643,7 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
     at = _now()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:12]
     entry = {"schema": "torque.session/1", "id": entry_id, "created_at": at,
-             "client": config["slug"], "summary": summary.strip(), "status": status,
+             kind: config["slug"], "summary": summary.strip(), "status": status,
              "status_basis": "user_reported", "independently_verified": False,
              "evidence": evidence_ref}
     sessions = _inside(client, client / "sessions")
@@ -690,8 +706,9 @@ def _session_timestamp(value: object) -> bool:
         return False
 
 
-def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 20) -> list[dict]:
-    client, _, config = load_client(workspace, client_name)
+def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 20, *,
+                  kind: str = "client") -> list[dict]:
+    client, _, config = load_engagement(workspace, client_name, kind)
     sessions = _inside(client, client / "sessions")
     if not sessions.exists():
         return []
@@ -702,7 +719,7 @@ def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 2
     for path in paths:
         value = _read_json(_inside(client, path))
         if (not _SESSION_ID.fullmatch(path.stem)
-                or value.get("schema") != "torque.session/1" or value.get("client") != config["slug"]
+                or value.get("schema") != "torque.session/1" or value.get(kind) != config["slug"]
                 or value.get("id") != path.stem or value.get("status") not in STATUSES
                 or value.get("status_basis") != "user_reported"
                 or value.get("independently_verified") is not False
@@ -717,23 +734,23 @@ def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 2
     return entries
 
 
-def _change_context(workspace: str | Path, client_name: str, client: Path) -> list[dict]:
+def _change_context(workspace: str | Path, client_name: str, client: Path, kind="client") -> list[dict]:
     """Bound event summaries without converting reported checks into observed acceptance."""
     from .changes import get_change, list_changes
     summaries = []
     limit = 5
-    for record in list_changes(workspace, client_name):
-        detail = get_change(workspace, client_name, record["id"])
+    for record in list_changes(workspace, client_name, engagement_kind=kind):
+        detail = get_change(workspace, client_name, record["id"], engagement_kind=kind)
         groups = {"decisions": "decision", "metadata_observations": "metadata_observation",
                   "next_steps": "next_step"}
         histories, totals = {}, {}
-        for name, kind in groups.items():
-            events = [event for event in detail["events"] if event["kind"] == kind]
+        for name, event_kind in groups.items():
+            events = [event for event in detail["events"] if event["kind"] == event_kind]
             totals[name] = len(events)
             histories[name] = []
             for event in events[-limit:]:
                 row = {key: event[key] for key in ("id", "created_at", "summary", "basis")}
-                if kind == "metadata_observation":
+                if event_kind == "metadata_observation":
                     row.update({key: event.get(key) for key in
                                 ("target_org", "job_id", "result", "evidence_integrity", "manifest_integrity")})
                     row["business_acceptance_proven"] = False
@@ -745,13 +762,14 @@ def _change_context(workspace: str | Path, client_name: str, client: Path) -> li
                           "history_note": ("Only the latest five entries per history kind are shown; use show_command for full history."
                                            if any(truncated.values()) else "All decision, metadata and next-step history is shown."),
                           "show_command": shlex.join(["torque", "change", "show", record["id"],
-                                                      "--workspace", str(client.parent.parent), "--client", client.name])})
+                                                      "--workspace", str(client.parent.parent), "--" + kind, client.name])})
     return summaries
 
 
-def client_output_path(workspace: str | Path, client_name: str, destination: str | Path) -> Path:
+def client_output_path(workspace: str | Path, client_name: str, destination: str | Path, *,
+                       kind: str = "client") -> Path:
     """Allow an explicit export, but never place this client's data under a sibling client."""
-    client, _, _ = load_client(workspace, client_name)
+    client, _, _ = load_engagement(workspace, client_name, kind)
     output = Path(destination).expanduser().absolute()
     resolved = output.resolve()
     if foreign_engagement(client, resolved):
@@ -778,22 +796,24 @@ def _context_notes(client: Path) -> dict[str, str]:
     return notes
 
 
-def get_context(workspace: str | Path, client_name: str) -> dict:
-    client, firm, config = load_client(workspace, client_name)
+def get_context(workspace: str | Path, client_name: str, *, kind: str = "client") -> dict:
+    client, firm, config = load_engagement(workspace, client_name, kind)
     notes = _context_notes(client)
     return {"workspace": firm, "client": config, "client_root": str(client),
-            "changes": _change_context(workspace, client_name, client),
+            "changes": _change_context(workspace, client_name, client, kind),
             "notes": notes,
-            "sessions": list_sessions(workspace, client_name),
+            "sessions": list_sessions(workspace, client_name, kind=kind),
             "evidence_note": "Journal statuses are user-reported, not independent verification."}
 
 
-def render_handoff(workspace: str | Path, client_name: str) -> str:
-    client_root, firm, client = load_client(workspace, client_name)
+def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "client") -> str:
+    client_root, firm, client = load_engagement(workspace, client_name, kind)
     notes = _context_notes(client_root)
-    entries = list_sessions(workspace, client_name, limit=None)
+    entries = list_sessions(workspace, client_name, limit=None, kind=kind)
     lines = [f"# Handoff: {client['name']}", "", f"Workspace: {firm['name']}",
-             f"Profile: {firm['profile']}", f"Configured org: {client.get('org') or 'not specified'}",
+             f"Profile: {firm['profile']}",
+             f"Configured org: {client.get('org') or 'not specified'}" if kind == "client"
+             else f"Initiative state: {client['state']}",
              "", "Statuses below were supplied by the user. This journal did not independently "
              "verify execution or outcomes.", ""]
     if notes:
@@ -801,7 +821,7 @@ def render_handoff(workspace: str | Path, client_name: str) -> str:
         for title, contents in notes.items():
             lines += [f"### {title}", "", contents.rstrip(), ""]
     if not entries:
-        lines.append("No session entries have been recorded for this client.")
+        lines.append(f"No session entries have been recorded for this {kind}.")
     for entry in reversed(entries):
         lines += [f"## {entry['created_at']} — {entry['status']} (user-reported)", "",
                   entry["summary"], "", f"Entry: {entry['id']}"]
@@ -814,6 +834,6 @@ def render_handoff(workspace: str | Path, client_name: str) -> str:
             lines.append("Evidence reference: none supplied.")
         lines.append("")
     from .changes import list_changes, render_change
-    for change in list_changes(workspace, client_name):
-        lines += ["", "---", "", render_change(workspace, client_name, change["id"]).rstrip()]
+    for change in list_changes(workspace, client_name, engagement_kind=kind):
+        lines += ["", "---", "", render_change(workspace, client_name, change["id"], engagement_kind=kind).rstrip()]
     return "\n".join(lines).rstrip() + "\n"
