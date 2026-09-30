@@ -2,15 +2,19 @@
 
 ## 2.0.0a19 - clients and initiatives, 2026-09-30 (not published to a package index)
 
-- Initiatives: `torque initiative add|list|show|set-state`, `--initiative` on context, session, handoff and change commands, `torque engagement list`.
+- Initiatives: `torque initiative add|list|show|set-state`, `--initiative` on context, session, handoff and change commands, `torque engagement list [--kind client|initiative]`.
+- An initiative lives in `initiatives/SLUG/` with a `binding.json` and a lifecycle (`active`, `paused` with a reason, `closed` with an outcome, `archived`), an optional `--owner`, and a history of who changed its state. A workspace `.gitignore` that lists private paths gains `/initiatives/`.
+- Client-only powers are refused for initiatives: `--org` on `change create`, `change verify-deploy`, consent, approvals and connected mode.
 - One boundary helper keeps evidence and exports inside their own client or initiative.
 - Durable publication: files and their folder are synced to disk.
 - Replacing a file keeps its mode and group only when asked (`keep_mode=True`); managed files stay private by default.
-- A maintenance flag (`.torque/maintenance`) pauses every record and configuration write: sessions, changes, consent, approvals and claims, launch records, before-states, delegates, permissions and `ai-access`.
+- A maintenance flag (`.torque/maintenance`) pauses every record and configuration write: sessions, changes, consent, approvals and claims, launch records, before-states, delegates, permissions and `ai-access`. `torque workspace upgrade` is not paused.
 - An archived initiative refuses new sessions, changes, notes and checks until it is reopened.
+- The revert wrappers refuse a connected write, running nothing, when the approval lookup fails (for example in maintenance); the delegated approver's read list includes the maintenance flag.
 - The gate protects initiative bindings and future client control, request and claim folders, including folder moves and removals, in every mode; connected sessions treat initiatives as other context and refuse `--initiative`, `torque initiative` and `torque engagement list`.
 - The gate's protected-record check runs in every mode (full, build-only, connected) and matches case-insensitively; `git rm --cached` of client records stays allowed as the gate's own remediation, through a strict allowlist that refuses shell expansion.
 - Client commands and records are unchanged.
+- Docs: [engagement records](docs/engagement-records.md#clients-and-initiatives), [build-only and connected modes](docs/ai-access.md), [validation for alpha 19](docs/validation-alpha19.md).
 - Known limitation: with the gate hook on, read-only commands that name an initiative folder as a whole (for example `find .` or `git log -- .` inside it) are refused; narrowed before 2.0.0a20.
 
 ## 2.0.0a18 - browser session restoration (candidate, not published)

@@ -85,11 +85,17 @@ maintain it during work. There is no mandatory lifecycle or form to complete.
 ### Clients and initiatives
 
 Internal work that is not for a client (adopting a tool, a workspace project) is an
-initiative: `torque initiative add NAME --workspace .` creates `initiatives/SLUG/`
-with the same sessions, context, change records and handoff as a client. Use
-`--initiative SLUG` wherever `--client` works for records. Initiatives never get
-client-only powers (org, consent, approvals, connected mode, verify-deploy).
-`torque engagement list --workspace .` shows both kinds.
+initiative: `torque initiative add NAME --workspace . [--owner PERSON]` creates
+`initiatives/SLUG/` with the same sessions, context, change records and handoff as a
+client. Use `--initiative SLUG` in place of `--client` on `context`, `session`, `handoff`
+and `change`. Initiatives never get client-only powers (org, consent, approvals,
+connected mode, verify-deploy). `torque initiative list|show|set-state` manages them
+(`active`, `paused` with a reason, `closed` with an outcome, `archived`, which refuses new
+records until reopened). `torque engagement list --workspace . [--kind client|initiative]`
+shows both kinds.
+
+An administrator can pause every record and configuration write by creating
+`.torque/maintenance` in the workspace; removing it resumes writes.
 
 ## What is included
 
@@ -128,7 +134,7 @@ them and integrate where appropriate; command count is not a competitive claim.
 - [How useful findings are incorporated](docs/research-adoption.md)
 - [Product direction and release work](docs/product-direction.md)
 - [Comparison protocol](docs/benchmark-protocol.md)
-- [Validation and limitations](docs/validation.md)
+- [Validation and limitations](docs/validation.md), [next live acceptance scenario](docs/live-acceptance.md)
 - [Client adoption and provider data boundaries](docs/client-adoption.md), [optional engagement worksheet](examples/client-data-boundary.md)
 - [Contributing](CONTRIBUTING.md), [security and data boundaries](SECURITY.md), [changelog](CHANGELOG.md)
 - [JSC continuity](docs/continuation.md), [workflow mapping](docs/workflow-continuity.md), [package provenance](docs/package-migration.md)
