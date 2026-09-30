@@ -59,12 +59,13 @@ def create_change(workspace: str | Path, client: str, title: str, outcome: str,
                   engagement_kind: str = "client") -> dict:
     title, outcome = _text(title, "title"), _text(outcome, "business outcome")
     criteria = [_text(c, "acceptance criterion") for c in (criteria or [])]
-    if org is not None and not _org(org):
-        raise ws.WorkspaceError("org must be one explicit alias, username or ID")
+    if org is not None:
+        from .engagements import require
+        require(engagement_kind, "org")
+        if not _org(org):
+            raise ws.WorkspaceError("org must be one explicit alias, username or ID")
     directory, config = _directory(workspace, client, engagement_kind)
-    ws.require_writable(directory.parent.parent.parent)
-    if config.get("state") == "archived":
-        raise ws.WorkspaceError("this engagement is archived; reopen it before recording new work")
+    ws.require_engagement_writable(directory.parent)
     identifier = "chg-" + uuid4().hex[:12]
     record = {"schema": "torque.change/1", "id": identifier, engagement_kind: config["slug"],
               "title": title, "outcome": outcome, "created_at": ws._now(),
@@ -119,7 +120,7 @@ def list_changes(workspace: str | Path, client: str, *, engagement_kind: str = "
 
 
 def _capture_file(root: Path, source: str | Path) -> dict:
-    ws.require_writable(_workspace_of(root))
+    ws.require_engagement_writable(root.parent.parent)
     raw = Path(source).expanduser().absolute()
     if raw.is_symlink():
         raise ws.WorkspaceError("evidence source must not be a symlink")
@@ -157,7 +158,7 @@ def _workspace_of(root: Path) -> Path:
 
 
 def _append(root: Path, record: dict, event: dict) -> dict:
-    ws.require_writable(_workspace_of(root))
+    ws.require_engagement_writable(root.parent.parent)
     directory = ws._inside(root, root / "events")
     existed = directory.exists()
     directory.mkdir(mode=0o700, exist_ok=True)

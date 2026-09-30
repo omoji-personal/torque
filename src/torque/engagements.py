@@ -7,8 +7,10 @@ consent, approvals, connected mode, verify-deploy) are refused for initiatives.
 """
 from __future__ import annotations
 
+from datetime import date
 import getpass
 import json
+import re
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +26,7 @@ CAPABILITIES = {
     "initiative": _SHARED,
 }
 PRIVATE_RULE = "/initiatives/"
+_ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 def require(kind: str, capability: str) -> None:
@@ -134,6 +137,13 @@ def set_state(workspace: str | Path, name: str, state: str, *, reason: str | Non
         raise ws.WorkspaceError("pausing needs a reason")
     if state == "closed" and not (outcome and outcome.strip()):
         raise ws.WorkspaceError("closing needs an outcome")
+    if review_date:
+        try:
+            valid = bool(_ISO_DATE.fullmatch(review_date.strip())) and bool(date.fromisoformat(review_date.strip()))
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ws.WorkspaceError("the review date must be an ISO 8601 date (YYYY-MM-DD)")
     folder, _, config = load_initiative(workspace, name)
     ws.require_writable(folder.parent.parent)
     path = folder / "state" / "engagement.json"

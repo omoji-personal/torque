@@ -60,12 +60,34 @@ def _inside(root: Path, path: Path) -> Path:
 ENGAGEMENT_FOLDERS = ("clients", "initiatives")
 
 
+def _case_insensitive(root: Path) -> bool:
+    """True when root's filesystem ignores case, probed with an engagement folder
+    that exists (so CLIENTS/beta is the same folder as clients/beta)."""
+    for folder in ENGAGEMENT_FOLDERS:
+        path = root / folder
+        variant = root / folder.upper()
+        try:
+            if path.is_dir():
+                return variant.exists() and os.path.samefile(path, variant)
+        except OSError:
+            return False
+    return False
+
+
 def foreign_engagement(own: Path, path: Path) -> bool:
-    """path lies inside another client or initiative of own's workspace."""
+    """path lies inside another client or initiative of own's workspace. On a
+    case-insensitive filesystem, names are compared without case."""
     root = own.parent.parent
-    if own == path or own in path.parents:
+    fold = _case_insensitive(root)
+
+    def key(p: Path) -> tuple[str, ...]:
+        return tuple(os.path.normcase(part).casefold() for part in p.parts) if fold else p.parts
+
+    own_key, path_key, root_key = key(own), key(path), key(root)
+    if path_key[:len(own_key)] == own_key:
         return False
-    return any((root / folder) in path.parents for folder in ENGAGEMENT_FOLDERS)
+    return any(len(path_key) > len(root_key) + 1 and path_key[:len(root_key) + 1] == root_key + key(Path(folder))
+               for folder in ENGAGEMENT_FOLDERS)
 
 
 def _read_json(path: Path) -> dict:
@@ -614,17 +636,24 @@ def load_engagement(workspace: str | Path, name: str, kind: str = "client") -> t
     return load_initiative(workspace, name)
 
 
-def _writable_engagement(folder: Path, config: dict) -> None:
+ARCHIVED_REFUSAL = "this engagement is archived; reopen it before recording new work"
+
+
+def require_engagement_writable(folder: Path) -> None:
+    """Refuse a new record in an engagement folder (clients/<slug> or
+    initiatives/<slug>) while the workspace is in maintenance or the engagement is
+    archived. The lifecycle lives in state/engagement.json; clients have none."""
     require_writable(folder.parent.parent)
-    if config.get("state") == "archived":
-        raise WorkspaceError("this engagement is archived; reopen it before recording new work")
+    state = folder / "state" / "engagement.json"
+    if state.exists() and _read_json(_inside(folder, state)).get("state") == "archived":
+        raise WorkspaceError(ARCHIVED_REFUSAL)
 
 
 def add_session(workspace: str | Path, client_name: str, summary: str,
                 status: str = "prepared", evidence: str | Path | None = None, *,
                 kind: str = "client") -> dict:
     client, _, config = load_engagement(workspace, client_name, kind)
-    _writable_engagement(client, config)
+    require_engagement_writable(client)
     if not summary.strip():
         raise WorkspaceError("session summary must be nonempty")
     if status not in STATUSES:
@@ -770,7 +799,8 @@ def _change_context(workspace: str | Path, client_name: str, client: Path, kind=
 
 def client_output_path(workspace: str | Path, client_name: str, destination: str | Path, *,
                        kind: str = "client") -> Path:
-    """Allow an explicit export, but never place this client's data under a sibling client."""
+    """Allow an explicit export, but never place this engagement's data under another
+    client or initiative."""
     client, _, _ = load_engagement(workspace, client_name, kind)
     output = Path(destination).expanduser().absolute()
     resolved = output.resolve()

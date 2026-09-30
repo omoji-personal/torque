@@ -780,7 +780,8 @@ def _doctor(args: argparse.Namespace) -> int:
     if not available["playwright"]:
         report["next_actions"].append("Browser testing needs Torque's browser extra and a configured browser runtime. See docs/installation.md.")
     if args.workspace:
-        private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients"]
+        private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients",
+                         "initiatives"]
         try:
             from . import gate
             tracked = gate._git_run(root, ["ls-files", "--", *private_paths])
@@ -990,7 +991,7 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(context)
             else:
                 print(f"{context['workspace']['name']} / {context['client']['name']}")
-                print(f"Client directory: {context['client_root']}")
+                print(f"{'Initiative' if kind == 'initiative' else 'Client'} directory: {context['client_root']}")
                 if kind == "client":
                     print(f"Configured org: {context['client'].get('org') or 'not specified'}")
                 print(context["evidence_note"])
@@ -1045,7 +1046,7 @@ def main(argv: list[str] | None = None) -> int:
                         if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
                             print(f"Evidence: {entry['evidence_integrity']} since recording.")
                     if not entries:
-                        print("No session entries for this client.")
+                        print(f"No session entries for this {'initiative' if kind == 'initiative' else 'client'}.")
         elif parsed.command == "handoff":
             name, kind = _scope(parsed)
             body = ws.render_handoff(parsed.workspace, name, kind=kind)
