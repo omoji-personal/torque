@@ -45,21 +45,28 @@ def _org(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip()) and not any(c.isspace() for c in value)
 
 
-def _directory(workspace: str | Path, client: str) -> tuple[Path, dict]:
-    root, _, config = ws.load_client(workspace, client)
+def _directory(workspace: str | Path, client: str, engagement_kind: str = "client") -> tuple[Path, dict]:
+    root, _, config = ws.load_engagement(workspace, client, engagement_kind)
     return ws._inside(root, root / "changes"), config
 
 
+def _owner_key(record: dict) -> str:
+    return "initiative" if "initiative" in record else "client"
+
+
 def create_change(workspace: str | Path, client: str, title: str, outcome: str,
-                  criteria: list[str] | None = None, org: str | None = None) -> dict:
+                  criteria: list[str] | None = None, org: str | None = None, *,
+                  engagement_kind: str = "client") -> dict:
     title, outcome = _text(title, "title"), _text(outcome, "business outcome")
     criteria = [_text(c, "acceptance criterion") for c in (criteria or [])]
     if org is not None and not _org(org):
         raise ws.WorkspaceError("org must be one explicit alias, username or ID")
-    directory, config = _directory(workspace, client)
+    directory, config = _directory(workspace, client, engagement_kind)
     ws.require_writable(directory.parent.parent.parent)
+    if config.get("state") == "archived":
+        raise ws.WorkspaceError("this engagement is archived; reopen it before recording new work")
     identifier = "chg-" + uuid4().hex[:12]
-    record = {"schema": "torque.change/1", "id": identifier, "client": config["slug"],
+    record = {"schema": "torque.change/1", "id": identifier, engagement_kind: config["slug"],
               "title": title, "outcome": outcome, "created_at": ws._now(),
               "planned_org": org, "criteria": [{"id": f"AC{i + 1}", "text": text}
                                                 for i, text in enumerate(criteria)]}
@@ -81,14 +88,15 @@ def create_change(workspace: str | Path, client: str, title: str, outcome: str,
     return record
 
 
-def load_change(workspace: str | Path, client: str, identifier: str) -> tuple[Path, dict]:
+def load_change(workspace: str | Path, client: str, identifier: str, *,
+                engagement_kind: str = "client") -> tuple[Path, dict]:
     if not isinstance(identifier, str) or not _CHANGE_ID.fullmatch(identifier):
         raise ws.WorkspaceError("change ID must be an ID returned by torque change create/list")
-    directory, config = _directory(workspace, client)
+    directory, config = _directory(workspace, client, engagement_kind)
     root = ws._inside(directory, directory / identifier)
     record = ws._read_json(ws._inside(directory, root / "change.json"))
     if (record.get("schema") != "torque.change/1" or record.get("id") != identifier
-            or record.get("client") != config["slug"] or not isinstance(record.get("title"), str)
+            or record.get(engagement_kind) != config["slug"] or not isinstance(record.get("title"), str)
             or not isinstance(record.get("outcome"), str) or not isinstance(record.get("criteria"), list)
             or not record["title"].strip() or not record["outcome"].strip()
             or not _timestamp(record.get("created_at"))
@@ -101,11 +109,11 @@ def load_change(workspace: str | Path, client: str, identifier: str) -> tuple[Pa
     return root, record
 
 
-def list_changes(workspace: str | Path, client: str) -> list[dict]:
-    directory, _ = _directory(workspace, client)
+def list_changes(workspace: str | Path, client: str, *, engagement_kind: str = "client") -> list[dict]:
+    directory, _ = _directory(workspace, client, engagement_kind)
     if not directory.exists():
         return []
-    return sorted((load_change(workspace, client, p.name)[1]
+    return sorted((load_change(workspace, client, p.name, engagement_kind=engagement_kind)[1]
                    for p in directory.iterdir() if _CHANGE_ID.fullmatch(p.name)),
                   key=lambda c: (c["created_at"], c["id"]), reverse=True)
 
@@ -156,7 +164,7 @@ def _append(root: Path, record: dict, event: dict) -> dict:
     at = datetime.now(timezone.utc)
     identifier = at.strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:12]
     value = {"schema": "torque.change-event/1", "id": identifier,
-             "change": record["id"], "client": record["client"],
+             "change": record["id"], _owner_key(record): record[_owner_key(record)],
              "created_at": at.isoformat(), **event}
     ws._write_json(ws._inside(root, directory / f"{identifier}.json"), value)
     ws.share_with_approver(_workspace_of(root), *([] if existed else [directory]), directory / f"{identifier}.json")
@@ -184,15 +192,18 @@ def _missing_fields(kind: str, event: dict) -> list[str]:
     return [key for key in APPROVAL_EVENT_FIELDS.get(kind, ()) if key not in event]
 
 
-def append_approval_event(workspace: str | Path, client: str, change_id: str, kind: str, fields: dict) -> dict:
+def append_approval_event(workspace: str | Path, client: str, change_id: str, kind: str, fields: dict, *,
+                          engagement_kind: str = "client") -> dict:
     """Record one approval step. These events log what happened; they do not
     authorize anything (the approval store and the gate do)."""
+    from .engagements import require
+    require(engagement_kind, "approvals")
     if kind not in APPROVAL_KINDS:
         raise ws.WorkspaceError(f"unknown approval event kind: {kind}")
     missing = _missing_fields(kind, fields)
     if missing:
         raise ws.WorkspaceError(f"{kind} event is missing: {', '.join(missing)}")
-    root, record = load_change(workspace, client, change_id)
+    root, record = load_change(workspace, client, change_id, engagement_kind=engagement_kind)
     reserved = {"schema", "id", "change", "client", "created_at", "kind", "basis", "summary"}
     extra = {k: v for k, v in fields.items() if k not in reserved}
     summary = fields.get("command") or fields.get("reason") or fields.get("approval_id") or kind
@@ -200,20 +211,21 @@ def append_approval_event(workspace: str | Path, client: str, change_id: str, ki
 
 
 def add_note(workspace: str | Path, client: str, identifier: str,
-             text: str, kind: str = "note") -> dict:
+             text: str, kind: str = "note", *, engagement_kind: str = "client") -> dict:
     if kind not in ("note", "decision", "next_step"):
         raise ws.WorkspaceError("note kind must be note, decision or next_step")
     text = _text(text, "note")
-    root, record = load_change(workspace, client, identifier)
+    root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
     return _append(root, record, {"kind": kind, "summary": text, "basis": "operator_reported"})
 
 
 def add_check(workspace: str | Path, client: str, identifier: str, criterion: str,
-              result: str, summary: str, evidence: str | Path | None = None) -> dict:
+              result: str, summary: str, evidence: str | Path | None = None, *,
+              engagement_kind: str = "client") -> dict:
     if result not in _RESULTS:
         raise ws.WorkspaceError(f"check result must be one of {', '.join(_RESULTS)}")
     summary = _text(summary, "check summary")
-    root, record = load_change(workspace, client, identifier)
+    root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
     if criterion not in {c["id"] for c in record["criteria"]}:
         raise ws.WorkspaceError("criterion must identify an acceptance criterion in this change")
     captured = _capture_file(root, evidence) if evidence is not None else None
@@ -223,9 +235,11 @@ def add_check(workspace: str | Path, client: str, identifier: str, criterion: st
 
 def verify_deploy(workspace: str | Path, client: str, identifier: str, org: str,
                   job_id: str, components: list[str] | None = None,
-                  manifest: str | Path | None = None) -> dict:
+                  manifest: str | Path | None = None, *, engagement_kind: str = "client") -> dict:
     """Read one exact live deployment; never turn metadata success into business acceptance."""
-    root, record = load_change(workspace, client, identifier)
+    from .engagements import require
+    require(engagement_kind, "verify_deploy")
+    root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
     ws.require_writable(_workspace_of(root))
     if not _org(org):
         raise ws.WorkspaceError("org must be one explicit alias, username or ID")
@@ -266,7 +280,7 @@ def _events(root: Path, record: dict) -> list[dict]:
         event = ws._read_json(ws._inside(root, path))
         if (not _EVENT_ID.fullmatch(path.stem) or event.get("id") != path.stem
                 or event.get("schema") != "torque.change-event/1" or event.get("change") != record["id"]
-                or event.get("client") != record["client"] or not isinstance(event.get("summary"), str)
+                or event.get(_owner_key(record)) != record[_owner_key(record)] or not isinstance(event.get("summary"), str)
                 or not event["summary"].strip() or not _timestamp(event.get("created_at"))
                 or event.get("kind") not in ("note", "decision", "next_step", "check", "metadata_observation",
                                              *_TORQUE_BASIS)):
@@ -325,8 +339,8 @@ def _integrity(root: Path, evidence: dict | None) -> str:
     return "matches_capture" if digest == evidence["sha256"] and size == evidence["bytes"] else "changed"
 
 
-def get_change(workspace: str | Path, client: str, identifier: str) -> dict:
-    root, record = load_change(workspace, client, identifier)
+def get_change(workspace: str | Path, client: str, identifier: str, *, engagement_kind: str = "client") -> dict:
+    root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
     events = _events(root, record)
     for event in events:
         if "evidence" in event:
@@ -351,10 +365,11 @@ def get_change(workspace: str | Path, client: str, identifier: str) -> dict:
             "next_steps": [e["summary"] for e in events if e["kind"] == "next_step"]}
 
 
-def render_change(workspace: str | Path, client: str, identifier: str) -> str:
-    item = get_change(workspace, client, identifier)
+def render_change(workspace: str | Path, client: str, identifier: str, *, engagement_kind: str = "client") -> str:
+    item = get_change(workspace, client, identifier, engagement_kind=engagement_kind)
+    owner_label = "Client" if engagement_kind == "client" else "Initiative"
     lines = [f"# {item['title']}", "", f"Business outcome: {item['outcome']}", "",
-             f"Change: {item['id']} · Client: {item['client']}",
+             f"Change: {item['id']} · {owner_label}: {item[engagement_kind]}",
              f"Planned org: {item.get('planned_org') or 'not specified'}", "", "## Acceptance criteria", ""]
     if not item["criteria"]:
         lines.append("No acceptance criteria recorded yet.")
