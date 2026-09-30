@@ -2916,6 +2916,18 @@ def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
         return ""
 
 
+def _is_cached_git_rm(toks: list[str]) -> bool:
+    """`git rm --cached ...`, with no output redirection in the same segment: this
+    only removes git's index entries, never a file in the working tree (regardless
+    of -f/--force), so it is not a removal or write against the protected-record
+    check. Every other git form (checkout, mv, clean, plain rm, restore, reset
+    --hard, ...) is unaffected."""
+    words = _without_redirections(toks)
+    if toks != words or len(words) < 3 or _basename(words[0]) != "git" or words[1] != "rm":
+        return False
+    return "--cached" in words[2:]
+
+
 def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
     reason = ("Torque: a client's consent, approval and control records, an engagement's binding and the "
               "approval key are changed only by the consultant's torque commands, in every mode.")
@@ -2938,6 +2950,10 @@ def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -
         current: list[Path] = [cwd]
         unknown = False
         for toks, sep in _segments_with_separators(_expand_home_in_command(text)):
+            if _is_cached_git_rm(toks):
+                # Untracking a record from git's index does not remove, write or even
+                # read it: the file (and its content) stay exactly as they were.
+                continue
             removes = any(_basename(tok) in _REMOVERS for tok in toks)
             writes = removes or any(re.match(r"^(\d+|&)?>", tok) for tok in toks) \
                 or any(_basename(tok) in _WRITE_VERBS for tok in toks)

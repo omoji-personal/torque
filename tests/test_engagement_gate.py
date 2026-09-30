@@ -165,3 +165,67 @@ def test_worktree_copy_guards_initiatives_and_other_clients_through_a_symlinked_
     own_client = gate._decide("Read", {"file_path": str(copy / "clients" / "alpha" / "client.json")},
                               alias, alias, org_rules=False, guarded=guarded)
     assert own_client[0]
+
+
+# --- Fix round 2: `git rm --cached` only removes git's index entries; it never
+# touches the working tree (regardless of -f/--force), so the record check must
+# not treat it as removing a protected record. Otherwise the gate refuses its own
+# prescribed remediation for a tracked clients/ (GIT_TRACKED_REASON tells the
+# agent to run exactly `git rm -r --cached clients`), and the index count can
+# never reach 0. ---
+
+CACHED_GIT_RM_ALLOWED = [
+    "git rm -r --cached clients",
+    "git rm --cached clients/alpha/consent.json",
+    "git rm -r --cached initiatives",
+]
+UNCACHED_GIT_RM_STILL_REFUSED = [
+    "git rm clients/alpha/consent.json",
+    "git rm -r clients",
+]
+
+
+def test_git_rm_cached_is_index_only_not_a_record_removal(tmp_path):
+    root = setup(tmp_path)
+    (root / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
+    for command in CACHED_GIT_RM_ALLOWED:
+        assert not gate._approval_file_reason("Bash", {"command": command}, root), command
+    for command in UNCACHED_GIT_RM_STILL_REFUSED:
+        assert gate._approval_file_reason("Bash", {"command": command}, root), command
+
+
+def test_git_rm_cached_with_a_redirection_is_not_exempted(tmp_path):
+    """`_is_cached_git_rm` requires the segment to hold no output redirection: a
+    redirection tacked onto the same segment (e.g. into the very record it names)
+    is a real working-tree write, not an index-only operation, so it stays refused."""
+    root = setup(tmp_path)
+    (root / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
+    command = "git rm --cached clients/alpha/consent.json > clients/alpha/consent.json"
+    assert gate._approval_file_reason("Bash", {"command": command}, root)
+
+
+def test_build_only_git_lockout_remediation_still_works(tmp_path):
+    """End to end: while clients/ is tracked in git's index, build-only mode blocks
+    ordinary git commands (GIT_TRACKED_REASON) until the agent runs the exact
+    remediation it is told to run. The record check must not re-block that
+    remediation, and running it for real must actually clear the lockout."""
+    root = setup(tmp_path)
+    (root / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-f", "clients/alpha/client.json",
+                    "clients/alpha/consent.json"], check=True)
+    assert gate.clients_index_count(root) == 2
+
+    still_locked_out, reason = gate.decide("Bash", {"command": "git log"}, root, "build-only", root)
+    assert not still_locked_out, "git log should still be blocked while clients/ is tracked"
+
+    allowed, reason = gate.decide("Bash", {"command": "git rm -r --cached clients"}, root, "build-only", root)
+    assert allowed, reason
+    allowed2, reason2 = gate.decide("Bash", {"command": "git rm --cached clients/alpha/consent.json"},
+                                    root, "build-only", root)
+    assert allowed2, reason2
+
+    subprocess.run(["git", "-C", str(root), "rm", "-r", "--cached", "-q", "clients"], check=True)
+    assert gate.clients_index_count(root) == 0
+    unblocked, reason3 = gate.decide("Bash", {"command": "git log"}, root, "build-only", root)
+    assert unblocked, reason3
