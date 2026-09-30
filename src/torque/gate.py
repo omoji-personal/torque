@@ -2918,6 +2918,7 @@ def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
 
 _CACHED_GIT_RM_OPTIONS = frozenset({"--cached", "-r", "-q", "--quiet", "-f", "--force",
                                     "--ignore-unmatch", "-n", "--dry-run"})
+_SHELL_EXPANSION_CHARS = frozenset("$`*?[]{}")
 
 
 def _is_cached_git_rm(toks: list[str]) -> bool:
@@ -2929,9 +2930,15 @@ def _is_cached_git_rm(toks: list[str]) -> bool:
     strict allowlist: `git` then `rm` with no global options between, no output
     redirection, every option word exactly one of _CACHED_GIT_RM_OPTIONS (combined
     short flags such as -rf are refused), `--cached` among them, and at least one
-    path. Anything else is judged as an ordinary remover."""
+    path. No word after `rm` may hold `$`, a backtick or any of `*?[]{}`: bash
+    would expand it (`$X`, `$'--no-cached'`, `${X:-...}`, a glob, braces) after the
+    gate decides, possibly into an option such as --no-cached. shlex keeps `$`
+    (it only strips the quotes around it), so a quoted `$` still counts here.
+    Anything else is judged as an ordinary remover."""
     words = _without_redirections(toks)
     if toks != words or len(words) < 3 or _basename(words[0]) != "git" or words[1] != "rm":
+        return False
+    if any(ch in _SHELL_EXPANSION_CHARS for w in words[2:] for ch in w):
         return False
     options = [w for w in words[2:] if w.startswith("-")]
     paths = [w for w in words[2:] if not w.startswith("-")]
@@ -2960,12 +2967,21 @@ def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -
         seen: list[Path] = [cwd]
         current: list[Path] = [cwd]
         unknown = False
+        # A grouping character (`{a,b}`, `${X}`, `$(...)`, a backtick) splits one
+        # command into several segments; the words after it are still arguments of
+        # the remover before it, so a removal carries across until a real separator.
+        carry = False
         for toks, sep in _segments_with_separators(_expand_home_in_command(text)):
             if _is_cached_git_rm(toks):
                 # Untracking a record from git's index does not remove, write or even
                 # read it: the file (and its content) stay exactly as they were.
+                carry = False
                 continue
-            removes = any(_basename(tok) in _REMOVERS for tok in toks)
+            removes = carry or any(_basename(tok) in _REMOVERS for tok in toks)
+            carry = removes and sep in _GROUPING_CHARS
+            if removes:
+                # Brace expansion: `{x,clients}` arrives as the word `x,clients`.
+                toks = toks + [part for tok in toks if "," in tok for part in tok.split(",") if part]
             writes = removes or any(re.match(r"^(\d+|&)?>", tok) for tok in toks) \
                 or any(_basename(tok) in _WRITE_VERBS for tok in toks)
             if unknown and writes and any(_holds_records(root) for root in _workspace_roots(cwd)):

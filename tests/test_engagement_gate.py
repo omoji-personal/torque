@@ -294,3 +294,61 @@ def test_allowed_cached_git_rm_forms_leave_the_file_on_disk(tmp_path):
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
         assert (repo / "clients/alpha/consent.json").is_file(), command
         assert (repo / "initiatives/plan/binding.json").is_file(), command
+
+
+# --- Fix round 5: bash expansion can turn a word the gate reads as a path into an
+# option (`$X`, `"$X"`, `$'--no-cached'`, `${X:---no-cached}`, braces, globs), so
+# no exempted word may hold `$`, a backtick or any of `*?[]{}`. Words split off by
+# a grouping character (`${`, `$(`, a backtick, `{a,b}`) still belong to the
+# remover before them. ---
+
+EXPANSION_REFUSED = [
+    "X=--no-cached; git rm --cached $X clients/alpha/consent.json",
+    "X=--no-cached; git rm --cached \"$X\" clients/alpha/consent.json",
+    "git rm --cached $'--no-cached' clients/alpha/consent.json",
+    "git rm --cached $'\\x2d-no-cached' clients/alpha/consent.json",
+    "X=--no-cached; git rm -r --cached $X clients",
+    "git rm -r --cached ${X:---no-cached} clients",
+    "git rm --cached clients/alpha/*.json",
+    # Same class, split across segments by a grouping character:
+    "git rm --cached {--no-cached,clients/alpha/consent.json}",
+    "git rm -r --cached {--no-cached,clients}",
+    "git rm -r --cached $(printf -- --no-cached) clients",
+    "git rm -r --cached `printf -- --no-cached` clients",
+    "git rm --cached -f $'--no-cached' clients/alpha/consent.json",
+    "rm -rf {x,clients}",
+    "rm -rf $(true) clients",
+]
+EXPANSION_ALLOWED = [
+    "git rm -r --cached clients",
+    "git rm --cached clients/alpha/consent.json",
+    "git rm clients/alpha/consent.json --cached",
+]
+
+
+def test_no_expansion_in_exempted_git_rm_cached_words(tmp_path):
+    root = setup(tmp_path)
+    (root / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
+    for command in EXPANSION_REFUSED:
+        assert gate._approval_file_reason("Bash", {"command": command}, root), command
+    for command in EXPANSION_ALLOWED:
+        assert not gate._approval_file_reason("Bash", {"command": command}, root), command
+
+
+def test_expansion_forms_really_delete_and_allowed_forms_do_not(tmp_path):
+    """Real bash + git in throwaway repos: every refused form deletes the record
+    (or its folder), every allowed form leaves it on disk."""
+    bash = shutil.which("bash")
+    assert bash
+    cases = [(c, True) for c in EXPANSION_REFUSED[:6] + EXPANSION_REFUSED[7:]] \
+        + [(c, False) for c in EXPANSION_ALLOWED]
+    for i, (command, deletes) in enumerate(cases):
+        repo = tmp_path / f"e{i}"
+        (repo / "clients" / "alpha").mkdir(parents=True)
+        (repo / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "-f", "clients"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+                        "commit", "-qm", "init"], check=True)
+        subprocess.run([bash, "-c", command], cwd=repo, capture_output=True)
+        assert (not (repo / "clients" / "alpha" / "consent.json").exists()) == deletes, command
