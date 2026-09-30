@@ -29,7 +29,8 @@ capabilities have separate limits in [validation](docs/validation.md); the
 [alpha 16 record](docs/validation-alpha16.md) covers the runtime, and the
 [alpha 17 record](docs/validation-alpha17.md) covers the knowledge skills added since.
 The [alpha 18 record](docs/validation-alpha18.md) covers browser restoration and failure
-diagnostics. No industry-leadership claim is made.
+diagnostics, and the [alpha 19 record](docs/validation-alpha19.md) covers clients and
+initiatives. No industry-leadership claim is made.
 
 ## Install and try the offline demo
 
