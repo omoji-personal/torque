@@ -207,6 +207,7 @@ def import_before_state(workspace, client, change_id, source, sobject: str | Non
     folder of them) into the change's evidence. Exported records are also stored as
     records/Object__Id.json, so the grant can check them against a record write (a CSV
     export needs `sobject`). The org it came from is not verified."""
+    ws.require_writable(workspace)
     source = Path(source).expanduser().absolute()
     if source.is_symlink() or not (source.is_dir() or source.is_file()):
         raise ws.WorkspaceError(f"before-state must be a folder or a file (not a link): {source}")
@@ -243,6 +244,7 @@ def _sf_json(run, cmd: list[str], timeout: int) -> dict:
 def capture_metadata(workspace, client, change_id, org, components: list[str], run=subprocess.run,
                      org_id_18: str | None = None) -> dict:
     """Retrieve the named components now, as their own recorded step."""
+    ws.require_writable(workspace)
     if not components:
         raise ws.WorkspaceError("name at least one component (Type:Name)")
     with tempfile.TemporaryDirectory(prefix="torque-before-") as tmp:
@@ -264,6 +266,7 @@ def _record_file(sobject: str, record_id: str) -> str:
 def capture_records(workspace, client, change_id, org, records: list[str], run=subprocess.run,
                     org_id_18: str | None = None) -> dict:
     """Read each record now (Object:Id), as its own recorded step."""
+    ws.require_writable(workspace)
     if not records:
         raise ws.WorkspaceError("name at least one record (Object:Id)")
     with tempfile.TemporaryDirectory(prefix="torque-before-") as tmp:

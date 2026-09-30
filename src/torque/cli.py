@@ -49,7 +49,16 @@ def _print_json(value: object) -> None:
 
 def _client_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", required=True, help="private workspace directory")
-    parser.add_argument("--client", required=True, help="explicit client name or slug")
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--client", help="explicit client name or slug")
+    scope.add_argument("--initiative", help="explicit internal initiative name or slug")
+
+
+def _scope(parsed: argparse.Namespace) -> tuple[str, str]:
+    """(name, kind) for the engagement a command names."""
+    if getattr(parsed, "initiative", None):
+        return parsed.initiative, "initiative"
+    return parsed.client, "client"
 
 
 def _disable_abbreviations(parser: argparse.ArgumentParser) -> None:
@@ -113,6 +122,30 @@ def build_parser() -> argparse.ArgumentParser:
     clients.add_argument("--workspace", required=True)
     clients.add_argument("--json", action="store_true")
     cli_approval.register_consent(client_sub)
+    initiative = sub.add_parser("initiative", help="manage an internal initiative's private context")
+    initiative_sub = initiative.add_subparsers(dest="action", required=True)
+    i_add = initiative_sub.add_parser("add")
+    i_add.add_argument("name")
+    i_add.add_argument("--workspace", required=True)
+    i_add.add_argument("--owner", help="accountable person")
+    i_add.add_argument("--json", action="store_true")
+    for action in ("list", "show", "set-state"):
+        p = initiative_sub.add_parser(action)
+        p.add_argument("--workspace", required=True)
+        p.add_argument("--json", action="store_true")
+        if action != "list":
+            p.add_argument("name")
+        if action == "set-state":
+            p.add_argument("state", choices=("active", "paused", "closed", "archived"))
+            p.add_argument("--reason")
+            p.add_argument("--review-date")
+            p.add_argument("--outcome")
+    engagement = sub.add_parser("engagement", help="list clients and initiatives together")
+    engagement_sub = engagement.add_subparsers(dest="action", required=True)
+    e_list = engagement_sub.add_parser("list")
+    e_list.add_argument("--workspace", required=True)
+    e_list.add_argument("--kind", choices=("client", "initiative"))
+    e_list.add_argument("--json", action="store_true")
     context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
     _client_args(context)
     context.add_argument("--json", action="store_true")
@@ -372,30 +405,35 @@ def _workflows(args: argparse.Namespace) -> int:
 
 def _change(args: argparse.Namespace) -> int:
     from . import changes
-    common = (args.workspace, args.client)
+    name, kind = _scope(args)
+    common = (args.workspace, name)
     action = args.action
     if action == "create":
-        result = changes.create_change(*common, args.title, args.outcome, args.criterion, args.org)
+        result = changes.create_change(*common, args.title, args.outcome, args.criterion, args.org,
+                                       engagement_kind=kind)
     elif action == "list":
-        result = changes.list_changes(*common)
+        result = changes.list_changes(*common, engagement_kind=kind)
     elif action in ("show", "handoff"):
-        result = changes.get_change(*common, args.change_id)
+        result = changes.get_change(*common, args.change_id, engagement_kind=kind)
         if not args.json:
-            text = changes.render_change(*common, args.change_id)
+            text = changes.render_change(*common, args.change_id, engagement_kind=kind)
             if action == "handoff" and args.output:
-                ws.atomic_write_new(ws.client_output_path(*common, args.output), text)
+                ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind), text)
                 print(args.output)
             else:
                 print(text, end="")
             return 0
         if action == "handoff" and args.output:
-            ws.atomic_write_new(ws.client_output_path(*common, args.output), json.dumps(result, indent=2) + "\n")
+            ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind),
+                                json.dumps(result, indent=2) + "\n")
     elif action == "note":
-        result = changes.add_note(*common, args.change_id, args.text, args.kind)
+        result = changes.add_note(*common, args.change_id, args.text, args.kind, engagement_kind=kind)
     elif action == "check":
-        result = changes.add_check(*common, args.change_id, args.criterion, args.result, args.summary, args.evidence)
+        result = changes.add_check(*common, args.change_id, args.criterion, args.result, args.summary,
+                                   args.evidence, engagement_kind=kind)
     else:
-        result = changes.verify_deploy(*common, args.change_id, args.org, args.job_id, args.component, args.manifest)
+        result = changes.verify_deploy(*common, args.change_id, args.org, args.job_id, args.component,
+                                       args.manifest, engagement_kind=kind)
     if args.json:
         _print_json(result)
     elif action == "list":
@@ -742,7 +780,8 @@ def _doctor(args: argparse.Namespace) -> int:
     if not available["playwright"]:
         report["next_actions"].append("Browser testing needs Torque's browser extra and a configured browser runtime. See docs/installation.md.")
     if args.workspace:
-        private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients"]
+        private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients",
+                         "initiatives"]
         try:
             from . import gate
             tracked = gate._git_run(root, ["ls-files", "--", *private_paths])
@@ -913,16 +952,48 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"{record['slug']}: {record['name']} (org: {record.get('org') or 'not configured'})")
                     if not records:
                         print("No clients yet. Use torque client add NAME --workspace PATH.")
+        elif parsed.command == "initiative":
+            from . import engagements as eng
+            if parsed.action == "add":
+                path = eng.add_initiative(parsed.workspace, parsed.name, parsed.owner)
+                _print_json({"initiative_root": str(path), "org_calls": False}) if parsed.json else print(path)
+            elif parsed.action == "list":
+                rows = eng.list_engagements(parsed.workspace, "initiative")
+                if parsed.json:
+                    _print_json(rows)
+                else:
+                    for row in rows:
+                        print(f"{row['slug']}: {row['name']} ({row['state']}, owner: {row['owner'] or 'not set'})")
+                    if not rows:
+                        print("No initiatives yet. Use torque initiative add NAME --workspace PATH.")
+            else:
+                config = (eng.load_initiative(parsed.workspace, parsed.name)[2] if parsed.action == "show"
+                          else eng.set_state(parsed.workspace, parsed.name, parsed.state, reason=parsed.reason,
+                                             review_date=parsed.review_date, outcome=parsed.outcome))
+                if parsed.json:
+                    _print_json(config)
+                else:
+                    print(f"{config['slug']}: {config['name']} ({config['state']}, owner: {config['owner'] or 'not set'})")
+        elif parsed.command == "engagement":
+            from . import engagements as eng
+            rows = eng.list_engagements(parsed.workspace, parsed.kind)
+            if parsed.json:
+                _print_json(rows)
+            else:
+                for row in rows:
+                    print(f"{row['kind']:<10} {row['slug']}: {row['name']} ({row['state']})")
         elif parsed.command == "change":
             return _change(parsed)
         elif parsed.command == "context":
-            context = ws.get_context(parsed.workspace, parsed.client)
+            name, kind = _scope(parsed)
+            context = ws.get_context(parsed.workspace, name, kind=kind)
             if parsed.json:
                 _print_json(context)
             else:
                 print(f"{context['workspace']['name']} / {context['client']['name']}")
-                print(f"Client directory: {context['client_root']}")
-                print(f"Configured org: {context['client'].get('org') or 'not specified'}")
+                print(f"{'Initiative' if kind == 'initiative' else 'Client'} directory: {context['client_root']}")
+                if kind == "client":
+                    print(f"Configured org: {context['client'].get('org') or 'not specified'}")
                 print(context["evidence_note"])
                 for title, value in context.get("notes", {}).items():
                     print(f"\n{title}:\n{value}")
@@ -952,14 +1023,16 @@ def main(argv: list[str] | None = None) -> int:
                     if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
                         print(f"Evidence: {entry['evidence_integrity']} since recording.")
         elif parsed.command == "session":
+            name, kind = _scope(parsed)
             if parsed.action == "add":
-                entry = ws.add_session(parsed.workspace, parsed.client, parsed.summary, parsed.status, parsed.evidence)
+                entry = ws.add_session(parsed.workspace, name, parsed.summary, parsed.status, parsed.evidence,
+                                       kind=kind)
                 if parsed.json:
                     _print_json(entry)
                 else:
                     print(f"Recorded {entry['id']} [{entry['status']}, user-reported]")
             else:
-                entries = ws.list_sessions(parsed.workspace, parsed.client, limit=None)
+                entries = ws.list_sessions(parsed.workspace, name, limit=None, kind=kind)
                 if parsed.action == "show":
                     entry = next((e for e in entries if e["id"] == parsed.entry_id), None)
                     if entry is None:
@@ -973,11 +1046,12 @@ def main(argv: list[str] | None = None) -> int:
                         if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
                             print(f"Evidence: {entry['evidence_integrity']} since recording.")
                     if not entries:
-                        print("No session entries for this client.")
+                        print(f"No session entries for this {'initiative' if kind == 'initiative' else 'client'}.")
         elif parsed.command == "handoff":
-            body = ws.render_handoff(parsed.workspace, parsed.client)
+            name, kind = _scope(parsed)
+            body = ws.render_handoff(parsed.workspace, name, kind=kind)
             if parsed.output:
-                output = ws.client_output_path(parsed.workspace, parsed.client, parsed.output)
+                output = ws.client_output_path(parsed.workspace, name, parsed.output, kind=kind)
                 ws.atomic_write_new(output, body)
                 print(output)
             else:

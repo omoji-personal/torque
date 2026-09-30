@@ -399,6 +399,7 @@ def write_settings(workspace, presence=None, confirm=None, *, profile="interacti
     account from the one that owns the workspace directory; landed in D1's fix
     round 1 after this task's brief was written, same as D2's identically named
     parameter)."""
+    ws.require_writable(workspace)
     from . import delegation
     if profile not in PROFILES:
         raise ws.WorkspaceError(f"unknown permission profile {profile!r}")

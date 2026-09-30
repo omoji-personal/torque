@@ -181,10 +181,14 @@ def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
         print("error: connected mode: run this with --workspace PATH --client NAME", file=sys.stderr)
         return EXIT_NOT_APPROVED, None
     parent = os.environ.get(APPROVED_PARENT_ENV)
-    if parent:
-        record = _parent_approval(workspace, client, parent, target_org, _invocation())
-    else:
-        record = _consumed_approval(workspace, client, _invocation(), target_org)
+    try:
+        if parent:
+            record = _parent_approval(workspace, client, parent, target_org, _invocation())
+        else:
+            record = _consumed_approval(workspace, client, _invocation(), target_org)
+    except ValueError as exc:  # WorkspaceError, e.g. the workspace is in maintenance
+        print(f"error: connected mode: {exc}; nothing was run", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
     if record is None:
         print("error: connected mode: no approval was consumed for this exact command in the last "
               "two minutes; request one with torque approval request", file=sys.stderr)

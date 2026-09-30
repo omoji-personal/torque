@@ -17,7 +17,7 @@ import shutil
 import urllib.parse
 
 from . import approval, consent, gate, workspace as ws
-from .connected_routes import BROWSER_SERVER, Route, classify, is_simple
+from .connected_routes import BROWSER_SERVER, INITIATIVE_OWNER, Route, classify, is_simple
 
 RANK = {"allow": 0, "ask": 1, "deny": 2}
 PREFIX = "Connected mode: "
@@ -76,13 +76,16 @@ def _bound_client(env, workspace: Path) -> str | None:
 
 
 def _guarded(workspace: Path, bound: str | None) -> list[Path]:
+    """Folders a client-bound connected session treats as other engagements'
+    context: every other client and every internal initiative."""
     clients = workspace / "clients"
+    initiatives = [workspace / "initiatives"] if (workspace / "initiatives").exists() else []
     if not bound:
-        return [clients]
+        return [clients, *initiatives]
     try:
-        return [p for p in clients.iterdir() if p.name != bound and (p.is_dir() or p.is_symlink())]
+        return [p for p in clients.iterdir() if p.name != bound and (p.is_dir() or p.is_symlink())] + initiatives
     except OSError:
-        return [clients]
+        return [clients, *initiatives]
 
 
 FILE_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
@@ -178,6 +181,8 @@ def _route_client(route: Route) -> str | None:
         return None
     if route.client == "*":
         return "*"
+    if route.client.startswith(INITIATIVE_OWNER):
+        return "<initiative>"
     try:
         return ws.slug_for(route.client)
     except ws.WorkspaceError:
@@ -238,7 +243,9 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         if not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
             decisions.append(unbound)
         elif client not in (None, bound):
-            decisions.append(_deny(f"this session is bound to {bound}; it cannot act for {route.client}."))
+            owner = (f"the internal initiative {route.client[len(INITIATIVE_OWNER):]}"
+                     if client == "<initiative>" else route.client)
+            decisions.append(_deny(f"this session is bound to {bound}; it cannot act for {owner}."))
         elif route.kind not in ("local", "admin") and route.org is not None and problems:
             decisions.append(_deny(f"{bound}'s consent is not usable: " + "; ".join(problems) + "."))
         elif route.kind not in ("local", "admin") and route.org is not None \

@@ -465,7 +465,7 @@ def _dirs(workspace, client, create: bool = True) -> dict[str, Path]:
 # name only (never listed), and `consumed/` (the agent's claim markers) is
 # never opened for content by the approver, so both stay off the write tuple
 # even though their bare folders are lstat'd (read) above.
-DELEGATED_READS = ("workspace.json", "clients", "clients/{client}", "clients/{client}/client.json",
+DELEGATED_READS = ("workspace.json", ".torque/maintenance", "clients", "clients/{client}", "clients/{client}/client.json",
                    "clients/{client}/consent.json", "clients/{client}/changes", "clients/{client}/changes/*",
                    "clients/{client}/changes/**", "clients/{client}/approvals",
                    "clients/{client}/approvals/requests", "clients/{client}/approvals/requests/*.json",
@@ -782,6 +782,7 @@ def create_request(workspace, client, change_id, org_alias, *, argv=None, mcp=No
                    cwd=None, resolve=None) -> dict:
     """Record a request (the agent may run this). Nothing is approved until the
     consultant grants it."""
+    ws.require_writable(workspace)
     item = _usable_consent(workspace, client)
     changes.load_change(workspace, client, change_id)
     cwd = Path(os.path.realpath(str(cwd or os.getcwd())))
@@ -1175,6 +1176,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     contract or test that needs this fakes ownership for this one call through
     the parameter, never by swapping the process-global `_control_stat`, which
     would also change what a concurrent caller in the same process sees)."""
+    ws.require_writable(workspace)
     if delegated:
         if new_components:
             raise ws.WorkspaceError("--new-component belongs to the consultant's production grants; a delegated "
@@ -1721,6 +1723,7 @@ def _log_grant(workspace, client, record: dict) -> None:
 
 
 def deny(workspace, client, request_id, reason, *, presence=None, confirm=None) -> dict:
+    ws.require_writable(workspace)
     _require_operator(presence, confirm, typed=True)
     if not isinstance(reason, str) or not reason.strip():
         raise ws.WorkspaceError("give a reason")
@@ -1810,6 +1813,7 @@ def deny_delegated(workspace, client, request_id, reason_class, *, model_id, rea
     workspace's control files and folders genuinely belong to a separate OS
     account. Fail closed: an unreadable or malformed request, workspace
     configuration or control file refuses rather than being treated as absent."""
+    ws.require_writable(workspace)
     actor, config, root, config_st = delegation._delegated_proof(
         workspace, "approver", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
         root_owner=root_owner)
@@ -2217,6 +2221,7 @@ def _activity(dirs: dict, entry: dict) -> None:
 
 
 def log_activity(workspace, client, entry: dict) -> None:
+    ws.require_writable(workspace)
     _activity(_dirs(workspace, client), entry)
 
 
@@ -2288,7 +2293,9 @@ def _record_use(workspace, client, dirs: dict, record: dict, action: str, sessio
 
 def consume(workspace, client, call_key, org_alias, *, config, session_id=None, tool_use_id=None,
             cwd=None, now=None) -> tuple[bool, str]:
-    """Use a matching granted approval once. Returns (True, approval ID) or (False, why)."""
+    """Use a matching granted approval once. Returns (True, approval ID) or (False, why).
+    Raises while the workspace is in maintenance (the gate then refuses the call)."""
+    ws.require_writable(workspace)
     now = now if now is not None else time.time()
     slug = ws.slug_for(client)
     dirs = _dirs(workspace, client)
@@ -2342,6 +2349,7 @@ def find_browser_approval(workspace, client, org_alias, *, config, now=None) -> 
 def note_browser_use(workspace, client, record: dict, *, tool_name=None, session_id=None, tool_use_id=None,
                      now=None) -> None:
     """Log one browser action in a window; its first use is also a change event."""
+    ws.require_writable(workspace)
     now = now if now is not None else time.time()
     dirs = _dirs(workspace, client)
     if _claim(dirs, record, now, session_id, tool_use_id):
@@ -2463,6 +2471,7 @@ def consumed_for_wrapper(workspace, client, invocation: tuple[str, list[str]], o
     Torque route invocation, run from the approved folder (`cwd`, default the current
     one), authenticated again, with its files checked again in full, claimed
     atomically so it serves one wrapper run."""
+    ws.require_writable(workspace)
     now = now if now is not None else time.time()
     config = config if config is not None else _config(workspace)
     dirs = _dirs(workspace, client)
@@ -2511,6 +2520,7 @@ def release_for_retry(workspace, client, invocation: tuple[str, list[str]], org_
     """After the wrapper could not resolve the org (nothing ran), return the approval
     the gate just consumed for this exact invocation, so the same command can be run
     again inside its window. At most three times per approval; each release is logged."""
+    ws.require_writable(workspace)
     now = now if now is not None else time.time()
     config = config if config is not None else _config(workspace)
     dirs = _dirs(workspace, client)
@@ -2526,6 +2536,7 @@ PARENT_WINDOW = 1800
 def authorize_child(workspace, client, approval_id, child_words: list[str]) -> None:
     """The revert executor names the one wrapper command it will start for the
     approval its own run verified (once per verified run)."""
+    ws.require_writable(workspace)
     if not _valid_id(approval_id, "apr-"):
         raise ws.WorkspaceError("invalid approval ID")
     dirs = _dirs(workspace, client)
@@ -2562,6 +2573,7 @@ def approved_parent(workspace, client, approval_id, org_alias, invocation=None, 
     """For the wrapper the revert executor starts: the approval its parent verified in
     the last `window` seconds, authenticated again, for exactly the command the parent
     named, run from the approved folder, claimed atomically once."""
+    ws.require_writable(workspace)
     now = now if now is not None else time.time()
     config = config if config is not None else _config(workspace)
     state = _parent_state(workspace, client, approval_id, org_alias, invocation, window=window, now=now,
@@ -2578,6 +2590,7 @@ def release_child(workspace, client, approval_id, org_alias, invocation, *, wind
                   config=None, cwd=None) -> bool:
     """The revert's child could not resolve the org (nothing ran): return the parent's
     approval, so the same `torque recover` command can be run again in its window."""
+    ws.require_writable(workspace)
     now = now if now is not None else time.time()
     config = config if config is not None else _config(workspace)
     state = _parent_state(workspace, client, approval_id, org_alias, invocation, window=window, now=now,

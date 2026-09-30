@@ -189,6 +189,7 @@ def create_binding(workspace, client, *, model_id, minutes=10, env=None, ancesto
     mode 0644 so the launching account can read it. Never creates a folder: the
     approvals folders belong to whoever the layout says. `root_owner` and
     `control_stat` are the caller-proof (R41) and R46 test seams."""
+    ws.require_writable(workspace)
     from . import approval, delegation
     actor, config, root, config_st = delegation._delegated_proof(
         workspace, "approver", model_id=model_id, getuid=getuid, env=env, ancestors=ancestors,
@@ -319,6 +320,7 @@ def claim_binding(workspace, client, binding_id, *, pid=None, now=None, starts=N
     client, from the current approver delegate, within its window), then the
     single-use claim, an O_EXCL approvals/consumed/<binding_id>.launch record.
     Every refusal is a delegation.Refusal with a reason class."""
+    ws.require_writable(workspace)
     from . import approval
     root, config, folder = _tier2_config(workspace, env=env, ancestors=ancestors, getuid=getuid,
                                          control_stat=control_stat, client=client)
@@ -353,6 +355,7 @@ def write_launch_record(workspace, client, kind, *, pid=None, starts=None) -> di
     """The launch record for a consultant's presence launch (`human`) or a doctor
     probe (`probe`). F1: the approvals folders are created when absent (mkdir 0700,
     an existing folder is never re-moded)."""
+    ws.require_writable(workspace)
     from . import approval
     if kind not in ("human", "probe"):
         raise ws.WorkspaceError("launch record kind is human or probe")

@@ -105,6 +105,7 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
     reviewer signs off. `delegated=True`: the workspace's setup delegate is
     recording this in place of the consultant at a real terminal; the record
     gains `recorded_by_actor` (the delegate's identity and kind)."""
+    ws.require_writable(workspace)
     if model_id is not None and not delegated:
         raise ws.WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
     actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
@@ -152,6 +153,7 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
 
 def _update(workspace, client, presence, change, *, delegated: bool = False, model_id: str | None = None,
            env=None, ancestors=None, getuid=None, root_owner=None) -> dict:
+    ws.require_writable(workspace)
     actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
     _, path = _path(workspace, client)
     item = load_consent(workspace, client)
@@ -168,6 +170,7 @@ def sign_off(workspace, client, reviewer: str, presence=None, *, delegated: bool
     not lift a suspension (record the agreement again for that). `delegated=True`:
     the workspace's setup delegate signs off in place of the consultant; the
     reviewer entry gains `signed_off_by` (the delegate's identity and kind)."""
+    ws.require_writable(workspace)
     if model_id is not None and not delegated:
         raise ws.WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
     if not isinstance(reviewer, str) or not reviewer.strip():

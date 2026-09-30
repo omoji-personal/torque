@@ -1181,7 +1181,10 @@ def _git_output(base: Path, args: list[str]) -> str | None:
 
 def clients_index_count(workspace: Path) -> int | None:
     """How many files under workspace/clients/ are in git's index: 0 when the
-    workspace is not in a repository, None when git errors, times out or is missing."""
+    workspace is not in a repository, None when git errors, times out or is missing.
+    initiatives/ is internal (not client-confidential) and is deliberately not
+    counted here: counting it would lock the agent out of ordinary git commands
+    (git log, git diff, git rm --cached) whenever an initiative file is tracked."""
     if not workspace.is_dir():
         return 0
     probe = _git_run(workspace, ["rev-parse", "--is-inside-work-tree"])
@@ -2360,17 +2363,30 @@ def _start_watchdog() -> threading.Timer:
 
 def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None,
             org_rules: bool = True, guarded: list[Path] | None = None) -> tuple[bool, str]:
-    """The build-only checks. With org_rules False (connected mode), org calls and
-    Torque commands pass this scan (connected mode classifies them itself), and
-    `guarded` lists the folders treated as client context (other clients' folders)
-    in place of the whole clients/ folder."""
+    """The build-only checks, plus (here, so every caller of this function gets it:
+    build-only's decide() and connected mode's decide_connected(), not only full
+    mode's own separate call) the same protected-record check full mode applies on
+    its own: an engagement's binding, and a client's consent, approval and control
+    records, are kept from every recognized tool regardless of whether their folder
+    is itself guarded below. With org_rules False (connected mode), org calls and
+    Torque commands pass the rest of this scan (connected mode classifies them
+    itself), and `guarded` lists the folders treated as client context (other
+    clients' folders, and internal initiatives) in place of the whole clients/
+    folder."""
     workspace = Path(os.path.realpath(str(workspace)))
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
+    reason = _approval_file_reason(tool_name, tool_input, cwd)
+    if reason:
+        return False, reason
     allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, False, org_rules, guarded)
     if not allowed:
         return allowed, reason
     for copy in _worktree_copies(workspace):
-        copies = None if guarded is None else [copy / "clients" / Path(folder).name for folder in guarded]
+        copies = None if guarded is None else [
+            copy / Path(os.path.realpath(str(folder))).relative_to(workspace)
+            if Path(os.path.realpath(str(folder))).is_relative_to(workspace)
+            else copy / "clients" / Path(folder).name
+            for folder in guarded]
         allowed, reason = _decide_root(tool_name, tool_input, copy, cwd, True, org_rules, copies)
         if not allowed:
             return allowed, reason
@@ -2843,7 +2859,8 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     return gated
 
 
-_PROTECTED_NAMES = ("consent.json", "consent-evidence", "approvals")
+_PROTECTED_NAMES = ("consent.json", "consent-evidence", "approvals", "binding.json", "control", "requests", "claims")
+_ENGAGEMENT_RECORDS = {"clients": _PROTECTED_NAMES, "initiatives": ("binding.json",)}
 _REMOVERS = {"rm", "rmdir", "mv", "unlink", "shred", "truncate", "rsync", "find", "chmod", "chown", "ln", "cp",
              "ditto", "tar", "unzip", "git"}
 
@@ -2853,47 +2870,86 @@ def _is_workspace_root(folder: Path) -> bool:
 
 
 def _protected_record(path: Path) -> bool:
-    """path is a client's consent, consent evidence or approval record (or inside one)
-    in a Torque workspace."""
+    """path is an engagement's binding, or a client's consent, consent evidence,
+    approval, control, request or claim record (or inside one), in a Torque
+    workspace. Folder and record names are matched case-insensitively (as _cf
+    matches everywhere else), since a case variant reaches the same file or
+    folder as the canonical name on a case-insensitive filesystem."""
     parts = path.parts
     for index in range(len(parts) - 3, -1, -1):
-        if parts[index] == "clients" and parts[index + 2] in _PROTECTED_NAMES:
+        names = _ENGAGEMENT_RECORDS.get(_cf(parts[index]))
+        if names and any(_cf(parts[index + 2]) == _cf(name) for name in names):
             return _is_workspace_root(Path(*parts[:index]))
     return False
 
 
 def _holds_records(path: Path) -> bool:
-    """path is a folder that holds such records: a client folder, clients/, or the
-    workspace root."""
+    """path is a folder that holds such records: an engagement folder, clients/ or
+    initiatives/, or the workspace root. Matched case-insensitively, as
+    _protected_record is. The os.path checks treat an unreachable name (one too
+    long, say) as absent on every Python version, as pathlib does from 3.14."""
     try:
-        if not path.is_dir():
+        if not os.path.isdir(path):
             return False
-        if path.parent.name == "clients" and _is_workspace_root(path.parent.parent):
-            return any((path / name).exists() for name in _PROTECTED_NAMES)
-        clients = path if path.name == "clients" else path / "clients"
-        if clients.is_dir() and _is_workspace_root(clients.parent):
-            return any((child / name).exists() for child in clients.iterdir() if child.is_dir()
-                       for name in _PROTECTED_NAMES)
+        names = _ENGAGEMENT_RECORDS.get(_cf(path.parent.name))
+        if names and _is_workspace_root(path.parent.parent):
+            return any(os.path.exists(path / name) for name in names)
+        for folder, names in _ENGAGEMENT_RECORDS.items():
+            base = path if _cf(path.name) == _cf(folder) else path / folder
+            if os.path.isdir(base) and _is_workspace_root(base.parent) and any(
+                    os.path.exists(child / name) for child in base.iterdir() if os.path.isdir(child) for name in names):
+                return True
     except OSError:
         return True
     return False
 
 
 def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
-    """In a workspace with no build-only or connected mode, the consent, consent
-    evidence and approval records of a Torque workspace, and the approval key, are
-    still kept from recognized tools, with every path resolved first (relative paths
-    and folders that hold them included): a record changed while the gate is
-    otherwise off would be trusted when the owner turns connected mode on."""
+    """In every mode (full, build-only and connected), an engagement's binding and
+    a client's consent, consent evidence, approval, control, request and claim
+    records, and the approval key, are kept from recognized tools, with every path
+    resolved first (relative paths and folders that hold them included): a record
+    changed by a tool a mode's own scan does not separately cover (or while a
+    stricter mode is off) would be trusted once the owner relies on it."""
     try:
         return _approval_file_targets_reason(tool_name, tool_input, cwd)
-    except Exception:  # Best effort in full mode: it never blocks by failing or running long.
+    except Exception:  # Best effort: it never blocks by failing or running long.
         return ""
 
 
+_CACHED_GIT_RM_OPTIONS = frozenset({"--cached", "-r", "-q", "--quiet", "-f", "--force",
+                                    "--ignore-unmatch", "-n", "--dry-run"})
+_SHELL_EXPANSION_CHARS = frozenset("$`*?[]{}")
+
+
+def _is_cached_git_rm(toks: list[str]) -> bool:
+    """`git rm --cached <path>...` only removes git's index entries, never a file in
+    the working tree, so it is not a removal or write against the protected-record
+    check. git's option parsing can turn a "cached"-looking command into a real
+    delete (`--end-of-options` or a bare `--` make a later `--cached` a path,
+    `--no-cached` negates it, `--no-cache` abbreviates the negation), so this is a
+    strict allowlist: `git` then `rm` with no global options between, no output
+    redirection, every option word exactly one of _CACHED_GIT_RM_OPTIONS (combined
+    short flags such as -rf are refused), `--cached` among them, and at least one
+    path. No word after `rm` may hold `$`, a backtick or any of `*?[]{}`: bash
+    would expand it (`$X`, `$'--no-cached'`, `${X:-...}`, a glob, braces) after the
+    gate decides, possibly into an option such as --no-cached. shlex keeps `$`
+    (it only strips the quotes around it), so a quoted `$` still counts here.
+    Anything else is judged as an ordinary remover."""
+    words = _without_redirections(toks)
+    if toks != words or len(words) < 3 or _basename(words[0]) != "git" or words[1] != "rm":
+        return False
+    if any(ch in _SHELL_EXPANSION_CHARS for w in words[2:] for ch in w):
+        return False
+    options = [w for w in words[2:] if w.startswith("-")]
+    paths = [w for w in words[2:] if not w.startswith("-")]
+    return (all(w in _CACHED_GIT_RM_OPTIONS for w in options)
+            and "--cached" in options and bool(paths))
+
+
 def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
-    reason = ("Torque: a client's consent and approval records and the approval key are changed only "
-              "by the consultant's torque commands, in every mode.")
+    reason = ("Torque: a client's consent, approval and control records, an engagement's binding and the "
+              "approval key are changed only by the consultant's torque commands, in every mode.")
     key = PATH_TOOLS.get(tool_name)
     if key:
         raw = tool_input.get(key)
@@ -2912,8 +2968,21 @@ def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -
         seen: list[Path] = [cwd]
         current: list[Path] = [cwd]
         unknown = False
+        # A grouping character (`{a,b}`, `${X}`, `$(...)`, a backtick) splits one
+        # command into several segments; the words after it are still arguments of
+        # the remover before it, so a removal carries across until a real separator.
+        carry = False
         for toks, sep in _segments_with_separators(_expand_home_in_command(text)):
-            removes = any(_basename(tok) in _REMOVERS for tok in toks)
+            if _is_cached_git_rm(toks):
+                # Untracking a record from git's index does not remove, write or even
+                # read it: the file (and its content) stay exactly as they were.
+                carry = False
+                continue
+            removes = carry or any(_basename(tok) in _REMOVERS for tok in toks)
+            carry = removes and sep in _GROUPING_CHARS
+            if removes:
+                # Brace expansion: `{x,clients}` arrives as the word `x,clients`.
+                toks = toks + [part for tok in toks if "," in tok for part in tok.split(",") if part]
             writes = removes or any(re.match(r"^(\d+|&)?>", tok) for tok in toks) \
                 or any(_basename(tok) in _WRITE_VERBS for tok in toks)
             if unknown and writes and any(_holds_records(root) for root in _workspace_roots(cwd)):
