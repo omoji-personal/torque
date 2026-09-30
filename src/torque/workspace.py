@@ -311,7 +311,7 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
         atomic_write_new(ignore, "# Private client data and artifacts\n*\n")
     else:
         original = ignore.read_text(encoding="utf-8")
-        private_rules = ["/clients/", "/workspace.json", "/profile.md", "/.torque/"]
+        private_rules = ["/clients/", "/initiatives/", "/workspace.json", "/profile.md", "/.torque/"]
         if any(rule not in original.splitlines() for rule in private_rules):
             updated = original.rstrip("\n") + "\n\n# Torque private workspace\n" + "\n".join(private_rules) + "\n"
             _atomic_replace_text(ignore, updated)
@@ -327,7 +327,9 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
         "use the user's actual authorization and existing Salesforce access for operations. "
         "No Torque hooks, approval tokens or global sf replacement are required.\n\n"
         "Keep client files in clients/SLUG/. Use --workspace . --client SLUG when calling "
-        "stateful native workflows. Keep credentials out of notes and session summaries. "
+        "stateful native workflows. Keep internal work (not for a client) in initiatives/SLUG/, "
+        "created with `torque initiative add NAME --workspace .`, and select it with --initiative SLUG. "
+        "Keep credentials out of notes and session summaries. "
         "Record progress with `torque session add --workspace . --client NAME --summary TEXT "
         "--status prepared|executed|verified|incomplete`. Status is user-reported; distinguish "
         "actual evidence, assertions and unanswered questions. Use `torque handoff` to render "
