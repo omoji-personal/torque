@@ -372,9 +372,10 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
     return root, config
 
 
-def require_writable(root: Path) -> None:
-    """Refuse record writes while an administrator holds the workspace in maintenance."""
-    if (root / MAINTENANCE_FLAG).exists():
+def require_writable(root: str | Path) -> None:
+    """Refuse record writes while an administrator holds the workspace in maintenance.
+    `root` is the workspace directory (a str or Path, as the writers receive it)."""
+    if (Path(root).expanduser() / MAINTENANCE_FLAG).exists():
         raise WorkspaceError(f"workspace is in maintenance ({MAINTENANCE_FLAG} exists); "
                              "writes are paused until it is removed")
 
@@ -402,6 +403,7 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
     `ancestors` and `getuid`, is an injectable override of
     `delegation.delegated_actor`'s own default, for tests that cannot create a
     second real OS account."""
+    require_writable(workspace)
     if mode not in AI_ACCESS_MODES:
         raise WorkspaceError(f"unknown ai_access mode: {mode}")
     if model_id is not None and not delegated:

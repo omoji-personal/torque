@@ -91,6 +91,7 @@ def set_delegate(workspace, role, account, uid, kind, *, presence=None, confirm=
     provisioning the workspace, may do this; nothing else can. Controller ruling
     R41: outside the administrator path, the delegate must be a separate OS
     account from the one naming it (an account cannot delegate to itself)."""
+    ws.require_writable(workspace)
     if role not in ROLES:
         raise ws.WorkspaceError(f"unknown delegate role {role!r}; choose approver or setup")
     if kind not in KINDS:
