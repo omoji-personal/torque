@@ -1081,7 +1081,6 @@ def _git_parse(rest: list[str], cwd: Path) -> tuple[Path, list[Path], str | None
 
 
 _CLIENT_SPEC = ":(icase)clients"
-_INITIATIVE_SPEC = ":(icase)initiatives"
 GIT_TRACKED_REASON = ("client files are in git's index in this workspace (or git could not check), so git "
                       "commands other than git status and git rm --cached of clients/ are blocked. Client "
                       "files must stay untracked: run git rm -r --cached clients")
@@ -1181,9 +1180,11 @@ def _git_output(base: Path, args: list[str]) -> str | None:
 
 
 def clients_index_count(workspace: Path) -> int | None:
-    """How many files under workspace/clients/ or workspace/initiatives/ are in git's
-    index: 0 when the workspace is not in a repository, None when git errors, times
-    out or is missing."""
+    """How many files under workspace/clients/ are in git's index: 0 when the
+    workspace is not in a repository, None when git errors, times out or is missing.
+    initiatives/ is internal (not client-confidential) and is deliberately not
+    counted here: counting it would lock the agent out of ordinary git commands
+    (git log, git diff, git rm --cached) whenever an initiative file is tracked."""
     if not workspace.is_dir():
         return 0
     probe = _git_run(workspace, ["rev-parse", "--is-inside-work-tree"])
@@ -1191,7 +1192,7 @@ def clients_index_count(workspace: Path) -> int | None:
         return None
     if probe[0] != 0:
         return 0 if "not a git repository" in probe[2].casefold() else None
-    listed = _git_run(workspace, ["ls-files", "--", _CLIENT_SPEC, _INITIATIVE_SPEC])
+    listed = _git_run(workspace, ["ls-files", "--", _CLIENT_SPEC])
     if listed is None or listed[0] != 0:
         return None
     return len(listed[1].splitlines())
@@ -2362,19 +2363,30 @@ def _start_watchdog() -> threading.Timer:
 
 def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None,
             org_rules: bool = True, guarded: list[Path] | None = None) -> tuple[bool, str]:
-    """The build-only checks. With org_rules False (connected mode), org calls and
-    Torque commands pass this scan (connected mode classifies them itself), and
-    `guarded` lists the folders treated as client context (other clients' folders)
-    in place of the whole clients/ folder."""
+    """The build-only checks, plus (here, so every caller of this function gets it:
+    build-only's decide() and connected mode's decide_connected(), not only full
+    mode's own separate call) the same protected-record check full mode applies on
+    its own: an engagement's binding, and a client's consent, approval and control
+    records, are kept from every recognized tool regardless of whether their folder
+    is itself guarded below. With org_rules False (connected mode), org calls and
+    Torque commands pass the rest of this scan (connected mode classifies them
+    itself), and `guarded` lists the folders treated as client context (other
+    clients' folders, and internal initiatives) in place of the whole clients/
+    folder."""
     workspace = Path(os.path.realpath(str(workspace)))
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
+    reason = _approval_file_reason(tool_name, tool_input, cwd)
+    if reason:
+        return False, reason
     allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, False, org_rules, guarded)
     if not allowed:
         return allowed, reason
     for copy in _worktree_copies(workspace):
-        copies = None if guarded is None else [copy / Path(folder).relative_to(workspace)
-                                               if Path(folder).is_relative_to(workspace)
-                                               else copy / "clients" / Path(folder).name for folder in guarded]
+        copies = None if guarded is None else [
+            copy / Path(os.path.realpath(str(folder))).relative_to(workspace)
+            if Path(os.path.realpath(str(folder))).is_relative_to(workspace)
+            else copy / "clients" / Path(folder).name
+            for folder in guarded]
         allowed, reason = _decide_root(tool_name, tool_input, copy, cwd, True, org_rules, copies)
         if not allowed:
             return allowed, reason
@@ -2859,26 +2871,30 @@ def _is_workspace_root(folder: Path) -> bool:
 
 def _protected_record(path: Path) -> bool:
     """path is an engagement's binding, or a client's consent, consent evidence,
-    approval, control, request or claim record (or inside one), in a Torque workspace."""
+    approval, control, request or claim record (or inside one), in a Torque
+    workspace. Folder and record names are matched case-insensitively (as _cf
+    matches everywhere else), since a case variant reaches the same file or
+    folder as the canonical name on a case-insensitive filesystem."""
     parts = path.parts
     for index in range(len(parts) - 3, -1, -1):
-        names = _ENGAGEMENT_RECORDS.get(parts[index])
-        if names and parts[index + 2] in names:
+        names = _ENGAGEMENT_RECORDS.get(_cf(parts[index]))
+        if names and any(_cf(parts[index + 2]) == _cf(name) for name in names):
             return _is_workspace_root(Path(*parts[:index]))
     return False
 
 
 def _holds_records(path: Path) -> bool:
     """path is a folder that holds such records: an engagement folder, clients/ or
-    initiatives/, or the workspace root."""
+    initiatives/, or the workspace root. Matched case-insensitively, as
+    _protected_record is."""
     try:
         if not path.is_dir():
             return False
-        names = _ENGAGEMENT_RECORDS.get(path.parent.name)
+        names = _ENGAGEMENT_RECORDS.get(_cf(path.parent.name))
         if names and _is_workspace_root(path.parent.parent):
             return any((path / name).exists() for name in names)
         for folder, names in _ENGAGEMENT_RECORDS.items():
-            base = path if path.name == folder else path / folder
+            base = path if _cf(path.name) == _cf(folder) else path / folder
             if base.is_dir() and _is_workspace_root(base.parent) and any(
                     (child / name).exists() for child in base.iterdir() if child.is_dir() for name in names):
                 return True
@@ -2888,20 +2904,21 @@ def _holds_records(path: Path) -> bool:
 
 
 def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
-    """In a workspace with no build-only or connected mode, the consent, consent
-    evidence and approval records of a Torque workspace, and the approval key, are
-    still kept from recognized tools, with every path resolved first (relative paths
-    and folders that hold them included): a record changed while the gate is
-    otherwise off would be trusted when the owner turns connected mode on."""
+    """In every mode (full, build-only and connected), an engagement's binding and
+    a client's consent, consent evidence, approval, control, request and claim
+    records, and the approval key, are kept from recognized tools, with every path
+    resolved first (relative paths and folders that hold them included): a record
+    changed by a tool a mode's own scan does not separately cover (or while a
+    stricter mode is off) would be trusted once the owner relies on it."""
     try:
         return _approval_file_targets_reason(tool_name, tool_input, cwd)
-    except Exception:  # Best effort in full mode: it never blocks by failing or running long.
+    except Exception:  # Best effort: it never blocks by failing or running long.
         return ""
 
 
 def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
-    reason = ("Torque: a client's consent and approval records and the approval key are changed only "
-              "by the consultant's torque commands, in every mode.")
+    reason = ("Torque: a client's consent, approval and control records, an engagement's binding and the "
+              "approval key are changed only by the consultant's torque commands, in every mode.")
     key = PATH_TOOLS.get(tool_name)
     if key:
         raw = tool_input.get(key)
