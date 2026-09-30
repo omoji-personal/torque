@@ -17,8 +17,8 @@ Only packaged Markdown files in these locations participate:
 - `.claude/commands/`, `.claude/rules/`, `.claude/skills/`, `.claude/agents/`
 - `.agents/skills/` (a separate copy of the packaged skills)
 
-Client configurations, evidence, state, sessions, profiles, and root `AGENTS.md`
-files remain outside this updater's scope. Other locally added workflow files
+Client and initiative folders (configurations, evidence, state, sessions),
+profiles, and root `AGENTS.md` files remain outside this updater's scope. Other locally added workflow files
 also remain untouched.
 
 ## What the result means
@@ -93,6 +93,9 @@ editing the workflow files before applying an upgrade: ordinary editors do not
 participate in that lock. The updater rechecks content before replacement and
 atomically refuses to overwrite a newly appearing file, but it cannot provide a
 transaction with an unrelated editor writing the same file at that instant.
+
+The maintenance flag (`.torque/maintenance`) pauses record and configuration writes,
+not this updater, so an administrator can upgrade workflows while records are paused.
 
 Workflow and tracking paths must use real directories and regular files.
 Symlinks are refused. An invalid tracking manifest produces an error rather than

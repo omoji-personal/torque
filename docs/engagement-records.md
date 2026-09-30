@@ -19,6 +19,18 @@ torque change show "$change_id" --workspace ../torque-private --client sample
 state machine, approval token, automatic deployment or forced task completion.
 The stable ID selects one change inside one client. `change list` discovers IDs.
 
+## Clients and initiatives
+
+Records work the same for a client and for an internal initiative (work that is not
+for a client, such as adopting a tool). Create one with
+`torque initiative add NAME --workspace PATH`, then pass `--initiative SLUG` in place
+of `--client` to `context`, `session`, `handoff` and every `change` command.
+Initiatives never get client-only powers: `--org` on `change create`,
+`change verify-deploy`, consent, approvals and connected mode are refused for them.
+An archived initiative refuses new sessions, changes, notes and checks until
+`torque initiative set-state NAME active` reopens it. `torque engagement list` shows
+clients and initiatives together.
+
 ## Record what actually happened
 
 After an actual check, record its result with `change check`. `--result` accepts
@@ -72,7 +84,10 @@ These checks leave the original journal untouched. `torque doctor --workspace
 PATH --client NAME` inspects all of that client's sessions and change records,
 including older entries outside the recent context summary.
 
-Local JSON files live under `clients/CLIENT/changes/CHANGE_ID/`. Each event is
+Local JSON files live under `clients/CLIENT/changes/CHANGE_ID/` (or
+`initiatives/SLUG/changes/CHANGE_ID/`). Each event is
 published atomically as a separate private file, preserving concurrent writers.
 This is local continuity, not a multi-user server or distributed transaction
-system. Symlink escapes and same-firm cross-client evidence references are refused.
+system. Symlink escapes and evidence references across clients or initiatives are
+refused. While `.torque/maintenance` exists in the workspace, every record write is
+refused; reads, context and handoffs still work.

@@ -132,7 +132,7 @@ The doctor command deliberately reports local dependencies separately from live
 verification. It also reports private paths already tracked by Git when inspecting
 a workspace; it does not rewrite Git history or change repository visibility.
 With `--workspace PATH --client NAME`, it also checks that client's saved sessions,
-changes and evidence. Missing or changed evidence is reported for review; local
+changes and evidence (doctor has no `--initiative` option yet). Missing or changed evidence is reported for review; local
 dependency readiness does not certify saved claims or live Salesforce behavior.
 
 Install and authenticate [Salesforce CLI](https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference.html)
@@ -153,7 +153,9 @@ torque workspace upgrade /path/to/private-workspace --json
 ```
 
 See [upgrade semantics](workspace-upgrades.md) for local edits and interrupted
-updates. Root instructions and client content are not automatically rewritten.
+updates. Root instructions, client and initiative content are not automatically
+rewritten. Upgrading to 2.0.0a19 needs no record migration: existing clients keep
+their folders, and `torque initiative add` creates `initiatives/` on first use.
 Uninstall with the installer you used (`pipx uninstall torque-salesforce` or the
 installation's `python -m pip uninstall torque-salesforce`). Private workspaces
 remain on disk for your review and retention needs.

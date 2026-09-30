@@ -53,7 +53,11 @@ assertion, not silently promoted to observed evidence.
 
 ## Firm and client context
 
-Use one workspace per firm and one client directory per engagement. The
+Use one workspace per firm and one client directory per client engagement.
+Internal work that is not for a client (adopting a tool, a workspace project) is an
+initiative in `initiatives/SLUG/`, with the same sessions, context, change records
+and handoff but no org, consent, approval or connected-mode powers; see
+[engagement records](engagement-records.md#clients-and-initiatives). The
 `solution-lead` profile is an editable starting point for discovery,
 solution design, configuration, testing, support, and handoffs. It does not
 claim to encode their actual policies or imply employer approval of this tool.

@@ -29,6 +29,16 @@ owner turns connected mode on. The `full`-mode check never blocks by failing: if
 finish, the call is allowed as before. Everything else `full` mode allows is
 unchanged.
 
+Since 2.0.0a19 the protected-record check covers every mode (`full`, build-only and
+connected), matches names case-insensitively, and also covers each initiative's
+`binding.json` and a client's `control/`, `requests/` and `claims/` folders.
+Build-only mode treats `initiatives/` as internal, not client context: a session can read
+and edit initiative records but not their bindings. Connected mode treats initiatives as
+other context: their folders are guarded, and `--initiative`, `torque initiative` and
+`torque engagement list` are refused. With the gate hook on, a read-only command that
+names a whole initiative folder (for example `find .` inside it) is refused until a
+later release narrows the check.
+
 ## Current limits, stated plainly
 
 - **No org allowlist in build-only.** Build-only blocks every Salesforce org, including a
