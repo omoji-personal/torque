@@ -1,5 +1,7 @@
 # Engagements a18 (core) Implementation Plan
 
+> Shipped as **2.0.0a19**: 2.0.0a18 was taken by a separate browser-session release (PR #44). "a18" below means this core release; "a19" and "a20" mean the next two engagement releases (now a20 and a21).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add internal initiatives beside clients as first-class engagements, with the protections the converged design requires for the first release, without changing any existing client behavior.

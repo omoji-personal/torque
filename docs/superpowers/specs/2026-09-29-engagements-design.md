@@ -1,6 +1,6 @@
 # Torque engagements: clients and initiatives for org-wide use (design v5)
 
-Status: converged 2026-09-29 after five rounds of adversarial review by four models (Codex GPT-6 Astra, Gemini 3.1 Pro, Kimi K3, Claude Opus 5.5); rulings in the review record below, 2026-09-29. Base: Torque 2.0.0a17 (main).
+Status: converged 2026-09-29 after five rounds of adversarial review by four models (Codex GPT-6 Astra, Gemini 3.1 Pro, Kimi K3, Claude Opus 5.5); rulings in the review record below, 2026-09-29. Base: Torque 2.0.0a17 (main). Release labels renumbered on 2026-09-30: 2.0.0a18 was taken by a separate browser-session release, so this design ships as a19 (core), a20 (board) and a21 (pilot).
 
 ## 1. Goal, scope, non-goals
 
@@ -127,14 +127,14 @@ Guards exist only in opt-in connected mode, as today. The engagement model exten
 - Deny, not ask, in every non-prompting permission mode for both agents; Codex always deny (it has no ask).
 - On the VM, the firm installs Torque's hooks as managed hooks (Claude managed settings with allowManagedHooksOnly and disableBypassPermissionsMode; Codex managed hooks, which skip per-person trust) and permission rules for connector writes. On laptops, doctor reports untrusted or missing hooks.
 - The gate derives the engagement from the clone path convention (~/work/<firm>/<engagement-id>/) checked against the admin-owned binding.json repository list; personal bindings are a cache and never trusted by the gate. Unmatched paths under the clone root fail closed.
-- a18 updates the gate's protected-record matchers for binding.json (both kinds) and control/, requests/ and claims/ (clients), covering agent writes, deletion, replacement and operations on the containing directories. On a laptop the agent shares the owner's account, so this matcher (not file ownership) is the protection there; laptop regression tests land before any migration.
+- a19 updates the gate's protected-record matchers for binding.json (both kinds) and control/, requests/ and claims/ (clients), covering agent writes, deletion, replacement and operations on the containing directories. On a laptop the agent shares the owner's account, so this matcher (not file ownership) is the protection there; laptop regression tests land before any migration.
 - Hook behavior and managed-setting values (for example disableBypassPermissionsMode) are a pinned contract: a supported-version list per CLI, contract tests per release, doctor refuses to certify guards on unsupported versions.
 - Pattern matching has known bypass classes; OS controls carry the security weight.
 
 ## 9. Migration and compatibility
 
-1. a18 ships readers of v2 and barrier-aware writers (every writer checks the maintenance flag and schema under the workspace lock) before any v2 writer exists.
-2. Migration runs in a maintenance window: it refuses unless every writer version observed in records from the last 30 days is a18 or later; set the maintenance flag (a18+ writers refuse writes), require a verified off-VM backup newer than 24 hours, migrate (UUIDs, engagement.json, control/ requests/ claims/ split, per-client connected mode, original bytes preserved, defaults labelled "migration default", legacy absolute evidence paths mapped), validate, publish workspace.json schema 2 last, clear the flag.
+1. a19 ships maintenance-aware writers (every record and configuration writer refuses while the maintenance flag is set). Readers of schema 2 ship with the migration tool (a21); until then, older and current binaries refuse a schema-2 workspace (fail closed).
+2. Migration runs in a maintenance window: it refuses unless every writer version observed in records from the last 30 days is a19 or later; set the maintenance flag (a19+ writers refuse writes), require a verified off-VM backup newer than 24 hours, migrate (UUIDs, engagement.json, control/ requests/ claims/ split, per-client connected mode, original bytes preserved, defaults labelled "migration default", legacy absolute evidence paths mapped), validate, publish workspace.json schema 2 last, clear the flag.
 3. Checkpoints and restart recovery; rollback restores the pre-migration backup only before any v2 write; no reverse migration.
 4. Untouched v1 workspaces keep working. `--client` is not deprecated.
 
@@ -156,9 +156,9 @@ Extend creation and crash, isolation and ACL tests across both kinds and both la
 
 ## 13. Release plan and pilot
 
-1. a18: engagement core, capability table, initiatives, v2 readers, maintenance-flag-aware writers, boundary helper, publish helper (create-only and replace), gate matcher update.
-2. a19: board, actions, material scan/ignore/adopt, generated AGENTS.md and CURRENT_WORK.md, launcher in the engagement folder.
-3. a20: reminder, managed-hook packaging and guard contract tests (Claude Code), migration tool, VM pilot with synthetic engagements. Codex support follows its own contract tests.
+1. a19: engagement core, capability table, initiatives, maintenance-flag-aware writers, boundary helper, publish helper (create-only and replace), gate matcher update.
+2. a20: board, actions, material scan/ignore/adopt, generated AGENTS.md and CURRENT_WORK.md, launcher in the engagement folder.
+3. a21: reminder, managed-hook packaging and guard contract tests (Claude Code), migration tool, VM pilot with synthetic engagements. Codex support follows its own contract tests.
 
 Pilot acceptance: a real handoff between two people, an interrupted save, access revocation, a restore drill, and a non-member enumeration check, all passing before client data.
 

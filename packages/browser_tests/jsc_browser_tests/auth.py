@@ -321,6 +321,12 @@ async def logout_as_user(page, instance_url: str) -> None:
         except Exception:
             raise AuthError("Could not return from Login As; stop this browser run and restore the admin session.")
     await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    # Logout As can land on a Classic Setup page. The active-user observer reads
+    # Lightning's Aura value provider, so return to Lightning before observing.
+    # This navigation does not establish identity: restore_original_user still
+    # requires a fresh match with the original browser user's ID.
+    await page.goto(f"{instance_url}/lightning/page/home",
+                    wait_until="domcontentloaded", timeout=30000)
 
 
 async def restore_original_user(page, instance_url: str, baseline_user: str) -> dict:

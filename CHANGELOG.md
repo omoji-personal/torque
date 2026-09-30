@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0a18 - clients and initiatives, 2026-09-29 (not published to a package index)
+## 2.0.0a19 - clients and initiatives, 2026-09-30 (not published to a package index)
 
 - Initiatives: `torque initiative add|list|show|set-state`, `--initiative` on context, session, handoff and change commands, `torque engagement list`.
 - One boundary helper keeps evidence and exports inside their own client or initiative.
@@ -9,10 +9,20 @@
 - A maintenance flag (`.torque/maintenance`) pauses every record and configuration write: sessions, changes, consent, approvals and claims, launch records, before-states, delegates, permissions and `ai-access`.
 - An archived initiative refuses new sessions, changes, notes and checks until it is reopened.
 - The gate protects initiative bindings and future client control, request and claim folders, including folder moves and removals, in every mode; connected sessions treat initiatives as other context and refuse `--initiative`, `torque initiative` and `torque engagement list`.
-- The gate now also protects folders named control, requests and claims directly under a client.
 - The gate's protected-record check runs in every mode (full, build-only, connected) and matches case-insensitively; `git rm --cached` of client records stays allowed as the gate's own remediation, through a strict allowlist that refuses shell expansion.
 - Client commands and records are unchanged.
-- Known limitation: with the gate hook on, read-only commands that name an initiative folder as a whole (for example `find .` or `git log -- .` inside it) are refused; narrowed before 2.0.0a19.
+- Known limitation: with the gate hook on, read-only commands that name an initiative folder as a whole (for example `find .` or `git log -- .` inside it) are refused; narrowed before 2.0.0a20.
+
+## 2.0.0a18 - browser session restoration (candidate, not published)
+
+- Return to Lightning after Logout As before observing the original browser user.
+  Classic landing pages lack the identity provider used by that check. A fresh user-ID
+  match is still required; returning to Lightning alone never proves restoration.
+- Include the redacted preflight failure in every unexecuted cell's JSON result.
+  With `--json`, print the artifact directory on stderr so stdout remains JSON.
+- Regression coverage models a Classic landing page, both logout selectors, an
+  identity mismatch and redacted failure details. Live browser acceptance remains
+  required for the target org.
 
 ## 2.0.0a17 - nonprofit knowledge skills, 2026-09-25 (not published to a package index)
 
