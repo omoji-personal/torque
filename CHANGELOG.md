@@ -6,10 +6,13 @@
 - One boundary helper keeps evidence and exports inside their own client or initiative.
 - Durable publication: files and their folder are synced to disk.
 - Replacing a file keeps its mode and group only when asked (`keep_mode=True`); managed files stay private by default.
-- A maintenance flag (`.torque/maintenance`) pauses record writes.
-- The gate protects initiative bindings and future client control, request and claim folders, including folder moves and removals, in every mode; connected sessions treat initiatives as other context.
+- A maintenance flag (`.torque/maintenance`) pauses every record and configuration write: sessions, changes, consent, approvals and claims, launch records, before-states, delegates, permissions and `ai-access`.
+- An archived initiative refuses new sessions, changes, notes and checks until it is reopened.
+- The gate protects initiative bindings and future client control, request and claim folders, including folder moves and removals, in every mode; connected sessions treat initiatives as other context and refuse `--initiative`, `torque initiative` and `torque engagement list`.
+- The gate now also protects folders named control, requests and claims directly under a client.
 - The gate's protected-record check runs in every mode (full, build-only, connected) and matches case-insensitively; `git rm --cached` of client records stays allowed as the gate's own remediation, through a strict allowlist that refuses shell expansion.
 - Client commands and records are unchanged.
+- Known limitation: with the gate hook on, read-only commands that name an initiative folder as a whole (for example `find .` or `git log -- .` inside it) are refused; narrowed before 2.0.0a19.
 
 ## 2.0.0a17 - nonprofit knowledge skills, 2026-09-25 (not published to a package index)
 

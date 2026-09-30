@@ -110,6 +110,17 @@ def test_owner_switch_resets_workspace_json_mode_after_a_delegated_switch(root):
     assert (root / "workspace.json").stat().st_mode & 0o777 == 0o600
 
 
+def test_owner_switch_resets_the_connected_rule_mode_after_a_delegated_switch(root):
+    """Final review regression (guarded a Critical): a delegated switch relaxes
+    .claude/rules/production-approval.md to 0644; the owner's own next switch
+    must write it back as a private 0600."""
+    switch(root)
+    rule = root / ".claude" / "rules" / "production-approval.md"
+    assert rule.stat().st_mode & 0o777 == 0o644
+    ws.set_ai_access(root, "connected", approval="required", verify="owner-uid", approver_uid=ME, presence=YES)
+    assert rule.stat().st_mode & 0o777 == 0o600
+
+
 # --- Fix round 1 ---
 
 
