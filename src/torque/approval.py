@@ -465,7 +465,7 @@ def _dirs(workspace, client, create: bool = True) -> dict[str, Path]:
 # name only (never listed), and `consumed/` (the agent's claim markers) is
 # never opened for content by the approver, so both stay off the write tuple
 # even though their bare folders are lstat'd (read) above.
-DELEGATED_READS = ("workspace.json", "clients", "clients/{client}", "clients/{client}/client.json",
+DELEGATED_READS = ("workspace.json", ".torque/maintenance", "clients", "clients/{client}", "clients/{client}/client.json",
                    "clients/{client}/consent.json", "clients/{client}/changes", "clients/{client}/changes/*",
                    "clients/{client}/changes/**", "clients/{client}/approvals",
                    "clients/{client}/approvals/requests", "clients/{client}/approvals/requests/*.json",

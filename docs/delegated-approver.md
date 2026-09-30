@@ -178,6 +178,7 @@ request's working folder, which is often outside the workspace.
 | Pattern | Access | Why |
 |---|---|---|
 | `workspace.json` | read | The delegate, tier and approver are read once from one descriptor |
+| `.torque/maintenance` | read (stat) | The maintenance flag: a grant or denial is refused while it exists |
 | `clients` | read (stat) | The control-folder check: not owned by or writable by the approver |
 | `clients/{client}` | read (stat) | The same check on the client folder |
 | `clients/{client}/client.json` | read | Loads the client |

@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from torque import engagements as eng
 from torque import gate
 from torque import gate_connected
@@ -130,7 +132,8 @@ def test_case_variant_paths_are_still_protected(tmp_path):
             continue
         checked += 1
         assert gate._approval_file_reason(tool, inp, root), (tool, inp)
-    assert checked, "no case variant was reachable on this filesystem to test"
+    if not checked:
+        pytest.skip("this filesystem is case-sensitive; no case variant reaches the file")
 
 
 def test_case_variant_bash_removal_is_still_refused(tmp_path):
