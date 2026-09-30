@@ -2886,17 +2886,18 @@ def _protected_record(path: Path) -> bool:
 def _holds_records(path: Path) -> bool:
     """path is a folder that holds such records: an engagement folder, clients/ or
     initiatives/, or the workspace root. Matched case-insensitively, as
-    _protected_record is."""
+    _protected_record is. The os.path checks treat an unreachable name (one too
+    long, say) as absent on every Python version, as pathlib does from 3.14."""
     try:
-        if not path.is_dir():
+        if not os.path.isdir(path):
             return False
         names = _ENGAGEMENT_RECORDS.get(_cf(path.parent.name))
         if names and _is_workspace_root(path.parent.parent):
-            return any((path / name).exists() for name in names)
+            return any(os.path.exists(path / name) for name in names)
         for folder, names in _ENGAGEMENT_RECORDS.items():
             base = path if _cf(path.name) == _cf(folder) else path / folder
-            if base.is_dir() and _is_workspace_root(base.parent) and any(
-                    (child / name).exists() for child in base.iterdir() if child.is_dir() for name in names):
+            if os.path.isdir(base) and _is_workspace_root(base.parent) and any(
+                    os.path.exists(child / name) for child in base.iterdir() if os.path.isdir(child) for name in names):
                 return True
     except OSError:
         return True

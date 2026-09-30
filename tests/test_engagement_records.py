@@ -1,5 +1,6 @@
 """Initiatives record sessions, context and handoffs exactly like clients."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +26,7 @@ def test_initiative_sessions_are_kept_apart_from_clients(root):
 def test_context_and_handoff_for_an_initiative(root):
     ws.add_session(root, "Plan", "drafted the plan", "prepared", kind="initiative")
     context = ws.get_context(root, "Plan", kind="initiative")
-    assert context["client"]["kind"] == "initiative" and context["client_root"].endswith("initiatives/plan")
+    assert context["client"]["kind"] == "initiative" and Path(context["client_root"]).parts[-2:] == ("initiatives", "plan")
     assert "drafted the plan" in ws.render_handoff(root, "Plan", kind="initiative")
 
 
