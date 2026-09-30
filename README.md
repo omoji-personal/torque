@@ -22,7 +22,7 @@ no workflow depends on them.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-**Status: development alpha, version 2.0.0a17.** It has not been published to a
+**Status: development alpha, version 2.0.0a18.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
 have offline acceptance coverage; bounded live operations and experimental
 capabilities have separate limits in [validation](docs/validation.md); the
@@ -79,6 +79,15 @@ An optional `torque change` record connects an outcome, acceptance criteria,
 decisions, reported checks and exact deployment observations. The assistant can
 maintain it during work. There is no mandatory lifecycle or form to complete.
 [Use engagement records](docs/engagement-records.md).
+
+### Clients and initiatives
+
+Internal work that is not for a client (adopting a tool, a workspace project) is an
+initiative: `torque initiative add NAME --workspace .` creates `initiatives/SLUG/`
+with the same sessions, context, change records and handoff as a client. Use
+`--initiative SLUG` wherever `--client` works for records. Initiatives never get
+client-only powers (org, consent, approvals, connected mode, verify-deploy).
+`torque engagement list --workspace .` shows both kinds.
 
 ## What is included
 

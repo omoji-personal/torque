@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0a18 - clients and initiatives, 2026-09-29 (not published to a package index)
+
+- Initiatives: `torque initiative add|list|show|set-state`, `--initiative` on context, session, handoff and change commands, `torque engagement list`.
+- One boundary helper keeps evidence and exports inside their own client or initiative.
+- Durable publication: files and their folder are synced to disk.
+- Replacing a file keeps its mode and group only when asked (`keep_mode=True`); managed files stay private by default.
+- A maintenance flag (`.torque/maintenance`) pauses record writes.
+- The gate protects initiative bindings and future client control, request and claim folders, including folder moves and removals, in every mode; connected sessions treat initiatives as other context.
+- The gate's protected-record check runs in every mode (full, build-only, connected) and matches case-insensitively; `git rm --cached` of client records stays allowed as the gate's own remediation, through a strict allowlist that refuses shell expansion.
+- Client commands and records are unchanged.
+
 ## 2.0.0a17 - nonprofit knowledge skills, 2026-09-25 (not published to a package index)
 
 Knowledge skills only; no command, gate or runtime behavior changes.
