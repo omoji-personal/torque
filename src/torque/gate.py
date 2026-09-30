@@ -1081,6 +1081,7 @@ def _git_parse(rest: list[str], cwd: Path) -> tuple[Path, list[Path], str | None
 
 
 _CLIENT_SPEC = ":(icase)clients"
+_INITIATIVE_SPEC = ":(icase)initiatives"
 GIT_TRACKED_REASON = ("client files are in git's index in this workspace (or git could not check), so git "
                       "commands other than git status and git rm --cached of clients/ are blocked. Client "
                       "files must stay untracked: run git rm -r --cached clients")
@@ -1180,8 +1181,9 @@ def _git_output(base: Path, args: list[str]) -> str | None:
 
 
 def clients_index_count(workspace: Path) -> int | None:
-    """How many files under workspace/clients/ are in git's index: 0 when the
-    workspace is not in a repository, None when git errors, times out or is missing."""
+    """How many files under workspace/clients/ or workspace/initiatives/ are in git's
+    index: 0 when the workspace is not in a repository, None when git errors, times
+    out or is missing."""
     if not workspace.is_dir():
         return 0
     probe = _git_run(workspace, ["rev-parse", "--is-inside-work-tree"])
@@ -1189,7 +1191,7 @@ def clients_index_count(workspace: Path) -> int | None:
         return None
     if probe[0] != 0:
         return 0 if "not a git repository" in probe[2].casefold() else None
-    listed = _git_run(workspace, ["ls-files", "--", _CLIENT_SPEC])
+    listed = _git_run(workspace, ["ls-files", "--", _CLIENT_SPEC, _INITIATIVE_SPEC])
     if listed is None or listed[0] != 0:
         return None
     return len(listed[1].splitlines())
@@ -2370,7 +2372,9 @@ def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None,
     if not allowed:
         return allowed, reason
     for copy in _worktree_copies(workspace):
-        copies = None if guarded is None else [copy / "clients" / Path(folder).name for folder in guarded]
+        copies = None if guarded is None else [copy / Path(folder).relative_to(workspace)
+                                               if Path(folder).is_relative_to(workspace)
+                                               else copy / "clients" / Path(folder).name for folder in guarded]
         allowed, reason = _decide_root(tool_name, tool_input, copy, cwd, True, org_rules, copies)
         if not allowed:
             return allowed, reason
@@ -2843,7 +2847,8 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
     return gated
 
 
-_PROTECTED_NAMES = ("consent.json", "consent-evidence", "approvals")
+_PROTECTED_NAMES = ("consent.json", "consent-evidence", "approvals", "binding.json", "control", "requests", "claims")
+_ENGAGEMENT_RECORDS = {"clients": _PROTECTED_NAMES, "initiatives": ("binding.json",)}
 _REMOVERS = {"rm", "rmdir", "mv", "unlink", "shred", "truncate", "rsync", "find", "chmod", "chown", "ln", "cp",
              "ditto", "tar", "unzip", "git"}
 
@@ -2853,27 +2858,30 @@ def _is_workspace_root(folder: Path) -> bool:
 
 
 def _protected_record(path: Path) -> bool:
-    """path is a client's consent, consent evidence or approval record (or inside one)
-    in a Torque workspace."""
+    """path is an engagement's binding, or a client's consent, consent evidence,
+    approval, control, request or claim record (or inside one), in a Torque workspace."""
     parts = path.parts
     for index in range(len(parts) - 3, -1, -1):
-        if parts[index] == "clients" and parts[index + 2] in _PROTECTED_NAMES:
+        names = _ENGAGEMENT_RECORDS.get(parts[index])
+        if names and parts[index + 2] in names:
             return _is_workspace_root(Path(*parts[:index]))
     return False
 
 
 def _holds_records(path: Path) -> bool:
-    """path is a folder that holds such records: a client folder, clients/, or the
-    workspace root."""
+    """path is a folder that holds such records: an engagement folder, clients/ or
+    initiatives/, or the workspace root."""
     try:
         if not path.is_dir():
             return False
-        if path.parent.name == "clients" and _is_workspace_root(path.parent.parent):
-            return any((path / name).exists() for name in _PROTECTED_NAMES)
-        clients = path if path.name == "clients" else path / "clients"
-        if clients.is_dir() and _is_workspace_root(clients.parent):
-            return any((child / name).exists() for child in clients.iterdir() if child.is_dir()
-                       for name in _PROTECTED_NAMES)
+        names = _ENGAGEMENT_RECORDS.get(path.parent.name)
+        if names and _is_workspace_root(path.parent.parent):
+            return any((path / name).exists() for name in names)
+        for folder, names in _ENGAGEMENT_RECORDS.items():
+            base = path if path.name == folder else path / folder
+            if base.is_dir() and _is_workspace_root(base.parent) and any(
+                    (child / name).exists() for child in base.iterdir() if child.is_dir() for name in names):
+                return True
     except OSError:
         return True
     return False

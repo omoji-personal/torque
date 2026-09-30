@@ -76,13 +76,16 @@ def _bound_client(env, workspace: Path) -> str | None:
 
 
 def _guarded(workspace: Path, bound: str | None) -> list[Path]:
+    """Folders a client-bound connected session treats as other engagements'
+    context: every other client and every internal initiative."""
     clients = workspace / "clients"
+    initiatives = [workspace / "initiatives"] if (workspace / "initiatives").exists() else []
     if not bound:
-        return [clients]
+        return [clients, *initiatives]
     try:
-        return [p for p in clients.iterdir() if p.name != bound and (p.is_dir() or p.is_symlink())]
+        return [p for p in clients.iterdir() if p.name != bound and (p.is_dir() or p.is_symlink())] + initiatives
     except OSError:
-        return [clients]
+        return [clients, *initiatives]
 
 
 FILE_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
