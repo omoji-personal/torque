@@ -2921,11 +2921,15 @@ def _is_cached_git_rm(toks: list[str]) -> bool:
     only removes git's index entries, never a file in the working tree (regardless
     of -f/--force), so it is not a removal or write against the protected-record
     check. Every other git form (checkout, mv, clean, plain rm, restore, reset
-    --hard, ...) is unaffected."""
+    --hard, ...) is unaffected. `--cached` counts only before the first bare `--`:
+    after one, git reads every word as a pathspec, not an option, so a trailing
+    `-- --cached` names a (usually nonexistent) path called --cached and performs
+    an ordinary, real removal of whatever came before it."""
     words = _without_redirections(toks)
     if toks != words or len(words) < 3 or _basename(words[0]) != "git" or words[1] != "rm":
         return False
-    return "--cached" in words[2:]
+    end = words.index("--") if "--" in words else len(words)
+    return "--cached" in words[2:end]
 
 
 def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:

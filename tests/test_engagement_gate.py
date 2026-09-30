@@ -178,6 +178,8 @@ CACHED_GIT_RM_ALLOWED = [
     "git rm -r --cached clients",
     "git rm --cached clients/alpha/consent.json",
     "git rm -r --cached initiatives",
+    "git rm --cached --force clients/alpha/consent.json",
+    "git rm clients/alpha/consent.json --cached",
 ]
 UNCACHED_GIT_RM_STILL_REFUSED = [
     "git rm clients/alpha/consent.json",
@@ -202,6 +204,20 @@ def test_git_rm_cached_with_a_redirection_is_not_exempted(tmp_path):
     (root / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
     command = "git rm --cached clients/alpha/consent.json > clients/alpha/consent.json"
     assert gate._approval_file_reason("Bash", {"command": command}, root)
+
+
+def test_cached_after_a_bare_double_dash_is_a_path_not_the_option(tmp_path):
+    """After a bare `--`, git reads every following word as a pathspec, not an
+    option: `git rm ... -- --cached` names a (usually nonexistent) path literally
+    called --cached and performs a real, working-tree removal of whatever path came
+    before it. The record check must not mistake this trailing `--cached` for the
+    index-only option, or it would exempt (and an agent could use to delete) the
+    named record."""
+    root = setup(tmp_path)
+    (root / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
+    for command in ("git rm -f --ignore-unmatch clients/alpha/consent.json -- --cached",
+                    "git rm -- clients/alpha/consent.json --cached"):
+        assert gate._approval_file_reason("Bash", {"command": command}, root), command
 
 
 def test_build_only_git_lockout_remediation_still_works(tmp_path):
