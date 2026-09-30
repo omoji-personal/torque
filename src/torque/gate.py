@@ -2916,20 +2916,27 @@ def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
         return ""
 
 
+_CACHED_GIT_RM_OPTIONS = frozenset({"--cached", "-r", "-q", "--quiet", "-f", "--force",
+                                    "--ignore-unmatch", "-n", "--dry-run"})
+
+
 def _is_cached_git_rm(toks: list[str]) -> bool:
-    """`git rm --cached ...`, with no output redirection in the same segment: this
-    only removes git's index entries, never a file in the working tree (regardless
-    of -f/--force), so it is not a removal or write against the protected-record
-    check. Every other git form (checkout, mv, clean, plain rm, restore, reset
-    --hard, ...) is unaffected. `--cached` counts only before the first bare `--`:
-    after one, git reads every word as a pathspec, not an option, so a trailing
-    `-- --cached` names a (usually nonexistent) path called --cached and performs
-    an ordinary, real removal of whatever came before it."""
+    """`git rm --cached <path>...` only removes git's index entries, never a file in
+    the working tree, so it is not a removal or write against the protected-record
+    check. git's option parsing can turn a "cached"-looking command into a real
+    delete (`--end-of-options` or a bare `--` make a later `--cached` a path,
+    `--no-cached` negates it, `--no-cache` abbreviates the negation), so this is a
+    strict allowlist: `git` then `rm` with no global options between, no output
+    redirection, every option word exactly one of _CACHED_GIT_RM_OPTIONS (combined
+    short flags such as -rf are refused), `--cached` among them, and at least one
+    path. Anything else is judged as an ordinary remover."""
     words = _without_redirections(toks)
     if toks != words or len(words) < 3 or _basename(words[0]) != "git" or words[1] != "rm":
         return False
-    end = words.index("--") if "--" in words else len(words)
-    return "--cached" in words[2:end]
+    options = [w for w in words[2:] if w.startswith("-")]
+    paths = [w for w in words[2:] if not w.startswith("-")]
+    return (all(w in _CACHED_GIT_RM_OPTIONS for w in options)
+            and "--cached" in options and bool(paths))
 
 
 def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:

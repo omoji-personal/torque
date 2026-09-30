@@ -245,3 +245,52 @@ def test_build_only_git_lockout_remediation_still_works(tmp_path):
     assert gate.clients_index_count(root) == 0
     unblocked, reason3 = gate.decide("Bash", {"command": "git log"}, root, "build-only", root)
     assert unblocked, reason3
+
+
+# --- Fix round 4: the `git rm --cached` exemption is a strict allowlist. git's
+# option parsing (--end-of-options, --no-cached negation, --no-cache prefix
+# abbreviation, a bare --, global options before rm) can turn a "cached"-looking
+# command into a real working-tree delete, so only a fixed set of exact option
+# words is accepted; anything else is judged as an ordinary remover. ---
+
+STRICT_CACHED_REFUSED = [
+    "git rm -f --ignore-unmatch --end-of-options clients/alpha/consent.json --cached",
+    "git rm -f --ignore-unmatch clients/alpha/consent.json --end-of-options --cached",
+    "git rm -f --cached --no-cached clients/alpha/consent.json",
+    "git rm -f clients/alpha/consent.json --cached --no-cache",
+    "git rm -f -- clients/alpha/consent.json --cached",
+    "git rm -rf --cached clients",
+    "git -C clients/alpha rm --cached consent.json",
+]
+STRICT_CACHED_ALLOWED = [
+    "git rm -r --cached clients",
+    "git rm --cached clients/alpha/consent.json",
+    "git rm --cached --force clients/alpha/consent.json",
+    "git rm clients/alpha/consent.json --cached",
+    "git rm -r -q --cached clients",
+    "git rm -r --cached initiatives",
+]
+
+
+def test_git_rm_cached_exemption_is_a_strict_allowlist(tmp_path):
+    root = setup(tmp_path)
+    (root / "clients" / "alpha" / "consent.json").write_text("{}", encoding="utf-8")
+    for command in STRICT_CACHED_REFUSED:
+        assert gate._approval_file_reason("Bash", {"command": command}, root), command
+    for command in STRICT_CACHED_ALLOWED:
+        assert not gate._approval_file_reason("Bash", {"command": command}, root), command
+
+
+def test_allowed_cached_git_rm_forms_leave_the_file_on_disk(tmp_path):
+    """Real git, in a throwaway repo: every exempted form only untracks."""
+    for i, command in enumerate(STRICT_CACHED_ALLOWED):
+        repo = tmp_path / f"r{i}"
+        for rel in ("clients/alpha/consent.json", "initiatives/plan/binding.json"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text("{}", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "-f", "clients", "initiatives"], check=True)
+        args = command.split()[1:]
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+        assert (repo / "clients/alpha/consent.json").is_file(), command
+        assert (repo / "initiatives/plan/binding.json").is_file(), command
