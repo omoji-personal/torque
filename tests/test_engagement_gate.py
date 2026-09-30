@@ -352,3 +352,39 @@ def test_expansion_forms_really_delete_and_allowed_forms_do_not(tmp_path):
                         "commit", "-qm", "init"], check=True)
         subprocess.run([bash, "-c", command], cwd=repo, capture_output=True)
         assert (not (repo / "clients" / "alpha" / "consent.json").exists()) == deletes, command
+
+
+# --- Final review: connected mode serves one client, never initiatives ---
+
+
+def _connected_decide(root, command, bound):
+    orig = gate_connected._bound_client
+    gate_connected._bound_client = lambda env, w: bound
+    try:
+        return gate_connected.decide_connected("Bash", {"command": command.replace("W", str(root))}, root, root,
+                                               env={}, permission_mode="default")
+    finally:
+        gate_connected._bound_client = orig
+
+
+def test_connected_bound_session_cannot_list_every_engagement(tmp_path):
+    root = setup(tmp_path)
+    ws.add_client(root, "Beta")
+    for command in ("torque engagement list --workspace W", "torque client list --workspace W"):
+        assert _connected_decide(root, command, "alpha").action == "deny", command
+
+
+def test_connected_bound_session_cannot_act_for_an_initiative(tmp_path):
+    root = setup(tmp_path)
+    for command in ("torque context --workspace W --initiative plan",
+                    "torque context --workspace=W --initiative=plan",
+                    "torque session add --workspace W --initiative plan --summary x",
+                    "torque change note chg-000000000000 --workspace W --initiative plan --text x"):
+        decision = _connected_decide(root, command, "alpha")
+        assert decision.action == "deny", command
+        assert "initiative" in decision.reason, command
+
+
+def test_connected_bound_session_still_reaches_its_own_client(tmp_path):
+    root = setup(tmp_path)
+    assert _connected_decide(root, "torque context --workspace W --client alpha", "alpha").action == "allow"

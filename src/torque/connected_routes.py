@@ -319,20 +319,27 @@ def rest_data_class(path: str) -> str | None:
     return "records"
 
 
+# The route owner for a command that names an internal initiative. Connected mode
+# serves one client's work only, so an initiative is never the bound client.
+INITIATIVE_OWNER = "initiative:"
+
+
 def _strip_context(rest: list[str]) -> tuple[list[str], str | None]:
-    out, client, i = [], None, 0
+    out, client, initiative, i = [], None, None, 0
     while i < len(rest):
         tok = rest[i]
         name = tok.split("=", 1)[0]
-        if name in ("--workspace", "--client"):
+        if name in ("--workspace", "--client", "--initiative"):
             value = tok.split("=", 1)[1] if "=" in tok else (rest[i + 1] if i + 1 < len(rest) else "")
             if name == "--client":
                 client = value
+            elif name == "--initiative":
+                initiative = value
             i += 1 if "=" in tok else 2
             continue
         out.append(tok)
         i += 1
-    return out, client
+    return out, (INITIATIVE_OWNER + initiative if initiative is not None else client)
 
 
 def _torque(rest: list[str], detail: str) -> Route:
@@ -356,9 +363,12 @@ def _torque(rest: list[str], detail: str) -> Route:
             records = bool(names & {"--capture-before-record", "--record"})
             return Route("read" if org else "no_org", org, detail, client, data="records" if records else None)
         return Route("local", None, detail, client)
-    if head == "client" and sub == "list":
+    if (head == "client" and sub == "list") or (head == "engagement" and sub == "list"):
         # Lists every client's name and org: one client per session, so refused.
         return Route("local", None, detail, "*")
+    if head == "initiative":
+        # Initiatives are internal work; connected mode never serves them.
+        return Route("local", None, detail, INITIATIVE_OWNER + (rest[2] if len(rest) > 2 else "*"))
     if head == "client" and sub == "consent":
         third = rest[2] if len(rest) > 2 else ""
         return Route("local" if third == "show" else "admin", None, detail, client)
