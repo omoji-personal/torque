@@ -111,6 +111,7 @@ def list_changes(workspace: str | Path, client: str) -> list[dict]:
 
 
 def _capture_file(root: Path, source: str | Path) -> dict:
+    ws.require_writable(_workspace_of(root))
     raw = Path(source).expanduser().absolute()
     if raw.is_symlink():
         raise ws.WorkspaceError("evidence source must not be a symlink")
@@ -225,6 +226,7 @@ def verify_deploy(workspace: str | Path, client: str, identifier: str, org: str,
                   manifest: str | Path | None = None) -> dict:
     """Read one exact live deployment; never turn metadata success into business acceptance."""
     root, record = load_change(workspace, client, identifier)
+    ws.require_writable(_workspace_of(root))
     if not _org(org):
         raise ws.WorkspaceError("org must be one explicit alias, username or ID")
     from jsc_qa.dispatcher import dispatch_meta_api

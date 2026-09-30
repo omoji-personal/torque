@@ -159,13 +159,22 @@ def share_with_approver(workspace, *paths) -> None:
         open_acl_mask(path)
 
 
-def _atomic_replace_text(path: Path, text: str) -> None:
-    """Replace an explicitly managed file without exposing a partial write. An
-    existing file keeps its mode and group (a shared record stays shared)."""
-    try:
-        existing = os.stat(path)
-    except FileNotFoundError:
-        existing = None
+def _atomic_replace_text(path: Path, text: str, *, keep_mode: bool = False) -> None:
+    """Replace an explicitly managed file without exposing a partial write.
+
+    By default the replacement is a fresh, private file (mkstemp's 0600), the
+    same result callers relied on before durability work touched this
+    function: a caller that manages its own mode afterward (set_ai_access,
+    _connected_rule) must not have that mode silently overridden by whatever
+    the file happened to be before. Pass keep_mode=True only when an existing
+    file's mode and group must survive the replace (a shared record stays
+    shared)."""
+    existing = None
+    if keep_mode:
+        try:
+            existing = os.stat(path)
+        except FileNotFoundError:
+            existing = None
     fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
@@ -176,7 +185,7 @@ def _atomic_replace_text(path: Path, text: str) -> None:
             os.chmod(temporary, stat.S_IMODE(existing.st_mode))
             try:
                 os.chown(temporary, -1, existing.st_gid)
-            except PermissionError:
+            except OSError:
                 pass
         os.replace(temporary, path)
         _fsync_dir(path.parent)

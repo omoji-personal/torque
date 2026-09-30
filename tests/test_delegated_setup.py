@@ -98,6 +98,18 @@ def test_owner_path_file_modes_are_unchanged(root):
     assert (root / "workspace.json").stat().st_mode & 0o777 == 0o600
 
 
+def test_owner_switch_resets_workspace_json_mode_after_a_delegated_switch(root):
+    """a18 fix round 1 finding 1: mode-preserving replace is opt-in
+    (_atomic_replace_text keep_mode=False by default). A delegated switch
+    first relaxes workspace.json to 0644; the owner's own next (non-delegated)
+    switch must reset it to a private 0600, not silently carry the 0644
+    forward."""
+    switch(root)
+    assert (root / "workspace.json").stat().st_mode & 0o777 == 0o644
+    ws.set_ai_access(root, "connected", approval="required", verify="owner-uid", approver_uid=ME, presence=YES)
+    assert (root / "workspace.json").stat().st_mode & 0o777 == 0o600
+
+
 # --- Fix round 1 ---
 
 
