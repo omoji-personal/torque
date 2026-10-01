@@ -1,17 +1,58 @@
-# Torque — Salesforce consulting workspace
+# Torque: instructions for coding agents
 
-Torque continues the working JusticeserverClaude framework. Preserve its practical capabilities and conversational workflows while separating employer/client context. Legacy Torque's source-edit shields, hooks and token machinery have been retired from the default product. Archived policies are historical and do not govern this successor.
+This file is the single source of instructions for any coding agent working on this
+repository (Claude Code, Codex, Gemini CLI, Cursor or others). Tool-specific files only
+point here.
 
-Use README.md and docs/continuation.md for the current implementation contract. No default global CLI interception or tool-specific approval tokens. Use existing Salesforce access and the user's actual authorization for real operations. Never silently select another client or org. Keep client data, auth, logs and recovery artifacts in the selected private workspace, outside tracked source. Report observed, asserted, unknown and untested outcomes distinctly.
+## What this repo is
 
-Use the relevant recipe from `torque workflows show NAME` and the task-specific guidance under `.claude/rules/`. Review and nonprofit knowledge skills live under `.agents/skills/` ([list](docs/skills.md)); technical worker roles are in `.claude/agents/`. The host chooses the model. No separate model-tier escalation system is required.
+Torque is a Python command-line tool plus packaged workflows that give a coding assistant a
+private, local workspace per Salesforce client or internal initiative. This repository is the
+public, generic engine. It must never contain a firm's, client's or person's material.
 
-Source Justiceserver workspace is read-only during this migration. Do not import its customer records, credentials, internal Trello, managed-package source, private documents or org mappings into Torque. Preserve useful workflows and generic implementations; synthetic examples must be clearly identified.
+## Map
 
-Run offline tests and a clean wheel installation before reporting package readiness. Live org/browser tests are separate and must be explicitly in scope. No commit, push or publication is implied by local implementation.
+| Path | Contents |
+|---|---|
+| `src/torque/` | The engine: workspace and records, change records, gate and connected mode, approvals, upgrades, demo |
+| `src/torque/data/` | Generated bundle that `torque workspace init` and `upgrade` install into a workspace (do not edit by hand) |
+| `packages/` | Bundled Salesforce tools reached through `torque` (revert, qa, browser, logs, advisory, lesson, meeting); provenance in `packages/provenance.json` |
+| `workflows/` | Workflow catalogue and the adapter check |
+| `.claude/`, `.agents/skills/`, `workflows/catalogue.json` | Source of the recipes, rules, worker roles, skills and catalogue; bundled into `src/torque/data/` |
+| `tests/`, `scripts/` | Offline tests and release checks |
+| `docs/`, `examples/` | User guides, one validation record per release, design records |
 
-Apply useful research and audit findings to the implementation, packaged workflows,
-examples or validation, as appropriate. Use `docs/research-adoption.md` to retain
-material adoption decisions and remaining proof; keep this maintainer record out
-of ordinary client workflows. Prefer integrating a mature existing tool when it
-serves the task. Do not introduce feature-count targets or extra user ceremonies.
+## Agent assets, by tool
+
+- Workflow recipes: `torque workflows list` and `torque workflows show NAME` work for any agent. Claude Code also reads them as `.claude/commands/`.
+- Skills: `.agents/skills/` (read by agents that support the shared skills folder); workspaces get the same skills in `.claude/skills/`. List: `docs/skills.md`.
+- Standing rules: `.claude/rules/*.md` are plain Markdown; any agent should read them before client work.
+- Worker roles: `.claude/agents/*.md` are plain role descriptions any agent can follow.
+- Guardrails: the build-only and connected-mode gate runs as a Claude Code hook today; other agents get the same records and workflows but not the hook.
+
+## Commands
+
+```sh
+python -m pip install -e '.[dev]'
+python scripts/test-offline.py -q          # full offline suite and package self-tests
+python workflows/sync_adapters.py --check  # catalogue matches the recipe files
+python scripts/sync-workflows.py --check   # src/torque/data matches the sources
+python scripts/check-provenance.py         # carried-over package files match their records
+python -m build && python scripts/check-distribution.py dist/*.whl --sdist dist/*.tar.gz
+python scripts/smoke-installed.py --require-wheel   # run from a clean venv with the wheel installed
+```
+
+## Done means
+
+All of the commands above pass locally, the change has tests, CI is green on Linux, macOS and
+Windows, and user-facing behavior changes are reflected in `README.md`, the relevant `docs/`
+page and `CHANGELOG.md`. Report observed, asserted, unknown and untested outcomes separately.
+
+## Rules
+
+- No firm, client or person names, credentials, org mappings or record data in tracked files; `tests/test_public_hygiene.py` enforces part of this.
+- Use the user's existing Salesforce access and authorization; never select another client or org silently. Live org and browser tests run only when explicitly in scope.
+- Edit recipes, rules and roles in `.claude/`, skills in `.agents/skills/`, and the catalogue in `workflows/catalogue.json`; then run `python scripts/sync-workflows.py` to rebuild `src/torque/data/`.
+- Prefer integrating a mature existing tool over building one; no feature-count targets or extra user ceremonies.
+- Retain material adoption decisions in `docs/research-adoption.md`.
+- No commit, push or release is implied by a local change; the maintainer decides.
