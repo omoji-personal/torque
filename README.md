@@ -67,8 +67,10 @@ torque context --workspace ../torque-private --client sample
 
 These commands create local files. An alias refers to existing Salesforce CLI
 authentication; it does not log in or authorize an org. Replace the sample names.
-Open the private workspace in your assistant; `AGENTS.md` and `CLAUDE.md` explain
-how to use its client context and bundled workflows.
+Open the private workspace in your assistant; its `AGENTS.md` explains how to use the
+client context and bundled workflows (`CLAUDE.md` points Claude Code to it). Torque works
+with any assistant that reads `AGENTS.md` and can run commands; the optional build-only
+and connected-mode gate currently runs as a Claude Code hook.
 
 Ask in ordinary language:
 

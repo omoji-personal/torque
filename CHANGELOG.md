@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Repository instructions are model-agnostic: `AGENTS.md` is the single source for any coding agent (map, agent assets by tool, commands, done-means, rules); `CLAUDE.md` imports it. Removed the empty `.claude/settings.json`. README notes which parts work with any assistant and that the gate runs as a Claude Code hook.
+
 ## 2.0.0a19 - clients and initiatives, 2026-09-30 (not published to a package index)
 
 - Initiatives: `torque initiative add|list|show|set-state`, `--initiative` on context, session, handoff and change commands, `torque engagement list [--kind client|initiative]`.
