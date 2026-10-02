@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Repository instructions are model-agnostic: `AGENTS.md` is the single source for any coding agent (map, agent assets by tool, commands, done-means, rules); `CLAUDE.md` imports it. Removed the empty `.claude/settings.json`. README notes which parts work with any assistant and that the gate runs as a Claude Code hook.
+- Harden offline testing with native Windows tool stubs, temporary authentication directories, a restricted environment and child-process network guards. Preserve and report the private denylist scan; check source and distribution contents for credential/path/URL leaks. Clarify public attribution and workflow editing rules, use reserved fixture email domains, and lead the README with a synthetic handoff, capability limits and revision-specific installation.
 
 ## 2.0.0a19 - clients and initiatives, 2026-09-30 (not published to a package index)
 

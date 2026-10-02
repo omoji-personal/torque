@@ -8,6 +8,13 @@ The user's six months of daily use describes the overall JSC working environment
 
 `packages/provenance.json` records every selected source file, source-relative path, original SHA-256, current destination SHA-256, and whether it changed. Source revision: `justiceserver-workspace` commit `017c20fdf3b80ef3fc4b85d621e90aa36c21fc81`. Per-file hashes identify the actual inspected source bytes, including any local differences from that commit. New integration files are identified separately. The advisory catalogue retains its own nested provenance back to Torque `3c40916`.
 
+These historical names and required public author/license notices are intentional
+attribution under the [public naming policy](../CONTRIBUTING.md#public-naming-and-attribution).
+They do not authorize private client records, authentication material or personal
+paths in the distribution. When a carried file changes, retain its original
+`source_sha256`, recompute `destination_sha256` from its current bytes, set `adapted`
+to whether those hashes differ, and rerun `python scripts/check-provenance.py`.
+
 Selected code and generalized tests were imported. The JusticeServer managed application, client documents, org aliases, domain browser flows and test-user records, deployment histories, log archives, credentials, and global hook installation were excluded. Empty browser configuration and synthetic fixtures are intentional template inputs. Existing Apache attribution is retained in source headers and `packages/licenses/`; the third-party browser page-object manifest records a reference dependency, not bundled `node_modules` or a required runtime download.
 
 | Root / import | Preserved behavior | Continuation changes |

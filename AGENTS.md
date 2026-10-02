@@ -8,7 +8,8 @@ point here.
 
 Torque is a Python command-line tool plus packaged workflows that give a coding assistant a
 private, local workspace per Salesforce client or internal initiative. This repository is the
-public, generic engine. It must never contain a firm's, client's or person's material.
+public, generic engine. Private firm, client and personal material belongs outside it.
+Necessary public attribution, license notices and dependency provenance are retained.
 
 ## Map
 
@@ -17,8 +18,9 @@ public, generic engine. It must never contain a firm's, client's or person's mat
 | `src/torque/` | The engine: workspace and records, change records, gate and connected mode, approvals, upgrades, demo |
 | `src/torque/data/` | Generated bundle that `torque workspace init` and `upgrade` install into a workspace (do not edit by hand) |
 | `packages/` | Bundled Salesforce tools reached through `torque` (revert, qa, browser, logs, advisory, lesson, meeting); provenance in `packages/provenance.json` |
-| `workflows/` | Workflow catalogue and the adapter check |
-| `.claude/`, `.agents/skills/`, `workflows/catalogue.json` | Source of the recipes, rules, worker roles, skills and catalogue; bundled into `src/torque/data/` |
+| `workflows/` | Source recipes (`*.md`), catalogue (`catalogue.json`) and adapter generator (`sync_adapters.py`) |
+| `.claude/commands/` | Generated workflow adapters; edit `workflows/*.md`, then regenerate |
+| `.claude/rules/`, `.claude/agents/`, `.agents/skills/` | Source standing rules, worker roles and skills; bundled with the adapters into `src/torque/data/` |
 | `tests/`, `scripts/` | Offline tests and release checks |
 | `docs/`, `examples/` | User guides, one validation record per release, design records |
 
@@ -50,9 +52,9 @@ page and `CHANGELOG.md`. Report observed, asserted, unknown and untested outcome
 
 ## Rules
 
-- No firm, client or person names, credentials, org mappings or record data in tracked files; `tests/test_public_hygiene.py` enforces part of this.
+- No private firm, client or personal material, credentials, org mappings or real record data in tracked files. Necessary public authorship, LICENSE/NOTICE text, dependency attribution and provenance are allowed; retain required notices. Fictional fixtures use reserved example domains. See `CONTRIBUTING.md`; `tests/test_public_hygiene.py` enforces part of this policy.
 - Use the user's existing Salesforce access and authorization; never select another client or org silently. Live org and browser tests run only when explicitly in scope.
-- Edit recipes, rules and roles in `.claude/`, skills in `.agents/skills/`, and the catalogue in `workflows/catalogue.json`; then run `python scripts/sync-workflows.py` to rebuild `src/torque/data/`.
+- Edit recipes in `workflows/*.md` and the catalogue in `workflows/catalogue.json`; run `python workflows/sync_adapters.py` to regenerate `.claude/commands/`, then `python scripts/sync-workflows.py` to rebuild `src/torque/data/`. Edit standing rules in `.claude/rules/`, worker roles in `.claude/agents/` and skills in `.agents/skills/`, then rebuild the bundle. Do not edit generated adapters or bundled files by hand.
 - Prefer integrating a mature existing tool over building one; no feature-count targets or extra user ceremonies.
 - Retain material adoption decisions in `docs/research-adoption.md`.
 - No commit, push or release is implied by a local change; the maintainer decides.

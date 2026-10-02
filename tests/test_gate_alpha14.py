@@ -279,7 +279,7 @@ def test_readme_status_and_neutral_lineage():
     import torque
     assert torque.__version__ in top and "development alpha" in top
     assert "Justiceserver" not in top and "JusticeServer" not in top
-    assert "earlier consulting toolkit" in " ".join(top.split())
+    assert "earlier consulting toolkit" in " ".join(text.split())
 
 
 def test_brace_expansion_that_multiplies_the_length_blocks_fast(ws):

@@ -141,5 +141,6 @@ def test_changelog_readme_and_record_for_alpha17():
         assert f"`{name}`" in section
     record = (ROOT / "docs" / "validation-alpha17.md").read_text(encoding="utf-8")
     assert "## Review scope" in record and "Python 3." in record and "\u2014" not in record
-    readme = (ROOT / "README.md").read_text(encoding="utf-8").split("\n## ", 1)[0]
-    assert torque.__version__ in readme and "validation-alpha17.md" in readme
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert torque.__version__ in readme.split("\n## ", 1)[0]
+    assert "validation-alpha17.md" in readme
