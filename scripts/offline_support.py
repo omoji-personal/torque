@@ -79,6 +79,13 @@ def install():
                         executable = str(target)
                 elif found:
                     executable = found
+                    # A nested launcher puts its own tool folder on PATH; its
+                    # Windows launchers are not this guard's, so use ours.
+                    folder = Path(found).resolve().parent
+                    target = BINS / Path(found).name
+                    if (folder != BINS and target.is_file()
+                            and (folder.parent / "bootstrap" / "offline_support.py").is_file()):
+                        executable = str(target)
                 kwargs["executable"] = executable
                 # Subprocess overrides must retain the guard for fresh Python
                 # interpreters (e.g. a test supplying its own PYTHONPATH).
