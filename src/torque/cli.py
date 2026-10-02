@@ -10,7 +10,7 @@ import inspect
 import json
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import sys
 import subprocess
@@ -268,11 +268,16 @@ def delegated_context(path: Path | None, route: str, argv: list[str], display: s
         if parity_config.is_file():
             parity = ws._read_json(parity_config)
             script, source_org = parity.get("script"), parity.get("baseline_org")
-            if not isinstance(script, str) or not script or Path(script).is_absolute() or any(part in (".", "..") for part in script.split("/")):
+            if (not isinstance(script, str) or not script or Path(script).is_absolute()
+                    or PureWindowsPath(script).drive or PureWindowsPath(script).root or ":" in script
+                    or any(part in ("", ".", "..") for part in re.split(r"[/\\]", script))):
                 raise ws.WorkspaceError("config/parity.json script must be a relative file under this client's config directory")
             if not isinstance(source_org, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", source_org):
                 raise ws.WorkspaceError("config/parity.json baseline_org must be a nonempty org alias")
-            adapter = ws._inside(path, path / "config" / script)
+            config_root = ws._inside(path, path / "config")
+            adapter = ws._inside(config_root, config_root / script).resolve()
+            if not adapter.is_relative_to(config_root.resolve()):
+                raise ws.WorkspaceError("config/parity.json script must stay under this client's config directory")
             if not adapter.is_file():
                 raise ws.WorkspaceError("config/parity.json script does not exist")
             changes["TORQUE_PARITY_SCRIPT"] = str(adapter)
@@ -305,6 +310,8 @@ def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
     root_arg = root_arg or os.environ.get("TORQUE_WORKSPACE")
     if client_name and not root_arg and not help_only:
         raise ws.WorkspaceError("--client requires --workspace PATH")
+    if not help_only:
+        ws.require_package_writable(root_arg)
     if root_arg and not help_only:
         if client_name:
             scope, _, _ = ws.load_client(root_arg, client_name)

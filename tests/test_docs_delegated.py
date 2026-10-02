@@ -68,8 +68,9 @@ def test_changelog_readme_and_record_for_alpha16():
 def test_edited_a15_tests_reconciliation_matches_git():
     """V2-4: the "Edited a15 tests" count and file list match
     `git diff --name-only dea2041 v2.0.0a16 -- tests/` restricted to files that
-    existed at dea2041. Later releases do not alter that historical claim.
-    Skipped when git or either reviewed revision is unavailable."""
+    existed at dea2041. This historical release record must not count later
+    regression tests. Skipped when git or either release is unavailable (an
+    sdist or a shallow clone)."""
     import re
     import shutil
     import subprocess
@@ -81,10 +82,9 @@ def test_edited_a15_tests_reconciliation_matches_git():
     def run(*args):
         return subprocess.run([git, "-C", str(ROOT), *args], capture_output=True, text=True, timeout=30,
                               stdin=subprocess.DEVNULL)
-    if run("cat-file", "-e", "dea2041^{commit}").returncode != 0:
-        pytest.skip("the dea2041 baseline commit is not in this checkout")
-    if run("cat-file", "-e", "v2.0.0a16^{commit}").returncode != 0:
-        pytest.skip("the reviewed alpha 16 tag is not in this checkout")
+    for revision in ("dea2041", "v2.0.0a16"):
+        if run("cat-file", "-e", f"{revision}^{{commit}}").returncode != 0:
+            pytest.skip(f"the {revision} release is not in this checkout")
     baseline = run("ls-tree", "-r", "--name-only", "dea2041", "--", "tests/")
     changed = run("diff", "--name-only", "dea2041", "v2.0.0a16", "--", "tests/")
     if baseline.returncode != 0 or changed.returncode != 0:

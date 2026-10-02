@@ -15,7 +15,8 @@ import shlex
 from . import gate as g
 
 # Route kinds, from least to most restricted in the gate.
-KINDS = ("local", "read", "check_only", "org_write", "browser_write", "unverifiable", "admin", "no_org")
+KINDS = ("local", "read", "check_only", "org_write", "browser_read", "browser_write", "unverifiable", "admin", "no_org")
+BROWSER_DATA_CLASSES = ("metadata", "records")
 
 # sf commands that only read, by their leading topic words (docs/connected-approval.md,
 # "Host facts verified"). Everything else with an org flag is a write.
@@ -41,14 +42,15 @@ SF_CHECK_ONLY = {("project", "deploy", "validate"), ("apex", "run", "test"), ("f
 # Local file generation and tooling; they take no org.
 SF_LOCAL = {("project", "generate"), ("project", "convert"), ("project", "list", "ignored"),
             ("template", "generate"), ("schema", "generate"), ("cmdt", "generate"), ("lightning", "generate"),
-            ("apex", "generate"), ("code-analyzer",), ("dev",), ("lightning", "dev"), ("agent", "generate"),
+            ("apex", "generate"), ("agent", "generate"),
             ("version",), ("help",), ("commands",), ("whatsnew",), ("which",), ("search",), ("info",),
             ("doctor",), ("autocomplete",), ("alias", "list"), ("config", "list"), ("config", "get"),
             ("env", "list"), ("plugins",), ("plugins", "inspect")}
 # Login and browser sessions: the gate cannot tell what they do. `org open` is not
 # here: it mints a session URL (an org write, D17), so it falls through to the
 # default rule below, "anything else with an org flag is a write".
-SF_ASK = {("org", "login"), ("org", "logout"), ("plugins", "install"), ("plugins", "link"),
+SF_ASK = {("code-analyzer",), ("dev",), ("lightning", "dev"),
+          ("org", "login"), ("org", "logout"), ("plugins", "install"), ("plugins", "link"),
           ("plugins", "update"), ("plugins", "uninstall"), ("plugins", "reset"), ("update",)}
 # Changing an alias or the default org would move an approved command to another org.
 SF_ADMIN = {("alias", "set"), ("alias", "unset"), ("config", "set"), ("config", "unset")}
@@ -86,22 +88,28 @@ NETWORK = {"curl", "wget", "http", "https", "xh", "httpie", "aria2c"}
 SF_HOSTS = re.compile(r"(salesforce\.com|force\.com|salesforce-setup\.com|cloudforce\.com|database\.com|"
                       r"site\.com|salesforce-sites\.com|visualforce\.com|lightning\.com|sfdc\.net)",
                       re.IGNORECASE)
+# Project hooks, plugins, executable configuration and pagers are not visible in
+# the command line. None of these programs is verified merely by its name.
+EXTENSIBLE_COMMANDS = {
+    "git", "gh", "hg", "ruff", "black", "isort", "mypy", "flake8", "pylint", "prettier", "eslint",
+    "shellcheck", "tsc", "less", "more", "man", "info", "tar", "zip", "unzip", "rsync", "scp",
+    "rg", "ag", "ack", "fd", "sort", "split", "sed", "awk", "gawk", "mawk", "nawk",
+}
 # Programs that only read or change local files. Their arguments are data, so an
 # `sf` word inside them (grep sf, echo sf) is not a call.
 LOCAL_COMMANDS = {
-    "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "tree", "echo",
+    "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "tree", "echo",
     "printf", "pwd", "cd", "pushd", "popd", "dirs", "mkdir", "rmdir", "touch", "cp", "mv", "rm", "ln", "chmod",
-    "chown", "diff", "cmp", "comm", "sort", "uniq", "cut", "tr", "paste", "join", "fold", "fmt", "nl", "rev",
-    "jq", "yq", "less", "more", "file", "stat", "du", "df", "date", "cal", "basename", "dirname", "realpath",
-    "readlink", "which", "type", "whereis", "test", "[", "[[", "true", "false", ":", "tar", "zip", "unzip",
+    "chown", "diff", "cmp", "comm", "uniq", "cut", "tr", "paste", "join", "fold", "fmt", "nl", "rev",
+    "jq", "yq", "file", "stat", "du", "df", "date", "cal", "basename", "dirname", "realpath",
+    "readlink", "which", "type", "whereis", "test", "[", "[[", "true", "false", ":",
     "gzip", "gunzip", "zcat", "bzip2", "xz", "shasum", "sha1sum", "sha256sum", "md5", "md5sum", "cksum",
     "xmllint", "column", "tee", "sleep", "export", "unset", "set", "shift", "read", "exit", "return", "local",
     "declare", "typeset", "readonly", "alias", "unalias", "hash", "wait", "jobs", "fg", "bg", "kill", "ps",
     "top", "uptime", "whoami", "id", "hostname", "uname", "sw_vers", "env", "printenv", "locale", "tput",
-    "clear", "history", "man", "info", "help", "git", "gh", "hg", "patch", "iconv", "base64", "xxd", "od",
-    "hexdump", "strings", "split", "csplit", "mktemp", "truncate", "dd", "sed", "awk", "gawk", "mawk", "nawk",
-    "find", "ditto", "rsync", "scp", "pbcopy", "pbpaste", "say",
-    "ruff", "black", "isort", "mypy", "flake8", "pylint", "prettier", "eslint", "shellcheck", "tsc",
+    "clear", "history", "help", "patch", "iconv", "base64", "xxd", "od",
+    "hexdump", "strings", "csplit", "mktemp", "truncate", "dd",
+    "find", "ditto", "pbcopy", "pbpaste", "say",
     "curl", "wget", "http", "https", "xh", "httpie", "aria2c", "ping", "dig", "nslookup", "host",
 }
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -143,7 +151,7 @@ class Route:
     org: str | None
     detail: str
     client: str | None = None
-    data: str | None = None  # "records" or "debug_logs" when the read needs that consent class
+    data: str | None = None  # reads default to metadata; records and debug_logs need their own consent
     headed: bool = False  # a browser route asking for a visible browser (--headed or a prefix of it)
 
 
@@ -423,14 +431,6 @@ def _strip_benign(head: str, words: list[str]) -> list[str]:
     return rest
 
 
-def _awk_runs(words: list[str]) -> bool:
-    return any(re.search(r"system\s*\(|\|\s*getline|print[^;]*\|\s*\"", w) for w in words[1:])
-
-
-def _sed_runs(words: list[str]) -> bool:
-    return any(re.search(r"(^|[;\n{]\s*)e(\s|$)|/[gpIiMm0-9]*e[gpIiMmw0-9]*\s*($|;)", w) for w in words[1:])
-
-
 def _segment(words: list[str], depth: int) -> list[Route]:
     had_assignment = False
     if words and words[0] in ("for", "select", "case"):
@@ -512,12 +512,8 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
                 end = next((j for j in range(i + 1, len(rest)) if rest[j] in (";", "+", "\\;")), len(rest))
                 routes += _segment(rest[i + 1:end], depth + 1)
         return routes
-    if head in ("awk", "gawk", "mawk", "nawk") and _awk_runs(words):
-        return [Route("unverifiable", None, detail + " (runs a command)")]
-    if head == "sed" and _sed_runs(words):
-        return [Route("unverifiable", None, detail + " (runs a command)")]
-    if head == "git" and any(w.startswith("alias.") or "=!" in w or w.startswith("core.") for w in rest):
-        return [Route("unverifiable", None, detail + " (git configuration that can run a command)")]
+    if head in EXTENSIBLE_COMMANDS:
+        return [Route("unverifiable", None, detail + " (can run hooks, plugins or configured commands)")]
     known_path = re.search(r"[/\\]", first) is None
     if head in LOCAL_COMMANDS and known_path:
         return [Route("local", None, detail)]
@@ -603,13 +599,15 @@ def classify_mcp(tool_name: str, tool_input: dict) -> Route:
         action = str(tool_input.get("action") or "")
         if words <= BROWSER_READ_WORDS | {"cursor", "position", "zoom", "screenshot"} or \
                 (tool == "computer" and action in COMPUTER_READ_ACTIONS):
-            return Route("read", None, tool_name)
+            return Route("browser_read", None, tool_name, data="records")
         return Route("admin", None, tool_name + " (desktop control can reach a terminal)")
     if BROWSER_SERVER.search(server):
         if tool == "computer":
             action = str(tool_input.get("action") or "")
-            return Route("read" if action in COMPUTER_READ_ACTIONS else "browser_write", None, tool_name)
-        return Route("read" if words and words <= BROWSER_READ_WORDS else "browser_write", None, tool_name)
+            return Route("browser_read" if action in COMPUTER_READ_ACTIONS else "browser_write", None,
+                         tool_name, data="records")
+        return Route("browser_read" if words and words <= BROWSER_READ_WORDS else "browser_write", None,
+                     tool_name, data="records")
     if g._mcp_reaches_salesforce(tool_name):
         org = mcp_org(tool_input)
         if words & MCP_WRITE_WORDS or not words & MCP_READ_WORDS:

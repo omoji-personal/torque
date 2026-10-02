@@ -65,7 +65,7 @@ def test_read_in_scope_allowed_out_of_scope_denied(w):
 
 def test_unbound_session_denies_org_routes(w):
     assert run(w, "Bash", {"command": "sf data query -q x -o acme-prod"}, env={}).action == "deny"
-    assert run(w, "Bash", {"command": "git status"}, env={}).action == "allow"
+    assert run(w, "Bash", {"command": "git status"}, env={}).action == "ask"
     assert run(w, "Bash", {"command": "python3 x.py"}, env={}).action == "ask"
     assert run(w, "Bash", {"command": "torque approval grant req-000000000001"}, env={}).action == "deny"
     assert run(w, "Bash", {"command": "torque context --workspace . --client acme"}, env={}).action == "deny"
@@ -149,7 +149,7 @@ def test_records_not_allowed_denies_data_query(w, tmp_path):
 
 def test_browser_interaction_needs_window(w, tmp_path):
     assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click"}).action == "deny"
-    assert run(w, "mcp__claude-in-chrome__read_page", {}).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__read_page", {}).action == "deny"
     cid = changes.create_change(w, "Acme", "Layout", "Cases show tier", [], "acme-sbx")["id"]
     req = approval.create_request(w, "Acme", cid, "acme-sbx", browser_minutes=10,
                                   purpose="Add the Tier field to the Case layout", resolve=ORGS.get)
@@ -157,7 +157,7 @@ def test_browser_interaction_needs_window(w, tmp_path):
     assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 7}).action == "deny"
     assert run(w, "mcp__claude-in-chrome__navigate",
                {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/home", "tabId": 7}
-               ).action == "allow"
+               ).action == "deny"
     assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 7}).action == "deny"
     assert run(w, "Bash", {"command": "torque browser run --target-org acme-sbx"}).action == "allow"
     assert run(w, "mcp__computer-use__type", {"text": "x"}).action == "deny"

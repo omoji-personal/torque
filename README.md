@@ -114,9 +114,14 @@ connected mode, verify-deploy). `torque initiative list|show|set-state` manages 
 (`active`, `paused` with a reason, `closed` with an outcome, `archived`, which refuses new
 records until reopened). `torque engagement list --workspace . [--kind client|initiative]`
 shows both kinds.
+Concurrent initiative lifecycle updates retain each history entry.
 
-An administrator can pause every record and configuration write by creating
-`.torque/maintenance` in the workspace; removing it resumes writes.
+Creating `.torque/maintenance` pauses core record/configuration writes, new delegated
+package commands through `torque` (except help), and direct revert wrapper admission in
+every workspace mode. It does not cancel work already admitted or stop every direct
+package API. Let active operations finish and retain their outcome files before migrating;
+removing the flag resumes admission. The workflow updater remains available. See
+[maintenance boundaries](docs/engagement-records.md#maintenance).
 
 ## What is included
 
@@ -136,13 +141,29 @@ Use your existing Salesforce tools and assistant. Torque requires no service
 account and installs no global command interception or approval-token system by
 default. A firm that wants an AI session to work in client orgs under control can opt a
 workspace into [connected mode](docs/connected-approval.md): the session is bound to one
-client, reads that client's approved orgs, and makes each org write only after the
-consultant approves that exact command from their own terminal. With a
+client and checks recognized org writes against approval of the exact command from the
+consultant's own terminal. **Tier 1 (the default) protects against accidental actions.**
+The agent shares the signing account and can bypass local approval and consumption
+records through code it runs; exact-command checks are not a security boundary against
+that account. With a
 [delegated approver](docs/delegated-approver.md), an independent approver account (a person
 or an automated reviewer) grants non-production writes instead, so a session can run
 unattended, and every decision records who made it. The
 catalogue's `qa-token-*` entries only manage legacy QA skip records kept for compatibility;
 no workflow depends on them.
+
+Extensible tools such as Git, linters and search tools with preprocessors require review
+in connected mode. Run untrusted project tooling in an isolated account or container
+without Salesforce credentials;
+Torque does not create that isolation. External browser and desktop reads are refused
+because their current org context cannot be verified. Torque's isolated browser requires
+an org window and consent for both metadata and record data.
+
+Stronger enforcement requires signing, consumption state and execution authorization
+outside the agent account, with grants bound to an immutable workspace identity and a
+verified org identity. Tier 2 separates approval ownership but retains local replay and
+execution-evidence limitations described in the linked guides.
+
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 

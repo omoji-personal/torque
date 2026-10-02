@@ -17,7 +17,7 @@ import shutil
 import urllib.parse
 
 from . import approval, consent, gate, workspace as ws
-from .connected_routes import BROWSER_SERVER, INITIATIVE_OWNER, Route, classify, is_simple
+from .connected_routes import BROWSER_DATA_CLASSES, BROWSER_SERVER, INITIATIVE_OWNER, Route, classify, is_simple
 
 RANK = {"allow": 0, "ask": 1, "deny": 2}
 PREFIX = "Connected mode: "
@@ -232,7 +232,8 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     browser_tool = tool_name.startswith("mcp__") and bool(BROWSER_SERVER.search(tool_name.split("__")[1]
                                                                                  if tool_name.count("__") > 1 else ""))
     if browser_tool:
-        # Browser tools may read and navigate, but not to a Salesforce org outside the consent.
+        # An explicit foreign URL is additional evidence of a scope violation.
+        # A matching URL cannot authorize a browser read or change below.
         for url in [u for v in gate._string_values(tool_input) for u in _URL_RE.findall(v)]:
             is_org, alias = browser_org(item, url)
             if is_org and (alias is None or not bound):
@@ -263,17 +264,23 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                                    "the default org is never used in connected mode."))
         elif route.kind == "unverifiable":
             text = (f"the gate cannot check what `{route.detail}` does. Read it (and any script it runs) "
-                    "before allowing it; it must not write to an org without an approval.")
+                    "before allowing it; it must not write to an org without an approval. Run untrusted "
+                    "project tooling in an isolated environment without Salesforce credentials; "
+                    "a host prompt does not provide that isolation.")
             decisions.append(Decision("ask", PREFIX + text))
+        elif route.kind == "browser_read":
+            decisions.append(_deny("external browser and desktop reads have no verified org context. "
+                                   "Use Torque's isolated browser with --target-org ORG, consent for "
+                                   "metadata and record data, and a granted browser window."))
         elif problems:
             decisions.append(_deny(f"{bound}'s consent is not usable: " + "; ".join(problems) + "."))
         elif route.org is not None and consent.approved_org(item, route.org) is None:
             decisions.append(_deny(f"org {route.org!r} is not in {bound}'s consent."))
         elif route.kind in ("read", "check_only"):
-            if route.data == "records" and "records" not in allowed_data:
-                decisions.append(_deny(f"{bound}'s consent does not cover record data."))
-            elif route.data == "debug_logs" and "debug_logs" not in allowed_data:
-                decisions.append(_deny(f"{bound}'s consent does not cover debug logs."))
+            category = route.data or "metadata"
+            if category not in allowed_data:
+                label = {"records": "record data", "debug_logs": "debug logs"}.get(category, category)
+                decisions.append(_deny(f"{bound}'s consent does not cover {label}."))
             else:
                 if route.kind == "check_only":
                     after_allow.append(lambda org=route.org: approval.log_activity(
@@ -285,8 +292,11 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
             # navigation and redirects, so it never makes changes in connected mode.
             decisions.append(_deny("browser changes go through Torque's own browser, `torque browser ... "
                                    "--target-org ORG`, which checks each request's org against a granted "
-                                   "window; browser tools here may read and navigate only."))
+                                   "window; external browser tools have no verified org context."))
         elif route.kind == "browser_write":
+            if not set(BROWSER_DATA_CLASSES) <= allowed_data:
+                decisions.append(_deny(f"{bound}'s browser consent must cover metadata and record data."))
+                continue
             window = approval.find_browser_approval(workspace, bound, route.org, config=config)
             if window and route.headed and window.get("delegated") is not False:
                 decisions.append(_deny(f"the browser window for {route.org} was granted by a delegated approver, "

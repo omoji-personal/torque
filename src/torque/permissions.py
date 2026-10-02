@@ -12,6 +12,7 @@ import re
 import sys
 
 from . import workspace as ws
+from .connected_routes import EXTENSIBLE_COMMANDS
 
 SF_WRITE_PREFIXES = (
     "sf project deploy start", "sf project deploy quick", "sf project deploy resume", "sf project delete",
@@ -33,6 +34,9 @@ INTERPRETER_FAMILIES = ("python", "py", "pypy", "node", "deno", "bun", "ruby", "
                         "sudo", "ssh", "docker", "podman", "claude", "cci", "cumulusci")
 BROWSER_SERVERS = ("mcp__claude-in-chrome", "mcp__chrome-devtools", "mcp__playwright", "mcp__computer-use")
 ASK_RULES = tuple([f"Bash({p}:*)" for p in (*SF_WRITE_PREFIXES, *TORQUE_WRITE_PREFIXES, *INTERPRETERS)]
+                  + [f"Bash({p}{suffix}:*)" for p in sorted(EXTENSIBLE_COMMANDS)
+                     for suffix in ("", ".exe", ".cmd", ".bat")]
+                  + ["Bash(sf code-analyzer:*)", "Bash(sf dev:*)", "Bash(sf lightning dev:*)"]
                   + [f"Bash({family}*)" for family in INTERPRETER_FAMILIES]
                   + ["Bash(sh *)", "Bash(env *)", "Bash(exec *)"] + list(BROWSER_SERVERS))
 FIXED_DENY_RULES = (

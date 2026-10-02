@@ -171,7 +171,13 @@ def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
     In a connected workspace, a Torque write route runs only when the gate has
     just consumed an approval for this exact command, and only against the org ID
     the consultant approved; an alias remapped since the grant is refused here.
-    Dry runs and workspaces not in connected mode are unaffected."""
+    Maintenance is checked first, including dry runs and non-connected workspaces."""
+    from torque.workspace import require_package_writable
+    try:
+        require_package_writable()
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}; nothing was run", file=sys.stderr)
+        return EXIT_NOT_APPROVED, None
     if dry_run:
         return 0, None
     try:
