@@ -7,6 +7,14 @@ approver can be a person or an automated reviewer (an AI model). Every grant, de
 launch and setup step records who decided it and of which kind (`human` or `ai`), so the
 reviewer's sample can tell them apart.
 
+**Tier 1 protects against accidental actions.** Its signing key and consumption records
+are accessible to the agent account; it is not an enforcement boundary against that
+account and cannot be used for delegated approval. Tier 2 separates approval ownership,
+but the local consumption and execution records still have the replay and forgery limits
+listed below. Stronger enforcement requires signing, consumption state and execution
+authorization outside the agent account, with grants bound to an immutable workspace
+identity and a verified org identity. This release does not implement that stronger design.
+
 It builds on [connected mode](connected-approval.md) and changes nothing there unless a
 workspace names delegates. The consultant's own grant keeps its presence check, typed
 code and grant screen, and records kind `human`. Default (`full`) and build-only
@@ -585,7 +593,8 @@ What it cannot stop:
   aliases could repoint one after a sandbox grant; keep the agent account's `sf`
   configuration out of its own write reach.
 - **A shared approver account.** A grant could be replayed across workspaces that share an
-  approver account and a client name. Give each workspace its own approver account.
+  approver account and a client name. Give each workspace its own approver account as a
+  mitigation; this does not replace an immutable workspace binding or protected consumption state.
 - **Recovery commands.** A delegated grant of `torque recover` carries no recovery binding,
   so the recovery is refused when used. The consultant grants recovery commands.
 - **Production work with an AI approver.** A workspace whose approver delegate is `ai`

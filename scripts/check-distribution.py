@@ -2,11 +2,13 @@
 """Check a built wheel's installed surface and accidental private/source content."""
 import argparse
 import json
+import os
 from pathlib import Path
 import zipfile
 import tarfile
 
 from legacy_commands import check_source_commands
+from public_hygiene import scan_distribution
 
 REQUIRED = {
     "torque/cli.py", "torque/workspace.py", "torque/data/catalogue.json",
@@ -23,6 +25,13 @@ def main():
     parser.add_argument("wheel", type=Path)
     parser.add_argument("--sdist", type=Path)
     args = parser.parse_args()
+    private = os.environ.get("TORQUE_PRIVATE_DENYLIST")
+    for artifact in filter(None, (args.wheel, args.sdist)):
+        findings = scan_distribution(artifact, Path(private).expanduser() if private else None)
+        if findings:
+            raise SystemExit("Public-content scan failed:\n" + "\n".join(findings))
+        print(f"Public-content scan passed: {artifact.name}; private denylist "
+              + ("PASSED" if private else "NOT RUN (not configured)"))
     with zipfile.ZipFile(args.wheel) as archive:
         names = set(archive.namelist())
         missing = REQUIRED - names

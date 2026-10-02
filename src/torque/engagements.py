@@ -144,15 +144,19 @@ def set_state(workspace: str | Path, name: str, state: str, *, reason: str | Non
             valid = False
         if not valid:
             raise ws.WorkspaceError("the review date must be an ISO 8601 date (YYYY-MM-DD)")
-    folder, _, config = load_initiative(workspace, name)
+    folder, _, _ = load_initiative(workspace, name)
     ws.require_writable(folder.parent.parent)
-    path = folder / "state" / "engagement.json"
-    record = ws._read_json(path)
-    entry = {"state": state, "at": ws._now(), "by": _actor()}
-    for key, value in (("reason", reason), ("review_date", review_date), ("outcome", outcome)):
-        if value:
-            entry[key] = value.strip()
-    record["state"] = state
-    record["history"] = [*record["history"], entry]
-    ws._atomic_replace_text(path, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
-    return load_initiative(workspace, name)[2]
+    # Use the existing cross-process lock for initiative publication as well as
+    # lifecycle updates. Atomic replacement alone does not protect a read/modify/write.
+    with ws._client_creation_lock(folder.parent.parent):
+        ws.require_writable(folder.parent.parent)
+        path = ws._inside(folder, folder / "state" / "engagement.json")
+        record = ws._read_json(path)
+        entry = {"state": state, "at": ws._now(), "by": _actor()}
+        for key, value in (("reason", reason), ("review_date", review_date), ("outcome", outcome)):
+            if value:
+                entry[key] = value.strip()
+        record["state"] = state
+        record["history"] = [*record["history"], entry]
+        ws._atomic_replace_text(path, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+        return load_initiative(workspace, name)[2]

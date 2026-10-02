@@ -89,5 +89,22 @@ Local JSON files live under `clients/CLIENT/changes/CHANGE_ID/` (or
 published atomically as a separate private file, preserving concurrent writers.
 This is local continuity, not a multi-user server or distributed transaction
 system. Symlink escapes and evidence references across clients or initiatives are
-refused. While `.torque/maintenance` exists in the workspace, every record write is
-refused; reads, context and handoffs still work.
+refused. Initiative lifecycle updates serialize the complete read, history append and
+replacement, so concurrent updates retain both entries.
+
+## Maintenance
+
+Creating `.torque/maintenance` refuses new core record/configuration writes and new
+package commands dispatched through `torque`, except help. Direct revert wrappers check
+the flag before their approval and dry-run shortcuts, in full, build-only and connected
+workspaces. Removing the flag resumes admission. Core reads, context, handoffs and the
+workflow updater remain available; package dispatch is conservatively paused even for
+commands that may only read.
+
+The flag is an admission check, not cancellation or a lock on every package storage API.
+Other direct package entry points and arbitrary file writes are outside this coverage.
+Operations already past a check may finish and write package snapshots, results and
+cleanup outcomes. Wait for them to finish before changing workspace files. A connected
+post-tool change-record append can be refused while maintenance is active; retain its
+reported error and package outcomes, then reconcile the change record after maintenance.
+Do not treat a missing execution record as proof that no org operation occurred.

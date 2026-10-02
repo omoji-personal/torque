@@ -22,7 +22,7 @@ fixtures:
 
   - name: apex_inline_soql
     source_type_expected: soql
-    input: "[SELECT Id FROM Contact WHERE Email__c = 'foo@bar.com']"
+    input: "[SELECT Id FROM Contact WHERE Email__c = 'foo@example.org']"
     note: "Bracketed Apex SOQL must be detected BEFORE JSON (starts with `[`)"
 
   - name: leading_log_prefix_soql
@@ -48,7 +48,7 @@ fixtures:
       ┌─────────┬─────────┐
       │ Name    │ Email   │
       ├─────────┼─────────┤
-      │ John    │ j@e.com │
+      │ John    │ j@example.org │
       └─────────┴─────────┘
     note: "Real box-drawing chars indicate CLI table"
 
@@ -56,7 +56,7 @@ fixtures:
     source_type_expected: cli_table
     input: |
       | Name | Email |
-      | John | j@e.com |
+      | John | j@example.org |
     note: "Pipe-delimited table"
 
   - name: valid_json

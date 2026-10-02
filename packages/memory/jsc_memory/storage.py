@@ -18,6 +18,9 @@ import os
 import pathlib
 import re
 import time
+import threading
+from contextlib import contextmanager
+from functools import wraps
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -121,6 +124,13 @@ class Lesson:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Lesson":
+        if (not isinstance(d, dict) or not all(isinstance(d.get(key), str) and d[key]
+                                              for key in ("id", "title"))):
+            raise ValueError("Lesson state requires a nonempty ID and title")
+        for key in ("captured_at", "last_seen", "helpful_count", "stale_count",
+                    "surfacing_attempts", "missed_review_count"):
+            if key in d and (type(d[key]) is not int or d[key] < 0):
+                raise ValueError(f"Lesson state has an invalid {key}")
         return cls(
             id=d["id"],
             title=d["title"],
@@ -146,6 +156,55 @@ def _file_id(lesson_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", lesson_id[:12]) or "lesson"
 
 
+_TRANSACTION_MUTEX = threading.RLock()
+_TRANSACTION_LOCAL = threading.local()
+
+
+@contextmanager
+def transaction():
+    """Serialize an entire lesson read/modify/write, across threads and processes.
+
+    The stable lock file is never removed or replaced. Closing the descriptor
+    releases the OS lock even when a process exits unexpectedly.
+    """
+    with _TRANSACTION_MUTEX:
+        if getattr(_TRANSACTION_LOCAL, "active", False):
+            yield
+            return
+        ensure_dirs()
+        fd = os.open(_lessons_dir() / ".storage.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            _TRANSACTION_LOCAL.active = True
+            try:
+                yield
+            finally:
+                _TRANSACTION_LOCAL.active = False
+        finally:
+            os.close(fd)
+
+
+def _serialized(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with transaction():
+            return function(*args, **kwargs)
+    return wrapped
+
+
+def _read_lesson(path: pathlib.Path) -> Lesson:
+    try:
+        return Lesson.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"Unreadable lesson state at {path}; original bytes preserved") from exc
+
+
+@_serialized
 def write_review_candidate(lesson: Lesson) -> pathlib.Path:
     """Write a Lesson to L1 review queue. Returns the path."""
     ensure_dirs()
@@ -160,11 +219,7 @@ def list_review_pending() -> list[Lesson]:
     ensure_dirs()
     out = []
     for p in sorted(review_queue_dir().glob("*.json")):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            out.append(Lesson.from_dict(data))
-        except Exception:
-            continue
+        out.append(_read_lesson(p))
     return out
 
 
@@ -174,15 +229,18 @@ def list_active() -> list[Lesson]:
     """
     ensure_dirs()
     sidecar = _lessons_dir() / "active.json"
-    if not sidecar.exists():
-        return []
     try:
         data = json.loads(sidecar.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise ValueError("Expected an active lesson list")
         return [Lesson.from_dict(d) for d in data]
-    except Exception:
+    except FileNotFoundError:
         return []
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"Unreadable active lesson state at {sidecar}; original bytes preserved") from exc
 
 
+@_serialized
 def write_active(lessons: list[Lesson]) -> None:
     """Persist L2 lessons to JSON sidecar (atomic)."""
     ensure_dirs()
@@ -202,16 +260,13 @@ def find_lesson(lesson_id: str) -> Optional[tuple[Lesson, str]]:
         if l.id == lesson_id or l.id.startswith(lesson_id):
             return l, "active"
     for p in sorted(archive_dir().glob("*.json")):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            l = Lesson.from_dict(data)
-            if l.id == lesson_id or l.id.startswith(lesson_id):
-                return l, "archive"
-        except Exception:
-            continue
+        l = _read_lesson(p)
+        if l.id == lesson_id or l.id.startswith(lesson_id):
+            return l, "archive"
     return None
 
 
+@_serialized
 def promote_to_active(lesson_id: str) -> Optional[Lesson]:
     """Move a review_pending lesson → active. Returns the promoted lesson or None."""
     pending = list_review_pending()
@@ -223,7 +278,10 @@ def promote_to_active(lesson_id: str) -> Optional[Lesson]:
             l.last_seen = int(time.time())
             # Add to active list
             active = list_active()
-            active.append(l)
+            # A crash after publication but before queue removal must not add
+            # a duplicate on retry.
+            if not any(a.id == l.id for a in active):
+                active.append(l)
             write_active(active)
             # Remove from review queue
             for p in review_queue_dir().glob(f"*-{_file_id(l.id)}.json"):
@@ -240,6 +298,7 @@ def promote_to_active(lesson_id: str) -> Optional[Lesson]:
     return None
 
 
+@_serialized
 def mark_stale(lesson_id: str) -> Optional[Lesson]:
     """Increment stale_count. If >= 2, archive. Returns the affected lesson."""
     pending = list_review_pending()

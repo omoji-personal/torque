@@ -77,7 +77,7 @@ B = lambda cmd: K("Bash", {"command": cmd})
     ("echo 'sf apex run -o acme-prod' | bash", [("local", None), ("unverifiable", None)]),
     ("curl -X POST https://acme.my.salesforce.com/services/data", [("unverifiable", None)]),
     ("curl https://example.com", [("local", None)]),
-    ("git status", [("local", None)]),
+    ("git status", [("unverifiable", None)]),
     ("git -c alias.x='!sf apex run -o acme-prod' x", [("unverifiable", None)]),
     ("grep -rn sf src/", [("local", None)]),
     ("echo $(sf apex run -f x -o acme-prod)", [("local", None), ("org_write", "acme-prod")]),
@@ -99,7 +99,7 @@ B = lambda cmd: K("Bash", {"command": cmd})
     ("script -q /dev/null torque approval grant req-1", [("unverifiable", None), ("admin", None)]),
     ("find . -name x -exec sf apex run -o acme-prod \;", [("unverifiable", None), ("org_write", "acme-prod")]),
     ("awk 'BEGIN{system(\"sf apex run -o acme-prod\")}'", [("unverifiable", None)]),
-    ("awk '{print $1}' file", [("local", None)]),
+    ("awk '{print $1}' file", [("unverifiable", None)]),
     ("for f in a b; do sf apex run -f $f -o acme-prod; done", [("local", None), ("org_write", "acme-prod")]),
     ("{ sf apex run -o acme-prod; }", [("org_write", "acme-prod")]),
     ("eval 'sf apex run -o acme-prod'", [("unverifiable", None), ("org_write", "acme-prod")]),
@@ -144,15 +144,15 @@ def test_mcp_routes():
     assert K("mcp__salesforce__mystery_tool", {"usernameOrAlias": "acme-prod"}) == [("org_write", "acme-prod")]
     assert K("mcp__salesforce__run_soql_query", {"query": "x"}) == [("no_org", None)]
     assert K("mcp__claude-in-chrome__computer", {"action": "left_click"}) == [("browser_write", None)]
-    assert K("mcp__claude-in-chrome__computer", {"action": "screenshot"}) == [("read", None)]
+    assert K("mcp__claude-in-chrome__computer", {"action": "screenshot"}) == [("browser_read", None)]
     assert K("mcp__claude-in-chrome__form_input", {}) == [("browser_write", None)]
     assert K("mcp__claude-in-chrome__javascript_tool", {}) == [("browser_write", None)]
     assert K("mcp__claude-in-chrome__shortcuts_execute", {}) == [("browser_write", None)]
-    assert K("mcp__claude-in-chrome__read_page", {}) == [("read", None)]
-    assert K("mcp__claude-in-chrome__tabs_create_mcp", {}) == [("read", None)]
-    assert K("mcp__chrome-devtools__navigate_page", {"url": "https://x"}) == [("read", None)]
+    assert K("mcp__claude-in-chrome__read_page", {}) == [("browser_read", None)]
+    assert K("mcp__claude-in-chrome__tabs_create_mcp", {}) == [("browser_read", None)]
+    assert K("mcp__chrome-devtools__navigate_page", {"url": "https://x"}) == [("browser_read", None)]
     assert K("mcp__chrome-devtools__evaluate_script", {}) == [("browser_write", None)]
-    assert K("mcp__computer-use__screenshot", {}) == [("read", None)]
+    assert K("mcp__computer-use__screenshot", {}) == [("browser_read", None)]
     assert K("mcp__computer-use__type", {"text": "x"}) == [("admin", None)]
     assert K("mcp__shell__run", {"command": "sf apex run -o acme-prod"}) == [("local", None), ("org_write", "acme-prod")]
     assert K("Read", {"file_path": "/w/x"}) == [("local", None)]

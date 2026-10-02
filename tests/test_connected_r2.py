@@ -125,6 +125,11 @@ def test_d1_mcp_file_inputs_are_bound(w, tmp_path):
 # D2: a browser window is bound to the org the browser is in
 
 def browser_window(w, org="acme-sbx"):
+    # Browser pages may contain both metadata and records.
+    path = w / "clients" / "acme" / "consent.json"
+    item = json.loads(path.read_text(encoding="utf-8"))
+    item["data_allowed"] = ["metadata", "records"]
+    path.write_text(json.dumps(item), encoding="utf-8")
     cid = change(w, org)
     kw = {"manual_recovery": "Undo the layout change in Setup, restoring the saved layout."} if org == "acme-prod" else {}
     req = approval.create_request(w, "Acme", cid, org, browser_minutes=10, purpose="Add Tier to the Case layout",
@@ -137,7 +142,7 @@ def test_d2_click_needs_navigation_to_the_window_org(w):
     click = ("mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1})
     assert run(w, *click).action == "deny"
     nav = {"url": "https://acme--sbx.sandbox.lightning.force.com/lightning/setup/ObjectManager/home", "tabId": 1}
-    assert run(w, "mcp__claude-in-chrome__navigate", nav).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__navigate", nav).action == "deny"
     assert run(w, *click).action == "deny"  # round 4 ruling: only torque browser makes changes
     assert run(w, "Bash", {"command": "torque browser run --target-org acme-sbx"}).action == "allow"
     assert run(w, *click, session="other").action == "deny"
@@ -146,20 +151,20 @@ def test_d2_click_needs_navigation_to_the_window_org(w):
 def test_d2_sandbox_window_does_not_cover_production(w):
     browser_window(w, "acme-sbx")
     assert run(w, "mcp__claude-in-chrome__navigate", {"url": "https://acme.lightning.force.com/", "tabId": 1}
-               ).action == "allow"
+               ).action == "deny"
     assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1}).action == "deny"
 
 
 def test_d2_navigation_to_an_org_outside_consent_is_refused(w):
     assert run(w, "mcp__claude-in-chrome__navigate",
                {"url": "https://beta.my.salesforce.com/"}).action == "deny"
-    assert run(w, "mcp__claude-in-chrome__navigate", {"url": "https://example.com/"}).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__navigate", {"url": "https://example.org/"}).action == "deny"
 
 
 def test_d2_switching_tabs_forgets_the_org(w):
     browser_window(w, "acme-sbx")
     run(w, "mcp__claude-in-chrome__navigate", {"url": "https://acme--sbx.sandbox.my.salesforce.com/"})
-    assert run(w, "mcp__chrome-devtools__select_page", {"pageIdx": 2}).action == "allow"
+    assert run(w, "mcp__chrome-devtools__select_page", {"pageIdx": 2}).action == "deny"
     assert run(w, "mcp__chrome-devtools__click", {"uid": "x"}).action == "deny"
 
 

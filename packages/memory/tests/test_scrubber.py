@@ -43,7 +43,7 @@ def test_large_snippet_returns_narrative():
 
 
 def test_apex_inline_soql_precedence():
-    snippet = "[SELECT Id FROM Contact WHERE Email__c = 'foo@bar.com']"
+    snippet = "[SELECT Id FROM Contact WHERE Email__c = 'foo@example.org']"
     assert scrubber.detect_source_type(snippet) == "soql"
 
 
@@ -73,7 +73,7 @@ def test_paranoid_drops_multi_pii_narrative():
 
 
 def test_lenient_keeps_multi_pii_narrative():
-    snippet = "Two emails: a@b.com and c@d.com"
+    snippet = "Two emails: a@example.org and c@example.com"
     scrubbed, drop_reason = scrubber.scrub_snippet(snippet, mode="lenient")
     assert drop_reason is None or "<email>" in scrubbed
 
@@ -86,11 +86,11 @@ def test_soql_keeps_field_names():
 
 
 def test_soql_scrubs_where_literals():
-    snippet = "SELECT Id FROM Contact WHERE Email__c = 'jane@doe.com'"
+    snippet = "SELECT Id FROM Contact WHERE Email__c = 'jane@example.org'"
     scrubbed, _ = scrubber.scrub_snippet(snippet, mode="lenient")
     assert "Email__c" in scrubbed, "Field name kept"
     assert "<email>" in scrubbed, "WHERE literal email scrubbed"
-    assert "jane@doe.com" not in scrubbed
+    assert "jane@example.org" not in scrubbed
 
 
 def test_json_keeps_keys_scrubs_values():
@@ -124,8 +124,8 @@ def test_scrub_candidate_dict():
     candidate = {
         "id": "abc",
         "title": "Test lesson",
-        "short": "Email j@e.com mentioned",
-        "full_text": "Long text with email j@e.com",
+        "short": "Email j@example.org mentioned",
+        "full_text": "Long text with email j@example.org",
     }
     scrubbed, drop = scrubber.scrub_candidate(candidate, mode="lenient")
     assert drop is None

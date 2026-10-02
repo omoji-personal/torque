@@ -260,12 +260,14 @@ def _poll_one(entry: dict) -> str:
 
     def observe(command):
         try:
-            proc = subprocess.run(command, capture_output=True, text=True,
+            proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict",
                                   timeout=60, cwd=snap_dir)
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        except (subprocess.TimeoutExpired, FileNotFoundError, UnicodeDecodeError) as exc:
+            if isinstance(exc, UnicodeDecodeError):
+                bundle.atomic_write_bytes(snap_dir / ("poll-invalid-utf8-" + uuid.uuid4().hex + ".bin"), exc.object)
             if snap_dir:
                 artifact = snap_dir / ("poll-" + uuid.uuid4().hex + ".json")
-                decode = lambda value: value.decode(errors="replace") if isinstance(value, bytes) else value
+                decode = lambda value: value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
                 bundle.atomic_write_json(artifact, {"command": command, "error": str(exc),
                     "stdout": decode(getattr(exc, "stdout", None)), "stderr": decode(getattr(exc, "stderr", None))})
                 entry.setdefault("observation_paths", []).append(str(artifact))

@@ -5,9 +5,94 @@ import ast
 import argparse
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+
+
+LIVE_TOOLS = ("sf", "sfdx", "gemini", "claude", "codex", "curl", "wget", "ssh")
+LOCAL_TOOLS = ("git", "bash", "sh", "cmd", "ps", "rm", "chmod", "ln", "getfacl", "setfacl")
+
+
+def offline_environment(root: Path, scratch: Path) -> dict[str, str]:
+    """Build a clean environment, with only the local tools the suite needs.
+
+    Windows CreateProcess searches for .exe, not .cmd. Use distlib's native
+    launchers, and resolve child commands explicitly in offline_support too:
+    Windows searches the application directory and CWD before PATH.
+    """
+    import json
+
+    # Keep the stub installation separate from fixture state: connected mode
+    # protects an sf installation's parent, so state cannot live under it.
+    bins = scratch / "tools" / "bin"
+    bins.mkdir(parents=True)
+    support = scratch / "tools" / "bootstrap"
+    support.mkdir()
+    shutil.copyfile(Path(__file__).with_name("offline_support.py"), support / "offline_support.py")
+    (support / "sitecustomize.py").write_text(
+        "import os, traceback\ntry:\n    import offline_support\n    offline_support.install()\n"
+        "except BaseException:\n    traceback.print_exc()\n    os._exit(2)\n", encoding="utf-8")
+    local = {name: shutil.which(name) for name in LOCAL_TOOLS}
+    local = {name: path for name, path in local.items() if path}
+    outer_guard = sys.modules.get("offline_support")
+    if outer_guard is not None:
+        # Nested launcher regressions must use the original local executables,
+        # not forward through a previous guard with a different allowlist.
+        local = json.loads((outer_guard.BASE / "tools.json").read_text(encoding="utf-8"))
+    (support / "tools.json").write_text(json.dumps(local), encoding="utf-8")
+    names = (*LIVE_TOOLS, *local, "python", "python3", "jsc", "torque")
+    if os.name == "nt":
+        from distlib.scripts import ScriptMaker
+
+        maker = ScriptMaker(None, str(bins))
+        maker.executable = sys.executable
+        maker.variants = {""}
+        for name in names:
+            maker.make(f"{name} = offline_support:tool_main")
+    else:
+        for name in names:
+            path = bins / name
+            if name in local:
+                path.symlink_to(local[name])
+                continue
+            # A quoted interpreter path also supports a venv under a space.
+            import shlex
+            path.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable)
+                            + " " + shlex.quote(str(support / "offline_support.py"))
+                            + " " + shlex.quote(name) + ' "$@"\n', encoding="utf-8")
+            path.chmod(0o755)
+    # An allowlist avoids carrying provider tokens, proxy credentials, CLI
+    # overrides, Python startup settings or authentication sockets into tests.
+    keep = {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "SYSTEMDRIVE",
+            "LANG", "LC_ALL", "LC_CTYPE", "TZ"}
+    env = {key: value for key, value in os.environ.items() if key.upper() in keep}
+    if os.name == "nt":
+        env["PATHEXT"] = ".EXE"
+    home = scratch / "home"
+    for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME",
+                 "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "TMP", "TEMP", "TMPDIR"):
+        path = home if name in ("HOME", "USERPROFILE") else scratch / name.lower()
+        path.mkdir(exist_ok=True)
+        env[name] = str(path)
+    env["HOMEDRIVE"], env["HOMEPATH"] = os.path.splitdrive(str(home))
+    env.update({"JSC_ROOT": str(scratch / "client"),
+                "TORQUE_TEST_LIVE_SENTINEL": str(scratch / "unexpected-live-cli.txt"),
+                "TORQUE_TEST_PRIVATE_SCAN_STATUS": str(scratch / "private-scan.txt"),
+                "PYTHONPATH": os.pathsep.join(str(path) for path in [support, *source_paths(root)]),
+                "PATH": str(bins), "PYTHONNOUSERSITE": "1",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_ALLOW_PROTOCOL": "", "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "core.hooksPath",
+                "GIT_CONFIG_VALUE_0": str(scratch / "no-hooks"),
+                "GIT_CONFIG_KEY_1": "core.fsmonitor", "GIT_CONFIG_VALUE_1": "false"})
+    if os.environ.get("TORQUE_PRIVATE_DENYLIST"):
+        # Expand before replacing HOME, including when invoked outside the repo.
+        env["TORQUE_PRIVATE_DENYLIST"] = str(Path(os.environ["TORQUE_PRIVATE_DENYLIST"]).expanduser().resolve())
+    return env
 
 
 def source_paths(root: Path) -> list[Path]:
@@ -50,51 +135,8 @@ def main():
     options, pytest_args = parser.parse_known_args()
     with tempfile.TemporaryDirectory(prefix="torque-offline-") as temporary:
         scratch = Path(temporary)
-        bins = scratch / "bin"
-        bins.mkdir()
         hitfile = scratch / "unexpected-live-cli.txt"
-        for tool in ("sf", "sfdx", "gemini", "claude"):
-            path = bins / tool
-            path.write_text(
-                "#!/usr/bin/env python3\nimport os,sys,json\n"
-                "with open(os.environ['TORQUE_TEST_LIVE_SENTINEL'], 'a') as f:\n"
-                "    f.write(os.path.basename(sys.argv[0]) + '\\n')\n"
-                "print(json.dumps({'status':1,'name':'OfflineBackendUnavailable',"
-                "'message':'The offline fixture backend is unavailable; no live call was made.'}))\n"
-                "raise SystemExit(1)\n"
-            , encoding="utf-8")
-            path.chmod(0o755)
-            if os.name == "nt":
-                # subprocess.run([tool, ...]) with shell=False (the pattern used
-                # throughout this codebase) resolves a bare name against PATH by
-                # appending only .exe; it never tries PATHEXT's other extensions.
-                # A .cmd sibling still helps any caller that resolves via
-                # shutil.which() (which does honor PATHEXT) or names the tool
-                # with its extension explicitly. Code that calls the bare name
-                # directly already treats FileNotFoundError as "tool not
-                # installed" (see get_sf_cli_version, _sf_result), so an
-                # unresolved bare call still fails closed the same way.
-                (bins / f"{tool}.cmd").write_text(
-                    "@echo off\r\n"
-                    f"echo {tool}>>\"%TORQUE_TEST_LIVE_SENTINEL%\"\r\n"
-                    "echo {\"status\": 1, \"name\": \"OfflineBackendUnavailable\", "
-                    "\"message\": \"The offline fixture backend is unavailable; "
-                    "no live call was made.\"}\r\n"
-                    "exit /b 1\r\n"
-                , encoding="utf-8")
-        env = {key: value for key, value in os.environ.items()
-               if not key.startswith(("TORQUE_", "JSC_"))}
-        env.update({"JSC_ROOT": str(scratch / "client"),
-                    "TORQUE_TEST_LIVE_SENTINEL": str(hitfile),
-                    "PYTHONPATH": os.pathsep.join(str(path) for path in source_paths(root)),
-                    "PATH": str(bins) + os.pathsep + env.get("PATH", ""),
-                    # The standalone harnesses below print fixture labels containing
-                    # non-ASCII characters (e.g. "->" as U+2192). With stdout piped
-                    # (capture_output=True) rather than a real console, Windows
-                    # defaults Python's stdout/stderr encoding to the system
-                    # codepage (e.g. cp1252), which can't encode them and raises
-                    # UnicodeEncodeError. Force UTF-8 regardless of platform/locale.
-                    "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        env = offline_environment(root, scratch)
         # JSC contains pytest tests and standalone fixture harnesses. The latter
         # report failures by process exit and must not be silently just imported.
         standalone = []
@@ -138,6 +180,11 @@ def main():
                         print(f"PASS {label}: {summary}")
         elif options.pytest_only:
             print("Selected pytest tests only; standalone fixture suites were not run.")
+        scan = Path(env["TORQUE_TEST_PRIVATE_SCAN_STATUS"])
+        status = scan.read_text(encoding="utf-8") if scan.exists() else (
+            "NOT RUN (test not selected or did not complete)" if env.get("TORQUE_PRIVATE_DENYLIST")
+            else "NOT RUN (TORQUE_PRIVATE_DENYLIST not configured)")
+        print("Private denylist scan: " + status)
         if hitfile.exists():
             from collections import Counter
             calls = Counter(hitfile.read_text(encoding="utf-8").splitlines())

@@ -248,7 +248,7 @@ def _invoke_gemini(
             cmd,
             cwd=str(workspace_root()),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="strict",
             timeout=timeout_s,
             input="",
         )
@@ -260,6 +260,8 @@ def _invoke_gemini(
             elif "model_capacity_exhausted" in stderr_low or "capacity" in stderr_low or "rate limit" in stderr_low or "quota" in stderr_low or "500" in stderr_low or "503" in stderr_low:
                 err_class = "CAPACITY"
         return p.returncode, p.stdout, p.stderr, err_class
+    except UnicodeDecodeError:
+        return 1, "", "Output was not valid UTF-8; operation incomplete", "INVALID_OUTPUT"
     except subprocess.TimeoutExpired:
         return 124, "", f"timeout after {timeout_s}s", "TIMEOUT"
     except FileNotFoundError:

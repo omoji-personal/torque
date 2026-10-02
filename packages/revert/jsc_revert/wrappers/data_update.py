@@ -72,9 +72,12 @@ def run(args: argparse.Namespace) -> int:
                "--values", args.values, "--json"]
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd)
         duration = round(time.monotonic() - t0, 2)
-        (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
+        c.bundle.atomic_write_text(ctx.snap_dir / "underlying-result.json", stdout)
 
-        snapshot_status = "complete" if exit_code == 0 else "failed"
+        data = c.parse_sf_json_safely(stdout)
+        result = data.get("result") if isinstance(data, dict) else None
+        succeeded = exit_code == 0 and isinstance(result, dict) and result.get("success") is True
+        snapshot_status = "complete" if succeeded else "failed" if exit_code > 0 else "partial"
         ctx.manifest["snapshot_status"] = snapshot_status
         ctx.update_phase("underlying_command",
             status=snapshot_status, exit_code=exit_code, duration_seconds=duration,
@@ -89,9 +92,8 @@ def run(args: argparse.Namespace) -> int:
             status="complete" if after_row is not None else "failed",
             duration_seconds=round(time.monotonic() - t0, 2),
         )
-        ctx.save()
-
-        return c.EXIT_SUCCESS if exit_code == 0 else c.EXIT_UNDERLYING_FAILED
+        return c.finish_record_capture(ctx, snapshot_status, before_ok=before_row is not None,
+                                       after_ok=after_row is not None)
 
     finally:
         ctx.release_lock()
@@ -108,6 +110,10 @@ def _query_record(target_org: str, sobject: str, record_id: str) -> dict | None:
         return None
     try:
         data = json.loads(stdout)
-        return data.get("result", {})
-    except json.JSONDecodeError:
+        result = data.get("result")
+        if (data.get("status", 0) == 0 and isinstance(result, dict)
+                and isinstance(result.get("Id"), str) and result["Id"][:15] == record_id[:15]):
+            return result
+        return None
+    except (ValueError, TypeError, AttributeError):
         return None

@@ -858,6 +858,12 @@ def dispatch_parity(target_org: str, change_description: str) -> DispatchResult:
     if not adapter or not source_org:
         return DispatchResult("Parity", "MANUAL_REQUIRED", "Configure this client's config/parity.json with script and baseline_org for comparison (direct package callers may set TORQUE_PARITY_SCRIPT and TORQUE_BASELINE_ORG), or compare the stated fields manually.")
     path = Path(adapter).expanduser().resolve()
+    selected = os.environ.get("TORQUE_WORKSPACE") or os.environ.get("JSC_ROOT")
+    if selected:
+        client = Path(selected).expanduser().resolve()
+        config = client / "config"
+        if not path.is_relative_to(config):
+            return DispatchResult("Parity", "ERROR", "Configured parity adapter must remain beneath the selected client's config directory.")
     if not path.is_file():
         return DispatchResult("Parity", "ERROR", "Configured parity adapter does not exist.")
     cmd = [sys.executable, str(path), "--source-org", source_org, "--fresh-org", target_org]

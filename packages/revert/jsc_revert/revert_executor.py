@@ -5,13 +5,14 @@ fix: does NOT mint TTL token (PreToolUse hooks fire on Claude `<Bash>` calls,
 not Python subprocess.run). Subprocess invocation of wrappers naturally bypasses
 deploy_gate (different command pattern: `jsc deploy` vs `sf project deploy`).
 
-Stale-revert defense: by default refuses to revert if any component is absent
-or renamed_unknown. Operator overrides with --force.
+Recovery holds the org lease across verification and execution. Unknown state
+blocks recovery; --force overrides only demonstrated drift.
 """
 
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -71,7 +72,7 @@ def execute_revert(
 
     # Connected mode: this run needs the approval the gate just consumed for it, for
     # this org ID; the wrapper it starts is told which approval that was.
-    from .wrappers._common import APPROVED_PARENT_ENV, connected_approval
+    from .wrappers._common import connected_approval
     approved_rc, approved = connected_approval(target_org, org.org_id_18)
     if approved_rc:
         return approved_rc
@@ -95,20 +96,6 @@ def execute_revert(
         print(f"warning: --force overriding automatic_revertible=False; this is best-effort only.",
               file=sys.stderr)
 
-    # Drift check (only meaningful for metadata)
-    if snap["operation_type"] == "deploy_metadata":
-        print(f"checking drift on {target_org}...", file=sys.stderr)
-        drift = stale_detector.classify_metadata_drift(snap_dir, snap, target_org)
-        summary = stale_detector.summary(drift)
-        print(f"drift summary: {summary}", file=sys.stderr)
-        if stale_detector.is_blocking(drift) and not force_ack:
-            print(f"\nStale revert blocked: {summary['absent']} absent + "
-                  f"{summary['renamed_unknown']} renamed_unknown components.",
-                  file=sys.stderr)
-            print(f"Re-run with --force to proceed (will recreate absent components).",
-                  file=sys.stderr)
-            return EXIT_STALE_BLOCKED
-
     # Build the revert command
     revert_cmd = revert_planner.build_revert_command(snap, snap_dir)
     if revert_cmd is None:
@@ -128,6 +115,37 @@ def execute_revert(
         if problem:
             print(f"error: connected mode: {problem}; nothing was run", file=sys.stderr)
             return EXIT_ORG_RESOLUTION_FAILED
+
+    from .wrappers._common import WrapperContext
+    lease = WrapperContext(operation_type="revert", target_org=target_org,
+                           wrapper_command="recovery verification and execution")
+    lease.org = org
+    lease.snapshot_id = snapshot_id
+    code = lease.acquire_org_lock()
+    if code:
+        return code
+    try:
+        return _execute_locked(snap_dir, snap, target_org, snapshot_id, force_ack, reason, approved, lease, revert_cmd)
+    finally:
+        lease.release_lock()
+
+
+def _execute_locked(snap_dir, snap, target_org, snapshot_id, force_ack, reason, approved, lease, revert_cmd):
+    from .wrappers._common import APPROVED_PARENT_ENV, REVERT_LEASE_ENV
+    # Drift check (only meaningful for metadata)
+    if snap["operation_type"] == "deploy_metadata":
+        print(f"checking drift on {target_org}...", file=sys.stderr)
+        drift = stale_detector.classify_metadata_drift(snap_dir, snap, target_org)
+        summary = stale_detector.summary(drift)
+        print(f"drift summary: {summary}", file=sys.stderr)
+        if stale_detector.is_unknown(drift):
+            print("Recovery blocked: current or post-deployment state is unknown; --force cannot bypass verification.",
+                  file=sys.stderr)
+            return EXIT_STALE_BLOCKED
+        if stale_detector.is_blocking(drift) and not force_ack:
+            print("Recovery blocked: verified drift; review the changes and use --force to override.", file=sys.stderr)
+            return EXIT_STALE_BLOCKED
+
     revert_cmd = _append_forensic_chain(revert_cmd, snapshot_id, reason)
     if approved is not None:
         # Name the one wrapper command this approval covers; the child accepts only it.
@@ -152,26 +170,36 @@ def execute_revert(
         child_env.pop(APPROVED_PARENT_ENV, None)
         if approved is not None:
             child_env[APPROVED_PARENT_ENV] = approved["id"]
+        lease.ensure_ownership()
+        child_env[REVERT_LEASE_ENV] = json.dumps({
+            "org_id": lease.org.org_id_short, "owner_token": lease.lock_state["owner_token"],
+            "parent_pid": os.getpid(), "snapshot_id": snapshot_id})
         proc = subprocess.run(
             revert_cmd,
             env=child_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="strict",
             timeout=REVERT_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as e:
         print(f"REVERT TIMEOUT after {REVERT_TIMEOUT_S}s", file=sys.stderr)
         if e.stdout:
-            partial = e.stdout if isinstance(e.stdout, str) else e.stdout.decode(errors='replace')
+            partial = e.stdout if isinstance(e.stdout, str) else e.stdout.decode('utf-8', errors='replace')
             print(f"  partial stdout: {partial[:1000]}", file=sys.stderr)
         if e.stderr:
-            partial = e.stderr if isinstance(e.stderr, str) else e.stderr.decode(errors='replace')
+            partial = e.stderr if isinstance(e.stderr, str) else e.stderr.decode('utf-8', errors='replace')
             print(f"  partial stderr: {partial[:1000]}", file=sys.stderr)
         return -1
+    except UnicodeDecodeError as exc:
+        from . import bundle
+        bundle.atomic_write_bytes(snap_dir / "recovery-invalid-utf8.bin", exc.object)
+        print("Recovery output was not valid UTF-8; outcome unknown. Inspect the target before retrying.", file=sys.stderr)
+        return 30
     except FileNotFoundError as exc:
         print(f"REVERT command not found: {exc}", file=sys.stderr)
         return -2
+    lease.ensure_ownership()
     if proc.stdout:
         print(proc.stdout)
     if proc.stderr:

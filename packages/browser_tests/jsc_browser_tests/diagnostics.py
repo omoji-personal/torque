@@ -2,22 +2,29 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
-_SECRET_KEY = re.compile(r"^(sid|session_?id|frontdoor_?url|access_?token|refresh_?token|oauth_token|authorization|cookie|password|_?confirmationtoken|csrf_?token|csrf|nonce)$", re.I)
+_CREDENTIAL_KEYS = {"sid", "sessionid", "frontdoorurl", "accesstoken", "refreshtoken",
+                    "oauthtoken", "authorization", "cookie", "password", "confirmationtoken",
+                    "csrftoken", "csrf", "nonce", "sfdxauthurl", "authcode"}
+# One definition covers case and separator variants in objects and text.
+_KEY_PATTERN = "(?:" + "|".join("[_-]*".join(key) for key in sorted(_CREDENTIAL_KEYS)) + ")"
+_SECRET_KEY = re.compile(r"[_-]*" + _KEY_PATTERN, re.I)
 _QUERY_SECRET = re.compile(
-    r"(?i)((?:sid|session_?id|access_?token|refresh_?token|oauth_token|password|_?confirmationtoken|csrf_?token|csrf|nonce)\s*(?:[=:]|%(?:25)*3d)\s*)[^\s&\"'<>]+"
+    rf"(?i)([_-]*{_KEY_PATTERN}\s*(?:[=:]|%(?:25)*3d)\s*)[^\s&\"'<>]+"
 )
 # A JSON or Python-repr credential field ("accessToken": "..." as sf org display prints it,
 # or 'accessToken': '...' from a dict's repr).
 _JSON_SECRET = re.compile(
-    r'(?i)((["\'])(?:sid|session_?id|access_?token|refresh_?token|oauth_?token|password|auth_?code|sfdx_?auth_?url)\2'
+    rf'(?i)((["\'])[_-]*{_KEY_PATTERN}\2'
     r'\s*:\s*)(["\'])(?:(?!\3)[^\\]|\\.)*\3')
 # A Salesforce session token by its shape: the org ID, "!" (or %21, %2521) and the token.
 _SF_TOKEN = re.compile(r"00D[A-Za-z0-9]{12,15}(?:!|%(?:25)*21)[A-Za-z0-9._\-]+")
 _HEADER_SECRET = re.compile(r"(?im)\b(authorization|cookie)\s*[:=]\s*[^\r\n]+")
 _BEARER = re.compile(r"(?i)\bBearer\s+[^\s\"'<>]+")
+_AUTH_URL = re.compile(r"(?i)force(?::|%(?:25)*3a)(?://|%(?:25)*2f%(?:25)*2f)[^\s\"'<>]+")
 # A session URL is removed whole, never left as a live-looking URL with one value masked:
 # any http(s) or ws(s) URL (its scheme written plainly or URL-encoded) that goes through
 # frontdoor or secur/, or carries a sid parameter anywhere, a URL-encoded one inside
@@ -40,6 +47,15 @@ def redact(value):
         return [redact(item) for item in value]
     if not isinstance(value, str):
         return value
+    if value.lstrip().startswith(("{", "[")):
+        try:
+            structured = json.loads(value)
+        except ValueError:
+            pass
+        else:
+            if isinstance(structured, (dict, list)):
+                return json.dumps(redact(structured), ensure_ascii=False)
+    value = _AUTH_URL.sub("[REDACTED]", value)
     value = _SESSION_URL.sub(SESSION_URL_MARK, value)
     if "frontdoor.jsp" in value.casefold():
         value = _TOKEN.sub(lambda m: SESSION_URL_MARK if "frontdoor.jsp" in m.group().casefold() else m.group(), value)

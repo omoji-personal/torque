@@ -40,7 +40,7 @@ def test_retrieve_stages_a_project_and_uses_a_relative_output_dir(tmp_path, monk
     """The sf retrieve must run with cwd inside a project it created."""
     seen = {}
 
-    def fake_run(cmd, capture_output=True, text=True, timeout=None, cwd=None):
+    def fake_run(cmd, capture_output=True, text=True, timeout=None, cwd=None, encoding=None, errors=None):
         seen["cmd"] = cmd
         seen["cwd"] = cwd
         # Inspect the staged project HERE — run_pre_snapshot_retrieve removes it
@@ -82,7 +82,7 @@ def test_retrieve_never_points_sf_at_the_snapshot_store(tmp_path, monkeypatch):
     """The regression itself: --output-dir must never be the snapshot store."""
     seen = {}
 
-    def fake_run(cmd, capture_output=True, text=True, timeout=None, cwd=None):
+    def fake_run(cmd, capture_output=True, text=True, timeout=None, cwd=None, encoding=None, errors=None):
         seen["cmd"] = cmd
         return subprocess.CompletedProcess(cmd, 1, json.dumps({"name": "X"}), "")
 
@@ -97,7 +97,7 @@ def test_retrieve_never_points_sf_at_the_snapshot_store(tmp_path, monkeypatch):
 
 # ── defect 2: staged paths must be re-pointed at the snapshot store ───────
 def test_absolute_staging_paths_are_repointed_so_files_classify_present(tmp_path, monkeypatch):
-    def fake_run(cmd, capture_output=True, text=True, timeout=None, cwd=None):
+    def fake_run(cmd, capture_output=True, text=True, timeout=None, cwd=None, encoding=None, errors=None):
         out = Path(cwd) / "retrieved" / "labels"
         out.mkdir(parents=True, exist_ok=True)
         (out / "CustomLabels.labels-meta.xml").write_text("<value>ORIGINAL</value>", encoding="utf-8")

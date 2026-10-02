@@ -8,6 +8,13 @@ The user's six months of daily use describes the overall JSC working environment
 
 `packages/provenance.json` records every selected source file, source-relative path, original SHA-256, current destination SHA-256, and whether it changed. Source revision: `justiceserver-workspace` commit `017c20fdf3b80ef3fc4b85d621e90aa36c21fc81`. Per-file hashes identify the actual inspected source bytes, including any local differences from that commit. New integration files are identified separately. The advisory catalogue retains its own nested provenance back to Torque `3c40916`.
 
+These historical names and required public author/license notices are intentional
+attribution under the [public naming policy](../CONTRIBUTING.md#public-naming-and-attribution).
+They do not authorize private client records, authentication material or personal
+paths in the distribution. When a carried file changes, retain its original
+`source_sha256`, recompute `destination_sha256` from its current bytes, set `adapted`
+to whether those hashes differ, and rerun `python scripts/check-provenance.py`.
+
 Selected code and generalized tests were imported. The JusticeServer managed application, client documents, org aliases, domain browser flows and test-user records, deployment histories, log archives, credentials, and global hook installation were excluded. Empty browser configuration and synthetic fixtures are intentional template inputs. Existing Apache attribution is retained in source headers and `packages/licenses/`; the third-party browser page-object manifest records a reference dependency, not bundled `node_modules` or a required runtime download.
 
 | Root / import | Preserved behavior | Continuation changes |
@@ -38,7 +45,7 @@ Default state is under `state/revert`, `state/memory`, `state/qa-tests`, `state/
 | `config/browser-flows/` | `TORQUE_BROWSER_FLOWS`, a path-separator-delimited file/directory list; recursive trusted Python modules exporting `FLOW` with `FlowSpec` |
 | `config/object-registry.yaml` | `TORQUE_BROWSER_REGISTRY`; supplies actual test-record carriers and cleanup scope |
 | `config/ai-fixtures/` | `TORQUE_AI_FIXTURES`; enables real provider replay for selected client fixtures |
-| `config/parity.json` | `{ "script": "parity.py", "baseline_org": "explicit-alias" }`; launcher validates a script beneath client config and maps to `TORQUE_PARITY_SCRIPT` / `TORQUE_BASELINE_ORG` |
+| `config/parity.json` | `{ "script": "parity.py", "baseline_org": "explicit-alias" }`; launcher rejects traversal with either separator, drive/root forms and resolved escapes, then maps to `TORQUE_PARITY_SCRIPT` / `TORQUE_BASELINE_ORG`. The dispatcher rechecks containment beneath the selected client's `config` before execution, including direct package calls with a selected root |
 | Explicit browser connection | `TORQUE_BROWSER_CDP` or compatibility `JSC_BROWSER_CDP`; supplied CDP endpoint |
 | Explicit overlay probe | `TORQUE_TEST_RECORD_OBJECT`, optional `TORQUE_TEST_RECORD_FIELD`; no JusticeServer object inferred |
 
@@ -59,6 +66,64 @@ Browser flows are executable configuration. Domain implementations, seed users a
 - In 2.0.0a16, the browser runner (`jsc_browser_tests/runner.py`, `suite.py`, `auth.py`, `cli.py`) compares the signed-in Username read from the page with the alias's username. A guarded (connected) run stops on a mismatch or an unreadable username; an unguarded run records the mismatch and continues. Under a window a [delegated approver](delegated-approver.md) granted, the browser runs headless only and refuses debug settings (`DEBUG`, `PWDEBUG`, `DEBUG_FILE`) before it starts. `--json` prints an identity report per cell, which the qa dispatcher (`jsc_qa/dispatcher.py`) passes on and shows. `diagnostics.py` also redacts Salesforce session tokens by their shape and credential fields in JSON.
 - In 2.0.0a18, the browser session setup (`jsc_browser_tests/auth.py`) returns to Lightning after Logout As before checking the original user; the suite (`suite.py`) includes the redacted preflight failure in every unexecuted cell's result; and with `--json` the runner (`cli.py`) prints the run folder on stderr so stdout stays JSON.
 - In 2.0.0a19, the revert wrappers (`wrappers/_common.py`) refuse a connected write, running nothing, when the approval lookup fails with a workspace error such as the maintenance flag.
+- The audit corrections recheck parity adapter containment in `jsc_qa/dispatcher.py` at execution, and check maintenance in `wrappers/_common.py` before dry-run and non-connected shortcuts. Package dispatch through `torque` also checks maintenance before importing the delegate. See [maintenance boundaries](engagement-records.md#maintenance) for in-progress operations and direct APIs outside this coverage. Original package source hashes remain unchanged in `packages/provenance.json`; destination hashes and adaptation flags reflect these edits.
+
+## Recovery and local state safety
+
+Successful synchronous metadata deployments with a complete `--metadata` recovery
+scope now retrieve and record their resulting state under the org lease. Recovery
+compares the same scope, including companion files, with that captured result.
+Missing legacy baselines, failed retrievals, missing checksums and unknown state
+refuse recovery even with `--force`. Verified differences require that explicit
+override. Snapshots without complete before/after evidence, including deployments
+finalized asynchronously without a captured result, require manual review.
+
+Cooperating revert wrappers use `~/.torque/org-locks/<canonical-org-id>.json`.
+The validated org ID includes its case checksum so case-insensitive filesystems
+keep different orgs separate. Aliases, selected clients and snapshot locations do
+not affect this key. `TORQUE_ORG_LOCK_DIR` can select one absolute local namespace
+for the account; every cooperating process must use the same setting. Finish old
+wrapper processes before upgrading to this namespace. Snapshots remain private
+to their selected client. The lease covers verification through recovery-wrapper
+completion, with validated parent-to-child ownership handoff. It coordinates one
+OS account on one machine, not other accounts, machines, Salesforce users, direct
+`sf` commands or independent browser writers. It is not a remote org lock and
+cannot prevent edits between the deployment and the immediate capture.
+
+Snapshot atomic writes use exclusive random temporary files, complete writes,
+file sync and atomic replacement. POSIX creates files at mode 0600 and uses
+directory descriptors with no-follow opens through the parent path. Windows uses
+`CREATE_NEW` with a protected owner/System DACL at creation, and pins parent
+directory handles without delete sharing until replacement completes. Reparse
+points are refused. Windows-specific ACL and directory-swap regressions run on
+Windows; POSIX mode assertions do not establish Windows permissions. The
+directory-swap threat requires an actor able to modify a relevant parent.
+
+Single-record upsert parses quoted assignments once, rejects conflicting external
+IDs, and includes the key in a one-record sObject Collections PATCH sent through
+`sf api request rest`. Values retain the CLI's literal backslashes, boolean
+conversion and JSON relationship objects. The external ID remains a literal key.
+A failed or incomplete lookup stops on every org type.
+The installed Salesforce CLI must provide that command; there is no create/update
+fallback. The pre-query captures evidence and does not choose the write branch.
+The server returns the actual insert/update outcome. This operation continues to
+have manual recovery only. [Salesforce sObject Collections upsert contract](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-composite-sobjects-collections-upsert.html).
+
+Record update/upsert exit zero only when the mutation and required captures
+succeed. Exit 11 indicates a successful sandbox write with missing before-state;
+exit 30 indicates incomplete post-capture or an unknown output outcome. A partial
+manifest preserves `mutation_succeeded` and the underlying phase separately.
+After a confirmed successful write, repair or inspect capture rather than retrying
+the mutation. Revert and browser subprocesses decode UTF-8 explicitly and refuse
+undecodable structured output. Available invalid bytes are retained privately in
+revert evidence, never interpreted as captured field values. Browser diagnostics
+redact credential keys recursively and redact Salesforce auth URLs in text.
+
+Lesson promotions, score changes and archival hold a stable OS file lock for the
+whole read/modify/write transaction. Corrupt or unreadable active/review/archive
+records raise a visible error and preserve their bytes. Promotion publishes the
+active list before removing the pending record; a retry after interrupted removal
+does not duplicate the active lesson.
 
 ## Packaging contract
 

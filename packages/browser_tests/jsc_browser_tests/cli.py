@@ -174,14 +174,14 @@ def _run_flow_with_profiles(
 
 def _print_flow_result(result: runner.FlowResult) -> None:
     icon = "✓" if result.overall_status == "PASS" else "✗"
-    print(f"  {icon} {result.flow_name} / {result.profile}: {result.overall_status} "
-          f"({result.duration_seconds:.1f}s)")
+    print(redact(f"  {icon} {result.flow_name} / {result.profile}: {result.overall_status} "
+          f"({result.duration_seconds:.1f}s)"))
     if result.error:
         print(f"    ERROR: {redact(result.error)}")
     for step in result.steps:
         sicon = {"PASS": "✓", "FAIL": "✗", "SKIP": "·"}.get(step.status, "?")
         fidelity_tag = "" if step.fidelity == "USER_FIDELITY" else f" [{step.fidelity}]"
-        print(f"      {sicon} {step.step_name}: {step.status}{fidelity_tag} ({step.duration_seconds:.1f}s)")
+        print(redact(f"      {sicon} {step.step_name}: {step.status}{fidelity_tag} ({step.duration_seconds:.1f}s)"))
         if step.detail and step.status != "PASS":
             print(f"        {redact(step.detail)[:200]}")
 
@@ -237,7 +237,7 @@ def cmd_suite_teardown(args: argparse.Namespace) -> int:
         print("Cleanup NOT_CHECKED: no test-record carriers are configured", file=sys.stderr)
         return 4
     leaks = verify_zero_leak(sf, args.runid, objs)
-    print(f"leaks: {leaks}")
+    print(f"leaks: {redact(leaks)}")
     return 0 if not leaks else 4
 
 

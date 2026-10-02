@@ -10,10 +10,14 @@ import json
 import os
 import subprocess
 import tempfile
+from .diagnostics import redact
 
 
 class SfError(Exception):
     """Raised when an sf CLI invocation fails."""
+
+    def __init__(self, message):
+        super().__init__(redact(message))
 
 
 # Suppress the sf CLI "update available" notice so it doesn't pollute --json stdout.
@@ -34,37 +38,35 @@ class SfClient:
     def _decode(stdout: str, label: str) -> dict:
         """Parse sf --json output, tolerating a leading CLI banner (some sf
         versions print an 'update available' notice to stdout before the JSON)."""
+        data = None
         try:
-            return json.loads(stdout)
+            data = json.loads(stdout)
         except json.JSONDecodeError:
             for i, ch in enumerate(stdout):
                 if ch in "{[":
                     try:
-                        return json.loads(stdout[i:])
+                        data = json.loads(stdout[i:])
+                        break
                     except json.JSONDecodeError:
                         break
-            raise SfError(f"sf {label} returned non-JSON: {stdout[:200]}")
+        if not isinstance(data, dict):
+            raise SfError(f"sf {label} returned invalid structured output: {redact(stdout)[:200]}")
+        return data
 
     def _run(self, args: list[str], timeout_s: int | None = None) -> dict:
-        proc = subprocess.run(
-            ["sf", *args, "--target-org", self.target_org, "--json"],
-            capture_output=True, text=True, timeout=timeout_s or self.timeout_s,
-            env=_sf_env(),
-        )
-        if proc.returncode != 0:
-            raise SfError(f"sf {' '.join(args)} exit {proc.returncode}: {proc.stderr[:300]}")
-        return self._decode(proc.stdout, ' '.join(args))
+        return self._run_raw([*args, "--target-org", self.target_org, "--json"], timeout_s)
 
     def _run_raw(self, args: list[str], timeout_s: int | None = None) -> dict:
         """Run an explicit `sf` arg list (no auto target-org/json appended) with
         the same return-code + JSON-decode guards as _run."""
-        proc = subprocess.run(
-            ["sf", *args],
-            capture_output=True, text=True, timeout=timeout_s or self.timeout_s,
-            env=_sf_env(),
-        )
+        try:
+            proc = subprocess.run(
+                ["sf", *args], capture_output=True, text=True, encoding="utf-8", errors="strict",
+                timeout=timeout_s or self.timeout_s, env=_sf_env())
+        except UnicodeDecodeError:
+            raise SfError("sf output was not valid UTF-8; operation incomplete. Inspect the target before retrying a write.") from None
         if proc.returncode != 0:
-            raise SfError(f"sf {' '.join(args)} exit {proc.returncode}: {proc.stderr[:300]}")
+            raise SfError(f"sf {' '.join(args)} exit {proc.returncode}: {redact(proc.stderr)[:300]}")
         return self._decode(proc.stdout, ' '.join(args))
 
     def query(self, soql: str, all_rows: bool = False) -> list[dict]:

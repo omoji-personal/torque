@@ -116,6 +116,8 @@ def _fake_bin(tmp_path):
     bin_dir = tmp_path / "bin"
     if not bin_dir.exists():
         bin_dir.mkdir()
+        # Lets the offline guard run these fakes instead of its unavailable stub.
+        (bin_dir / ".offline-fixture-bin").touch()
         for name, body in (("sf", FAKE_SF), ("security", FAKE_SECURITY)):
             (bin_dir / name).write_text(body)
             (bin_dir / name).chmod(0o755)

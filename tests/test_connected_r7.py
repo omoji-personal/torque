@@ -100,7 +100,7 @@ def connected(tmp_path, monkeypatch):
     ws.set_ai_access(root, "connected", approval="required", presence=YES)
     letter = tmp_path / "a.pdf"
     letter.write_bytes(b"agreement")
-    consent.record_consent(root, "Acme", "2026-09-30", letter, ["metadata"], ["acme-sbx"], ["Contact"], presence=YES,
+    consent.record_consent(root, "Acme", "2026-09-30", letter, ["metadata", "records"], ["acme-sbx"], ["Contact"], presence=YES,
                            resolve=ORGS.get)
     consent.sign_off(root, "Acme", "Reviewer", presence=YES)
     root = Path(os.path.realpath(root))

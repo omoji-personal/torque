@@ -24,12 +24,12 @@ def test_generated_rules_cover_routes():
 
 def test_merge_keeps_user_rules_and_removes_conflicting_allows():
     settings = {"hooks": {"PreToolUse": []},
-                "permissions": {"allow": ["Bash(git status)", "Bash(python3:*)", "Bash(sf project deploy start *)",
+                "permissions": {"allow": ["Bash(ls *)", "Bash(git status)", "Bash(python3:*)", "Bash(sf project deploy start *)",
                                           "mcp__claude-in-chrome__computer"],
                                 "ask": ["Bash(npm test)"], "defaultMode": "bypassPermissions"}}
     merged = p.merge(settings, p.generate())
     assert merged["hooks"] == {"PreToolUse": []}
-    assert merged["permissions"]["allow"] == ["Bash(git status)"]
+    assert merged["permissions"]["allow"] == ["Bash(ls *)"]
     assert "Bash(npm test)" in merged["permissions"]["ask"]
     assert "defaultMode" not in merged["permissions"]
     assert p.drift(merged, p.generate()) == []

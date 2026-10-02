@@ -1,7 +1,7 @@
 """Connected mode's guard for Torque's own browser (`torque browser ... --target-org ORG`).
 
 Browser tools driven by the AI session cannot show which org a page is in after
-navigation and redirects, so connected mode refuses their changes. Torque's own
+navigation and redirects, so connected mode refuses their reads and changes. Torque's own
 Playwright session is the one browser path that may change an org: before it
 starts, the org is resolved live and must match the client's consent and a
 granted browser window; while it runs, every request the route handler sees (each navigation, frame and
@@ -17,6 +17,7 @@ import urllib.parse
 
 from . import approval, consent, workspace as ws
 from .gate_connected import _same_org, org_key
+from .connected_routes import BROWSER_DATA_CLASSES
 
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
@@ -125,6 +126,8 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
         item = approval._usable_consent(workspace, client)
     except ws.WorkspaceError as exc:
         raise GuardRefused(str(exc)) from exc
+    if not set(BROWSER_DATA_CLASSES) <= consent.data_allowed(item):
+        raise GuardRefused("browser consent must cover metadata and record data")
     entry = consent.approved_org(item, target_org)
     if entry is None:
         raise GuardRefused(f"org {target_org!r} is not in this client's consent")
@@ -151,6 +154,7 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
         entry_now = consent.approved_org(item_now, target_org)
         return bool(current and current.get("id") == window.get("id")
                     and not consent.consent_problems(item_now, client=ws.slug_for(client))
+                    and set(BROWSER_DATA_CLASSES) <= consent.data_allowed(item_now)
                     and entry_now and entry_now.get("org_id_18") == info.org_id_18)
     from .namespaces import DEFAULT_MANAGED
     extra = config.get("managed_namespaces") if isinstance(config.get("managed_namespaces"), list) else []

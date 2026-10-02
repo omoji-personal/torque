@@ -39,7 +39,7 @@ _ORG_QUERY = "SELECT Id, IsSandbox, OrganizationType FROM Organization"
 
 def _sf_result(command: list[str], timeout_seconds: int) -> dict | None:
     try:
-        proc = subprocess.run(command, capture_output=True, text=True,
+        proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict",
                               timeout=timeout_seconds)
         if proc.returncode != 0:
             return None

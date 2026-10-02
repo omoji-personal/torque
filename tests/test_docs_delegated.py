@@ -58,17 +58,19 @@ def test_changelog_readme_and_record_for_alpha16():
     assert "approver_kind" in flat and "sf org open" in flat
     record = (ROOT / "docs" / "validation-alpha16.md").read_text(encoding="utf-8")
     assert "## Edited a15 tests" in record and "## Invariant verification" in record and "Round 0b" in record
-    readme = (ROOT / "README.md").read_text(encoding="utf-8").split("\n## ", 1)[0]
-    assert torque.__version__ in readme and "delegated-approver.md" in readme
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert torque.__version__ in readme.split("\n## ", 1)[0]
+    assert "delegated-approver.md" in readme
     connected = (ROOT / "docs" / "connected-approval.md").read_text(encoding="utf-8")
     assert "delegated-approver.md" in connected
 
 
 def test_edited_a15_tests_reconciliation_matches_git():
     """V2-4: the "Edited a15 tests" count and file list match
-    `git diff --name-only dea2041 -- tests/` restricted to files that existed at
-    dea2041. Skipped when git or the dea2041 commit is not available (an sdist or
-    a shallow clone)."""
+    `git diff --name-only dea2041 v2.0.0a16 -- tests/` restricted to files that
+    existed at dea2041. This historical release record must not count later
+    regression tests. Skipped when git or either release is unavailable (an
+    sdist or a shallow clone)."""
     import re
     import shutil
     import subprocess
@@ -80,10 +82,11 @@ def test_edited_a15_tests_reconciliation_matches_git():
     def run(*args):
         return subprocess.run([git, "-C", str(ROOT), *args], capture_output=True, text=True, timeout=30,
                               stdin=subprocess.DEVNULL)
-    if run("cat-file", "-e", "dea2041^{commit}").returncode != 0:
-        pytest.skip("the dea2041 baseline commit is not in this checkout")
+    for revision in ("dea2041", "v2.0.0a16"):
+        if run("cat-file", "-e", f"{revision}^{{commit}}").returncode != 0:
+            pytest.skip(f"the {revision} release is not in this checkout")
     baseline = run("ls-tree", "-r", "--name-only", "dea2041", "--", "tests/")
-    changed = run("diff", "--name-only", "dea2041", "--", "tests/")
+    changed = run("diff", "--name-only", "dea2041", "v2.0.0a16", "--", "tests/")
     if baseline.returncode != 0 or changed.returncode != 0:
         pytest.skip("git could not compare against dea2041")
     edited = sorted(set(changed.stdout.split()) & set(baseline.stdout.split()))

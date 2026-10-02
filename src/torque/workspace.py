@@ -402,6 +402,22 @@ def require_writable(root: str | Path) -> None:
                              "writes are paused until it is removed")
 
 
+def require_package_writable(selected: str | Path | None = None) -> None:
+    """Check maintenance before starting package work, including direct entry points.
+
+    A selected package root can be the workspace, its client, or a legacy private
+    folder. Check its ancestors and the working folder's ancestors. This is an
+    admission check, not cancellation: already running work must retain outcomes.
+    """
+    selected = selected or os.environ.get("TORQUE_WORKSPACE") or os.environ.get("JSC_ROOT")
+    paths = [Path.cwd()]
+    if selected:
+        paths.append(Path(selected).expanduser().resolve())
+    for path in paths:
+        for candidate in (path, *path.parents):
+            require_writable(candidate)
+
+
 def _owner_uid_supported() -> bool:
     """Tier 2 checks file ownership by numeric uid, which Windows does not have."""
     return hasattr(os, "getuid")
