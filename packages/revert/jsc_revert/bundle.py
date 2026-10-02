@@ -76,7 +76,9 @@ def _parent_directory(path: Path):
             for part in parent.parts[1:]:
                 current /= part
                 current.mkdir(mode=0o700, exist_ok=True)
-                handle = create(str(current), 0, 3, None, 3, 0x02200000, None)
+                # FILE_LIST_DIRECTORY: a handle with no data access is exempt
+                # from share checks, so it would not block a rename.
+                handle = create(str(current), 0x1, 3, None, 3, 0x02200000, None)
                 if handle == wintypes.HANDLE(-1).value:
                     raise ctypes.WinError(ctypes.get_last_error())
                 handles.append(handle)
@@ -139,6 +141,19 @@ def _windows_private_file(path: Path) -> int:
         kernel.LocalFree(descriptor)
 
 
+def _windows_replace(source: Path, target: Path) -> None:
+    """Windows denies a replace while another writer is replacing the same
+    target (WinError 5/32); retry briefly, since the condition is transient."""
+    for attempt in range(50):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in (5, 32) or attempt == 49:
+                raise
+            time.sleep(0.01 * (attempt + 1))
+
+
 def atomic_write_bytes(path: Path, content: bytes, mode: int = 0o600) -> None:
     """Publish complete private bytes from an exclusively created random file."""
     path = Path(path).absolute()
@@ -165,7 +180,7 @@ def atomic_write_bytes(path: Path, content: bytes, mode: int = 0o600) -> None:
             finally:
                 os.close(fd)
             if parent_fd is None:
-                os.replace(path.parent / temp, path)
+                _windows_replace(path.parent / temp, path)
             else:
                 os.replace(temp, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
         finally:

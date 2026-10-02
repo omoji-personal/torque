@@ -13,7 +13,7 @@ def test_sf_output_uses_utf8_even_with_legacy_locale(monkeypatch):
     monkeypatch.setattr(locale, "getencoding", lambda: "cp1252", raising=False)
     monkeypatch.setattr(locale, "getpreferredencoding", lambda *a: "cp1252")
     # Exercise the fallback even when the outer offline launcher sets PYTHONUTF8.
-    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp1252")
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp1252", raising=False)
     original = subprocess.run
     def run(command, **kwargs):
         return original([sys.executable, "-c", "import os; os.write(1, bytes.fromhex('7b2276616c7565223a22c3a9227d'))"], **kwargs)

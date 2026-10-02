@@ -269,7 +269,7 @@
       "source_path": "packages/revert/jsc_revert/bundle.py",
       "source_sha256": "cf7852c890f13fc4f0519f034c76924cb984ab7f2ee520e69648acc59755fbcb",
       "source_tracked": true,
-      "destination_sha256": "7e911900c562eb9b04ca2c85e263c23aa642e35e97e3bc1fa7d9148b801506ef",
+      "destination_sha256": "5bc4ac3bbcbb5852421ea4d25c41ebc614e7f2c56d82428eff0976097cc5ac0d",
       "adapted": true
     },
     {

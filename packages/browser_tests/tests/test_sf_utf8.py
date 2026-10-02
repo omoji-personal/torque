@@ -12,7 +12,7 @@ from jsc_browser_tests.sf_client import SfClient, SfError
 def test_browser_sf_uses_utf8_with_legacy_locale(monkeypatch, method, args):
     monkeypatch.setattr(locale, "getencoding", lambda: "cp1252", raising=False)
     monkeypatch.setattr(locale, "getpreferredencoding", lambda *a: "cp1252")
-    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp1252")
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp1252", raising=False)
     original = subprocess.run
     def run(command, **kwargs):
         return original([sys.executable, "-c", "import os; os.write(1, bytes.fromhex('7b2276616c7565223a22c3a9227d'))"], **kwargs)

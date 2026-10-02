@@ -142,6 +142,25 @@ sock.close()
     assert run.returncode == 0, run.stdout + run.stderr
 
 
+def test_checkout_scripts_on_child_path_cannot_shadow_the_bootstrap_guard(harness, tmp_path):
+    # A test may hand its own sys.path to a child as PYTHONPATH; the checkout's
+    # scripts/ then precedes the bootstrap copy, which alone has tools.json.
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    child = "import offline_support; print(offline_support.BASE)"
+    parent = ("import os, subprocess, sys\n"
+              f"path = os.pathsep.join([{str(ROOT / 'scripts')!r}, *sys.path])\n"
+              f"out = subprocess.run([sys.executable, '-c', {child!r}], check=True, capture_output=True, text=True,\n"
+              "                     env=dict(os.environ, PYTHONPATH=path)).stdout\n"
+              "print(out.strip())\n")
+    run = subprocess.run([sys.executable, "-c", parent], env=env, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    # Under the offline runner the outer bootstrap wins; either copy has tools.json.
+    loaded = Path(run.stdout.strip())
+    assert loaded != (ROOT / "scripts").resolve() and (loaded / "tools.json").is_file()
+
+
 @pytest.mark.parametrize("found", [False, True])
 def test_launcher_preserves_and_reports_synthetic_private_scan(tmp_path, found):
     root = tmp_path / "repository"

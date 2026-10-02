@@ -62,9 +62,10 @@ def install():
                 executable = os.fsdecode(kwargs.get("executable") or args[0])
                 name = Path(executable).stem if os.name == "nt" else Path(executable).name
                 if name in LIVE or name in SOURCE_TOOLS:
-                    target = shutil.which(name, path=str(BINS))
-                    if target:
-                        executable = target
+                    # Not shutil.which: on Windows it searches the CWD first.
+                    target = BINS / (name + ".exe" if os.name == "nt" else name)
+                    if target.is_file():
+                        executable = str(target)
                 elif not os.path.dirname(executable):
                     environment = kwargs.get("env") if kwargs.get("env") is not None else os.environ
                     executable = shutil.which(executable, path=environment.get("PATH", "")) or executable
@@ -72,9 +73,11 @@ def install():
                 # Subprocess overrides must retain the guard for fresh Python
                 # interpreters (e.g. a test supplying its own PYTHONPATH).
             child_env = dict(kwargs.get("env") if kwargs.get("env") is not None else os.environ)
-            paths = child_env.get("PYTHONPATH", "").split(os.pathsep)
-            if not any((Path(path) / "offline_support.py").is_file() for path in paths if path):
-                child_env["PYTHONPATH"] = os.pathsep.join([str(BASE), *filter(None, paths)])
+            # The bootstrap copy must come first: a checkout's scripts/ on the
+            # caller's path would otherwise shadow it without its tools.json.
+            paths = [path for path in child_env.get("PYTHONPATH", "").split(os.pathsep)
+                     if path and Path(path).resolve() != BASE]
+            child_env["PYTHONPATH"] = os.pathsep.join([str(BASE), *paths])
             kwargs["env"] = child_env
             super().__init__(args, *positional, **kwargs)
 
