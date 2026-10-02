@@ -7,12 +7,9 @@ record and configuration writer, and extends the gate's protected-record check t
 initiative bindings and client control, request and claim folders in every mode.
 Client commands and records are unchanged.
 
-## Review scope
+## Observed results
 
-macOS with Python 3.14. The design converged after five rounds of adversarial review
-by four models before implementation. Each of the nine plan tasks passed a spec and
-quality review; the gate task passed five rounds of probe-based security review, and
-a whole-branch review preceded one final fix wave.
+macOS with Python 3.14.
 
 The full suite passed 3,550 tests and 154 subtests with 10 skips (excluding one
 pre-existing package self-test file that exits at import). The offline harness, both
@@ -32,3 +29,11 @@ separators; parameter defaults that hide a path; `xargs`; `git clean` on an igno
 read-only commands that name a whole initiative folder are refused until a later
 release narrows the check. No live org command ran in these checks, and no
 package-index release or demo readiness is claimed.
+
+## Review process
+
+The design converged after five rounds of adversarial review by four models before
+implementation. Each of the nine plan tasks passed a spec and quality review; the
+gate task passed five rounds of probe-based security review, and a whole-branch
+review preceded one final fix wave. These reviews supplement the measured results
+and do not establish the remaining live or multi-account acceptance.

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "torque-salesforce"
 version = "2.0.0a19"
-description = "A practical Salesforce consulting workspace, continued from JusticeserverClaude"
+description = "A private, local workspace for Salesforce consulting context and handoffs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT AND Apache-2.0"
@@ -31,7 +31,7 @@ Documentation = "https://github.com/omoji-personal/torque#readme"
 [project.optional-dependencies]
 browser = ["playwright>=1.45"]
 meeting = ["Pillow>=10"]
-dev = ["pytest>=8", "build>=1.2", "Pillow>=10"]
+dev = ["pytest>=8", "build>=1.2", "Pillow>=10", "distlib>=0.3.9; sys_platform == 'win32'"]
 
 [project.scripts]
 torque = "torque.cli:main"

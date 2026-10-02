@@ -16,8 +16,9 @@ def test_changelog_readme_and_record_for_alpha15():
     assert "\n## 2.0.0a15 - " in changelog
     record = (REPO / "docs" / "validation-alpha15.md").read_text(encoding="utf-8")
     assert "## Review scope" in record and "Python 3." in record
-    top = (REPO / "README.md").read_text(encoding="utf-8").split("\n## ", 1)[0]
-    assert torque.__version__ in top and "connected mode" in top
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert torque.__version__ in readme.split("\n## ", 1)[0]
+    assert "connected mode" in readme
 
 
 def test_connected_docs_state_the_tier_one_limit():

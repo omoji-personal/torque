@@ -10,6 +10,26 @@ recordings, screenshots with personal data and recovery payloads out of source,
 issues and pull requests. A sanitized reproduction should contain only what is
 needed to reproduce the problem.
 
+## Public naming and attribution
+
+Keep private firm, client and personal material out of tracked files and release
+artifacts. This does not prohibit necessary public authorship, LICENSE/NOTICE text,
+dependency attribution or historical names needed to trace inherited code. Retain
+required notices and original provenance; product introductions need no legacy
+branding. Fictional data uses reserved example domains such as `example.org` and
+`example.com` (reserved `.example`, `.invalid` and `.test` fixtures are also valid).
+
+`tests/test_public_hygiene.py` checks tracked text for known private-name hashes,
+credential shapes, personal absolute paths, internal URLs and fixture email domains.
+`scripts/check-distribution.py` scans wheel and source-distribution member contents
+for the same credential/path/URL shapes. Public author metadata and required notices
+are intentionally allowed. These checks cannot recognize all private names or PII.
+Set `TORQUE_PRIVATE_DENYLIST` to a private file outside the checkout, one term per
+line with optional `#` comments, for additional name checks in both commands.
+The offline launcher preserves this setting and reports whether the scan passed,
+failed or did not run. Missing or empty configured files fail the scan. Diagnostics
+show file locations without reproducing private terms or suspected credentials.
+
 ## Development
 
 ```sh
@@ -26,6 +46,18 @@ imports, even if an older Torque package is installed. It runs the standalone
 fixture suites as well. For a focused iteration, use
 `python scripts/test-offline.py --pytest-only tests/test_workspace.py -q`;
 this explicitly omits the standalone suites and is not full qualification.
+
+The runner uses a temporary home and configuration directories, drops ambient
+authentication variables, and exposes only stubbed live tools and the local tools
+needed by fixtures. Windows stubs use distlib's native executable launchers from
+the development dependencies. A Python startup guard follows child interpreters,
+blocks external DNS/TCP/UDP and unapproved direct executables, and resolves tool
+stubs before Windows can search the working directory. Numeric loopback remains
+available for local fixture servers. Git network protocols and user hooks are
+disabled. This is accidental-call isolation for trusted tests, not an OS sandbox
+for hostile Python, native extensions or arbitrary commands inside a shell.
+Use an OS network sandbox when running untrusted code.
+
 Keep conversational recipes under `workflows/`, then run `workflows/sync_adapters.py`
 and `scripts/sync-workflows.py` to refresh adapters and wheel resources. See
 [validation](docs/validation.md) for the clean-wheel check. A source test does not
@@ -39,6 +71,11 @@ org scope and cleanup of only their own artifacts.
 
 Pull requests should state the concrete problem, resulting behavior, validation
 and remaining limits. Retain relevant provenance when adapting inherited code.
+When adapting `packages/` files, run `python scripts/check-provenance.py` to identify
+changed entries, update only their `destination_sha256` and `adapted` fields in
+`packages/provenance.json`, and run the check again. Preserve `source_sha256`, source
+paths, notices and revision records. See [package provenance](docs/package-migration.md).
+
 No global sf interception, ambient authorization tokens or mandatory administrative
 workflow should be introduced by default. Proposed integration with another tool
 should identify what Torque adds to the user's existing workflow.

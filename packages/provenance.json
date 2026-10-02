@@ -71,7 +71,7 @@
       "source_path": "packages/qa_orchestrator/tests/test_orchestrator.py",
       "source_sha256": "03a5f343d93100a3d73c891f41bb20e6dd9059da9c638c68265669e20bea0177",
       "source_tracked": true,
-      "destination_sha256": "b80ca10f77484de4e4ac331c97dcf5d95080927c2e7a02a5dde644aa8db4cb4c",
+      "destination_sha256": "6e0e7efcdc382ed0900ac53e69f86a538719798212ab091e6e3a1903697a5fc9",
       "adapted": true
     },
     {
@@ -656,7 +656,7 @@
       "source_path": "packages/memory/tests/test_scrubber.py",
       "source_sha256": "5ba8c4e611c36dd4df662d19e37d90dd0e3603c750734547124412dd7bdf4c45",
       "source_tracked": true,
-      "destination_sha256": "14248c453bf004478b78557ee31cfa22b760146ab0efa8b216591d9c55d9bc86",
+      "destination_sha256": "1a9c9cc12f818031164eeb85e44d66cba291634e2005179375730ef2e0acef79",
       "adapted": true
     },
     {
@@ -809,8 +809,8 @@
       "source_path": "packages/memory/tests/fixtures/pii_shapes.yaml",
       "source_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
       "source_tracked": true,
-      "destination_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
-      "adapted": false
+      "destination_sha256": "7366cf8137e188a12a37423531245caca57c36c3ab9d7641caa8ef8f360dc75d",
+      "adapted": true
     },
     {
       "path": "packages/browser_tests/__init__.py",

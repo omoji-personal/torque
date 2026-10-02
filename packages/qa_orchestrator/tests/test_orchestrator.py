@@ -265,7 +265,7 @@ def main() -> int:
             "is_production": False,
             "users": {
                 "admin": {
-                    "username": "admin@test.org",
+                    "username": "admin@example.org",
                     "user_id": "0050a000001ABC123",
                     "expected_profile": "System Administrator",
                     "license": "Salesforce",
