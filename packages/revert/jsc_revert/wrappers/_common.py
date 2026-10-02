@@ -55,10 +55,15 @@ EXIT_NOT_APPROVED = 3  # connected mode: no consumed approval for this exact run
 _ACTIVE_WRAPPER = ContextVar("torque_active_wrapper", default=None)
 # Set by the revert executor for the wrapper it runs: the approval it verified.
 APPROVED_PARENT_ENV = "TORQUE_APPROVED_PARENT"
+REVERT_LEASE_ENV = "TORQUE_REVERT_LEASE"
 
 
 class IndeterminateScope(Exception):
     """The workspace's mode could not be read, so connected mode cannot be ruled out."""
+
+
+class IncompleteSubprocessOutput(Exception):
+    """A command ran but its structured output could not be decoded safely."""
 
 
 def _config_mode(path: Path, selected_client: bool = False):
@@ -228,6 +233,7 @@ class WrapperContext:
         self._active_token = None
         self._lock_path = None
         self._lease_mutex = threading.Lock()
+        self._borrowed_lease = False
 
     def resolve_org(self) -> int:
         """Resolve target org. Returns 0 on success, error code otherwise."""
@@ -244,16 +250,37 @@ class WrapperContext:
 
     def acquire_org_lock(self) -> int:
         """Try to acquire per-org lock. Returns 0 or EXIT_CONCURRENCY_CONFLICT."""
+        inherited = os.environ.get(REVERT_LEASE_ENV)
+        if inherited:
+            try:
+                parent = json.loads(inherited)
+                self._lock_path = org_sequence.org_lock_path(self.org.org_id_short)
+                state = org_sequence._try_read_lock(self._lock_path).state
+                if (self.operation_type != "revert" or not self.parent_snapshot_id
+                        or parent["snapshot_id"] != self.parent_snapshot_id
+                        or parent["org_id"] != self.org.org_id_short
+                        or parent["parent_pid"] != os.getppid()
+                        or not state or state["owner_pid"] != os.getppid()
+                        or state["owner_token"] != parent["owner_token"]
+                        or state["snapshot_id"] != self.parent_snapshot_id):
+                    raise ValueError("Recovery parent does not own this org lease")
+            except (ValueError, TypeError, KeyError, OSError) as exc:
+                print(f"error: invalid recovery lease: {exc}", file=sys.stderr)
+                return EXIT_CONCURRENCY_CONFLICT
+            self.lock_state = state
+            self._borrowed_lease = True
+            self._active_token = _ACTIVE_WRAPPER.set(self)
+            return 0
         try:
             self.lock_state = org_sequence.acquire_lock(
                 self.org.org_id_short, self.org.alias,
                 self.snapshot_id, self.operation_type,
                 session_id=os.environ.get("CLAUDE_SESSION_ID"),
             )
-        except org_sequence.LockConflictError as e:
+        except (org_sequence.LockConflictError, OSError, ValueError) as e:
             print(f"error: org lock unavailable: {e}", file=sys.stderr)
             return EXIT_CONCURRENCY_CONFLICT
-        self._lock_path = bundle.org_dir(self.org.org_id_short, self.org.alias) / ".org_lock.json"
+        self._lock_path = org_sequence.org_lock_path(self.org.org_id_short)
         self._active_token = _ACTIVE_WRAPPER.set(self)
         self._lease_thread = threading.Thread(target=self._refresh_lease, name="torque-org-lease", daemon=True)
         self._lease_thread.start()
@@ -261,6 +288,11 @@ class WrapperContext:
 
     def _heartbeat_once(self):
         with self._lease_mutex:
+            if self._borrowed_lease:
+                state = org_sequence._try_read_lock(self._lock_path).state
+                if not state or state["owner_token"] != self.lock_state["owner_token"]:
+                    raise org_sequence.LockOwnershipError("Recovery parent lease was lost")
+                return
             org_sequence.heartbeat(self.org.org_id_short, self.org.alias,
                                    self.lock_state["owner_token"], lock_path=self._lock_path)
 
@@ -324,7 +356,7 @@ class WrapperContext:
         if self._active_token is not None:
             _ACTIVE_WRAPPER.reset(self._active_token)
             self._active_token = None
-        if self.lock_state and self.org:
+        if self.lock_state and self.org and not self._borrowed_lease:
             try:
                 org_sequence.release(self.org.org_id_short, self.org.alias, self.lock_state["owner_token"], lock_path=self._lock_path)
             except Exception:
@@ -345,9 +377,25 @@ def _stdout_to_str(x) -> str:
     if isinstance(x, str):
         return x
     try:
-        return x.decode(errors="replace")
+        return x.decode("utf-8", errors="replace")
     except Exception:
         return ""
+
+
+def finish_record_capture(ctx, mutation_status: str, *, before_ok: bool, after_ok: bool) -> int:
+    """Keep mutation success separate from full capture success and retry advice."""
+    succeeded = mutation_status == "complete"
+    ctx.manifest["mutation_succeeded"] = True if succeeded else False if mutation_status == "failed" else None
+    complete = succeeded and before_ok and after_ok
+    ctx.manifest["snapshot_status"] = "complete" if complete else "failed" if mutation_status == "failed" else "partial"
+    ctx.save()
+    if mutation_status == "failed":
+        return EXIT_UNDERLYING_FAILED
+    if not complete:
+        print("Mutation succeeded, but capture is incomplete; do not retry the write." if succeeded else
+              "Mutation outcome is unknown; inspect the target before retrying the write.", file=sys.stderr)
+        return EXIT_POST_FINALIZE_FAILED if not after_ok or not succeeded else EXIT_PRESNAP_FAILED_SANDBOX
+    return EXIT_SUCCESS
 
 
 def run_sf_subprocess(cmd: list[str], timeout_seconds: int = 600,
@@ -363,7 +411,7 @@ def run_sf_subprocess(cmd: list[str], timeout_seconds: int = 600,
     if active is not None:
         active.ensure_ownership()
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="strict",
                               timeout=timeout_seconds, cwd=cwd)
         if active is not None:
             try:
@@ -378,6 +426,23 @@ def run_sf_subprocess(cmd: list[str], timeout_seconds: int = 600,
         return -1, _stdout_to_str(e.stdout), _stdout_to_str(e.stderr) + f"\nTIMEOUT after {timeout_seconds}s"
     except FileNotFoundError:
         return -2, "", "sf CLI not found in PATH"
+    except UnicodeDecodeError as exc:
+        mutation_succeeded = False
+        if active is not None and active.snap_dir is not None:
+            raw = active.snap_dir / ("invalid-utf8-" + uuid.uuid4().hex + ".bin")
+            bundle.atomic_write_bytes(raw, exc.object)
+            if active.manifest is not None:
+                active.manifest["snapshot_status"] = "partial"
+                phase = active.manifest.get("phases", {}).get("underlying_command", {})
+                if phase.get("status") == "complete":
+                    active.manifest["mutation_succeeded"] = True
+                    mutation_succeeded = True
+                active.manifest.setdefault("incomplete_output_paths", []).append(str(raw))
+                active.save()
+        message = ("Mutation succeeded, but capture output was not valid UTF-8; do not retry the write."
+                   if mutation_succeeded else
+                   "Command output was not valid UTF-8; operation incomplete. Inspect the target before retrying a write.")
+        raise IncompleteSubprocessOutput(message) from None
 
 
 def in_sfdx_project(start: str | None = None) -> bool:

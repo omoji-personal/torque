@@ -120,6 +120,13 @@ operations accept `--workspace PATH --client NAME` and retain their explicit org
 arguments. The legacy `torque revert ...` grammar remains available for existing
 scripts. Recovery is scoped; it is not a universal undo or Salesforce backup.
 
+Metadata recovery verifies captured post-deployment state while holding an org
+lease shared across aliases and workspaces for the same OS account. Unknown state
+blocks recovery, including with `--force`. Data upsert sends an atomic external-ID
+request; incomplete capture returns nonzero even when the write succeeded. Lesson
+updates preserve unreadable state and serialize concurrent changes. See
+[package safety and limits](docs/package-migration.md#recovery-and-local-state-safety).
+
 `torque doctor --for salesforce` checks local dependencies without contacting an
 org. After installing a newer version, `torque workspace upgrade PATH --check`
 previews workflow updates; applying them preserves local customizations.

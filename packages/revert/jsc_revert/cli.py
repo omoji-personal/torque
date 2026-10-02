@@ -505,11 +505,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     from .org_sequence import LockOwnershipError
+    from .wrappers._common import IncompleteSubprocessOutput
     try:
         return args.func(args)
     except LockOwnershipError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 40
+    except IncompleteSubprocessOutput as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 30
 
 
 if __name__ == "__main__":

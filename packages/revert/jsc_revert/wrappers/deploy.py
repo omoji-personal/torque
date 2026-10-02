@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from . import _common as c
-from .. import snapshot_pre
+from .. import snapshot_pre, stale_detector
 
 
 def run(args: argparse.Namespace) -> int:
@@ -169,6 +169,14 @@ def run(args: argparse.Namespace) -> int:
             status="complete" if wrapper_exit == 0 else "deferred",
             duration_seconds=0.0,
         )
+        if wrapper_exit == 0 and args.metadata and not args.dry_run:
+            try:
+                stale_detector.capture_deployment_state(ctx.snap_dir, ctx.manifest, args.target_org)
+            except Exception as exc:
+                snapshot_status = ctx.manifest["snapshot_status"] = "partial"
+                ctx.update_phase("post_finalize", status="failed", error=str(exc))
+                wrapper_exit = c.EXIT_POST_FINALIZE_FAILED
+                print("Deployment succeeded, but post-deployment capture failed; do not retry the write.", file=sys.stderr)
         ctx.save()
 
         if wrapper_exit != 0:

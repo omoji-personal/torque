@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Repository instructions are model-agnostic: `AGENTS.md` is the single source for any coding agent (map, agent assets by tool, commands, done-means, rules); `CLAUDE.md` imports it. Removed the empty `.claude/settings.json`. README notes which parts work with any assistant and that the gate runs as a Claude Code hook.
+- Harden recovery with captured post-deployment drift checks, refusal of unknown state, and org leases shared across aliases/workspaces for one OS account. Make snapshot writes exclusive, private and atomic; use atomic external-ID upsert; report incomplete record capture without hiding successful writes. Decode revert/browser subprocesses as UTF-8, redact structured browser credentials, and serialize lesson updates while preserving unreadable state.
 
 ## 2.0.0a19 - clients and initiatives, 2026-09-30 (not published to a package index)
 

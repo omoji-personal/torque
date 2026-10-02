@@ -220,8 +220,13 @@ def test_drift_checks_only_requested_field_not_incidental_parent(tmp_path, monke
     seen = []
     def retrieve(selectors, target, output, timeout_seconds):
         seen.extend(selectors)
-        return snapshot_pre.RetrieveResult("Succeeded", [snapshot_pre.FileClassification("CustomField", "Request__c.Note__c", "present", record["before_checksum"], record["filePath"], None)], output / "result.json")
+        path = output / "objects/Request__c/fields/Note__c.field-meta.xml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(Path(record["filePath"]).read_bytes())
+        return snapshot_pre.RetrieveResult("Succeeded", [snapshot_pre.FileClassification("CustomField", "Request__c.Note__c", "present", record["before_checksum"], str(path), None)], output / "result.json")
     monkeypatch.setattr(snapshot_pre, "run_pre_snapshot_retrieve", retrieve)
+    stale_detector.capture_deployment_state(tmp_path, manifest, "synthetic")
+    seen.clear()
     result = stale_detector.classify_metadata_drift(tmp_path, manifest, "synthetic")
     assert seen == ["CustomField:Request__c.Note__c"]
     assert len(result) == 1 and result[0].state is stale_detector.DriftState.PRESENT_SAME

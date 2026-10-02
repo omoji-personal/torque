@@ -60,6 +60,63 @@ Browser flows are executable configuration. Domain implementations, seed users a
 - In 2.0.0a18, the browser session setup (`jsc_browser_tests/auth.py`) returns to Lightning after Logout As before checking the original user; the suite (`suite.py`) includes the redacted preflight failure in every unexecuted cell's result; and with `--json` the runner (`cli.py`) prints the run folder on stderr so stdout stays JSON.
 - In 2.0.0a19, the revert wrappers (`wrappers/_common.py`) refuse a connected write, running nothing, when the approval lookup fails with a workspace error such as the maintenance flag.
 
+## Recovery and local state safety
+
+Successful synchronous metadata deployments with a complete `--metadata` recovery
+scope now retrieve and record their resulting state under the org lease. Recovery
+compares the same scope, including companion files, with that captured result.
+Missing legacy baselines, failed retrievals, missing checksums and unknown state
+refuse recovery even with `--force`. Verified differences require that explicit
+override. Snapshots without complete before/after evidence, including deployments
+finalized asynchronously without a captured result, require manual review.
+
+Cooperating revert wrappers use `~/.torque/org-locks/<canonical-org-id>.json`.
+The validated org ID includes its case checksum so case-insensitive filesystems
+keep different orgs separate. Aliases, selected clients and snapshot locations do
+not affect this key. `TORQUE_ORG_LOCK_DIR` can select one absolute local namespace
+for the account; every cooperating process must use the same setting. Finish old
+wrapper processes before upgrading to this namespace. Snapshots remain private
+to their selected client. The lease covers verification through recovery-wrapper
+completion, with validated parent-to-child ownership handoff. It coordinates one
+OS account on one machine, not other accounts, machines, Salesforce users, direct
+`sf` commands or independent browser writers. It is not a remote org lock and
+cannot prevent edits between the deployment and the immediate capture.
+
+Snapshot atomic writes use exclusive random temporary files, complete writes,
+file sync and atomic replacement. POSIX creates files at mode 0600 and uses
+directory descriptors with no-follow opens through the parent path. Windows uses
+`CREATE_NEW` with a protected owner/System DACL at creation, and pins parent
+directory handles without delete sharing until replacement completes. Reparse
+points are refused. Windows-specific ACL and directory-swap regressions run on
+Windows; POSIX mode assertions do not establish Windows permissions. The
+directory-swap threat requires an actor able to modify a relevant parent.
+
+Single-record upsert parses quoted assignments once, rejects conflicting external
+IDs, and includes the key in a one-record sObject Collections PATCH sent through
+`sf api request rest`. Values retain the CLI's literal backslashes, boolean
+conversion and JSON relationship objects. The external ID remains a literal key.
+A failed or incomplete lookup stops on every org type.
+The installed Salesforce CLI must provide that command; there is no create/update
+fallback. The pre-query captures evidence and does not choose the write branch.
+The server returns the actual insert/update outcome. This operation continues to
+have manual recovery only. [Salesforce sObject Collections upsert contract](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-composite-sobjects-collections-upsert.html).
+
+Record update/upsert exit zero only when the mutation and required captures
+succeed. Exit 11 indicates a successful sandbox write with missing before-state;
+exit 30 indicates incomplete post-capture or an unknown output outcome. A partial
+manifest preserves `mutation_succeeded` and the underlying phase separately.
+After a confirmed successful write, repair or inspect capture rather than retrying
+the mutation. Revert and browser subprocesses decode UTF-8 explicitly and refuse
+undecodable structured output. Available invalid bytes are retained privately in
+revert evidence, never interpreted as captured field values. Browser diagnostics
+redact credential keys recursively and redact Salesforce auth URLs in text.
+
+Lesson promotions, score changes and archival hold a stable OS file lock for the
+whole read/modify/write transaction. Corrupt or unreadable active/review/archive
+records raise a visible error and preserve their bytes. Promotion publishes the
+active list before removing the pending record; a retry after interrupted removal
+does not duplicate the active lesson.
+
 ## Packaging contract
 
 The root Torque distribution packages all ten import namespaces. Required Python dependencies discovered in production imports are PyYAML for QA/browser configuration, Pillow for meeting-frame operations, and Playwright for browser operations. Most core/advisory/revert/memory/probe code otherwise uses the standard library. Browser binaries, Salesforce CLI, ffmpeg, and Gemini are external capability-specific dependencies; installing Torque does not authenticate, install global hooks, or invoke providers.

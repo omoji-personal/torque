@@ -3,7 +3,7 @@
 Closes plan-v5 Closure 2 + Codex-R5-P1-3 (PID validation must NOT fail-open
 when cmdline inspection is unavailable).
 
-Lock state stored at: <revert-dir>/<org_id_short>-<alias>/.org_lock.json
+Lock state stored in one account-local namespace, independent of snapshot scope.
 
 Atomic acquisition: O_CREAT|O_EXCL kernel-guaranteed exactly-one winner.
 Tagged read result: VALID | EMPTY | MALFORMED | NOT_PRESENT — handles
@@ -47,6 +47,24 @@ LOCK_HEARTBEAT_SECONDS = 60
 LOCK_STALE_THRESHOLD_SECONDS = 300       # heartbeat freshness gate (5 min)
 LOCK_HARD_ABSOLUTE_THRESHOLD_SECONDS = 900   # stale cross-host/unparseable lease threshold
 PS_CHECK_TIMEOUT_SECONDS = 2
+
+
+def org_lock_path(org_id: str) -> Path:
+    """Canonical ID key, including case checksum for case-insensitive filesystems.
+
+    All cooperating processes for an OS account must use the same local root.
+    TORQUE_ORG_LOCK_DIR is an explicit account-wide override, never a client root.
+    """
+    from .org_detect import _valid_id, _pad_to_18
+    if not _valid_id(org_id):
+        raise ValueError("A validated Salesforce org ID is required for an org lease")
+    canonical = _pad_to_18(org_id[:15])
+    if len(org_id) == 18 and org_id != canonical:
+        raise ValueError("Org ID case checksum is invalid")
+    root = Path(os.environ.get("TORQUE_ORG_LOCK_DIR", str(Path.home() / ".torque" / "org-locks"))).expanduser()
+    if not root.is_absolute():
+        raise ValueError("TORQUE_ORG_LOCK_DIR must be an absolute account-local path")
+    return root / (canonical.lower() + ".json")
 
 # Cmdline marker: substring identifying a JSC wrapper process
 JSC_WRAPPER_CMDLINE_MARKER = "jsc_revert"
@@ -208,7 +226,7 @@ def _check_pid_is_jsc_wrapper(pid: int) -> PidStatus:
         try:
             result = subprocess.run(
                 ["ps", "-p", str(pid), "-o", "command="],
-                capture_output=True, text=True,
+                capture_output=True, text=True, encoding="utf-8", errors="strict",
                 timeout=PS_CHECK_TIMEOUT_SECONDS,
             )
             if result.returncode != 0:
@@ -217,7 +235,7 @@ def _check_pid_is_jsc_wrapper(pid: int) -> PidStatus:
             if any(marker in result.stdout for marker in WRAPPER_CMDLINE_MARKERS):
                 return PidStatus.WRAPPER
             return PidStatus.NOT_WRAPPER
-        except (subprocess.TimeoutExpired, PermissionError, FileNotFoundError, OSError):
+        except (subprocess.TimeoutExpired, PermissionError, FileNotFoundError, OSError, UnicodeError):
             # Codex-R5-P1-3: empirically reproduced PermissionError on Darwin.
             # Return UNKNOWN, NOT False — caller treats as live until hard threshold.
             return PidStatus.UNKNOWN
@@ -286,8 +304,8 @@ def acquire_lock(
     Raises LockConflictError if another live wrapper holds the lock.
     Steals stale locks (audit-logged).
     """
-    org_d = bundle.org_dir(org_id_short, org_alias)
-    lock_path = org_d / ".org_lock.json"
+    lock_path = org_lock_path(org_id_short)
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     # Check existing lock first; steal if stale
     read_result = _try_read_lock(lock_path)
@@ -360,7 +378,12 @@ def acquire_lock(
             f"Lock acquired by another process between read and CAS create at {lock_path}"
         )
     try:
-        os.write(fd, json.dumps(lock_state).encode("utf-8"))
+        remaining = memoryview(json.dumps(lock_state).encode("utf-8"))
+        while remaining:
+            count = os.write(fd, remaining)
+            if count <= 0:
+                raise OSError("Org lease write made no progress")
+            remaining = remaining[count:]
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -380,7 +403,7 @@ def heartbeat(
     stolen or released).
     """
     if lock_path is None:
-        lock_path = bundle.org_dir(org_id_short, org_alias) / ".org_lock.json"
+        lock_path = org_lock_path(org_id_short)
     read_result = _try_read_lock(lock_path)
     if read_result.status != LockReadStatus.VALID:
         raise LockOwnershipError(
@@ -400,7 +423,7 @@ def heartbeat(
 def release(org_id_short: str, org_alias: str, owner_token: str, *, lock_path: Path | None = None) -> bool:
     """Verify ownership, then delete lock. Returns True if released."""
     if lock_path is None:
-        lock_path = bundle.org_dir(org_id_short, org_alias) / ".org_lock.json"
+        lock_path = org_lock_path(org_id_short)
     read_result = _try_read_lock(lock_path)
     if read_result.status != LockReadStatus.VALID:
         return False

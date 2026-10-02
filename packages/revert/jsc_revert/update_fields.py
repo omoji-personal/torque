@@ -8,13 +8,13 @@ _SYSTEM = {"id", "attributes", "createddate", "createdbyid", "lastmodifieddate",
            "lastmodifiedbyid", "systemmodstamp"}
 
 
-def parse_update_fields(values: str) -> list[str] | None:
-    """Read only field names from sf's quoted key=value input, without interpreting values.
+def parse_assignments(values: str) -> list[tuple[str, str]] | None:
+    """Read sf's quoted key=value input without interpreting values.
 
     sf's parser treats whitespace outside paired single/double quotes as a separator
     and does not apply shell backslash escaping. An unbalanced pair is not sufficient
-    evidence of scope. Failure here keeps the original write available but manual-only
-    recovery; this parser never changes the values passed to Salesforce.
+    evidence of scope. Malformed input returns None; callers decide whether that
+    blocks the write or prevents automatic recovery.
     """
     if not isinstance(values, str) or not values.strip():
         return None
@@ -34,11 +34,22 @@ def parse_update_fields(values: str) -> list[str] | None:
         return None
     if current:
         tokens.append("".join(current))
-    fields, seen = [], set()
+    assignments = []
     for token in tokens:
-        field, separator, _ = token.partition("=")
+        field, separator, value = token.partition("=")
         if not separator or not _FIELD.fullmatch(field):
             return None
+        assignments.append((field, value))
+    return assignments or None
+
+
+def parse_update_fields(values: str) -> list[str] | None:
+    """Retain only explicit field names for a scoped recovery payload."""
+    assignments = parse_assignments(values)
+    if assignments is None:
+        return None
+    fields, seen = [], set()
+    for field, _ in assignments:
         if field.lower() not in seen:
             fields.append(field)
             seen.add(field.lower())

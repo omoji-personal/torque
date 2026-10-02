@@ -29,6 +29,7 @@ from revert.jsc_revert import org_sequence, bundle
 
 def _set_revert_dir(d: str) -> None:
     os.environ["JSC_REVERT_DIR"] = d
+    os.environ["TORQUE_ORG_LOCK_DIR"] = str(Path(d) / "account-locks")
 
 
 def _make_lock_file(lock_path: Path, **state_overrides) -> None:
@@ -69,11 +70,11 @@ def main() -> int:  # noqa: C901
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-1", "deploy_metadata")
         check("F-OS-1a acquire returns state with owner_token", "owner_token" in state)
         check("F-OS-1b lock file exists",
-              (Path(tmpd) / "00DPP0000004XYZ-sf-test" / ".org_lock.json").exists())
+              (org_sequence.org_lock_path("00DPP0000004XYZ")).exists())
         released = org_sequence.release("00DPP0000004XYZ", "sf-test", state["owner_token"])
         check("F-OS-1c release returns True", released)
         check("F-OS-1d lock file gone after release",
-              not (Path(tmpd) / "00DPP0000004XYZ-sf-test" / ".org_lock.json").exists())
+              not (org_sequence.org_lock_path("00DPP0000004XYZ")).exists())
 
         # ── F-OS-2: O_EXCL CAS rejects concurrent acquire ─────────────────
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-2", "deploy_metadata")
@@ -87,7 +88,7 @@ def main() -> int:  # noqa: C901
         # ── F-OS-3: stale lock past HARD_ABSOLUTE → stealable ─────────────
         # Write a lock with heartbeat 16 min ago (> 15 min hard absolute)
         old_iso = _iso(datetime.utcnow() - timedelta(seconds=org_sequence.LOCK_HARD_ABSOLUTE_THRESHOLD_SECONDS + 60))
-        lock_path = Path(tmpd) / "00DPP0000004XYZ-sf-test" / ".org_lock.json"
+        lock_path = org_sequence.org_lock_path("00DPP0000004XYZ")
         _make_lock_file(lock_path, heartbeat_at_iso=old_iso, owner_pid=99999)  # bogus PID
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-4", "deploy_metadata")
         check("F-OS-3 stale lock past HARD_ABSOLUTE is stolen", state["snapshot_id"] == "snap-4")
@@ -208,7 +209,7 @@ def main() -> int:  # noqa: C901
         state = org_sequence.acquire_lock("00DPP0000004XYZ", "sf-test", "snap-12", "deploy_metadata")
         time.sleep(0.05)
         org_sequence.heartbeat("00DPP0000004XYZ", "sf-test", state["owner_token"])
-        new_state = json.loads((Path(tmpd) / "00DPP0000004XYZ-sf-test" / ".org_lock.json").read_text(encoding="utf-8"))
+        new_state = json.loads((org_sequence.org_lock_path("00DPP0000004XYZ")).read_text(encoding="utf-8"))
         check("F-OS-11 heartbeat updates heartbeat_at_iso",
               new_state["heartbeat_at_iso"] >= state["heartbeat_at_iso"])
 

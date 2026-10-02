@@ -37,6 +37,15 @@ work still needing evidence. A recommendation is not a completed integration.
 
 ## Incorporation practice
 
+Single-record upsert now reuses Salesforce's [sObject Collections upsert API](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-composite-sobjects-collections-upsert.html)
+through the authenticated [CLI REST command](https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_api_request_rest.html).
+This keeps external-ID matching and mutation in one server request instead of
+emulating insert/update decisions locally. Offline tests cover key preservation,
+quoted values, indeterminate lookup refusal and partial capture. Live acceptance
+of this new route remains untested. Value parsing retains the
+[CLI's boolean and relationship conversions](https://github.com/salesforcecli/plugin-data/blob/main/src/dataUtils.ts)
+and literal backslashes; external IDs remain literal keys.
+
 For a material useful finding, choose the smallest effective response: fix the
 implementation, improve a packaged recipe/example, reuse an existing tool, or
 retain a concrete next verification task. Record a source and the reason when they

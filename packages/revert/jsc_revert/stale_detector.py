@@ -1,29 +1,17 @@
-"""stale_detector.py — 5-state drift detection per plan-v5 Closure stale-revert.
-
-States:
-  present_same     — component exists in org AND checksum matches snapshot
-  present_changed  — component exists but checksum drifted (someone else edited)
-  absent           — component no longer in org (deleted out-of-band)
-  renamed_unknown  — checksum-different + SetupAuditTrail shows rename event
-                     (best-effort; SetupAuditTrail has limited retention)
-  retrieve_failed  — query/retrieve operation itself failed (network/auth/perms)
-
-Used by revert_executor to gate the revert: by default, absent + renamed_unknown
-states block the revert (require --force).
-
-For non-metadata snapshots (data_record_*, apex_run, etc.), drift detection
-is operation-type-specific and may not apply directly.
-"""
-
+"""Compare the current recovery scope with its captured post-deployment state."""
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import tempfile
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
 
-from . import bundle, snapshot_pre
-from .metadata_scope import MetadataScopeError, selected_records
+from . import snapshot_pre
+from .metadata_scope import (MetadataScopeError, selected_records, _file_index,
+                             _component_paths, _logical_relative)
 
 
 class DriftState(Enum):
@@ -43,122 +31,94 @@ class ComponentDrift(NamedTuple):
     raw_problem: str | None
 
 
-def classify_metadata_drift(
-    snapshot_dir: Path,
-    manifest: dict,
-    target_org: str,
-) -> list[ComponentDrift]:
-    """For deploy_metadata snapshots: re-retrieve each component + compare checksums.
+def _observe(snapshot_dir: Path, manifest: dict, target_org: str, *, prefix: str) -> list[dict]:
+    records = selected_records(manifest.get("payload", {}))
+    keys = sorted({(entry["type"], entry["fullName"]) for entry in records})
+    if not keys:
+        raise MetadataScopeError("Recovery scope is empty")
+    # Never reuse retrieved files from an earlier verification.
+    output = Path(tempfile.mkdtemp(prefix=prefix, dir=snapshot_dir)).resolve()
+    retrieved = snapshot_pre.run_pre_snapshot_retrieve(
+        [f"{kind}:{name}" for kind, name in keys], target_org, output, timeout_seconds=180)
+    if retrieved.status != "Succeeded":
+        raise MetadataScopeError("Retrieval did not succeed")
+    captured = [{"type": fc.type, "fullName": fc.fullName, "before_state": fc.state,
+                 "before_checksum": fc.checksum, "filePath": fc.file_path}
+                for fc in retrieved.files]
+    index = _file_index({"files": captured}, output)
+    observations = []
+    for kind, name in keys:
+        matching = [fc for fc in retrieved.files if (fc.type, fc.fullName) == (kind, name)]
+        if not matching or any(fc.state not in {"present", "absent"} for fc in matching):
+            raise MetadataScopeError(f"Current state unavailable for {kind}:{name}")
+        states = {fc.state for fc in matching}
+        if len(states) != 1:
+            raise MetadataScopeError(f"Contradictory retrieval for {kind}:{name}")
+        state = matching[0].state
+        checksum = None
+        if state == "present":
+            paths = set()
+            for fc in matching:
+                if not fc.file_path or not fc.checksum:
+                    raise MetadataScopeError(f"Current checksum unavailable for {kind}:{name}")
+                paths.update(_component_paths({"type": kind, "fullName": name},
+                             Path(fc.file_path), output, index))
+            # Include companion files and bundle members, not only the last CLI row.
+            content = sorted((_logical_relative(path, output).as_posix(), index[path]) for path in paths)
+            checksum = hashlib.sha256(json.dumps(content).encode("utf-8")).hexdigest()
+        observations.append({"type": kind, "fullName": name, "state": state, "checksum": checksum})
+    return observations
 
-    Returns drift for the original recovery scope, excluding incidental parents.
-    """
-    payload = manifest.get("payload", {})
+
+def capture_deployment_state(snapshot_dir: Path, manifest: dict, target_org: str) -> None:
+    """Called under the write lease immediately after a successful deployment."""
+    manifest["payload"]["after_state"] = _observe(snapshot_dir, manifest, target_org, prefix="metadata-after-")
+
+
+def classify_metadata_drift(snapshot_dir: Path, manifest: dict, target_org: str) -> list[ComponentDrift]:
     try:
-        files_in_snapshot = selected_records(payload)
-    except MetadataScopeError:
-        # The planner will explain why no exact recovery plan can be built.
-        return []
-    if not files_in_snapshot:
-        return []
-
-    # Build retrieve selectors for all components in snapshot
-    selectors = sorted({f"{f['type']}:{f['fullName']}" for f in files_in_snapshot
-                        if f.get("type") and f.get("fullName")})
-    if not selectors:
-        return []
-
-    # Stage retrieve into a fresh tmpdir
-    drift_dir = snapshot_dir / ".drift-check"
-    drift_dir.mkdir(exist_ok=True, mode=0o700)
-
-    try:
-        retrieve_result = snapshot_pre.run_pre_snapshot_retrieve(
-            selectors, target_org, drift_dir, timeout_seconds=180,
-        )
-    except (ValueError, Exception) as e:
-        # Retrieve itself failed → all components retrieve_failed
-        return [
-            ComponentDrift(
-                type=f.get("type", ""), fullName=f.get("fullName", ""),
-                state=DriftState.RETRIEVE_FAILED,
-                snapshot_checksum=f.get("before_checksum"),
-                current_checksum=None,
-                raw_problem=f"retrieve failed: {str(e)[:200]}",
-            )
-            for f in files_in_snapshot
-        ]
-
-    # Build lookup: (type, fullName) → FileClassification from retrieve
-    current_index = {(fc.type, fc.fullName): fc for fc in retrieve_result.files}
-
-    drift_list = []
-    for f in files_in_snapshot:
-        ftype = f.get("type", "")
-        fullname = f.get("fullName", "")
-        snap_checksum = f.get("before_checksum")
-        current = current_index.get((ftype, fullname))
-
-        if current is None:
-            # Component wasn't even in the retrieve result — fail-closed
-            drift_list.append(ComponentDrift(
-                type=ftype, fullName=fullname,
-                state=DriftState.RETRIEVE_FAILED,
-                snapshot_checksum=snap_checksum, current_checksum=None,
-                raw_problem="component not present in re-retrieve result",
-            ))
-            continue
-
-        if current.state == "absent":
-            drift_list.append(ComponentDrift(
-                type=ftype, fullName=fullname,
-                state=DriftState.ABSENT,
-                snapshot_checksum=snap_checksum, current_checksum=None,
-                raw_problem=current.raw_problem,
-            ))
-        elif current.state == "retrieve_failed":
-            drift_list.append(ComponentDrift(
-                type=ftype, fullName=fullname,
-                state=DriftState.RETRIEVE_FAILED,
-                snapshot_checksum=snap_checksum, current_checksum=None,
-                raw_problem=current.raw_problem,
-            ))
-        elif current.state == "present":
-            if snap_checksum and current.checksum and snap_checksum == current.checksum:
-                drift_list.append(ComponentDrift(
-                    type=ftype, fullName=fullname,
-                    state=DriftState.PRESENT_SAME,
-                    snapshot_checksum=snap_checksum, current_checksum=current.checksum,
-                    raw_problem=None,
-                ))
-            else:
-                drift_list.append(ComponentDrift(
-                    type=ftype, fullName=fullname,
-                    state=DriftState.PRESENT_CHANGED,
-                    snapshot_checksum=snap_checksum, current_checksum=current.checksum,
-                    raw_problem=None,
-                ))
+        records = selected_records(manifest.get("payload", {}))
+        keys = {(entry["type"], entry["fullName"]) for entry in records}
+        after = manifest.get("payload", {}).get("after_state")
+        if not isinstance(after, list) or not after:
+            raise MetadataScopeError("No captured post-deployment state; legacy recovery requires manual review")
+        baseline = {(entry["type"], entry["fullName"]): entry for entry in after}
+        if set(baseline) != keys or len(baseline) != len(after):
+            raise MetadataScopeError("Post-deployment capture does not match the recovery scope")
+        for entry in baseline.values():
+            if (entry.get("state") not in {"present", "absent"}
+                    or (entry["state"] == "present" and (not isinstance(entry.get("checksum"), str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", entry["checksum"])))
+                    or (entry["state"] == "absent" and entry.get("checksum") is not None)):
+                raise MetadataScopeError("Post-deployment state is incomplete")
+        current = _observe(snapshot_dir, manifest, target_org, prefix=".drift-")
+    except Exception as exc:
+        return [ComponentDrift("", "", DriftState.RETRIEVE_FAILED, None, None, str(exc))]
+    drift = []
+    for entry in current:
+        expected = baseline[(entry["type"], entry["fullName"])]
+        if entry["state"] == expected["state"] and entry["checksum"] == expected["checksum"]:
+            state = DriftState.PRESENT_SAME
+        elif entry["state"] == "absent":
+            state = DriftState.ABSENT
         else:
-            drift_list.append(ComponentDrift(
-                type=ftype, fullName=fullname,
-                state=DriftState.RETRIEVE_FAILED,
-                snapshot_checksum=snap_checksum, current_checksum=None,
-                raw_problem=f"unexpected current.state={current.state!r}",
-            ))
-
-    return drift_list
+            state = DriftState.PRESENT_CHANGED
+        drift.append(ComponentDrift(entry["type"], entry["fullName"], state,
+                                    expected["checksum"], entry["checksum"], None))
+    return drift
 
 
 def is_blocking(drift_list: list[ComponentDrift]) -> bool:
-    """Returns True if any component is in a state that blocks revert by default.
-    Operator can override with --force.
-    """
-    return any(d.state in (DriftState.ABSENT, DriftState.RENAMED_UNKNOWN)
-               for d in drift_list)
+    return not drift_list or any(d.state != DriftState.PRESENT_SAME for d in drift_list)
+
+
+def is_unknown(drift_list: list[ComponentDrift]) -> bool:
+    return not drift_list or any(d.state in {DriftState.RETRIEVE_FAILED, DriftState.RENAMED_UNKNOWN}
+                                for d in drift_list)
 
 
 def summary(drift_list: list[ComponentDrift]) -> dict[str, int]:
-    """Count of components per state."""
     out = {state.value: 0 for state in DriftState}
-    for d in drift_list:
-        out[d.state.value] += 1
+    for drift in drift_list:
+        out[drift.state.value] += 1
     return out

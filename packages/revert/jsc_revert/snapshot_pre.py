@@ -372,13 +372,17 @@ def run_pre_snapshot_retrieve(
         try:
             # cwd=stage is the whole point — it is what makes staged_out "inside
             # the project" as far as the sf CLI is concerned.
-            proc = subprocess.run(cmd, capture_output=True, text=True,
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="strict",
                                   timeout=timeout_seconds, cwd=str(stage))
+        except UnicodeDecodeError as exc:
+            from . import bundle
+            bundle.atomic_write_bytes(output_dir / ".retrieve-invalid-utf8.bin", exc.object)
+            raise ValueError("Retrieve output was not valid UTF-8; state is unknown") from None
         except subprocess.TimeoutExpired as e:
             raw_json_path.write_text(json.dumps({
                 "error": "subprocess.TimeoutExpired",
-                "stdout": e.stdout.decode() if e.stdout else "",
-                "stderr": e.stderr.decode() if e.stderr else "",
+                "stdout": e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else e.stdout,
+                "stderr": e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else e.stderr,
             }, indent=2), encoding="utf-8")
             raise
 
@@ -396,6 +400,8 @@ def run_pre_snapshot_retrieve(
 
     # Persist raw output regardless of exit
     raw_json_path.write_text(proc.stdout or "", encoding="utf-8")
+    if proc.returncode != 0:
+        raise ValueError("Retrieve command failed; state is unknown")
 
     try:
         data = json.loads(proc.stdout)
