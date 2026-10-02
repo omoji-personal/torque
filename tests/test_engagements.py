@@ -82,3 +82,59 @@ def test_initiative_add_respects_maintenance(root):
     (root / ws.MAINTENANCE_FLAG).write_text("x\n")
     with pytest.raises(ws.WorkspaceError, match="maintenance"):
         eng.add_initiative(root, "Plan")
+
+
+def test_concurrent_lifecycle_updates_keep_both_history_entries(root, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    folder = eng.add_initiative(root, "Plan")
+    path = folder / "state" / "engagement.json"
+    writing, release, second_started = Event(), Event(), Event()
+    replace = ws._atomic_replace_text
+
+    def hold_first_write(target, text, **kwargs):
+        if target == path and json.loads(text)["state"] == "paused":
+            writing.set()
+            assert release.wait(10), "first writer was not released"
+        return replace(target, text, **kwargs)
+
+    def close():
+        second_started.set()
+        return eng.set_state(root, "Plan", "closed", outcome="complete")
+
+    monkeypatch.setattr(ws, "_atomic_replace_text", hold_first_write)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(eng.set_state, root, "Plan", "paused", reason="waiting")
+        try:
+            assert writing.wait(10)
+            second = pool.submit(close)
+            assert second_started.wait(10)
+            with pytest.raises(TimeoutError):
+                second.result(timeout=0.2)
+        finally:
+            release.set()
+        assert first.result(timeout=10)["state"] == "paused"
+        assert second.result(timeout=10)["state"] == "closed"
+    state = eng.load_initiative(root, "Plan")[2]
+    assert [entry["state"] for entry in state["history"]] == ["active", "paused", "closed"]
+
+
+def test_lifecycle_rechecks_maintenance_after_waiting_for_lock(root, monkeypatch):
+    from contextlib import contextmanager
+
+    folder = eng.add_initiative(root, "Plan")
+    path = folder / "state" / "engagement.json"
+    original = path.read_bytes()
+    lock = ws._client_creation_lock
+
+    @contextmanager
+    def maintenance_while_waiting(workspace):
+        (workspace / ws.MAINTENANCE_FLAG).write_text("migration", encoding="utf-8")
+        with lock(workspace):
+            yield
+
+    monkeypatch.setattr(ws, "_client_creation_lock", maintenance_while_waiting)
+    with pytest.raises(ws.WorkspaceError, match="maintenance"):
+        eng.set_state(root, "Plan", "closed", outcome="complete")
+    assert path.read_bytes() == original

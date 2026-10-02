@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Repository instructions are model-agnostic: `AGENTS.md` is the single source for any coding agent (map, agent assets by tool, commands, done-means, rules); `CLAUDE.md` imports it. Removed the empty `.claude/settings.json`. README notes which parts work with any assistant and that the gate runs as a Claude Code hook.
+- Audit fixes: connected mode reviews extensible tooling, refuses external browser/desktop reads without verified context, and enforces metadata and browser data consent. Clarified Tier 1's accidental-action protection and remaining replay limits. Parity adapters reject Windows traversal and resolved config escapes at execution. Maintenance now checks delegated package dispatch and direct revert wrapper admission; documented in-progress and direct-API limits. Concurrent initiative lifecycle updates retain all history entries.
 
 ## 2.0.0a19 - clients and initiatives, 2026-09-30 (not published to a package index)
 

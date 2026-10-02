@@ -29,7 +29,7 @@ def w(tmp_path, monkeypatch):
     ws.set_ai_access(root, "connected", approval="required", presence=YES)
     letter = tmp_path / "a.pdf"
     letter.write_bytes(b"agreement")
-    consent.record_consent(root, "Acme", "2026-09-30", letter, ["metadata"], ["acme-prod", "acme-sbx"],
+    consent.record_consent(root, "Acme", "2026-09-30", letter, ["metadata", "records"], ["acme-prod", "acme-sbx"],
                            ["Contact"], presence=YES, resolve=ORGS.get)
     consent.sign_off(root, "Acme", "Reviewer", presence=YES)
     return Path(os.path.realpath(root))
@@ -118,7 +118,7 @@ def window(w, org="acme-sbx"):
 
 def test_d2_mcp_browser_changes_are_refused_even_with_a_window(w):
     window(w)
-    assert run(w, "mcp__claude-in-chrome__navigate", {"url": SBX, "tabId": 1}).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__navigate", {"url": SBX, "tabId": 1}).action == "deny"
     assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 1}).action == "deny"
     assert run(w, "mcp__chrome-devtools__click", {"uid": "x"}).action == "deny"
     assert run(w, "mcp__playwright__browser_click", {"element": "x"}).action == "deny"
@@ -126,7 +126,7 @@ def test_d2_mcp_browser_changes_are_refused_even_with_a_window(w):
 
 def test_n4_a_search_string_cannot_authorize(w):
     window(w)
-    assert run(w, "mcp__claude-in-chrome__find", {"query": SBX, "tabId": 2}).action == "allow"
+    assert run(w, "mcp__claude-in-chrome__find", {"query": SBX, "tabId": 2}).action == "deny"
     assert run(w, "mcp__claude-in-chrome__computer", {"action": "left_click", "tabId": 2}).action == "deny"
 
 

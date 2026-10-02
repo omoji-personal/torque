@@ -111,7 +111,7 @@ def window(w, org="acme-sbx"):
 
 def test_d2_click_is_bound_to_the_navigated_tab(w):
     window(w)
-    assert run(w, NAV, {"url": SBX, "tabId": 1}).action == "allow"
+    assert run(w, NAV, {"url": SBX, "tabId": 1}).action == "deny"
     # Round 4 ruling: browser tools never make changes in connected mode.
     assert run(w, CLICK, {"action": "left_click", "tabId": 1}).action == "deny"
     assert run(w, CLICK, {"action": "left_click", "tabId": 2}).action == "deny"
@@ -260,7 +260,7 @@ def test_d12_wildcard_intersection_is_exact():
     problems = permissions.drift({"permissions": {**permissions.generate(), "allow": ["Bash(p*on -c *)"]}},
                                  permissions.generate())
     assert any("p*on -c *" in p for p in problems)
-    ok = permissions.drift({"permissions": {**permissions.generate(), "allow": ["Bash(git status)",
+    ok = permissions.drift({"permissions": {**permissions.generate(), "allow": ["Bash(echo ready)",
                                                                                 "Bash(ls *)"]}},
                            permissions.generate())
     assert not any("allows" in p for p in ok)

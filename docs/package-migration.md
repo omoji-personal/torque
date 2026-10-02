@@ -38,7 +38,7 @@ Default state is under `state/revert`, `state/memory`, `state/qa-tests`, `state/
 | `config/browser-flows/` | `TORQUE_BROWSER_FLOWS`, a path-separator-delimited file/directory list; recursive trusted Python modules exporting `FLOW` with `FlowSpec` |
 | `config/object-registry.yaml` | `TORQUE_BROWSER_REGISTRY`; supplies actual test-record carriers and cleanup scope |
 | `config/ai-fixtures/` | `TORQUE_AI_FIXTURES`; enables real provider replay for selected client fixtures |
-| `config/parity.json` | `{ "script": "parity.py", "baseline_org": "explicit-alias" }`; launcher validates a script beneath client config and maps to `TORQUE_PARITY_SCRIPT` / `TORQUE_BASELINE_ORG` |
+| `config/parity.json` | `{ "script": "parity.py", "baseline_org": "explicit-alias" }`; launcher rejects traversal with either separator, drive/root forms and resolved escapes, then maps to `TORQUE_PARITY_SCRIPT` / `TORQUE_BASELINE_ORG`. The dispatcher rechecks containment beneath the selected client's `config` before execution, including direct package calls with a selected root |
 | Explicit browser connection | `TORQUE_BROWSER_CDP` or compatibility `JSC_BROWSER_CDP`; supplied CDP endpoint |
 | Explicit overlay probe | `TORQUE_TEST_RECORD_OBJECT`, optional `TORQUE_TEST_RECORD_FIELD`; no JusticeServer object inferred |
 
@@ -59,6 +59,7 @@ Browser flows are executable configuration. Domain implementations, seed users a
 - In 2.0.0a16, the browser runner (`jsc_browser_tests/runner.py`, `suite.py`, `auth.py`, `cli.py`) compares the signed-in Username read from the page with the alias's username. A guarded (connected) run stops on a mismatch or an unreadable username; an unguarded run records the mismatch and continues. Under a window a [delegated approver](delegated-approver.md) granted, the browser runs headless only and refuses debug settings (`DEBUG`, `PWDEBUG`, `DEBUG_FILE`) before it starts. `--json` prints an identity report per cell, which the qa dispatcher (`jsc_qa/dispatcher.py`) passes on and shows. `diagnostics.py` also redacts Salesforce session tokens by their shape and credential fields in JSON.
 - In 2.0.0a18, the browser session setup (`jsc_browser_tests/auth.py`) returns to Lightning after Logout As before checking the original user; the suite (`suite.py`) includes the redacted preflight failure in every unexecuted cell's result; and with `--json` the runner (`cli.py`) prints the run folder on stderr so stdout stays JSON.
 - In 2.0.0a19, the revert wrappers (`wrappers/_common.py`) refuse a connected write, running nothing, when the approval lookup fails with a workspace error such as the maintenance flag.
+- The audit corrections recheck parity adapter containment in `jsc_qa/dispatcher.py` at execution, and check maintenance in `wrappers/_common.py` before dry-run and non-connected shortcuts. Package dispatch through `torque` also checks maintenance before importing the delegate. See [maintenance boundaries](engagement-records.md#maintenance) for in-progress operations and direct APIs outside this coverage. Original package source hashes remain unchanged in `packages/provenance.json`; destination hashes and adaptation flags reflect these edits.
 
 ## Packaging contract
 

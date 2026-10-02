@@ -2,10 +2,18 @@
 
 Connected mode lets an AI session do real delivery work for one client: read that
 client's orgs, run check-only deploys and tests, capture a before-state, and prepare
-each change. Every org write still waits for the consultant: the session asks for an
+each change. Recognized org writes wait for the consultant: the session asks for an
 approval of one exact command, the consultant reads it and grants it from their own
 terminal, and the session may then run that command once. Each step is recorded in the
 client's change record for a second reviewer.
+
+**Tier 1 (the default) protects against accidental actions, not code running as the
+agent account.** That account can read the signing key and replace local consumption
+records, so exact-command approval and single-use checks depend on those files remaining
+intact. Tier 2 separates approval ownership but still has local replay and execution
+evidence limitations. Stronger enforcement requires signing, consumption state and
+execution authorization outside the agent account, with grants bound to an immutable
+workspace identity and a verified org identity. This release does not provide that boundary.
 
 It is opt-in. A workspace without `"ai_access": "connected"` behaves exactly as before
 (`full` by default, or [build-only](ai-access.md)). Like build-only mode, it is a
@@ -16,13 +24,13 @@ sandbox. The limits are listed below.
 
 | Route | Examples | Decision |
 |---|---|---|
-| Local work | editors, `git`, `torque change`, `torque approval request/status/list/log` | allowed |
-| Reads of the bound client's approved orgs | `sf data query -o acme-prod`, `sf project retrieve start`, Salesforce MCP query, get and describe tools, `sf api request rest` GET | allowed when the consent covers the org and the data class. Record data (queries, searches, exports, record gets, REST record and query paths, the same reads in legacy `sfdx` and MCP form) needs `records`; Apex logs need `debug_logs`; a REST path Torque cannot place counts as record data |
-| Check-only | `sf project deploy validate`, `--dry-run`, `sf apex run test` | allowed and logged in `clients/<slug>/approvals/activity.jsonl` |
+| Local work | file tools, `torque change`, `torque approval request/status/list/log` | allowed |
+| Reads of the bound client's approved orgs | `sf data query -o acme-prod`, `sf project retrieve start`, Salesforce MCP query, get and describe tools, `sf api request rest` GET | allowed when the consent covers the org and the data class. Schema and metadata reads need `metadata`. Record data (queries, searches, exports, record gets, REST record and query paths, the same reads in legacy `sfdx` and MCP form) needs `records`; Apex logs need `debug_logs`; a REST path Torque cannot place counts as record data |
+| Check-only | `sf project deploy validate`, `--dry-run`, `sf apex run test` | allowed with metadata consent and logged in `clients/<slug>/approvals/activity.jsonl` |
 | Org writes | any other `sf`/`sfdx` command with an org flag, `sf api request` other than a plain GET, `torque deploy/data/org/recover`, `jsc` write verbs, Salesforce MCP tools that are not clearly reads | allowed once, by consuming a matching approval |
-| Browser changes | `torque browser ... --target-org ORG` (and `torque qa` with an org) | allowed inside a granted browser window for that org; Torque's own browser checks every request's org (see below) |
-| Browser tools | clicks, typing, scripts and form input through browser MCP or devtools servers | refused: they may read pages and navigate (not to an org outside the consent), never change anything |
-| Programs the gate cannot check | `python x.py`, `node`, `bash script.sh`, `sh -c '...'`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | the host asks the consultant when the session's permission mode is `default`, `acceptEdits` or `plan` (or the host sends none) |
+| Torque browser | `torque browser ... --target-org ORG` (and `torque qa` with an org) | needs metadata and record-data consent and a granted browser window for that org; Torque starts an isolated browser and checks its org (see below) |
+| External browser and desktop tools | screenshots, page reads, navigation, clicks, typing, scripts and form input through browser MCP, devtools or desktop servers | refused: tool arguments, URLs and tab IDs do not establish the current context |
+| Programs the gate cannot check | `git`, `hg`, `gh`, linters/formatters, `sf code-analyzer`, `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | classified as unverifiable; the gate requests review in prompting modes. Run untrusted project tooling without Salesforce credentials in an isolated account or container; a prompt does not constrain its environment |
 | Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
 | Out of scope | another client's folder or `--client`, `torque client list`, an org not in the consent (whatever the route), an `sf` call without an explicit org | refused |
 | Prompts skipped | any org write, browser change or unchecked program while the session's permission mode is not `default`, `acceptEdits` or `plan` (`bypassPermissions`, `auto`, `dontAsk`, or a mode this version does not know) | refused, even with an approval, which stays unused |
@@ -249,10 +257,10 @@ grant. The snapshot a Torque wrapper takes inside the approved write never count
 
 In connected mode, only Torque's own browser changes anything in an org:
 `torque browser ... --target-org ORG` (and `torque qa` with an org). Browser MCP and
-devtools servers may read pages and navigate (not to a Salesforce org outside the consent),
-and every click, typing, script or form input through them is refused. They cannot show
-which org their page is in after navigation, redirects or a failed load, so their org
-cannot be enforced; Torque's Playwright session can.
+devtools servers and desktop tools cannot read, capture, navigate or change pages in
+connected mode. An already-open tab may contain another client's data; neither a tab ID
+nor a URL supplied in tool arguments verifies its current context. Use Torque's isolated
+Playwright session for browser work.
 
 `torque approval request --browser --minutes 20 --purpose "Add Tier to the Case layout" --org acme-sbx ...`
 asks for a window of up to 30 minutes for one org. Clicks cannot be listed in advance, so
@@ -260,8 +268,9 @@ the window is per org and time, not per action. In a production org the request 
 `--manual-recovery TEXT`.
 
 When Torque's browser starts in a connected workspace, it resolves the org live and
-requires the ID the consent records, a granted window for that org, and the org's My
-Domain address (recorded with the consent). The session starts through frontdoor on that
+requires consent for both `metadata` and `records`, the ID the consent records, a granted
+window for that org, and the org's My Domain address (recorded with the consent). The
+session starts through frontdoor on that
 My Domain, so the login hosts are never needed.
 
 Once the page loads, the run reads the signed-in user's Username from the page itself (a
@@ -301,18 +310,20 @@ host, that exact host is added and listed here.
 
 The session lives only as long as its authorization. Every request the handler sees, reads
 included, reads the window and the consent again first, with no cache. When the window
-ends, or the consent is suspended or no longer usable, or the window is withdrawn, Torque
-refuses the request, closes every page and the browser context, and the run stops.
+ends, or either data category is removed, the consent is suspended or no longer usable,
+or the window is withdrawn, Torque refuses the request, closes every page and the browser
+context, and the run stops.
 
 ## Two approval tiers
 
-- **Tier 1, `hmac` (default).** The consultant and the session share one OS account.
+- **Tier 1, `hmac` (default): protection against accidental actions.** The consultant and the session share one OS account.
   Approvals are signed with a key at `~/.config/torque/approval.key` (Windows:
   `%APPDATA%\torque\approval.key`), created at the first grant. The gate and the permission
   rules keep recognized tools away from the key, but **a script the session writes and runs
   can read the key and forge an approval**, and on macOS a script can drive a terminal
   (AppleScript, `tmux send-keys`) to answer the grant prompt. Tier 1 records intent and
   catches mistakes; it is not a boundary against a session that writes code to get around it.
+  The same account can remove consume markers and replay grants within their validity.
 - **Tier 2, `owner-uid` (recommended for stage 2).** The consultant grants from a separate
   OS account (the approver). The gate accepts an approval only when its file is owned by that
   account's uid and not writable by others, which the session's account cannot create. No
@@ -337,17 +348,18 @@ refuses the request, closes every page and the browser context, and the run stop
 With the hook in force, on recognized routes:
 
 - a known org write by Bash, a Torque route or an MCP tool without a granted approval;
-- replay of an approval, its use for another command, payload, working folder, org or
-  client, its use after its window, after its change record is gone, or after the consent
+- reuse of an approval while its local consume marker remains intact, its use for another
+  command, payload, working folder, org or client, its use after its window, after its change
+  record is gone, or after the consent
   stops naming the org ID it was granted for;
 - the session granting its own approval through recognized routes (refused by the gate and
   the permission rules; the grant also needs a real terminal outside the session and a typed code);
 - a write to an org outside the bound client's consent (whatever route names it), reads of
   another client's folder, and listing every client (`torque client list`);
-- a browser change through a browser MCP or devtools tool, a change by Torque's own browser
+- reads and changes through external browser, desktop or devtools tools, a change by Torque's own browser
   without a granted window for its org, any request of Torque's browser to another
-  Salesforce org, and navigation by browser tools to a Salesforce org outside the consent;
-- reads of record data or debug logs the consent does not cover, in every recognized form;
+  Salesforce org;
+- recognized reads of metadata, record data or debug logs the consent does not cover;
 - org access for a client without active, signed-off consent;
 - a production approval of any kind (browser windows included) without an independent
   before-state or a written recovery path;
@@ -377,19 +389,26 @@ With the hook in force, on recognized routes:
 - **A redirect chain already in flight.** A chain that started before the window ended or
   the consent was suspended completes, within the hosts above. The next request the handler
   sees is refused and the context closes.
-- Code the session writes and runs (scripts, `python -c`, heredocs to interpreters, a git
-  hook, a test runner's configuration): the host asks, and the consultant must read it first.
+- Code executed inside a permitted process (scripts, Git hooks, linter plugins, search
+  preprocessors, text-processing programs and runner configuration). The gate now classifies
+  extensible tooling as unverifiable and generated permissions include a backstop, but no
+  separate prompt is guaranteed when nested code
+  runs. Review is not isolation. Run untrusted tooling in a separate account or container
+  without Salesforce credentials, auth-directory mounts, tokens or access to credentialed
+  processes; merely changing environment variables does not remove file-based credentials.
+  Torque does not launch such a sandbox. Regenerate existing connected permission settings
+  with `torque approval permissions --workspace W --write` to install the new backstop.
 - In tier 1, a script reading the key and forging an approval, or driving a terminal to
   answer the grant.
 - In tier 2, a script deleting a consume marker to run the same exact command again within
   its window (bounded by 15 minutes and the exact binding).
 - A program the session places ahead of `sf` on `PATH` through a route the gate does not
   see, or a writable Salesforce CLI installation changed by a script; doctor warns about both.
-- Commands built at run time, programs that run commands through their own options (`tar
-  --to-command`, `rsync -e`, `zip -TT`, GNU `sed`'s `e`), and every route
+- Commands built at run time after a program has been permitted, configured subprocesses
+  (`tar --to-command`, `rsync -e`, `zip -TT`, GNU `sed`'s `e`), and every route
   [build-only mode](ai-access.md#what-it-cannot-stop) lists as unparsed.
 - Actions inside a granted browser window in the approved org (per window, not per click),
-  and actions a URL triggers while browser tools only read and navigate.
+  including actions triggered by navigation in Torque's browser.
 - An alias remapped before a raw `sf` write (doctor `--live` detects it at readiness time).
 - Two tool calls running at the same time: a file edited while an approved deploy starts.
 - The hook not running (missing, disabled, timed out, or a host without hooks).
