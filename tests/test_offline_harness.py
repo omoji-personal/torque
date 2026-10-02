@@ -142,6 +142,26 @@ sock.close()
     assert run.returncode == 0, run.stdout + run.stderr
 
 
+def test_only_a_marked_fixture_folder_replaces_the_live_tool_stub(harness, tmp_path):
+    marked, plain = tmp_path / "marked", tmp_path / "plain"
+    fake = _sentinel(marked, "sf", tmp_path / "fake-ran")
+    (marked / ".offline-fixture-bin").touch()
+    _sentinel(plain, "sf", tmp_path / "plain-ran")
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    code = ("import os, subprocess, sys\n"
+            "for folder in sys.argv[1:]:\n"
+            "    subprocess.run(['sf', 'org', 'display'], capture_output=True,\n"
+            "                   env=dict(os.environ, PATH=folder + os.pathsep + os.environ['PATH']))\n")
+    run = subprocess.run([sys.executable, "-c", code, str(marked), str(plain)], env=env,
+                         capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert fake.exists() and (tmp_path / "fake-ran").exists()
+    assert not (tmp_path / "plain-ran").exists()
+    assert Path(env["TORQUE_TEST_LIVE_SENTINEL"]).read_text().splitlines() == ["sf"]
+
+
 def test_checkout_scripts_on_child_path_cannot_shadow_the_bootstrap_guard(harness, tmp_path):
     # A test may hand its own sys.path to a child as PYTHONPATH; the checkout's
     # scripts/ then precedes the bootstrap copy, which alone has tools.json.

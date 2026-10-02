@@ -17,6 +17,12 @@ BASE = Path(__file__).resolve().parent
 BINS = BASE.parent / "bin"
 LIVE = {"sf", "sfdx", "gemini", "claude", "codex", "curl", "wget", "ssh"}
 SOURCE_TOOLS = {"jsc": "jsc_revert.cli", "torque": "torque.cli"}
+# A test that supplies its own fake tools marks their folder with this file.
+FIXTURE_MARKER = ".offline-fixture-bin"
+
+
+def _fixture_tool(path):
+    return bool(path) and (Path(path).resolve().parent / FIXTURE_MARKER).is_file()
 
 
 def tool_main():
@@ -61,14 +67,18 @@ def install():
             if not kwargs.get("shell") and isinstance(args, (list, tuple)) and args:
                 executable = os.fsdecode(kwargs.get("executable") or args[0])
                 name = Path(executable).stem if os.name == "nt" else Path(executable).name
-                if name in LIVE or name in SOURCE_TOOLS:
+                environment = kwargs.get("env") if kwargs.get("env") is not None else os.environ
+                found = executable if os.path.dirname(executable) else shutil.which(
+                    executable, path=environment.get("PATH", ""))
+                if _fixture_tool(found):
+                    executable = found
+                elif name in LIVE or name in SOURCE_TOOLS:
                     # Not shutil.which: on Windows it searches the CWD first.
                     target = BINS / (name + ".exe" if os.name == "nt" else name)
                     if target.is_file():
                         executable = str(target)
-                elif not os.path.dirname(executable):
-                    environment = kwargs.get("env") if kwargs.get("env") is not None else os.environ
-                    executable = shutil.which(executable, path=environment.get("PATH", "")) or executable
+                elif found:
+                    executable = found
                 kwargs["executable"] = executable
                 # Subprocess overrides must retain the guard for fresh Python
                 # interpreters (e.g. a test supplying its own PYTHONPATH).
@@ -99,7 +109,7 @@ def install():
             if executable is None:
                 raise PermissionError("Offline suite requires an explicit executable")
             resolved = Path(shutil.which(os.fsdecode(executable)) or os.fsdecode(executable)).resolve()
-            if str(resolved) not in allowed and resolved.parent != BINS:
+            if str(resolved) not in allowed and resolved.parent != BINS and not _fixture_tool(resolved):
                 raise PermissionError("Offline suite blocked an unapproved executable")
         if event == "os.system":
             raise PermissionError("Offline suite requires subprocess with an explicit executable")
