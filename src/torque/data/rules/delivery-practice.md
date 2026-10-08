@@ -20,4 +20,6 @@
 Ordinary operational errors and real capability limitations still need resolution.
 They are not reasons to restore the retired Torque enforcement system.
 
+In a build-only or connected workspace, the mode's own rule file (`build-only.md` or
+`production-approval.md`) takes precedence over this rule.
 In a workspace with `approval: required`, `production-approval.md` overrides this rule for production.

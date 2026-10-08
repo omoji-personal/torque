@@ -19,8 +19,31 @@ session was started with, which Antigravity runs without asking anyway, and
 "ask" otherwise, which hands it to Antigravity's own permission flow. The gate
 never widens what that flow allows.
 
-Connected mode is not supported here: `torque launch` starts Claude Code, so an
-Antigravity session is not bound to a client and the gate treats it as unbound.
+Connected mode. `torque launch --host antigravity` (or a workspace whose
+workspace.json names "host": "antigravity") starts `agy` with a launch record
+that names this host. This hook states its host (TORQUE_HOOK_HOST) before it
+calls the gate, so only such a record binds the session to its client, and only
+while the folder Antigravity was started in (the first workspace path) is that
+record's workspace. Any other session is unbound: org calls and every client's
+folder are refused. A bound call gets the same connected-mode decision as under
+Claude Code, with a call ID built from `conversationId` and `stepIdx`. What
+differs:
+
+- Antigravity sends no permission mode, so the gate cannot refuse a call it
+  cannot check because prompts are skipped; it answers "ask" as it does in a
+  prompting session.
+- Only the before-call event is handled, so no execution record is written
+  after an approved call ran.
+- Antigravity's own browser tools are checked as browser tools, which connected
+  mode refuses, as it refuses a browser MCP server under Claude Code.
+- A session launched with a launch binding is unattended. Where the gate would
+  ask, this hook refuses: under `claude -p` an ask no one answers is a refusal,
+  and it is not known that `agy -p` treats one the same way.
+
+Connected mode here is verified offline only: tests feed this module the hook
+input Antigravity was observed to send. No connected session has been run in a
+live Antigravity session, and it is not known that `conversationId` with
+`stepIdx` is unique when one step makes several calls.
 
 Tool names and arguments as observed with Antigravity CLI 1.3.1.
 """
@@ -36,6 +59,7 @@ import sys
 import threading
 
 from . import gate
+from . import hosts
 
 HOOK_NAME = "torque-gate"
 HOOK_MODULE = "torque.gate_antigravity"
@@ -54,31 +78,41 @@ FILE_TOOLS = {"view_file": ("Read", "file_path", ("AbsolutePath",)),
 # Antigravity tool -> (the gate's tool, the argument with the pattern, the argument with the folder).
 SEARCH_TOOLS = {"grep_search": ("Grep", "Query", "SearchPath"),
                 "find_by_name": ("Glob", "Pattern", "SearchDirectory")}
-# Text typed into a command that is already running is a command line too.
+# Text typed into a command that is already running is a command line too. A call
+# that types text this module cannot read keeps its own name; a manage_task call
+# that types nothing (it lists or stops tasks) has nothing to check (`gate_event`).
 INPUT_TOOLS = ("manage_task", "send_command_input")
+# A manage_task action with one of these in its name types into the command.
+# "send_input" is the one observed; the others are guesses that fail closed.
+_TYPING_ACTIONS = ("input", "send", "write", "stdin")
 # Tools that name no file, run no command and reach no network: nothing for the
 # gate to check. A worker started by one of them sends its own calls through this hook.
 PLAIN_TOOLS = frozenset({
-    "ask_custom_permission", "ask_permission", "ask_question", "browser_subagent", "command_status",
-    "define_subagent", "finish", "invoke_subagent", "list_permissions", "list_plugin_accounts", "list_resources",
-    "manage_subagents", "manage_task", "run_workflow", "schedule", "search_marketplace", "send_command_input",
-    "send_message", "wait", "wait_5_seconds"})
-# Network reads: nothing for the gate to check, and Antigravity's own flow decides.
-NETWORK_TOOLS = frozenset({"read_url_content", "search_web"})
-# Tools whose arguments can name a file or a page: every string argument is
-# checked the way an MCP tool's is.
+    "ask_custom_permission", "ask_permission", "ask_question", "command_status", "define_subagent", "finish",
+    "invoke_subagent", "list_permissions", "list_plugin_accounts", "list_resources", "manage_subagents",
+    "run_workflow", "search_marketplace", "send_message", "wait", "wait_5_seconds"})
+# Network reads that name no file or page: nothing for the gate to check, and
+# Antigravity's own flow decides.
+NETWORK_TOOLS = frozenset({"search_web"})
+# Tools whose arguments can name a file or a page, or carry a prompt that does:
+# every string argument is checked the way an MCP tool's is.
 SCANNED_TOOLS = frozenset({
     "browser_click_element", "browser_drag_pixel_to_pixel", "browser_get_dom", "browser_get_network_request",
     "browser_input", "browser_list_network_requests", "browser_mouse_down", "browser_mouse_up",
     "browser_move_mouse", "browser_press_key", "browser_refresh_page", "browser_resize_window", "browser_scroll",
-    "browser_scroll_dom", "browser_select_option", "capture_browser_console_logs", "capture_browser_screenshot",
-    "click_browser_pixel", "delete_knowledge", "execute_browser_javascript", "generate_image",
-    "list_browser_pages", "manage_inbox", "open_browser_url", "read_browser_page", "read_resource"})
+    "browser_scroll_dom", "browser_select_option", "browser_subagent", "capture_browser_console_logs",
+    "capture_browser_screenshot", "click_browser_pixel", "delete_knowledge", "execute_browser_javascript",
+    "generate_image", "list_browser_pages", "manage_inbox", "open_browser_url", "read_browser_page",
+    "read_resource", "read_url_content", "schedule"})
+# The server name a scanned tool is given in the gate's `mcp__SERVER__TOOL` form.
+# Connected mode tells a browser tool by its server's name, so Antigravity's
+# browser tools get one it reads as a browser.
+SCANNED_SERVER = "antigravity"
+BROWSER_SERVER = "antigravity_browser"
 READ_ONLY = ("view_file", "list_dir", "grep_search", "find_by_name")
 _PATH_ARGUMENTS = ("AbsolutePath", "DirectoryPath", "SearchPath", "SearchDirectory")
-# The gate names Claude Code's tools when it suggests what to use instead.
-_TOOL_HINT = ("Use Bash, Read, Edit, Write, Grep or Glob",
-              "Use run_command, view_file, replace_file_content, write_to_file, grep_search or find_by_name")
+# How a launch record says its session was started with `torque launch --delegated`.
+UNATTENDED = "binding"
 
 
 def hook_command(python: str) -> str:
@@ -95,20 +129,54 @@ def hook_entry(python: str) -> dict:
         {"type": "command", "command": hook_command(python), "timeout": HOOK_TIMEOUT}]}]}}
 
 
+def _first_path(payload: dict) -> str:
+    """The first workspace path, the folder Antigravity was started in; "" when
+    the hook input names none."""
+    paths = payload.get("workspacePaths")
+    return paths[0] if isinstance(paths, list) and paths and isinstance(paths[0], str) else ""
+
+
 def _folder(payload: dict) -> str:
     """The session's working folder: the first workspace path, else the folder
     above `.agents`, where Antigravity starts the hook."""
-    paths = payload.get("workspacePaths")
-    if isinstance(paths, list) and paths and isinstance(paths[0], str) and paths[0]:
-        return paths[0]
+    first = _first_path(payload)
+    if first:
+        return first
     here = Path.cwd()
     return str(here.parent if here.name == ".agents" else here)
 
 
+def _call_id(payload: dict) -> str | None:
+    """The call's ID in approval and activity records, `conversationId:stepIdx`;
+    None when the hook input lacks either."""
+    conversation, step = payload.get("conversationId"), payload.get("stepIdx")
+    if isinstance(conversation, str) and conversation and type(step) is int:
+        return f"{conversation}:{step}"
+    return None
+
+
+def _types_nothing(args: dict) -> bool:
+    """A manage_task call that sends no text to its command: it has no `Input`,
+    and its action is absent or is not a word for typing."""
+    action = args.get("Action")
+    if "Input" in args or not (action is None or isinstance(action, str)):
+        return False
+    return not any(word in (action or "").casefold() for word in _TYPING_ACTIONS)
+
+
+def _mcp_name(value) -> bool:
+    """A server or tool name the gate can read back out of `mcp__SERVER__TOOL`:
+    text with no `__` in it and no `_` at either end."""
+    return (isinstance(value, str) and bool(value) and value == value.strip() and value.isprintable()
+            and "__" not in value and not value.startswith("_") and not value.endswith("_"))
+
+
 def gate_event(payload: dict) -> dict:
     """The tool call in the form the gate reads. A tool this module does not
-    know, or a known one without the argument that names its file, keeps its
-    own name, which build-only mode blocks as a tool it does not recognise."""
+    know keeps its own name, which build-only and connected mode block as a tool
+    they do not recognise. So does a known one this module cannot read: a file
+    tool without the argument that names its file, typed input that is not
+    text, and an MCP call without a usable server or tool name."""
     call = payload.get("toolCall")
     if not isinstance(call, dict) or not isinstance(call.get("name"), str) or not call["name"]:
         raise ValueError("the hook input has no tool name")
@@ -125,8 +193,11 @@ def gate_event(payload: dict) -> dict:
         tool, tool_input = SHELL_TOOL, {"command": args["CommandLine"]}
         if isinstance(args.get("Cwd"), str) and args["Cwd"]:
             cwd = os.path.join(folder, args["Cwd"])
-    elif name in INPUT_TOOLS and isinstance(args.get("Input"), str):
-        tool, tool_input = SHELL_TOOL, {"command": args["Input"]}
+    elif name in INPUT_TOOLS:
+        if isinstance(args.get("Input"), str):
+            tool, tool_input = SHELL_TOOL, {"command": args["Input"]}
+        elif name == "manage_task" and _types_nothing(args):
+            tool, tool_input = "Task", {}
     elif name in FILE_TOOLS:
         gate_tool, key, sources = FILE_TOOLS[name]
         path = next((args[source] for source in sources if isinstance(args.get(source), str) and args[source]), None)
@@ -144,20 +215,41 @@ def gate_event(payload: dict) -> dict:
             if isinstance(includes, list) and all(isinstance(item, str) for item in includes):
                 tool_input["glob"] = ",".join(includes)
     elif name == "call_mcp_tool":
-        arguments = args.get("Arguments")
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except ValueError:
-                arguments = {"value": arguments}
-        tool = f"mcp__{args.get('ServerName') or 'server'}__{args.get('ToolName') or 'tool'}"
-        tool_input = arguments if isinstance(arguments, dict) else {"value": arguments}
+        server, called = args.get("ServerName"), args.get("ToolName")
+        if _mcp_name(server) and _mcp_name(called):
+            arguments = args.get("Arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {"value": arguments}
+            tool = f"mcp__{server}__{called}"
+            tool_input = arguments if isinstance(arguments, dict) else {"value": arguments}
     elif name in PLAIN_TOOLS or name in NETWORK_TOOLS:
         tool, tool_input = "Task", {}
     elif name in SCANNED_TOOLS:
-        tool = "mcp__antigravity__" + name
+        tool = f"mcp__{BROWSER_SERVER if 'browser' in name else SCANNED_SERVER}__{name}"
     return {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input, "cwd": cwd,
-            "session_id": payload.get("conversationId")}
+            "session_id": payload.get("conversationId"), "tool_use_id": _call_id(payload)}
+
+
+def _binding(payload: dict, environ=os.environ) -> str:
+    """Connected mode: a launched session (TORQUE_LAUNCH) keeps its binding only
+    while the folder Antigravity was started in is the workspace its launch
+    record names. Otherwise the binding is taken out of this process, and the
+    gate decides the call for an unbound session. Returns how the session that
+    keeps its binding was launched (the record's `via`), else ""."""
+    if not environ.get("TORQUE_LAUNCH"):
+        return ""
+    # Imported only here: a session that was not launched never loads it.
+    from . import launch
+    first = _first_path(payload)
+    record = launch.session_record(first, environ) if first else None
+    if record is None:
+        environ.pop("TORQUE_LAUNCH", None)
+        environ.pop("TORQUE_CLIENT", None)
+        return ""
+    return str(record.get("via") or "")
 
 
 def _inside_session(payload: dict, args: dict) -> bool:
@@ -215,6 +307,8 @@ def main() -> int:
     watchdog.start()
     try:
         try:
+            # This hook states its host: a launch record written for another host does not bind here.
+            os.environ[hosts.HOOK_HOST_ENV] = hosts.ANTIGRAVITY.key
             payload = json.loads(gate._hook_input())
             if not isinstance(payload, dict):
                 raise ValueError("the hook input must be a JSON object")
@@ -227,15 +321,22 @@ def main() -> int:
             # The folder the session was started in binds it, as CLAUDE_PROJECT_DIR does
             # under Claude Code: leaving that folder does not end the gating.
             os.environ["CLAUDE_PROJECT_DIR"] = _folder(payload)
+            launched = _binding(payload)
             out, err = io.StringIO(), io.StringIO()
             with redirect_stdout(out), redirect_stderr(err):
                 code = gate.evaluate(json.dumps(event))
         except Exception as exc:
             return _say(stdout, "deny", f"Torque gate: this call could not be read ({exc}); blocking to fail closed.")
         if code != 0:
-            reason = err.getvalue().strip().replace(*_TOOL_HINT)
+            # The gate names Claude Code's tools when it suggests what to use instead.
+            reason = err.getvalue().strip().replace(hosts.CLAUDE.tool_hint, hosts.ANTIGRAVITY.tool_hint)
             return _say(stdout, "deny", reason or "Torque gate: this call is blocked.")
         explicit = _explicit(out.getvalue())
+        if explicit and explicit[0] == "ask" and launched == UNATTENDED:
+            # Under `claude -p` the gate's ask is a refusal, because no one answers it.
+            # It is not known that `agy -p` refuses one, so the refusal is made here.
+            return _say(stdout, "deny", explicit[1] + " This session was launched unattended, with a launch "
+                                                      "binding, so there is no one to ask and the call is refused.")
         if explicit:
             return _say(stdout, *explicit)
         return _say(stdout, _no_objection(payload))

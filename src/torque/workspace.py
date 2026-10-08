@@ -580,10 +580,90 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
         # 0644 lets that account read it; the harness chowns it to root afterward.
         config_path.chmod(0o644)
     _connected_rule(root, mode == "connected", delegated=delegated)
+    if not delegated:
+        # A delegated setup step writes only the files delegation.SETUP_WRITES lists;
+        # there, `torque workspace upgrade` adds the Antigravity copy of the rule.
+        _mode_rules(root, mode)
     return root
 
 
 CONNECTED_RULE = "production-approval.md"
+BUILD_ONLY_RULE = "build-only.md"
+# The rule file a mode adds to each host's playbook: mode -> (its name there, where
+# its packaged text is under torque/data). Full mode adds none.
+MODE_RULES = {"connected": (CONNECTED_RULE, ("connected", CONNECTED_RULE)),
+              "build-only": (BUILD_ONLY_RULE, (BUILD_ONLY_RULE,))}
+# Claude Code's copy of the connected rule keeps the life it had before the other
+# mode rules existed: `_connected_rule` writes and removes it, and `torque
+# workspace upgrade` does not track it.
+_CONNECTED_RULE_PATH = ".claude/rules/" + CONNECTED_RULE
+
+
+def access_mode(config: dict) -> str:
+    """The mode the gate enforces for this workspace.json: `full` when it names
+    none, otherwise the gate's own reading of the value (what is neither full nor
+    connected with required approval is build-only)."""
+    from . import gate
+    return gate._resolve_ai_access(config["ai_access"], config.get("approval")) if "ai_access" in config else "full"
+
+
+def mode_rule_paths() -> frozenset[str]:
+    """Every workspace path `mode_rules` can name, whatever the mode."""
+    from . import hosts
+    return frozenset(f"{host.playbook}/rules/{name}" for host in hosts.HOSTS
+                     for name, _ in MODE_RULES.values()) - {_CONNECTED_RULE_PATH}
+
+
+def mode_rules(mode: str, data=None) -> dict[str, tuple[str, str]]:
+    """{workspace path: (text, packaged source)} for the rule files `mode` adds
+    beside Claude Code's connected rule: the build-only rule in each host's
+    playbook, and the Antigravity copy of the connected rule. Empty in full mode.
+    `data` is the packaged data folder (torque/data)."""
+    if mode not in MODE_RULES:
+        return {}
+    from . import antigravity, hosts
+    name, packaged = MODE_RULES[mode]
+    data = resources.files("torque").joinpath("data") if data is None else data
+    text = data.joinpath(*packaged).read_text(encoding="utf-8")
+    source = "torque/data/" + "/".join(packaged)
+    out: dict[str, tuple[str, str]] = {}
+    for host in hosts.HOSTS:
+        relative = f"{host.playbook}/rules/{name}"
+        if relative == _CONNECTED_RULE_PATH:
+            continue
+        if host is hosts.ANTIGRAVITY:
+            # Antigravity discards a rule without its header (antigravity.rule).
+            copy = antigravity.rule(name[:-len(".md")], text)
+            if copy is not None:
+                out[relative] = (copy, source + " (Antigravity copy)")
+        else:
+            out[relative] = (text, source)
+    return out
+
+
+def _mode_rules(root: Path, mode: str) -> None:
+    """Write the rule files `mode` adds (`mode_rules`) and remove those of the
+    other modes, as `_connected_rule` does for Claude Code's connected rule: a
+    rule that says what a mode means stays in a playbook only while the workspace
+    is in that mode. The rule tells the agent what to expect; the gate, not the
+    rule, is what blocks a call."""
+    wanted = mode_rules(mode)
+    for relative in sorted(mode_rule_paths() - set(wanted)):
+        _inside(root, root / relative).unlink(missing_ok=True)
+    for relative, (text, _source) in wanted.items():
+        target = _inside(root, root / relative)
+        _inside(root, target.parent).mkdir(mode=0o700, parents=True, exist_ok=True)
+        if target.exists():
+            _atomic_replace_text(target, text)
+        else:
+            atomic_write_new(target, text)
+    from .template_updates import record_mode_rules
+    try:
+        record_mode_rules(root)
+    except (OSError, WorkspaceError):
+        # The record is bookkeeping for `workspace upgrade`, which adopts an
+        # unchanged rule and reports a damaged manifest itself; the mode is set.
+        pass
 
 
 def _connected_rule(root: Path, present: bool, *, delegated: bool = False) -> None:

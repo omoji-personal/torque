@@ -60,7 +60,9 @@ def _derived(path: str) -> bool:
     return any(path.startswith(prefix + "/") for prefix in _DERIVED)
 
 
-def _bundled() -> dict[str, tuple[bytes, str]]:
+def _bundled(mode: str = "full") -> dict[str, tuple[bytes, str]]:
+    """Every packaged file a workspace in `mode` gets: the same set in every mode,
+    plus the rule files that mode adds (workspace.mode_rules)."""
     data = resources.files("torque").joinpath("data")
     files = {}
     def visit(item, relative: str, source: str) -> None:
@@ -81,6 +83,10 @@ def _bundled() -> dict[str, tuple[bytes, str]]:
             raise ws.WorkspaceError("bundled workflow is outside the managed locations")
         # A packaged skill keeps its place over a recipe of the same name.
         files.setdefault(relative, (text.encode("utf-8"), source))
+    for relative, (text, source) in ws.mode_rules(mode, data).items():
+        if not _valid_workflow(relative):
+            raise ws.WorkspaceError("bundled workflow is outside the managed locations")
+        files[relative] = (text.encode("utf-8"), source)
     return files
 
 
@@ -322,12 +328,17 @@ def _close_root(handle) -> None:
         os.close(handle)
 
 
-def _run(workspace: Path, *, check: bool, initial: bool = False) -> dict:
+def _run(workspace: Path, *, check: bool, initial: bool = False, only=None) -> dict:
+    """`only`, a set of workspace paths, limits the run to those files; every other
+    manifest entry is carried over as it is."""
     # Reject a symlink at the user-supplied root before load_workspace resolves it.
     if Path(workspace).expanduser().is_symlink():
         raise ws.WorkspaceError("workspace root must not be a symlink")
-    root, _ = ws.load_workspace(workspace)
-    bundle = _bundled()  # Read the whole installed bundle before any mutation.
+    root, config = ws.load_workspace(workspace)
+    # Read the whole installed bundle before any mutation.
+    bundle = _bundled(ws.access_mode(config))
+    # The rule files of a mode this workspace is not in.
+    off_mode = ws.mode_rule_paths() - set(bundle)
     root_fd = _open_root(root)
     try:
         with _locked(root_fd, check):
@@ -337,6 +348,8 @@ def _run(workspace: Path, *, check: bool, initial: bool = False) -> dict:
             updated = dict(baseline)
             actions = []
             for path, (contents, source) in sorted(bundle.items()):
+                if only is not None and path not in only:
+                    continue
                 current = _read(root_fd, path)
                 digest = _hash(contents)
                 old = baseline.get(path)
@@ -365,7 +378,19 @@ def _run(workspace: Path, *, check: bool, initial: bool = False) -> dict:
                     if action["action"] == "adopt" and not check:
                         action["applied"] = True
                 actions.append(action)
-            for path in sorted(set(baseline) - set(bundle)):
+            for path in sorted((set(baseline) | off_mode) - set(bundle)):
+                if only is not None and path not in only:
+                    continue
+                if path in off_mode:
+                    if _read(root_fd, path) is None:
+                        # `workspace ai-access` removed it when the workspace left that mode.
+                        updated.pop(path, None)
+                        continue
+                    actions.append({"path": path, "action": "retired", "applied": False,
+                                    "suggestion": "This rule describes an AI access mode the workspace is not in; "
+                                                  "left untouched. Remove it, or set the mode again with "
+                                                  "torque workspace ai-access."})
+                    continue
                 actions.append({"path": path, "action": "retired", "applied": False,
                                 "suggestion": "No longer bundled; left untouched. Review or remove it locally if appropriate."})
             next_manifest = {"schema": _SCHEMA, "files": {k: v for k, v in updated.items() if not _derived(k)}}
@@ -388,6 +413,16 @@ def _run(workspace: Path, *, check: bool, initial: bool = False) -> dict:
 def record_initial_templates(root: Path) -> dict:
     """Record only byte-matching defaults after workspace materialization; no workflow writes."""
     return _run(root, check=False, initial=True)
+
+
+def record_mode_rules(root: Path) -> dict | None:
+    """After `workspace ai-access` wrote or removed a mode's rule files
+    (workspace._mode_rules): record the ones that match the packaged text and
+    forget the ones it removed, so a later update can tell an untouched rule from
+    an edited one. Writes the manifest only, and only in a workspace that has one."""
+    if not (Path(root) / MANIFEST).is_file():
+        return None
+    return _run(root, check=False, initial=True, only=ws.mode_rule_paths())
 
 
 def update_templates(workspace: Path, check: bool = False) -> dict:

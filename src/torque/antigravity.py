@@ -14,6 +14,9 @@ and `$ARGUMENTS` is not expanded; Antigravity's own /help, /context and /undo
 take those names; a worker that lists an unknown tool name can hang. The hook
 file (.agents/hooks.json) is not derived: the owner registers the gate there
 (gate_antigravity), as with the Claude Code hook.
+
+The rule a build-only or connected workspace adds (workspace.mode_rules) is
+copied with `rule` too, into the same `.agents/rules/`.
 """
 from __future__ import annotations
 
@@ -23,6 +26,9 @@ import re
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 # Commands Antigravity answers itself; the recipe becomes /torque-NAME.
 BUILTIN_COMMANDS = ("help", "context", "undo")
+# One of those names written as a slash command (`/context`), not as part of a
+# path or an address (project/context, /context/notes.md, https://help.example.com).
+_BUILTIN_MENTION = re.compile(r"(?<![\w/.:~})-])/(" + "|".join(BUILTIN_COMMANDS) + r")(?![\w/-]|\.\w)")
 INPUT_NOTE = "the text sent with this command, or the current request when none was sent."
 # Claude Code tool name -> Antigravity tool name. Only names seen working are listed.
 TOOLS = {"Read": "view_file", "LS": "list_dir", "Grep": "grep_search", "Glob": "find_by_name",
@@ -62,19 +68,27 @@ def _page(header: list[str], body: str) -> str:
     return "---\n" + "\n".join(header) + "\n---\n\n" + body.lstrip("\n")
 
 
+def skill_name(name: str) -> str:
+    return "torque-" + name if name in BUILTIN_COMMANDS else name
+
+
+def _commands(body: str) -> str:
+    """The text with each mention of a recipe Antigravity renames (`/context`)
+    pointing at its name there (`/torque-context`); the bare name is
+    Antigravity's own command."""
+    return _BUILTIN_MENTION.sub(lambda match: "/" + skill_name(match.group(1)), body)
+
+
 def rule(name: str, text: str) -> str | None:
     """An always-on rule. A rule scoped with `paths:` is not copied: it would
     otherwise apply everywhere."""
     fields, body = _split(text)
     if "paths" in fields:
         return None
+    body = _commands(body)
     title = re.search(r"^#\s+(.+?)\s*$", body, re.M)
     description = fields.get("description") or _scalar(title.group(1) if title else name)
     return _page(["trigger: always_on", "description: " + description], body)
-
-
-def skill_name(name: str) -> str:
-    return "torque-" + name if name in BUILTIN_COMMANDS else name
 
 
 def skill(name: str, text: str) -> str | None:
@@ -83,9 +97,9 @@ def skill(name: str, text: str) -> str | None:
     fields, body = _split(text)
     if not fields.get("description"):
         return None
-    shown = skill_name(name)
-    body = body.replace(f"# /{name}\n", f"# /{shown}\n", 1).replace("$ARGUMENTS", INPUT_NOTE)
-    return _page(["name: " + shown, "description: " + fields["description"]], body)
+    # The recipe's own heading (`# /help`) is renamed with every other mention.
+    body = _commands(body).replace("$ARGUMENTS", INPUT_NOTE)
+    return _page(["name: " + skill_name(name), "description: " + fields["description"]], body)
 
 
 def _tools(declared: str | None) -> list[str]:
@@ -105,7 +119,7 @@ def agent(name: str, text: str) -> str | None:
         return None
     header = ["name: " + (fields.get("name") or name), "description: " + fields["description"], "tools:"]
     header += ["  - " + tool for tool in _tools(fields.get("tools"))] + ["mainAgent: false", "subagent: true"]
-    return _page(header, body)
+    return _page(header, _commands(body))
 
 
 _GROUPS = (("rules", rule, ".agents/rules/{}.md"),

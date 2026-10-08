@@ -18,6 +18,7 @@ import subprocess
 from . import __version__
 from . import cli_approval
 from . import delegation
+from . import hosts
 from . import workspace as ws
 
 DELEGATES = {
@@ -608,7 +609,7 @@ def _antigravity_hook_report(root: Path, mode: str) -> dict:
                   "recommended_entry": agy.hook_entry(sys.executable)}
     matchers: list[str] = []
     try:
-        data = json.loads((root / ".agents" / "hooks.json").read_text(encoding="utf-8"))
+        data = json.loads((root / hosts.ANTIGRAVITY.hook_file).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = None
     for spec in (data.values() if isinstance(data, dict) else []):
@@ -715,10 +716,13 @@ def _doctor(args: argparse.Namespace) -> int:
               "optional_modules": {name: importlib.util.find_spec(name) is not None
                                    for name in ("yaml", "playwright", "PIL")},
               "org_calls": False, "workspace": None, "client": None}
+    in_use = hosts.DEFAULT
     if args.workspace:
         root, firm = ws.load_workspace(args.workspace)
         report["workspace"] = {"path": str(root), "name": firm["name"], "profile": firm["profile"]}
-        report["ai_access"] = _gate_hook_report(Path(root))
+        # The host workspace.json names is the one whose hook decides readiness.
+        in_use = hosts.for_workspace(firm)
+        report["ai_access"] = {**_gate_hook_report(Path(root)), "host": in_use.key}
         if args.client:
             client, _, data = ws.load_client(root, args.client)
             # Reading the selected journal also checks its local format, without evaluating claims.
@@ -744,33 +748,50 @@ def _doctor(args: argparse.Namespace) -> int:
     report["ready"] = report["capabilities"][selected]["local_dependencies_ready"]
     report["next_actions"] = []
     access = report.get("ai_access")
+    claude_in_use = in_use is hosts.CLAUDE
+
+    def claude_finding(text: str, blocks: bool = True) -> None:
+        """A finding about Claude Code's hook. It decides readiness only when Claude
+        Code is the workspace's host; under another host it is advice."""
+        if claude_in_use:
+            if blocks:
+                report["ready"] = False
+            report["next_actions"].append(text)
+        else:
+            report["next_actions"].append("Claude Code (not this workspace's host): " + text)
+
     if access and access["mode"] == "build-only":
         hook = access["hook"]
         if not hook["verified"]:
-            report["ready"] = False
             if not hook["configured"]:
-                report["next_actions"].append(
-                    "Build-only mode is set but no torque.gate hook is wired in this workspace's "
-                    ".claude/settings.json, so nothing is blocked. Add the hook from docs/ai-access.md "
-                    "with this command: " + hook["recommended_command"])
+                if claude_in_use:
+                    claude_finding(
+                        "Build-only mode is set but no torque.gate hook is wired in this workspace's "
+                        ".claude/settings.json, so nothing is blocked. Add the hook from docs/ai-access.md "
+                        "with this command: " + hook["recommended_command"])
+                else:
+                    report["next_actions"].append(
+                        "Claude Code reads .claude/settings.json, never .agents/hooks.json, and no torque.gate "
+                        "hook is wired there, so a session started with Claude Code in this workspace is not "
+                        "gated. If Claude Code is used here, add the hook from docs/ai-access.md with this "
+                        "command: " + hook["recommended_command"])
             elif hook["probe_error"]:
-                report["next_actions"].append(
+                claude_finding(
                     "The torque.gate hook could not run the gate (" + hook["probe_error"] + "), so it "
                     "blocks every tool call, ordinary work included. Point the hook at an interpreter "
                     "with Torque installed, using: " + hook["recommended_command"])
             else:
-                report["next_actions"].append(
+                claude_finding(
                     f"The torque.gate hook did not block a client-path probe (exit {hook['probe_exit']}), "
                     "so build-only mode is not in force. Point the hook at an interpreter with Torque "
                     "installed, using: " + hook["recommended_command"])
         else:
             if not hook["fail_closed_shim"]:
-                report["next_actions"].append(
+                claude_finding(
                     "The torque.gate hook works, but fails open if its interpreter later loses Torque. "
-                    "Switch to the fail-closed hook command: " + hook["recommended_command"])
+                    "Switch to the fail-closed hook command: " + hook["recommended_command"], blocks=False)
             if not hook["isolated"]:
-                report["ready"] = False
-                report["next_actions"].append(
+                claude_finding(
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
                     "sitecustomize.py written into the workspace can replace the gate. Switch to: "
                     + hook["recommended_command"])
@@ -778,15 +799,21 @@ def _doctor(args: argparse.Namespace) -> int:
                 or t > HOOK_TIMEOUT]
         if hook["configured"] and slow:
             from . import gate
-            report["next_actions"].append(
+            claude_finding(
                 f'Set "timeout": {HOOK_TIMEOUT} on the torque.gate hook entry (it has '
                 + ("none" if slow[0] is None else repr(slow[0])) + "). A hook that times out lets the call "
                 f"proceed; the gate blocks by itself once its {gate.GATE_TIME_BUDGET:g}-second budget runs out, "
-                "well inside that timeout.")
+                "well inside that timeout.", blocks=False)
         agy = access["antigravity_hook"]
         entry = ("the torque-gate entry docs/ai-access.md shows, with this command: " + agy["recommended_command"])
         if not agy["configured"]:
-            if (Path(root) / ".agents").is_dir():
+            if in_use is hosts.ANTIGRAVITY:
+                report["ready"] = False
+                report["next_actions"].append(
+                    "workspace.json names Antigravity as this workspace's host, but no torque.gate_antigravity "
+                    "hook is registered in .agents/hooks.json, so a session started with Antigravity here is "
+                    "not gated and build-only mode is not in force. Add to .agents/hooks.json " + entry)
+            elif (Path(root) / ".agents").is_dir():
                 report["next_actions"].append(
                     "Antigravity reads .agents/hooks.json, never .claude/settings.json, and no "
                     "torque.gate_antigravity hook is registered there, so a session started with Antigravity "
@@ -846,14 +873,12 @@ def _doctor(args: argparse.Namespace) -> int:
                 "must stay untracked: low-level git commands can read them, so the gate blocks every git "
                 "command here except git status without -v/--verbose and git rm --cached of paths under "
                 "clients/. Run git rm -r --cached clients and keep clients/ ignored.")
-        if hook["disabled_by"]:
-            report["ready"] = False
-            report["next_actions"].append(
+        if hook["disabled_by"] and (claude_in_use or hook["configured"]):
+            claude_finding(
                 "Claude Code will not run this workspace's hook: " + "; ".join(hook["disabled_by"])
                 + ". Remove disableAllHooks (or allowManagedHooksOnly) so the torque.gate hook runs.")
         if hook["configured"] and not hook["matcher_covers_tools"]:
-            report["ready"] = False
-            report["next_actions"].append(
+            claude_finding(
                 'The hook matcher does not cover every tool call. Set it to ".*": the gate checks '
                 "command-running tools such as Monitor and blocks tools it does not recognise, but only "
                 "for the calls the matcher sends it.")
@@ -865,6 +890,21 @@ def _doctor(args: argparse.Namespace) -> int:
             report["ready"] = False
         report["next_actions"] += [f"Connected mode: {problem.rstrip('.')}." for problem in connected["problems"]]
         report["next_actions"] += [f"Connected mode (advice): {note.rstrip('.')}." for note in connected["advice"]]
+        if not claude_in_use:
+            # doctor_connected reads Claude Code's hook, its permission rules and its
+            # answer format; nothing above says an Antigravity session is gated.
+            report["ready"] = False
+            agy = access["antigravity_hook"]
+            if not agy["configured"]:
+                report["next_actions"].append(
+                    "workspace.json names Antigravity as this workspace's host, but no torque.gate_antigravity "
+                    "hook is registered in .agents/hooks.json, so a session started with Antigravity here is "
+                    "not gated. Add to .agents/hooks.json the torque-gate entry docs/ai-access.md shows, with "
+                    "this command: " + agy["recommended_command"])
+            report["next_actions"].append(
+                f"workspace.json names {in_use.name} as this workspace's host. Doctor checks connected mode for "
+                "Claude Code only (its hook, its permission rules and the probes above), so it cannot say this "
+                "workspace is ready and reports it as not ready. See docs/hosts.md.")
     if report["client"] and report["client"]["evidence_problems"]:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
@@ -900,19 +940,34 @@ def _doctor(args: argparse.Namespace) -> int:
             if access["mode"] == "build-only":
                 h = access["hook"]
                 ok = h["verified"] and h["isolated"] and h["matcher_covers_tools"] and not h["disabled_by"]
-                state = ("hook command blocked a standalone probe; settings checked, host enforcement "
-                         "not tested" if ok else "HOOK NOT IN FORCE")
-                print(f"AI access: build-only ({state})")
                 a = access["antigravity_hook"]
-                if not a["configured"]:
-                    print("Antigravity hook: not registered in .agents/hooks.json")
-                elif a["verified"] and a["isolated"] and a["matcher_covers_tools"] and not a["disabled"]:
-                    print("Antigravity hook: blocked a standalone probe; host enforcement not tested")
+                a_ok = a["verified"] and a["isolated"] and a["matcher_covers_tools"] and not a["disabled"]
+                if claude_in_use:
+                    state = ("hook command blocked a standalone probe; settings checked, host enforcement "
+                             "not tested" if ok else "HOOK NOT IN FORCE")
+                    print(f"AI access: build-only ({state})")
+                    if not a["configured"]:
+                        print("Antigravity hook: not registered in .agents/hooks.json")
+                    elif a_ok:
+                        print("Antigravity hook: blocked a standalone probe; host enforcement not tested")
+                    else:
+                        print("Antigravity hook: NOT IN FORCE")
                 else:
-                    print("Antigravity hook: NOT IN FORCE")
+                    state = ("hook command blocked a standalone probe; host enforcement not tested"
+                             if a["configured"] and a_ok else "HOOK NOT IN FORCE")
+                    print(f"AI access: build-only, host {in_use.name} ({state})")
+                    if not h["configured"]:
+                        print("Claude Code hook: not wired in .claude/settings.json")
+                    elif ok:
+                        print("Claude Code hook: blocked a standalone probe; settings checked, host enforcement "
+                              "not tested")
+                    else:
+                        print("Claude Code hook: NOT IN FORCE")
             elif access["mode"] == "connected":
                 connected = access["connected"]
                 state = "ready" if connected["ready"] else "NOT READY"
+                if not claude_in_use:
+                    state = f"NOT CHECKED under {in_use.name}; the checks below are Claude Code's"
                 print(f"AI access: connected, approval required ({connected['approval_verify']}; {state})")
                 from . import doctor_connected
                 doctor_connected.print_report(connected)

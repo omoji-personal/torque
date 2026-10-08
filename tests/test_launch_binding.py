@@ -401,10 +401,103 @@ def test_launch_record_kinds_and_shape(tmp_path, monkeypatch):
     for record in (human, probe):
         assert launch.LAUNCH_ID.fullmatch(record["id"])
         assert json.loads((consumed(root) / f"{record['id']}.launch").read_text()) == record
-        assert set(record) == {"schema", "id", "kind", "via", "client", "workspace", "pid", "pid_started",
+        # The record names its host; one written without a host given is Claude Code's.
+        assert set(record) == {"schema", "id", "kind", "via", "client", "workspace", "host", "pid", "pid_started",
                                "created_at"}
+        assert record["host"] == "claude" and record["schema"] == "torque.launch/1"
     with pytest.raises(ws.WorkspaceError, match="human or probe"):
         launch.write_launch_record(root, "Acme", "ai")
+
+
+# The host a delegated launch starts.
+
+def test_a_delegated_launch_starts_the_named_host_with_that_hosts_allowlist(tmp_path, monkeypatch, env_guard):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    monkeypatch.chdir(root)
+    ran = []
+    # Claude Code's options are not Antigravity's: nothing is claimed and nothing starts.
+    for words in (PASS, ["-p", "--permission-mode", "default"], ["--dangerously-skip-permissions"]):
+        with pytest.raises(delegation.Refusal) as info:
+            cli_approval.launch(root, "Acme", words, execvp=lambda *a: ran.append(a), delegated=True,
+                                binding=binding["id"], host="antigravity", **CLEAN)
+        refusal(info, "launch-flag-refused")
+        assert "to agy" in str(info.value)
+    assert not ran and not (consumed(root) / f"{binding['id']}.launch").exists()
+    words = ["-p", "summarize the open cases", "--model", "m", "--add-dir", str(tmp_path)]
+    cli_approval.launch(root, "Acme", words, execvp=lambda program, args: ran.append((program, args)),
+                        delegated=True, binding=binding["id"], host="antigravity", **CLEAN)
+    assert ran == [("agy", ["agy", *words])]
+    record = json.loads((consumed(root) / f"{binding['id']}.launch").read_text())
+    assert (record["host"], record["via"], record["binding_id"]) == ("antigravity", "binding", binding["id"])
+
+
+def test_a_delegated_launch_starts_the_workspaces_host_by_default(tmp_path, monkeypatch, env_guard):
+    root = delegated_workspace(tmp_path, monkeypatch)
+    config = json.loads((root / "workspace.json").read_text())
+    (root / "workspace.json").write_text(json.dumps({**config, "host": "antigravity"}))
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    monkeypatch.chdir(root)
+    ran = []
+    with pytest.raises(delegation.Refusal) as info:
+        cli_approval.launch(root, "Acme", ["-p", "--verbose"], execvp=lambda *a: ran.append(a), delegated=True,
+                            binding=binding["id"], **CLEAN)
+    refusal(info, "launch-flag-refused")
+    cli_approval.launch(root, "Acme", ["-p", "hello"], execvp=lambda program, args: ran.append((program, args)),
+                        delegated=True, binding=binding["id"], **CLEAN)
+    assert ran == [("agy", ["agy", "-p", "hello"])]
+    assert json.loads((consumed(root) / f"{binding['id']}.launch").read_text())["host"] == "antigravity"
+
+
+def test_a_binding_launch_record_binds_only_under_its_hosts_hook(tmp_path, monkeypatch):
+    from torque import hosts
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    started = time.strftime("%a %b %d %H:%M:%S %Y", time.localtime(time.time()))
+    real = launch.process_start
+    monkeypatch.setattr(launch, "process_start",
+                        lambda pid, *, run=None: started if pid == os.getpid() else real(pid, run=run))
+    record = launch.claim_binding(root, "Acme", binding["id"], host="antigravity", **CLEAN)
+    env = {"TORQUE_CLIENT": "acme", "TORQUE_LAUNCH": record["id"]}
+    assert launch.verify_launch(root, {**env, hosts.HOOK_HOST_ENV: "antigravity"}) == ("acme", "")
+    slug, why = launch.verify_launch(root, env)
+    assert slug is None and "written for Antigravity" in why
+
+
+def test_an_unattended_antigravity_session_is_refused_where_the_gate_would_ask(tmp_path, monkeypatch, capsys):
+    """Under `claude -p` an ask no one answers is a refusal. It is not known that
+    `agy -p` treats one the same way, so the Antigravity hook refuses itself."""
+    import io
+    import sys
+    from torque import gate_antigravity, hosts
+    root = delegated_workspace(tmp_path, monkeypatch)
+    binding = launch.create_binding(root, "Acme", model_id=MODEL, **APPROVER)
+    as_agent(monkeypatch)
+    started = time.strftime("%a %b %d %H:%M:%S %Y", time.localtime(time.time()))
+    real = launch.process_start
+    monkeypatch.setattr(launch, "process_start",
+                        lambda pid, *, run=None: started if pid == os.getpid() else real(pid, run=run))
+    record = launch.claim_binding(root, "Acme", binding["id"], host="antigravity", **CLEAN)
+    # The hook writes the last two in its own process; set here so the teardown removes them.
+    for name, value in (("TORQUE_CLIENT", "acme"), ("TORQUE_LAUNCH", record["id"]), ("CLAUDE_PROJECT_DIR", ""),
+                        (hosts.HOOK_HOST_ENV, "")):
+        monkeypatch.setenv(name, value)
+
+    def call(command):
+        data = {"toolCall": {"name": "run_command", "args": {"CommandLine": command}},
+                "workspacePaths": [str(root)], "conversationId": "c1", "stepIdx": 1}
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(data).encode("utf-8")),
+                                                           encoding="utf-8"))
+        assert gate_antigravity.main() == 0
+        return json.loads(capsys.readouterr().out)
+    refused = call("python3 tools/fix.py")
+    assert refused["decision"] == "deny" and "cannot check" in refused["reason"]
+    assert refused["reason"].endswith("there is no one to ask and the call is refused.")
+    # A call the gate has no objection to is left to Antigravity as before.
+    assert call("sf data query -q 'SELECT Id FROM Account' -o acme-dev")["decision"] == "ask"
 
 
 def test_launch_record_creates_missing_folders_without_remoding(tmp_path, monkeypatch):

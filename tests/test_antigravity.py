@@ -79,6 +79,38 @@ def test_recipe_named_like_a_builtin_command_is_prefixed(name):
     assert f"# /torque-{name}\n" in text and f"# /{name}\n" not in text
 
 
+COMMANDS = "Load `/context`, then run /help (or /undo). End with /context.\n"
+NOT_COMMANDS = ("Keep project/context and connection/context; see schemas/help and https://help.example.com/undo,\n"
+                "/context/notes.md, ~/context, ./help, $(pwd)/undo, /context.md, /contextual and /session-save.\n")
+
+
+def test_a_mention_of_a_renamed_recipe_points_at_its_antigravity_name():
+    source = COMMAND.format(name="session-resume").replace("Steps.\n", COMMANDS + NOT_COMMANDS)
+    text = antigravity.skill("session-resume", source)
+    assert "Load `/torque-context`, then run /torque-help (or /torque-undo). End with /torque-context.\n" in text
+    # A path, an address, another recipe and a longer word are left as they are.
+    assert NOT_COMMANDS in text
+    # Rules and worker roles are read under Antigravity too.
+    assert "Use `/torque-context` first.\n" in antigravity.rule("x", "# X\n\nUse `/context` first.\n")
+    assert "Offer /torque-undo.\n" in antigravity.agent("worker", WORKER + "Offer /undo.\n")
+    # Doing it twice changes nothing more.
+    assert antigravity._commands(antigravity._commands(COMMANDS)) == antigravity._commands(COMMANDS)
+
+
+def test_the_packaged_resume_recipe_names_the_renamed_context_command(tmp_path):
+    root = ws.init_workspace(tmp_path / "firm", "Example firm")
+    text = (root / ".agents/skills/session-resume/SKILL.md").read_text(encoding="utf-8")
+    assert "Load `/torque-context`, then" in text and "`/context`" not in text
+    # Claude Code's copy keeps the name the recipe has there.
+    assert "Load `/context`, then" in (root / ".claude/commands/session-resume.md").read_text(encoding="utf-8")
+    # No generated file names one of Antigravity's own commands as a Torque recipe.
+    from importlib import resources
+    generated = antigravity.surface(resources.files("torque").joinpath("data"))
+    assert ".agents/skills/torque-context/SKILL.md" in generated
+    for relative, (made, _source) in generated.items():
+        assert not antigravity._BUILTIN_MENTION.search(made), relative
+
+
 @pytest.mark.parametrize("declared,expected", [
     (None, list(antigravity.TOOLS.values())),
     ("tools: Read, Grep, WebFetch\n", ["view_file", "grep_search"]),
