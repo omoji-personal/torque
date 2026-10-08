@@ -252,8 +252,12 @@ def _get_org_id_18(target_org: str) -> str | None:
     """Best-effort org_id_18 resolution via sf CLI."""
     import json
     import subprocess
+    try:  # the shared launcher finds sf where Windows installs it as a batch file
+        from jsc_common.tools import run as run_tool
+    except ImportError:
+        run_tool = subprocess.run
     try:
-        proc = subprocess.run(
+        proc = run_tool(
             ["sf", "org", "display", "--target-org", target_org, "--json"],
             capture_output=True, text=True, timeout=10,
         )

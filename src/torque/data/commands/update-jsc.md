@@ -9,7 +9,7 @@ Continue the old update command name through the Torque update workflow.
 **Interface:** Compatibility recipe. A slash command is an assistant instruction, not a separate shell executable.
 
 This is a compatibility name for `/update-torque`. Follow that recipe for the actual
-Torque installation or checkout. It does not update the historical JusticeServer
+Torque installation or checkout. It does not update the earlier toolkit's
 directories, use an employer GitHub account, download a token-bearing archive or
 restore the old two-clone topology.
 

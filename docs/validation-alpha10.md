@@ -10,7 +10,7 @@ do not qualify alpha 10's changed bytes.
 - **Offline suite (macOS, Python 3.12, local):** 1123 pytest tests and 154 subtests pass,
   and the 12 standalone fixture suites complete. Salesforce executables were replaced by
   unavailable stubs, and no live org or provider call was made.
-- **Wheel and sdist:** the surface checks pass: 53 recipes and 42 legacy JSC command mappings,
+- **Wheel and sdist:** the surface checks pass: 53 recipes and 42 legacy command mappings,
   compared name by name with the table in `workflow-continuity.md`. A clean wheel
   installation passes the installed smoke script.
 - **CI:** `Validate Torque` is green on all 9 cells (Ubuntu, macOS and Windows, each on

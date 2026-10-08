@@ -137,8 +137,8 @@ def main():
         scratch = Path(temporary)
         hitfile = scratch / "unexpected-live-cli.txt"
         env = offline_environment(root, scratch)
-        # JSC contains pytest tests and standalone fixture harnesses. The latter
-        # report failures by process exit and must not be silently just imported.
+        # The carried packages contain pytest tests and standalone fixture harnesses.
+        # The latter report failures by process exit and must not be silently just imported.
         standalone = []
         for path in sorted((root / "packages").glob("*/tests/test*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))

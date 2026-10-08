@@ -59,7 +59,7 @@ def exit_code(score: dict, write_gate_ok: bool, teardown_leak: bool) -> int:
 def render_md(cells, score) -> str:
     """Markdown report: matrix grid + honest-coverage section."""
     lines = [
-        "# JSC Gold-Standard Suite Report",
+        "# Gold-Standard Suite Report",
         "",
         f"**Score: {score['score']}/100** — "
         f"P0={score['p0']} P1={score['p1']} P2={score['p2']} counted={score['counted']} "
@@ -91,8 +91,8 @@ def render_html(cells, score) -> str:
     )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
-        "<title>JSC Gold-Standard Suite Report</title></head><body>"
-        "<h1>JSC Gold-Standard Suite Report</h1>"
+        "<title>Gold-Standard Suite Report</title></head><body>"
+        "<h1>Gold-Standard Suite Report</h1>"
         f"<p><strong>Score: {score['score']}/100</strong> "
         f"(P0={score['p0']} P1={score['p1']} P2={score['p2']} counted={score['counted']})</p>"
         "<table border='1'><tr><th>Flow</th><th>Profile</th><th>Status</th></tr>"

@@ -15,6 +15,11 @@ from .extract_frames import extract_frames, SENSITIVITY_PRESETS
 from .parse_transcript import parse_transcript
 from .correlate import correlate
 
+try:  # the shared launcher passes each argument literally to gemini's Windows batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -123,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
                 frame_path = str(output_dir / f.path)
                 print(f"  Analyzing frame {idx}/{total_frames} via Gemini...", file=sys.stderr)
                 try:
-                    gemini_result = subprocess.run(
+                    gemini_result = run_tool(
                         [
                             gemini_path, "-p",
                             "Describe what is shown in this meeting screenshot in 1-2 sentences. "

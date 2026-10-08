@@ -122,12 +122,48 @@ def _file_sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Windows refuses a file path of 260 characters or more, and a folder path of 248
+# or more, unless long paths are enabled on the PC.
+_WINDOWS_FILE_LIMIT, _WINDOWS_FOLDER_LIMIT = 259, 247
+
+
+def _long_paths_enabled() -> bool:
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            return winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 1
+    except (ImportError, OSError):
+        return False
+
+
+def path_limit_problem(source_dir: Path, target: Path, limited: bool | None = None) -> str:
+    """Why the tree under source_dir cannot be copied to target on this PC, or "".
+    Retrieved metadata is deep (objects/NAME/fields/NAME.field-meta.xml) and the
+    evidence folder adds to it, so a copy can pass Windows' path limit half way."""
+    if limited is None:
+        limited = os.name == "nt" and not _long_paths_enabled()
+    if not limited:
+        return ""
+    base = len(str(target)) + 1
+    worst = max((base + len(str(path.relative_to(source_dir)))
+                 - (_WINDOWS_FOLDER_LIMIT if path.is_dir() else _WINDOWS_FILE_LIMIT)
+                 for path in source_dir.rglob("*")), default=0)
+    if worst <= 0:
+        return ""
+    return (f"the before-state would pass Windows' path limit by {worst} character(s): its files go under "
+            f"{target}, and long paths are not enabled on this PC. Nothing was stored. Use a shorter workspace "
+            "path, or have long paths enabled in Windows (LongPathsEnabled)")
+
+
 def _store(workspace, client, change_id, source_dir: Path, job: str | None, how: str,
            org_alias: str | None = None, org_id_18: str | None = None) -> dict:
     root, record = changes.load_change(workspace, client, change_id)
     evidence = ws._inside(root, root / "evidence")
-    evidence.mkdir(mode=0o700, exist_ok=True)
     target = ws._inside(root, evidence / ("before-" + uuid4().hex))
+    problem = path_limit_problem(source_dir, target)
+    if problem:
+        raise ws.WorkspaceError(problem)
+    evidence.mkdir(mode=0o700, exist_ok=True)
     shutil.copytree(source_dir, target, symlinks=True)
     files = []
     for path in sorted(target.rglob("*")):
@@ -230,6 +266,9 @@ def import_before_state(workspace, client, change_id, source, sobject: str | Non
 
 
 def _sf_json(run, cmd: list[str], timeout: int) -> dict:
+    if run is None:
+        # The shared launcher finds sf where Windows installs it as a batch file.
+        from jsc_common.tools import run
     try:
         done = run(cmd, capture_output=True, text=True, timeout=timeout)
         data = json.loads(done.stdout or "{}")
@@ -241,7 +280,7 @@ def _sf_json(run, cmd: list[str], timeout: int) -> dict:
     return data
 
 
-def capture_metadata(workspace, client, change_id, org, components: list[str], run=subprocess.run,
+def capture_metadata(workspace, client, change_id, org, components: list[str], run=None,
                      org_id_18: str | None = None) -> dict:
     """Retrieve the named components now, as their own recorded step."""
     ws.require_writable(workspace)
@@ -263,7 +302,7 @@ def _record_file(sobject: str, record_id: str) -> str:
     return f"{sobject}__{record_id}.json"
 
 
-def capture_records(workspace, client, change_id, org, records: list[str], run=subprocess.run,
+def capture_records(workspace, client, change_id, org, records: list[str], run=None,
                     org_id_18: str | None = None) -> dict:
     """Read each record now (Object:Id), as its own recorded step."""
     ws.require_writable(workspace)

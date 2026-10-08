@@ -43,6 +43,27 @@ def test_refuses_agent_ancestor():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="ancestry is checked on macOS and Linux")
+@pytest.mark.parametrize("command,name", [("/usr/local/bin/agy", "agy"), ("agy", "agy"),
+                                          ("/opt/Antigravity/antigravity", "antigravity"),
+                                          ("/Applications/Antigravity.app/Contents/MacOS/Antigravity", "antigravity")])
+def test_refuses_an_antigravity_ancestor(command, name):
+    result = check(ancestors=lambda: [(10, "zsh"), (9, command)])
+    assert not result.ok and result.reason == f"an agent process ({name}) is an ancestor of this command"
+    assert presence.agent_reason({}, lambda: [(10, "zsh"), (9, command)]) == result.reason
+
+
+@pytest.mark.skipif(os.name == "nt", reason="ancestry is checked on macOS and Linux")
+def test_an_ordinary_ancestry_is_not_an_agent_session():
+    assert check(ancestors=lambda: [(12, "zsh"), (11, "tmux: server"), (10, "/usr/bin/login"), (9, "sshd")]).ok
+
+
+def test_markers_come_from_the_host_registry():
+    from torque import hosts
+    assert presence.AGENT_ENV == hosts.env_markers() == ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+    assert presence.AGENT_PROCESS_MARKERS == hosts.process_markers() == ("claude", "agy", "antigravity")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="ancestry is checked on macOS and Linux")
 def test_unknown_ancestry_fails_closed():
     assert not check(ancestors=lambda: [(-1, "<unknown>")]).ok
 

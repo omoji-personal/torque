@@ -1,13 +1,14 @@
 """
 jsc-probes CLI entry point.
 
-Adopted into JusticeserverClaude (JSC) 2026-05-04 from claudeblazer (Apache-2.0).
+Adopted into the earlier toolkit 2026-05-04 from claudeblazer (Apache-2.0).
 TAA Phase 5 P2-2.
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import re
 import sys
@@ -63,6 +64,36 @@ def _api_version(class_path: Path, override: str | None) -> str:
     return version
 
 
+def _publish_new(temporary: Path, path: Path) -> None:
+    """Name the finished file without replacing an existing one (FileExistsError).
+
+    A hard link does it in one step. A filesystem without hard links (Google
+    Drive for desktop, exFAT, some network shares) refuses the link; there
+    Windows renames, which never replaces a file, and elsewhere the name is
+    claimed with an exclusive create before the finished file moves onto it.
+    The same steps as torque.workspace.publish_new, kept here so this package
+    still runs by itself."""
+    try:
+        os.link(temporary, path)
+        return
+    except FileExistsError:
+        raise
+    except OSError as exc:
+        refused = (errno.EPERM, errno.EACCES, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS, errno.EMLINK)
+        if getattr(exc, "winerror", None) not in (1, 50) and exc.errno not in refused:
+            raise
+    if os.name == "nt":
+        os.rename(temporary, path)
+        return
+    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+    try:
+        os.replace(temporary, path)
+    except OSError:
+        if path.stat().st_size == 0:
+            path.unlink()
+        raise
+
+
 def _write_pair(files: dict[Path, str], force: bool) -> None:
     # Validate both before touching either. Exclusive links also detect an output
     # created between validation and publication, without following symlinks.
@@ -85,8 +116,8 @@ def _write_pair(files: dict[Path, str], force: bool) -> None:
             if force:
                 os.replace(temporary, path)
             else:
-                os.link(temporary, path)
-                published.append((path, temporary.stat()))
+                _publish_new(temporary, path)
+                published.append((path, path.stat()))
     except Exception:
         # On no-clobber publication failure, remove only files this call created
         # and only while they still refer to this call's exact inode.

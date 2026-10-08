@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 import hashlib
 from importlib import resources
 import json
@@ -111,6 +112,63 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
+# What os.link answers on a filesystem without hard links (Google Drive for
+# desktop, exFAT, some network shares): Windows ERROR_INVALID_FUNCTION and
+# ERROR_NOT_SUPPORTED; elsewhere the "not permitted" and "not supported" family.
+_NO_LINK_WINERRORS = (1, 50)
+_NO_LINK_ERRNOS = frozenset(getattr(errno, name) for name in
+                            ("EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EMLINK")
+                            if hasattr(errno, name))
+
+
+def links_unsupported(exc: OSError) -> bool:
+    """True when os.link failed because the filesystem cannot make hard links."""
+    return not isinstance(exc, FileExistsError) and (
+        getattr(exc, "winerror", None) in _NO_LINK_WINERRORS or exc.errno in _NO_LINK_ERRNOS)
+
+
+def publish_new(temporary, path, *, dir_fd: int | None = None) -> None:
+    """Give the complete file `temporary` the name `path` in the same folder,
+    never replacing an existing file: FileExistsError when `path` exists.
+
+    A hard link does that in one step. Where the filesystem refuses hard links,
+    Windows renames (its rename never replaces a file); elsewhere the name is
+    claimed with an exclusive create and the complete file is moved onto that
+    empty claim. `dir_fd` makes both names relative to an open folder (POSIX)."""
+    at = {} if dir_fd is None else {"dir_fd": dir_fd}
+    both = {} if dir_fd is None else {"src_dir_fd": dir_fd, "dst_dir_fd": dir_fd}
+    try:
+        os.link(temporary, path, **both, **({} if dir_fd is None else {"follow_symlinks": False}))
+        return
+    except OSError as exc:
+        if not links_unsupported(exc):
+            raise
+    if os.name == "nt":
+        os.rename(temporary, path)
+        return
+    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, **at))
+    try:
+        os.replace(temporary, path, **both)
+    except OSError:
+        # Withdraw this call's own empty claim; anything else there is not ours.
+        try:
+            if os.stat(path, follow_symlinks=False, **at).st_size == 0:
+                os.unlink(path, **at)
+        except OSError:
+            pass
+        raise
+
+
+def command_text(argv: list[str]) -> str:
+    """A command line the user can paste into their own shell: POSIX quoting, or on
+    Windows the quoting cmd.exe and PowerShell both read (shlex's single quotes are
+    literal characters in cmd.exe)."""
+    if os.name == "nt":
+        import subprocess
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
+
+
 def atomic_write_new(path: Path, text: str) -> None:
     """Publish one complete private file atomically, without replacing an existing file."""
     if not path.parent.is_dir():
@@ -126,7 +184,7 @@ def atomic_write_new(path: Path, text: str) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         try:
-            os.link(temporary, path)
+            publish_new(temporary, path)
         except FileExistsError as exc:
             raise WorkspaceError(f"file already exists; choose a new path: {path}") from exc
         _fsync_dir(path.parent)
@@ -285,6 +343,13 @@ def _materialize_workflows(root: Path) -> None:
     for group in ("commands", "rules", "skills", "agents"):
         copy_tree(data.joinpath(group), root / ".claude" / group)
     copy_tree(data.joinpath("skills"), root / ".agents" / "skills")
+    # Antigravity reads .agents/ only: the same rules, recipes and worker roles in its format.
+    from . import antigravity
+    for relative, (text, _source) in antigravity.surface(data).items():
+        target = _inside(root, root / relative)
+        _inside(root, target.parent).mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not target.exists():
+            atomic_write_new(target, text)
 
 
 def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Path:
@@ -347,7 +412,10 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
         "local .claude/commands/NAME.md when present, then the packaged recipe as fallback. "
         "Without a selected workspace, show reads the packaged reference. These recipes support conversational work; "
         "use the user's actual authorization and existing Salesforce access for operations. "
-        "No Torque hooks, approval tokens or global sf replacement are required.\n\n"
+        "No Torque hooks, approval tokens or global sf replacement are required. "
+        "Antigravity offers the same recipes as skills and slash commands from .agents/skills/; "
+        "its own /help, /context and /undo keep those names, so those three recipes are "
+        "/torque-help, /torque-context and /torque-undo.\n\n"
         "Keep client files in clients/SLUG/. Use --workspace . --client SLUG when calling "
         "stateful native workflows. Keep internal work (not for a client) in initiatives/SLUG/, "
         "created with `torque initiative add NAME --workspace .`, and select it with --initiative SLUG. "
@@ -512,10 +580,90 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
         # 0644 lets that account read it; the harness chowns it to root afterward.
         config_path.chmod(0o644)
     _connected_rule(root, mode == "connected", delegated=delegated)
+    if not delegated:
+        # A delegated setup step writes only the files delegation.SETUP_WRITES lists;
+        # there, `torque workspace upgrade` adds the Antigravity copy of the rule.
+        _mode_rules(root, mode)
     return root
 
 
 CONNECTED_RULE = "production-approval.md"
+BUILD_ONLY_RULE = "build-only.md"
+# The rule file a mode adds to each host's playbook: mode -> (its name there, where
+# its packaged text is under torque/data). Full mode adds none.
+MODE_RULES = {"connected": (CONNECTED_RULE, ("connected", CONNECTED_RULE)),
+              "build-only": (BUILD_ONLY_RULE, (BUILD_ONLY_RULE,))}
+# Claude Code's copy of the connected rule keeps the life it had before the other
+# mode rules existed: `_connected_rule` writes and removes it, and `torque
+# workspace upgrade` does not track it.
+_CONNECTED_RULE_PATH = ".claude/rules/" + CONNECTED_RULE
+
+
+def access_mode(config: dict) -> str:
+    """The mode the gate enforces for this workspace.json: `full` when it names
+    none, otherwise the gate's own reading of the value (what is neither full nor
+    connected with required approval is build-only)."""
+    from . import gate
+    return gate._resolve_ai_access(config["ai_access"], config.get("approval")) if "ai_access" in config else "full"
+
+
+def mode_rule_paths() -> frozenset[str]:
+    """Every workspace path `mode_rules` can name, whatever the mode."""
+    from . import hosts
+    return frozenset(f"{host.playbook}/rules/{name}" for host in hosts.HOSTS
+                     for name, _ in MODE_RULES.values()) - {_CONNECTED_RULE_PATH}
+
+
+def mode_rules(mode: str, data=None) -> dict[str, tuple[str, str]]:
+    """{workspace path: (text, packaged source)} for the rule files `mode` adds
+    beside Claude Code's connected rule: the build-only rule in each host's
+    playbook, and the Antigravity copy of the connected rule. Empty in full mode.
+    `data` is the packaged data folder (torque/data)."""
+    if mode not in MODE_RULES:
+        return {}
+    from . import antigravity, hosts
+    name, packaged = MODE_RULES[mode]
+    data = resources.files("torque").joinpath("data") if data is None else data
+    text = data.joinpath(*packaged).read_text(encoding="utf-8")
+    source = "torque/data/" + "/".join(packaged)
+    out: dict[str, tuple[str, str]] = {}
+    for host in hosts.HOSTS:
+        relative = f"{host.playbook}/rules/{name}"
+        if relative == _CONNECTED_RULE_PATH:
+            continue
+        if host is hosts.ANTIGRAVITY:
+            # Antigravity discards a rule without its header (antigravity.rule).
+            copy = antigravity.rule(name[:-len(".md")], text)
+            if copy is not None:
+                out[relative] = (copy, source + " (Antigravity copy)")
+        else:
+            out[relative] = (text, source)
+    return out
+
+
+def _mode_rules(root: Path, mode: str) -> None:
+    """Write the rule files `mode` adds (`mode_rules`) and remove those of the
+    other modes, as `_connected_rule` does for Claude Code's connected rule: a
+    rule that says what a mode means stays in a playbook only while the workspace
+    is in that mode. The rule tells the agent what to expect; the gate, not the
+    rule, is what blocks a call."""
+    wanted = mode_rules(mode)
+    for relative in sorted(mode_rule_paths() - set(wanted)):
+        _inside(root, root / relative).unlink(missing_ok=True)
+    for relative, (text, _source) in wanted.items():
+        target = _inside(root, root / relative)
+        _inside(root, target.parent).mkdir(mode=0o700, parents=True, exist_ok=True)
+        if target.exists():
+            _atomic_replace_text(target, text)
+        else:
+            atomic_write_new(target, text)
+    from .template_updates import record_mode_rules
+    try:
+        record_mode_rules(root)
+    except (OSError, WorkspaceError):
+        # The record is bookkeeping for `workspace upgrade`, which adopts an
+        # unchanged rule and reports a damaged manifest itself; the mode is set.
+        pass
 
 
 def _connected_rule(root: Path, present: bool, *, delegated: bool = False) -> None:
@@ -808,8 +956,8 @@ def _change_context(workspace: str | Path, client_name: str, client: Path, kind=
                           "history_truncated": truncated,
                           "history_note": ("Only the latest five entries per history kind are shown; use show_command for full history."
                                            if any(truncated.values()) else "All decision, metadata and next-step history is shown."),
-                          "show_command": shlex.join(["torque", "change", "show", record["id"],
-                                                      "--workspace", str(client.parent.parent), "--" + kind, client.name])})
+                          "show_command": command_text(["torque", "change", "show", record["id"],
+                                                        "--workspace", str(client.parent.parent), "--" + kind, client.name])})
     return summaries
 
 

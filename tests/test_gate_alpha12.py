@@ -387,14 +387,18 @@ EXEC_ALLOW = [
 @pytest.mark.parametrize("key", ["command", "cmd", "script"])
 def test_r3_01_mcp_command_is_scanned_like_bash(ws, command, key):
     assert _blocked("Bash", {"command": command}, ws, ws), command
-    assert _blocked("mcp__desktop_commander__start_process", {key: command}, ws, ws), (key, command)
+    assert _blocked("mcp__commander__start_process", {key: command}, ws, ws), (key, command)
     assert _blocked("mcp__shell__run", {"input": {key: command}}, ws, ws), (key, command)
 
 
+# These two tests named the server desktop_commander. A server whose name says
+# desktop is now blocked outright in build-only mode, as a desktop control tool
+# (tests/test_gate_build_only_surfaces.py), so a neutral name keeps them about the
+# command scan.
 @pytest.mark.parametrize("command", EXEC_ALLOW)
 def test_r3_01_mcp_command_ordinary_work_allowed(ws, command):
     assert _allowed("Bash", {"command": command}, ws, ws), command
-    assert _allowed("mcp__desktop_commander__start_process", {"command": command}, ws, ws), command
+    assert _allowed("mcp__commander__start_process", {"command": command}, ws, ws), command
 
 
 def test_r3_01_other_tools_with_cmd_or_script_are_scanned(ws):

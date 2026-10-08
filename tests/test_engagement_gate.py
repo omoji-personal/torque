@@ -56,7 +56,7 @@ def test_connected_guard_covers_initiatives(tmp_path):
 
 
 # --- Fix round 1: the protected-record check must block through _decide() itself,
-# not only through _main()'s full-mode-only call, so build-only's decide() and
+# not only through evaluate()'s full-mode-only call, so build-only's decide() and
 # connected mode's decide_connected() (which both call gate._decide() directly)
 # are covered too. ---
 

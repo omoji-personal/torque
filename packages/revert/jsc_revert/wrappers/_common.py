@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from ..metadata_scope import captured_source_relative
-from .. import bundle, manifest as mf, org_detect, org_sequence, revert_capabilities
+from .. import bundle, manifest as mf, org_detect, org_sequence, revert_capabilities, tool_launch
 
 
 EXIT_SUCCESS = 0
@@ -417,8 +417,8 @@ def run_sf_subprocess(cmd: list[str], timeout_seconds: int = 600,
     if active is not None:
         active.ensure_ownership()
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="strict",
-                              timeout=timeout_seconds, cwd=cwd)
+        proc = tool_launch.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="strict",
+                               timeout=timeout_seconds, cwd=cwd)
         if active is not None:
             try:
                 active.ensure_ownership()

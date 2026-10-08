@@ -2,29 +2,82 @@
 
 Fail closed: an unknown Salesforce CLI verb, an unknown Salesforce MCP tool and
 an unknown browser action count as writes, and a program this module does not
-recognize counts as unverifiable (the host asks the consultant). Parsing is
+recognize counts as unverifiable (the host asks the consultant). A command that
+prints or takes a credential, or lists every org on the machine, is its own kind,
+refused whatever the session's approvals (SF_CREDENTIALS, SF_ALL_ORGS). Parsing is
 quote-aware, so a SOQL string with parentheses or semicolons stays one argument;
 command substitutions, `bash -c` strings and wrapped commands are classified too.
 See docs/connected-approval.md for what this cannot see."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
 import shlex
 
 from . import gate as g
 
-# Route kinds, from least to most restricted in the gate.
-KINDS = ("local", "read", "check_only", "org_write", "browser_read", "browser_write", "unverifiable", "admin", "no_org")
+# Route kinds, from least to most restricted in the gate. The last two are refused
+# for the session whatever its approvals: a command that prints or takes a credential,
+# and one that lists every org this machine is logged in to.
+KINDS = ("local", "read", "check_only", "org_write", "browser_read", "browser_write", "unverifiable", "admin", "no_org",
+         "credential", "all_orgs")
+REFUSED_KINDS = ("credential", "all_orgs")
 BROWSER_DATA_CLASSES = ("metadata", "records")
 
+# sf commands that print a credential or take one, whatever their flags: an access
+# token (`org display`, `org display user`), a password, a login. `org login` also
+# points an alias at the org it logs in to. Matched on the command's words in any
+# order and in the colon spelling, as the CLI accepts them; `auth` and `user` are the
+# legacy topics (sfdx force:auth:web:login, force:user:display, force:user:password:generate).
+# `org open` joins them when it prints its login URL (_prints_login_url).
+SF_CREDENTIALS = {("org", "display"), ("org", "auth"), ("org", "login"), ("org", "generate", "password"),
+                  ("user", "display"), ("user", "password"),
+                  ("auth", "web"), ("auth", "jwt"), ("auth", "sfdxurl"), ("auth", "accesstoken"), ("auth", "device")}
+# sf commands that list every org this machine is logged in to, other clients' orgs
+# included (`org list --json` can print their access tokens too). `org list` with one
+# of SF_ORG_LIST_ONE_ORG reads the named org only and is a read (SF_READ).
+SF_ALL_ORGS = {("org", "list"), ("auth", "list"), ("alias", "list"), ("env", "list")}
+SF_ORG_LIST_ONE_ORG = {"limits", "metadata", "metadata-types", "users", "sobject"}
+# The full names of those commands. The CLI completes a shortened command on its own
+# when only one command fits its words and flags (`sf display --verbose -o ALIAS` runs
+# `org display`), so a command whose words all come from one of these names is
+# refused as that command.
+SF_REFUSED_NAMES = (
+    ("credential", ("org", "display", "user")), ("credential", ("org", "generate", "password")),
+    ("credential", ("org", "login", "web")), ("credential", ("org", "login", "jwt")),
+    ("credential", ("org", "login", "sfdx-url")), ("credential", ("org", "login", "access-token")),
+    ("credential", ("org", "login", "device")), ("credential", ("auth", "web", "login")),
+    ("credential", ("auth", "jwt", "grant")), ("credential", ("auth", "sfdxurl", "store")),
+    ("credential", ("auth", "accesstoken", "store")), ("credential", ("auth", "device", "login")),
+    ("credential", ("user", "display")), ("credential", ("user", "password", "generate")),
+    ("all_orgs", ("org", "list", "auth")), ("all_orgs", ("auth", "list")), ("all_orgs", ("alias", "list")),
+    ("all_orgs", ("env", "list")))
+# The words of `org open` and its subcommands, for the same reason.
+SF_OPEN_WORDS = {"org", "open", "agent", "authoring-bundle"}
+# `sf help org display` and `sf which org display` describe a command; they do not run it.
+SF_DESCRIBE_ONLY = {"help", "which"}
+# `org open` flags that print the login URL, and its short options that take a value
+# (in a group such as -ro ALIAS, a value option ends the options).
+SF_OPEN_URL_FLAGS = {"--url-only", "--urlonly", "--json", "--flags-dir"}
+SF_OPEN_VALUE_LETTERS = "obpfu"
+# In container mode the CLI prints the login URL instead of opening a browser. The
+# hook inherits the session's environment, so the gate reads the variables there
+# (_container_mode), and refuses a command that sets one (classify_bash).
+SF_CONTAINER_VARS = ("SF_CONTAINER_MODE", "SFDX_CONTAINER_MODE")
+_CONTAINER_SET_RE = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(SF_CONTAINER_VARS) + r")['\"]?\s*=", re.IGNORECASE)
+# Characters the shell expands before sf runs: a variable or brace expansion can
+# become any word, a glob any file name in the folder.
+_EXPANSION_CHARS = frozenset("$`{}")
+_GLOB_CHARS = frozenset("*?[")
 # sf commands that only read, by their leading topic words (docs/connected-approval.md,
 # "Host facts verified"). Everything else with an org flag is a write.
 SF_READ = {
     ("data", "query"), ("data", "get", "record"), ("data", "search"), ("data", "export"),
     ("data", "bulk", "results"), ("data", "resume"),  # resume reports a job and can return its rows
     ("sobject", "describe"), ("sobject", "list"),
-    ("org", "display"), ("org", "list"),
+    ("org", "list", "limits"), ("org", "list", "metadata"), ("org", "list", "metadata-types"),
+    ("org", "list", "users"), ("org", "list", "sobject"),
     ("project", "retrieve", "start"), ("project", "retrieve", "preview"),
     ("project", "deploy", "report"), ("project", "deploy", "preview"),
     ("apex", "get", "log"), ("apex", "list", "log"), ("apex", "get", "test"),
@@ -44,20 +97,21 @@ SF_LOCAL = {("project", "generate"), ("project", "convert"), ("project", "list",
             ("template", "generate"), ("schema", "generate"), ("cmdt", "generate"), ("lightning", "generate"),
             ("apex", "generate"), ("agent", "generate"),
             ("version",), ("help",), ("commands",), ("whatsnew",), ("which",), ("search",), ("info",),
-            ("doctor",), ("autocomplete",), ("alias", "list"), ("config", "list"), ("config", "get"),
-            ("env", "list"), ("plugins",), ("plugins", "inspect")}
-# Login and browser sessions: the gate cannot tell what they do. `org open` is not
-# here: it mints a session URL (an org write, D17), so it falls through to the
-# default rule below, "anything else with an org flag is a write".
+            ("doctor",), ("autocomplete",), ("config", "list"), ("config", "get"),
+            ("plugins",), ("plugins", "inspect")}
+# Tooling and sessions the gate cannot tell apart by name. `org open` is not here:
+# it mints a session URL (an org write, D17), so it falls through to the default
+# rule below, "anything else with an org flag is a write", unless it prints that URL
+# (SF_CREDENTIALS). `org login` is not here either: it is refused (SF_CREDENTIALS).
 SF_ASK = {("code-analyzer",), ("dev",), ("lightning", "dev"),
-          ("org", "login"), ("org", "logout"), ("plugins", "install"), ("plugins", "link"),
+          ("org", "logout"), ("plugins", "install"), ("plugins", "link"),
           ("plugins", "update"), ("plugins", "uninstall"), ("plugins", "reset"), ("update",)}
 # Changing an alias or the default org would move an approved command to another org.
 SF_ADMIN = {("alias", "set"), ("alias", "unset"), ("config", "set"), ("config", "unset")}
 SFDX_RECORD_READS = {"force:data:soql:query"}
 SFDX_LOG_READS = {"force:apex:log:get", "force:apex:log:list"}
-SFDX_READ = {"force:data:soql:query", "force:source:retrieve", "force:mdapi:retrieve", "force:org:display",
-             "force:org:list", "force:schema:sobject:describe", "force:schema:sobject:list",
+SFDX_READ = {"force:data:soql:query", "force:source:retrieve", "force:mdapi:retrieve",
+             "force:schema:sobject:describe", "force:schema:sobject:list",
              "force:apex:log:get", "force:apex:log:list"}
 TORQUE_ORG_FLAGS = set(g.ORG_FLAGS) | {"--org"}
 # torque routes that change an org, and their subcommands that only read.
@@ -131,9 +185,12 @@ MCP_RECORD_WORDS = {"query", "soql", "sosl", "search", "record", "records", "row
 MCP_READ_WORDS = {"query", "soql", "sosl", "describe", "list", "get", "retrieve", "search", "display", "read",
                   "show", "find", "fetch", "count", "inspect", "view", "status", "info", "explain", "analyze",
                   "resume", "report", "limits", "whoami"}
-BROWSER_SERVER = re.compile(r"(chrome|playwright|puppeteer|browser|firefox|safari|webdriver|selenium)",
-                            re.IGNORECASE)
-DESKTOP_SERVER = re.compile(r"(computer[-_]?use|desktop|applescript|automation)", re.IGNORECASE)
+# A Salesforce MCP tool whose name says it returns a credential, or lists every org.
+MCP_CREDENTIAL_WORDS = {"token", "tokens", "password", "passwords", "credential", "credentials", "secret",
+                        "secrets", "frontdoor"}
+# Which MCP servers drive a browser or the desktop is read from the gate
+# (gate._mcp_surface), which build-only mode uses too; these words then sort a
+# browser tool into a read or a change.
 BROWSER_READ_WORDS = {"read", "get", "find", "screenshot", "snapshot", "list", "navigate", "tabs", "tab",
                       "context", "console", "network", "messages", "message", "page", "pages", "text", "zoom",
                       "wait", "resize", "cursor", "position", "gif", "lighthouse", "performance", "trace",
@@ -249,12 +306,83 @@ def _sf_org_flags(topic: tuple[str, ...]) -> set[str]:
     return set(g.ORG_FLAGS) - {"-v"}
 
 
+def _container_mode() -> bool:
+    """The Salesforce CLI is in container mode in this environment (any value but
+    false or 0, to fail closed)."""
+    return any(os.environ.get(name, "").strip().casefold() not in ("", "false", "0") for name in SF_CONTAINER_VARS)
+
+
+def _prints_login_url(rest: list[str]) -> bool:
+    """`sf org open` prints its login URL instead of only opening a browser: in
+    container mode, with --url-only (-r, --urlonly) or --json, with --flags-dir
+    (whose files can set either), or with a word the shell could turn into one of
+    them: a variable or brace expansion, or a glob that can match a file named
+    like an option."""
+    if _container_mode():
+        return True
+    for tok in rest:
+        if tok.split("=", 1)[0] in SF_OPEN_URL_FLAGS or _EXPANSION_CHARS & set(tok):
+            return True
+        if tok[:1] in ("-", *_GLOB_CHARS) and _GLOB_CHARS & set(tok):
+            return True
+        if tok.startswith("-") and not tok.startswith("--"):
+            for letter in tok[1:]:
+                if letter == "r":
+                    return True
+                if letter in SF_OPEN_VALUE_LETTERS:
+                    break
+    return False
+
+
+def _sf_refused(topic: tuple[str, ...], rest: list[str], anywhere: bool = False) -> tuple[str, str] | None:
+    """("all_orgs" or "credential", note) when an sf command lists every org or prints
+    or takes a credential, else None. The command's words are read as the CLI reads
+    them: in any order (`sf display org`), in the colon spelling (`org:display`),
+    without the legacy `force` prefix (`force:org:display`), and shortened (`sf
+    display`, which the CLI completes; the note then names the full command). With
+    `anywhere` the words are not the leading ones (flag values sit among them), so a
+    command's words count wherever they are."""
+    words = tuple(part for word in topic for part in re.split(r"[:\s]+", word.casefold())
+                  if part and part != "force")
+    if words[:1] and words[0] in SF_DESCRIBE_ONLY:
+        return None
+
+    def named(key: tuple[str, ...]) -> bool:
+        return set(key) <= set(words if anywhere else words[:len(key) + 1])
+    if named(("org", "list")) and not set(words[:4]) & SF_ORG_LIST_ONE_ORG:
+        return "all_orgs", ""
+    if any(named(key) for key in SF_ALL_ORGS - {("org", "list")}):
+        return "all_orgs", ""
+    if any(named(key) for key in SF_CREDENTIALS):
+        return "credential", ""
+    given = set(words)
+    if (named(("org", "open")) or ("open" in given and given <= SF_OPEN_WORDS)) and _prints_login_url(rest):
+        return "credential", ""
+    for kind, name in SF_REFUSED_NAMES:
+        if given and given <= set(name):
+            return kind, f" (the CLI can complete this to sf {' '.join(name)})"
+    return None
+
+
 def _sf(rest: list[str], detail: str) -> Route:
     topic = _topic(rest)
     orgs = org_values(rest, _sf_org_flags(topic))
     org = orgs[0] if len(orgs) == 1 else None
+    # A flag before the command words (sf --json org list): the CLI wants the command
+    # first, but the gate does not rely on that. Every word after the flag is read,
+    # and such a line is never local work.
+    late = () if topic else tuple(tok for tok in rest if not tok.startswith("-"))
+    refused = _sf_refused(topic or late, rest, anywhere=bool(late))
+    if refused:
+        return Route(refused[0], None, detail + refused[1])
+    if any((_EXPANSION_CHARS | _GLOB_CHARS) & set(word) for word in (topic or late)[:3]):
+        # sf org ${X:+display}, sf org d*: the shell picks the command at run time, so
+        # the gate cannot tell which one runs and no approval covers it.
+        return Route("admin", org, detail + " (its command words are built at run time)")
     if len(orgs) > 1:
         return Route("no_org", None, detail + " (names more than one org)")
+    if late:
+        return Route("org_write" if org else "no_org", org, detail)
     if not topic:
         return Route("local", None, detail) if not orgs else Route("org_write", org, detail)
     if ":" in topic[0]:
@@ -282,14 +410,10 @@ def _sf(rest: list[str], detail: str) -> Route:
         return Route(kind if org else "no_org", org, detail, data=rest_data_class(path) if kind == "read" else None)
     if topic[:3] == ("project", "deploy", "start") and "--dry-run" in rest:
         return Route("check_only" if org else "no_org", org, detail)
-    if topic[:2] == ("org", "display") and "--verbose" in rest:
-        return Route("org_write" if org else "no_org", org, detail + " (prints credentials)")
     if _match(topic, SF_CHECK_ONLY):
         return Route("check_only" if org else "no_org", org, detail)
     if _match(topic, SF_READ):
         data = "records" if _match(topic, SF_RECORD_READS) else "debug_logs" if _match(topic, SF_LOG_READS) else None
-        if topic[:2] == ("org", "list"):
-            return Route("read" if org else "local", org, detail)
         return Route("read" if org else "no_org", org, detail, data=data)
     return Route("org_write" if org else "no_org", org, detail)
 
@@ -575,6 +699,12 @@ def classify_bash(command: str, _depth: int = 0) -> list[Route]:
                      if r.kind in ("read", "check_only", "org_write", "browser_write") else r for r in found]
         routes.extend(found)
         exported = exported or _exports(words)
+    setting = _CONTAINER_SET_RE.search(text)
+    if setting:
+        # NAME=true sf org open, export NAME=..., $env:NAME = ...: with it set, an
+        # approved `sf org open` prints its login URL instead of opening a browser.
+        routes.append(Route("admin", None, f"setting {setting.group(1).upper()} makes `sf org open` print its "
+                                           "login URL"))
     for nested in g._direct_substitutions(text):
         routes.extend(r for r in classify_bash(nested, _depth + 1) if r.kind != "local")
     return list(dict.fromkeys(routes)) or [Route("local", None, "")]
@@ -592,42 +722,66 @@ def _words(name: str) -> list[str]:
 
 
 def classify_mcp(tool_name: str, tool_input: dict) -> Route:
-    parts = tool_name.split("__")
-    server, tool = (parts[1] if len(parts) > 2 else ""), parts[-1]
+    tool = tool_name.split("__")[-1]
     words = set(_words(tool))
-    if DESKTOP_SERVER.search(server):
+    # The call's own name and, for a resource read, the server its arguments name.
+    names = g._mcp_names(tool_name, tool_input)
+    surfaces = {g._mcp_surface(name) for name in names}
+    if "desktop" in surfaces:
         action = str(tool_input.get("action") or "")
         if words <= BROWSER_READ_WORDS | {"cursor", "position", "zoom", "screenshot"} or \
                 (tool == "computer" and action in COMPUTER_READ_ACTIONS):
             return Route("browser_read", None, tool_name, data="records")
         return Route("admin", None, tool_name + " (desktop control can reach a terminal)")
-    if BROWSER_SERVER.search(server):
+    if "browser" in surfaces:
         if tool == "computer":
             action = str(tool_input.get("action") or "")
             return Route("browser_read" if action in COMPUTER_READ_ACTIONS else "browser_write", None,
                          tool_name, data="records")
         return Route("browser_read" if words and words <= BROWSER_READ_WORDS else "browser_write", None,
                      tool_name, data="records")
-    if g._mcp_reaches_salesforce(tool_name):
+    if any(g._mcp_reaches_salesforce(name) for name in names):
+        if words & MCP_CREDENTIAL_WORDS or ("display" in words and words & {"org", "user"}):
+            return Route("credential", None, tool_name)
+        if "orgs" in words and words & {"list", "all"}:
+            return Route("all_orgs", None, tool_name)
         org = mcp_org(tool_input)
         if words & MCP_WRITE_WORDS or not words & MCP_READ_WORDS:
             return Route("org_write" if org else "no_org", org, tool_name)
         data = ("debug_logs" if words & {"log", "logs", "debug"} else
                 "records" if words & MCP_RECORD_WORDS else None)
         return Route("read" if org else "no_org", org, tool_name, data=data)
+    host = g._salesforce_host(tool_input)
+    if host:
+        # A server under a neutral name: only its arguments show that it reaches an org.
+        return Route("unverifiable", None, f"{tool_name} (names the Salesforce host {host})")
     return Route("local", None, tool_name)
+
+
+def _powershell_refusals(command: str) -> list[Route]:
+    """The always-refused routes in a PowerShell command, read the way the build-only
+    scan reads it (gate._powershell_commands): its escapes and path separators, a
+    decoded -EncodedCommand, and the strings it hands to something that runs them."""
+    try:
+        texts = g._powershell_commands(command)
+    except ValueError as exc:
+        return [Route("admin", None, f"a PowerShell command the gate could not read ({exc})")]
+    return [route for text in texts for route in classify_bash(text) if route.kind in REFUSED_KINDS]
 
 
 def classify(tool_name: str, tool_input: dict) -> list[Route]:
     """Every route a tool call takes."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     routes: list[Route] = []
-    if tool_name.startswith("mcp__"):
+    if tool_name.startswith("mcp__") or tool_name in g.MCP_LIKE_TOOLS:
         routes.append(classify_mcp(tool_name, tool_input))
         for text in g._command_strings(tool_input):
             routes.extend(r for r in classify_bash(text) if r.kind != "local")
         return list(dict.fromkeys(routes))
     command = tool_input.get("command")
     if tool_name == "Bash" or (tool_name not in g.SAFE_TOOLS and isinstance(command, str)):
-        return classify_bash(str(command or ""))
+        routes = classify_bash(str(command or ""))
+        if "powershell" in tool_name.casefold():
+            routes += _powershell_refusals(str(command or ""))
+        return list(dict.fromkeys(routes))
     return [Route("local", None, tool_name)]

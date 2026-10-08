@@ -30,7 +30,8 @@ Necessary public attribution, license notices and dependency provenance are reta
 - Skills: `.agents/skills/` (read by agents that support the shared skills folder); workspaces get the same skills in `.claude/skills/`. List: `docs/skills.md`.
 - Standing rules: `.claude/rules/*.md` are plain Markdown; any agent should read them before client work.
 - Worker roles: `.claude/agents/*.md` are plain role descriptions any agent can follow.
-- Guardrails: the build-only and connected-mode gate runs as a Claude Code hook today; other agents get the same records and workflows but not the hook.
+- Antigravity (`agy`) reads `.agents/` only. A workspace gets the rules, recipes (as skills and slash commands) and worker roles there in its format, derived at `init` and `upgrade` by `src/torque/antigravity.py`; nothing for it is generated in this repository. See `docs/workspace-upgrades.md`.
+- Guardrails: the gate (`src/torque/gate.py`) runs as a Claude Code hook; `src/torque/gate_antigravity.py` runs the same gate as an Antigravity hook. `src/torque/hosts.py` is the registry of hosts: `torque launch` starts the host a workspace names, or `--host claude|antigravity`. Connected mode under Antigravity is tested offline only. Other agents get the same records and workflows but not the hook. See `docs/ai-access.md` and `docs/hosts.md`.
 
 ## Commands
 

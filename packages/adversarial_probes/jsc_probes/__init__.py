@@ -1,6 +1,6 @@
 """jsc-probes — adversarial probe synthesis for Salesforce code.
 
-Adopted into JusticeserverClaude (JSC) 2026-05-04 from claudeblazer (Apache-2.0).
+Adopted into the earlier toolkit 2026-05-04 from claudeblazer (Apache-2.0).
 TAA Phase 5 P2-2.
 """
 

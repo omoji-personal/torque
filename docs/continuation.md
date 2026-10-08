@@ -2,11 +2,11 @@
 
 ## Product decision
 
-JusticeserverClaude is the foundation. Its repeated real-world use is the reason
-to preserve its broad conversational workflow and reusable implementations.
-Torque provides the continuing public project name and selected advisory ideas.
-This is a direct generalization of JSC, rather than a new interface that requires
-the consultant to change how they work.
+The author's earlier consulting toolkit is the foundation. Its repeated real-world
+use is the reason to preserve its broad conversational workflow and reusable
+implementations. Torque provides the continuing public project name and selected
+advisory ideas. This is a direct generalization of that toolkit, rather than a new
+interface that requires the consultant to change how they work.
 
 The default experience is an assistant operating inside a private workspace.
 It loads firm/client context, investigates, prepares and executes authorized
@@ -20,7 +20,7 @@ flowchart TD
     A[Conversation in private workspace] --> B[Firm profile and selected client]
     A --> C[Torque workflows and review skills]
     C --> D[Existing Salesforce CLI, connectors, browser]
-    C --> E[JSC-derived Python libraries]
+    C --> E[Inherited Python libraries]
     E --> D
     B --> F[Private notes, evidence, sessions, snapshots]
     E --> F
@@ -33,7 +33,7 @@ artifacts. Credentials remain with the existing host/Salesforce tools.
 
 ### Continuity choices
 
-| JSC capability | Treatment in Torque |
+| Earlier toolkit capability | Treatment in Torque |
 |---|---|
 | Daily conversational commands | All 42 names mapped; generic recipes and new context/session helpers |
 | Client context and ongoing memory | Explicit firm/client workspace, local session journal, handoff, retained lesson engine |
@@ -43,7 +43,7 @@ artifacts. Credentials remain with the existing host/Salesforce tools.
 | Meeting processing and AI regression | Generic engines retained; media dependencies optional |
 | Managed package, customer data, pricing, Trello | Context that belongs in the relevant private environment |
 | Torque shell shields, shims, approval tokens | Removed from the default product; no new global registrations |
-| JSC technical review subagents | Six concise, model-neutral role definitions |
+| Technical review subagents | Six concise, model-neutral role definitions |
 
 Workflow coverage is not runtime verification. A guided `connect-org` recipe is
 usable through the agent and existing Salesforce CLI; it is not a new Torque
@@ -78,14 +78,15 @@ and uncommitted work were preserved before replacement in a private recovery
 checkpoint; the Git history remains intact. This does not alter old global
 installations, other repositories, or live orgs.
 
-The `jsc_*` import namespaces intentionally remain. Renaming every mature module
-would add churn with little user benefit. Package-specific compatibility CLI
-entry points are available along with `torque` delegates.
+The `jsc_*` import namespaces intentionally remain as legacy identifiers kept for
+compatibility. Renaming every mature module would add churn with little user
+benefit. Package-specific compatibility CLI entry points are available along
+with `torque` delegates.
 
-Do not copy a JSC `local/` directory wholesale into a new employer workspace.
-Initialize clean firm/client context and bring only relevant, deliberately
-selected material into that private environment. There is no customer migration
-required to adopt the new runtime.
+Do not copy the earlier toolkit's `local/` directory wholesale into a new
+employer workspace. Initialize clean firm/client context and bring only
+relevant, deliberately selected material into that private environment. There
+is no customer migration required to adopt the new runtime.
 
 ## Next validation before routine live use
 
@@ -101,6 +102,6 @@ The broader consulting workflow remains the next test:
 4. Measure task time, repeated context requests, unnecessary interruptions,
    and corrections. Adjust concrete friction found during use.
 
-These exercises determine operational confidence and the employer pilot story.
+These exercises determine operational confidence.
 They are separate from the offline packaging and regression checks for this alpha.
-No specific build deadline or employer rollout date is assumed.
+No specific build deadline or rollout date is assumed.

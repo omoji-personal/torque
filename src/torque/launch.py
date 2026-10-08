@@ -7,6 +7,9 @@ delegated approver, after claiming a single-use launch binding that approver's
 account wrote (`via: binding`). Doctor's probes write their own (`via: probe`).
 The gate takes the binding from that record, never from TORQUE_CLIENT alone.
 
+A record names the host it was written for (`host`, a key of hosts.py; a record
+without it is Claude Code's), and binds only under that host's hook.
+
 A binding is verified like a grant: the approver account owns it and its folder
 and nobody else can write either, it is not a link, the workspace's control files
 pass R46, and anything unreadable refuses. docs/delegated-approver.md."""
@@ -21,6 +24,7 @@ import stat
 import subprocess
 import time
 
+from . import hosts
 from . import workspace as ws
 
 BINDING_SCHEMA = "torque.launch-binding/1"
@@ -35,15 +39,8 @@ MAX_PS_CALLS = 8
 MAX_ANCESTORS = 7
 VIA = ("binding", "presence", "probe")
 PS_TIMEOUT = 2
-# R49 (amended): the only claude options a delegated launch passes through, an
-# allowlist (fail closed). Options that take a value take the next word or `=value`;
-# --permission-mode only with the value "default".
-ALLOWED_FLAGS = ("-p", "--print", "--include-partial-messages", "--replay-user-messages", "--verbose",
-                 "--no-session-persistence")
-ALLOWED_VALUE_OPTIONS = ("--input-format", "--output-format", "--model", "--fallback-model", "--effort",
-                         "--append-system-prompt", "--max-budget-usd", "--json-schema", "--session-id", "--name")
-# Removed from a delegated launch's child environment (and refused when the caller sets it).
-REFUSED_ENV = ("CLAUDE_CODE_SIMPLE",)
+# R49 (amended): the options a delegated launch passes through, and the variables
+# it refuses, are each host's own lists in hosts.py.
 BINDING_FIELDS = ("schema", "id", "workspace", "client", "nonce", "created_at", "expires_at", "approver",
                   "approver_uid", "approver_kind", "approver_model")
 
@@ -128,10 +125,20 @@ def _started(pid: int, starts) -> str | None:
     return found
 
 
-def _record(root: Path, slug: str, ident: str, kind: str, via: str, pid: int, started, extra: dict) -> dict:
+def _host_key(host) -> str:
+    """The registry key a launch record carries for `host` (a key or a hosts.Host)."""
+    key = getattr(host, "key", host)
+    if hosts.get(key) is None:
+        raise ws.WorkspaceError(f"launch record host is {' or '.join(hosts.KEYS)}")
+    return key
+
+
+def _record(root: Path, slug: str, ident: str, kind: str, via: str, pid: int, started, host: str,
+            extra: dict) -> dict:
     from .approval import _iso
     return {"schema": LAUNCH_SCHEMA, "id": ident, "kind": kind, "via": via, "client": slug,
-            "workspace": str(root), "pid": pid, "pid_started": started, "created_at": _iso(time.time()), **extra}
+            "workspace": str(root), "host": host, "pid": pid, "pid_started": started,
+            "created_at": _iso(time.time()), **extra}
 
 
 def _write_record(dirs: dict, record: dict) -> bool:
@@ -314,16 +321,18 @@ def _checked_binding(root: Path, config: dict, slug: str, binding_id: str, t: fl
 
 
 def claim_binding(workspace, client, binding_id, *, pid=None, now=None, starts=None, env=None, ancestors=None,
-                  getuid=None, control_stat=None) -> dict:
+                  getuid=None, control_stat=None, host=hosts.DEFAULT.key) -> dict:
     """Consume a launch binding for this process: the checks in `_tier2_config`,
     then the binding itself (approver-owned, unaltered, for this workspace and
     client, from the current approver delegate, within its window), then the
-    single-use claim, an O_EXCL approvals/consumed/<binding_id>.launch record.
-    Every refusal is a delegation.Refusal with a reason class."""
+    single-use claim, an O_EXCL approvals/consumed/<binding_id>.launch record
+    that names `host`, the host being started. Every refusal is a
+    delegation.Refusal with a reason class."""
     ws.require_writable(workspace)
     from . import approval
     root, config, folder = _tier2_config(workspace, env=env, ancestors=ancestors, getuid=getuid,
                                          control_stat=control_stat, client=client)
+    host = _host_key(host)
     if not isinstance(binding_id, str) or not BINDING_ID.fullmatch(binding_id):
         # Never let near a path.
         raise _refuse("binding-invalid", "a launch binding ID looks like lnk-0123456789ab")
@@ -335,7 +344,7 @@ def claim_binding(workspace, client, binding_id, *, pid=None, now=None, starts=N
     if t > expires:
         raise _refuse("binding-expired", "the launch binding expired; ask the approver for a new one")
     pid = pid if pid is not None else os.getpid()
-    record = _record(root, slug, binding_id, kind, "binding", pid, _started(pid, starts),
+    record = _record(root, slug, binding_id, kind, "binding", pid, _started(pid, starts), host,
                      {"binding_id": binding_id, "nonce": binding["nonce"],
                       "binding_created_at": binding["created_at"], "binding_expires_at": binding["expires_at"],
                       "approver": {k: binding[k] for k in ("approver", "approver_uid", "approver_kind",
@@ -351,14 +360,16 @@ def claim_binding(workspace, client, binding_id, *, pid=None, now=None, starts=N
     return record
 
 
-def write_launch_record(workspace, client, kind, *, pid=None, starts=None) -> dict:
+def write_launch_record(workspace, client, kind, *, pid=None, starts=None, host=hosts.DEFAULT.key) -> dict:
     """The launch record for a consultant's presence launch (`human`) or a doctor
-    probe (`probe`). F1: the approvals folders are created when absent (mkdir 0700,
-    an existing folder is never re-moded)."""
+    probe (`probe`), naming `host`, the host being started. F1: the approvals
+    folders are created when absent (mkdir 0700, an existing folder is never
+    re-moded)."""
     ws.require_writable(workspace)
     from . import approval
     if kind not in ("human", "probe"):
         raise ws.WorkspaceError("launch record kind is human or probe")
+    host = _host_key(host)
     root, _ = ws.load_workspace(workspace)
     root = Path(os.path.realpath(root))
     folder = ws.load_client(root, client)[0]
@@ -366,18 +377,22 @@ def write_launch_record(workspace, client, kind, *, pid=None, starts=None) -> di
     pid = pid if pid is not None else os.getpid()
     prefix, via = ("launch", "presence") if kind == "human" else ("probe", "probe")
     record = _record(root, folder.name, f"{prefix}-{secrets.token_hex(6)}", kind, via, pid, _started(pid, starts),
-                     {})
+                     host, {})
     if not _write_record(dirs, record):
         raise ws.WorkspaceError("could not write the launch record; try again")
     return record
 
 
-def launch_flag_problem(extra) -> str:
+def launch_flag_problem(extra, host=None) -> str:
     """R49 (amended): "" when every option passed through a delegated launch is on
-    the allowlist (ALLOWED_FLAGS, ALLOWED_VALUE_OPTIONS with their value, and
-    `--permission-mode default`); else the first refused one. A value given as the
-    next word must not start with "-" (use `--opt=value` for that). Positional prompt text
-    passes; a lone `--` passes but options after it are still refused (fail closed)."""
+    the allowlist of `host` (a hosts.Host; Claude Code when none is given): its
+    allowed_flags, its allowed_value_options with their value, and its
+    pinned_options with their one value (Claude Code's `--permission-mode
+    default`); else the first refused one. A value given as the next word must not
+    start with "-" (use `--opt=value` for that). Positional prompt text passes; a
+    lone `--` passes but options after it are still refused (fail closed)."""
+    host = host or hosts.DEFAULT
+    pinned = dict(host.pinned_options)
     words = [str(word) for word in extra or ()]
     index = 0
     while index < len(words):
@@ -386,26 +401,27 @@ def launch_flag_problem(extra) -> str:
         if word == "--" or not word.startswith("-"):
             continue
         name, eq, value = word.partition("=")
-        if name in ALLOWED_FLAGS and not eq:
+        if name in host.allowed_flags and not eq:
             continue
-        if name in ALLOWED_VALUE_OPTIONS or name == "--permission-mode":
+        if name in host.allowed_value_options or name in pinned:
             if not eq:
-                # A separate value never starts with "-" (it could be an option claude
+                # A separate value never starts with "-" (it could be an option the host
                 # parses as one); such a value goes in the `--opt=value` form.
                 if index >= len(words) or words[index].startswith("-"):
                     return word
                 value = words[index]
                 index += 1
-            if name == "--permission-mode" and value != "default":
-                return f"--permission-mode {value}"
+            if name in pinned and value != pinned[name]:
+                return f"{name} {value}"
             continue
         return word
     return ""
 
 
-def launch_env_problem(environ) -> str:
-    """The first REFUSED_ENV variable set in `environ`, or ""."""
-    return next((name for name in REFUSED_ENV if name in environ), "")
+def launch_env_problem(environ, host=None) -> str:
+    """The first variable `host` refuses (Claude Code when none is given) that is
+    set in `environ`, or ""."""
+    return next((name for name in (host or hosts.DEFAULT).refused_env if name in environ), "")
 
 
 def _read_record(path: Path) -> dict | None:
@@ -434,9 +450,48 @@ _VIA_KINDS = {"presence": (("human",), "launch-"), "probe": (("probe",), "probe-
               "binding": (("ai", "human"), "lnk-")}
 
 
+def _host_problem(record: dict, env) -> str:
+    """Why a launch record does not bind under the hook that is verifying it; ""
+    when it was written for that hook's host. The hook states its host in
+    TORQUE_HOOK_HOST (the Antigravity adapter sets it in its own process); unset
+    means Claude Code, whose hook sets nothing. A record without `host` (written
+    before the field existed) is Claude Code's. The variable is the hook's own
+    statement, not proof of the host: whoever starts a hook process chooses its
+    environment."""
+    stated = env.get(hosts.HOOK_HOST_ENV) or hosts.DEFAULT.key
+    if hosts.get(stated) is None:
+        return "the hook names a host this version does not know"
+    written = record.get("host", hosts.DEFAULT.key)
+    if not isinstance(written, str) or hosts.get(written) is None:
+        return "the launch record names a host this version does not know"
+    if written != stated:
+        return f"the launch record was written for {hosts.get(written).name}, not for {hosts.get(stated).name}"
+    return ""
+
+
+def session_record(folder, env) -> dict | None:
+    """The launch record `env` names (TORQUE_LAUNCH, for TORQUE_CLIENT) when it
+    lies in the workspace at `folder` and names that workspace: the session whose
+    working folder is `folder` is the one `torque launch` started there. None
+    otherwise. The record is read without following a link, and nothing else in
+    it is checked here; `verify_launch` does that when the gate binds."""
+    from . import approval
+    launch_id, client = env.get("TORQUE_LAUNCH"), env.get("TORQUE_CLIENT")
+    if not isinstance(launch_id, str) or not LAUNCH_ID.fullmatch(launch_id) or not client:
+        return None
+    try:
+        root = Path(os.path.realpath(folder))
+        path = approval._dirs(root, ws.slug_for(client), create=False)["consumed"] / f"{launch_id}.launch"
+    except (OSError, ValueError, ws.WorkspaceError):
+        return None
+    record = _read_record(path)
+    return record if record is not None and record.get("workspace") == str(root) else None
+
+
 def verify_launch(root, env, *, getpid=None, getppid=None, run=None, now=None) -> tuple[str | None, str]:
     """(the bound client slug, "") when `env` names, by TORQUE_LAUNCH, a launch record
-    for its TORQUE_CLIENT and this workspace whose process is this one or one of its
+    for its TORQUE_CLIENT and this workspace, written for the host whose hook is
+    verifying it (`_host_problem`), whose process is this one or one of its
     nearest ancestors with the same start time (`launch_process_problem`, at most
     MAX_PS_CALLS `ps` calls; skipped on Windows, F45) and, whenever the record names
     a binding (F8), whose approver binding still verifies in full and was claimed by
@@ -469,6 +524,9 @@ def verify_launch(root, env, *, getpid=None, getppid=None, run=None, now=None) -
         record_created = approval._epoch(record.get("created_at"))
     except (TypeError, ValueError):
         return None, "malformed launch record"
+    why = _host_problem(record, env)
+    if why:
+        return None, why
     if os.name != "nt":
         why = launch_process_problem(record.get("pid"), record.get("pid_started"), getpid=getpid,
                                      getppid=getppid, run=run)

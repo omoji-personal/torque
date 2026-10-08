@@ -1142,9 +1142,10 @@ def _audit_changes(rows: list[dict], components: list[str], since: str) -> list[
 def live_deploy_report(job_id: str, org: str) -> dict | None:
     """The check-only job's status, read live with `sf project deploy report`."""
     import subprocess
+    from jsc_common import tools
     try:
-        done = subprocess.run(["sf", "project", "deploy", "report", "--job-id", job_id, "--target-org", org,
-                               "--json"], capture_output=True, text=True, timeout=120)
+        done = tools.run(["sf", "project", "deploy", "report", "--job-id", job_id, "--target-org", org,
+                          "--json"], capture_output=True, text=True, timeout=120)
         data = json.loads(done.stdout or "{}")
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -1261,7 +1262,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     lines = [
         *_screen_lines(req, derived, org_id, org_kind, kind_line, middle=middle),
         *([f"Recovery:    snapshot {derived['recovery_snapshot']} will run: "
-           f"{shlex.join(derived['recovery_plan']) if derived['recovery_plan'] else 'NOTHING (no plan)'}"]
+           f"{ws.command_text(derived['recovery_plan']) if derived['recovery_plan'] else 'NOTHING (no plan)'}"]
           if derived.get("recovery_snapshot") else []),
     ]
     if derived["namespaces"]:

@@ -1,21 +1,23 @@
-# JSC package continuation in Torque
+# Package continuation in Torque
 
-The ten JSC Python package roots are the implementation foundation. This is a continuation of the working consulting environment, with client configuration and persisted state moved out of the public distribution. It is not a rewrite of the daily workflow into an advisory-only engine. Internal `jsc_*` imports and compatibility command names remain to reduce churn. The source JusticeServer repositories were read only during the port.
+The ten Python package roots carried over from the earlier toolkit are the implementation foundation. This is a continuation of the working consulting environment, with client configuration and persisted state moved out of the public distribution. It is not a rewrite of the daily workflow into an advisory-only engine. Internal `jsc_*` imports and compatibility command names are legacy identifiers kept for compatibility and to reduce churn. The source repositories were read only during the port.
 
-The user's six months of daily use describes the overall JSC working environment. It does not establish that every package, surface, later addition, or migrated integration has six months of live validation. The package-port checkpoints below are offline. A later bounded Salesforce metadata/data acceptance run is recorded in [validation](validation.md); authenticated browsers and model providers remain untested.
+The user's six months of daily use describes the earlier toolkit's overall working environment. It does not establish that every package, surface, later addition, or migrated integration has six months of live validation. The package-port checkpoints below are offline. A later bounded Salesforce metadata/data acceptance run is recorded in [validation](validation.md); authenticated browsers and model providers remain untested.
 
 ## Provenance and selection
 
-`packages/provenance.json` records every selected source file, source-relative path, original SHA-256, current destination SHA-256, and whether it changed. Source revision: `justiceserver-workspace` commit `017c20fdf3b80ef3fc4b85d621e90aa36c21fc81`. Per-file hashes identify the actual inspected source bytes, including any local differences from that commit. New integration files are identified separately. The advisory catalogue retains its own nested provenance back to Torque `3c40916`.
+`packages/provenance.json` records every selected source file, source-relative path, original SHA-256, current destination SHA-256, and whether it changed. Source revision: commit `017c20fdf3b80ef3fc4b85d621e90aa36c21fc81` of the earlier toolkit's repository, which the manifest records under the neutral label `prior-toolkit`. Per-file hashes identify the actual inspected source bytes, including any local differences from that commit. New integration files are identified separately. The advisory catalogue retains its own nested provenance back to Torque `3c40916`.
 
-These historical names and required public author/license notices are intentional
-attribution under the [public naming policy](../CONTRIBUTING.md#public-naming-and-attribution).
+The manifest and this tree name no earlier employer or product. Legacy identifiers
+such as the `jsc_*` package names are kept for compatibility, and required public
+author/license notices are retained, under the
+[public naming policy](../CONTRIBUTING.md#public-naming-and-attribution).
 They do not authorize private client records, authentication material or personal
 paths in the distribution. When a carried file changes, retain its original
 `source_sha256`, recompute `destination_sha256` from its current bytes, set `adapted`
 to whether those hashes differ, and rerun `python scripts/check-provenance.py`.
 
-Selected code and generalized tests were imported. The JusticeServer managed application, client documents, org aliases, domain browser flows and test-user records, deployment histories, log archives, credentials, and global hook installation were excluded. Empty browser configuration and synthetic fixtures are intentional template inputs. Existing Apache attribution is retained in source headers and `packages/licenses/`; the third-party browser page-object manifest records a reference dependency, not bundled `node_modules` or a required runtime download.
+Selected code and generalized tests were imported. The source's managed application, client documents, org aliases, domain browser flows and test-user records, deployment histories, log archives, credentials, and global hook installation were excluded. Empty browser configuration and synthetic fixtures are intentional template inputs. Existing Apache attribution is retained in source headers and `packages/licenses/`; the third-party browser page-object manifest records a reference dependency, not bundled `node_modules` or a required runtime download.
 
 | Root / import | Preserved behavior | Continuation changes |
 | --- | --- | --- |
@@ -47,7 +49,7 @@ Default state is under `state/revert`, `state/memory`, `state/qa-tests`, `state/
 | `config/ai-fixtures/` | `TORQUE_AI_FIXTURES`; enables real provider replay for selected client fixtures |
 | `config/parity.json` | `{ "script": "parity.py", "baseline_org": "explicit-alias" }`; launcher rejects traversal with either separator, drive/root forms and resolved escapes, then maps to `TORQUE_PARITY_SCRIPT` / `TORQUE_BASELINE_ORG`. The dispatcher rechecks containment beneath the selected client's `config` before execution, including direct package calls with a selected root |
 | Explicit browser connection | `TORQUE_BROWSER_CDP` or compatibility `JSC_BROWSER_CDP`; supplied CDP endpoint |
-| Explicit overlay probe | `TORQUE_TEST_RECORD_OBJECT`, optional `TORQUE_TEST_RECORD_FIELD`; no JusticeServer object inferred |
+| Explicit overlay probe | `TORQUE_TEST_RECORD_OBJECT`, optional `TORQUE_TEST_RECORD_FIELD`; no product-specific object inferred |
 
 Ordinary QA and execution do not read global bypass tokens. Compatibility token helpers are retained only behind their explicit commands and store state under `state/legacy-tokens`. Browser test-data writes require an identified sandbox/developer org or an explicit run-level production-write choice. An unknown org is not reclassified as safe by a token. Read-only smoke does not require a mutation token.
 
@@ -67,6 +69,8 @@ Browser flows are executable configuration. Domain implementations, seed users a
 - In 2.0.0a18, the browser session setup (`jsc_browser_tests/auth.py`) returns to Lightning after Logout As before checking the original user; the suite (`suite.py`) includes the redacted preflight failure in every unexecuted cell's result; and with `--json` the runner (`cli.py`) prints the run folder on stderr so stdout stays JSON.
 - In 2.0.0a19, the revert wrappers (`wrappers/_common.py`) refuse a connected write, running nothing, when the approval lookup fails with a workspace error such as the maintenance flag.
 - The audit corrections recheck parity adapter containment in `jsc_qa/dispatcher.py` at execution, and check maintenance in `wrappers/_common.py` before dry-run and non-connected shortcuts. Package dispatch through `torque` also checks maintenance before importing the delegate. See [maintenance boundaries](engagement-records.md#maintenance) for in-progress operations and direct APIs outside this coverage. Original package source hashes remain unchanged in `packages/provenance.json`; destination hashes and adaptation flags reflect these edits.
+- Windows launch: every package call that starts `sf` or `gemini` goes through `jsc_common/tools.py` (new), which finds the batch file Windows installs and keeps arguments literal (`jsc_revert/tool_launch.py`, new, falls back to plain `subprocess` when the revert package is used alone; the other packages do the same inline). Changed: `jsc_revert` (`org_detect.py`, `manifest.py`, `post_deploy_polling.py`, `snapshot_pre.py`, `wrappers/_common.py`), `jsc_qa` (`cli.py`, `dispatcher.py`, `seed_validator.py`), `jsc_browser_tests` (`sf_client.py`, `vision.py`), `jsc_loganalyzer` (`cli.py`, `code_analyzer.py`), `jsc_advisory/sf.py`, `meeting_processor/cli.py`, `jsc_ai_prompt_regression/harness.py`. `jsc_revert/revert_executor.py` starts its child with the real interpreter in a Windows virtual environment. `jsc_probes/cli.py` publishes a draft without a hard link where the filesystem has none. Destination hashes and adaptation flags reflect these edits.
+- Neutral naming: comments, docstrings and notices in the carried packages describe their origin as the earlier toolkit, and the manifest records the source repository as `prior-toolkit`. Changed: `jsc_common/workspace.py`, `jsc_revert` (`__init__.py`, `mcp_capture.py`, `org_sequence.py`) and its tests (`test_org_sequence.py`, `test_restore_path.py`), `jsc_loganalyzer/code_analyzer.py` and its test (`test_code_analyzer.py`), `jsc_memory/__init__.py`, `jsc_browser_tests` (`report.py`, `provisioning/object_registry.py`), `jsc_probes` (`__init__.py`, `cli.py`), `jsc_advisory` (`__init__.py`, `cli.py`, `sf.py`, the note in `data/provenance.json`), the notes line of `jsc_qa/data/qa-router.yaml` and `packages/licenses/NOTICE.txt`. Three display strings changed with them: the browser suite report title (`Gold-Standard Suite Report`), the `jsc_revert.mcp_capture` parser description and the `--json` help of `jsc_loganalyzer.code_analyzer`. No behavior, identifier or license term changed. Source hashes and the source commit are unchanged; destination hashes and adaptation flags reflect these edits.
 
 ## Recovery and local state safety
 

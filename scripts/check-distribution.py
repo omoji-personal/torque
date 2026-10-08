@@ -55,7 +55,7 @@ def main():
         if home_paths:
             raise SystemExit(f"Developer-local absolute paths in wheel: {home_paths}")
         print(f"Wheel surface verified: {len(names)} entries, {len(rows)} recipes, "
-              f"{len(source_commands)} legacy JSC command mappings.")
+              f"{len(source_commands)} legacy command mappings.")
     if args.sdist:
         with tarfile.open(args.sdist) as archive:
             paths = [Path(member.name) for member in archive.getmembers()]

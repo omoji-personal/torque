@@ -141,10 +141,10 @@ recipe/adapter pair and the actual installed native parser contracts.
 ## Scope of this port
 
 The conversational continuity layer is implemented locally. Its source lineage is
-the 42 command files reviewed in the JusticeServer working workspace, generalized
+the 42 command files reviewed in the earlier toolkit's working workspace, generalized
 without importing client records, internal contacts, org aliases, managed-package
-source, token-bearing URLs or employer branding. Historical source names remain
-only where necessary for command compatibility and provenance.
+source, token-bearing URLs or employer branding. Legacy identifiers remain only
+where necessary for command compatibility.
 
 Recipe completeness is not a claim that every live tool has been tested. Offline
 catalogue/synchronization checks establish local packaging and instruction

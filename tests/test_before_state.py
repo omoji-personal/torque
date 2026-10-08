@@ -149,3 +149,25 @@ def test_write_components_upsert_matches_a15_both_spellings():
     short = ["sf", "data", "upsert", "record", "-s", "Contact", "-i", "Email_Ext_Id__c",
              "-v", "Email_Ext_Id__c=steward@acme.example Title=Steward", "-o", "acme-dev"]
     assert bs.write_components(short, None) == ["Record:Contact:Email_Ext_Id__c"]
+
+
+def test_a_tree_past_the_windows_path_limit_is_refused_before_anything_is_copied(change, tmp_path, monkeypatch):
+    root, cid = change
+    source = retrieved(tmp_path)
+    evidence = root / "clients" / "acme" / "changes" / cid / "evidence"
+    target = evidence / ("before-" + "0" * 32)
+    longest = max(len(str(path.relative_to(source))) for path in source.rglob("*") if path.is_file())
+    room = 259 - len(str(target)) - 1 - longest
+    assert bs.path_limit_problem(source, target, limited=True) == ("" if room >= 0 else bs.path_limit_problem(
+        source, target, limited=True))
+    deep = type(target)(str(target) + "x" * (max(room, 0) + 3))
+    problem = bs.path_limit_problem(source, deep, limited=True)
+    # Three characters past the limit, plus whatever a long temporary folder was already over by.
+    over = 3 + max(-room, 0)
+    assert f"path limit by {over} character(s)" in problem and "Nothing was stored" in problem
+    assert bs.path_limit_problem(source, deep, limited=False) == ""
+    # A PC with the limit refuses the import and leaves no partial copy behind.
+    monkeypatch.setattr(bs, "path_limit_problem", lambda *args, **kwargs: problem)
+    with pytest.raises(ws.WorkspaceError, match="path limit"):
+        bs.import_before_state(root, "Acme", cid, source)
+    assert not evidence.exists() or not list(evidence.glob("before-*"))

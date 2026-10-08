@@ -56,7 +56,10 @@ def _loopback(host):
 
 def install():
     local = json.loads((BASE / "tools.json").read_text(encoding="utf-8"))
-    allowed = {str(Path(path).resolve()) for path in [sys.executable, *local.values()]}
+    # In a Windows virtual environment sys.executable is a launcher; the interpreter it
+    # starts (this same Python) is what a child bound to its parent has to start.
+    allowed = {str(Path(path).resolve()) for path in [sys.executable, getattr(sys, "_base_executable", None)
+                                                      or sys.executable, *local.values()]}
     popen = subprocess.Popen
 
     class OfflinePopen(popen):

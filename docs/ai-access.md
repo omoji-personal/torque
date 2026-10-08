@@ -26,8 +26,10 @@ holds them (the client's folder, `clients/`, the workspace) is refused too. Afte
 directory change the gate cannot follow (`cd "$X"`, `cd -`), any command that removes or
 writes is refused in a workspace that holds such records. A record changed while the gate is otherwise off would be trusted when the
 owner turns connected mode on. The `full`-mode check never blocks by failing: if it cannot
-finish, the call is allowed as before. Everything else `full` mode allows is
-unchanged.
+finish (an error inside it, or its time or glob budget spent), the call is allowed as
+before. Everything else `full` mode allows is unchanged. In build-only and connected mode
+the same check fails closed: an error inside it blocks the call, and the reason names the
+error. A spent budget blocks the call there too, as it does for every other check.
 
 Since 2.0.0a19 the protected-record check covers every mode (`full`, build-only and
 connected), matches names case-insensitively, and also covers each initiative's
@@ -66,11 +68,13 @@ later release narrows the check.
 
 - Any `sf`/`sfdx` call carrying an org flag (`-o`, `--target-org`, `--from-org`, `-u`,
   `--targetusername`, `--target-dev-hub`, `-v`) anywhere, even behind a wrapper, env var, `npx`, or
-  subshell. Without one, only these pass: local generators (`project generate`, `lightning
+  subshell. `sf.cmd`, `sf.exe`, `sf.ps1`, `npx @salesforce/cli@VERSION` and the CLI's own script
+  run with node (`node .../@salesforce/cli/bin/run.js`) all count as `sf`. Without an org flag, only these pass: local generators (`project generate`, `lightning
   generate`, `apex generate`), `project convert`, `code-analyzer run` and `code-analyzer rules`
   (their roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
   `--root-dir`/`--source-dir` for convert, and the current directory when none is given or when
-  convert uses `--manifest`/`--metadata`), `--version`, `--help`, `version`, `help`, `plugins`. `code-analyzer`'s `-o` and `-v`
+  convert uses `--manifest`/`--metadata`), `--version`, `version`, `help`, `plugins`. A bare
+  `sf --help` is blocked; use `sf help`. `code-analyzer`'s `-o` and `-v`
   short flags read as org flags; use `--output-file` and `--view`.
 - Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
   other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`. The
@@ -81,8 +85,35 @@ later release narrows the check.
   `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):
   anything other than `--help`, `-h`, or `--version`.
 - MCP tools whose server or tool name indicates Salesforce access (a name containing `salesforce`,
-  `sfdx`, `sf_`, `_sf`, `soql`, `sosl`, `sobject`, or `apex`, or a server or tool named `sf`), and
-  any MCP call with a string argument (at any depth) that resolves into
+  `sfdx`, `sf_`, `_sf`, `soql`, `sosl`, `sobject`, or `apex`, or a server or tool named `sf`). A
+  resource read (`ReadMcpResourceTool`, Antigravity's `read_resource`) names its server in a
+  `server` or `ServerName` argument, and that name is checked the same way.
+- An MCP call, whatever its server is called, with a string argument (a value or an argument
+  name, at any depth, `%` escapes decoded) that names a Salesforce org or login host: a host
+  name ending in `salesforce.com`, `force.com`, `my.site.com`, `salesforce-setup.com`,
+  `salesforce-sites.com`, `cloudforce.com`, `database.com`, `visualforce.com`,
+  `documentforce.com`, `lightning.com` or `sfdc.net`. That
+  covers My Domain, sandbox, Lightning, Visualforce, file and site hosts, instance hosts and the
+  login hosts (`login.salesforce.com`, `test.salesforce.com`). Salesforce's public sites are not
+  org access and pass: `salesforce.com`, `www`, `help`, `developer`, `trailhead`, `appexchange`,
+  `status`, `architect`, `admin`, `resources.docs` and `releasenotes.docs` under
+  `salesforce.com`. This is how a Salesforce MCP server under a neutral name is caught. It only
+  works when an argument carries a host; see "What it cannot stop".
+- Browser and desktop control tools, outright: an MCP tool whose server name contains `chrome`,
+  `playwright`, `puppeteer`, `browser`, `firefox`, `safari`, `webdriver` or `selenium` (Claude in
+  Chrome, Playwright, Puppeteer, Chrome DevTools), or `computer-use` (also `computer_use` and
+  `computeruse`), `desktop`, `applescript` or `automation` (computer use and desktop
+  control), or whose own name contains
+  `browser` (Antigravity's `open_browser_url`, `read_browser_page`, `browser_*`,
+  `click_browser_pixel`, `execute_browser_javascript`, `capture_browser_*` and
+  `list_browser_pages`). Navigation, page reads, screenshots, clicks and in-page JavaScript are
+  all blocked, whatever URL the call names: the gate cannot see which page or window such a tool
+  acts on (an open tab, a redirect, a signed-in session), so it cannot keep an org or client
+  page out of the session. Connected mode reads the same names and refuses the same tools. Plain
+  web fetch and web search (`WebFetch`, `WebSearch`, Antigravity's `read_url_content` and
+  `search_web`) are not browser tools and pass as before, with one difference: the address
+  given to `read_url_content` is checked like an MCP argument, so an org address is blocked.
+- Any MCP call with a string argument (at any depth) that resolves into
   `clients/`, `workspace.json`, `.claude/`, or the installed Torque package. A tree-walking MCP
   tool (a name containing `tree`, `search`, `find`, `grep`, `glob`, or `walk`) rooted at or above
   `clients/` is blocked too. A `file:` URI is parsed as a URI: `file:///p`, `file://localhost/p`
@@ -133,8 +164,18 @@ later release narrows the check.
   recursive tool could follow; `torque doctor` looks for them once (see below).
 - Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
   tool's shell, and a `PowerShell` tool (or any other tool with a `command`, `cmd` or `script`
-  argument) gets the same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
-  for PowerShell syntax.
+  argument) gets the same scan. For PowerShell, the shell Claude Code and Antigravity use on
+  Windows, the command is first read as PowerShell: backslashes are path separators; the
+  backtick is its escape character (`` s`f.cmd `` is `sf.cmd`); `Set-Location`, `Get-ChildItem`,
+  `Copy-Item`, `Remove-Item`, `Move-Item`, `Rename-Item` and their aliases (`sl`, `gci`, `dir`,
+  `ri`, `del`, `ren` and others) are the commands the scan knows, with `-Recurse` (also `-r`,
+  `-s`, `-Depth`) and cmd's `/s` and `/e` as a recursive read (`dir /s`, `findstr /s`, `xcopy
+  /s`, `robocopy /E`, `tree /f`); a string handed to something that runs it (`Invoke-Expression`,
+  `iex`, `powershell` or `pwsh` with or without `-Command`, `cmd /c`, `[scriptblock]::Create`,
+  `Start-Process`, `Start-Job`, `wsl`) is scanned as a command, at any nesting; and
+  `-EncodedCommand` is decoded and scanned, or blocked when it cannot be decoded. `ls -r` keeps
+  its Bash meaning for the Bash tool. This is still best-effort: a cmdlet, alias or function the
+  list does not name is not read.
 - Tools the gate does not recognise. Besides Bash, the file tools (`Read`, `Edit`, `Write`,
   `MultiEdit`, `NotebookEdit`, `NotebookRead`, `LS`, `LSP`), `Grep`, `Glob`, MCP tools and command
   tools, only these pass unchecked: `TodoWrite`, `TodoRead`, `TaskCreate`, `TaskUpdate`,
@@ -157,10 +198,15 @@ later release narrows the check.
   matches a file in it, or when git cannot answer (no repository, git missing).
 - Worktree copies. Every folder under `.claude/worktrees/` is checked as a workspace of its own,
   so its `clients/` is guarded like the workspace's: `Read`, `Grep`, `Glob`, `LSP`, MCP path
-  arguments and Bash commands that reach `.claude/worktrees/<name>/clients/` are blocked.
-- A Bash command aimed at `workspace.json`, `.claude/settings*.json`, `.worktreeinclude`, or the
-  `.claude` directory (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on
-  `workspace.json`, `.claude/settings*.json` and `.worktreeinclude`), and a destructive command
+  arguments and Bash commands that reach `.claude/worktrees/<name>/clients/` are blocked. If
+  `.claude/worktrees/` is there but cannot be listed, every call is blocked until it can:
+  a copy the gate cannot list is a copy it cannot guard.
+- A Bash command aimed at `workspace.json`, `.claude/settings*.json`, `.agents/hooks.json`
+  (Antigravity's hook configuration), `.worktreeinclude`, or the `.claude` directory
+  (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on `workspace.json`,
+  `.claude/settings*.json`, `.agents/hooks.json` and `.worktreeinclude`), a command that removes,
+  moves or copies over the `.agents` folder itself (the rules, skills and worker roles inside it
+  stay editable), and a destructive command
   (`rm`, `mv`, `cp`, `truncate`, a redirection) using a glob at the workspace root. A command
   is "aimed at" these files when it names them; a patch or archive writes the paths inside it,
   which the next bullet covers.
@@ -325,6 +371,83 @@ switched off by `disableAllHooks` in the workspace, user or managed settings (or
 not that the running host calls it. Confirm that once in a real session. Run it after setup, after every Torque or Python update, and
 before each monthly review.
 
+## Wiring the Antigravity hook
+
+Antigravity (`agy`) reads `.agents/hooks.json` in the working folder and never reads
+`.claude/settings.json`, so the Claude Code hook above does nothing in an Antigravity session.
+`torque.gate_antigravity` is the same gate behind Antigravity's hook format. Put this entry in
+the workspace's `.agents/hooks.json`, beside any other named hook there, with the absolute path
+of an interpreter that has Torque installed. `torque doctor --workspace .` names the command
+for the interpreter it runs under, and gives the whole entry as
+`ai_access.antigravity_hook.recommended_entry` in `--json` output.
+
+```json
+{"torque-gate": {"PreToolUse": [{"matcher": "*",
+  "hooks": [{"type": "command", "command": "/path/to/venv/bin/python -I -m torque.gate_antigravity", "timeout": 30}]}]}}
+```
+
+On Windows the command is the same with the interpreter's own path
+(`C:\\path\\to\\venv\\Scripts\\python.exe -I -m torque.gate_antigravity` inside the JSON).
+Antigravity runs it through `cmd /c` there and `sh -c` elsewhere, from the `.agents` folder.
+Quote the interpreter path only when it contains a space.
+
+What it does with each call:
+
+- Antigravity's tool calls are rewritten into the ones the gate knows and then decided by the
+  same code: `run_command` and text typed into a running command (`manage_task`,
+  `send_command_input`) as a PowerShell command on Windows and a Bash command elsewhere;
+  `view_file`, `list_dir`, `grep_search` and `find_by_name` as `Read`, `LS`, `Grep` and `Glob`;
+  `write_to_file`, `replace_file_content`, `multi_replace_file_content` and `sed_file` as
+  `Write`, `Edit` and `MultiEdit`; `call_mcp_tool` as that server's MCP tool; the browser tools
+  (`open_browser_url`, `read_browser_page`, `browser_*`, `browser_subagent`,
+  `click_browser_pixel`, `execute_browser_javascript`, `capture_browser_*`,
+  `list_browser_pages`) as MCP tools named `mcp__antigravity_browser__<name>`, which build-only
+  and connected mode block outright as browser tools; `generate_image`, `read_resource`,
+  `manage_inbox`, `delete_knowledge`, `schedule` and `read_url_content` like an MCP tool
+  (`mcp__antigravity__<name>`), every string argument checked as a path and for a Salesforce
+  host. `search_web` is a plain web search: the gate has no objection and Antigravity's own
+  flow decides. A tool the module does not know (`notebook_execution`, and any tool
+  Antigravity adds later) is blocked in build-only mode. So is a known tool the module cannot
+  read: a file tool without the argument that names its file, typed input that is not text,
+  and an MCP call without a usable server or tool name.
+- A blocked call is answered `deny` with the gate's reason. Antigravity has no answer that
+  means "no opinion", so a call the gate lets through is answered `allow` only when it is a
+  read inside the folders the session was started with (the working folder and those added
+  with `--add-dir`), which Antigravity runs without asking anyway, and `ask` otherwise. `ask`
+  hands the call to Antigravity's own permission flow, so the gate never allows what that flow
+  would have asked about. Whether `ask` adds a prompt for a tool Antigravity would otherwise
+  run silently has only been observed in headless runs; check it in an interactive session.
+- Antigravity blocks a call when its hook crashes, runs past its timeout or prints no decision
+  (observed with Antigravity CLI 1.3.1 on Windows), so a missing interpreter, a failed import
+  and the gate's own 5-second budget all end in a block. No wrapper is needed for that.
+- The session is bound to the folder it was started in, the way `CLAUDE_PROJECT_DIR` binds a
+  Claude Code session: a command run from another folder is still gated.
+- Subagents send their own tool calls through the same hook.
+
+Limits:
+
+- Torque's hook has not yet been called by a live Antigravity session. The hook input, the
+  answers and the failure behaviour were seen with another hook; Torque's hook was then run
+  as a command on that input. Confirm it once in a real session before relying on it.
+- Connected mode under Antigravity is written and tested offline only. `torque launch --host
+  antigravity` binds a session to one client; see [hosts](hosts.md). An Antigravity session
+  that was not started that way is not bound: org calls, browser tools and every client's
+  folder are refused, and no approval can be used.
+- `browser_subagent` starts a worker that drives a browser. It is blocked by name in
+  build-only and connected mode, like the other browser tools.
+- Never start a client session with `--dangerously-skip-permissions`: it removes Antigravity's
+  own folder boundary and turns every `ask` into a run. A `deny` still holds.
+- Doctor runs the registered command once on a synthetic `clients/` read, through the shell
+  from `.agents/`, and reports `Antigravity hook: blocked a standalone probe`, `NOT IN FORCE`
+  or `not registered`. A hook that is registered but does not block, cannot load the gate,
+  runs without `-I`, is disabled or has a matcher narrower than `*` makes doctor exit 3. A
+  workspace with no Antigravity hook only gets a next action, because doctor cannot know
+  whether Antigravity is used there. The probe does not show that Antigravity calls the hook;
+  confirm that once in a real session.
+- The tool names and arguments are the ones Antigravity CLI 1.3.1 sends. A later version that
+  renames an argument turns that tool into one the gate does not know, which blocks it in
+  build-only mode and is otherwise passed to Antigravity's own flow.
+
 ## What it cannot stop
 
 It is pattern matching on recognized tool calls, not a sandbox. Not covered:
@@ -350,10 +473,30 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   ready, or says the scan stopped at its limit.
 - A network tool (`curl`, a language HTTP client) reaching an org or a client system directly
   with credentials the user holds.
+- A Salesforce MCP server under a neutral name whose calls carry no Salesforce host. The gate
+  recognises a Salesforce MCP server in two ways only: by its server or tool name (the words
+  listed under "What build-only blocks"), and by a string argument that names a Salesforce
+  host. A server registered under a neutral name (`crm`, `data`, a client's name) whose tools
+  are also neutrally named, and whose calls identify the org by an org alias, a record ID or a
+  SOQL string, passes: nothing in such a call says Salesforce. So does a server that keeps the
+  org's host in its own configuration, one that reaches an org through a custom domain (a site
+  at `portal.example.org`) or an IP address, and a host built from parts or encoded other than
+  with `%` escapes. The gate does not read the host's MCP configuration and has no list of
+  allowed servers, and `torque doctor` does not look for Salesforce MCP servers. Remove them
+  from every configuration a build-only session loads.
+- A browser the gate does not see as a browser tool. The block is by name: an MCP browser or
+  desktop server whose server name has none of the listed words and whose tools are not named
+  `browser` passes. A browser started from the shell is a command, not a browser tool: `open`
+  or `start` with a URL, and a Playwright, Puppeteer or Selenium script the session writes and
+  runs, are read only as command lines. `WebFetch` passes with any URL, an org URL included.
+  It is a plain fetch, not the user's signed-in browser, but a page that needs no sign-in (a
+  public site on `my.site.com`) is readable. Antigravity's `read_url_content` is refused for
+  an address on a Salesforce org host and passes for any other.
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
   database connectors. Disable those connectors for a build-only session.
 - A tool call the hook never sees: a matcher narrower than `.*` (doctor flags it), and a host
-  without this hook. A host that does not set `CLAUDE_PROJECT_DIR` loses the session binding: a
+  without this hook (Claude Code and Antigravity each need their own entry; other hosts have
+  none). A host that does not set `CLAUDE_PROJECT_DIR` loses the session binding: a
   call from outside the workspace is then gated only when it names a path inside it.
 - A workspace below the current directory that is neither the session's project nor named by a
   path in the call (for example `rg foo` run from the parent of another workspace).
@@ -372,7 +515,8 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - `pip install -r` of a requirements file, or `pip install .` from a Torque checkout, that
   replaces Torque without naming it on the command line.
 - Copy or archive tools other than `tar`, `zip`, `cp`, `scp` and `rsync` with a recursive flag
-  (for example `7z`, `ditto`, `robocopy`) run over the workspace, and extractors other than
+  (for example `7z`, `ditto`, `Compress-Archive`; `robocopy` and `xcopy` are read only in a
+  PowerShell command) run over the workspace, and extractors other than
   `tar`, `bsdtar`, `unzip` and `ditto -x` (for example `7z x`, `cpio -i`). A patch that `git
   apply` reads from standard input inside `project/` is left to git's own path checks, which
   reject `..` and absolute paths. An archive whose members are links that a later member
@@ -404,7 +548,11 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 
 It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
 `Clients__c`) from the workspace root; an MCP string argument that is exactly `clients`, or `.`
-for a tree-walking MCP tool; a glob at the workspace root that matches `clients/`, such as
+for a tree-walking MCP tool; an MCP argument that only mentions an org host (a note, a search
+query, an email address at an org host); an MCP server whose name contains `desktop` or
+`automation` without driving the desktop (Desktop Commander, a marketing automation
+connector), and any MCP tool whose own name contains `browser`; a glob at the workspace root
+that matches `clients/`, such as
 `echo *`, `ls *`, `grep foo *`, `git add *` or `npx prettier --check '**/*.ts'` (these would list,
 stage, read or rewrite client files; name the files or run them from `project/`); a regex
 argument that also works as a glob matching a root entry (`.*` matches `.claude`);

@@ -11,7 +11,7 @@ crash-window where wrapper died between O_EXCL and write (empty lockfile)
 + malformed lockfile (corrupt JSON / missing required fields).
 
 PID validation: tristate WRAPPER | NOT_WRAPPER | UNKNOWN. UNKNOWN means we
-couldn't run `ps`/`/proc` to verify the process is actually a JSC wrapper —
+couldn't run `ps`/`/proc` to verify the process is actually a revert wrapper —
 in that case treat a same-host owner as NOT-stealable while its identity remains
 unknown. Codex empirically reproduced PermissionError on `ps -p` on Darwin
 sandbox; v5 stub returned False (treated as NOT_WRAPPER) and stole the
@@ -66,7 +66,7 @@ def org_lock_path(org_id: str) -> Path:
         raise ValueError("TORQUE_ORG_LOCK_DIR must be an absolute account-local path")
     return root / (canonical.lower() + ".json")
 
-# Cmdline marker: substring identifying a JSC wrapper process
+# Cmdline marker: substring identifying a revert wrapper process
 JSC_WRAPPER_CMDLINE_MARKER = "jsc_revert"
 WRAPPER_CMDLINE_MARKERS = (JSC_WRAPPER_CMDLINE_MARKER, "torque.cli", "/torque", "/jsc")
 
@@ -105,7 +105,7 @@ class LockReadStatus(Enum):
 
 class PidStatus(Enum):
     WRAPPER = "WRAPPER"          # alive AND cmdline contains JSC_WRAPPER_CMDLINE_MARKER
-    NOT_WRAPPER = "NOT_WRAPPER"  # not alive OR cmdline confirmed not-JSC
+    NOT_WRAPPER = "NOT_WRAPPER"  # not alive OR cmdline confirmed not a wrapper
     UNKNOWN = "UNKNOWN"          # alive but cmdline inspection unavailable (Codex-R5-P1-3)
 
 

@@ -6,9 +6,10 @@ CustomLabel was mutated ORIGINAL-VALUE-A -> MUTATED-VALUE-F through
 back at ORIGINAL-VALUE-A. Before these fixes the same sequence failed at four
 separate points, each of which reported success or a soft warning:
 
-  1. pre-snapshot retrieve passed --output-dir into ~/.justiceserverclaude/,
-     which sf rejects (OutputDirOutsideProjectError) for ANY org and ANY
-     selector — so no deploy_metadata snapshot had ever captured before-state.
+  1. pre-snapshot retrieve passed --output-dir into the earlier toolkit's
+     state folder under the home directory, which sf rejects
+     (OutputDirOutsideProjectError) for ANY org and ANY selector — so no
+     deploy_metadata snapshot had ever captured before-state.
   2. after staging the retrieve, sf's ABSOLUTE filePath values still pointed at
      the deleted staging dir, so correctly-captured files classified as
      `retrieve_failed`.

@@ -2,16 +2,41 @@
 
 **Keep Salesforce consulting work easy to resume and hand over.**
 
-Torque is a Python command-line tool and a set of conversational workflows that
-give your coding assistant a private, local workspace for each Salesforce client:
-business context, requirements, decisions, implementation workflows, observations
-and a handoff another consultant can use.
+Torque is a Python command-line tool and a set of conversational workflows for
+consultants who use an AI coding assistant on Salesforce work. It keeps one folder
+of plain files per client: business context, requirements, decisions, evidence and
+a handoff another consultant can use. It also wraps Salesforce CLI operations so
+that a change leaves a record and, where supported, a way back.
 
-**Status: development alpha, version 2.0.0a19.** It has not been published to a
+**Status: development alpha, version 2.0.0a20.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
-have offline acceptance coverage; bounded live operations and experimental
-capabilities have separate limits in [validation](docs/validation.md).
-**Recovery is scoped; it is not a universal undo or Salesforce backup.**
+have offline acceptance coverage; live operations have narrower coverage, stated
+separately in [validation](docs/validation.md).
+
+## What to know before you use it
+
+- **The assistant acts with your own Salesforce login.** Torque adds no service
+  account. Whatever your login can do in an org, sandbox or production, a command
+  the assistant runs can do.
+- **By default nothing is restrained.** A new workspace runs in `full` mode: Torque
+  records and guides, it does not block. Two optional modes add a gate that checks
+  each tool call. `build-only` keeps org access and client context out of the
+  session. `connected` binds a session to one client and requires your approval,
+  from your own terminal, for each org write. See [AI access](docs/ai-access.md).
+- **The gate is a seat belt, not a sandbox.** It reads the commands and tool calls
+  it recognizes. Code the assistant writes and runs under your account can get
+  past it, and under Claude Code a hook that cannot start does not block. The
+  known gaps are listed under
+  [what it cannot stop](docs/ai-access.md#what-it-cannot-stop).
+- **The files are local; the conversation is not.** The workspace is plain files
+  on your disk or drive. What the assistant reads from them goes to that
+  assistant's model provider under your account's terms. See
+  [security and data boundaries](SECURITY.md).
+- **Recovery is scoped.** Supported operations save the state before a change and
+  can restore it. It is not a universal undo or Salesforce backup.
+- **Two hosts, to different depths.** Claude Code and Antigravity are both
+  supported; [hosts](docs/hosts.md) says what works under each and what was
+  verified live.
 
 ## A handoff you can resume
 
@@ -74,7 +99,8 @@ The [alpha 16 record](docs/validation-alpha16.md) covers the runtime, and the
 [alpha 17 record](docs/validation-alpha17.md) covers the knowledge skills added since.
 The [alpha 18 record](docs/validation-alpha18.md) covers browser restoration and failure
 diagnostics, and the [alpha 19 record](docs/validation-alpha19.md) covers clients and
-initiatives. No industry-leadership claim is made.
+initiatives. The [alpha 20 record](docs/validation-alpha20.md) covers Windows and
+Antigravity, and says which parts were run live. No industry-leadership claim is made.
 
 ## Continue real client work
 
@@ -88,8 +114,12 @@ These commands create local files. An alias refers to existing Salesforce CLI
 authentication; it does not log in or authorize an org. Replace the sample names.
 Open the private workspace in your assistant; its `AGENTS.md` explains how to use the
 client context and bundled workflows (`CLAUDE.md` points Claude Code to it). Torque works
-with any assistant that reads `AGENTS.md` and can run commands; the optional build-only
-and connected-mode gate currently runs as a Claude Code hook.
+with any assistant that reads `AGENTS.md` and can run commands. The optional gate runs as
+a Claude Code hook and as an [Antigravity hook](docs/ai-access.md#wiring-the-antigravity-hook).
+Connected mode is proven under Claude Code; under Antigravity it is written and tested
+offline and has not been run in a live session ([hosts](docs/hosts.md)). Antigravity reads
+`.agents/` only, so the workspace also gets the rules, recipes (as skills and slash
+commands) and worker roles there in [its format](docs/workspace-upgrades.md#antigravity-copies).
 
 Ask in ordinary language:
 
@@ -127,7 +157,7 @@ removing the flag resumes admission. The workflow updater remains available. See
 
 | Work | Interface |
 | --- | --- |
-| Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original JSC command mappings |
+| Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original command mappings |
 | Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs |
 | Org and metadata investigation | `torque advisory`; use current official Salesforce CLI, skills and MCP tools alongside it |
 | Platform knowledge | Five [skills](docs/skills.md): architecture, Code Analyzer and SOQL review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
@@ -167,8 +197,8 @@ execution-evidence limitations described in the linked guides.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-A firm with an AI-use policy can set a workspace to build-only: a Claude Code hook then
-keeps the assistant away from client orgs and client context, best-effort and not a
+A firm with an AI-use policy can set a workspace to build-only: a Claude Code or
+Antigravity hook then keeps the assistant away from client orgs and client context, best-effort and not a
 sandbox. See [build-only mode](docs/ai-access.md) for what it does and does not cover.
 
 Run `torque --help`, `torque workflows list`, or a route's `--help`. Stateful
@@ -206,7 +236,7 @@ them and integrate where appropriate; command count is not a competitive claim.
 - [Validation and limitations](docs/validation.md), [next live acceptance scenario](docs/live-acceptance.md)
 - [Client adoption and provider data boundaries](docs/client-adoption.md), [optional engagement worksheet](examples/client-data-boundary.md)
 - [Contributing](CONTRIBUTING.md), [security and data boundaries](SECURITY.md), [changelog](CHANGELOG.md)
-- [JSC continuity](docs/continuation.md), [workflow mapping](docs/workflow-continuity.md), [package provenance](docs/package-migration.md)
+- [Continuity with the earlier toolkit](docs/continuation.md), [workflow mapping](docs/workflow-continuity.md), [package provenance](docs/package-migration.md)
 
 Client data, credentials, org mappings and employer documents belong in private
 workspaces, outside the public source. Git ignore rules do not untrack files

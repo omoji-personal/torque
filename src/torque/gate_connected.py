@@ -5,7 +5,10 @@ client's consent lists; check-only deploys and test runs are allowed and logged;
 an org write is allowed only by consuming an approval the consultant granted for
 that exact call; a browser action needs a granted browser window; anything the
 gate cannot check asks the consultant (and is refused when prompts are skipped);
-approval administration is refused. See docs/connected-approval.md."""
+approval administration is refused, and so is a command that prints or takes a
+credential (`sf org display`, `sf org open --url-only`, `sf org login`) or lists
+every org on the machine (`sf org list`), with or without an approval. See
+docs/connected-approval.md."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,10 +20,19 @@ import shutil
 import urllib.parse
 
 from . import approval, consent, gate, workspace as ws
-from .connected_routes import BROWSER_DATA_CLASSES, BROWSER_SERVER, INITIATIVE_OWNER, Route, classify, is_simple
+from .connected_routes import BROWSER_DATA_CLASSES, INITIATIVE_OWNER, Route, classify, is_simple
 
 RANK = {"allow": 0, "ask": 1, "deny": 2}
 PREFIX = "Connected mode: "
+# A query that answers "which org is this alias?" without printing a credential.
+ORG_IDENTITY_QUERY = 'sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"'
+CREDENTIAL_REASON = ("`{detail}` prints or takes a credential (an access token, a login URL or a password), so "
+                     "the session never runs it, with or without an approval. To check which org an alias "
+                     "points to, run " + ORG_IDENTITY_QUERY + "; the consultant runs logins in their own "
+                     "terminal.")
+ALL_ORGS_REASON = ("`{detail}` lists every org this machine is logged in to, including orgs outside "
+                   "{client}'s consent, so the session never runs it. Use the org aliases in the client's "
+                   "consent (`torque client consent show --workspace . --client NAME`).")
 # Permission modes in which the host shows the consultant a prompt. Any other named
 # mode (bypassPermissions, auto, dontAsk, or one this version does not know) is refused
 # for routes the gate cannot check. A missing mode is treated as a prompting one: hosts
@@ -229,8 +241,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     after_allow: list = []
     approved_id: str | None = None
     skipping = bool(permission_mode) and permission_mode not in PROMPT_MODES
-    browser_tool = tool_name.startswith("mcp__") and bool(BROWSER_SERVER.search(tool_name.split("__")[1]
-                                                                                 if tool_name.count("__") > 1 else ""))
+    browser_tool = tool_name.startswith("mcp__") and gate._mcp_surface(tool_name) == "browser"
     if browser_tool:
         # An explicit foreign URL is additional evidence of a scope violation.
         # A matching URL cannot authorize a browser read or change below.
@@ -241,7 +252,12 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                                        f"{bound or 'a bound client'}'s consent."))
     for route in routes:
         client = _route_client(route)
-        if not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
+        if route.kind == "credential":
+            # Refused before anything else, bound or not: no consent or approval covers it.
+            decisions.append(_deny(CREDENTIAL_REASON.format(detail=route.detail)))
+        elif route.kind == "all_orgs":
+            decisions.append(_deny(ALL_ORGS_REASON.format(detail=route.detail, client=bound or "the bound client")))
+        elif not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
             decisions.append(unbound)
         elif client not in (None, bound):
             owner = (f"the internal initiative {route.client[len(INITIATIVE_OWNER):]}"

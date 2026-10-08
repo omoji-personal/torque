@@ -260,8 +260,9 @@ def test_inv2_consent_org_id_changed_after_grant_invalidates(w, tmp_path):
 
 
 # Invariant 4: an org read on the default org still needs usable consent
-def test_inv4_default_org_display_needs_consent(w):
+def test_inv4_default_org_read_needs_consent(w):
     consent.suspend(w, "Acme", presence=YES)
+    assert run(w, "Bash", {"command": "sf sobject list"}).action != "allow"
     assert run(w, "Bash", {"command": "sf org display"}).action != "allow"
 
 
@@ -324,6 +325,9 @@ def test_production_browser_window_with_recovery_path_is_granted(w):
     assert item["manual_recovery"].startswith("Remove")
 
 
-def test_default_org_display_is_no_org_and_named_display_is_a_read(w):
-    assert run(w, "Bash", {"command": "sf org display"}).action == "deny"
-    assert run(w, "Bash", {"command": "sf org display -o acme-prod"}).action == "allow"
+def test_default_org_read_is_no_org_and_named_read_is_allowed(w):
+    # Was `sf org display`; that command prints an access token and is now refused in
+    # every form (tests/test_connected_credentials.py), so a metadata read stands in.
+    assert run(w, "Bash", {"command": "sf sobject list"}).action == "deny"
+    assert run(w, "Bash", {"command": "sf sobject list -o acme-prod"}).action == "allow"
+    assert run(w, "Bash", {"command": "sf org display -o acme-prod"}).action == "deny"

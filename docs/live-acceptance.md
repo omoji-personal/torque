@@ -40,7 +40,7 @@ Keep raw responses, snapshots, IDs, and client configuration outside this reposi
    object. Verify all are absent from active metadata/normal queries. Do not
    equate a soft delete with permanent erasure or purge unrelated recycle-bin data.
 
-Recovery command spelling retains the native JSC delegate:
+Recovery command spelling retains the native legacy delegate:
 
 ```sh
 torque revert --workspace PRIVATE --client TEST revert preview SNAPSHOT --org ALIAS
@@ -74,7 +74,7 @@ resume client context, turn a small requirement into a record-triggered Flow,
 validate/deploy, prove the Flow's business result, walk it as an identified
 non-admin user, restore the browser session, and produce a handoff with evidence.
 Measure elapsed task time, repeated explanations, avoidable interruptions, and
-corrections. This supplies a practical employer pilot and public demo while keeping
+corrections. This supplies a practical pilot and a public demo while keeping
 all example data synthetic. It remains separate from the narrower API acceptance
 results in [validation](validation.md).
 

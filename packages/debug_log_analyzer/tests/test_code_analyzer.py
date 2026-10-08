@@ -2,7 +2,7 @@
 
 Parses a CAPTURED, hand-authored v5 `sf code-analyzer run` JSON fixture (a mix
 of severities 1-5) and asserts:
-  - each violation maps to the right JSC P0/P1/P2 band,
+  - each violation maps to the right P0/P1/P2 band,
   - the report renders,
   - the exit-code logic is non-zero when a P0/P1 is present and zero when only
     P2s remain.

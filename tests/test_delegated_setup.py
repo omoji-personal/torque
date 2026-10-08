@@ -33,6 +33,19 @@ def test_delegated_mode_switch_records_the_ai_actor(root):
     assert within(changed(before, snapshot(root)), delegation.SETUP_WRITES["ai-access"])
 
 
+def test_delegated_mode_switch_leaves_the_antigravity_rule_to_the_upgrade(root):
+    """The delegated step writes only what delegation.SETUP_WRITES lists, so the
+    Antigravity copy of the connected rule arrives with `workspace upgrade`."""
+    from torque import template_updates
+    copy = root / ".agents" / "rules" / "production-approval.md"
+    switch(root)
+    assert (root / ".claude" / "rules" / "production-approval.md").is_file() and not copy.exists()
+    check = template_updates.update_templates(root, check=True)
+    assert [row["action"] for row in check["actions"] if row["path"] == ".agents/rules/production-approval.md"] == ["add"]
+    template_updates.update_templates(root)
+    assert copy.read_text(encoding="utf-8").startswith("---\ntrigger: always_on\n")
+
+
 def test_delegated_mode_switch_is_tier2_only(root):
     with pytest.raises(delegation.Refusal) as info:
         ws.set_ai_access(root, "connected", approval="required", verify="hmac", delegated=True, model_id=MODEL,

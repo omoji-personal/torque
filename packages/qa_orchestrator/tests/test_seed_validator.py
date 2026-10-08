@@ -120,7 +120,7 @@ class TestSoqlIdValidation(unittest.TestCase):
 
         captured = {"queries": []}
 
-        def fake_run(cmd, capture_output=True, text=True, timeout=30):
+        def fake_run(cmd, capture_output=True, text=True, timeout=30, encoding=None):
             q = cmd[cmd.index("--query") + 1]
             captured["queries"].append(q)
             if "PermissionSetAssignment" in q or "PermissionSet" in q:
@@ -156,7 +156,7 @@ class TestSoqlIdValidation(unittest.TestCase):
         self.assertTrue(ok, detail)
 
         # and a license MISMATCH must fail with the actual value named
-        def fake_run_mismatch(cmd, capture_output=True, text=True, timeout=30):
+        def fake_run_mismatch(cmd, capture_output=True, text=True, timeout=30, encoding=None):
             q = cmd[cmd.index("--query") + 1]
             if "PermissionSetAssignment" in q or "PermissionSet" in q:
                 payload = {"result": {"records": []}}

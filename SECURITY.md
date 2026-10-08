@@ -39,7 +39,48 @@ Targets are explicit. Recovery captures have operation-specific limits and are
 not complete backups. A local lease coordinates cooperating processes; it cannot
 cancel an already submitted Salesforce job or supply a distributed transaction.
 Missing verification is reported as incomplete. Ordinary user authorization governs
-work; Torque does not install a global approval or command-blocking framework.
+work: the assistant acts with the consultant's own Salesforce login, in whatever org
+that login reaches, production included.
+
+## The optional gate, and what it is not
+
+By default Torque blocks nothing. A workspace runs in `full` mode until its owner
+chooses otherwise. Two optional modes add a gate: a hook the assistant calls before
+each tool call ([AI access](docs/ai-access.md),
+[connected mode](docs/connected-approval.md), [hosts](docs/hosts.md)).
+
+- The gate reads the commands and tool calls it recognizes. It is not a sandbox and
+  not an operating-system boundary. A program the assistant writes and runs under
+  the same account, or a command form the gate does not recognize, is outside it.
+  The known gaps are listed in the AI access page.
+- Under Claude Code a hook that cannot start, times out, or exits with a code other
+  than 2 does not block the call, and a session started outside the workspace
+  folder loads no hook at all. `torque doctor` checks the hook command, its
+  interpreter and its timeout. Under Antigravity a hook that crashed, timed out or
+  printed no decision was observed to block the call; that is the host's behaviour
+  on the version tested, not a guarantee from Torque.
+- Connected mode's tier 1 approvals are signed with a key that the session's own
+  account can read. They guard against accidental actions, not against code run
+  under that account. Tier 2 uses a separate approver account and is available on
+  macOS and Linux only.
+- On Windows several checks are weaker. Permission and owner checks on the key,
+  grants, consent evidence and before-state files are skipped, so those files
+  inherit the folder's access list, and a launch record is not tied to a process.
+- Commands that print credentials, such as `sf org display`, are refused for the
+  assistant in connected mode. In `full` mode nothing stops the assistant from
+  running them, and their output then reaches its model.
+
+## What Torque stores
+
+Recovery snapshots, approval evidence and before-state captures keep exact command
+text, raw Salesforce CLI output and record values as they were, without redaction,
+under the selected client's folder. Nothing expires them. If the workspace sits on a
+synced or shared drive, those files are synced and shared with it. Torque's own
+org-identity lookups discard the access token the Salesforce CLI returns. Browser
+automation requests a session URL and holds it in memory.
+
+Optional vision and meeting adapters send the screenshots or frames you select to
+the configured provider's command-line tool when you invoke them.
 
 ## Reporting a vulnerability
 

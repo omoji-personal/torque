@@ -2,7 +2,11 @@
 of it is a gated org write, never an "unverifiable" ask-and-hope. Covers the plain
 forms, every flag spelling the CLI documents, and the wrapped shapes (env, exec,
 xargs, bash -c, python -c, find -exec) the a15 classifier already understands for
-every other `sf` write."""
+every other `sf` write.
+
+A form that prints that URL to the session (--url-only, -r, --json) is not a write
+an approval can cover: it is refused as a credential-printing command
+(tests/test_connected_credentials.py). The forms below only open a browser."""
 import pytest
 
 from torque import connected_routes as cr, permissions
@@ -11,15 +15,32 @@ K = lambda tool, inp: [(r.kind, r.org) for r in cr.classify(tool, inp)]
 B = lambda cmd: K("Bash", {"command": cmd})
 
 
+@pytest.fixture(autouse=True)
+def no_container_mode(monkeypatch):
+    # In container mode every `sf org open` prints its URL, so every form is refused.
+    for name in cr.SF_CONTAINER_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.parametrize("command", [
-    "sf org open -o acme-dev", "sf org open --target-org acme-dev --url-only", "sf org open -o acme-dev -r",
+    "sf org open -o acme-dev", "sf org open --target-org acme-dev",
     "sf org open --path /lightning/setup/SetupOneHome/home -o acme-dev", "sf org open --browser chrome -o acme-dev",
-    "sf org open --private -o acme-dev", "sf org open -o acme-dev --private -r",
-    "sfdx force:org:open -u acme-dev", "sfdx force:org:open -u acme-dev -r",
+    "sf org open --private -o acme-dev", "sf org open -o acme-dev --private -b firefox",
+    "sfdx force:org:open -u acme-dev", "sfdx force:org:open -u acme-dev -p /lightning/setup/SetupOneHome/home",
 ])
 def test_org_open_is_a_gated_write(command):
     routes = cr.classify("Bash", {"command": command})
     assert [(r.kind, r.org) for r in routes] == [("org_write", "acme-dev")]
+
+
+@pytest.mark.parametrize("command", [
+    "sf org open --target-org acme-dev --url-only", "sf org open -o acme-dev -r",
+    "sf org open -o acme-dev --private -r", "sf org open -ro acme-dev", "sf org open -o acme-dev --urlonly", "sf org open -o acme-dev --json",
+    "sfdx force:org:open -u acme-dev -r", "sfdx force:org:open -u acme-dev --json",
+])
+def test_org_open_that_prints_its_url_is_refused_not_gated(command):
+    # Was a gated write (and so approvable) before; it hands the session a login URL.
+    assert B(command) == [("credential", None)]
 
 
 def test_org_open_without_an_org_is_refused():
@@ -27,9 +48,9 @@ def test_org_open_without_an_org_is_refused():
 
 
 def test_org_open_without_an_org_is_refused_url_only():
-    # A flag alone (no --target-org / -o) still refuses: the default org is never
-    # used in connected mode, even for a read-only-looking --url-only/-r call.
-    assert [r.kind for r in cr.classify("Bash", {"command": "sf org open --url-only"})] == ["no_org"]
+    # A flag alone (no --target-org / -o) still refuses, now as a credential-printing
+    # command: the URL it prints would be the default org's.
+    assert [r.kind for r in cr.classify("Bash", {"command": "sf org open --url-only"})] == ["credential"]
 
 
 def test_interactive_profile_asks_on_org_open():
@@ -57,4 +78,4 @@ def test_wrapped_org_open_forms_stay_gated(cmd, expected):
 
 
 def test_sfdx_alias_is_also_gated():
-    assert B("sfdx force:org:open -u acme-dev --json") == [("org_write", "acme-dev")]
+    assert B("sfdx force:org:open -u acme-dev") == [("org_write", "acme-dev")]

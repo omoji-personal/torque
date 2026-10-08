@@ -12,9 +12,8 @@ import os
 from pathlib import Path
 import sys
 
+from . import hosts
 from . import workspace as ws
-
-AGENT_BINARY = "claude"
 
 
 def _client_args(parser: argparse.ArgumentParser) -> None:
@@ -137,6 +136,9 @@ def register(sub) -> None:
                              "(tier 2 only)")
     launch.add_argument("--binding", metavar="lnk-ID", help="with --delegated: the binding from "
                                                             "`torque approval launch-binding`")
+    launch.add_argument("--host", metavar="|".join(hosts.KEYS),
+                        help="the agent host to start (default: the \"host\" workspace.json names, else "
+                             f"{hosts.DEFAULT.key}); the words after -- are passed to it")
 
 
 def register_consent(client_sub) -> None:
@@ -180,28 +182,39 @@ def _print(value) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False))
 
 
+def _launch_host(named, config: dict) -> hosts.Host:
+    """The host a launch starts: the one named with --host, else the workspace's."""
+    return hosts.resolve(named) if named is not None else hosts.for_workspace(config)
+
+
 def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None, *, delegated=False, binding=None,
-           env=None, ancestors=None) -> int:
+           env=None, ancestors=None, host=None) -> int:
     """Bind a new AI session to one client through a launch record for this process
-    (exec keeps the pid): after the consultant's presence check and code
+    (exec keeps the pid; on Windows this process starts the agent and waits): after the consultant's presence check and code
     (unchanged), or, with `delegated`, by claiming a single-use launch binding the
-    workspace's delegated approver wrote. `extra` passes through to `claude`
-    unchanged (for example `-p --input-format stream-json`). The hook process
-    inherits TORQUE_CLIENT, TORQUE_WORKSPACE and TORQUE_LAUNCH from this
-    environment; the gate binds only from the record TORQUE_LAUNCH names."""
+    workspace's delegated approver wrote. The session runs under `host` (a name
+    hosts.resolve accepts), else under the host workspace.json names, else under
+    Claude Code; the launch record names it. `extra` passes through to that
+    host's binary unchanged (for example `-p --input-format stream-json` for
+    `claude`); a delegated launch passes only the options on that host's
+    allowlist. The hook process inherits TORQUE_CLIENT, TORQUE_WORKSPACE and
+    TORQUE_LAUNCH from this environment; the gate binds only from the record
+    TORQUE_LAUNCH names."""
     from . import consent, gate, launch as launches
+    target = None
     if delegated:
         from .delegation import Refusal
         if not binding:
             raise ws.WorkspaceError("--delegated needs --binding lnk-... from `torque approval launch-binding`")
         # Every presence-free check before anything else is read (agent-session,
         # tier 2, approver delegate, launching account); claim_binding repeats them.
-        launches._tier2_config(workspace, env=env, ancestors=ancestors)
-        flag = launches.launch_flag_problem(extra)
+        _, protected, _ = launches._tier2_config(workspace, env=env, ancestors=ancestors)
+        target = _launch_host(host, protected)
+        flag = launches.launch_flag_problem(extra, target)
         if flag:
-            raise Refusal("launch-flag-refused", f"a delegated launch does not pass {flag} to claude: only "
+            raise Refusal("launch-flag-refused", f"a delegated launch does not pass {flag} to {target.binary}: only "
                                                  "the allowlisted options go through (R49)")
-        variable = launches.launch_env_problem(os.environ)
+        variable = launches.launch_env_problem(os.environ, target)
         if variable:
             raise Refusal("launch-flag-refused", f"a delegated launch does not run with {variable} set; unset it "
                                                  "and launch again")
@@ -221,23 +234,48 @@ def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None,
     root, config = ws.load_workspace(workspace)
     if gate._resolve_ai_access(config.get("ai_access"), config.get("approval")) != "connected":
         raise ws.WorkspaceError("launch is for a connected workspace; see docs/connected-approval.md")
+    # A delegated launch keeps the host its options were checked against.
+    target = target or _launch_host(host, config)
     folder, _, client_config = ws.load_client(root, client)
     problems = consent.consent_problems(consent.load_consent(root, client))
     if problems:
         if delegated:
             raise Refusal("consent-unusable", "consent is not usable: " + "; ".join(problems))
         raise ws.WorkspaceError("consent is not usable: " + "; ".join(problems))
-    record = (launches.claim_binding(root, client, binding, env=env, ancestors=ancestors) if delegated
-              else launches.write_launch_record(root, client, "human"))
+    record = (launches.claim_binding(root, client, binding, env=env, ancestors=ancestors, host=target.key)
+              if delegated else launches.write_launch_record(root, client, "human", host=target.key))
     os.environ["TORQUE_CLIENT"] = client_config["slug"]
     os.environ["TORQUE_WORKSPACE"] = str(folder)
     os.environ["TORQUE_LAUNCH"] = record["id"]
+    # A hook states its own host; a value left in the launching shell is not one.
+    os.environ.pop(hosts.HOOK_HOST_ENV, None)
     if delegated:
-        for name in launches.REFUSED_ENV:
+        for name in target.refused_env:
             os.environ.pop(name, None)
     os.chdir(root)
-    execvp(AGENT_BINARY, [AGENT_BINARY, *extra])
+    if os.name == "nt" and execvp is os.execvp:
+        return run_agent([target.binary, *extra])
+    execvp(target.binary, [target.binary, *extra])
     return 0
+
+
+def run_agent(argv: list[str]) -> int:
+    """Start the agent on Windows and wait for it; its exit code. Windows has no
+    exec: os.execvp starts a second process and ends this one, which hands the
+    console back to the shell while the agent still reads it, and it cannot start
+    an agent installed as a batch file (`claude` can be) at all. The launch record
+    names this process, which stays the agent's parent. Ctrl+C belongs to the agent."""
+    import signal
+    import subprocess
+    from jsc_common import tools
+    line, options = tools.command(argv)
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        return subprocess.Popen(line, **options).wait()
+    except OSError as exc:
+        raise ws.WorkspaceError(f"could not start {argv[0]}: {exc}") from exc
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 def _launch_binding(p) -> int:
@@ -248,8 +286,13 @@ def _launch_binding(p) -> int:
         return 0
     print(f"Launch binding {record['id']} for {record['client']}, single use, valid until {record['expires_at']}.")
     print("Start the session with:")
+    # The binding names no host: the launch starts the workspace's unless --host names another.
+    try:
+        label = hosts.for_workspace(ws.load_workspace(p.workspace)[1]).binary.upper()
+    except (OSError, ValueError):
+        label = "HOST"
     print(f"  torque launch --workspace {p.workspace} --client {p.client} --delegated --binding {record['id']} "
-          "-- CLAUDE OPTIONS")
+          f"-- {label} OPTIONS")
     return 0
 
 
@@ -495,8 +538,8 @@ def run(parsed, tail: list[str] | None) -> int:
         if parsed.delegated or parsed.binding:
             # launch() checks the --delegated/--binding pairing.
             return launch(parsed.workspace, parsed.client, tail or [], delegated=parsed.delegated,
-                          binding=parsed.binding)
-        return launch(parsed.workspace, parsed.client, tail or [])
+                          binding=parsed.binding, host=parsed.host)
+        return launch(parsed.workspace, parsed.client, tail or [], host=parsed.host)
     if parsed.action == "launch-binding":
         return _launch_binding(parsed)
     if parsed.action == "request":

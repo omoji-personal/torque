@@ -29,9 +29,10 @@ sandbox. The limits are listed below.
 | Check-only | `sf project deploy validate`, `--dry-run`, `sf apex run test` | allowed with metadata consent and logged in `clients/<slug>/approvals/activity.jsonl` |
 | Org writes | any other `sf`/`sfdx` command with an org flag, `sf api request` other than a plain GET, `torque deploy/data/org/recover`, `jsc` write verbs, Salesforce MCP tools that are not clearly reads | allowed once, by consuming a matching approval |
 | Torque browser | `torque browser ... --target-org ORG` (and `torque qa` with an org) | needs metadata and record-data consent and a granted browser window for that org; Torque starts an isolated browser and checks its org (see below) |
-| External browser and desktop tools | screenshots, page reads, navigation, clicks, typing, scripts and form input through browser MCP, devtools or desktop servers | refused: tool arguments, URLs and tab IDs do not establish the current context |
-| Programs the gate cannot check | `git`, `hg`, `gh`, linters/formatters, `sf code-analyzer`, `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, `sf org login`, any program it does not recognize | classified as unverifiable; the gate requests review in prompting modes. Run untrusted project tooling without Salesforce credentials in an isolated account or container; a prompt does not constrain its environment |
-| Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
+| External browser and desktop tools | screenshots, page reads, navigation, clicks, typing, scripts and form input through browser MCP, devtools or desktop servers, and Antigravity's own browser tools (`open_browser_url`, `read_browser_page`, `browser_*` and the rest) | refused: tool arguments, URLs and tab IDs do not establish the current context. The tools are recognized by name, the same names build-only mode blocks ([build-only](ai-access.md#what-build-only-blocks)) |
+| Credentials and org listings | `sf org display` and `sf org display user` (they print an access token), `sf org open` with `--url-only`, `-r` or `--json` (a login URL), `sf org generate password`, `sf org login ...`, `sf org auth ...`; `sf org list`, `sf org list auth`, `sf alias list`, `sf auth list`, `sf env list` (every org this machine is logged in to, other clients' included); Salesforce MCP tools named for a token, password or credential, or for listing all orgs | refused, with or without an approval, in every permission mode and whether or not a client is bound. No approval can be requested for them. The reason names the query to use instead: `sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"` (a record read, so the consent must cover `records`). See "Credential and org-listing commands" below |
+| Programs the gate cannot check | `git`, `hg`, `gh`, linters/formatters, `sf code-analyzer`, `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, an MCP tool under a neutral name whose arguments name a Salesforce host, any program it does not recognize | classified as unverifiable; the gate requests review in prompting modes. Run untrusted project tooling without Salesforce credentials in an isolated account or container; a prompt does not constrain its environment |
+| Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, an `sf` command whose command words the shell builds at run time (`sf org $X`, `sf org d*`), a command that sets `SF_CONTAINER_MODE` or `SFDX_CONTAINER_MODE`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
 | Out of scope | another client's folder or `--client`, `torque client list`, an org not in the consent (whatever the route), an `sf` call without an explicit org | refused |
 | Prompts skipped | any org write, browser change or unchecked program while the session's permission mode is not `default`, `acceptEdits` or `plan` (`bypassPermissions`, `auto`, `dontAsk`, or a mode this version does not know) | refused, even with an approval, which stays unused |
 
@@ -85,6 +86,10 @@ Each "present" step also prints a six-character code the owner types back.
    process or one of its nearest ancestors with the same start time; `TORQUE_CLIENT` set by
    hand binds nothing. Use one session per client. An unattended session starts from a
    delegated approver's launch binding instead ([delegated approver](delegated-approver.md)).
+   The launch starts the host the workspace names (`"host"` in `workspace.json`, Claude Code
+   when absent), or the one given with `--host claude|antigravity`. The launch record names
+   its host and binds only under that host's hook. Everything on this page was proven under
+   Claude Code; under Antigravity it is tested offline only ([hosts](hosts.md)).
 
 ### Doctor probes
 
@@ -102,10 +107,10 @@ profiles; the last two columns show what the host then does under each.
 | `unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
 | `admin` | `torque approval grant` | deny | refused | refused: the hook denies it, no prompt |
 | `browser_write` | a browser click (`mcp__claude-in-chrome__computer`) | deny | refused | refused: the hook denies it, no prompt |
-| `bound_read` | `sf org display` on an approved org | allow | runs | runs only if a read allow rule covers it; otherwise refused under claude -p |
+| `bound_read` | `sf sobject list` on an approved org (a metadata read) | allow | runs | runs only if a read allow rule covers it; otherwise refused under claude -p |
 | `bound_write_unapproved` | `sf project deploy start` with no approval | deny | refused | refused: the hook denies it, no prompt |
 | `bound_org_outside_consent` | an org the consent does not name | deny | refused | refused: the hook denies it, no prompt |
-| `bound_default_org` | `sf org display` with no `-o` | deny | refused | refused: the hook denies it, no prompt |
+| `bound_default_org` | `sf sobject list` with no `-o` | deny | refused | refused: the hook denies it, no prompt |
 | `bound_other_client` | `torque context` for another client | deny | refused | refused: the hook denies it, no prompt |
 | `bound_unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
 | `bound_skipped_prompts` | a script with prompts skipped (`bypassPermissions`) | deny | refused | refused: the hook denies it, no prompt |
@@ -314,6 +319,83 @@ ends, or either data category is removed, the consent is suspended or no longer 
 or the window is withdrawn, Torque refuses the request, closes every page and the browser
 context, and the run stops.
 
+## Credential and org-listing commands
+
+Some `sf` commands hand the session a credential. `sf org display` prints the org's access
+token (and with `--verbose` its auth URL). `sf org open --url-only` prints a URL that signs in
+without a password. `sf org generate password` prints a password. The `sf org login` commands
+take a credential, can print tokens with `--json`, and can point an alias at another org.
+`sf org list` and `sf alias list` show every org this machine is logged in to, other clients'
+orgs included, and `sf org list --json` can also print their access tokens. None of these is
+a read, and none is a write an approval can cover. The gate refuses them for the session, and
+`torque approval request` refuses to create a request for them. The consultant runs them in
+their own terminal.
+
+To check which org an alias points to, the session runs
+`sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"`. It is a
+record read, so the client's consent must cover `records`.
+
+What is refused:
+
+- `org display` and `org display user`, with any flags.
+- `org open` when it prints its URL: with `--url-only`, `-r` (alone or leading a group such as
+  `-ro ALIAS`), `--urlonly` or `--json`; with `--flags-dir` (a file there can set either flag);
+  with a word the shell could turn into such a flag (a `$` or brace expansion, or a glob that
+  can match a file named like an option); and when `SF_CONTAINER_MODE` or
+  `SFDX_CONTAINER_MODE` is set in the session's environment, because the CLI then prints the
+  URL instead of opening a browser. A command that sets one of those variables is refused
+  too. `sf org open` with none of these opens the consultant's browser and stays a write
+  that needs an approval.
+- `org generate password`, every `org login` variant, and every `org auth` subcommand.
+- `org list` (alone or with `auth`), `auth list`, `alias list` and `env list`.
+  `org list limits`, `metadata`, `metadata-types`, `users` and `sobject record-counts` read one
+  named org and stay reads; without an org flag they are refused like any other read of the
+  default org.
+- The legacy spellings under `sf` or `sfdx`: `force:org:display`, `force:org:list`,
+  `force:org:open`, `force:user:display`, `force:user:password:generate`, `force:auth:...`,
+  `auth:...` and `force:alias:list`.
+- The words in any order and in the colon spelling, because the CLI accepts both:
+  `sf display org`, `sf org:display`. `sf help org display` and `sf which org display` only
+  describe a command and pass.
+- With a flag before the command words (`sf --json org list`). The CLI wants the command
+  first, but the gate does not rely on that: it reads the words wherever they are, and an
+  `sf` line that starts with a flag and then names a command is never local work.
+- A shortened command. The CLI completes a command on its own when only one command fits
+  the words and flags given: `sf display --verbose -o ALIAS` runs `org display`. So a command
+  whose words all come from the name of one refused command is refused as that command:
+  `sf display`, `sf user`, `sf password`, `sf login`, `sf web`, `sf list`, `sf alias`, and
+  `sf org` with no further word. `sf open` is refused when it prints its URL. The reason names
+  the full command it could become.
+- Each of these as `sf.cmd`, `sf.exe` or `sf.ps1`, by a path, through `npx @salesforce/cli` or
+  the CLI's `run.js`, behind `env`, `nohup`, `time`, `xargs`, `bash -c`, `eval`, `$(...)` or
+  backticks, and chained or piped with other commands. In a PowerShell tool call they are
+  also read in the forms build-only mode reads: the backtick escape, backslash paths,
+  `cmd /c`, `Invoke-Expression`, `powershell -Command`, a script block and `-EncodedCommand`.
+- An `sf` command whose first three command words hold a `$` or brace expansion or a glob
+  (`sf org $X`, `sf org d*`): the shell picks the command after the gate decides, so it is
+  refused and no approval covers it.
+- A Salesforce MCP tool whose name has `token`, `password`, `credential`, `secret` or
+  `frontdoor`, or `display` with `org` or `user` (refused as a credential), or `orgs` with
+  `list` or `all` (refused as a listing). This is read from the tool's name only.
+
+The gate reads the command line of a tool call. It does not sit between the Salesforce CLI
+and the org, and it is not a sandbox. Known forms that are not refused:
+
+- A command the gate cannot read is asked about, not refused: a script or `python -c` that
+  runs `sf org display`, a command piped into a shell (`echo ... | bash`), a program name built
+  at run time (`$SF org display`), PowerShell's `Start-Process sf -ArgumentList ...`, and a
+  quoted command string given to `cmd /c` in a Bash call. In a prompting mode the consultant
+  sees the command and can allow it. In any other mode it is refused.
+- A script can read the Salesforce CLI's own files, where the tokens are stored. The gate
+  keeps recognized tools away from those folders. It does not inspect scripts.
+- Another command's `--json` output may carry auth fields (`sf org create scratch`,
+  `sf org resume scratch`). Those are org writes that need an approval, so read the command
+  before granting it. This has not been checked against the CLI's output.
+- `SF_CONTAINER_MODE` set where the gate cannot see it, such as a shell profile that the
+  tool's shell loads, still makes an approved `sf org open` print its URL.
+- A Salesforce MCP server under a neutral name. Its tools are not recognized as Salesforce
+  tools unless an argument names a Salesforce host, and then the call is only asked about.
+
 ## Two approval tiers
 
 - **Tier 1, `hmac` (default): protection against accidental actions.** The consultant and the session share one OS account.
@@ -359,6 +441,10 @@ With the hook in force, on recognized routes:
 - reads and changes through external browser, desktop or devtools tools, a change by Torque's own browser
   without a granted window for its org, any request of Torque's browser to another
   Salesforce org;
+- a recognized command that prints or takes a credential (`sf org display`,
+  `sf org open --url-only`, `sf org generate password`, `sf org login`) or lists every org on
+  the machine (`sf org list`, `sf alias list`), with or without an approval. The forms read
+  and the forms that get past are in "Credential and org-listing commands";
 - recognized reads of metadata, record data or debug logs the consent does not cover;
 - org access for a client without active, signed-off consent;
 - a production approval of any kind (browser windows included) without an independent
@@ -366,7 +452,9 @@ With the hook in force, on recognized routes:
 - edits to the mode, consent and approval files and reads of the approval key, and the
   Salesforce CLI's credential, alias and configuration folders and installation. The consent,
   consent-evidence and approval records of a Torque workspace, and the approval key, are
-  guarded from recognized tools in every mode where the hook runs, `full` included;
+  guarded from recognized tools in every mode where the hook runs, `full` included. In
+  connected and build-only mode an error inside that check blocks the call; in `full` mode
+  it lets the call through ([build-only](ai-access.md));
 - an approval used with its files changed, and a use that cannot be recorded;
 - changing an alias or the default org with `sf alias set` or `sf config set`;
 - org writes, browser changes and programs the gate cannot check while the consultant's
@@ -404,6 +492,14 @@ With the hook in force, on recognized routes:
   its window (bounded by 15 minutes and the exact binding).
 - A program the session places ahead of `sf` on `PATH` through a route the gate does not
   see, or a writable Salesforce CLI installation changed by a script; doctor warns about both.
+- A Salesforce MCP server registered under a neutral name. A call is classified as Salesforce
+  by its server or tool name. Under a neutral name it is local work, with no consent check and
+  no approval, unless a string argument names a Salesforce org or login host; then the gate
+  asks about it (and refuses it when prompts are skipped). A call that names the org only by
+  an alias, a record ID or a SOQL string is not seen. Register Salesforce MCP servers under a
+  name that says so, or leave them out of a connected session.
+- A credential printed by a command the gate cannot read, and the other forms listed at the
+  end of "Credential and org-listing commands".
 - Commands built at run time after a program has been permitted, configured subprocesses
   (`tar --to-command`, `rsync -e`, `zip -TT`, GNU `sed`'s `e`), and every route
   [build-only mode](ai-access.md#what-it-cannot-stop) lists as unparsed.
@@ -461,11 +557,14 @@ below; recheck them when either tool changes its hook or command contract.
 `sf` commands that only read (from the 2.150.6 summaries) and that connected mode
 allows for an approved org: `data query`, `data get record`, `data search`,
 `data export tree|bulk|resume`, `data bulk results`, `data resume`,
-`sobject describe|list`, `org display [user]`, `org list [limits|metadata|metadata-types|users|sobject record-counts]`,
+`sobject describe|list`, `org list limits|metadata|metadata-types|users|sobject record-counts`,
 `project retrieve start|preview`, `project deploy report|preview`,
 `apex get log|test`, `apex list log`, `flow get test`, `logic get test`,
 `package installed list`, `package install report`, `package uninstall report`,
-`package version list`, `community list template`. `apex tail log` is not a read:
-it turns on debug logging (a trace flag) in the org. `org auth show-access-token`,
-`show-sfdx-auth-url` and `show-user-password` print credentials and are treated
-as writes. Any command not on this list counts as a write.
+`package version list`, `community list template`, `limits api display`,
+`cmdt generate fromorg`. `apex tail log` is not a read:
+it turns on debug logging (a trace flag) in the org. `org display` and `org display user`
+print an access token, and `org list` with no subcommand (or `auth`) lists every org on the
+machine: they are not reads and not writes, they are refused ("Credential and org-listing
+commands"). So are `org auth show-access-token`, `show-sfdx-auth-url` and
+`show-user-password`. Any other command not on this list counts as a write.

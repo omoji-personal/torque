@@ -35,6 +35,11 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+try:  # the shared launcher finds gemini where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 from .contracts import (
     TargetSpec,
     ValidationFinding,
@@ -196,7 +201,7 @@ def _invoke_gemini(
 
     try:
         try:
-            p = subprocess.run(
+            p = run_tool(
                 cmd,
                 cwd=str(workspace_root()),
                 capture_output=True,

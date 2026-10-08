@@ -12,6 +12,11 @@ import subprocess
 import tempfile
 from .diagnostics import redact
 
+try:  # the shared launcher finds sf where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 
 class SfError(Exception):
     """Raised when an sf CLI invocation fails."""
@@ -60,7 +65,7 @@ class SfClient:
         """Run an explicit `sf` arg list (no auto target-org/json appended) with
         the same return-code + JSON-decode guards as _run."""
         try:
-            proc = subprocess.run(
+            proc = run_tool(
                 ["sf", *args], capture_output=True, text=True, encoding="utf-8", errors="strict",
                 timeout=timeout_s or self.timeout_s, env=_sf_env())
         except UnicodeDecodeError:

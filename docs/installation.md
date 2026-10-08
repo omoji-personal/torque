@@ -70,6 +70,38 @@ The demo path must be new and outside the checkout, same as on macOS/Linux. Put
 `.venv\Scripts` on PATH, or use the absolute path, the same way `.venv/bin` is used
 above.
 
+What Torque does for Windows itself:
+
+- The Salesforce CLI is installed as `sf.cmd` (npm, or the Salesforce installer), which
+  Windows does not start for the bare name `sf`. Torque finds it on PATH (never in the
+  current folder), starts an npm shim as its own `node.exe` script, and runs any other
+  batch file through `cmd.exe` with each argument quoted so that `&`, `%`, `^` and `"`
+  stay literal. The same applies to `gemini`.
+- Output that is redirected (a pipe, a file, an assistant's terminal) is written as
+  UTF-8, not in the ANSI code page, unless `PYTHONIOENCODING` is set. Output to a
+  console window is unchanged. A script that reads Torque's output should decode it as
+  UTF-8 (in Python, `encoding="utf-8"`), or set `PYTHONIOENCODING` for the call.
+- `torque recover run` starts its child with the real interpreter when Torque runs in a
+  virtual environment, because the environment's `python.exe` is a launcher.
+- `torque launch` (connected mode) starts `claude` as a child process and waits for it,
+  returning its exit code. Windows has no `exec`: the call used elsewhere would end
+  Torque and hand the console back to the shell while the agent was still reading it,
+  and could not start `claude` installed as a batch file. Ctrl+C goes to the agent.
+- A command Torque prints for you to paste (`show_command` in `torque context`) is
+  quoted for cmd.exe and PowerShell, not for a POSIX shell.
+- The build-only gate reads PowerShell commands as PowerShell, and runs as an
+  Antigravity hook as well as a Claude Code hook: [build-only mode](ai-access.md).
+
+Limits on Windows: a path of 260 characters or more fails unless long paths are enabled
+in Windows, and evidence folders are deep, so keep the workspace path short. A
+before-state that would pass the limit is refused before anything is copied, with the
+number of characters it is over. Creating a symbolic link needs Developer Mode or an
+elevated prompt; Torque itself creates none, and the tests that build one are reported as
+skipped there.
+On a volume without hard links, such as Google Drive for desktop, new files are published
+another way (see [workspace upgrades](workspace-upgrades.md#interrupted-or-simultaneous-updates));
+the automated tests replace the link call and do not run on such a volume.
+
 The build-only-mode hook (see `ai-access.md`) goes in the workspace's own
 `.claude/settings.json`, never a user-level settings file. On Windows, do not use a
 bare `python` in the hook command: it often resolves to the Microsoft Store alias or

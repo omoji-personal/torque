@@ -29,7 +29,9 @@ def main():
             if not path.is_file() or path.read_text(encoding="utf-8") != expected:
                 mismatches.append(path.name)
         else:
-            path.write_text(expected, encoding="utf-8")
+            # newline="\n": Windows would otherwise write \r\n, and the bundle built
+            # from these files is compared and shipped byte for byte.
+            path.write_text(expected, encoding="utf-8", newline="\n")
     if mismatches:
         print('Adapters differ: ' + ', '.join(mismatches))
         return 1

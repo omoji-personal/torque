@@ -11,10 +11,13 @@ import secrets
 import subprocess
 import sys
 
-# Claude Code sets these for every tool subprocess (verified, docs/connected-approval.md).
-AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+from . import hosts
+
+# What each host sets for every tool subprocess, from the registry (hosts.py).
+# Claude Code's are verified (docs/connected-approval.md); Antigravity lists none yet.
+AGENT_ENV = hosts.env_markers()
 # A process whose command name contains one of these is an agent host.
-AGENT_PROCESS_MARKERS = ("claude",)
+AGENT_PROCESS_MARKERS = hosts.process_markers()
 # No 0/O or 1/I: the code is read off a screen and typed back.
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 CODE_LENGTH = 6

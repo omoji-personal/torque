@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "packages/jsc_common/jsc_common/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/jsc_common/jsc_common/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -13,7 +13,7 @@
     },
     {
       "path": "packages/jsc_common/jsc_common/org_classify.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/jsc_common/jsc_common/org_classify.py",
       "source_sha256": "0e2c6c3004f30e545e7b7de4fde95faec69ba621291d37e0621683a891e5a39e",
       "source_tracked": true,
@@ -22,7 +22,7 @@
     },
     {
       "path": "packages/jsc_common/tests/test_org_classify.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/jsc_common/tests/test_org_classify.py",
       "source_sha256": "4891495cf6f9838d28aa2b600fe01979066015a5f19433b0e488ba3e6fa90f79",
       "source_tracked": true,
@@ -31,16 +31,16 @@
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/data/qa-router.yaml",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/qa-router.yaml",
       "source_sha256": "d9f1c7a56817580d7692405aaf4d64bf79b94576bf0d2d88a6abf402688119bd",
       "source_tracked": true,
-      "destination_sha256": "35b0215f6481f4277476a7dea7821f78f347491164018b112540388ccb009efd",
+      "destination_sha256": "9e9e6c2877c9e42d559e1656fc229ef22f24ecdc55a3cb43c97e39d008e651bb",
       "adapted": true
     },
     {
       "path": "packages/qa_orchestrator/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -49,7 +49,7 @@
     },
     {
       "path": "packages/qa_orchestrator/tests/test_qa_skip_token.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/tests/test_qa_skip_token.py",
       "source_sha256": "e77978a4a46125096fede9ba6a17eba891a1148406341e8e28dc0a63c0bcfac1",
       "source_tracked": true,
@@ -58,7 +58,7 @@
     },
     {
       "path": "packages/qa_orchestrator/tests/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/tests/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -67,7 +67,7 @@
     },
     {
       "path": "packages/qa_orchestrator/tests/test_orchestrator.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/tests/test_orchestrator.py",
       "source_sha256": "03a5f343d93100a3d73c891f41bb20e6dd9059da9c638c68265669e20bea0177",
       "source_tracked": true,
@@ -76,7 +76,7 @@
     },
     {
       "path": "packages/qa_orchestrator/tests/test_meta_api.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/tests/test_meta_api.py",
       "source_sha256": "e32c5ba3de797a876127dcac3829a480fbac2fa813e23b5b6dd23978e99438a8",
       "source_tracked": true,
@@ -85,34 +85,34 @@
     },
     {
       "path": "packages/qa_orchestrator/tests/test_seed_validator.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/tests/test_seed_validator.py",
       "source_sha256": "ff21e8aeabac88bf17cbde88f778c2c09f8c79a5999a6485d497d48340a7f7d7",
       "source_tracked": true,
-      "destination_sha256": "3e75fc1efc6d9f39bf8e4663b5347d600917f4c670a9d8eacc77c6a92dd7b764",
+      "destination_sha256": "98e98a1287903ed6706df535de8c87b700e537b5f9a71f52b05d18534f6c0e5e",
       "adapted": true
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
       "source_sha256": "d37863fc4bb6f32935244976631e9a0fe509c3660d67df4968f5b13e87e8c20d",
       "source_tracked": true,
-      "destination_sha256": "98d7a01bbc4298cc07202bfc2eee9ea02ba8ed2fa3c2aa24764a844875cd02e3",
+      "destination_sha256": "bf4928659ff914e9940ac38e0228e0cd226c4c24cb11a2cfe95150e419f1c65a",
       "adapted": true
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/seed_validator.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/jsc_qa/seed_validator.py",
       "source_sha256": "fa556cd4affb85af87c63837a4305ce9574574c17761fa0491af7ea245ecf292",
       "source_tracked": true,
-      "destination_sha256": "f829d5ae7ca4a7815526f9340eb0b945c5a53257df716d11872dea6923a55240",
+      "destination_sha256": "dd309d491105b8b032da7445c1135da3d26a7607e947da5e96d605a338c36125",
       "adapted": true
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/qa_skip_token.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/jsc_qa/qa_skip_token.py",
       "source_sha256": "fb90da9db469b97940bb2583e7c2e964d8fd284afe8ae4583bf7c588b4da1f12",
       "source_tracked": true,
@@ -121,7 +121,7 @@
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/jsc_qa/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -130,16 +130,16 @@
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/jsc_qa/cli.py",
       "source_sha256": "96bb6753ada72ab93a4cd4dc94a466dc86735269f6edc09d22ca396e42917438",
       "source_tracked": true,
-      "destination_sha256": "18784c60b28be9c6794e5ab753f7f9ebf72c862e016749b48d09b6d5bc06c9ed",
+      "destination_sha256": "e2104aa5af09a8c96724ee09da62b06511d4119e63654b31a7feebf09aeb8240",
       "adapted": true
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/router.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/jsc_qa/router.py",
       "source_sha256": "c1ece999fe816c2ed06271431c0807075dbcfad21b0b208b3def945bf1609e60",
       "source_tracked": true,
@@ -148,7 +148,7 @@
     },
     {
       "path": "packages/qa_orchestrator/jsc_qa/report.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/qa_orchestrator/jsc_qa/report.py",
       "source_sha256": "352695a00986bab15b6f989ee1494665494eea53965055b7f2b9ebfc7ad9c154",
       "source_tracked": true,
@@ -157,7 +157,7 @@
     },
     {
       "path": "packages/revert/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -166,16 +166,16 @@
     },
     {
       "path": "packages/revert/tests/test_org_sequence.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_org_sequence.py",
       "source_sha256": "24e7b4adc7db15187ba7a4553e680e07355c175a8f6bff26554cf982c4a39999",
       "source_tracked": true,
-      "destination_sha256": "fe4e1dd1c12dc2038cb531642093df0494058c972a16bfc5d751dfcf58a00e5e",
+      "destination_sha256": "8f50f0f0078b1c267d17d90a2bf88bd25974eae5d8dcb2ce0d494e8543eb5797",
       "adapted": true
     },
     {
       "path": "packages/revert/tests/test_intent_marker.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_intent_marker.py",
       "source_sha256": "0937710e1a2c48fd9589d73cbc3ba18bdfe3587e0dee105958de079062a5e09e",
       "source_tracked": true,
@@ -184,7 +184,7 @@
     },
     {
       "path": "packages/revert/tests/test_snapshot_pre.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_snapshot_pre.py",
       "source_sha256": "c0827dbaee2e707761788372bd031d792f816ca97ca997efb8a0cd9f677fd1e9",
       "source_tracked": true,
@@ -193,7 +193,7 @@
     },
     {
       "path": "packages/revert/tests/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -202,7 +202,7 @@
     },
     {
       "path": "packages/revert/tests/test_phase_i4_extended_2.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_phase_i4_extended_2.py",
       "source_sha256": "fb95835af77d10905c369887270447becb75171fd7c1abcc6c9a755d9d49c854",
       "source_tracked": true,
@@ -211,7 +211,7 @@
     },
     {
       "path": "packages/revert/tests/test_data_undelete_wrapper.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_data_undelete_wrapper.py",
       "source_sha256": "0c9cb0b84efd0815d767cd84444ebcc93fe52587b05df2ba65405cea432371c3",
       "source_tracked": true,
@@ -220,7 +220,7 @@
     },
     {
       "path": "packages/revert/tests/test_cli_integration.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_cli_integration.py",
       "source_sha256": "419a301f761db178871c794d498b5f8c43d5ec1810c078c9cce9d53d1f905300",
       "source_tracked": true,
@@ -229,7 +229,7 @@
     },
     {
       "path": "packages/revert/tests/test_mcp_capture.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_mcp_capture.py",
       "source_sha256": "21859a75b08cdf94d457963c8808e5f2507d13e1b533d78e64a8464765df0f01",
       "source_tracked": true,
@@ -238,7 +238,7 @@
     },
     {
       "path": "packages/revert/tests/test_revert_capabilities.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_revert_capabilities.py",
       "source_sha256": "8a0b21b2aba08f511ddd489582e713bef653e8005d6995568c786f397bedb7d6",
       "source_tracked": true,
@@ -247,7 +247,7 @@
     },
     {
       "path": "packages/revert/tests/test_revert_planner.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_revert_planner.py",
       "source_sha256": "dbd07927f8dbffefd2e67d1251ddbc068601f1d681af693eb006e6a96dc332d5",
       "source_tracked": true,
@@ -256,16 +256,16 @@
     },
     {
       "path": "packages/revert/tests/test_restore_path.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/tests/test_restore_path.py",
       "source_sha256": "9aea860382f1c14004ca53cba3260a266f3bef9c8d77811ab5850a65eaefd531",
       "source_tracked": true,
-      "destination_sha256": "92b3ad4097cd99d8c52e409d9a24b961a19f90271ccb79928a1c51e126e28e4a",
+      "destination_sha256": "91ba63ddaf324ecde6d60d8c710ce4d3c8124021e7ff157655a3e9aedd278015",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/bundle.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/bundle.py",
       "source_sha256": "cf7852c890f13fc4f0519f034c76924cb984ab7f2ee520e69648acc59755fbcb",
       "source_tracked": true,
@@ -274,34 +274,34 @@
     },
     {
       "path": "packages/revert/jsc_revert/org_detect.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/org_detect.py",
       "source_sha256": "4e8c78a2c456e040941393430dd1950e65c1a772d890a12d632d13c3865f3eba",
       "source_tracked": true,
-      "destination_sha256": "850cfc915ee69a19a179f0bb0f94cc2d4bf04b4966f23a0034fb3cc93e3d9548",
+      "destination_sha256": "ee7892c054856aeca16a352f34720e6513fe31eca1211613df2ce3b2c19462c1",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/manifest.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/manifest.py",
       "source_sha256": "e9849ce7dac08e4dd58bcf2bd8d5f8e894297ebe90c05d371feae638435d19ac",
       "source_tracked": true,
-      "destination_sha256": "912b988abde5a7f9c39fa71740e7e4d52cea0a9be29ec993e58abc94d9288f35",
+      "destination_sha256": "3f87e5650d9d8b005e16970bf4229d671f1726ff7129a6e809bc311962a378f3",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/revert_executor.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/revert_executor.py",
       "source_sha256": "8d2a28bef1758779a50eeef4af4c88f86e8676a2f474a2104d2c98b79ba6de0f",
       "source_tracked": true,
-      "destination_sha256": "4a6af1ae24a66169938d2bf219dc9f565ae592ab3b6d2adf4972389dfaf60905",
+      "destination_sha256": "8bc277235a705cdf374a123324cc50272a0a8075b2d854d6b2b9c0e5dd29dd65",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/revert_planner.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/revert_planner.py",
       "source_sha256": "24ef5f21c20fbafe1fe36f68c1839a15298d1a80491bd98c02aecdede3c3f449",
       "source_tracked": true,
@@ -310,25 +310,25 @@
     },
     {
       "path": "packages/revert/jsc_revert/post_deploy_polling.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/post_deploy_polling.py",
       "source_sha256": "565c95f63d6f1e4078c172a25370c46be1d990b1e896d9c3514c0ddf5aafaec2",
       "source_tracked": true,
-      "destination_sha256": "8b5c799a410019c365ca6d7285bcf21674d596c3f6f1a04e17bf50dcab69958d",
+      "destination_sha256": "89ca5c95de343b6c9c647b645fabb0b75fbc5df63b01462c14a912c1ed9de529",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/__init__.py",
       "source_sha256": "f5c563c68f79fb3994498151623dc404d2515fe7eb966a8558b785d3caeded3a",
       "source_tracked": true,
-      "destination_sha256": "15ba711eca1465e30a4e527b801802dda7dcebe446216363a2c3879bb9726fc2",
+      "destination_sha256": "e3276c28a307fc54fe32ca674378496b7d36768120b98a60ed9415c54d0a7d2c",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/intent_marker.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/intent_marker.py",
       "source_sha256": "bb83cab27ee9e9d45494c50c4545ac156c1af9f7a88a5239b66eb0a0e536b994",
       "source_tracked": true,
@@ -337,7 +337,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/stale_detector.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/stale_detector.py",
       "source_sha256": "927ac58a81dd7fe6ad21495f46fe72a01015b8dcc20725d6a94b3c6a8272c98e",
       "source_tracked": true,
@@ -346,25 +346,25 @@
     },
     {
       "path": "packages/revert/jsc_revert/snapshot_pre.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/snapshot_pre.py",
       "source_sha256": "075334af50f924c5e53d6c276f49a02b1ed4abf26774931716d047ca268af5c4",
       "source_tracked": true,
-      "destination_sha256": "0c4de2872bba4d61c83c2fdd81877c0003cd7c2aafd3aef97c490357eaaa9df2",
+      "destination_sha256": "d68f11942ed1624613a9fee7ac66f1c425ad65f8f7d9f6b3317f189834637645",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/mcp_capture.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/mcp_capture.py",
       "source_sha256": "828dc6f29b8228c9fe696a7999e353d3e936bb329d498a7d11b175fe749e24f5",
       "source_tracked": true,
-      "destination_sha256": "b091248c09bc768b73c08a40ba8608d60c64aa34c404fa5f7842819f35ee9a17",
+      "destination_sha256": "08b8b79d6a2f3d23835b8063baa39451f7538e1aef76f41bc1edbf29a85bbbe5",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/cli.py",
       "source_sha256": "c2cd6105a45d7ce342063ec2be0b556eec6b0057e458d95644818adcec421e26",
       "source_tracked": true,
@@ -373,7 +373,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/revert_capabilities.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/revert_capabilities.py",
       "source_sha256": "54a0081d9b2c3b49322abf6516195394a6578c043608969417a971b03b19721a",
       "source_tracked": true,
@@ -382,16 +382,16 @@
     },
     {
       "path": "packages/revert/jsc_revert/org_sequence.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/org_sequence.py",
       "source_sha256": "19c3e91915f8e9f8d5632e666ad4cc0716a98b93914d7ae2f59f2e281c3caf34",
       "source_tracked": true,
-      "destination_sha256": "9c01c7b2f5d0e3b02958939687e96baa42c3e2a73c20b8578cb21a2eeba34bf0",
+      "destination_sha256": "ce1da83c88bbc4f8058ace63bb569fcfb26b9036ab8df432ef4176e360b32b30",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/package_install.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/package_install.py",
       "source_sha256": "998566e6fe499cb3962b067c0979fbef1d20b44b0585bf69f04e89127d3714bf",
       "source_tracked": true,
@@ -400,7 +400,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_upsert.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_upsert.py",
       "source_sha256": "75386581e0b3426dbc8f0da6c2a191933c2eac2efaff6b4f280fe8a4e85d6f01",
       "source_tracked": true,
@@ -409,7 +409,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/apex_run.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/apex_run.py",
       "source_sha256": "0d9092505d222052b957709b4094b89c14ebdf2077b1776bfd4a7bff2405af31",
       "source_tracked": true,
@@ -418,7 +418,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/deploy.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/deploy.py",
       "source_sha256": "47bade899a92565ce12a2af9eaaefac4de44b3123d7e2bbb4b140ac31460ced9",
       "source_tracked": true,
@@ -427,7 +427,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/package_uninstall.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/package_uninstall.py",
       "source_sha256": "72e75de6adb82b62c89092050d1673de81ea9d88525d7ec02d0a08b8fdbbbe70",
       "source_tracked": true,
@@ -436,7 +436,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/deploy_resume.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/deploy_resume.py",
       "source_sha256": "a358b1b3469fbdef890fd11e0081746b0cda4809815efd0b18ab754733960161",
       "source_tracked": true,
@@ -445,16 +445,16 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/_common.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/_common.py",
       "source_sha256": "3cce54873ffdd043fe0fd87f4d892e75375e1cfd6872ee63660cbbb1b67b751b",
       "source_tracked": true,
-      "destination_sha256": "696c568d3fb17fab8f65032c64dbdd1bce212a213fd216a138f2b6b279edcbe0",
+      "destination_sha256": "be34737a72cf067d8721e4fc3987a91b317c7937da86bf2d22416c1f694dfdc1",
       "adapted": true
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_bulk_upsert.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_upsert.py",
       "source_sha256": "fdcc02f8ed1e04d456a6999b882d3379fd037de0f71cb42f9e809e13be514926",
       "source_tracked": true,
@@ -463,7 +463,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -472,7 +472,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_undelete.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_undelete.py",
       "source_sha256": "cfa7a9ce34f614fc90cb948d7340be2a581bc7e8a50253997bc636b2ded385de",
       "source_tracked": true,
@@ -481,7 +481,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/org_assign_permset.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permset.py",
       "source_sha256": "6af95d8dfc50358bad566ab981ca8d6b9bf8e25be3df2be51d8137307950ab98",
       "source_tracked": true,
@@ -490,7 +490,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_bulk_import.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_import.py",
       "source_sha256": "cb528c8703cc9f0cbba0bfc56a9bb235ccb6ecc1097739f3dba80b252d5af3fe",
       "source_tracked": true,
@@ -499,7 +499,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_bulk_update.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_update.py",
       "source_sha256": "554ca9553aed70d3fed647f8f7833bb6b5c81d883bbf5ac42a5483977d68a3a3",
       "source_tracked": true,
@@ -508,7 +508,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_bulk_delete.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_delete.py",
       "source_sha256": "b99726470cc1bed00d942fedfa64ec445034f116f0b9dc88275f383c1db01b12",
       "source_tracked": true,
@@ -517,7 +517,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/deploy_abort.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/deploy_abort.py",
       "source_sha256": "9711290d8df0c5f0e110ad8277ded628f70e82ac8f1b829654fdaefbefd19a73",
       "source_tracked": true,
@@ -526,7 +526,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/deploy_quick.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/deploy_quick.py",
       "source_sha256": "2aa16f52373df2b2c0f308bc573ed6d1b79ba03580519509dd1926aa4ac57e83",
       "source_tracked": true,
@@ -535,7 +535,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_create.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_create.py",
       "source_sha256": "9f4be6e37f2305c8d1c966418449a08e3b21d3952e9077a2c3eebeade6db6557",
       "source_tracked": true,
@@ -544,7 +544,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_delete.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_delete.py",
       "source_sha256": "abb4a5b6e8769c00332e2e6b75a49cf096d11c7a9c5411144336c7f505c180aa",
       "source_tracked": true,
@@ -553,7 +553,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/org_assign_permsetlicense.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permsetlicense.py",
       "source_sha256": "e753ebf09e20917ddf7bd9f3cf80c799274a45e1ad2e26c33d9e9cb8e1818c76",
       "source_tracked": true,
@@ -562,7 +562,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_update.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_update.py",
       "source_sha256": "0df2fbfd0d7a199b34d940a40d0c1ce6d20419678a019bd9788220a984db96d5",
       "source_tracked": true,
@@ -571,7 +571,7 @@
     },
     {
       "path": "packages/revert/jsc_revert/wrappers/data_import.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/revert/jsc_revert/wrappers/data_import.py",
       "source_sha256": "30df6a293183366f83509519d713a9f1531397db04a71e120e87c89854851d06",
       "source_tracked": true,
@@ -580,7 +580,7 @@
     },
     {
       "path": "packages/debug_log_analyzer/tests/test_parsers.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/debug_log_analyzer/tests/test_parsers.py",
       "source_sha256": "299bb3254a61d7af165e8cbcd1f5753a2b9cbdffe26b47b23fdb4791564e0323",
       "source_tracked": true,
@@ -589,16 +589,16 @@
     },
     {
       "path": "packages/debug_log_analyzer/tests/test_code_analyzer.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/debug_log_analyzer/tests/test_code_analyzer.py",
       "source_sha256": "15c63d022c0012d3ae5c5fb8f472575593a158709f1eaaeaa9d611aacad5210c",
       "source_tracked": true,
-      "destination_sha256": "15c63d022c0012d3ae5c5fb8f472575593a158709f1eaaeaa9d611aacad5210c",
-      "adapted": false
+      "destination_sha256": "8396b65f96fc34226ea11cf8086e77038d678fc88f91331344951fba2a2ff359",
+      "adapted": true
     },
     {
       "path": "packages/debug_log_analyzer/jsc_loganalyzer/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/__init__.py",
       "source_sha256": "fd3723c901c547f0a4a09a38abefb71b904b48a8b6b57b54e4420c2df8f54f58",
       "source_tracked": true,
@@ -607,7 +607,7 @@
     },
     {
       "path": "packages/debug_log_analyzer/jsc_loganalyzer/parsers.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/parsers.py",
       "source_sha256": "1bebad6428a31266b521af0cdb5cc0ed51f8773e70bb360a320088163821bcc3",
       "source_tracked": true,
@@ -616,25 +616,25 @@
     },
     {
       "path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
       "source_sha256": "9e4f018f0645b45951bb8339c7069fd49c308f1242b3958b8313b6adf5a6856e",
       "source_tracked": true,
-      "destination_sha256": "6231989687a9cb411cc49b7cad6c78001f20b50bc351e499505d598fe41af35d",
+      "destination_sha256": "1d4c47a829e3a6192af7da68f7356b72585c6e23eecd35c432a5930ccc4023f3",
       "adapted": true
     },
     {
       "path": "packages/debug_log_analyzer/jsc_loganalyzer/code_analyzer.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/code_analyzer.py",
       "source_sha256": "7c7b580ac21280df04cf34c93a318c8881a32ff34322537544a9395d70d991ec",
       "source_tracked": true,
-      "destination_sha256": "f648b8bed227dec59af09013df57bd306bc5665604d4e9691669fd2ce3f8d1bd",
+      "destination_sha256": "efb85817e9e63e6e5b816ff112a6aecfb8c5b2506c52d162ab949abc26556191",
       "adapted": true
     },
     {
       "path": "packages/debug_log_analyzer/jsc_loganalyzer/score.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/score.py",
       "source_sha256": "0cfca320ff0096425ea8f1a2dcf5c833666785eef4d7e801832c10501cedd8e4",
       "source_tracked": true,
@@ -643,7 +643,7 @@
     },
     {
       "path": "packages/memory/tests/conftest.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/conftest.py",
       "source_sha256": "6138cc44d565adacaeadba92970574bb96638348076732939861e3c7ff45d037",
       "source_tracked": true,
@@ -652,7 +652,7 @@
     },
     {
       "path": "packages/memory/tests/test_scrubber.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/test_scrubber.py",
       "source_sha256": "5ba8c4e611c36dd4df662d19e37d90dd0e3603c750734547124412dd7bdf4c45",
       "source_tracked": true,
@@ -661,7 +661,7 @@
     },
     {
       "path": "packages/memory/tests/test_ranker.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/test_ranker.py",
       "source_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
       "source_tracked": true,
@@ -670,7 +670,7 @@
     },
     {
       "path": "packages/memory/tests/test_injector.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/test_injector.py",
       "source_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
       "source_tracked": true,
@@ -679,7 +679,7 @@
     },
     {
       "path": "packages/memory/tests/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -688,7 +688,7 @@
     },
     {
       "path": "packages/memory/tests/test_storage.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/test_storage.py",
       "source_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
       "source_tracked": true,
@@ -697,7 +697,7 @@
     },
     {
       "path": "packages/memory/tests/test_capture.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/test_capture.py",
       "source_sha256": "b949eb1c10fc233640684bd4e932f8b0c33ed62287a6e26127a0b596dbdab41c",
       "source_tracked": true,
@@ -706,7 +706,7 @@
     },
     {
       "path": "packages/memory/tests/test_index.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/test_index.py",
       "source_sha256": "d6aec1c1d3b565a38c3486bdfcf6730c5d5b5d2bf9b49803bc4f87223c738132",
       "source_tracked": true,
@@ -715,7 +715,7 @@
     },
     {
       "path": "packages/memory/tests/test_spool.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/test_spool.py",
       "source_sha256": "2929d9c0ef196e823af91c3abf75599769164480119bda1c32f5c390fcac366b",
       "source_tracked": true,
@@ -724,7 +724,7 @@
     },
     {
       "path": "packages/memory/jsc_memory/index.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/index.py",
       "source_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
       "source_tracked": true,
@@ -733,7 +733,7 @@
     },
     {
       "path": "packages/memory/jsc_memory/spool.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/spool.py",
       "source_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
       "source_tracked": true,
@@ -742,7 +742,7 @@
     },
     {
       "path": "packages/memory/jsc_memory/scrubber.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/scrubber.py",
       "source_sha256": "50867444b425b53bfc7209596b267bd842d094a28f814791ed68d6b44f5f4283",
       "source_tracked": true,
@@ -751,16 +751,16 @@
     },
     {
       "path": "packages/memory/jsc_memory/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/__init__.py",
       "source_sha256": "b879d0aac327e28b7f9ddfa3f1705902421def0fe5652febca1e239746e20bde",
       "source_tracked": true,
-      "destination_sha256": "b879d0aac327e28b7f9ddfa3f1705902421def0fe5652febca1e239746e20bde",
-      "adapted": false
+      "destination_sha256": "db30b99ad681f603d9023cfd27843717483237b42ff771bab1ef2e7714adfcd6",
+      "adapted": true
     },
     {
       "path": "packages/memory/jsc_memory/injector.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/injector.py",
       "source_sha256": "9fa7188913da15edd38b49e2340281e173277a99d5f56f03ad84c317676987f4",
       "source_tracked": true,
@@ -769,7 +769,7 @@
     },
     {
       "path": "packages/memory/jsc_memory/capture.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/capture.py",
       "source_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
       "source_tracked": true,
@@ -778,7 +778,7 @@
     },
     {
       "path": "packages/memory/jsc_memory/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/cli.py",
       "source_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
       "source_tracked": true,
@@ -787,7 +787,7 @@
     },
     {
       "path": "packages/memory/jsc_memory/storage.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/storage.py",
       "source_sha256": "6a815a6a996f2d1359c3ba8dbab6a2aa04d9fb3ab70a510feb7c6c3115e9c1a9",
       "source_tracked": true,
@@ -796,7 +796,7 @@
     },
     {
       "path": "packages/memory/jsc_memory/ranker.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/jsc_memory/ranker.py",
       "source_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
       "source_tracked": true,
@@ -805,7 +805,7 @@
     },
     {
       "path": "packages/memory/tests/fixtures/pii_shapes.yaml",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/memory/tests/fixtures/pii_shapes.yaml",
       "source_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
       "source_tracked": true,
@@ -814,7 +814,7 @@
     },
     {
       "path": "packages/browser_tests/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -823,7 +823,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/matrix.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/matrix.py",
       "source_sha256": "5ee5e491f99e98316ac492800e8225cbb3e9ef45bd1ddd886efa5604a24360d4",
       "source_tracked": true,
@@ -832,7 +832,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/auth.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
@@ -841,7 +841,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/runner.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/runner.py",
       "source_sha256": "2dd2825125d554bd79dc5d0d623445d98ddac520bf3a7ba10327d55b0392c769",
       "source_tracked": true,
@@ -850,7 +850,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/suite.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/suite.py",
       "source_sha256": "40e81f606e0e88b7862ca72367b2662a192ec9be8a0af567979f1c41893de125",
       "source_tracked": true,
@@ -859,16 +859,16 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/vision.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/vision.py",
       "source_sha256": "60fa4ccb2379b4827eaaa92ea8e6b41ca01e2abbdf2a5f7925c278f31dbfb394",
       "source_tracked": true,
-      "destination_sha256": "01911f978cd01d22e01dc9de17012d8ff036c151ace332bc896e48ed9d47b1b0",
+      "destination_sha256": "3073bf018f390ec3210c886ede03b93c75e0502e2337e8b5f76d8833aff10a3d",
       "adapted": true
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/manifest.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/manifest.py",
       "source_sha256": "5d52ad56d5acbf075b8cf8f96b28694253edee4dc33b3867ce048ac0b224fc25",
       "source_tracked": true,
@@ -877,7 +877,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -886,7 +886,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/flow_spec.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/flow_spec.py",
       "source_sha256": "2a98b35da36cbf3d6032f6facaf6b93996d4f0883896e9e317403403152458fb",
       "source_tracked": true,
@@ -895,7 +895,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
       "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
       "source_tracked": true,
@@ -904,7 +904,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/cell_runner.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/cell_runner.py",
       "source_sha256": "801f670c5d603747f0506302c884d20ffa52fd7776fd4dbcad90fe93387114ea",
       "source_tracked": true,
@@ -913,7 +913,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/preconditions.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/preconditions.py",
       "source_sha256": "9952746c9a466dd5bfb121cd8ca149bf68c407cd5b8f2aa7004cdefb8316d9d4",
       "source_tracked": true,
@@ -922,25 +922,25 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
       "source_sha256": "8e6979337830478d413126b80272eb2ed0ae4a4669952475fa51dfd3d05c48c9",
       "source_tracked": true,
-      "destination_sha256": "984fdfe07d6019ed1b7e155b5561f20204d753a8ae37fedf760f38212458370c",
+      "destination_sha256": "bd5fdce5135084cde11c3023fb644605b4cfe1049354d49ff7dfc64f0fefa661",
       "adapted": true
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/report.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/report.py",
       "source_sha256": "32ddc229bdc0e9eb2c7012f734cafe23f8ea10bdcf7da2c3a225f2c5df5511e2",
       "source_tracked": true,
-      "destination_sha256": "7e213976b9980a6605d390d44b197565734aeb6a49804515d8d2018b354daccc",
+      "destination_sha256": "3347cbfc5ad938e1ec10d3adb0b78de47435303a864ad76848122305fd4d9eb8",
       "adapted": true
     },
     {
       "path": "packages/browser_tests/tests/test_flow_spec.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/test_flow_spec.py",
       "source_sha256": "f37c54ccc71e62a7095d19bcde5461d94259e6c6c1669fb88c12979a50215832",
       "source_tracked": true,
@@ -949,7 +949,7 @@
     },
     {
       "path": "packages/browser_tests/tests/test_browser_tests.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/test_browser_tests.py",
       "source_sha256": "da8109f1107b8d1ccf73bc4de6a7c09c93aa22217a6280a2805c1a10391f2887",
       "source_tracked": true,
@@ -958,7 +958,7 @@
     },
     {
       "path": "packages/browser_tests/tests/test_sf_client.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/test_sf_client.py",
       "source_sha256": "8a2b0d03026aad7b8f20b09707c821d0d72923c561b55b4c9154f599fe137585",
       "source_tracked": true,
@@ -967,7 +967,7 @@
     },
     {
       "path": "packages/browser_tests/tests/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -976,7 +976,7 @@
     },
     {
       "path": "packages/browser_tests/tests/test_matrix.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/test_matrix.py",
       "source_sha256": "9244ab6248e134e0b63631e98b0bd872b1e06938412b0c41e3ee920fb2f64c5b",
       "source_tracked": true,
@@ -985,7 +985,7 @@
     },
     {
       "path": "packages/browser_tests/tests/test_report_scorer.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/test_report_scorer.py",
       "source_sha256": "df3452cea2535fe79e9fe50539b6045e37362262f693cd487ac2e72eb4364812",
       "source_tracked": true,
@@ -994,7 +994,7 @@
     },
     {
       "path": "packages/browser_tests/tests/test_assertions.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/test_assertions.py",
       "source_sha256": "3df412bd5a04aa60895c6d3cbbb86ecb66e91468293ec41899cf53d4191253d3",
       "source_tracked": true,
@@ -1003,7 +1003,7 @@
     },
     {
       "path": "packages/browser_tests/tests/test_cell_runner.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/tests/test_cell_runner.py",
       "source_sha256": "22f2b1b52fd3d422c8dbd27251271727b41183ce36b422a94ced690f87df9f45",
       "source_tracked": true,
@@ -1012,7 +1012,7 @@
     },
     {
       "path": "packages/browser_tests/vendor/package.json",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/vendor/package.json",
       "source_sha256": "f7bce13ffd10e4e7dd8bd7c064643531107048757c86ddec7b18eed9d33b7338",
       "source_tracked": true,
@@ -1021,7 +1021,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/provisioning/teardown.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/provisioning/teardown.py",
       "source_sha256": "967a106e86b8e239d8b8b45e05fa7bbadb4e6af72d9672352966929bfecebb80",
       "source_tracked": true,
@@ -1030,16 +1030,16 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/provisioning/object_registry.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/provisioning/object_registry.py",
       "source_sha256": "8e4588758e61bcf51e4d9b46db2964bfaf0ccb5d32e26fd7620a6ae73914dc78",
       "source_tracked": true,
-      "destination_sha256": "b27d32e8b5221de35e6d1c8acd58cf22500cad50f7b64fee8041d0549c64f9a5",
+      "destination_sha256": "09a20ebbecbc7922cfa47f8d7b22fcb745c76d1ae7433aede6eab5186b302c4e",
       "adapted": true
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/provisioning/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/provisioning/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -1048,7 +1048,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/smoke_login.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/smoke_login.py",
       "source_sha256": "8c380f4df7cc981accfa0326367fab2a79c84edc32f40009da8eb3c22ddb740a",
       "source_tracked": true,
@@ -1057,7 +1057,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -1066,7 +1066,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_page.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_page.py",
       "source_sha256": "9db106e602dc943027e306f7867028608e3cc2989d83784ab6aec3a8de111fb2",
       "source_tracked": true,
@@ -1075,7 +1075,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/assertions/vision_checks.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/assertions/vision_checks.py",
       "source_sha256": "069263f92c435d63e6c3dea0fb42d2da49800106cfe78a138b96433527368a62",
       "source_tracked": true,
@@ -1084,7 +1084,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/assertions/soql.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/assertions/soql.py",
       "source_sha256": "9c6b9d286ee3b5785c6f844c2a354bc7375c1d72225bbaa418c422653f244703",
       "source_tracked": true,
@@ -1093,7 +1093,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/assertions/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/assertions/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -1102,7 +1102,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/combobox.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/combobox.py",
       "source_sha256": "31178c43915684ce9266e0a8faccae5885ac9b8399410680d5972e5347087926",
       "source_tracked": true,
@@ -1111,7 +1111,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/input_field.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/input_field.py",
       "source_sha256": "9a44e7dc3efffd296673d8f306d914218f10f1ab1ec0fa1ea4acf8b4f3f3f7e2",
       "source_tracked": true,
@@ -1120,7 +1120,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/__init__.py",
       "source_sha256": "4bbdefb51f20725fcb982c28454a09dd6d8cee7ccff5626a44c4cfb677b70fa7",
       "source_tracked": true,
@@ -1129,7 +1129,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/button.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/button.py",
       "source_sha256": "78a1e9fa46ffbf579bf96d47b3f75b3cb913931a94342dbdca20b2b780e089e1",
       "source_tracked": true,
@@ -1138,7 +1138,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/toast.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/toast.py",
       "source_sha256": "8e6bfd0c7f5caf0df69c1c1af18176e85b8b3178e82292f7aa125b1e62680034",
       "source_tracked": true,
@@ -1147,7 +1147,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/modal.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/modal.py",
       "source_sha256": "3bdca4a0799cc3c2f23d05f86a9b6f8c8bc426431f90a5cdb6a3c9dfafb1be3b",
       "source_tracked": true,
@@ -1156,7 +1156,7 @@
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/record_form.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/record_form.py",
       "source_sha256": "4226897103d24165a4f740baeed177513d0c672c8eac0f40995a41bb3e9cf1f8",
       "source_tracked": true,
@@ -1165,7 +1165,7 @@
     },
     {
       "path": "packages/meeting_processor/tests/test_meeting_processor.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/meeting_processor/tests/test_meeting_processor.py",
       "source_sha256": "53107a85e270eb9f74af35f92626f352e2db8b36311dede73cda8399b8f7f256",
       "source_tracked": true,
@@ -1174,7 +1174,7 @@
     },
     {
       "path": "packages/meeting_processor/meeting_processor/correlate.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/meeting_processor/meeting_processor/correlate.py",
       "source_sha256": "268a2d14605d43f94608ae3d2414473163db60a96d062616c179fbfd23ea6fea",
       "source_tracked": true,
@@ -1183,7 +1183,7 @@
     },
     {
       "path": "packages/meeting_processor/meeting_processor/parse_transcript.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/meeting_processor/meeting_processor/parse_transcript.py",
       "source_sha256": "87fc6ee717ac1eced374474f51522a90051a65177a4d21926cf6117c9548dd46",
       "source_tracked": true,
@@ -1192,7 +1192,7 @@
     },
     {
       "path": "packages/meeting_processor/meeting_processor/extract_frames.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/meeting_processor/meeting_processor/extract_frames.py",
       "source_sha256": "08b9decdd1eff268646aaf243e8f6daa99929c0217c03e1972c234877fc706fa",
       "source_tracked": true,
@@ -1201,7 +1201,7 @@
     },
     {
       "path": "packages/meeting_processor/meeting_processor/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/meeting_processor/meeting_processor/__init__.py",
       "source_sha256": "8cf95f92078642443aa6d4af53e592a4bb047613108e6923dc38f4b086a50ed7",
       "source_tracked": true,
@@ -1210,16 +1210,16 @@
     },
     {
       "path": "packages/meeting_processor/meeting_processor/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/meeting_processor/meeting_processor/cli.py",
       "source_sha256": "8b9eda69d758c314886019e2d4773fc2a4ac316cf09e6e27f416e711b465c7dd",
       "source_tracked": true,
-      "destination_sha256": "0fcc0bbf8008bbba6cacb828e5e50232a73c0c3b2751a434d289b5c8ad7a5b11",
+      "destination_sha256": "40228baf01c23c664a95c0fad8aa6e81d212d65db862ebe3b11ca81697d73203",
       "adapted": true
     },
     {
       "path": "packages/meeting_processor/meeting_processor/__main__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/meeting_processor/meeting_processor/__main__.py",
       "source_sha256": "5ddd591269e049d5bf5de23e0e3f6d78cba3b7ab13ec4a53b46c24a2c91eab51",
       "source_tracked": true,
@@ -1228,7 +1228,7 @@
     },
     {
       "path": "packages/adversarial_probes/tests/test_apex.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/adversarial_probes/tests/test_apex.py",
       "source_sha256": "aa86d6d1eab3adc0543b1fd741d942d0fd7dd8edfe2fb57490ad738f6b702938",
       "source_tracked": true,
@@ -1237,7 +1237,7 @@
     },
     {
       "path": "packages/adversarial_probes/jsc_probes/apex.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/adversarial_probes/jsc_probes/apex.py",
       "source_sha256": "f4ced273e3193bbada19833b6fa746ec0da91f5ba6e148e617dd90d3fc7055b1",
       "source_tracked": true,
@@ -1246,34 +1246,34 @@
     },
     {
       "path": "packages/adversarial_probes/jsc_probes/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/adversarial_probes/jsc_probes/__init__.py",
       "source_sha256": "c27cdb7c745ba40511536014640200ee360a11814accc55e8e174ccbad250cac",
       "source_tracked": true,
-      "destination_sha256": "c27cdb7c745ba40511536014640200ee360a11814accc55e8e174ccbad250cac",
-      "adapted": false
+      "destination_sha256": "794b88e8dab8006cc674463b41bd541ca0507cf7eb4eb85ad2755d37570c1449",
+      "adapted": true
     },
     {
       "path": "packages/adversarial_probes/jsc_probes/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/adversarial_probes/jsc_probes/cli.py",
       "source_sha256": "a1b06f634d0a937dcfa1e6125a2df40e4c3ffc7aeb9deaf7da87cae95169a898",
       "source_tracked": true,
-      "destination_sha256": "bbb49a2c8b26296cd94d3c7e31c4e3e2e00ef27d8c45574f22e03ebb65617d05",
+      "destination_sha256": "c9c929113ee515b6d219974c91142a59570922b9b1dd13589e84c949c4b0113f",
       "adapted": true
     },
     {
       "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/harness.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/harness.py",
       "source_sha256": "a5794b54bb021fd20706ccbcef50515fd95e43ea549803025ac0181bed2d5dec",
       "source_tracked": true,
-      "destination_sha256": "7c88305cb16148f1b8fbe6e33e0982980406d281b65b625d2e3bbb6aa323b8d1",
+      "destination_sha256": "2ef26d92696900bf81fb2ad3d22e7f9e20acfdf0ebc6cd0c33823b66eb6efce9",
       "adapted": true
     },
     {
       "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/__init__.py",
       "source_sha256": "291a030c12ee3f860a8714a8f2cdb316117bf11f9ed5e948b6573d86c1d95556",
       "source_tracked": true,
@@ -1282,7 +1282,7 @@
     },
     {
       "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/cli.py",
       "source_sha256": "3eb23a1eaa70dc8b5c0460b89b1afceb73b09164a87fb86c4039794838f42b68",
       "source_tracked": true,
@@ -1291,7 +1291,7 @@
     },
     {
       "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/contracts.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/contracts.py",
       "source_sha256": "ee3f119cb6149bf0cdca908d8bf7db442d45aea81b44eb950879618671f245d5",
       "source_tracked": true,
@@ -1300,7 +1300,7 @@
     },
     {
       "path": "packages/ai_prompt_regression/tests/test_ai_prompt_regression.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/ai_prompt_regression/tests/test_ai_prompt_regression.py",
       "source_sha256": "805f18358e6daad5abb14c32e6f623fbe8e1504afc0c56d14f4a85da0b5aeddd",
       "source_tracked": true,
@@ -1309,7 +1309,7 @@
     },
     {
       "path": "packages/ai_prompt_regression/tests/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/ai_prompt_regression/tests/__init__.py",
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_tracked": true,
@@ -1318,7 +1318,7 @@
     },
     {
       "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/spec.json",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/spec.json",
       "source_sha256": "456e3a857bd2a7086737370806979f847181e475bbcb467bae01bc94be6046b3",
       "source_tracked": true,
@@ -1327,7 +1327,7 @@
     },
     {
       "path": "packages/salesforce_advisory/tests/test_salesforce_advisory.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/tests/test_salesforce_advisory.py",
       "source_sha256": "f8bc47d793785782758c665ec3b1ce0b1d75fd49e96eed6683fac69b186512b3",
       "source_tracked": true,
@@ -1336,25 +1336,25 @@
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/sf.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/sf.py",
       "source_sha256": "f75b960146b7640af07f4d3ddb3080ff7213070a4d2c523119fe9d618c830f1c",
       "source_tracked": true,
-      "destination_sha256": "f75b960146b7640af07f4d3ddb3080ff7213070a4d2c523119fe9d618c830f1c",
-      "adapted": false
+      "destination_sha256": "932f1393442150a010eded1e33b3189c2f83fabaad9cc909fc4ed5d79ae5d9aa",
+      "adapted": true
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/__init__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/__init__.py",
       "source_sha256": "d85cff65ff29496a21c998a2f367ba3ffb9ba562e5da6a865964f9f606a6124e",
       "source_tracked": true,
-      "destination_sha256": "d85cff65ff29496a21c998a2f367ba3ffb9ba562e5da6a865964f9f606a6124e",
-      "adapted": false
+      "destination_sha256": "83a75cb93ed230992be3fc301eaed520bc40dfc5312a105dbc171ceda4338e3f",
+      "adapted": true
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/flow.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/flow.py",
       "source_sha256": "600661abb1412e4786d3746f574de3f925ab18cf2f9244eb84a0df52b21b7cfd",
       "source_tracked": true,
@@ -1363,16 +1363,16 @@
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/cli.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
       "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
       "source_tracked": true,
-      "destination_sha256": "05d4ee1b73313a32b25c8cff654bfaab803fa48a24de1e2cdd1a8033d33771bf",
+      "destination_sha256": "a227aaa47c862edf54bf0c72fae4888162110d171703c1cf289ea20528c2eb5e",
       "adapted": true
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/receipt.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/receipt.py",
       "source_sha256": "914f03fa15e62f4a8b64ec7f44d3ceb3e0da4e57c663a964c371dadaeb410761",
       "source_tracked": true,
@@ -1381,7 +1381,7 @@
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/evidence.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/evidence.py",
       "source_sha256": "7f6031f90b03e4112f5b9fde26b75e5546dfdb822900bcbad2f99ae10e7054a0",
       "source_tracked": true,
@@ -1390,7 +1390,7 @@
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/__main__.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/__main__.py",
       "source_sha256": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
       "source_tracked": true,
@@ -1399,7 +1399,7 @@
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/impact.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/impact.py",
       "source_sha256": "76ceba6323316d5c24ee300cca26e0b8724362c608003addf8bfb3b08c25f5c4",
       "source_tracked": true,
@@ -1408,7 +1408,7 @@
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/catalogue.py",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/catalogue.py",
       "source_sha256": "068c452ca10ee11480c0f617d45d7c5de89fd4356ff0bcfc5419eb76e30573a9",
       "source_tracked": true,
@@ -1417,16 +1417,16 @@
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/data/provenance.json",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/provenance.json",
       "source_sha256": "3d2f4d9da6fe038d03b08f0b6df2063451d03c7b95fef4a89f8c79fc2edcfbf0",
       "source_tracked": true,
-      "destination_sha256": "3d2f4d9da6fe038d03b08f0b6df2063451d03c7b95fef4a89f8c79fc2edcfbf0",
-      "adapted": false
+      "destination_sha256": "0e29a384674d89e726996a86adcc8966f61124bcae1758434d2c358171370d09",
+      "adapted": true
     },
     {
       "path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
-      "source_repository": "justiceserver-workspace",
+      "source_repository": "prior-toolkit",
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
       "source_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
       "source_tracked": true,
@@ -1476,7 +1476,7 @@
     {
       "path": "packages/jsc_common/jsc_common/workspace.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "bda4613014cd2c6d512d7dac43f7a3366bd085eb7c7a2fb37d50aa6e75c23bac"
+      "destination_sha256": "ff2f93209d46aa85144c9d61b24f24a8da048e7482d6dc2ba979678c9d9022fc"
     },
     {
       "path": "packages/jsc_common/tests/test_continuation.py",
@@ -1491,7 +1491,7 @@
     {
       "path": "packages/licenses/NOTICE.txt",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "28fed5f0ec1a6c4b5d748504a581b2d07cf6de5ef2608876801e132a6e24a1d6"
+      "destination_sha256": "52128dd05f712d768bcc064d4aebc1a7cd6bf97484b96d442ac59c3659a5cfcf"
     },
     {
       "path": "packages/qa_orchestrator/tests/test_manifest_evidence_integration.py",
@@ -1669,7 +1669,7 @@
   ],
   "selection_excludes": [
     "client documents, managed Salesforce application and org-specific metadata",
-    "domain browser flows, seed records and JusticeServer test-record registry",
+    "domain browser flows, seed records and product-specific test-record registry",
     "org/auth state, actual debug logs, snapshots and meeting artifacts",
     "global hooks, restrictive command shims and shell installation",
     "node_modules, caches and egg metadata"

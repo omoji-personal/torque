@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -283,7 +282,7 @@ def rewrite_command(root: Path, profile: str, sidecar: dict | None, entries: dic
         python = hook_python or (recorded if isinstance(recorded, str) and recorded else None)
         if python:
             words += ["--hook-python", python]
-    text = " ".join(word if word == "PYTHON" else shlex.quote(word) for word in words)
+    text = ws.command_text(words)
     if profile == "invalid":
         text += " (add --unattended if this workspace ran the unattended profile)"
     return text
@@ -447,11 +446,12 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
         slug = ws.slug_for(client)
         alias = consent.load_consent(root, client)["approved_orgs"][0]["alias"]
         cases += [
-            ("bound_read", "Bash", {"command": f"sf org display -o {alias}"}, "allow", slug),
+            # A metadata read: `sf org display` prints a token, so connected mode refuses it.
+            ("bound_read", "Bash", {"command": f"sf sobject list -o {alias}"}, "allow", slug),
             ("bound_write_unapproved", "Bash",
              {"command": f"sf project deploy start -m Flow:Doctor_Probe -o {alias}"}, "deny", slug),
-            ("bound_org_outside_consent", "Bash", {"command": "sf org display -o doctor-probe-other"}, "deny", slug),
-            ("bound_default_org", "Bash", {"command": "sf org display"}, "deny", slug),
+            ("bound_org_outside_consent", "Bash", {"command": "sf sobject list -o doctor-probe-other"}, "deny", slug),
+            ("bound_default_org", "Bash", {"command": "sf sobject list"}, "deny", slug),
             ("bound_other_client", "Bash", {"command": "torque context --workspace . --client doctor-probe-other"},
              "deny", slug),
             ("bound_unverifiable", "Bash", {"command": "python3 doctor_probe.py"}, "ask", slug),
