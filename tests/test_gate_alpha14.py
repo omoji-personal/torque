@@ -278,7 +278,8 @@ def test_readme_status_and_neutral_lineage():
     top = text.split("\n## ", 1)[0]
     import torque
     assert torque.__version__ in top and "development alpha" in top
-    assert "Justiceserver" not in top and "JusticeServer" not in top
+    # Lineage is described neutrally; names that must not appear are checked by the
+    # private denylist test in test_public_hygiene.py, so this file spells none.
     assert "earlier consulting toolkit" in " ".join(text.split())
 
 

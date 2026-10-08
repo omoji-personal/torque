@@ -1,7 +1,7 @@
 schema_version: 1
 last_updated: '2026-09-07'
-notes: Generic Salesforce change taxonomy continued from JSC. Configure client-specific
-  routes with TORQUE_QA_ROUTER; results describe coverage, not authorization.
+notes: Generic Salesforce change taxonomy continued from the earlier toolkit. Configure
+  client-specific routes with TORQUE_QA_ROUTER; results describe coverage, not authorization.
 surfaces:
   MetaAPI:
     description: Exact-job and artifact-scoped Metadata API deploy/validation verification;

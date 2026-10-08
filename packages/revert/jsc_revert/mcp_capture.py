@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-jsc_revert.mcp_capture — subprocess CLI for JSC MCP server (Node) to call.
+jsc_revert.mcp_capture — subprocess CLI for the earlier toolkit's MCP server (Node) to call.
 
 Closes Codex-R5-P0-2 Route B per plan-v5 Closure 4 (with Codex-R5-P1-5 fix:
 post-capture failures must be visible to caller).
 
-The JSC MCP server (Node, lives in justiceserver-workspace per
+That MCP server (Node, kept in the earlier toolkit's repository per
 mcp-server-discipline.md) shells out to this CLI for write-tool snapshots:
 
   Node side:
@@ -293,7 +293,7 @@ HANDLERS = {
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="JSC MCP server Route B bridge")
+    parser = argparse.ArgumentParser(description="MCP server Route B bridge")
     parser.add_argument("--operation", choices=VALID_OPERATIONS,
                         help="snapshot operation to perform")
     parser.add_argument("--version", action="store_true",

@@ -1,4 +1,4 @@
-"""CLI for JSC's model-neutral Salesforce advisory layer."""
+"""CLI for the model-neutral Salesforce advisory layer."""
 
 from __future__ import annotations
 

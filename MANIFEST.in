@@ -8,7 +8,6 @@ recursive-include examples *.md *.json *.yaml
 recursive-include .agents/skills *.md
 recursive-include .claude/commands *.md
 recursive-include .claude/rules *.md
-include .claude/settings.json
 include .claude/agents/admin-support.md .claude/agents/bulk-extract.md .claude/agents/field-audit.md
 include .claude/agents/flow-analyzer.md .claude/agents/general-worker.md .claude/agents/hostile-qa-auditor.md
 recursive-include packages *.py *.json *.yaml *.txt *.md

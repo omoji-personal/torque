@@ -1,7 +1,7 @@
 # Contributing
 
 Build for working Salesforce consultants: reduce repeated work, retain useful
-JSC capabilities and make outcomes understandable. Start with a concrete user
+inherited capabilities and make outcomes understandable. Start with a concrete user
 problem and a small reproducible example. The continuation currently has no active
 external users; compatibility decisions should still be explicit in the changelog.
 
@@ -13,22 +13,34 @@ needed to reproduce the problem.
 ## Public naming and attribution
 
 Keep private firm, client and personal material out of tracked files and release
-artifacts. This does not prohibit necessary public authorship, LICENSE/NOTICE text,
-dependency attribution or historical names needed to trace inherited code. Retain
-required notices and original provenance; product introductions need no legacy
-branding. Fictional data uses reserved example domains such as `example.org` and
-`example.com` (reserved `.example`, `.invalid` and `.test` fixtures are also valid).
+artifacts. The tree names no earlier employer or product. Describe inherited work
+in neutral terms such as "the earlier toolkit"; the provenance manifest records its
+source repository under the neutral label `prior-toolkit`. Legacy identifiers such
+as the `jsc_*` package names, the `jsc` console commands and the `JSC_*` environment
+variables are kept for compatibility. They are technical names that programs depend
+on, not branding, and product introductions need none.
 
-`tests/test_public_hygiene.py` checks tracked text for known private-name hashes,
-credential shapes, personal absolute paths, internal URLs and fixture email domains.
+This does not prohibit necessary public authorship, LICENSE/NOTICE text or dependency
+attribution, including the Apache-2.0 notice for the modules derived from
+claudeblazer. Retain required notices and the original provenance hashes. Fictional
+data uses reserved example domains such as `example.org` and `example.com` (reserved
+`.example`, `.invalid` and `.test` fixtures are also valid).
+
+Names that must not appear are checked through a private denylist kept outside the
+repository, so no tracked file spells or encodes one. Set `TORQUE_PRIVATE_DENYLIST`
+to a private file outside the checkout, one term per line with optional `#` comments;
+`tests/test_public_hygiene.py` and `scripts/check-distribution.py` both apply it.
+The offline launcher preserves this setting and reports whether the scan passed,
+failed or did not run. Missing or empty configured files fail the scan. Without the
+setting, the name check does not run.
+
+`tests/test_public_hygiene.py` also checks tracked text for credential shapes,
+personal absolute paths, internal URLs and fixture email domains.
 `scripts/check-distribution.py` scans wheel and source-distribution member contents
 for the same credential/path/URL shapes. Public author metadata and required notices
 are intentionally allowed. These checks cannot recognize all private names or PII.
-Set `TORQUE_PRIVATE_DENYLIST` to a private file outside the checkout, one term per
-line with optional `#` comments, for additional name checks in both commands.
-The offline launcher preserves this setting and reports whether the scan passed,
-failed or did not run. Missing or empty configured files fail the scan. Diagnostics
-show file locations without reproducing private terms or suspected credentials.
+Diagnostics show file locations without reproducing private terms or suspected
+credentials.
 
 ## Development
 

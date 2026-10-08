@@ -1,4 +1,4 @@
-"""Call-time storage scope shared by the preserved JSC implementations.
+"""Call-time storage scope shared by the preserved legacy implementations.
 
 The Torque launcher sets TORQUE_WORKSPACE to one selected client directory.
 Direct package callers can select the same scope explicitly. No auth is stored

@@ -12,5 +12,5 @@
       "reason": "Corrected the source remedy's retrieved-XML contradiction to use definition-scoped activation sources; the Torque handoff records the upstream fix."
     }
   ],
-  "note": "Confidence labels describe the Torque source catalogue. JSC re-verifies a fact when a dedicated read-only verifier is available and never uses a catalogue entry to deny an operation."
+  "note": "Confidence labels describe the Torque source catalogue. The advisory layer re-verifies a fact when a dedicated read-only verifier is available and never uses a catalogue entry to deny an operation."
 }

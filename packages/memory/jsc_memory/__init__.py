@@ -1,4 +1,4 @@
-"""jsc_memory — recursive lesson capture system for JSC.
+"""jsc_memory — recursive lesson capture system, continued from the earlier toolkit.
 
 See `.claude/rules/lesson-capture.md` for the operator-facing contract.
 See `audits/2026-05-12-lesson-capture-redesign/plan-v5.md` for the design.

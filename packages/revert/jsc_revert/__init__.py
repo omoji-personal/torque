@@ -1,4 +1,4 @@
-"""jsc_revert — Salesforce snapshot and recovery system, continued from JSC.
+"""jsc_revert — Salesforce snapshot and recovery system, continued from the earlier toolkit.
 
 Phase I.3 ships only the Route B subprocess CLI (mcp_capture).
 Full system per plan-v5 ships in Phase I.4.

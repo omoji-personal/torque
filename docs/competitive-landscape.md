@@ -2,7 +2,7 @@
 
 Checked **2026-09-07** against current official documentation and project-owned repositories, plus the Torque 2.0 alpha 2 audit baseline. This is a capability and positioning review, not a hands-on benchmark of competing products. Recommendations and numerical targets below are proposed criteria, not measured results. The market research involved no competitor account access or hands-on product trials.
 
-Torque can pursue an excellent public product by making the daily Salesforce consulting engagement unusually easy to continue, verify, and hand over. Its broad JSC foundation is valuable implementation experience. It does not establish superiority over the tools below. The strongest next investment is a polished, reproducible client-task journey that works with established execution tools and measurably reduces repeated investigation and handoff effort.
+Torque can pursue an excellent public product by making the daily Salesforce consulting engagement unusually easy to continue, verify, and hand over. Its broad foundation in the earlier toolkit is valuable implementation experience. It does not establish superiority over the tools below. The strongest next investment is a polished, reproducible client-task journey that works with established execution tools and measurably reduces repeated investigation and handoff effort.
 
 ## Current competitive capability matrix
 
@@ -25,7 +25,7 @@ Local execution is also not exclusive: sfdx-hardis documents a [no-backend/no-em
 
 ## What alpha 2 has, and the gaps that matter
 
-These are the alpha 2 audit baseline, before the alpha 3 improvements described in the changelog; they are not an audit of every package. The [README](../README.md), [validation record](../docs/validation.md) and [continuation contract](../docs/continuation.md) identify the current scope honestly: 49 recipes preserve all 42 JSC names; native context, journal and handoff coexist with guided work and inherited libraries. Offline tests and an installed package smoke test are documented. A bounded live metadata/data/recovery exercise is documented, while representative Flow behavior and non-admin browser acceptance remain open.
+These are the alpha 2 audit baseline, before the alpha 3 improvements described in the changelog; they are not an audit of every package. The [README](../README.md), [validation record](../docs/validation.md) and [continuation contract](../docs/continuation.md) identify the current scope honestly: 49 recipes preserve all 42 original command names; native context, journal and handoff coexist with guided work and inherited libraries. Offline tests and an installed package smoke test are documented. A bounded live metadata/data/recovery exercise is documented, while representative Flow behavior and non-admin browser acceptance remain open.
 
 | Gap | Current evidence | Highest-value improvement |
 |---|---|---|

@@ -1,5 +1,5 @@
 """
-Salesforce Code Analyzer v5 wrapper — static-analysis → JSC Finding/score shape.
+Salesforce Code Analyzer v5 wrapper — static-analysis → loganalyzer Finding/score shape.
 
 Task B2(a). NOT a slash command (R3-7: must not break A7's command-count==40
 assertion). Invokable as a module:
@@ -8,24 +8,24 @@ assertion). Invokable as a module:
     python3 -m jsc_loganalyzer.code_analyzer --json-input <captured.json>   # offline
 
 It shells `sf code-analyzer run` (static analysis — NO org needed), reads the v5
-JSON, maps each violation's 1-5 severity into JSC's P0/P1/P2 Finding shape
+JSON, maps each violation's 1-5 severity into the P0/P1/P2 Finding shape
 (reusing jsc_loganalyzer.score.Finding), prints a 0-100 health-score report plus
 a findings summary, and exits NON-ZERO when any P0/P1 finding is present.
 
 Severity mapping (documented; mirrors the loganalyzer convention where
 Finding.severity is 1=P0, 2=P1, 3=P2):
 
-    Code Analyzer sev 1  -> JSC severity 1  (P0)   "Critical"
-    Code Analyzer sev 2  -> JSC severity 2  (P1)   "High"
-    Code Analyzer sev 3  -> JSC severity 3  (P2)   "Moderate"
-    Code Analyzer sev 4  -> JSC severity 3  (P2)   "Low"
-    Code Analyzer sev 5  -> JSC severity 3  (P2)   "Info"
+    Code Analyzer sev 1  -> Finding severity 1  (P0)   "Critical"
+    Code Analyzer sev 2  -> Finding severity 2  (P1)   "High"
+    Code Analyzer sev 3  -> Finding severity 3  (P2)   "Moderate"
+    Code Analyzer sev 4  -> Finding severity 3  (P2)   "Low"
+    Code Analyzer sev 5  -> Finding severity 3  (P2)   "Info"
 
-Rationale: Code Analyzer's 5-level scale is collapsed to JSC's 3-level scale.
+Rationale: Code Analyzer's 5-level scale is collapsed to the 3-level Finding scale.
 sev1/sev2 are the only levels that should block a ship (they map to the
-score-impacting P0/P1 deductions), so sev3-5 all fold into the lowest JSC
+score-impacting P0/P1 deductions), so sev3-5 all fold into the lowest
 band (P2). The CI exit-code gate fires on P0/P1 only — consistent with the
-JSC ship-gate discipline (0 P0 / 0 P1).
+existing ship-gate discipline (0 P0 / 0 P1).
 
 Adopted 2026-06-13 (Phase B2(a)).
 """
@@ -51,13 +51,13 @@ except ImportError:
 # bounded so a hung CLI can't hang the harness/CI.
 ANALYZER_TIMEOUT_SECONDS = 600
 
-# Code Analyzer sev (1-5) -> JSC Finding.severity (1=P0, 2=P1, 3=P2). See the
+# Code Analyzer sev (1-5) -> Finding.severity (1=P0, 2=P1, 3=P2). See the
 # module docstring for the rationale.
 _SEVERITY_MAP = {1: 1, 2: 2, 3: 3, 4: 3, 5: 3}
 
 
 def map_severity(ca_severity: int) -> int:
-    """Map a Code Analyzer 1-5 severity to a JSC Finding severity (1/2/3).
+    """Map a Code Analyzer 1-5 severity to a Finding severity (1/2/3).
 
     Unknown / out-of-range severities fall back to the lowest band (P2) so a
     future Code Analyzer scale change can never silently escalate to a blocking
@@ -79,7 +79,7 @@ def _primary_location(violation: dict) -> dict:
 
 
 def violations_to_findings(report: dict) -> list[Finding]:
-    """Convert a parsed v5 Code Analyzer report dict into JSC Findings.
+    """Convert a parsed v5 Code Analyzer report dict into Findings.
 
     Each `violations[]` entry (fields: engine, rule, severity, locations[],
     message) becomes one Finding whose `category` encodes the engine+rule and
@@ -200,7 +200,7 @@ def render_report(findings: list[Finding], report: dict) -> str:
         ordered = sorted(findings, key=lambda f: f.severity)
         shown = ordered[:30]
         for f in shown:
-            # JSC Finding.severity 1/2/3 displays as P0/P1/P2.
+            # Finding.severity 1/2/3 displays as P0/P1/P2.
             plabel = f"P{f.severity - 1}"
             lines.append(f"  [{plabel}] {f.category}: {f.message}")
             if f.context:
@@ -245,7 +245,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON (the JSC Result shape) instead of text.",
+        help="Emit machine-readable JSON (the loganalyzer Result shape) instead of text.",
     )
     return parser.parse_args(argv)
 

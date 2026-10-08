@@ -2,7 +2,7 @@
 
 Decision date: 2026-09-07. Primary users are Salesforce consultants and small
 consulting teams who work across clients. A firm's own setup is one optional
-private configuration. The practical JusticeserverClaude workflow remains the
+private configuration. The practical workflow of the earlier toolkit remains the
 foundation; a hosted service, replacement IDE or new deployment engine is not
 required to deliver the next useful product.
 

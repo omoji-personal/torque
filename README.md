@@ -130,7 +130,7 @@ removing the flag resumes admission. The workflow updater remains available. See
 
 | Work | Interface |
 | --- | --- |
-| Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original JSC command mappings |
+| Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original command mappings |
 | Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs |
 | Org and metadata investigation | `torque advisory`; use current official Salesforce CLI, skills and MCP tools alongside it |
 | Platform knowledge | Five [skills](docs/skills.md): architecture, Code Analyzer and SOQL review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
@@ -209,7 +209,7 @@ them and integrate where appropriate; command count is not a competitive claim.
 - [Validation and limitations](docs/validation.md), [next live acceptance scenario](docs/live-acceptance.md)
 - [Client adoption and provider data boundaries](docs/client-adoption.md), [optional engagement worksheet](examples/client-data-boundary.md)
 - [Contributing](CONTRIBUTING.md), [security and data boundaries](SECURITY.md), [changelog](CHANGELOG.md)
-- [JSC continuity](docs/continuation.md), [workflow mapping](docs/workflow-continuity.md), [package provenance](docs/package-migration.md)
+- [Continuity with the earlier toolkit](docs/continuation.md), [workflow mapping](docs/workflow-continuity.md), [package provenance](docs/package-migration.md)
 
 Client data, credentials, org mappings and employer documents belong in private
 workspaces, outside the public source. Git ignore rules do not untrack files

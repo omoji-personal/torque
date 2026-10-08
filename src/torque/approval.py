@@ -1262,7 +1262,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     lines = [
         *_screen_lines(req, derived, org_id, org_kind, kind_line, middle=middle),
         *([f"Recovery:    snapshot {derived['recovery_snapshot']} will run: "
-           f"{shlex.join(derived['recovery_plan']) if derived['recovery_plan'] else 'NOTHING (no plan)'}"]
+           f"{ws.command_text(derived['recovery_plan']) if derived['recovery_plan'] else 'NOTHING (no plan)'}"]
           if derived.get("recovery_snapshot") else []),
     ]
     if derived["namespaces"]:

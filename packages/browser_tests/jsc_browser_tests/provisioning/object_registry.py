@@ -45,7 +45,7 @@ def load_registry(path: Path | None = None) -> dict[str, ObjectEntry]:
 def generate_registry(sf_client, object_names: list[str], *, test_record_field: str = "Test_Record__c") -> dict:
     """Describe explicitly selected objects; caller supplies domain relationships.
 
-    No JusticeServer carrier or parent assumptions are inferred. Registry files
+    No product-specific carrier or parent assumptions are inferred. Registry files
     may provide parent_join_field/seed_dependencies for client-specific teardown.
     """
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", test_record_field):

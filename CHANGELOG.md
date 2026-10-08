@@ -17,6 +17,7 @@
 - Harden offline testing with native Windows tool stubs, temporary authentication directories, a restricted environment and child-process network guards. Preserve and report the private denylist scan; check source and distribution contents for credential/path/URL leaks. Clarify public attribution and workflow editing rules, use reserved fixture email domains, and lead the README with a synthetic handoff, capability limits and revision-specific installation.
 - Audit fixes: connected mode reviews extensible tooling, refuses external browser/desktop reads without verified context, and enforces metadata and browser data consent. Clarified Tier 1's accidental-action protection and remaining replay limits. Parity adapters reject Windows traversal and resolved config escapes at execution. Maintenance now checks delegated package dispatch and direct revert wrapper admission; documented in-progress and direct-API limits. Concurrent initiative lifecycle updates retain all history entries.
 - Windows private writes now hold each parent folder with list access, so its no-delete sharing actually blocks a rename during publication, and retry a replace briefly while another writer holds the same target. The offline guard routes live tools to its own stubs without a current-folder search and always loads its bootstrap copy first.
+- Neutral naming: documentation, notices, comments and provenance describe inherited work as the earlier toolkit, and `packages/provenance.json` records its source repository as `prior-toolkit` (source hashes and the source commit are unchanged). Legacy identifiers kept for compatibility are unchanged: the `jsc_*` packages, the `jsc` commands, the `JSC_*` variables and `/update-jsc`. Three display strings changed: the browser suite report title is `Gold-Standard Suite Report`, and the `jsc_revert.mcp_capture` description and `jsc_loganalyzer.code_analyzer --json` help were reworded. Names that must not appear are checked through a private denylist outside the repository.
 
 ## 2.0.0a19 - clients and initiatives, 2026-09-30 (not published to a package index)
 
@@ -655,7 +656,7 @@ were removed from active use. This did not establish non-admin browser or Flow U
 
 ## 2.0.0a1 — local continuation baseline, 2026-09-07
 
-Continued the reusable JusticeserverClaude framework in Torque, preserving 42
+Continued the earlier toolkit's reusable framework in Torque, preserving 42
 original conversational mappings, adding private employer/client workspaces,
 49 recipes, portable review skills, selected generic runtime packages, a session
 journal and handoffs. Retired the previous Torque enforcement runtime from the

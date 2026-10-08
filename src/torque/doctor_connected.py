@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -283,7 +282,7 @@ def rewrite_command(root: Path, profile: str, sidecar: dict | None, entries: dic
         python = hook_python or (recorded if isinstance(recorded, str) and recorded else None)
         if python:
             words += ["--hook-python", python]
-    text = " ".join(word if word == "PYTHON" else shlex.quote(word) for word in words)
+    text = ws.command_text(words)
     if profile == "invalid":
         text += " (add --unattended if this workspace ran the unattended profile)"
     return text

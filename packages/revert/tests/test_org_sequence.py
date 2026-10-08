@@ -139,7 +139,7 @@ def main() -> int:  # noqa: C901
         lock_path.unlink()
 
         # ── F-OS-7 (Codex-R5-P1-3 critical): UNKNOWN PID + gray zone → NOT stolen ──
-        # Use init's PID 1 (always alive but not a JSC wrapper). Same host.
+        # Use init's PID 1 (always alive but not a revert wrapper). Same host.
         # Heartbeat 6 min ago (gray zone: > 5min STALE_THRESHOLD, < 15min HARD_ABSOLUTE).
         # Per Codex-R5-P1-3: this should NOT be stolen because UNKNOWN-PID-status
         # treats live-but-uncertain as wait-for-hard-absolute.

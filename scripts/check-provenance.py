@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify recorded inherited-package bytes without accessing the source employer repo."""
+"""Verify recorded inherited-package bytes without accessing the source repository."""
 import hashlib
 import json
 from pathlib import Path

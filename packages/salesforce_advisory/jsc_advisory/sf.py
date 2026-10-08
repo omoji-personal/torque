@@ -73,7 +73,7 @@ class SfClient:
 
         Checking only the first two words would let a future caller append a
         new CLI flag with local side effects. This package does not intercept or
-        restrict JSC's ordinary shell commands; it narrowly constrains its own
+        restrict the toolkit's ordinary shell commands; it narrowly constrains its own
         subprocess boundary.
         """
         values = tuple(args)
