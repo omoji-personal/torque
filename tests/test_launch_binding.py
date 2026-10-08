@@ -631,7 +631,8 @@ def test_cli_launch_flag_usage(tmp_path, monkeypatch, capsys, env_guard):
     seen = {}
     monkeypatch.setattr(cli_approval, "launch", lambda *a, **k: seen.update(args=a, kwargs=k) or 0)
     assert cli.main([*base, "--delegated", "--binding", "lnk-0123456789ab", "--", *PASS]) == 0
-    assert seen["args"][2] == PASS and seen["kwargs"] == {"delegated": True, "binding": "lnk-0123456789ab"}
+    assert seen["args"][2] == PASS
+    assert seen["kwargs"] == {"delegated": True, "binding": "lnk-0123456789ab", "host": None}
 
 
 def test_launch_binding_is_a_fixed_deny_rule():

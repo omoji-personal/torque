@@ -97,7 +97,7 @@ B = lambda cmd: K("Bash", {"command": cmd})
     ("env HOME=/tmp/x sf apex run -o acme-prod", [("unverifiable", "acme-prod")]),
     ("xargs sf apex run -o acme-prod", [("unverifiable", None), ("org_write", "acme-prod")]),
     ("script -q /dev/null torque approval grant req-1", [("unverifiable", None), ("admin", None)]),
-    ("find . -name x -exec sf apex run -o acme-prod \;", [("unverifiable", None), ("org_write", "acme-prod")]),
+    ("find . -name x -exec sf apex run -o acme-prod \\;", [("unverifiable", None), ("org_write", "acme-prod")]),
     ("awk 'BEGIN{system(\"sf apex run -o acme-prod\")}'", [("unverifiable", None)]),
     ("awk '{print $1}' file", [("unverifiable", None)]),
     ("for f in a b; do sf apex run -f $f -o acme-prod; done", [("local", None), ("org_write", "acme-prod")]),

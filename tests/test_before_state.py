@@ -162,7 +162,9 @@ def test_a_tree_past_the_windows_path_limit_is_refused_before_anything_is_copied
         source, target, limited=True))
     deep = type(target)(str(target) + "x" * (max(room, 0) + 3))
     problem = bs.path_limit_problem(source, deep, limited=True)
-    assert "path limit by 3 character(s)" in problem and "Nothing was stored" in problem
+    # Three characters past the limit, plus whatever a long temporary folder was already over by.
+    over = 3 + max(-room, 0)
+    assert f"path limit by {over} character(s)" in problem and "Nothing was stored" in problem
     assert bs.path_limit_problem(source, deep, limited=False) == ""
     # A PC with the limit refuses the import and leaves no partial copy behind.
     monkeypatch.setattr(bs, "path_limit_problem", lambda *args, **kwargs: problem)
