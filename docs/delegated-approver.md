@@ -432,10 +432,10 @@ answer is the same under both profiles (13 probes, the bound ones only with `--c
 | `unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
 | `admin` | `torque approval grant` | deny | refused | refused: the hook denies it, no prompt |
 | `browser_write` | a browser click | deny | refused | refused: the hook denies it, no prompt |
-| `bound_read` | `sf org display` on an approved org | allow | runs | runs only if a read allow rule covers it; otherwise refused under claude -p |
+| `bound_read` | `sf sobject list` on an approved org (a metadata read) | allow | runs | runs only if a read allow rule covers it; otherwise refused under claude -p |
 | `bound_write_unapproved` | `sf project deploy start`, no approval | deny | refused | refused: the hook denies it, no prompt |
 | `bound_org_outside_consent` | an org the consent does not name | deny | refused | refused: the hook denies it, no prompt |
-| `bound_default_org` | `sf org display` with no `-o` | deny | refused | refused: the hook denies it, no prompt |
+| `bound_default_org` | `sf sobject list` with no `-o` | deny | refused | refused: the hook denies it, no prompt |
 | `bound_other_client` | `torque context` for another client | deny | refused | refused: the hook denies it, no prompt |
 | `bound_unverifiable` | `python3 doctor_probe.py` | ask | the consultant is asked | refused: the ask has no one to answer under claude -p |
 | `bound_skipped_prompts` | a script with prompts skipped | deny | refused | refused: the hook denies it, no prompt |

@@ -86,6 +86,10 @@ Each "present" step also prints a six-character code the owner types back.
    process or one of its nearest ancestors with the same start time; `TORQUE_CLIENT` set by
    hand binds nothing. Use one session per client. An unattended session starts from a
    delegated approver's launch binding instead ([delegated approver](delegated-approver.md)).
+   The launch starts the host the workspace names (`"host"` in `workspace.json`, Claude Code
+   when absent), or the one given with `--host claude|antigravity`. The launch record names
+   its host and binds only under that host's hook. Everything on this page was proven under
+   Claude Code; under Antigravity it is tested offline only ([hosts](hosts.md)).
 
 ### Doctor probes
 

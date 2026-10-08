@@ -59,6 +59,11 @@ The probe runs the hook command by itself. It does not show that the host calls 
 
 ## What was checked, and how
 
+Torque's own hook has not yet been called by a live Antigravity session, and no live
+session has loaded the files Torque writes under `.agents/`. What was seen live is how
+Antigravity treats a hook and those file formats in general. Torque's hook was then run as
+a command on that input: 35 made-up calls across build-only, full and connected workspaces.
+
 Recorded earlier as seen with Antigravity CLI 1.3.1 on Windows (see `ai-access.md` and
 `workspace-upgrades.md`). This page adds nothing to those observations:
 
@@ -111,8 +116,9 @@ only there.
 - **The binding needs the right folder.** Under Antigravity a session stays bound only while
   its first workspace folder is the workspace the launch record names.
 - **A launch binding names no host.** The account that claims it chooses the host.
-- **Browser tools.** In connected mode Antigravity's own browser tools are refused, as a
-  browser MCP server is under Claude Code.
+- **Browser tools.** In build-only and connected mode Antigravity's own browser tools are
+  refused, as a browser MCP server is under Claude Code. Its web fetch (`read_url_content`)
+  is refused for an address on a Salesforce org host and passes for any other.
 - **No record after the call.** The Antigravity hook handles the before-call event only.
 - **The call ID** is the conversation ID and the step number. It is not known to be unique
   when one step makes several calls.

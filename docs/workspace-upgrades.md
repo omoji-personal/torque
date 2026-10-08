@@ -80,6 +80,11 @@ Torque up to 2.0.0a19 rejects a manifest whose `files` names `.agents/rules/` or
 workspace can be used with both. If such a version rewrites the manifest it drops that
 section; the next upgrade with a current version adopts the unchanged copies again.
 
+A build-only workspace also gets `build-only.md`, and a connected one
+`production-approval.md`, as a rule for each host. `torque workspace ai-access` writes the
+rule of the new mode and removes the old one; `upgrade` adds a missing one and keeps an
+edited one. The two exceptions are listed under [mode rules](hosts.md#mode-rules).
+
 Not written by init or upgrade: Antigravity's hook file (`.agents/hooks.json`). Like the
 Claude Code hook, the owner adds the gate's entry there by hand; see
 [wiring the Antigravity hook](ai-access.md#wiring-the-antigravity-hook). Without it,

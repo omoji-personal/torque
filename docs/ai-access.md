@@ -73,7 +73,8 @@ later release narrows the check.
   generate`, `apex generate`), `project convert`, `code-analyzer run` and `code-analyzer rules`
   (their roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
   `--root-dir`/`--source-dir` for convert, and the current directory when none is given or when
-  convert uses `--manifest`/`--metadata`), `--version`, `--help`, `version`, `help`, `plugins`. `code-analyzer`'s `-o` and `-v`
+  convert uses `--manifest`/`--metadata`), `--version`, `version`, `help`, `plugins`. A bare
+  `sf --help` is blocked; use `sf help`. `code-analyzer`'s `-o` and `-v`
   short flags read as org flags; use `--output-file` and `--view`.
 - Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
   other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`. The
@@ -110,7 +111,8 @@ later release narrows the check.
   acts on (an open tab, a redirect, a signed-in session), so it cannot keep an org or client
   page out of the session. Connected mode reads the same names and refuses the same tools. Plain
   web fetch and web search (`WebFetch`, `WebSearch`, Antigravity's `read_url_content` and
-  `search_web`) are not browser tools and pass as before.
+  `search_web`) are not browser tools and pass as before, with one difference: the address
+  given to `read_url_content` is checked like an MCP argument, so an org address is blocked.
 - Any MCP call with a string argument (at any depth) that resolves into
   `clients/`, `workspace.json`, `.claude/`, or the installed Torque package. A tree-walking MCP
   tool (a name containing `tree`, `search`, `find`, `grep`, `glob`, or `walk`) rooted at or above
@@ -397,16 +399,17 @@ What it does with each call:
   `view_file`, `list_dir`, `grep_search` and `find_by_name` as `Read`, `LS`, `Grep` and `Glob`;
   `write_to_file`, `replace_file_content`, `multi_replace_file_content` and `sed_file` as
   `Write`, `Edit` and `MultiEdit`; `call_mcp_tool` as that server's MCP tool; the browser tools
-  (`open_browser_url`, `read_browser_page`, `browser_*`, `click_browser_pixel`,
-  `execute_browser_javascript`, `capture_browser_*`, `list_browser_pages`) as MCP tools named
-  `mcp__antigravity__<name>`, which build-only mode blocks outright as browser tools;
-  `generate_image`, `read_resource`, `manage_inbox` and `delete_knowledge` like an MCP tool,
-  every string argument checked as a path and for a Salesforce host. `read_url_content` and
-  `search_web` are plain web reads: the gate has no objection and Antigravity's own flow
-  decides. `browser_subagent` is passed as a worker start, not as a browser tool (see the
-  limits below). A tool the module does not know (`notebook_execution`, and any tool
-  Antigravity adds later), and a known file tool without the argument that names its file,
-  are blocked in build-only mode.
+  (`open_browser_url`, `read_browser_page`, `browser_*`, `browser_subagent`,
+  `click_browser_pixel`, `execute_browser_javascript`, `capture_browser_*`,
+  `list_browser_pages`) as MCP tools named `mcp__antigravity_browser__<name>`, which build-only
+  and connected mode block outright as browser tools; `generate_image`, `read_resource`,
+  `manage_inbox`, `delete_knowledge`, `schedule` and `read_url_content` like an MCP tool
+  (`mcp__antigravity__<name>`), every string argument checked as a path and for a Salesforce
+  host. `search_web` is a plain web search: the gate has no objection and Antigravity's own
+  flow decides. A tool the module does not know (`notebook_execution`, and any tool
+  Antigravity adds later) is blocked in build-only mode. So is a known tool the module cannot
+  read: a file tool without the argument that names its file, typed input that is not text,
+  and an MCP call without a usable server or tool name.
 - A blocked call is answered `deny` with the gate's reason. Antigravity has no answer that
   means "no opinion", so a call the gate lets through is answered `allow` only when it is a
   read inside the folders the session was started with (the working folder and those added
@@ -423,13 +426,15 @@ What it does with each call:
 
 Limits:
 
-- Connected mode is not supported in Antigravity. `torque launch` starts Claude Code, so an
-  Antigravity session in a connected workspace is not bound to a client: org calls, its
-  browser tools and every client's folder are refused, and no approval can be used.
-- `browser_subagent` starts a worker that drives a browser. The gate has no objection to the
-  start and relies on the worker's own browser calls reaching this hook, where they are
-  blocked. That has not been confirmed for this tool in a real session. Until it is, do not
-  use `browser_subagent` in a build-only workspace.
+- Torque's hook has not yet been called by a live Antigravity session. The hook input, the
+  answers and the failure behaviour were seen with another hook; Torque's hook was then run
+  as a command on that input. Confirm it once in a real session before relying on it.
+- Connected mode under Antigravity is written and tested offline only. `torque launch --host
+  antigravity` binds a session to one client; see [hosts](hosts.md). An Antigravity session
+  that was not started that way is not bound: org calls, browser tools and every client's
+  folder are refused, and no approval can be used.
+- `browser_subagent` starts a worker that drives a browser. It is blocked by name in
+  build-only and connected mode, like the other browser tools.
 - Never start a client session with `--dangerously-skip-permissions`: it removes Antigravity's
   own folder boundary and turns every `ask` into a run. A `deny` still holds.
 - Doctor runs the registered command once on a synthetic `clients/` read, through the shell
@@ -483,9 +488,10 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   desktop server whose server name has none of the listed words and whose tools are not named
   `browser` passes. A browser started from the shell is a command, not a browser tool: `open`
   or `start` with a URL, and a Playwright, Puppeteer or Selenium script the session writes and
-  runs, are read only as command lines. `WebFetch` and Antigravity's `read_url_content` pass
-  with any URL, an org URL included. They are plain fetches, not the user's signed-in browser,
-  but a page that needs no sign-in (a public site on `my.site.com`) is readable.
+  runs, are read only as command lines. `WebFetch` passes with any URL, an org URL included.
+  It is a plain fetch, not the user's signed-in browser, but a page that needs no sign-in (a
+  public site on `my.site.com`) is readable. Antigravity's `read_url_content` is refused for
+  an address on a Salesforce org host and passes for any other.
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
   database connectors. Disable those connectors for a build-only session.
 - A tool call the hook never sees: a matcher narrower than `.*` (doctor flags it), and a host

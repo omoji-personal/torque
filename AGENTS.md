@@ -31,7 +31,7 @@ Necessary public attribution, license notices and dependency provenance are reta
 - Standing rules: `.claude/rules/*.md` are plain Markdown; any agent should read them before client work.
 - Worker roles: `.claude/agents/*.md` are plain role descriptions any agent can follow.
 - Antigravity (`agy`) reads `.agents/` only. A workspace gets the rules, recipes (as skills and slash commands) and worker roles there in its format, derived at `init` and `upgrade` by `src/torque/antigravity.py`; nothing for it is generated in this repository. See `docs/workspace-upgrades.md`.
-- Guardrails: the gate (`src/torque/gate.py`) runs as a Claude Code hook; `src/torque/gate_antigravity.py` runs the same gate as an Antigravity hook for build-only mode (connected mode needs `torque launch`, which starts Claude Code). Other agents get the same records and workflows but not the hook. See `docs/ai-access.md`.
+- Guardrails: the gate (`src/torque/gate.py`) runs as a Claude Code hook; `src/torque/gate_antigravity.py` runs the same gate as an Antigravity hook. `src/torque/hosts.py` is the registry of hosts: `torque launch` starts the host a workspace names, or `--host claude|antigravity`. Connected mode under Antigravity is tested offline only. Other agents get the same records and workflows but not the hook. See `docs/ai-access.md` and `docs/hosts.md`.
 
 ## Commands
 

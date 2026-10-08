@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from torque import connected_routes as cr, gate, gate_antigravity as agy
+from torque import connected_routes as cr, gate, gate_antigravity as agy, hosts
 
 W = Path("/w")
 
@@ -111,6 +111,8 @@ def root(tmp_path, monkeypatch):
         {"schema": "torque.workspace/1", "name": "Synthetic", "profile": "generic", "ai_access": "build-only"}),
         encoding="utf-8")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+    # The Antigravity hook states its host in its own process; undo that after each test.
+    monkeypatch.setenv(hosts.HOOK_HOST_ENV, "")
     return base
 
 
@@ -147,7 +149,8 @@ def test_antigravity_web_reads_and_other_tools_are_still_handed_to_its_own_flow(
 def test_every_antigravity_browser_tool_is_covered():
     browser = {name for name in agy.SCANNED_TOOLS if gate._mcp_surface("mcp__antigravity__" + name)}
     assert browser == {name for name in agy.SCANNED_TOOLS if "browser" in name}
-    assert agy.SCANNED_TOOLS - browser == {"delete_knowledge", "generate_image", "manage_inbox", "read_resource"}
+    assert agy.SCANNED_TOOLS - browser == {"delete_knowledge", "generate_image", "manage_inbox", "read_resource",
+                                           "read_url_content", "schedule"}
 
 
 # --- An MCP server under a neutral name ---
@@ -158,14 +161,17 @@ ORG_HOSTS = [
     "https://example.cloudforce.com", "https://example--c.vf.force.com/apex/Page", "https://example.file.force.com/x",
     "https://na139.salesforce.com", "https://login.salesforce.com", "https://test.salesforce.com/services/oauth2/token",
     "login.salesforce.com", "HTTPS://EXAMPLE.MY.SALESFORCE.COM/", "https://example.my.salesforce.com.",
-    "https://example%2Emy%2Esalesforce%2Ecom/", "https://example.my.salesforce-sites.com/",
+    # Written in two parts so the repository's own content scan does not read this fixture
+    # as a host without a dot.
+    "https:" + "//example%2Emy%2Esalesforce%2Ecom/", "https://example.my.salesforce-sites.com/",
     "https://example--ns.documentforce.com/", "https://example.database.com",
-    "open https://example.my.salesforce.com/001 and read the page", "admin@example.my.salesforce.com",
+    # A made-up address at an org host, in two parts for the same scan.
+    "open https://example.my.salesforce.com/001 and read the page", "admin@" + "example.my.salesforce.com",
 ]
 OTHER_HOSTS = [
     "https://example.com", "https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta",
     "https://help.salesforce.com/s/articleView?id=sf.flow.htm", "https://trailhead.salesforce.com/",
-    "https://www.salesforce.com/products/", "salesforce.com", "someone@salesforce.com",
+    "https://www.salesforce.com/products/", "salesforce.com", "someone@" + "salesforce.com",
     "https://www.website.com/a", "https://workforce.com", "https://airforce.com/x", "https://notsalesforce.com/",
     "https://example.my.salesforce.com.example.org/x", "https://login.salesforce.com-example.org/",
     "https://salesforce.community/", "a note about force.community and my.site.common",

@@ -125,8 +125,6 @@ def test_what_the_gate_lets_through_is_allowed_or_handed_to_antigravity(root, mo
         ("ask", "write_to_file", {"TargetFile": str(root / "src" / "b.md"), "CodeContent": "x"}),
         ("ask", "call_mcp_tool", {"ServerName": "notes", "ToolName": "add", "Arguments": {"text": "hello"}}),
         ("ask", "search_web", {"Query": "x"}),
-        ("ask", "open_browser_url", {"Url": "https://example.com"}),
-        ("ask", "browser_subagent", {"Task": "open the release notes"}),
         ("ask", "schedule", {"Prompt": "run the tests again in an hour"}),
         ("ask", "read_url_content", {"Url": "https://example.com/page"}),
         ("ask", "manage_task", {"Action": "kill", "TaskId": "1"}),
@@ -134,6 +132,16 @@ def test_what_the_gate_lets_through_is_allowed_or_handed_to_antigravity(root, mo
     ]
     for expected, name, args in cases:
         assert decision(monkeypatch, capsys, root, name, args) == expected, (name, args)
+
+
+def test_build_only_blocks_antigravitys_own_browser_tools(root, monkeypatch, capsys):
+    # A browser can reach an org through a login the session did not make, so build-only
+    # blocks browser tools by name, whatever page they are sent to.
+    for name, args in (("open_browser_url", {"Url": "https://example.com"}),
+                       ("browser_subagent", {"Task": "open the release notes"}),
+                       ("read_browser_page", {"PageId": "1"})):
+        reply = answer(monkeypatch, capsys, payload(root, name, args))
+        assert reply["decision"] == "deny" and reply["reason"].startswith("Build-only mode"), (name, reply)
 
 
 def test_a_folder_added_to_the_session_counts_as_inside_it(root, monkeypatch, capsys, tmp_path):
