@@ -66,7 +66,8 @@ later release narrows the check.
 
 - Any `sf`/`sfdx` call carrying an org flag (`-o`, `--target-org`, `--from-org`, `-u`,
   `--targetusername`, `--target-dev-hub`, `-v`) anywhere, even behind a wrapper, env var, `npx`, or
-  subshell. Without one, only these pass: local generators (`project generate`, `lightning
+  subshell. `sf.cmd`, `sf.exe`, `sf.ps1`, `npx @salesforce/cli@VERSION` and the CLI's own script
+  run with node (`node .../@salesforce/cli/bin/run.js`) all count as `sf`. Without an org flag, only these pass: local generators (`project generate`, `lightning
   generate`, `apex generate`), `project convert`, `code-analyzer run` and `code-analyzer rules`
   (their roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
   `--root-dir`/`--source-dir` for convert, and the current directory when none is given or when
@@ -133,8 +134,18 @@ later release narrows the check.
   recursive tool could follow; `torque doctor` looks for them once (see below).
 - Tools other than Bash that run a command string. Claude Code's `Monitor` runs in the Bash
   tool's shell, and a `PowerShell` tool (or any other tool with a `command`, `cmd` or `script`
-  argument) gets the same scan, with PowerShell's backslashes read as path separators. That scan is best-effort
-  for PowerShell syntax.
+  argument) gets the same scan. For PowerShell, the shell Claude Code and Antigravity use on
+  Windows, the command is first read as PowerShell: backslashes are path separators; the
+  backtick is its escape character (`` s`f.cmd `` is `sf.cmd`); `Set-Location`, `Get-ChildItem`,
+  `Copy-Item`, `Remove-Item`, `Move-Item`, `Rename-Item` and their aliases (`sl`, `gci`, `dir`,
+  `ri`, `del`, `ren` and others) are the commands the scan knows, with `-Recurse` (also `-r`,
+  `-s`, `-Depth`) and cmd's `/s` and `/e` as a recursive read (`dir /s`, `findstr /s`, `xcopy
+  /s`, `robocopy /E`, `tree /f`); a string handed to something that runs it (`Invoke-Expression`,
+  `iex`, `powershell` or `pwsh` with or without `-Command`, `cmd /c`, `[scriptblock]::Create`,
+  `Start-Process`, `Start-Job`, `wsl`) is scanned as a command, at any nesting; and
+  `-EncodedCommand` is decoded and scanned, or blocked when it cannot be decoded. `ls -r` keeps
+  its Bash meaning for the Bash tool. This is still best-effort: a cmdlet, alias or function the
+  list does not name is not read.
 - Tools the gate does not recognise. Besides Bash, the file tools (`Read`, `Edit`, `Write`,
   `MultiEdit`, `NotebookEdit`, `NotebookRead`, `LS`, `LSP`), `Grep`, `Glob`, MCP tools and command
   tools, only these pass unchecked: `TodoWrite`, `TodoRead`, `TaskCreate`, `TaskUpdate`,
@@ -158,9 +169,12 @@ later release narrows the check.
 - Worktree copies. Every folder under `.claude/worktrees/` is checked as a workspace of its own,
   so its `clients/` is guarded like the workspace's: `Read`, `Grep`, `Glob`, `LSP`, MCP path
   arguments and Bash commands that reach `.claude/worktrees/<name>/clients/` are blocked.
-- A Bash command aimed at `workspace.json`, `.claude/settings*.json`, `.worktreeinclude`, or the
-  `.claude` directory (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on
-  `workspace.json`, `.claude/settings*.json` and `.worktreeinclude`), and a destructive command
+- A Bash command aimed at `workspace.json`, `.claude/settings*.json`, `.agents/hooks.json`
+  (Antigravity's hook configuration), `.worktreeinclude`, or the `.claude` directory
+  (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on `workspace.json`,
+  `.claude/settings*.json`, `.agents/hooks.json` and `.worktreeinclude`), a command that removes,
+  moves or copies over the `.agents` folder itself (the rules, skills and worker roles inside it
+  stay editable), and a destructive command
   (`rm`, `mv`, `cp`, `truncate`, a redirection) using a glob at the workspace root. A command
   is "aimed at" these files when it names them; a patch or archive writes the paths inside it,
   which the next bullet covers.
@@ -325,6 +339,70 @@ switched off by `disableAllHooks` in the workspace, user or managed settings (or
 not that the running host calls it. Confirm that once in a real session. Run it after setup, after every Torque or Python update, and
 before each monthly review.
 
+## Wiring the Antigravity hook
+
+Antigravity (`agy`) reads `.agents/hooks.json` in the working folder and never reads
+`.claude/settings.json`, so the Claude Code hook above does nothing in an Antigravity session.
+`torque.gate_antigravity` is the same gate behind Antigravity's hook format. Put this entry in
+the workspace's `.agents/hooks.json`, beside any other named hook there, with the absolute path
+of an interpreter that has Torque installed. `torque doctor --workspace .` names the command
+for the interpreter it runs under, and gives the whole entry as
+`ai_access.antigravity_hook.recommended_entry` in `--json` output.
+
+```json
+{"torque-gate": {"PreToolUse": [{"matcher": "*",
+  "hooks": [{"type": "command", "command": "/path/to/venv/bin/python -I -m torque.gate_antigravity", "timeout": 30}]}]}}
+```
+
+On Windows the command is the same with the interpreter's own path
+(`C:\\path\\to\\venv\\Scripts\\python.exe -I -m torque.gate_antigravity` inside the JSON).
+Antigravity runs it through `cmd /c` there and `sh -c` elsewhere, from the `.agents` folder.
+Quote the interpreter path only when it contains a space.
+
+What it does with each call:
+
+- Antigravity's tool calls are rewritten into the ones the gate knows and then decided by the
+  same code: `run_command` and text typed into a running command (`manage_task`,
+  `send_command_input`) as a PowerShell command on Windows and a Bash command elsewhere;
+  `view_file`, `list_dir`, `grep_search` and `find_by_name` as `Read`, `LS`, `Grep` and `Glob`;
+  `write_to_file`, `replace_file_content`, `multi_replace_file_content` and `sed_file` as
+  `Write`, `Edit` and `MultiEdit`; `call_mcp_tool` as that server's MCP tool; the browser tools,
+  `generate_image` and `read_resource` like an MCP tool, every string argument checked as a
+  path. A tool the module does not know (`notebook_execution`, and any tool Antigravity adds
+  later), and a known file tool without the argument that names its file, are blocked in
+  build-only mode.
+- A blocked call is answered `deny` with the gate's reason. Antigravity has no answer that
+  means "no opinion", so a call the gate lets through is answered `allow` only when it is a
+  read inside the folders the session was started with (the working folder and those added
+  with `--add-dir`), which Antigravity runs without asking anyway, and `ask` otherwise. `ask`
+  hands the call to Antigravity's own permission flow, so the gate never allows what that flow
+  would have asked about. Whether `ask` adds a prompt for a tool Antigravity would otherwise
+  run silently has only been observed in headless runs; check it in an interactive session.
+- Antigravity blocks a call when its hook crashes, runs past its timeout or prints no decision
+  (observed with Antigravity CLI 1.3.1 on Windows), so a missing interpreter, a failed import
+  and the gate's own 5-second budget all end in a block. No wrapper is needed for that.
+- The session is bound to the folder it was started in, the way `CLAUDE_PROJECT_DIR` binds a
+  Claude Code session: a command run from another folder is still gated.
+- Subagents send their own tool calls through the same hook.
+
+Limits:
+
+- Connected mode is not supported in Antigravity. `torque launch` starts Claude Code, so an
+  Antigravity session in a connected workspace is not bound to a client: org calls and every
+  client's folder are refused, and no approval can be used.
+- Never start a client session with `--dangerously-skip-permissions`: it removes Antigravity's
+  own folder boundary and turns every `ask` into a run. A `deny` still holds.
+- Doctor runs the registered command once on a synthetic `clients/` read, through the shell
+  from `.agents/`, and reports `Antigravity hook: blocked a standalone probe`, `NOT IN FORCE`
+  or `not registered`. A hook that is registered but does not block, cannot load the gate,
+  runs without `-I`, is disabled or has a matcher narrower than `*` makes doctor exit 3. A
+  workspace with no Antigravity hook only gets a next action, because doctor cannot know
+  whether Antigravity is used there. The probe does not show that Antigravity calls the hook;
+  confirm that once in a real session.
+- The tool names and arguments are the ones Antigravity CLI 1.3.1 sends. A later version that
+  renames an argument turns that tool into one the gate does not know, which blocks it in
+  build-only mode and is otherwise passed to Antigravity's own flow.
+
 ## What it cannot stop
 
 It is pattern matching on recognized tool calls, not a sandbox. Not covered:
@@ -353,7 +431,8 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
   database connectors. Disable those connectors for a build-only session.
 - A tool call the hook never sees: a matcher narrower than `.*` (doctor flags it), and a host
-  without this hook. A host that does not set `CLAUDE_PROJECT_DIR` loses the session binding: a
+  without this hook (Claude Code and Antigravity each need their own entry; other hosts have
+  none). A host that does not set `CLAUDE_PROJECT_DIR` loses the session binding: a
   call from outside the workspace is then gated only when it names a path inside it.
 - A workspace below the current directory that is neither the session's project nor named by a
   path in the call (for example `rg foo` run from the parent of another workspace).
@@ -372,7 +451,8 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - `pip install -r` of a requirements file, or `pip install .` from a Torque checkout, that
   replaces Torque without naming it on the command line.
 - Copy or archive tools other than `tar`, `zip`, `cp`, `scp` and `rsync` with a recursive flag
-  (for example `7z`, `ditto`, `robocopy`) run over the workspace, and extractors other than
+  (for example `7z`, `ditto`, `Compress-Archive`; `robocopy` and `xcopy` are read only in a
+  PowerShell command) run over the workspace, and extractors other than
   `tar`, `bsdtar`, `unzip` and `ditto -x` (for example `7z x`, `cpio -i`). A patch that `git
   apply` reads from standard input inside `project/` is left to git's own path checks, which
   reject `..` and absolute paths. An archive whose members are links that a later member

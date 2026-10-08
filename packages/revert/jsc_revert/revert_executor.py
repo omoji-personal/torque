@@ -44,6 +44,21 @@ def _append_forensic_chain(revert_cmd: list[str], snapshot_id: str, reason: str 
     return cmd
 
 
+def _direct_interpreter(command: list[str], env: dict, *, windows: bool = os.name == "nt") -> list[str]:
+    """The command with this interpreter started directly.
+
+    In a Windows virtual environment python.exe is a launcher that starts the
+    real interpreter as its own child. The wrapper would then not see this
+    process as its parent and would refuse the recovery lease. Start the real
+    interpreter, told which environment it serves, the way multiprocessing does.
+    """
+    base = getattr(sys, "_base_executable", None)
+    if windows and base and command[:1] == [sys.executable] and base != sys.executable:
+        env["__PYVENV_LAUNCHER__"] = sys.executable
+        return [base, *command[1:]]
+    return command
+
+
 def execute_revert(
     snapshot_id: str,
     target_org: str,
@@ -175,7 +190,7 @@ def _execute_locked(snap_dir, snap, target_org, snapshot_id, force_ack, reason, 
             "org_id": lease.org.org_id_short, "owner_token": lease.lock_state["owner_token"],
             "parent_pid": os.getpid(), "snapshot_id": snapshot_id})
         proc = subprocess.run(
-            revert_cmd,
+            _direct_interpreter(revert_cmd, child_env),
             env=child_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,

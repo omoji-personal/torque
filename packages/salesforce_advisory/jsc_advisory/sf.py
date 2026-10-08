@@ -13,6 +13,11 @@ import subprocess
 from dataclasses import dataclass
 from typing import Sequence
 
+try:  # the shared launcher finds sf where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 
 class AdvisorySafetyError(RuntimeError):
     """A caller attempted to leave the package's read-only command surface."""
@@ -99,7 +104,7 @@ class SfClient:
         argv = ("sf", *tuple(args))
         self.invocations.append(Invocation(argv=argv, timeout=timeout))
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+            proc = run_tool(argv, capture_output=True, text=True, timeout=timeout)
         except (subprocess.TimeoutExpired, OSError) as exc:
             raise Unknown(f"{type(exc).__name__}: {str(exc)[:140]}") from exc
         try:

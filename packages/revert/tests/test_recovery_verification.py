@@ -126,7 +126,8 @@ x.ensure_ownership()
 x.release_lock()
 assert org_sequence.org_lock_path(p["org_id"]).exists()
 '''
-        return original([sys.executable, "-c", script], **kwargs)
+        # Started the way the executor starts its child (no launcher in between in a Windows venv).
+        return original(revert_executor._direct_interpreter([sys.executable, "-c", script], kwargs["env"]), **kwargs)
     monkeypatch.setattr(revert_executor.subprocess, "run", child)
     assert revert_executor.execute_revert(snap["snapshot_id"], "synthetic", force_ack=force) == expected
     assert len(calls) == int(force)

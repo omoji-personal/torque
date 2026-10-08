@@ -16,6 +16,11 @@ from pathlib import Path
 from jsc_loganalyzer.parsers import run_all_parsers
 from jsc_loganalyzer.score import Result, score_findings
 
+try:  # the shared launcher finds sf where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 # Hard cap on how many ApexLogs a single bounded-lookback run will fetch +
 # analyze. Bounds both the sf-CLI cost and the analysis time so the run stays
 # within the post-deploy hook's ~120s subprocess timeout. (TAA B3.)
@@ -105,7 +110,7 @@ def fetch_recent_logs(target_org: str, since_iso: str | None, limit: int) -> lis
 
     bodies: list[str] = []
     try:
-        list_proc = subprocess.run(
+        list_proc = run_tool(
             ["sf", "data", "query", "--target-org", target_org, "--use-tooling-api",
              "--query", query, "--json"],
             capture_output=True, text=True, timeout=60,
@@ -118,7 +123,7 @@ def fetch_recent_logs(target_org: str, since_iso: str | None, limit: int) -> lis
             log_id = rec.get("Id")
             if not log_id:
                 continue
-            body_proc = subprocess.run(
+            body_proc = run_tool(
                 ["sf", "apex", "log", "get", "--target-org", target_org, "--log-id", log_id],
                 capture_output=True, text=True, timeout=60,
             )

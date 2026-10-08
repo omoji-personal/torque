@@ -253,6 +253,7 @@ def _poll_one(entry: dict) -> str:
     uses its structured result. Store each observation beside the private snapshot.
     """
     import subprocess
+    from . import tool_launch
     try:
         snap_dir, _ = mf.load_by_id(entry["org_id_short"], entry["alias"], entry["snapshot_id"])
     except (FileNotFoundError, ValueError, KeyError):
@@ -260,7 +261,7 @@ def _poll_one(entry: dict) -> str:
 
     def observe(command):
         try:
-            proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict",
+            proc = tool_launch.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict",
                                   timeout=60, cwd=snap_dir)
         except (subprocess.TimeoutExpired, FileNotFoundError, UnicodeDecodeError) as exc:
             if isinstance(exc, UnicodeDecodeError):

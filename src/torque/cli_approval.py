@@ -183,7 +183,7 @@ def _print(value) -> None:
 def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None, *, delegated=False, binding=None,
            env=None, ancestors=None) -> int:
     """Bind a new AI session to one client through a launch record for this process
-    (exec keeps the pid): after the consultant's presence check and code
+    (exec keeps the pid; on Windows this process starts the agent and waits): after the consultant's presence check and code
     (unchanged), or, with `delegated`, by claiming a single-use launch binding the
     workspace's delegated approver wrote. `extra` passes through to `claude`
     unchanged (for example `-p --input-format stream-json`). The hook process
@@ -236,8 +236,29 @@ def launch(workspace, client, extra: list[str], execvp=os.execvp, presence=None,
         for name in launches.REFUSED_ENV:
             os.environ.pop(name, None)
     os.chdir(root)
+    if os.name == "nt" and execvp is os.execvp:
+        return run_agent([AGENT_BINARY, *extra])
     execvp(AGENT_BINARY, [AGENT_BINARY, *extra])
     return 0
+
+
+def run_agent(argv: list[str]) -> int:
+    """Start the agent on Windows and wait for it; its exit code. Windows has no
+    exec: os.execvp starts a second process and ends this one, which hands the
+    console back to the shell while the agent still reads it, and it cannot start
+    `claude` installed as a batch file at all. The launch record names this
+    process, which stays the agent's parent. Ctrl+C belongs to the agent."""
+    import signal
+    import subprocess
+    from jsc_common import tools
+    line, options = tools.command(argv)
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        return subprocess.Popen(line, **options).wait()
+    except OSError as exc:
+        raise ws.WorkspaceError(f"could not start {argv[0]}: {exc}") from exc
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 def _launch_binding(p) -> int:

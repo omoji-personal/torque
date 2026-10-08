@@ -1142,9 +1142,10 @@ def _audit_changes(rows: list[dict], components: list[str], since: str) -> list[
 def live_deploy_report(job_id: str, org: str) -> dict | None:
     """The check-only job's status, read live with `sf project deploy report`."""
     import subprocess
+    from jsc_common import tools
     try:
-        done = subprocess.run(["sf", "project", "deploy", "report", "--job-id", job_id, "--target-org", org,
-                               "--json"], capture_output=True, text=True, timeout=120)
+        done = tools.run(["sf", "project", "deploy", "report", "--job-id", job_id, "--target-org", org,
+                          "--json"], capture_output=True, text=True, timeout=120)
         data = json.loads(done.stdout or "{}")
     except (OSError, ValueError, subprocess.SubprocessError):
         return None

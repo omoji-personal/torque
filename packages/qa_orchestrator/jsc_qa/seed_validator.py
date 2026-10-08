@@ -22,6 +22,11 @@ import os
 import re
 import subprocess
 from pathlib import Path
+
+try:  # the shared launcher finds sf where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
 from typing import Any
 
 
@@ -237,7 +242,7 @@ def validate_user_via_soql(
            f"Profile.UserLicense.Name FROM User WHERE Id='{user_id}'",
            "--json"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = run_tool(cmd, capture_output=True, text=True, timeout=30)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         return False, f"sf data query failed: {e}"
     if proc.returncode != 0:
@@ -283,7 +288,7 @@ def validate_user_via_soql(
                 f"WHERE AssigneeId='{user_id}'",
                 "--json"]
         try:
-            proc = subprocess.run(cmd2, capture_output=True, text=True, timeout=30)
+            proc = run_tool(cmd2, capture_output=True, text=True, timeout=30)
             data = json.loads(proc.stdout)
             ps_names = [r["PermissionSet"]["Name"]
                         for r in data.get("result", {}).get("records", [])]
@@ -316,7 +321,7 @@ def validate_user_via_soql(
                 f"WHERE AssigneeId='{user_id}')",
                 "--json"]
         try:
-            proc = subprocess.run(cmd3, capture_output=True, text=True, timeout=30)
+            proc = run_tool(cmd3, capture_output=True, text=True, timeout=30)
             data = json.loads(proc.stdout)
             for ps in data.get("result", {}).get("records", []):
                 for perm_field in perm_fields:

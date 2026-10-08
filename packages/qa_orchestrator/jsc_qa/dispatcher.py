@@ -45,6 +45,11 @@ except ImportError:  # pragma: no cover - bootstrap for bare PYTHONPATH
         _sys.path.insert(0, _common)
     from jsc_common.org_classify import is_production_target
 
+try:  # the shared launcher finds sf where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 
 @dataclass
 class DispatchResult:
@@ -519,7 +524,7 @@ def dispatch_meta_api(
         "report_api_version": _META_API_REPORT_API_VERSION,
     }
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_MEDIUM)
+        proc = run_tool(cmd, capture_output=True, text=True, timeout=TIMEOUT_MEDIUM)
     except (subprocess.TimeoutExpired, OSError) as e:
         return DispatchResult(
             surface="MetaAPI", status="ERROR",

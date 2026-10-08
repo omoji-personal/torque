@@ -196,8 +196,9 @@ def _iso_now() -> str:
 def get_sf_cli_version() -> str:
     """Best-effort: get sf CLI version string. Returns '' on failure."""
     import subprocess
+    from . import tool_launch
     try:
-        r = subprocess.run(["sf", "--version"], capture_output=True, text=True, encoding="utf-8", errors="strict", timeout=5)
+        r = tool_launch.run(["sf", "--version"], capture_output=True, text=True, encoding="utf-8", errors="strict", timeout=5)
         if r.returncode == 0:
             return r.stdout.strip().split()[0] if r.stdout else ""
     except (FileNotFoundError, subprocess.TimeoutExpired, UnicodeError):

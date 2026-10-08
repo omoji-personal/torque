@@ -40,6 +40,11 @@ from pathlib import Path
 
 from jsc_loganalyzer.score import Finding, Result, score_findings
 
+try:  # the shared launcher finds sf where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 # Subprocess timeout for the `sf code-analyzer run` invocation. Mandatory per
 # verify-harness-patterns.md "Subprocess timeouts (mandatory)". Static analysis
 # of a large workspace can be slow, so this is generous (10 min) but still
@@ -128,7 +133,7 @@ def run_code_analyzer(workspace: str | None, output_file: str) -> dict:
     except FileNotFoundError:
         pass
     try:
-        proc = subprocess.run(
+        proc = run_tool(
             cmd,
             capture_output=True,
             text=True,

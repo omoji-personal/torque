@@ -44,6 +44,11 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+try:  # the shared launcher finds gemini where Windows installs it as a batch file
+    from jsc_common.tools import run as run_tool
+except ImportError:
+    run_tool = subprocess.run
+
 
 DEFAULT_MODEL_CHAIN = (
     "gemini-3-pro-preview",
@@ -244,7 +249,7 @@ def _invoke_gemini(
     """
     cmd = ["gemini", "-m", model, "-p", prompt]
     try:
-        p = subprocess.run(
+        p = run_tool(
             cmd,
             cwd=str(workspace_root()),
             capture_output=True,

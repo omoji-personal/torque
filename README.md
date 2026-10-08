@@ -88,8 +88,11 @@ These commands create local files. An alias refers to existing Salesforce CLI
 authentication; it does not log in or authorize an org. Replace the sample names.
 Open the private workspace in your assistant; its `AGENTS.md` explains how to use the
 client context and bundled workflows (`CLAUDE.md` points Claude Code to it). Torque works
-with any assistant that reads `AGENTS.md` and can run commands; the optional build-only
-and connected-mode gate currently runs as a Claude Code hook.
+with any assistant that reads `AGENTS.md` and can run commands. The optional build-only
+gate runs as a Claude Code hook and as an [Antigravity hook](docs/ai-access.md#wiring-the-antigravity-hook);
+connected mode needs Claude Code. Antigravity reads `.agents/` only, so the workspace also
+gets the rules, recipes (as skills and slash commands) and worker roles there in
+[its format](docs/workspace-upgrades.md#antigravity-copies).
 
 Ask in ordinary language:
 
@@ -167,8 +170,8 @@ execution-evidence limitations described in the linked guides.
 `solution-lead` is an optional workspace profile for a consultant who leads
 delivery across several clients; the product works with any firm or independent consultant.
 
-A firm with an AI-use policy can set a workspace to build-only: a Claude Code hook then
-keeps the assistant away from client orgs and client context, best-effort and not a
+A firm with an AI-use policy can set a workspace to build-only: a Claude Code or
+Antigravity hook then keeps the assistant away from client orgs and client context, best-effort and not a
 sandbox. See [build-only mode](docs/ai-access.md) for what it does and does not cover.
 
 Run `torque --help`, `torque workflows list`, or a route's `--help`. Stateful

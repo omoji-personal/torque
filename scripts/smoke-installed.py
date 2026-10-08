@@ -21,8 +21,9 @@ def main():
                if not k.startswith(("TORQUE_", "JSC_")) and k != "PYTHONPATH"}
 
         def call(*args):
-            run = subprocess.run([sys.executable, "-m", "torque", *args],
-                                 cwd=root, env=env, capture_output=True, text=True, timeout=30)
+            # Redirected Torque output is UTF-8 on every platform, Windows included.
+            run = subprocess.run([sys.executable, "-m", "torque", *args], cwd=root, env=env,
+                                 capture_output=True, text=True, encoding="utf-8", timeout=30)
             if run.returncode:
                 raise AssertionError(f"CLI failed {args}: {run.stderr}\n{run.stdout}")
             return run.stdout
@@ -48,7 +49,11 @@ def main():
         call("workspace", "init", str(private), "--name", "Synthetic consulting firm", "--profile", "solution-lead")
         assert (private / "AGENTS.md").is_file()
         assert len(list((private / ".claude/commands").glob("*.md"))) == len(rows)
-        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 5
+        # Five packaged skills, and every recipe again as an Antigravity skill.
+        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 5 + len(rows)
+        for group in ("rules", "agents"):
+            assert (len(list((private / ".agents" / group).glob("*.md")))
+                    == len(list((private / ".claude" / group).glob("*.md"))) > 0), group
         assert "Salesforce Solution Lead" in (private / "profile.md").read_text(encoding="utf-8")
         for client in ("alpha", "beta"):
             call("client", "add", client, "--workspace", str(private), "--org", f"synthetic-{client}")
@@ -123,7 +128,7 @@ def main():
         forbidden = checkout / "private"
         denied = subprocess.run([sys.executable, "-m", "torque", "workspace", "init", str(forbidden),
                                  "--name", "Synthetic private firm"], cwd=root, env=env,
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert denied.returncode == 2 and "source checkout" in denied.stderr and not forbidden.exists()
         print(f"Installed CLI verified: nine delegates, six public routes, {len(rows)} recipes, offline demo, private init, two-client/four-change fresh-process continuity, evidence drift, complete client doctor, source/private boundary, reported failure handoff and customized workspace upgrade.")
 

@@ -61,6 +61,40 @@ def test_launch_binds_client_in_environment(connected, tmp_path, monkeypatch):
     assert os.path.realpath(seen["cwd"]) == os.path.realpath(connected)
 
 
+def test_run_agent_waits_for_the_agent_and_returns_its_exit_code():
+    import signal
+    import sys
+    before = signal.getsignal(signal.SIGINT)
+    assert cli_approval.run_agent([sys.executable, "-c", "import sys; sys.exit(7)"]) == 7
+    assert signal.getsignal(signal.SIGINT) is before
+    with pytest.raises(ws.WorkspaceError, match="could not start"):
+        cli_approval.run_agent(["no-such-agent-binary-for-this-test"])
+    assert signal.getsignal(signal.SIGINT) is before
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exec replaces the process everywhere else")
+def test_launch_starts_the_agent_as_a_child_on_windows(connected, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for key in ("TORQUE_CLIENT", "TORQUE_WORKSPACE", "TORQUE_LAUNCH"):
+        monkeypatch.setenv(key, "placeholder")
+        monkeypatch.delenv(key)
+    monkeypatch.setattr("torque.consent.load_consent", lambda w, c: {
+        "schema": "torque.consent/1", "client": "acme", "status": "active",
+        "reviewer": {"name": "R", "signed_off_at": "2026-09-30T10:00:00+00:00"}, "data_allowed": ["metadata"],
+        "approved_orgs": [{"alias": "a", "kind": "sandbox", "org_id_18": "x"}]})
+    monkeypatch.setattr("torque.presence.confirm_code", lambda: True)
+    monkeypatch.setattr("torque.presence.operator_present", YES)
+    seen = {}
+
+    def fake_agent(argv):
+        seen.update(argv=argv, client=os.environ.get("TORQUE_CLIENT"), launch=os.environ.get("TORQUE_LAUNCH"))
+        return 5
+    monkeypatch.setattr(cli_approval, "run_agent", fake_agent)
+    # The default exec is used: on Windows it would end this process and leave the console to the shell.
+    assert cli_approval.launch(connected, "Acme", ["--model", "x"]) == 5
+    assert seen["argv"] == ["claude", "--model", "x"] and seen["client"] == "acme" and seen["launch"]
+
+
 def test_require_exit_codes(connected, monkeypatch, capsys):
     monkeypatch.setattr("torque.approval.require", lambda *a, **k: (False, "no granted approval matches"))
     code = cli.main(["approval", "require", "--workspace", str(connected), "--client", "Acme", "--org", "a",

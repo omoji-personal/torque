@@ -25,6 +25,12 @@ _SCHEMA = "torque.templates/1"
 _GROUPS = (("commands", ".claude/commands"), ("rules", ".claude/rules"),
            ("skills", ".claude/skills"), ("agents", ".claude/agents"),
            ("skills", ".agents/skills"))
+# The Antigravity copies derived from the rules and worker roles (antigravity.py);
+# recipes become skills under .agents/skills, listed above. Versions up to 2.0.0a19
+# reject a manifest whose "files" names these two locations, so their entries are
+# kept in a section of their own, which those versions ignore.
+_DERIVED = (".agents/rules", ".agents/agents")
+_DERIVED_SECTION = "antigravity_files"
 
 # Windows lacks the openat()/linkat()/unlinkat() family Python exposes as the
 # dir_fd parameter, and the O_DIRECTORY/O_NOFOLLOW flags do not exist there.
@@ -47,7 +53,11 @@ def _hash(contents: bytes) -> str:
 def _valid_workflow(path: str) -> bool:
     return (isinstance(path, str) and path.endswith(".md") and "\\" not in path
             and all(part not in ("", ".", "..") for part in path.split("/"))
-            and any(path.startswith(prefix + "/") for _, prefix in _GROUPS))
+            and any(path.startswith(prefix + "/") for prefix in (*(p for _, p in _GROUPS), *_DERIVED)))
+
+
+def _derived(path: str) -> bool:
+    return any(path.startswith(prefix + "/") for prefix in _DERIVED)
 
 
 def _bundled() -> dict[str, tuple[bytes, str]]:
@@ -65,6 +75,12 @@ def _bundled() -> dict[str, tuple[bytes, str]]:
             files[relative] = (item.read_text(encoding="utf-8").encode("utf-8"), source)
     for group, destination in _GROUPS:
         visit(data.joinpath(group), destination, "torque/data/" + group)
+    from . import antigravity
+    for relative, (text, source) in antigravity.surface(data).items():
+        if not _valid_workflow(relative):
+            raise ws.WorkspaceError("bundled workflow is outside the managed locations")
+        # A packaged skill keeps its place over a recipe of the same name.
+        files.setdefault(relative, (text.encode("utf-8"), source))
     return files
 
 
@@ -218,19 +234,24 @@ def _locked(root_fd, check: bool):
 
 
 def _load_manifest(raw: bytes | None) -> dict:
+    """The manifest with every tracked file under "files", whichever section holds it."""
     if raw is None:
         return {"schema": _SCHEMA, "files": {}}
     try:
         value = json.loads(raw)
         if not isinstance(value, dict) or value.get("schema") != _SCHEMA or not isinstance(value.get("files"), dict):
             raise ValueError("invalid schema")
-        for name, entry in value["files"].items():
+        derived = value.get(_DERIVED_SECTION, {})
+        if not isinstance(derived, dict):
+            raise ValueError("invalid schema")
+        files = {**derived, **value["files"]}
+        for name, entry in files.items():
             if (not _valid_workflow(name) or not isinstance(entry, dict)
                     or not isinstance(entry.get("sha256"), str)
                     or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
                     or not isinstance(entry.get("version"), str) or not entry["version"]):
                 raise ValueError("invalid file entry")
-        return value
+        return {"schema": _SCHEMA, "files": files}
     except (ValueError, TypeError, UnicodeError) as exc:
         raise ws.WorkspaceError("invalid .torque/templates.json; preserve it and repair the manifest before updating") from exc
 
@@ -253,7 +274,7 @@ def _publish(root_fd, path: str, contents: bytes, expected: bytes | None) -> boo
                     return False
                 if expected is None:
                     try:
-                        os.link(temp_path, target)
+                        ws.publish_new(temp_path, target)
                     except FileExistsError:
                         return False
                 else:
@@ -274,7 +295,7 @@ def _publish(root_fd, path: str, contents: bytes, expected: bytes | None) -> boo
                 return False
             if expected is None:
                 try:
-                    os.link(temporary, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+                    ws.publish_new(temporary, name, dir_fd=fd)
                 except FileExistsError:
                     return False
             else:
@@ -347,7 +368,10 @@ def _run(workspace: Path, *, check: bool, initial: bool = False) -> dict:
             for path in sorted(set(baseline) - set(bundle)):
                 actions.append({"path": path, "action": "retired", "applied": False,
                                 "suggestion": "No longer bundled; left untouched. Review or remove it locally if appropriate."})
-            next_manifest = {"schema": _SCHEMA, "files": updated}
+            next_manifest = {"schema": _SCHEMA, "files": {k: v for k, v in updated.items() if not _derived(k)}}
+            derived = {k: v for k, v in updated.items() if _derived(k)}
+            if derived:
+                next_manifest[_DERIVED_SECTION] = derived
             encoded = (json.dumps(next_manifest, indent=2, sort_keys=True) + "\n").encode()
             changed_manifest = not check and encoded != raw_manifest
             if changed_manifest and not _publish(root_fd, MANIFEST, encoded, raw_manifest):

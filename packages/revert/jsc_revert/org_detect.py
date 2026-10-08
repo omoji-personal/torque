@@ -11,6 +11,8 @@ import re
 import subprocess
 from typing import NamedTuple
 
+from . import tool_launch
+
 
 class OrgInfo(NamedTuple):
     alias: str
@@ -39,8 +41,8 @@ _ORG_QUERY = "SELECT Id, IsSandbox, OrganizationType FROM Organization"
 
 def _sf_result(command: list[str], timeout_seconds: int) -> dict | None:
     try:
-        proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict",
-                              timeout=timeout_seconds)
+        proc = tool_launch.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict",
+                               timeout=timeout_seconds)
         if proc.returncode != 0:
             return None
         data = json.loads(proc.stdout)

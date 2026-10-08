@@ -34,6 +34,8 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
+from . import tool_launch
+
 
 # Codex-R5-P1-4 fix: extract (type, fullName) as exact tuple, not substring match
 _NOT_FOUND_PROBLEM_RE = re.compile(
@@ -372,8 +374,8 @@ def run_pre_snapshot_retrieve(
         try:
             # cwd=stage is the whole point — it is what makes staged_out "inside
             # the project" as far as the sf CLI is concerned.
-            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="strict",
-                                  timeout=timeout_seconds, cwd=str(stage))
+            proc = tool_launch.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="strict",
+                                   timeout=timeout_seconds, cwd=str(stage))
         except UnicodeDecodeError as exc:
             from . import bundle
             bundle.atomic_write_bytes(output_dir / ".retrieve-invalid-utf8.bin", exc.object)

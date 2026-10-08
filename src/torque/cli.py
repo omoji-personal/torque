@@ -460,9 +460,13 @@ def _change(args: argparse.Namespace) -> int:
 _HOOK_COVERAGE_PROBES = ("Bash", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "NotebookRead", "LS",
                          "Grep", "Glob", "Monitor", "PowerShell", "WebFetch", "Task", "mcp__server__tool",
                          "FutureTool")
+# The same for Antigravity's hook, in its tool names.
+_AGY_COVERAGE_PROBES = ("run_command", "manage_task", "send_command_input", "view_file", "list_dir", "grep_search",
+                        "find_by_name", "write_to_file", "replace_file_content", "multi_replace_file_content",
+                        "call_mcp_tool", "open_browser_url", "invoke_subagent", "future_tool")
 
 
-def _matcher_covers(matchers: list[str]) -> bool:
+def _matcher_covers(matchers: list[str], probes: tuple[str, ...] = _HOOK_COVERAGE_PROBES) -> bool:
     """True when the union of the hook entries' matchers matches every probe name."""
     def matches(matcher: str, name: str) -> bool:
         if matcher.strip() in ("", "*"):
@@ -471,7 +475,7 @@ def _matcher_covers(matchers: list[str]) -> bool:
             return re.fullmatch(matcher, name) is not None
         except re.error:
             return False
-    return bool(matchers) and all(any(matches(m, name) for m in matchers) for name in _HOOK_COVERAGE_PROBES)
+    return bool(matchers) and all(any(matches(m, name) for m in matchers) for name in probes)
 
 
 def _hook_settings_layers(root: Path) -> list[Path]:
@@ -588,7 +592,57 @@ def _gate_hook_report(root: Path) -> dict:
             failed = [err for code, err in results if code == 2 and "could not" in err]
             if failed:
                 hook["probe_error"] = (failed[0].strip().splitlines() or [""])[-1][:300]
-    return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook}
+    return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook,
+            "antigravity_hook": _antigravity_hook_report(root, mode)}
+
+
+def _antigravity_hook_report(root: Path, mode: str) -> dict:
+    """The same for Antigravity, which reads `.agents/hooks.json` and never
+    `.claude/`: whether the gate is registered there for every tool and, in
+    build-only mode, whether it blocks a synthetic client-path read when run
+    the way Antigravity runs a hook (through the shell, from `.agents/`)."""
+    from . import gate_antigravity as agy
+    hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False, "isolated": False,
+                  "disabled": False, "verified": None, "probe_decision": None, "probe_error": "",
+                  "recommended_command": agy.hook_command(sys.executable),
+                  "recommended_entry": agy.hook_entry(sys.executable)}
+    matchers: list[str] = []
+    try:
+        data = json.loads((root / ".agents" / "hooks.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    for spec in (data.values() if isinstance(data, dict) else []):
+        entries = spec.get("PreToolUse") if isinstance(spec, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            for item in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
+                command = str(item.get("command") or "") if isinstance(item, dict) else ""
+                if agy.HOOK_MODULE in command:
+                    hook["commands"].append(command)
+                    hook["configured"] = True
+                    hook["disabled"] = hook["disabled"] or spec.get("enabled") is False
+                    matchers.append(str(entry.get("matcher") or ""))
+    hook["matcher_covers_tools"] = _matcher_covers(matchers, _AGY_COVERAGE_PROBES)
+    hook["isolated"] = bool(hook["commands"]) and all(_HOOK_ISOLATED_RE.match(c) for c in hook["commands"])
+    if mode == "build-only" and hook["commands"]:
+        probe = json.dumps({"toolCall": {"name": "view_file", "args": {
+            "AbsolutePath": str(root / "clients" / ".torque-doctor-probe" / "probe.md")}},
+            "workspacePaths": [str(root)], "conversationId": "torque-doctor"})
+        answers = []
+        for command in hook["commands"]:
+            try:
+                run = subprocess.run(command, shell=True, cwd=root / ".agents", input=probe, capture_output=True,
+                                     text=True, timeout=60)
+                answers.append(json.loads(run.stdout))
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                answers.append({})
+        decisions = [answer.get("decision") if isinstance(answer, dict) else None for answer in answers]
+        reasons = [str(answer.get("reason") or "") if isinstance(answer, dict) else "" for answer in answers]
+        hook["probe_decision"] = decisions[0]
+        hook["verified"] = all(d == "deny" and "could not" not in r for d, r in zip(decisions, reasons))
+        failed = [r for d, r in zip(decisions, reasons) if d == "deny" and "could not" in r]
+        if failed:
+            hook["probe_error"] = failed[0][:300]
+    return hook
 
 
 # The hook timeout the documentation gives, in seconds (Claude Code's default).
@@ -729,6 +783,39 @@ def _doctor(args: argparse.Namespace) -> int:
                 + ("none" if slow[0] is None else repr(slow[0])) + "). A hook that times out lets the call "
                 f"proceed; the gate blocks by itself once its {gate.GATE_TIME_BUDGET:g}-second budget runs out, "
                 "well inside that timeout.")
+        agy = access["antigravity_hook"]
+        entry = ("the torque-gate entry docs/ai-access.md shows, with this command: " + agy["recommended_command"])
+        if not agy["configured"]:
+            if (Path(root) / ".agents").is_dir():
+                report["next_actions"].append(
+                    "Antigravity reads .agents/hooks.json, never .claude/settings.json, and no "
+                    "torque.gate_antigravity hook is registered there, so a session started with Antigravity "
+                    "in this workspace is not gated. If Antigravity is used here, add to .agents/hooks.json "
+                    + entry)
+        elif not agy["verified"]:
+            report["ready"] = False
+            if agy["probe_error"] or agy["probe_decision"] is None:
+                report["next_actions"].append(
+                    "The Antigravity hook could not run the gate ("
+                    + (agy["probe_error"] or "it printed no decision") + "), so Antigravity blocks every tool "
+                    "call, ordinary work included. Point it at an interpreter with this Torque version "
+                    "installed. Use " + entry)
+            else:
+                report["next_actions"].append(
+                    f"The Antigravity hook did not block a client-path probe (decision {agy['probe_decision']}), "
+                    "so build-only mode is not in force in Antigravity. Point it at an interpreter with Torque "
+                    "installed. Use " + entry)
+        else:
+            if agy["disabled"] or not agy["matcher_covers_tools"]:
+                report["ready"] = False
+                report["next_actions"].append(
+                    "The Antigravity hook works but does not see every tool call (it is disabled, or its matcher "
+                    "is narrower than \"*\"), so some calls are not gated. Use " + entry)
+            if not agy["isolated"]:
+                report["ready"] = False
+                report["next_actions"].append(
+                    "The Antigravity hook runs Python without -I (isolated mode), so a torque/ folder or "
+                    "sitecustomize.py written into the workspace can replace the gate. Use " + entry)
         links = _links_out(Path(root))
         access["links_out"] = links
         if links["found"]:
@@ -816,6 +903,13 @@ def _doctor(args: argparse.Namespace) -> int:
                 state = ("hook command blocked a standalone probe; settings checked, host enforcement "
                          "not tested" if ok else "HOOK NOT IN FORCE")
                 print(f"AI access: build-only ({state})")
+                a = access["antigravity_hook"]
+                if not a["configured"]:
+                    print("Antigravity hook: not registered in .agents/hooks.json")
+                elif a["verified"] and a["isolated"] and a["matcher_covers_tools"] and not a["disabled"]:
+                    print("Antigravity hook: blocked a standalone probe; host enforcement not tested")
+                else:
+                    print("Antigravity hook: NOT IN FORCE")
             elif access["mode"] == "connected":
                 connected = access["connected"]
                 state = "ready" if connected["ready"] else "NOT READY"
@@ -878,8 +972,24 @@ def _recover_grammar():
 INVOCATION: tuple[str, list[str]] | None = None
 
 
+def _utf8_output() -> None:
+    """Windows gives a redirected stdout or stderr the ANSI code page, which cannot
+    encode much of what notes, summaries and recipes hold, and an agent host reads
+    the output as UTF-8. A console window and an explicit PYTHONIOENCODING stay as
+    they are."""
+    if os.name != "nt" or os.environ.get("PYTHONIOENCODING"):
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if not stream.isatty() and (stream.encoding or "").lower().replace("-", "") != "utf8":
+                stream.reconfigure(encoding="utf-8")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     global INVOCATION
+    _utf8_output()
     args = list(sys.argv[1:] if argv is None else argv)
     INVOCATION = ("torque", list(args))
     parsed = None
