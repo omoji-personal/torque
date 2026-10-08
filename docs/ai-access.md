@@ -26,8 +26,10 @@ holds them (the client's folder, `clients/`, the workspace) is refused too. Afte
 directory change the gate cannot follow (`cd "$X"`, `cd -`), any command that removes or
 writes is refused in a workspace that holds such records. A record changed while the gate is otherwise off would be trusted when the
 owner turns connected mode on. The `full`-mode check never blocks by failing: if it cannot
-finish, the call is allowed as before. Everything else `full` mode allows is
-unchanged.
+finish (an error inside it, or its time or glob budget spent), the call is allowed as
+before. Everything else `full` mode allows is unchanged. In build-only and connected mode
+the same check fails closed: an error inside it blocks the call, and the reason names the
+error. A spent budget blocks the call there too, as it does for every other check.
 
 Since 2.0.0a19 the protected-record check covers every mode (`full`, build-only and
 connected), matches names case-insensitively, and also covers each initiative's
@@ -82,8 +84,34 @@ later release narrows the check.
   `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):
   anything other than `--help`, `-h`, or `--version`.
 - MCP tools whose server or tool name indicates Salesforce access (a name containing `salesforce`,
-  `sfdx`, `sf_`, `_sf`, `soql`, `sosl`, `sobject`, or `apex`, or a server or tool named `sf`), and
-  any MCP call with a string argument (at any depth) that resolves into
+  `sfdx`, `sf_`, `_sf`, `soql`, `sosl`, `sobject`, or `apex`, or a server or tool named `sf`). A
+  resource read (`ReadMcpResourceTool`, Antigravity's `read_resource`) names its server in a
+  `server` or `ServerName` argument, and that name is checked the same way.
+- An MCP call, whatever its server is called, with a string argument (a value or an argument
+  name, at any depth, `%` escapes decoded) that names a Salesforce org or login host: a host
+  name ending in `salesforce.com`, `force.com`, `my.site.com`, `salesforce-setup.com`,
+  `salesforce-sites.com`, `cloudforce.com`, `database.com`, `visualforce.com`,
+  `documentforce.com`, `lightning.com` or `sfdc.net`. That
+  covers My Domain, sandbox, Lightning, Visualforce, file and site hosts, instance hosts and the
+  login hosts (`login.salesforce.com`, `test.salesforce.com`). Salesforce's public sites are not
+  org access and pass: `salesforce.com`, `www`, `help`, `developer`, `trailhead`, `appexchange`,
+  `status`, `architect`, `admin`, `resources.docs` and `releasenotes.docs` under
+  `salesforce.com`. This is how a Salesforce MCP server under a neutral name is caught. It only
+  works when an argument carries a host; see "What it cannot stop".
+- Browser and desktop control tools, outright: an MCP tool whose server name contains `chrome`,
+  `playwright`, `puppeteer`, `browser`, `firefox`, `safari`, `webdriver` or `selenium` (Claude in
+  Chrome, Playwright, Puppeteer, Chrome DevTools), or `computer-use` (also `computer_use` and
+  `computeruse`), `desktop`, `applescript` or `automation` (computer use and desktop
+  control), or whose own name contains
+  `browser` (Antigravity's `open_browser_url`, `read_browser_page`, `browser_*`,
+  `click_browser_pixel`, `execute_browser_javascript`, `capture_browser_*` and
+  `list_browser_pages`). Navigation, page reads, screenshots, clicks and in-page JavaScript are
+  all blocked, whatever URL the call names: the gate cannot see which page or window such a tool
+  acts on (an open tab, a redirect, a signed-in session), so it cannot keep an org or client
+  page out of the session. Connected mode reads the same names and refuses the same tools. Plain
+  web fetch and web search (`WebFetch`, `WebSearch`, Antigravity's `read_url_content` and
+  `search_web`) are not browser tools and pass as before.
+- Any MCP call with a string argument (at any depth) that resolves into
   `clients/`, `workspace.json`, `.claude/`, or the installed Torque package. A tree-walking MCP
   tool (a name containing `tree`, `search`, `find`, `grep`, `glob`, or `walk`) rooted at or above
   `clients/` is blocked too. A `file:` URI is parsed as a URI: `file:///p`, `file://localhost/p`
@@ -168,7 +196,9 @@ later release narrows the check.
   matches a file in it, or when git cannot answer (no repository, git missing).
 - Worktree copies. Every folder under `.claude/worktrees/` is checked as a workspace of its own,
   so its `clients/` is guarded like the workspace's: `Read`, `Grep`, `Glob`, `LSP`, MCP path
-  arguments and Bash commands that reach `.claude/worktrees/<name>/clients/` are blocked.
+  arguments and Bash commands that reach `.claude/worktrees/<name>/clients/` are blocked. If
+  `.claude/worktrees/` is there but cannot be listed, every call is blocked until it can:
+  a copy the gate cannot list is a copy it cannot guard.
 - A Bash command aimed at `workspace.json`, `.claude/settings*.json`, `.agents/hooks.json`
   (Antigravity's hook configuration), `.worktreeinclude`, or the `.claude` directory
   (`Edit`/`Write`/`MultiEdit`/`NotebookEdit` are blocked only on `workspace.json`,
@@ -366,11 +396,17 @@ What it does with each call:
   `send_command_input`) as a PowerShell command on Windows and a Bash command elsewhere;
   `view_file`, `list_dir`, `grep_search` and `find_by_name` as `Read`, `LS`, `Grep` and `Glob`;
   `write_to_file`, `replace_file_content`, `multi_replace_file_content` and `sed_file` as
-  `Write`, `Edit` and `MultiEdit`; `call_mcp_tool` as that server's MCP tool; the browser tools,
-  `generate_image` and `read_resource` like an MCP tool, every string argument checked as a
-  path. A tool the module does not know (`notebook_execution`, and any tool Antigravity adds
-  later), and a known file tool without the argument that names its file, are blocked in
-  build-only mode.
+  `Write`, `Edit` and `MultiEdit`; `call_mcp_tool` as that server's MCP tool; the browser tools
+  (`open_browser_url`, `read_browser_page`, `browser_*`, `click_browser_pixel`,
+  `execute_browser_javascript`, `capture_browser_*`, `list_browser_pages`) as MCP tools named
+  `mcp__antigravity__<name>`, which build-only mode blocks outright as browser tools;
+  `generate_image`, `read_resource`, `manage_inbox` and `delete_knowledge` like an MCP tool,
+  every string argument checked as a path and for a Salesforce host. `read_url_content` and
+  `search_web` are plain web reads: the gate has no objection and Antigravity's own flow
+  decides. `browser_subagent` is passed as a worker start, not as a browser tool (see the
+  limits below). A tool the module does not know (`notebook_execution`, and any tool
+  Antigravity adds later), and a known file tool without the argument that names its file,
+  are blocked in build-only mode.
 - A blocked call is answered `deny` with the gate's reason. Antigravity has no answer that
   means "no opinion", so a call the gate lets through is answered `allow` only when it is a
   read inside the folders the session was started with (the working folder and those added
@@ -388,8 +424,12 @@ What it does with each call:
 Limits:
 
 - Connected mode is not supported in Antigravity. `torque launch` starts Claude Code, so an
-  Antigravity session in a connected workspace is not bound to a client: org calls and every
-  client's folder are refused, and no approval can be used.
+  Antigravity session in a connected workspace is not bound to a client: org calls, its
+  browser tools and every client's folder are refused, and no approval can be used.
+- `browser_subagent` starts a worker that drives a browser. The gate has no objection to the
+  start and relies on the worker's own browser calls reaching this hook, where they are
+  blocked. That has not been confirmed for this tool in a real session. Until it is, do not
+  use `browser_subagent` in a build-only workspace.
 - Never start a client session with `--dangerously-skip-permissions`: it removes Antigravity's
   own folder boundary and turns every `ask` into a run. A `deny` still holds.
 - Doctor runs the registered command once on a synthetic `clients/` read, through the shell
@@ -428,6 +468,24 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   ready, or says the scan stopped at its limit.
 - A network tool (`curl`, a language HTTP client) reaching an org or a client system directly
   with credentials the user holds.
+- A Salesforce MCP server under a neutral name whose calls carry no Salesforce host. The gate
+  recognises a Salesforce MCP server in two ways only: by its server or tool name (the words
+  listed under "What build-only blocks"), and by a string argument that names a Salesforce
+  host. A server registered under a neutral name (`crm`, `data`, a client's name) whose tools
+  are also neutrally named, and whose calls identify the org by an org alias, a record ID or a
+  SOQL string, passes: nothing in such a call says Salesforce. So does a server that keeps the
+  org's host in its own configuration, one that reaches an org through a custom domain (a site
+  at `portal.example.org`) or an IP address, and a host built from parts or encoded other than
+  with `%` escapes. The gate does not read the host's MCP configuration and has no list of
+  allowed servers, and `torque doctor` does not look for Salesforce MCP servers. Remove them
+  from every configuration a build-only session loads.
+- A browser the gate does not see as a browser tool. The block is by name: an MCP browser or
+  desktop server whose server name has none of the listed words and whose tools are not named
+  `browser` passes. A browser started from the shell is a command, not a browser tool: `open`
+  or `start` with a URL, and a Playwright, Puppeteer or Selenium script the session writes and
+  runs, are read only as command lines. `WebFetch` and Antigravity's `read_url_content` pass
+  with any URL, an org URL included. They are plain fetches, not the user's signed-in browser,
+  but a page that needs no sign-in (a public site on `my.site.com`) is readable.
 - MCP tools reaching client data that is not a path under `clients/`: mail, drive, chat, CRM or
   database connectors. Disable those connectors for a build-only session.
 - A tool call the hook never sees: a matcher narrower than `.*` (doctor flags it), and a host
@@ -484,7 +542,11 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 
 It also over-blocks: a `Grep` whose pattern mentions `clients` (for example a custom object named
 `Clients__c`) from the workspace root; an MCP string argument that is exactly `clients`, or `.`
-for a tree-walking MCP tool; a glob at the workspace root that matches `clients/`, such as
+for a tree-walking MCP tool; an MCP argument that only mentions an org host (a note, a search
+query, an email address at an org host); an MCP server whose name contains `desktop` or
+`automation` without driving the desktop (Desktop Commander, a marketing automation
+connector), and any MCP tool whose own name contains `browser`; a glob at the workspace root
+that matches `clients/`, such as
 `echo *`, `ls *`, `grep foo *`, `git add *` or `npx prettier --check '**/*.ts'` (these would list,
 stage, read or rewrite client files; name the files or run them from `project/`); a regex
 argument that also works as a glob matching a root entry (`.*` matches `.claude`);

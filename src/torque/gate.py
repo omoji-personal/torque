@@ -75,6 +75,35 @@ _PY_ARG_FLAGS = {"-W", "-X", "--check-hash-based-pycs"}
 # MCP tool names ("mcp__<server>__<tool>") that indicate Salesforce org access.
 _MCP_SF_SUBSTRINGS = ("salesforce", "sfdx", "sf_", "_sf", "soql", "sosl", "sobject", "apex")
 _MCP_SF_TOKEN_RE = re.compile(r"(^|[_\-.])sf([_\-.]|$)")
+# Argument names under which an MCP call names the server it reads from (a resource
+# read: ReadMcpResourceTool's `server`, Antigravity's `ServerName`).
+_MCP_SERVER_KEYS = ("server", "servername", "server_name")
+# Salesforce org and login hosts, by suffix. An MCP server whose name does not say
+# Salesforce is still org access when a string argument names one of these hosts.
+# SF_PUBLIC_HOSTS are Salesforce's own public sites under those suffixes; they hold
+# no org. Connected mode's network check keeps its own, looser pattern (SF_HOSTS).
+SF_HOST_SUFFIXES = ("salesforce.com", "force.com", "my.site.com", "salesforce-setup.com", "salesforce-sites.com",
+                    "cloudforce.com", "database.com", "visualforce.com", "documentforce.com", "lightning.com",
+                    "sfdc.net")
+SF_PUBLIC_HOSTS = frozenset({"salesforce.com", "www.salesforce.com", "help.salesforce.com",
+                             "developer.salesforce.com", "trailhead.salesforce.com", "appexchange.salesforce.com",
+                             "status.salesforce.com", "architect.salesforce.com", "admin.salesforce.com",
+                             "resources.docs.salesforce.com", "releasenotes.docs.salesforce.com"})
+# A whole host name ending in one of the suffixes: workforce.com, website.com and
+# example.salesforce.com.example.org do not match.
+_SF_HOST_RE = re.compile(r"(?<![A-Za-z0-9.-])((?:[A-Za-z0-9-]+\.)*(?:"
+                         + "|".join(re.escape(suffix) for suffix in SF_HOST_SUFFIXES) + r"))(?!\.?[A-Za-z0-9-])",
+                         re.IGNORECASE)
+# MCP servers that drive a browser or the desktop, by server name. The gate cannot see
+# which page or window such a tool acts on, so build-only mode blocks them and
+# connected mode refuses them (connected_routes classifies with these same patterns).
+BROWSER_SERVER = re.compile(r"(chrome|playwright|puppeteer|browser|firefox|safari|webdriver|selenium)",
+                            re.IGNORECASE)
+DESKTOP_SERVER = re.compile(r"(computer[-_]?use|desktop|applescript|automation)", re.IGNORECASE)
+BROWSER_TOOL_REASON = ("Build-only mode: browser and desktop control tools are blocked, because the gate cannot "
+                       "see which page or window such a tool acts on, so it cannot keep an org or client page "
+                       "out of the session. Do that step yourself outside the AI session; for a public page, "
+                       "use web fetch or web search.")
 PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path",
               "MultiEdit": "file_path", "NotebookEdit": "notebook_path", "NotebookRead": "notebook_path",
               "LS": "path"}
@@ -2367,14 +2396,89 @@ def _mcp_reaches_salesforce(tool_name: str) -> bool:
     return any(_MCP_SF_TOKEN_RE.search(part) for part in name.split("__")[1:])
 
 
+def _mcp_surface(tool_name: str) -> str:
+    """"desktop" or "browser" when an MCP tool name (mcp__<server>__<tool>) drives
+    the desktop or a browser, otherwise "". Read from the server's name, and for a
+    browser from the tool's own name too: Antigravity's browser tools arrive as
+    mcp__antigravity__open_browser_url, mcp__antigravity__browser_click_element
+    and so on (gate_antigravity)."""
+    parts = tool_name.split("__")
+    server, tool = "__".join(parts[1:-1]), parts[-1]
+    if DESKTOP_SERVER.search(server):
+        return "desktop"
+    if BROWSER_SERVER.search(server) or "browser" in tool.casefold():
+        return "browser"
+    return ""
+
+
+def _mcp_names(tool_name: str, tool_input: object) -> list[str]:
+    """The names to classify an MCP call by: its own, and one per server it names
+    in an argument. A resource read (ReadMcpResourceTool, Antigravity's
+    read_resource) carries its server there, not in the tool name."""
+    names = [tool_name]
+    tool = tool_name.split("__")[-1]
+    if isinstance(tool_input, dict) and "resource" in tool.casefold():
+        for key, value in tool_input.items():
+            if isinstance(key, str) and key.casefold() in _MCP_SERVER_KEYS and isinstance(value, str) and value:
+                names.append(f"mcp__{value}__{tool}")
+    return names
+
+
+def _argument_names(value: object, depth: int = 0):
+    """Every string a tool_input uses as an argument name (a dict key), nested."""
+    if depth > 8:
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str):
+                yield key
+            yield from _argument_names(item, depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _argument_names(item, depth + 1)
+
+
+def _salesforce_host(tool_input: object) -> str:
+    """The first Salesforce org or login host a string argument names (a value or an
+    argument name, at any depth, percent escapes decoded), or "". Salesforce's
+    public sites do not count."""
+    for raw in itertools.chain(_string_values(tool_input), _argument_names(tool_input)):
+        for text in dict.fromkeys([raw, urllib.parse.unquote(raw)]):
+            for match in _SF_HOST_RE.finditer(text):
+                host = match.group(1).casefold()
+                if host not in SF_PUBLIC_HOSTS:
+                    return host
+    return ""
+
+
+def _mcp_org_reason(tool_name: str, tool_input: dict) -> str:
+    """Why build-only mode blocks an MCP call as org access, or "": its server or tool
+    name indicates Salesforce, it drives a browser or the desktop, or a string
+    argument names a Salesforce org or login host (a server under a neutral name)."""
+    names = _mcp_names(tool_name, tool_input)
+    if any(_mcp_reaches_salesforce(name) for name in names):
+        return ("Build-only mode: this MCP tool looks like Salesforce org access. "
+                "Disable Salesforce MCP servers in a build-only workspace.")
+    if any(_mcp_surface(name) for name in names):
+        return BROWSER_TOOL_REASON
+    host = _salesforce_host(tool_input)
+    if host:
+        return (f"Build-only mode: this MCP tool call names the Salesforce host {host}, which is org access. "
+                "Disable that MCP server in a build-only workspace, or run the step yourself outside the "
+                "AI session.")
+    return ""
+
+
 def _worktree_copies(workspace: Path) -> list[Path]:
     """The worktrees under the workspace's .claude/worktrees/, resolved. Each may
     hold a copy of clients/ (tracked client files, or files .worktreeinclude
-    names), so each is checked as a workspace of its own."""
+    names), so each is checked as a workspace of its own. Only a folder that is
+    not there means no copies: any other error reading it is raised, which blocks
+    the call (fail closed), since a copy that cannot be listed cannot be guarded."""
     folder = workspace.joinpath(*WORKTREES_DIR)
     try:
         entries = sorted(p for p in folder.iterdir() if p.is_dir())
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return []
     copies = [Path(os.path.realpath(str(p))) for p in entries]
     return [c for c in dict.fromkeys(copies) if _cf(str(c)) != _cf(str(workspace))]
@@ -2466,14 +2570,16 @@ def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None,
     mode's own separate call) the same protected-record check full mode applies on
     its own: an engagement's binding, and a client's consent, approval and control
     records, are kept from every recognized tool regardless of whether their folder
-    is itself guarded below. With org_rules False (connected mode), org calls and
+    is itself guarded below. Here that check is strict: an error inside it blocks
+    the call (fail closed), where full mode's own call lets the call through. With
+    org_rules False (connected mode), org calls and
     Torque commands pass the rest of this scan (connected mode classifies them
     itself), and `guarded` lists the folders treated as client context (other
     clients' folders, and internal initiatives) in place of the whole clients/
     folder."""
     workspace = Path(os.path.realpath(str(workspace)))
     cwd = Path(os.path.realpath(str(cwd))) if cwd is not None else workspace
-    reason = _approval_file_reason(tool_name, tool_input, cwd)
+    reason = _approval_file_reason(tool_name, tool_input, cwd, strict=True)
     if reason:
         return False, reason
     allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, False, org_rules, guarded)
@@ -2517,10 +2623,12 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
             reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules)
             if reason:
                 return False, f"Build-only mode: {reason}. Run it yourself outside the AI session."
+    if org_rules and (tool_name.startswith("mcp__") or tool_name in MCP_LIKE_TOOLS):
+        # Connected mode (org_rules False) classifies these calls itself.
+        reason = _mcp_org_reason(tool_name, tool_input)
+        if reason:
+            return False, reason
     if tool_name.startswith("mcp__"):
-        if org_rules and _mcp_reaches_salesforce(tool_name):
-            return False, ("Build-only mode: this MCP tool looks like Salesforce org access. "
-                           "Disable Salesforce MCP servers in a build-only workspace.")
         reason = _mcp_path_reason(tool_name, tool_input, clients, claude_dir, workspace, cwd)
         if reason:
             return False, f"Build-only mode: {reason}."
@@ -3006,16 +3114,29 @@ def _holds_records(path: Path) -> bool:
     return False
 
 
-def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
+def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path, strict: bool = False) -> str:
     """In every mode (full, build-only and connected), an engagement's binding and
     a client's consent, consent evidence, approval, control, request and claim
     records, and the approval key, are kept from recognized tools, with every path
     resolved first (relative paths and folders that hold them included): a record
     changed by a tool a mode's own scan does not separately cover (or while a
-    stricter mode is off) would be trusted once the owner relies on it."""
+    stricter mode is off) would be trusted once the owner relies on it.
+
+    In full mode the check is best effort: it never blocks by failing or running
+    long, so an error inside it lets the call through. With `strict` (build-only
+    and connected mode, through _decide) it fails closed: an error blocks the call
+    with a reason, and a spent budget is raised for the caller to block on."""
     try:
-        return _approval_file_targets_reason(tool_name, tool_input, cwd)
-    except Exception:  # Best effort: it never blocks by failing or running long.
+        return _approval_file_targets_reason(tool_name, tool_input, cwd, strict)
+    except BudgetExceeded:
+        if strict:
+            raise
+        return ""
+    except Exception as exc:
+        if strict:
+            return ("Torque: the check that keeps tools away from consent, approval and control records could "
+                    f"not read this call ({type(exc).__name__}: {exc}), so the call is blocked to fail closed. "
+                    "Write the command more simply, or run it yourself outside the AI session.")
         return ""
 
 
@@ -3049,7 +3170,7 @@ def _is_cached_git_rm(toks: list[str]) -> bool:
             and "--cached" in options and bool(paths))
 
 
-def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -> str:
+def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path, strict: bool = False) -> str:
     reason = ("Torque: a client's consent, approval and control records, an engagement's binding and the "
               "approval key are changed only by the consultant's torque commands, in every mode.")
     key = PATH_TOOLS.get(tool_name)
@@ -3087,7 +3208,7 @@ def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -
                 toks = toks + [part for tok in toks if "," in tok for part in tok.split(",") if part]
             writes = removes or any(re.match(r"^(\d+|&)?>", tok) for tok in toks) \
                 or any(_basename(tok) in _WRITE_VERBS for tok in toks)
-            if unknown and writes and any(_holds_records(root) for root in _workspace_roots(cwd)):
+            if unknown and writes and any(_holds_records(root) for root in _workspace_roots(cwd, strict)):
                 return reason
             for here in current:
                 for tok in toks:
@@ -3107,10 +3228,14 @@ def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path) -
     return ""
 
 
-def _workspace_roots(start: Path) -> list[Path]:
+def _workspace_roots(start: Path, strict: bool = False) -> list[Path]:
+    """The workspaces at or above start. When they cannot be read, none in full
+    mode (best effort); with `strict` the error is raised, which blocks the call."""
     try:
         return [folder for folder, _mode, _known in _workspace_chain(start)]
     except OSError:
+        if strict:
+            raise
         return []
 
 

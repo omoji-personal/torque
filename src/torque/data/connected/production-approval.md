@@ -17,8 +17,17 @@ work through delivery".
 - Never run `torque approval grant` or `deny`, `torque client consent`,
   `torque launch`, `torque workspace ai-access`, `sf alias set` or
   `sf config set`, and never edit consent, approval or Salesforce CLI files.
+- Never run a command that prints or takes a credential, or that lists every
+  org this machine is logged in to: `sf org display`, `sf org open --url-only`
+  (or `-r`, `--json`), `sf org generate password`, `sf org login`,
+  `sf org list`, `sf alias list`. The gate refuses them, with or without an
+  approval. To check which org an alias points to, run
+  `sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"`.
 - Before running a script or any program the gate cannot check, tell the
   consultant whether it reaches an org and what it does; the host will ask them.
-- Browser: ask for a browser window (`torque approval request --browser
-  --purpose TEXT`) before any Setup or record change through the browser.
-  Reading pages is fine.
+- Browser: use only Torque's own browser, `torque browser ... --target-org ALIAS`
+  (or `torque qa` with an org). Ask for a browser window first
+  (`torque approval request --browser --purpose TEXT --org ALIAS`) and stop
+  until the consultant grants it. The gate refuses browser, devtools and
+  desktop tools (Claude in Chrome, Playwright, computer use) in this mode, for
+  reading a page as well as for changing one.
