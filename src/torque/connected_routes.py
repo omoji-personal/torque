@@ -618,6 +618,7 @@ def _mask(command: str) -> str:
 
 
 _BODY_SUBSTITUTION = re.compile(r"(?<!\\)(\$\(|`)")
+_FILE_DESCRIPTOR = re.compile(r"[0-9]+(?=[<>])")
 _QUOTING = frozenset("'\"\\")
 
 
@@ -730,6 +731,12 @@ def _scan(command: str) -> tuple[str, list]:
                         continue
             if c == "$" and command[i + 1:i + 2] == "(":
                 starts.append((i, "$("))
+            if word_start and c in "0123456789" and _FILE_DESCRIPTOR.match(command, i):
+                # A number directly before a redirection is a file descriptor (`2>&1`) and not
+                # a word of the command. With a space between, it is a word: `--target-org 123
+                # >&2` names the org 123.
+                i = _FILE_DESCRIPTOR.match(command, i).end()
+                continue
             if c == "`":
                 if not in_backticks:
                     starts.append((i, "`"))
@@ -851,9 +858,7 @@ def _split(command: str) -> tuple[list[list[str]], list[str]] | None:
                 segments[-1][-1].paren = True
             backticks += tok.count("`")
             if _is_redirect(tok):
-                skip = True
-                if segments[-1] and segments[-1][-1].isdigit():
-                    segments[-1].pop()
+                skip = True         # a file descriptor before it (`2>&1`) is not among the words: _scan
             else:
                 segments.append([])
             continue
@@ -1564,6 +1569,11 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head in NETWORK or head in ("open", "xdg-open", "start"):
         if any(SF_HOSTS.search(w) for w in rest):
             return [Route("unverifiable", None, detail + " (reaches a Salesforce host)")]
+        if head == "wget" and any(w.split("=", 1)[0] in ("--use-askpass", "-e", "--execute") or
+                                  (w.startswith("-") and not w.startswith("--") and "e" in w[1:]) for w in rest):
+            # wget starts the program `--use-askpass` names, and `-e` gives it a line of its
+            # start-up file, which can name one.
+            return [Route("unverifiable", None, detail + " (an option that names a program or a command to run)")]
         if head in NETWORK:
             return [Route("local", None, detail)]
     if head == "find" and any(w in ("-exec", "-execdir", "-ok", "-okdir") for w in rest):
@@ -1576,6 +1586,9 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head in EXTENSIBLE_COMMANDS:
         return [Route("unverifiable", None, detail + " (can run hooks, plugins or configured commands)")]
     known_path = re.search(r"[/\\]", first) is None
+    if head == "hash" and any(w.startswith("-") and "p" in w for w in rest):
+        # `hash -p FILE NAME`: from here on the shell runs FILE for NAME (`hash -p ./x sf`).
+        return [Route("unverifiable", None, detail + " (makes a name run another program)")]
     if head in LOCAL_COMMANDS and known_path:
         return [Route("local", None, detail)]
     routes = [Route("unverifiable", None, detail)]
@@ -1585,11 +1598,81 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     return routes
 
 
+# Variables Bash itself runs commands from: PS4 before each traced command (`set -x`), the
+# prompts and PROMPT_COMMAND in an interactive shell, BASH_ENV and ENV in a shell it starts.
+_BASH_RUNS = frozenset({"PS0", "PS1", "PS2", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV"})
+# Names programs and the shell read whether or not this session's environment has them
+# yet: where commands and the home folder are found, how words split, what sf, Node and
+# Torque are configured by, proxies and certificates.
+_READ_NAMES = re.compile(r"(?i)(?:PATH|HOME|IFS|CDPATH|EXECIGNORE|GLOBIGNORE|POSIXLY_CORRECT|SHELLOPTS|BASHOPTS|"
+                         r"BASH_XTRACEFD|TMPDIR|TEMP|TMP|DEBUG|PWDEBUG|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|"
+                         r"LOCALAPPDATA|COMSPEC|PATHEXT|(?:SF|SFDX|TORQUE|JSC|NODE|NPM|LD|DYLD|XDG|GIT|PYTHON|SSL|"
+                         r"CURL)_\w*|\w*_PROXY)\Z")
+_ASSIGNING_BUILTINS = frozenset({"read", "printf", "declare", "typeset", "local", "readonly", "export", "unset",
+                                 "let", "getopts", "mapfile", "readarray"})
+_NAME_AT_START = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\+?=|\[|\Z)")
+
+
+def _assigned_names(words: list[str]) -> list[str]:
+    """The names a statement sets, or unsets, in the shell itself, so that the value is
+    there for the commands after it: `NAME=value` with no command after it, the variable
+    of a `for` or `select`, and the names given to read, printf -v, declare, typeset,
+    local, readonly, export, unset, let, getopts, mapfile and readarray (after wrapper
+    words such as command or builtin). A name the shell builds (`printf -v "$n"`) is given
+    as `$`: it can be any name. A `NAME=value` before a command is set for that command
+    alone, and is not one of these."""
+    if words and words[0] in ("for", "select"):
+        return [str(words[1])] if len(words) > 1 else []
+    names = []
+    while words:
+        if g._basename(words[0]) in BENIGN_WRAPPERS:
+            words = _strip_benign(g._basename(words[0]), words)
+        elif words[0] in _KEYWORDS:
+            words = words[1:]
+        elif _ASSIGN_RE.match(words[0]):
+            names.append(words[0].split("=", 1)[0])
+            words = words[1:]
+        else:
+            break
+    if not words:
+        return names
+    head, rest = words[0], words[1:]
+    if head not in _ASSIGNING_BUILTINS:
+        return []
+    if head == "printf":                # only `-v NAME` is a name; the other words are text
+        given = [rest[i + 1] for i, word in enumerate(rest[:-1]) if word == "-v"]
+    elif head == "read":                # the word after one of these options is its value, not a name
+        given = [word for i, word in enumerate(rest)
+                 if not word.startswith("-") and not (i and rest[i - 1] in ("-d", "-i", "-n", "-N", "-p", "-t", "-u"))]
+    else:
+        given = [word for word in rest if not word.startswith(("-", "+"))]
+    names = []
+    for word in given:
+        if _filled(word) or _LOOSE_CHARS & set(_raw(word)):
+            names.append("$")           # the shell builds the name: it can be any name
+            continue
+        name = _NAME_AT_START.match(str(word))
+        if name:
+            names.append(name.group(1))
+            if head in ("declare", "typeset", "local") and _NAME_AT_START.fullmatch(str(word).split("=", 1)[-1]):
+                names.append(str(word).split("=", 1)[-1])       # `declare -n ref=PATH`: ref is PATH from here on
+    return names
+
+
+def _read_by_later_commands(name: str) -> bool:
+    """A variable whose value reaches the commands after it once the shell holds it: one
+    that is in the environment already (an assignment to an exported variable changes
+    the environment; names compared without case, as Windows has them), or one of the
+    names programs and the shell read (_READ_NAMES)."""
+    return name == "$" or bool(_READ_NAMES.match(name)) or name.upper() in {key.upper() for key in os.environ}
+
+
 def _exports(words: list[str]) -> bool:
     """The segment puts variables into the environment of later commands (after any
     keywords, assignments and wrapper words such as command, builtin or time): `export`,
-    `declare -x`/`typeset -x`/`local -x`/`readonly -x` (flags combined or not), or
-    `set -a`/`set -o allexport` (every later assignment is exported)."""
+    `declare -x`/`typeset -x`/`local -x`/`readonly -x` (flags combined or not),
+    `set -a`/`set -o allexport` (every later assignment is exported), or `set -k`/`set
+    -o keyword` (a `NAME=value` word anywhere in a later command is set for it)."""
     while words:
         if g._basename(words[0]) in BENIGN_WRAPPERS:
             # `command export ...`, `builtin declare -x ...`, `time -p export ...`
@@ -1607,8 +1690,8 @@ def _exports(words: list[str]) -> bool:
         return any(f.startswith("-") and "x" in f[1:] for f in flags)
     if head == "set":
         rest = words[1:]
-        return any(f.startswith("-") and not f.startswith("--") and "a" in f[1:] for f in flags) or any(
-            rest[i] == "-o" and i + 1 < len(rest) and rest[i + 1] == "allexport" for i in range(len(rest)))
+        return any(f.startswith("-") and not f.startswith("--") and set("ak") & set(f[1:]) for f in flags) or any(
+            rest[i] == "-o" and i + 1 < len(rest) and rest[i + 1] in ("allexport", "keyword") for i in range(len(rest)))
     return False
 
 
@@ -1632,16 +1715,24 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
         segments = [g._without_redirections(toks) for toks, _ in g._segments_with_separators(text) if toks]
     else:
         segments = parsed[0]
-    exported = False
+    exported = ""
     for words in segments:
         found = _segment(words, _depth)
         if exported:
             # An exported variable (DEBUG=pw:api prints the session URL, PWDEBUG forces a
             # visible browser, SF_* can point an alias at another org) reaches every later
-            # program of the shell, so the gate cannot check what they do.
-            found = _asked_as_well(found, " (after an exported variable)")
+            # program of the shell, so the gate cannot check what they do. So does a plain
+            # assignment to a variable that is exported already (`PATH=/x:$PATH; sf ...`
+            # runs another sf, `HOME=/x; sf ...` reads other aliases; checked in real Bash).
+            found = _asked_as_well(found, exported)
         routes.extend(found)
-        exported = exported or _exports(words)
+        names = _assigned_names(words)
+        if _BASH_RUNS & set(names):
+            routes.append(Route("unverifiable", None, " ".join(words[:5]) + " (Bash runs commands from this variable)"))
+        if not exported and _exports(words):
+            exported = " (after an exported variable)"
+        elif not exported and any(_read_by_later_commands(name) for name in names):
+            exported = " (after a variable that the commands after it read was set)"
     setting = _CONTAINER_SET_RE.search(text)
     if setting:
         # NAME=true sf org open, export NAME=..., $env:NAME = ...: with it set, an
@@ -2015,10 +2106,16 @@ def _powershell_statements(text: str) -> str:
 _PS_INERT_HEAD = frozenset("'\"$[@-+!{}=,<>#")
 _PS_NUMBER = re.compile(r"(?i)(?:0x[0-9a-f]+|\d+\.?\d*(?:e[+-]?\d+)?|\.\d+)(?:[dl]|[kmgtp]b)*\Z")
 _PS_STATEMENT_END = re.compile(r"([;\n|&()]+)")
-# What stands directly before a `(` when that is a method call: a member's name after a dot
-# or `::` (`$x.Invoke`, `[scriptblock]::Create`, `(...).Invoke`, `$x.'Invoke'`, `$x.$name`),
-# or the dot alone when the name is computed (`$x.('In' + 'voke')()`).
-_PS_METHOD = re.compile(r"(?:\.|::)[\w'\"$\\`]*\Z")
+# What stands directly before a `(` when that is a method call: a member after a dot or
+# `::`, whatever names it (`$x.Invoke`, `[scriptblock]::Create`, `(...).Invoke`, `$x.'Invoke'`,
+# `$x.$name`, `$x.$env:NAME`, `$x.${name}`, `$x."$name"`), or the dot alone when the name is
+# computed (`$x.('In' + 'voke')()`). So: a dot or `::` anywhere in the word the parenthesis
+# follows, a quoted piece of that word counting as part of it.
+_PS_METHOD = re.compile(r"(?:\.|::)(?:\"[^\"]*\"|'[^']*'|\S)*\Z")
+# The same call written with a script block for its argument and no parentheses
+# (`$x.ForEach{ ... }`, `$x.Where{ ... }`): a member directly before a brace. A `${name}`
+# or a hash literal there is not one.
+_PS_METHOD_BLOCK = re.compile(r"(?:\.|::)(?:\"[^\"]*\"|'[^']*'|[^\s{}();|&])*(?<![$@.:])\{")
 _PS_METHOD_NOTE = " (a method call: the gate cannot tell what it runs)"
 # PowerShell's escaped dollar (`` `$5 ``), which is not the last of a pair of backticks.
 _PS_ESCAPED_DOLLAR = re.compile(r"(?<!`)((?:``)*)`\$")
@@ -2162,6 +2259,10 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
     if drive:
         routes.append(Route("unverifiable", None, drive + " (names PowerShell's store of environment variables, "
                                                           "functions or aliases, which a copy or a move changes)"))
+    block = _PS_METHOD_BLOCK.search(_mask(readings[0]))
+    if block:
+        routes.append(Route("unverifiable", None,
+                            block.group().translate(_UNMASK)[-60:] + " ...}" + _PS_METHOD_NOTE))
     if not written:
         routes += asked         # beside a write nothing only asks: the write needs its approval
     if not written and (

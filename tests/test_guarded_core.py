@@ -569,7 +569,7 @@ def test_describe_reads_cautiously():
     for payload in (None, {}, {"name": "X"}, {"name": "X Y", "fields": []}, {"name": 5, "fields": []}):
         with pytest.raises(E, match="describe"):
             core.parse_describe(payload)
-    stated = {"type": "string", "calculated": False, "encrypted": False, "compoundFieldName": None}
+    stated = {"type": "string", "calculated": False, "encrypted": False, "compoundFieldName": None, "label": "A field", "nameField": False}
     odd = core.parse_describe({"name": "X__c", "fields": [{"name": "A__c", **stated}, {"name": "B C"}, "junk",
                                                           {"type": "x"}]})
     info = odd.field("a__c")
@@ -892,7 +892,7 @@ def test_a_type_the_rules_do_not_know_shows_no_value():
     # a well-formed type word that is none of Salesforce's field types the rules know: what it
     # means is unknown, so its values are kept back in every lane, like those of a hard type
     stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "filterable": True,
-              "groupable": True, "aggregatable": True, "compoundFieldName": None}
+              "groupable": True, "aggregatable": True, "compoundFieldName": None, "label": "A field", "nameField": False}
     setting = core.parse_describe({"name": "Setting__c", "queryable": True, "customSetting": True, "fields": [
         {"name": "Reply_To__c", "type": "unknown", **stated}, {"name": "Mode__c", "type": "futuretype", **stated},
         {"name": "Plain__c", "type": "string", **stated}, {"name": "Flag__c", "type": "boolean", **stated}]})
@@ -921,7 +921,7 @@ def test_a_type_the_rules_do_not_know_shows_no_value():
 
 def test_a_formula_made_from_a_type_the_rules_do_not_know_shows_no_value_either():
     stated = {"calculatedFormula": None, "encrypted": False, "filterable": True, "groupable": True, "aggregatable": True,
-              "compoundFieldName": None}
+              "compoundFieldName": None, "label": "A field", "nameField": False}
     thing = core.parse_describe({"name": "Thing__c", "queryable": True, "fields": [
         {"name": "Hidden__c", "type": "futuretype", "calculated": False, **stated},
         {"name": "Mirror__c", "type": "string", "calculated": True, **{**stated, "calculatedFormula": "Hidden__c"}},
@@ -945,7 +945,7 @@ def test_a_formula_made_from_a_type_the_rules_do_not_know_shows_no_value_either(
 def test_a_part_of_a_compound_field_needs_its_parent_in_the_describe():
     # Salesforce lists the parent (an address, a name, Fiscal) in the same describe; a part is
     # protected by what the parent is, so a describe without the parent is not used
-    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "compoundFieldName": None}
+    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "compoundFieldName": None, "label": "A field", "nameField": False}
     part = {**stated, "name": "Mailing__City__s", "type": "string", "compoundFieldName": "Mailing__c"}
     with pytest.raises(E) as refusal:
         core.parse_describe({"name": "Site__c", "queryable": True, "fields": [
@@ -963,7 +963,7 @@ def test_a_describe_that_does_not_state_the_protective_facts_is_not_used():
     # encrypted, which compound field it is a part of: Salesforce states all of them for every
     # field, and the rules protect by them
     good = {"name": "Reply_To__c", "type": "email", "calculated": False, "calculatedFormula": None, "encrypted": False,
-            "compoundFieldName": None}
+            "compoundFieldName": None, "label": "A field", "nameField": False}
     assert core.parse_describe({"name": "Setting__c", "fields": [good]}).field("Reply_To__c").type == "email"
     for change in ({"type": "ORG-SENTINEL-real.person@example.com"}, {"type": "one\ntwo"}, {"type": ["x"]},
                    {"type": None}, {"type": ""}, {"calculated": None}, {"calculated": "true"}, {"calculated": 1},
@@ -971,7 +971,9 @@ def test_a_describe_that_does_not_state_the_protective_facts_is_not_used():
                    {"calculatedFormula": "Account.Name"},                # a formula on a field that says it has none
                    {"compoundFieldName": 5}, {"compoundFieldName": ""}, {"compoundFieldName": "a b"},
                    {"compoundFieldName": ["Mailing__c"]}, {"compoundFieldName": False},
-                   "type", "calculated", "encrypted", "compoundFieldName"):      # the fact left out
+                   {"label": 5}, {"label": None}, {"label": ["Health"]}, {"nameField": None}, {"nameField": "true"},
+                   {"nameField": 1},
+                   "type", "calculated", "encrypted", "compoundFieldName", "label", "nameField"):    # the fact left out
         item = {k: v for k, v in good.items() if k != change} if isinstance(change, str) else {**good, **change}
         with pytest.raises(E) as refusal:
             core.parse_describe({"name": "Setting__c", "queryable": True, "customSetting": True, "fields": [item]})
@@ -985,7 +987,7 @@ def test_a_part_of_an_address_stays_protected_whatever_the_describe_says_about_i
     # parent as anything but a field's name (a number, nothing at all) is not used, so the part
     # never reads as an ordinary text field
     stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "filterable": True,
-              "groupable": True, "aggregatable": True, "compoundFieldName": None}
+              "groupable": True, "aggregatable": True, "compoundFieldName": None, "label": "A field", "nameField": False}
 
     def site(parent):
         city = {**stated, "name": "Mailing__City__s", "type": "string"}
@@ -1011,7 +1013,7 @@ def test_a_part_of_an_address_stays_protected_whatever_the_describe_says_about_i
 def test_a_field_listed_twice_is_an_answer_that_is_not_used():
     # Salesforce lists a field once. If an answer lists it twice (an email field, then the same name as
     # a checkbox), neither row can be taken for the truth: the describe, or the classification, is not used
-    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "compoundFieldName": None}
+    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "compoundFieldName": None, "label": "A field", "nameField": False}
     for second in ("Reply_To__c", "reply_to__c", "REPLY_TO__C"):
         with pytest.raises(E) as refusal:
             core.parse_describe({"name": "Setting__c", "queryable": True, "customSetting": True, "fields": [
@@ -1021,3 +1023,63 @@ def test_a_field_listed_twice_is_an_answer_that_is_not_used():
     listed = [{**row, "QualifiedApiName": "Notes__c", "ComplianceGroup": "PII"}, {**row, "QualifiedApiName": "notes__c"}]
     assert not core.parse_facts(listed).readable
     assert core.parse_facts(listed[:1]).readable and core.parse_facts(listed[:1]).classified("Notes__c")
+
+
+def test_a_sensitive_word_is_found_after_an_acronym_beside_a_digit_and_in_the_plural():
+    # `SSNStatus` is SSN and Status, `DOB2` is DOB and 2, `Salaries` is the plural of salary
+    loud = describe(extra=[fld("SSNStatus__c", "picklist", values=["a"]), fld("SSNCode__c", "boolean"),
+                           fld("DOB2__c", "date"), fld("HTMLAge__c", "double"), fld("Salaries__c", "double"),
+                           fld("SSNs__c", "boolean"), fld("Ages__c", "double"), fld("SSNOf__c", "boolean"),
+                           fld("X2__c", "boolean", label="Disabilities noted")])
+    names = ("SSNStatus__c", "SSNCode__c", "DOB2__c", "HTMLAge__c", "Salaries__c", "SSNs__c", "Ages__c", "SSNOf__c",
+             "X2__c")
+    assert [core.sensitive_word(loud.field(n)) for n in names] == ["ssn", "ssn", "dob", "age", "salary", "ssn", "age",
+                                                                    "ssn", "disability"]
+    plain = ("Stages__c", "Pages2__c", "Images__c", "USAGEStats__c", "Messages__c", "Business__c", "Status__c",
+             "Classes__c", "Wages__c", "Traces__c", "Passes__c", "HTMLPage__c", "Essex2__c")
+    quiet = describe(extra=[fld(name, "boolean") for name in plain])
+    for name in plain:
+        assert core.sensitive_word(quiet.field(name)) == "", name
+    # and the rules follow the word: a release needs the acknowledgement, a configuration row masks it
+    with pytest.raises(E, match="acknowledge-sensitive"):
+        core.check_release(loud, loud.field("SSNStatus__c"), "exact", FACTS, acknowledged=False)
+    core.check_release(loud, loud.field("SSNStatus__c"), "exact", FACTS, acknowledged=True)
+    assert core.presence_reason(loud, loud.field("SSNCode__c"), NOTHING, FACTS)
+    assert core._words("SSNStatus") == {"ssn", "status", "ssnstatus"} and core._words("DOB2") == {"dob", "2"}
+
+
+def test_a_describe_states_the_label_and_whether_a_field_is_the_name():
+    # the sensitive words are looked for in the label, and a record's name is never released: a describe
+    # that leaves either out, or states it as something else than text or yes/no, is not used
+    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "compoundFieldName": None,
+              "filterable": True, "groupable": True, "aggregatable": True}
+
+    def pay(**code):
+        field = {**stated, "name": "Code1__c", "type": "double", "label": "Annual Salary", "nameField": False, **code}
+        field = {key: value for key, value in field.items() if value != "left out"}
+        return {"name": "Pay__c", "queryable": True, "customSetting": True, "fields": [
+            {**stated, "name": "Id", "type": "id", "label": "Record ID", "nameField": False}, field]}
+
+    whole = core.parse_describe(pay())
+    assert core.sensitive_word(whole.field("Code1__c")) == "salary"
+    everything = core.Policy(objects={"pay__c": frozenset({"*"})})
+    assert core.show_config_row(whole, [whole.field("Code1__c")], {"Code1__c": 5}, everything, core.OrgFacts()) == {
+        "Code1__c": "<set>"}
+    for change in ({"label": "left out"}, {"label": None}, {"label": 5}, {"label": ["Annual Salary"]},
+                   {"nameField": "left out"}, {"nameField": None}, {"nameField": "false"}, {"nameField": 0}):
+        with pytest.raises(E) as refusal:
+            core.parse_describe(pay(**change))
+        assert str(refusal.value) == "the org's describe for this object could not be read", change
+    named = core.parse_describe(pay(type="picklist", label="Status", nameField=True))
+    with pytest.raises(E, match="record's name"):
+        core.check_release(named, named.field("Code1__c"), "exact", FACTS, acknowledged=True)
+    plain = core.parse_describe(pay(type="picklist", label="Status"))
+    core.check_release(plain, plain.field("Code1__c"), "exact", FACTS, acknowledged=True)
+
+
+def test_a_mask_is_told_apart_from_a_stored_value_that_reads_the_same():
+    assert isinstance(core.MASKED_SET, core.Mask) and core.MASKED_SET == "<set>" and not isinstance("<set>", core.Mask)
+    assert isinstance(core.presence("x"), core.Mask) and isinstance(core.presence(None), core.Mask)
+    assert not isinstance(core.stored("<set>"), core.Mask)
+    shown = core.show_test_value(D, D.field("AccountId"), "001000000000009AAA", NOTHING, FACTS, set())
+    assert shown == "<unregistered 001>" and isinstance(shown, core.Mask)

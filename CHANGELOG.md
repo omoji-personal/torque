@@ -77,7 +77,15 @@ off-by-default feature, guarded reads, answers build questions about an org with
   characters is now checked against PowerShell's own tokenizer. A PowerShell method call (`$x.Invoke()`) is
   asked about wherever it stands. A guarded read names its workspace with a path written out
   (`--workspace "$PWD/.."` is refused). The guarded commands do not use a describe that leaves out, or
-  misstates, which compound field a field is part of.
+  misstates, which compound field a field is part of. In Bash, a statement that sets a variable the next
+  commands read without `export` (`PATH=/x:$PATH; sf ...`, `HOME=/x; sf ...`, also through `read`,
+  `printf -v`, `declare` or a `for` variable) makes those commands asked about, as `export` does; `hash -p`
+  and a variable Bash runs commands from (`PS4`) are asked about. A number is a file descriptor only directly
+  before a redirection, so `--target-org 123 >&2` keeps its org. A PowerShell method whose name comes from a
+  variable, or whose argument is a script block without parentheses, is a method call (checked against
+  PowerShell's parser). A sensitive word is found after an acronym (`SSNStatus`), beside a digit and in the
+  plural. The record of a guarded read tells a mask from a stored value that reads like one. A describe that
+  leaves out a field's label, or whether it is the record's name, is not used.
 - Guarded reads and older versions: while guarded reads are on, `workspace.json` names the mode
   `connected-guarded`. A Torque from before guarded reads treats that as build-only and refuses org work in
   the workspace, instead of applying its own older reading of connected mode.

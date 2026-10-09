@@ -597,3 +597,14 @@ def test_a_refusal_is_one_line_whatever_it_holds(w, monkeypatch):
     out, err = io.StringIO(), io.StringIO()
     assert guarded.run(parsed, out, err) == 2
     assert err.getvalue() == "torque guarded: first line second line and more\n" and out.getvalue() == ""
+
+
+def test_a_stored_value_that_reads_like_a_mask_is_recorded_as_shown(w):
+    # the record of what a session saw goes by what the rules did, not by how the printed text looks
+    register(w)
+    row = {"attributes": {}, "Id": ACCOUNT, "Name": "<set>", "IsPersonAccount": False, "Phone": "<blank>",
+           "ParentId": OTHER, "Rating": "<unregistered 001>"}
+    out = guarded.record(w, "Acme", "acme-prod", "Account", ACCOUNT, every=True, **kw(Sf(lambda soql: [row])))
+    assert out["fields"]["Name"] == "<set>" and out["fields"]["ParentId"] == "<unregistered 001>"
+    fields = activity(w)[-1]["fields"]
+    assert (fields["Name"], fields["Phone"], fields["Rating"], fields["ParentId"]) == ("shown", "shown", "shown", "masked")

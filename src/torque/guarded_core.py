@@ -20,7 +20,15 @@ import re
 LANES = ("counts", "config_records", "test_records")
 LEVELS = ("exact", "coarse")
 POLICY_SCHEMA = "torque.guarded_policy/1"
-MASKED_SET, MASKED_BLANK, OTHER, UNREADABLE = "<set>", "<blank>", "<other>", "<unreadable>"
+
+
+class Mask(str):
+    """Text the rules print in place of a value. A stored value that happens to read the
+    same (a text field that holds `<set>`) is a plain string, so the record of what a
+    session was shown can tell the two apart."""
+
+
+MASKED_SET, MASKED_BLANK, OTHER, UNREADABLE = Mask("<set>"), Mask("<blank>"), Mask("<other>"), Mask("<unreadable>")
 ALL_FIELDS = "*"   # an object release that covers every field: custom settings and custom metadata types only
 
 MAX_DIMENSIONS = 3
@@ -145,21 +153,24 @@ def parse_describe(payload) -> Describe:
         formula = item.get("calculatedFormula")
         compound = item.get("compoundFieldName")
         # The facts the rules protect by: the type (a plain word), whether the field is
-        # calculated and from what, whether it is encrypted, and which compound field it
-        # is a part of (none, or a field's name). Salesforce states all of them for every
-        # field. A describe that does not is not used at all: a guess (an unknown type,
-        # "not calculated", "part of no address") would let a value through.
+        # calculated and from what, whether it is encrypted, which compound field it is a
+        # part of (none, or a field's name), its label (text; the sensitive words are
+        # looked for in it) and whether it is the record's name. Salesforce states all of
+        # them for every field. A describe that does not is not used at all: a guess (an
+        # unknown type, "not calculated", "part of no address", "no label", "not the
+        # name") would let a value through.
         if not isinstance(item.get("type"), str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,39}", item["type"]) \
                 or not isinstance(item.get("calculated"), bool) or not isinstance(item.get("encrypted"), bool) \
                 or not (formula is None or isinstance(formula, str)) \
                 or (isinstance(formula, str) and formula.strip() and not item["calculated"]) \
                 or "compoundFieldName" not in item \
                 or not (compound is None or (isinstance(compound, str) and _IDENT.match(compound))) \
+                or not isinstance(item.get("label"), str) or not isinstance(item.get("nameField"), bool) \
                 or item["name"].casefold() in fields:           # a field listed twice: which one is true?
             raise GuardedError("the org's describe for this object could not be read")
         fields[item["name"].casefold()] = FieldInfo(
             name=item["name"], type=item["type"].casefold(),
-            label=str(item.get("label") or ""), groupable=item.get("groupable") is True,
+            label=item["label"], groupable=item.get("groupable") is True,
             filterable=item.get("filterable") is True, aggregatable=item.get("aggregatable") is True,
             calculated=item.get("calculated") is True,
             formula=formula if isinstance(formula, str) and formula.strip() else None,
@@ -286,13 +297,26 @@ def require_facts(policy: Policy, facts: OrgFacts) -> OrgFacts:
 
 
 def _words(text: str) -> set:
-    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
-    return {w for w in re.split(r"[^A-Za-z0-9]+", spaced.casefold()) if w}
+    """The words of a name or a label. A word ends at anything that is not a letter or a
+    digit, where a capital follows a small letter or a digit (`BirthDate`), between
+    letters and digits (`DOB2`), and where an acronym is followed by a capitalised word
+    (`SSNStatus` is SSN and Status). The last is read both ways, split and not, since
+    `SSNs` is one word."""
+    found = set()
+    for spaced in (text, re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", text)):
+        spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", spaced)
+        spaced = re.sub(r"(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])", " ", spaced)
+        found.update(w for w in re.split(r"[^A-Za-z0-9]+", spaced.casefold()) if w)
+    return found
 
 
 def sensitive_word(info: FieldInfo) -> str:
-    """A sensitive word that is a whole word of the field's API name or label, or ''."""
-    found = sorted((_words(info.name) | _words(info.label)) & SENSITIVE_WORDS)
+    """A sensitive word that is a whole word of the field's API name or label, in the
+    singular or as a plain plural (`Salaries`, `Ages`), or ''."""
+    words = _words(info.name) | _words(info.label)
+    words |= {w[:-1] for w in words if w.endswith("s")} | {w[:-2] for w in words if w.endswith("es")} \
+        | {w[:-3] + "y" for w in words if w.endswith("ies")}
+    found = sorted(words & SENSITIVE_WORDS)
     return found[0] if found else ""
 
 
@@ -1091,7 +1115,7 @@ def show_test_value(describe: Describe, info: FieldInfo, value, policy: Policy, 
                 full = record_id(value)
             except GuardedError:
                 return UNREADABLE
-            return full if full in registered else f"<unregistered {full[:3]}>"
+            return full if full in registered else Mask(f"<unregistered {full[:3]}>")
         if info.type not in KNOWN_TYPES:
             return presence(value)      # what a value of this type means is not known
         if not self_contained(describe, info) and released(describe, info, policy, facts) is None:

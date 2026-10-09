@@ -1733,3 +1733,87 @@ def test_reading_a_property_is_not_a_method_call():
     found = routes._powershell_hidden("echo $x.M() ; echo $y.Name ; echo (hostname)", 0)
     assert [route.detail for route in found] == ["$x.M(...) (a method call: the gate cannot tell what it runs)"]
 
+
+# ---- round 15: a variable set for the commands after it without `export`, a name made to run another
+# ---- program, a number that is a word and not a file descriptor, a method named by a variable
+
+R15_QUERY = 'sf data query -q "SELECT Email FROM Contact" -o acme-prod'
+
+
+@pytest.mark.parametrize("setter", [
+    "HOME=/other; ", "PATH=/other:$PATH; ", "PATH=/other:$PATH\n", "HOME=/other && ", "read HOME <<< /other; ",
+    "read -r HOME <<< /other; ", "printf -v HOME /other; ", "declare HOME=/other; ", "typeset HOME=/other; ",
+    "unset HOME; ", "let PATH=1; ", "builtin read HOME <<< /other; ", "command declare HOME=/other; ",
+    "x=1 HOME=/other; ", "NODE_OPTIONS=--require=./x.js; ", "SF_STATE_FOLDER=/other; ", "HTTPS_PROXY=http://proxy.example.org:8080; ",
+    "set -k; ", "set -o keyword; ", "TQ_R15_SET=/other; ", "IFS=,; ", 'n=PATH; printf -v "$n" /other; ',
+    "declare -n ref=PATH; ref=/other; ", 'read "$n" <<< /other; ', "printf -v $n /other; ",
+])
+def test_a_variable_the_next_commands_read_is_asked_about_without_export(w, monkeypatch, setter):
+    # an assignment to a variable that is exported already changes the environment: `PATH=/x:$PATH; sf ...`
+    # runs another sf, and `HOME=/x; sf ...` reads other aliases (checked in real Bash)
+    monkeypatch.setenv("TQ_R15_SET", "here")
+    command = setter + R15_QUERY
+    kinds = KINDS(command)
+    assert "read" in kinds and "unverifiable" in kinds, (command, kinds)
+    assert run(w, command, "dontAsk").action == "deny"
+    write = setter + UPDATE + ' "Name=x"'
+    assert "org_write" not in KINDS(write) and "unverifiable" in KINDS(write), (write, KINDS(write))
+
+
+def test_a_loop_variable_and_an_ordinary_variable_are_as_before(w, monkeypatch):
+    monkeypatch.delenv("OUTPUT", raising=False)
+    monkeypatch.delenv("o", raising=False)
+    assert "unverifiable" in KINDS("for HOME in /other; do " + R15_QUERY + "; done")
+    assert "unverifiable" in KINDS("select PATH in /other; do " + R15_QUERY + "; done")
+    for command in ("x=5; " + R15_QUERY, "OUTPUT=out.json; " + R15_QUERY, "echo PATH is set; " + R15_QUERY,
+                    "printf '%s\\n' hello; " + R15_QUERY, "read -r line < notes.txt; " + R15_QUERY,
+                    "for o in Account Contact; do sf sobject describe -s \"$o\" -o acme-prod; done"):
+        assert "unverifiable" not in KINDS(command), (command, KINDS(command))
+    names = routes._assigned_names
+    assert names(["HOME=/x", "A=1"]) == ["HOME", "A"] and names(["HOME=/x", "sf", "org"]) == []
+    assert names(["read", "-r", "HOME"]) == ["HOME"] and names(["printf", "-v", "HOME", "PATH"]) == ["HOME"]
+    assert names(["read", "-p", "PATH", "-r", "line"]) == ["line"] and names(["printf", "%s", "PATH"]) == []
+    assert names(["for", "PATH", "in", "a"]) == ["PATH"] and names(["echo", "HOME=/x"]) == []
+    assert names(["declare", "-i", "PATH+=1", "ARR[0]=5"]) == ["PATH", "$"]     # brackets: the shell may build it
+    assert names(["declare", "-n", "ref=PATH"]) == ["ref", "PATH"]       # a name reference: ref is PATH from here on
+
+
+@pytest.mark.parametrize("command", [
+    "PS4=\\$\\(python\\ x.py\\); set -x; true", "PS4='$'\"(python x.py)\"; set -x; true", "export PS4=x; true",
+    "read PS4 <<< x; true", "PROMPT_COMMAND='python x.py'; true", "BASH_ENV=./x.sh; true", "declare ENV=./x.sh",
+    "hash -p ./x.sh sf; " + R15_QUERY, "builtin hash -p ./x.sh sf", "hash -dp ./x.sh sf",
+    "wget --use-askpass=./x.sh http://example.org/", "wget -e use_askpass=./x.sh http://example.org/",
+    "wget --execute use_askpass=./x.sh http://example.org/", "wget -qe use_askpass=./x.sh http://example.org/",
+])
+def test_what_makes_bash_or_a_local_program_run_another_program_is_asked_about(w, command):
+    assert "unverifiable" in KINDS(command), (command, KINDS(command))
+    assert run(w, command, "dontAsk").action == "deny"
+
+
+def test_ordinary_uses_of_the_same_commands_stay_local():
+    for command in ("hash -r", "hash", "hash sf", "wget http://example.org/x.zip", "wget -q -O x.zip http://example.org/x",
+                    "set -x; true", "set -e; true", "PS5=x; true"):
+        assert set(KINDS(command)) == {"local"}, (command, KINDS(command))
+
+
+def test_a_number_is_a_file_descriptor_only_directly_before_a_redirection(w):
+    # `--target-org 123 >&2` names the org 123; `2>&1` is a file descriptor and no word of the command
+    assert B("torque logs --target-org 123 >&2") == [("read", "123", "debug_logs")]
+    assert B("torque logs --target-org 5 >&2 acme-prod") == [("read", "5", "debug_logs")]
+    assert run(w, "torque logs --target-org 5 >&2 acme-prod").action == "deny"
+    assert B("sf sobject describe -s Account -o 123 > out.json") == [("read", "123", None)]
+    for tail in (" 2>&1", " 2>/dev/null", " 2>> err.txt", " 1>out.json 2>&1", " 2>&1 | cat", " 10>x", " 0</dev/null"):
+        found = B(R15_QUERY + tail)
+        assert ("read", "acme-prod", "records") in found and "no_org" not in [kind for kind, _, _ in found], (tail, found)
+    assert B(R15_QUERY + " 2>&1")[0] == ("read", "acme-prod", "records")
+    assert routes._mask("a 2>&1 b 12 >x 3<y '4>z' 5") == routes._mask("a >&1 b 12 >x <y '4>z' 5")
+    assert not routes.is_simple("torque x 2>&1") and routes.is_simple("torque x --since 2")
+
+
+@pytest.mark.parametrize("command", [
+    "echo $x.$env:NAME()", "echo @{1=$x.${name}()}", "echo 'abc'.$env:NAME()", "echo $x.$script:name()",
+    "echo $x::$name()", "echo $x.$y.$z()", "echo @{1=[type]::$env:NAME()}",
+])
+def test_a_powershell_method_named_by_a_variable_is_a_method_call(w, command):
+    assert "unverifiable" in KINDS(command, "PowerShell"), (command, KINDS(command, "PowerShell"))
+    assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"

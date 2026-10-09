@@ -70,6 +70,9 @@ Counts
   any text a record was given.
 - "Is it filled in" (`fill`, `= null`, `!= null`) needs no release, except for a field the org classifies or
   whose name marks it sensitive (birth date, gender, health and the like): those follow their release.
+  The word has to stand as a word of the name or label (`BirthDate`, `SSNStatus`, `DOB2`, `Salaries`); one
+  glued to another with no capital, digit or separator (`ssnstatus`) is not found, so name-based protection
+  is a help and not the control. The control is what the consultant releases.
 
 What can never be released: free text, names, email, phone, addresses, encrypted fields, files, lookups, a
 field the org classifies as confidential or under a compliance group, a formula that reads another record, and

@@ -330,8 +330,9 @@ def fill(workspace, client, alias, sobject, fields, where=(), *, env=None, resol
 
 
 def _how(shown) -> str:
-    return "masked" if shown in (core.MASKED_SET, core.MASKED_BLANK) or (
-        isinstance(shown, str) and shown.startswith("<unregistered")) else "shown"
+    """Whether a field's value was shown or masked, by what the rules returned for it: a
+    stored value that reads like a mask (`<set>`) was shown."""
+    return "masked" if isinstance(shown, core.Mask) else "shown"
 
 
 def config(workspace, client, alias, sobject, fields=(), limit=core.CONFIG_LIMIT_DEFAULT, *, env=None,

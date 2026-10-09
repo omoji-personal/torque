@@ -273,6 +273,7 @@ for ($c = 1; $c -le 0xFFFF; $c++) {
   elseif ($start -match 'StringLiteral') { $kind = 'single' }
   elseif ($start -match 'StringExpandable') { $kind = 'double' }
   elseif ($t.Count -ne 3 -or $t2.Count -ne 3) { $kind = 'other' }
+  elseif (@($t + $t2 | Where-Object { 'Identifier', 'Generic', 'EndOfInput' -notcontains [string]$_.Kind }).Count) { $kind = 'other' }
   if ($kind) { '{0:X4} {1}' -f $c, $kind }
 }
 'end ' + $ExecutionContext.SessionState.LanguageMode
@@ -310,3 +311,56 @@ def test_the_gate_reports_every_sf_command_powershell_runs(tmp_path):
             missed.append((line, sorted(ran[number]), sorted(seen)))
     assert not missed, missed
     assert len(ran) >= 80                      # most cases really run their sf call
+
+
+# Spellings of a method call, and some that are none. PowerShell's own parser says which is which.
+METHOD_FORMS = [
+    "echo $x.Invoke()", "echo $x.Invoke ()", "echo $x.Invoke<# c #>()", "echo $x.Invoke`\n()", "echo $x . Invoke()",
+    "echo $x.\nInvoke()", "echo $x::Invoke()", "echo $x.Invoke.Invoke()", "echo $x.$env:NAME()", "echo $x.${name}()",
+    "echo $x.\"$name\"()", "echo $x.'Invoke'()", "echo $x.(\"In\"+\"voke\")()", "echo $x.$(\"Invoke\")()",
+    "echo 'abc'.ToUpper()", "echo \"abc\".ToUpper()", "echo abc.ToUpper()", "echo [string]::Join('a','b')",
+    "echo ([string]::Join('a','b'))", "echo @{1=[string]::Join('a','b')}", "echo $x.\"a b\"()", "echo $x.ForEach{ 1 }",
+    "echo $x.Where({ 1 })", "echo $x[0].Invoke()", "echo $x.y[0]()", "echo $x.Invoke`()", "echo $x.In`voke()",
+    "echo $($x).Invoke()", "echo @(1).Count.ToString()", "echo $x.Invoke\t()", "echo 1.ToString()",
+    "echo (1).ToString()", "echo $x.y.z()", "echo $x.y::z()", "echo ${x}.Invoke()", "echo $env:X.ToUpper()",
+    "echo \"$x\".ToUpper()", "echo \"a$($x.Invoke())b\"", "echo $x.Invoke(1)(2)", "echo @{1=$x.Invoke()}",
+    "echo @{1=$x.${name}()}", "echo $x.Where{ $_ }", "echo 1 | select @{n='x';e={$_.Run()}}", "echo $x.$y.$z()",
+    "echo 'abc'.$env:NAME()", "echo $x.\"$a $b\"()", "echo $x::$name()", "echo @{a=1; b=[type]::$env:NAME()}",
+    "echo $x.Invoke( )", "echo $x.'a b'{ 1 }", "echo $x.$name{ 1 }",
+    # no call: a property, a text, a type's member that is only named
+    "echo $x.Name", "echo $x.y.z", "echo [math]::Pi", "echo $env:X.Length", "echo 'see a.b() there'", "echo $x.${name}",
+    "echo @{a=$x.Name; b=$y.Count}", "echo 1 | select @{n='x';e={$_.Name}}",
+]
+PARSER = r"""
+$P = [System.Management.Automation.Language.Parser]
+$forms = Get-Content -LiteralPath 'forms.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+foreach ($form in $forms) {
+  $t = $null; $e = $null
+  $ast = $P::ParseInput($form, [ref]$t, [ref]$e)
+  $calls = @($ast.FindAll({ $args[0] -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)).Count
+  '{0} {1}' -f $calls, $e.Count
+}
+"""
+
+
+def test_the_gate_asks_about_every_method_call_powershells_parser_finds(tmp_path):
+    # Nothing runs: each text is parsed, and the parser is asked whether its tree holds a method call.
+    import json
+    (tmp_path / "forms.json").write_text(json.dumps(METHOD_FORMS), encoding="utf-8")
+    encoded = base64.b64encode(PARSER.encode("utf-16-le")).decode("ascii")
+    done = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cwd=tmp_path,
+                          capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    rows = [row.split() for row in done.stdout.splitlines() if row.strip()]
+    if len(rows) != len(METHOD_FORMS):
+        pytest.skip("Windows PowerShell is present but its parser could not be asked here")
+
+    def asked(form):
+        return any(route.kind == "unverifiable" for route in classify("PowerShell", {"command": form}))
+
+    calls = {form: int(count) for form, (count, _) in zip(METHOD_FORMS, rows)}
+    missed = [form for form, count in calls.items() if count and not asked(form)]
+    assert not missed, missed
+    assert sum(count > 0 for count in calls.values()) >= 30      # most of the forms are calls for the parser
+    # and where the parser finds no call and nothing else is unusual, the gate does not ask
+    for form in METHOD_FORMS[-8:]:
+        assert calls[form] == 0 and not asked(form), (form, calls[form])
