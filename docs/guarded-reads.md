@@ -30,7 +30,9 @@ torque guarded related --workspace W --client C --target-org A --id 001... --chi
 
 The session never writes a query. It names an object, fields and simple filters; Torque builds the query from
 the org's own describe and prints only what the rules below allow. A guarded read is run on its own, with
-nothing chained, piped or redirected, so that the workspace it names is the one the session works in.
+nothing chained, piped or redirected, so that the workspace it names is the one the session works in. Write
+the workspace path out (`--workspace .`, `--workspace ~/firm`): a path with a variable in it, or one that
+begins with `~+`, `~-` or `~name`, is refused.
 
 ## Turning it on (the consultant, at a terminal)
 

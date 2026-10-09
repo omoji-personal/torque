@@ -72,7 +72,12 @@ off-by-default feature, guarded reads, answers build questions about an org with
   wherever it stands (`echo @{1=$env:NAME='...'}` sets a variable that `sf.cmd` fills in); an escaped dollar
   (`` "Paid `$5" ``) is plain text. One of Torque's commands whose client, initiative or org
   option gets its value from the shell (`--client "$NAME"`) is refused. A PowerShell word that names the
-  environment, function, alias or variable drive (`cp env:A env:B`, `cd alias:`) is asked about.
+  environment, function, alias or variable drive (`cp env:A env:B`, `cd alias:`) is asked about. The line
+  and paragraph separators (U+2028, U+2029) separate words for PowerShell, and the gate's table of such
+  characters is now checked against PowerShell's own tokenizer. A PowerShell method call (`$x.Invoke()`) is
+  asked about wherever it stands. A guarded read names its workspace with a path written out
+  (`--workspace "$PWD/.."` is refused). The guarded commands do not use a describe that leaves out, or
+  misstates, which compound field a field is part of.
 - Guarded reads and older versions: while guarded reads are on, `workspace.json` names the mode
   `connected-guarded`. A Torque from before guarded reads treats that as build-only and refuses org work in
   the workspace, instead of applying its own older reading of connected mode.

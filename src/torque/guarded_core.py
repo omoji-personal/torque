@@ -145,13 +145,17 @@ def parse_describe(payload) -> Describe:
         formula = item.get("calculatedFormula")
         compound = item.get("compoundFieldName")
         # The facts the rules protect by: the type (a plain word), whether the field is
-        # calculated and from what, whether it is encrypted. Salesforce states all of
-        # them for every field. A describe that does not is not used at all: a guess
-        # (an unknown type, "not calculated") would let a value through.
+        # calculated and from what, whether it is encrypted, and which compound field it
+        # is a part of (none, or a field's name). Salesforce states all of them for every
+        # field. A describe that does not is not used at all: a guess (an unknown type,
+        # "not calculated", "part of no address") would let a value through.
         if not isinstance(item.get("type"), str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,39}", item["type"]) \
                 or not isinstance(item.get("calculated"), bool) or not isinstance(item.get("encrypted"), bool) \
                 or not (formula is None or isinstance(formula, str)) \
-                or (isinstance(formula, str) and formula.strip() and not item["calculated"]):
+                or (isinstance(formula, str) and formula.strip() and not item["calculated"]) \
+                or "compoundFieldName" not in item \
+                or not (compound is None or (isinstance(compound, str) and _IDENT.match(compound))) \
+                or item["name"].casefold() in fields:           # a field listed twice: which one is true?
             raise GuardedError("the org's describe for this object could not be read")
         fields[item["name"].casefold()] = FieldInfo(
             name=item["name"], type=item["type"].casefold(),
@@ -212,10 +216,12 @@ def parse_facts(records) -> OrgFacts:
     fields = {}
     keys = ("ComplianceGroup", "SecurityClassification", "DataType")
     for record in records:
-        # Every value is text or empty. Anything else (a missing key, a list, a number)
-        # is an answer this code does not understand, and reads as "could not be read".
+        # Every value is text or empty. Anything else (a missing key, a list, a number, a
+        # field with two rows) is an answer this code does not understand, and reads as
+        # "could not be read".
         if not isinstance(record, dict) or not isinstance(record.get("QualifiedApiName"), str) \
-                or any(key not in record or not (record[key] is None or isinstance(record[key], str)) for key in keys):
+                or any(key not in record or not (record[key] is None or isinstance(record[key], str)) for key in keys) \
+                or record["QualifiedApiName"].casefold() in fields:
             return OrgFacts(False)
         fields[record["QualifiedApiName"].casefold()] = tuple(record[key] or "" for key in keys)
     return OrgFacts(True, fields)

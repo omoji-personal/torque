@@ -271,3 +271,24 @@ def test_options_behind_a_comment_still_count(w):
     assert run(w, "torque guarded policy show --workspace . --client acme # --workspace ../second").action == "deny"
     assert run(w, "torque guarded counts --workspace . --client acme --object Opportunity # --target-org acme-prod"
                ).action == "deny"
+
+
+@pytest.mark.parametrize("workspace", [
+    '--workspace "$PWD/.."', '--workspace="$PWD/.."', '--workspace "$PWD"', '--workspace "`pwd`/.."',
+    '--workspace "$(pwd)/.."', "--workspace ~+/..", "--workspace ~-", "--workspace ~1/x", "--workspace ~other/firm",
+    "--workspace=~+/..",
+])
+def test_a_guarded_read_names_its_workspace_with_a_path_written_out(w, workspace):
+    # the gate compares the path as written with the workspace the session works in: `"$PWD/.."`
+    # and `~+/..` would read as this folder and run in its parent
+    command = f"torque guarded counts {workspace} --client acme --target-org acme-prod --object Opportunity"
+    assert [route[0] for route in B(command)] == ["admin"], (command, B(command))
+    assert run(w, command).action == "deny"
+
+
+def test_a_workspace_path_written_out_is_read_as_before(w):
+    for workspace in ("--workspace .", "--workspace ~/firm", "--workspace=.", "--workspace './'"):
+        command = f"torque guarded counts {workspace} --client acme --target-org acme-prod --object Opportunity"
+        assert B(command) == [("read", "acme-prod", "counts")], (command, B(command))
+    assert run(w, f"torque guarded counts {T} --object Opportunity").action == "allow"
+

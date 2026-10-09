@@ -257,6 +257,46 @@ def test_a_variable_set_on_the_same_line_reaches_the_launcher_and_the_gate_asks(
     assert [(route.kind, route.org) for route in plain] == [("read", "org0")], plain
 
 
+TOKENIZER = r"""
+$P = [System.Management.Automation.Language.Parser]
+for ($c = 1; $c -le 0xFFFF; $c++) {
+  if (($c -ge 0xD800 -and $c -le 0xDFFF) -or ($c -ge 0x20 -and $c -lt 0x7F) -or $c -eq 9 -or $c -eq 10 -or $c -eq 13) { continue }
+  $ch = [string][char]$c
+  $t = $null; $e = $null
+  [void]$P::ParseInput('rec a' + $ch + 'b', [ref]$t, [ref]$e)
+  $t2 = $null; $e2 = $null
+  [void]$P::ParseInput('rec ' + $ch + 'x', [ref]$t2, [ref]$e2)
+  $start = (($t2 | ForEach-Object { $_.Kind }) -join ',')
+  $kind = ''
+  if ($t.Count -eq 4 -and -not (($t | ForEach-Object { $_.Kind }) -contains 'NewLine')) { $kind = 'space' }
+  elseif ($start -match 'Parameter') { $kind = 'dash' }
+  elseif ($start -match 'StringLiteral') { $kind = 'single' }
+  elseif ($start -match 'StringExpandable') { $kind = 'double' }
+  elseif ($t.Count -ne 3 -or $t2.Count -ne 3) { $kind = 'other' }
+  if ($kind) { '{0:X4} {1}' -f $c, $kind }
+}
+'end ' + $ExecutionContext.SessionState.LanguageMode
+"""
+
+
+def test_the_gates_table_of_powershell_characters_is_the_tokenizers_own(tmp_path):
+    # Asks PowerShell's tokenizer about every character of the Basic Multilingual Plane outside printable
+    # ASCII: between two letters (a space splits the word) and at the start of a word (a dash begins a
+    # parameter, a quote a string). Nothing is run; the text is only tokenized.
+    from torque.connected_routes import _PS_CHARACTERS
+    encoded = base64.b64encode(TOKENIZER.encode("utf-16-le")).decode("ascii")
+    done = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cwd=tmp_path,
+                          capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+    rows = [row.strip() for row in done.stdout.splitlines() if row.strip()]
+    if not rows or rows[-1] != "end FullLanguage":
+        pytest.skip("Windows PowerShell is present but its tokenizer could not be asked here")
+    real = {chr(int(code, 16)): kind for code, kind in (row.split() for row in rows[:-1])}
+    assert "other" not in real.values(), sorted(hex(ord(c)) for c, kind in real.items() if kind == "other")
+    names = {" ": "space", "-": "dash", "'": "single", '"': "double"}
+    table = {chr(code): names[written] for code, written in _PS_CHARACTERS.items()}
+    assert real == table, sorted((hex(ord(c)), real.get(c), table.get(c)) for c in set(real) ^ set(table))
+
+
 def test_the_gate_reports_every_sf_command_powershell_runs(tmp_path):
     ran = powershell_runs(LINES, tmp_path)
     if ran is None or ran.get(0) != {"org0"}:

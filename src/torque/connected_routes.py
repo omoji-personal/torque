@@ -140,8 +140,12 @@ TORQUE_DECIDING_OPTIONS = frozenset({name for name in TORQUE_ORG_FLAGS if name.s
     "--workspace", "--client", "--initiative", "--write", "--dry-run", "--where", "--headed", "--capture-before",
     "--capture-before-record", "--capture-before-metadata", "--record", "--help", "--version"})
 # The options whose value the gate decides by: which org, client or initiative. (A guarded
-# read's `--workspace` is compared as a path with the workspace the session works in.)
+# read's `--workspace` is compared as a path with the workspace the session works in, and
+# is held to the same rule there: _torque.)
 TORQUE_VALUE_DECIDES = frozenset(TORQUE_ORG_FLAGS | {"--client", "--initiative"})
+# A tilde the shell expands to something else than the home folder: `~+` (the current
+# folder), `~-` (the one before), `~2` (the folder stack), `~name` (another user's home).
+_SHELL_TILDE = re.compile(r"(?:--workspace=)?~[^/\\]")
 # torque commands another package's parser reads (cli.DELEGATES and cli.PUBLIC_ROUTES).
 # Everything else is read by Torque's own parser, which the gate follows exactly.
 TORQUE_DELEGATED = frozenset({"advisory", "qa", "revert", "logs", "browser", "meeting", "lesson", "probes",
@@ -1202,14 +1206,14 @@ def _cut_short(rest: list[str]) -> str:
     return ""
 
 
-def _filled_decider(rest: list[str]) -> str:
+def _filled_decider(rest: list[str], names=None) -> str:
     """The first option the gate decides by whose value the shell fills in at run time
     (`--client "$NAME"`, `--initiative="$I"`, `--client $NAME`), or ''. A double-quoted
     variable is one word, so the command's shape is known, but not what the word says:
     a session bound to one client would read `--client "$acme"` as that client and run
     it for whatever the variable holds."""
     for i, tok in enumerate(rest):
-        if tok.split("=", 1)[0] not in TORQUE_VALUE_DECIDES:
+        if tok.split("=", 1)[0] not in (TORQUE_VALUE_DECIDES if names is None else names):
             continue
         value = tok if "=" in tok or i + 1 == len(rest) else rest[i + 1]
         if _filled(value) or _LOOSE_CHARS & set(_raw(value)):
@@ -1295,10 +1299,16 @@ def _torque(rest: list[str], detail: str, paren: bool = False) -> Route:
         return Route("admin", None, detail + f" (the shell fills in the value of `{filled}` at run time, and the "
                                              "gate decides by that value; write it out)")
     workspaces = _flag_values(rest, {"--workspace"})
+    written = rest
     rest, client = _strip_context(rest)
     head = rest[0] if rest else ""
     sub = rest[1] if len(rest) > 1 else ""
     if head == "guarded":
+        if _filled_decider(written, {"--workspace"}) or any(_SHELL_TILDE.match(value) for value in workspaces):
+            # The gate compares the path as written with the workspace the session works in:
+            # `"$PWD/.."` and `~+/..` read as this folder and run in its parent.
+            return Route("admin", None, detail + " (a guarded read names its workspace with a path written out: "
+                                                 "no variable, and no `~` other than `~/`)", client)
         return _guarded(rest, workspaces, detail, client)
     orgs = org_values(rest, TORQUE_ORG_FLAGS)
     org = orgs[0] if len(orgs) == 1 else None
@@ -1717,12 +1727,15 @@ _POWERSHELL_KINDS = (*REFUSED_KINDS, "admin", "read", "check_only", "no_org")
 
 
 _PS_HERE = re.compile(r"@([\"'])[ \t]*\r?\n")
-# Characters PowerShell's tokenizer reads as a quote, a dash or a space.
+# Characters PowerShell's tokenizer reads as a quote, a dash or a space. The list is the
+# tokenizer's own: tests/test_gate_against_powershell.py asks it about every character of
+# the Basic Multilingual Plane. The line and paragraph separators (U+2028, U+2029) separate
+# words for it; they do not end a statement.
 _PS_CHARACTERS = str.maketrans({
     **dict.fromkeys("\u2018\u2019\u201a\u201b", "'"), **dict.fromkeys("\u201c\u201d\u201e", '"'),
     **dict.fromkeys("\u2013\u2014\u2015", "-"),
     **dict.fromkeys("\u00a0\u0085\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
-                    "\u202f\u205f\u3000\f\v", " ")})
+                    "\u2028\u2029\u202f\u205f\u3000\f\v", " ")})
 _PS_TOKEN_START = " \t\r\n;|&(){}"
 _PS_AFTER_COMMA = re.compile(r"[ \t]*(?:\r?\n[ \t]*)?")
 # Put after a word that Windows PowerShell may not hand to a native program as the one
@@ -2002,6 +2015,11 @@ def _powershell_statements(text: str) -> str:
 _PS_INERT_HEAD = frozenset("'\"$[@-+!{}=,<>#")
 _PS_NUMBER = re.compile(r"(?i)(?:0x[0-9a-f]+|\d+\.?\d*(?:e[+-]?\d+)?|\.\d+)(?:[dl]|[kmgtp]b)*\Z")
 _PS_STATEMENT_END = re.compile(r"([;\n|&()]+)")
+# What stands directly before a `(` when that is a method call: a member's name after a dot
+# or `::` (`$x.Invoke`, `[scriptblock]::Create`, `(...).Invoke`, `$x.'Invoke'`, `$x.$name`),
+# or the dot alone when the name is computed (`$x.('In' + 'voke')()`).
+_PS_METHOD = re.compile(r"(?:\.|::)[\w'\"$\\`]*\Z")
+_PS_METHOD_NOTE = " (a method call: the gate cannot tell what it runs)"
 # PowerShell's escaped dollar (`` `$5 ``), which is not the last of a pair of backticks.
 _PS_ESCAPED_DOLLAR = re.compile(r"(?<!`)((?:``)*)`\$")
 _PS_HIDDEN_NOTE = " (inside braces, where PowerShell runs it as a command)"
@@ -2030,13 +2048,23 @@ def _powershell_hidden(text: str, depth: int) -> list[Route]:
     PowerShell runs the value of a hash literal's entry as a statement before the command
     that gets the literal starts (`echo @{1=python x.py}` runs python), and many commands
     run a script block they are given (`select @{n='x';e={./x.cmd}}`). A statement that
-    begins with a string, a number, a variable or a type runs nothing by itself."""
+    begins with a string, a number, a variable or a type runs nothing by itself, unless it
+    calls a method: `$x.Invoke()`, `[scriptblock]::Create(...)` and
+    `$ExecutionContext.InvokeCommand.InvokeScript((cat x.txt))` run code, also as an
+    argument of a command (`echo $x.Invoke()`), so a method call (a member's name
+    directly before a parenthesis) is asked about wherever it stands."""
     found = []
-    for piece in _PS_STATEMENT_END.split(_mask(text))[::2]:
-        first = piece.split()[:1]
-        if not first or first[0][0] in _PS_INERT_HEAD or _PS_NUMBER.match(first[0]):
+    pieces = _PS_STATEMENT_END.split(_mask(text))
+    for at in range(0, len(pieces), 2):
+        words = pieces[at].split()
+        if not words:
             continue
-        found += [route for route in classify_bash(piece.translate(_UNMASK), depth + 1, _net=False)
+        if at + 1 < len(pieces) and pieces[at + 1].startswith("(") and _PS_METHOD.search(pieces[at]):
+            found.append(Route("unverifiable", None,
+                               words[-1].translate(_UNMASK)[-60:] + "(...)" + _PS_METHOD_NOTE))
+        if words[0][0] in _PS_INERT_HEAD or _PS_NUMBER.match(words[0]):
+            continue
+        found += [route for route in classify_bash(pieces[at].translate(_UNMASK), depth + 1, _net=False)
                   if route.kind == "unverifiable" and not route.detail.endswith(_ADDS_WORDS_NOTE)]
     return found
 
@@ -2124,7 +2152,8 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
     braced = _powershell_escapes(plain, True, True, assigned)
     known = {route.detail for route in routes if route.kind == "unverifiable"}     # asked about already
     for text in dict.fromkeys((braced, _powershell_statements(braced))):
-        routes += [replace(route, detail=route.detail + _PS_HIDDEN_NOTE)
+        routes += [route if route.detail.endswith(_PS_METHOD_NOTE)
+                   else replace(route, detail=route.detail + _PS_HIDDEN_NOTE)
                    for route in _powershell_hidden(text, depth) if route.detail not in known]
     if assigned:
         routes.append(Route("unverifiable", None, assigned[0] + "= (an assignment: what it sets can change what "

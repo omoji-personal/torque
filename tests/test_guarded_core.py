@@ -569,7 +569,7 @@ def test_describe_reads_cautiously():
     for payload in (None, {}, {"name": "X"}, {"name": "X Y", "fields": []}, {"name": 5, "fields": []}):
         with pytest.raises(E, match="describe"):
             core.parse_describe(payload)
-    stated = {"type": "string", "calculated": False, "encrypted": False}
+    stated = {"type": "string", "calculated": False, "encrypted": False, "compoundFieldName": None}
     odd = core.parse_describe({"name": "X__c", "fields": [{"name": "A__c", **stated}, {"name": "B C"}, "junk",
                                                           {"type": "x"}]})
     info = odd.field("a__c")
@@ -892,7 +892,7 @@ def test_a_type_the_rules_do_not_know_shows_no_value():
     # a well-formed type word that is none of Salesforce's field types the rules know: what it
     # means is unknown, so its values are kept back in every lane, like those of a hard type
     stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "filterable": True,
-              "groupable": True, "aggregatable": True}
+              "groupable": True, "aggregatable": True, "compoundFieldName": None}
     setting = core.parse_describe({"name": "Setting__c", "queryable": True, "customSetting": True, "fields": [
         {"name": "Reply_To__c", "type": "unknown", **stated}, {"name": "Mode__c", "type": "futuretype", **stated},
         {"name": "Plain__c", "type": "string", **stated}, {"name": "Flag__c", "type": "boolean", **stated}]})
@@ -920,7 +920,8 @@ def test_a_type_the_rules_do_not_know_shows_no_value():
 
 
 def test_a_formula_made_from_a_type_the_rules_do_not_know_shows_no_value_either():
-    stated = {"calculatedFormula": None, "encrypted": False, "filterable": True, "groupable": True, "aggregatable": True}
+    stated = {"calculatedFormula": None, "encrypted": False, "filterable": True, "groupable": True, "aggregatable": True,
+              "compoundFieldName": None}
     thing = core.parse_describe({"name": "Thing__c", "queryable": True, "fields": [
         {"name": "Hidden__c", "type": "futuretype", "calculated": False, **stated},
         {"name": "Mirror__c", "type": "string", "calculated": True, **{**stated, "calculatedFormula": "Hidden__c"}},
@@ -944,32 +945,79 @@ def test_a_formula_made_from_a_type_the_rules_do_not_know_shows_no_value_either(
 def test_a_part_of_a_compound_field_needs_its_parent_in_the_describe():
     # Salesforce lists the parent (an address, a name, Fiscal) in the same describe; a part is
     # protected by what the parent is, so a describe without the parent is not used
-    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False}
-    part = {"name": "Mailing__City__s", "type": "string", "compoundFieldName": "Mailing__c", **stated}
+    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "compoundFieldName": None}
+    part = {**stated, "name": "Mailing__City__s", "type": "string", "compoundFieldName": "Mailing__c"}
     with pytest.raises(E) as refusal:
         core.parse_describe({"name": "Site__c", "queryable": True, "fields": [
             {"name": "Id", "type": "id", **stated}, part]})
     assert str(refusal.value) == "the org's describe for this object could not be read"
     whole = core.parse_describe({"name": "Site__c", "queryable": True, "fields": [
         {"name": "Id", "type": "id", **stated}, {"name": "Mailing__c", "type": "address", **stated}, part,
-        {"name": "Name", "type": "string", "compoundFieldName": "Name", **stated}]})
+        {**stated, "name": "Name", "type": "string", "compoundFieldName": "Name"}]})
     assert "address" in core.hard_reason(whole, whole.field("Mailing__City__s"), core.OrgFacts())
     assert D.field("FiscalYear").compound == "Fiscal" and "fiscal" in D.fields
 
 
 def test_a_describe_that_does_not_state_the_protective_facts_is_not_used():
     # the type as a plain word, whether the field is calculated (and from what), whether it is
-    # encrypted: Salesforce states all of them for every field, and the rules protect by them
-    good = {"name": "Reply_To__c", "type": "email", "calculated": False, "calculatedFormula": None, "encrypted": False}
+    # encrypted, which compound field it is a part of: Salesforce states all of them for every
+    # field, and the rules protect by them
+    good = {"name": "Reply_To__c", "type": "email", "calculated": False, "calculatedFormula": None, "encrypted": False,
+            "compoundFieldName": None}
     assert core.parse_describe({"name": "Setting__c", "fields": [good]}).field("Reply_To__c").type == "email"
     for change in ({"type": "ORG-SENTINEL-real.person@example.com"}, {"type": "one\ntwo"}, {"type": ["x"]},
                    {"type": None}, {"type": ""}, {"calculated": None}, {"calculated": "true"}, {"calculated": 1},
                    {"encrypted": None}, {"encrypted": "false"}, {"calculatedFormula": 5},
                    {"calculatedFormula": "Account.Name"},                # a formula on a field that says it has none
-                   "type", "calculated", "encrypted"):                   # the fact left out
+                   {"compoundFieldName": 5}, {"compoundFieldName": ""}, {"compoundFieldName": "a b"},
+                   {"compoundFieldName": ["Mailing__c"]}, {"compoundFieldName": False},
+                   "type", "calculated", "encrypted", "compoundFieldName"):      # the fact left out
         item = {k: v for k, v in good.items() if k != change} if isinstance(change, str) else {**good, **change}
         with pytest.raises(E) as refusal:
             core.parse_describe({"name": "Setting__c", "queryable": True, "customSetting": True, "fields": [item]})
         assert str(refusal.value) == "the org's describe for this object could not be read", change
     formula = {**good, "type": "string", "calculated": True, "calculatedFormula": "Account.Name"}
     assert core.parse_describe({"name": "Setting__c", "fields": [formula]}).field("Reply_To__c").calculated
+
+
+def test_a_part_of_an_address_stays_protected_whatever_the_describe_says_about_its_parent():
+    # the part of an address is kept back because of what its parent is; a describe that states the
+    # parent as anything but a field's name (a number, nothing at all) is not used, so the part
+    # never reads as an ordinary text field
+    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "filterable": True,
+              "groupable": True, "aggregatable": True, "compoundFieldName": None}
+
+    def site(parent):
+        city = {**stated, "name": "Mailing__City__s", "type": "string"}
+        if parent == "left out":
+            del city["compoundFieldName"]
+        else:
+            city["compoundFieldName"] = parent
+        return {"name": "Site__c", "queryable": True, "customSetting": True, "fields": [
+            {**stated, "name": "Id", "type": "id"}, {**stated, "name": "Mailing__c", "type": "address"}, city]}
+
+    for parent in (5, "left out", "", 0, True, ["Mailing__c"], "Mailing c"):
+        with pytest.raises(E) as refusal:
+            core.parse_describe(site(parent))
+        assert str(refusal.value) == "the org's describe for this object could not be read", parent
+    whole = core.parse_describe(site("Mailing__c"))
+    everything = core.Policy(objects={"site__c": frozenset({"*"})})
+    row = core.show_config_row(whole, [whole.field("Mailing__City__s")], {"Mailing__City__s": "VALUE"}, everything,
+                               core.OrgFacts())
+    assert row == {"Mailing__City__s": "<set>"}
+    assert "address" in core.hard_reason(whole, whole.field("Mailing__City__s"), core.OrgFacts())
+
+
+def test_a_field_listed_twice_is_an_answer_that_is_not_used():
+    # Salesforce lists a field once. If an answer lists it twice (an email field, then the same name as
+    # a checkbox), neither row can be taken for the truth: the describe, or the classification, is not used
+    stated = {"calculated": False, "calculatedFormula": None, "encrypted": False, "compoundFieldName": None}
+    for second in ("Reply_To__c", "reply_to__c", "REPLY_TO__C"):
+        with pytest.raises(E) as refusal:
+            core.parse_describe({"name": "Setting__c", "queryable": True, "customSetting": True, "fields": [
+                {**stated, "name": "Reply_To__c", "type": "email"}, {**stated, "name": second, "type": "boolean"}]})
+        assert str(refusal.value) == "the org's describe for this object could not be read"
+    row = {"ComplianceGroup": None, "SecurityClassification": None, "DataType": "Text"}
+    listed = [{**row, "QualifiedApiName": "Notes__c", "ComplianceGroup": "PII"}, {**row, "QualifiedApiName": "notes__c"}]
+    assert not core.parse_facts(listed).readable
+    assert core.parse_facts(listed[:1]).readable and core.parse_facts(listed[:1]).classified("Notes__c")

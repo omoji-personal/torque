@@ -1694,3 +1694,42 @@ def test_values_written_out_and_filled_values_of_other_options_are_as_before(w):
     assert KINDS("torque context --workspace . --client '$acme'") == ["local"]       # single quotes: plain text
     assert KINDS('torque session add --workspace . --client acme --summary "$TEXT" --status executed') == ["local"]
     assert run(w, 'torque session add --workspace . --client acme --summary "$TEXT" --status executed').action == "allow"
+
+
+# ---- round 14: the line and paragraph separators in PowerShell, a method call wherever it stands
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029"])
+def test_the_line_and_paragraph_separators_separate_words_for_powershell(w, separator):
+    logs = f"torque logs{separator}--target-org acme-prod"
+    assert ("read", "acme-prod", "debug_logs") in B_PS(logs), B_PS(logs)
+    assert run(w, logs, tool="PowerShell").action == "deny"             # this consent has no debug_logs class
+    assert "admin" in KINDS(f"torque workspace{separator}ai-access full --path .", "PowerShell")
+    query = f"sf data query{separator}-q \"SELECT Email FROM Contact\"{separator}-o acme-prod"
+    assert ("read", "acme-prod", "records") in B_PS(query), B_PS(query)
+    assert routes._powershell_texts(f"a{separator}b")[0] == "a b"
+    # Bash takes neither for a space: there the word is one word
+    assert KINDS(f"echo a{separator}b") == ["local"]
+
+
+@pytest.mark.parametrize("command", [
+    "echo @{1=$sb.Invoke()}", "echo @{1=$ExecutionContext.InvokeCommand.InvokeScript('hostname')}",
+    "echo @{1=$ExecutionContext.InvokeCommand.InvokeScript((cat x.txt))}",
+    "echo $ExecutionContext.InvokeCommand.InvokeScript((cat x.txt))", "echo $sb.Invoke()",
+    "echo @{1=[scriptblock]::Create((cat x.txt)).Invoke()}", "echo 1 | select @{n='x';e={$_.Run()}}",
+    "echo @{1=$x.'Invoke'()}", "echo @{1=$x.$name()}", "echo @{1=$x.('In'+'voke')()}", "echo @{1=(cat x.txt).Invoke()}",
+    "echo @{1='text'.Invoke()}", "echo @{a=1; b=$h['k v'].Invoke()}", "ls | select @{n='x';e={[IO.File]::ReadAllText('x')}}",
+])
+def test_a_powershell_method_call_is_asked_about_wherever_it_stands(w, command):
+    # on a line of its own `$sb.Invoke()` is asked about; inside braces, or as an argument, it runs the same
+    assert "unverifiable" in KINDS(command, "PowerShell"), (command, KINDS(command, "PowerShell"))
+    assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+
+
+def test_reading_a_property_is_not_a_method_call():
+    for command in ("echo @{a=$x.Name; b=$y.Count}", "echo $x.Name", "echo 1 | select @{n='x';e={$_.Name}}",
+                    "echo 'see foo.bar() for details'", "echo [math]::Pi", "echo $env:USERPROFILE.Length",
+                    "echo 'a.b' ; echo c"):
+        assert "unverifiable" not in KINDS(command, "PowerShell"), (command, KINDS(command, "PowerShell"))
+    found = routes._powershell_hidden("echo $x.M() ; echo $y.Name ; echo (hostname)", 0)
+    assert [route.detail for route in found] == ["$x.M(...) (a method call: the gate cannot tell what it runs)"]
+
