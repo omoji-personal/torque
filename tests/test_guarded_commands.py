@@ -608,3 +608,19 @@ def test_a_stored_value_that_reads_like_a_mask_is_recorded_as_shown(w):
     assert out["fields"]["Name"] == "<set>" and out["fields"]["ParentId"] == "<unregistered 001>"
     fields = activity(w)[-1]["fields"]
     assert (fields["Name"], fields["Phone"], fields["Rating"], fields["ParentId"]) == ("shown", "shown", "shown", "masked")
+
+
+def test_the_record_of_a_config_read_goes_by_what_the_rows_showed(w):
+    guarded.policy_release_object(w, "Acme", "acme-prod", "Trigger_Handler__c", ["Class__c", "Active__c"],
+                                  records=True, run=Sf(), **admin())
+    odd = [{"attributes": {}, "Id": "a01000000000001AAA", "Class__c": ["VALUE"], "Active__c": True}]
+    out = guarded.config(w, "Acme", "acme-prod", "Trigger_Handler__c", **kw(Sf(lambda soql: odd)))
+    assert out["rows"] == [{"Id": "a01000000000001AAA", "Class__c": "<unreadable>", "Active__c": True}]
+    entry = activity(w)[-1]
+    assert entry["fields_shown"] == ["Active__c", "Id"] and entry["fields_masked"] == ["Class__c"]
+    # with no rows nothing was shown, whatever the release allows
+    out = guarded.config(w, "Acme", "acme-prod", "Trigger_Handler__c", **kw(Sf(lambda soql: [])))
+    entry = activity(w)[-1]
+    assert out["rows"] == [] and entry["fields_shown"] == [] and entry["fields_masked"] == [] and entry["rows_shown"] == 0
+    assert "Trigger_Handler__c" not in {name for name, fields in guarded.exposure(w, "Acme")["fields_shown"].items()
+                                        if "Class__c" in fields}

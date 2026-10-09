@@ -43,9 +43,10 @@ off-by-default feature, guarded reads, answers build questions about an org with
   data class and is asked about; it used to be asked about only. An `sf` or delegated Torque read with words
   the shell adds later is asked about too. A PowerShell command string (`powershell -Command '...'`, also from
   a Bash call) has its reads and owner commands checked.
-- Fix, connected mode: an option's name cut short on a Torque command is refused. The command's parser takes
-  `--target other` as `--target-org other`, and the last one given wins, so `torque advisory impact --target-org
-  A ... --target B` read org B while the gate checked A. A PowerShell hash literal or script block is read
+- Fix, connected mode: an option's name cut short on a Torque command is refused. The parser of a delegated
+  command takes `--target other` as `--target-org other`, and the last one given wins, so `torque advisory
+  impact --target-org A ... --target B` read org B while the gate checked A. (Torque's own commands refuse a
+  shortened name themselves.) A PowerShell hash literal or script block is read
   under any command (`echo @{rows = sf data query ...}`), the word inside a Bash `${...}` keeps its own quotes
   (`"${x:-"'"}"`), a splatted `@MORE` or `--%` on an `sf` read is asked about, and two writes on one
   PowerShell line are never one approved command. Windows PowerShell does not escape what an argument
@@ -85,7 +86,13 @@ off-by-default feature, guarded reads, answers build questions about an org with
   variable, or whose argument is a script block without parentheses, is a method call (checked against
   PowerShell's parser). A sensitive word is found after an acronym (`SSNStatus`), beside a digit and in the
   plural. The record of a guarded read tells a mask from a stored value that reads like one. A describe that
-  leaves out a field's label, or whether it is the record's name, is not used.
+  leaves out a field's label, or whether it is the record's name, is not used. A Bash word is read once
+  more with its quotes removed, so a command substitution written in pieces is seen where Bash evaluates the
+  word a second time (`read 'a[$'"(sf ...)]"`, `${y@P}`). A variable set in passing counts as set
+  (`${HOME:=x}`, `$[ HOME = 9 ]`, `{HOME}>file`, `printf -vHOME`), and a name is compared as written
+  (`tmp=...` is left alone). `/usr/bin/time -o FILE command` is read as the command. The record of a
+  configuration read goes by the rows that were printed. `docs/connected-approval.md` says what the gate
+  reads and what it cannot: a value that is not on the line.
 - Guarded reads and older versions: while guarded reads are on, `workspace.json` names the mode
   `connected-guarded`. A Torque from before guarded reads treats that as build-only and refuses org work in
   the workspace, instead of applying its own older reading of connected mode.

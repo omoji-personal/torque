@@ -1817,3 +1817,169 @@ def test_a_number_is_a_file_descriptor_only_directly_before_a_redirection(w):
 def test_a_powershell_method_named_by_a_variable_is_a_method_call(w, command):
     assert "unverifiable" in KINDS(command, "PowerShell"), (command, KINDS(command, "PowerShell"))
     assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+
+
+# ---- round 16: a variable set in passing (arithmetic, a stored file descriptor)
+
+@pytest.mark.parametrize("setter", [
+    ": $[ HOME = 9 ]; ", ": ${a[HOME=1]}; ", ': "${a[PATH=1]}"; ', ": {HOME}>/dev/null; ", "wait -p HOME -n; ",
+    ": $[ PATH++ ]; ", "echo hi {PATH}>out.txt; ", ": $[ --HOME ]; ", ": ${a[ PATH += 1 ]}; ",
+])
+def test_a_variable_set_in_passing_is_asked_about_too(w, setter):
+    # arithmetic assigns (a number: `PATH=3` makes a folder named 3 the place commands are found), and
+    # `{NAME}>file` stores a descriptor's number in NAME (checked in real Bash)
+    command = setter + R15_QUERY
+    kinds = KINDS(command)
+    assert "read" in kinds and "unverifiable" in kinds, (command, kinds)
+    assert run(w, command, "dontAsk").action == "deny"
+
+
+def test_arithmetic_and_descriptors_on_an_ordinary_variable_are_as_before(monkeypatch):
+    for name in ("n", "a", "fd"):
+        monkeypatch.delenv(name, raising=False)
+    for command in ("echo ${a[0]}; " + R15_QUERY, ": $[ n = 9 ]; " + R15_QUERY, "echo {a,b}; " + R15_QUERY,
+                    "wait; " + R15_QUERY, "exec {fd}>out.txt; " + R15_QUERY.replace("sf ", "true ; sf "),
+                    R15_QUERY.replace("Contact", "Contact WHERE Username = 'a' AND ((Name = 'b'))")):
+        kinds = KINDS(command)
+        assert "read" in kinds and "after a variable" not in " ".join(r.detail for r in classify("Bash", {"command": command})), \
+            (command, kinds)
+    found = routes._set_in_passing(": $[ HOME = 9 ] ${a[PATH=1]} {TMP}>x $[ a == b ] ${c[1]} $[ d <= 2 ] ${e[f++]}")
+    assert found == ["HOME", "PATH", "f", "TMP"]
+    assert routes._assigned_names(["wait", "-p", "HOME", "-n"]) == ["HOME"] and routes._assigned_names(["wait", "1"]) == []
+    for name in ("PYTHONPATH", "PYTHONSTARTUP", "OPENSSL_CONF", "npm_config_prefix", "https_proxy"):
+        assert routes._read_by_later_commands(name), name
+
+
+@pytest.mark.parametrize("setter", [
+    "printf -vHOME /other; ", "read -aHOME <<< /other; ", "read -raPATH <<< /other; ", "wait -pHOME -n; ",
+    "builtin printf -vPATH /other; ", 'printf -v"$n" /other; ', "read -a$n <<< x; ",
+])
+def test_an_option_written_together_with_the_name_it_sets_is_read(w, setter):
+    # Bash takes `-vHOME` as `-v HOME`: every ending of an option word that is a name could be the name
+    command = setter + R15_QUERY
+    kinds = KINDS(command)
+    assert "read" in kinds and "unverifiable" in kinds, (command, kinds)
+    assert run(w, command, "dontAsk").action == "deny"
+    names = routes._assigned_names
+    assert "HOME" in names(["printf", "-vHOME", "x"]) and "HOME" in names(["read", "-aHOME"])
+    assert "PATH" in names(["read", "-raPATH"]) and names(["read", "-r", "line"]) == ["line"]
+    assert "unverifiable" not in KINDS("read -rs line < notes.txt; " + R15_QUERY)
+    assert "unverifiable" not in KINDS("printf '%s\\n' -vx; " + R15_QUERY)
+
+
+@pytest.mark.parametrize("setter", [
+    "echo ${HOME:=/other}; ", "echo ${HOME=/other}; ", ': "${PATH:=/other}"; ', "echo ${x:-${HOME:=/other}}; ",
+    ": ${SF_STATE_FOLDER:=/other}; ", "echo ${HOME[0]:=x}; ", "cat <<E\n${HOME:=/other}\nE\n",
+])
+def test_an_expansion_that_assigns_is_a_setter_too(w, setter):
+    # `${NAME:=value}` assigns when the variable is unset or empty, and an exported one stays exported
+    command = setter + R15_QUERY
+    kinds = KINDS(command)
+    assert "read" in kinds and "unverifiable" in kinds, (command, kinds)
+    assert run(w, command, "dontAsk").action == "deny"
+
+
+def test_an_expansion_that_only_reads_is_as_before(monkeypatch):
+    monkeypatch.delenv("x", raising=False)
+    for command in ("echo ${HOME:-/x}; " + R15_QUERY, "echo ${HOME}; " + R15_QUERY, "echo ${x:=5}; " + R15_QUERY,
+                    "echo ${HOME:+set}; " + R15_QUERY, "echo ${#HOME}; " + R15_QUERY, "echo ${HOME/a/b}; " + R15_QUERY):
+        details = " ".join(route.detail for route in classify("Bash", {"command": command}))
+        assert "after a variable" not in details and "runs commands from" not in details, (command, details)
+    # a variable Bash runs commands from is asked about where an expansion sets it, too
+    assert "unverifiable" in KINDS("echo ${BASH_ENV:=./x.sh}; echo SECOND")
+    assert "unverifiable" in KINDS("echo ${PS4:=x}; set -x; true")
+    assert routes._set_in_passing("echo ${HOME:=a} ${b=c} ${d:-e} ${f[1]:=g} ${#h} ${i/j/k}") == ["HOME", "b", "f"]
+
+
+@pytest.mark.parametrize("command", [
+    "/usr/bin/time -o echo " + R15_QUERY, "/usr/bin/time -f echo " + R15_QUERY, "command time --output echo " + R15_QUERY,
+    "/usr/bin/time --format echo -o out.txt " + R15_QUERY, "/usr/bin/time -a -o echo -v " + R15_QUERY,
+    "stdbuf -o echo " + R15_QUERY, "caffeinate -t echo " + R15_QUERY, "nice --adjustment echo " + R15_QUERY,
+    "/usr/bin/time -p " + R15_QUERY, "/usr/bin/time --output=x.txt " + R15_QUERY, "time " + R15_QUERY,
+    "nice -n 5 " + R15_QUERY, "timeout -k 5 10 " + R15_QUERY, "stdbuf -oL " + R15_QUERY,
+])
+def test_the_value_of_a_wrappers_option_is_not_the_command(w, command):
+    # `/usr/bin/time -o echo sf ...` writes its timing to a file named echo and runs sf
+    assert ("read", "acme-prod", "records") in B(command), (command, B(command))
+    assert run(w, command).action == "deny"                                # this consent has no records class
+    owner = command.replace(R15_QUERY, "torque workspace ai-access full --path .")
+    assert "admin" in KINDS(owner), (owner, KINDS(owner))
+
+
+def test_a_lower_case_variable_of_the_lines_own_is_left_alone(monkeypatch):
+    # a shell tells `tmp` from `TMP` (checked in Git Bash on Windows too): only the name as written counts
+    def details(command):
+        return " ".join(route.detail for route in classify("Bash", {"command": command}))
+
+    for setter in ("tmp=/x; ", "os=win; ", "home=/x; ", "temp=/x; ", "user=me; ", "term=x; ", "read -r home < notes.txt; ",
+                   "for os in a b; do true; done; ", "tmp=$(mktemp -d); "):
+        assert "after a variable" not in details(setter + R15_QUERY), setter
+    # zsh ties `path` and `cdpath` to PATH and CDPATH; programs read the lower-case proxy and npm names too
+    for setter in ("path=/x; ", "cdpath=/x; ", "https_proxy=http://proxy.example.org:8080; ", "npm_config_prefix=/x; "):
+        assert "after a variable" in details(setter + R15_QUERY), setter
+    monkeypatch.setenv("TQ_R16_Mixed", "x")
+    assert routes._read_by_later_commands("TQ_R16_Mixed") and not routes._read_by_later_commands("tq_r16_mixed")
+    assert routes._read_by_later_commands("PATH") and not routes._read_by_later_commands("Tq_R16_Unset")
+
+
+@pytest.mark.parametrize("command", [
+    "read 'a[$'\"(QUERY)]\" <<< 1", "printf -v 'a[$'\"(QUERY)]\" x", "unset 'a[$'\"(QUERY)]\"",
+    "test -v 'a[$'\"(QUERY)]\"", "[[ -v 'a[$'\"(QUERY)]\" ]]", "[[ 'a[$'\"(QUERY)]\" -eq 0 ]]",
+    "declare 'a[$'\"(QUERY)]=x\"", "y='$'\"(QUERY)\"; echo \"${y@P}\"", "PS4='$'\"(QUERY)\"; set -x; true",
+    "y='a[$'\"(QUERY)]\"; x=abc; echo \"${x:y}\"", "ref='a[$'\"(QUERY)]\"; echo \"${!ref}\"",
+    "read 'a[`'\"QUERY\"'`]' <<< 1", "echo x$'\\x24'\"(QUERY)\"",
+])
+def test_a_word_is_read_again_with_its_quotes_removed(w, command):
+    # Bash evaluates some words a second time (an array subscript, a prompt, arithmetic), and a substitution
+    # written in pieces runs then; the gate reads every word once more as the text it is
+    command = command.replace("QUERY", "sf data query -q 'SELECT Email FROM Contact' -o acme-prod")
+    assert ("read", "acme-prod", "records") in B(command), (command, B(command))
+    assert run(w, command, "dontAsk").action == "deny"
+    owner = command.replace("sf data query -q 'SELECT Email FROM Contact' -o acme-prod",
+                            "torque workspace ai-access full --path .")
+    assert "admin" in KINDS(owner), (owner, KINDS(owner))
+
+
+def test_ordinary_words_are_not_changed_by_being_read_again():
+    for command in ("read -r line", "unset 'arr[1]'", "[[ $x == [a-z]* ]]", "[[ $n -eq 0 ]]", "echo ${arr[1]}",
+                    "echo 'costs $5 (roughly)'", "printf -v out '%s' x", "test -v HOME", "[ \"$HOME\" = /x ]",
+                    "[[ $HOME = /x ]]", "echo 'a[b=c]'"):
+        assert set(KINDS(command)) == {"local"}, (command, KINDS(command))
+    # arithmetic in a subscript assigns, wherever a name with one is taken
+    for setter in ("printf -v 'a[HOME=7]' x; ", "read 'a[PATH=1]' <<< 1; ", ": ${a[HOME++]}; "):
+        assert "unverifiable" in KINDS(setter + R15_QUERY), setter
+    assert routes._set_in_passing("[ $HOME = x ] [[ $PATH = y ]] a[HOME=1] $[ TMP = 2 ] b[c]") == ["HOME", "TMP"]
+
+
+@pytest.mark.parametrize("wrapper", [
+    "env -a echo", "env --argv0 echo", "env -P echo", "env -i -a echo", "/usr/bin/time -ao echo", "exec -cla echo",
+    "stdbuf -o echo -e echo", "timeout -s echo -k echo 5", "caffeinate -dw echo", "nice -n echo",
+])
+def test_every_wrapper_option_that_takes_a_value_is_known(w, wrapper):
+    command = wrapper + " " + R15_QUERY
+    assert ("read", "acme-prod", "records") in B(command), (command, B(command))
+    assert run(w, command).action == "deny"                                # this consent has no records class
+
+
+@pytest.mark.parametrize("wrapper", [
+    "/usr/bin/time -x echo", "env -x echo", "stdbuf --mode echo", "nice -z echo", "timeout --what echo 5",
+    "caffeinate -x echo", "env -uNAME", "command -x echo", "/usr/bin/time --wait echo",
+])
+def test_a_wrapper_option_the_gate_does_not_know_is_asked_about(w, wrapper):
+    # it could take the next word as its value, as `time -o` does
+    command = wrapper + " " + R15_QUERY
+    assert "unverifiable" in KINDS(command), (command, KINDS(command))
+    assert run(w, command, "dontAsk").action == "deny"
+
+
+def test_the_wrappers_known_options_are_read_as_before():
+    for wrapper in ("nice -5", "nice -n 5", "nice -n5", "command -p", "exec -c", "stdbuf -oL -eL", "nohup",
+                    "timeout --preserve-status 5", "timeout -k 5 10", "caffeinate -dims", "/usr/bin/time -p",
+                    "/usr/bin/time --output=x.txt", "command --", "env -i", "env -u NAME", "env --unset=NAME"):
+        command = wrapper + " " + R15_QUERY
+        assert B(command) == [("read", "acme-prod", "records")], (command, B(command))
+    options = routes._wrapper_options
+    assert options("time", ["-o", "f", "sf"]) == (2, False) and options("time", ["-oL", "sf"]) == (1, False)
+    assert options("exec", ["-cla", "n", "sf"]) == (2, False) and options("nice", ["-5", "sf"]) == (1, False)
+    assert options("time", ["-x", "sf"]) == (1, True) and options("nohup", ["sf"]) == (0, False)
+

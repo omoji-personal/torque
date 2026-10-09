@@ -1083,3 +1083,11 @@ def test_a_mask_is_told_apart_from_a_stored_value_that_reads_the_same():
     assert not isinstance(core.stored("<set>"), core.Mask)
     shown = core.show_test_value(D, D.field("AccountId"), "001000000000009AAA", NOTHING, FACTS, set())
     assert shown == "<unregistered 001>" and isinstance(shown, core.Mask)
+
+
+def test_the_plural_of_a_word_in_sis_is_found():
+    loud = describe(extra=[fld("Diagnoses__c", "boolean"), fld("X3__c", "boolean", label="Known diagnoses")])
+    assert [core.sensitive_word(loud.field(n)) for n in ("Diagnoses__c", "X3__c")] == ["diagnosis", "diagnosis"]
+    quiet = describe(extra=[fld("Analyses__c", "boolean"), fld("Bases__c", "boolean"), fld("Phases__c", "boolean")])
+    for name in ("Analyses__c", "Bases__c", "Phases__c"):
+        assert core.sensitive_word(quiet.field(name)) == "", name

@@ -89,6 +89,17 @@ LINES += [f"cat <<-E\n\techo '\n\tE\n{S}\n#'", f"cat <<A <<'B C'\necho '\nA\nech
           f"cat <<\\! ; {T}\necho '\n!\n{S}\n#'", f"echo \"$(cat <<\\!\necho '\n!\n)\" ; {S} #'"]
 
 
+# A word Bash evaluates a second time: an array subscript given to a builtin that takes a name, a value
+# expanded as a prompt, as arithmetic or through another name. The substitution is written in pieces
+# (`'a[$'"(...)]"`), so it is no substitution when the line is read, and runs when the word is evaluated.
+LINES += [f"read 'a[$'\"({S})]\" <<< 1", f"printf -v 'a[$'\"({S})]\" x", f"a=(1); unset 'a[$'\"({S})]\"",
+          f"a=(1); test -v 'a[$'\"({S})]\"", f"a=(1); [[ -v 'a[$'\"({S})]\" ]]", f"[[ 'a[$'\"({S})]\" -eq 0 ]]",
+          f"declare 'a[$'\"({S})]=x\"", f"y='$'\"({S})\"; echo \"${{y@P}}\"", f"PS4='$'\"({S})\"; set -x; true",
+          f"y='a[$'\"({S})]\"; x=abc; echo \"${{x:y}}\"", f"ref='a[$'\"({S})]\"; echo \"${{!ref}}\"",
+          f"i='a[$'\"({S})]\"; arr=(1 2); echo \"${{arr[i]}}\"", f"read 'a[`'\"{S}\"'`]' <<< 1",
+          f"read 'a[$'\"({S})]\" <<< 1 ; {T}"]
+
+
 def bash_runs(line: str, folder: Path) -> set | None:
     out = folder / "..out"
     if out.exists():

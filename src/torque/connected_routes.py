@@ -132,10 +132,13 @@ SFDX_READ = {"force:data:soql:query", "force:source:retrieve", "force:mdapi:retr
              "force:schema:sobject:describe", "force:schema:sobject:list",
              "force:apex:log:get", "force:apex:log:list"}
 TORQUE_ORG_FLAGS = set(g.ORG_FLAGS) | {"--org"}
-# The long options the gate decides by. Torque's parsers take a prefix of an option's
-# name as that option (`--target other` is `--target-org other`, and the last one given
-# wins), so a name cut short would let the command use another org, client, filter or
-# mode than the one the gate read.
+# The long options the gate decides by. The parsers of the delegated packages (`torque
+# logs`, `advisory`, `deploy` ...) take a prefix of an option's name as that option
+# (`--target other` is `--target-org other`, and the last one given wins), so a name cut
+# short would let the command use another org, client, filter or mode than the one the
+# gate read. Torque's own parsers have abbreviations off and refuse such a name
+# themselves (cli._disable_abbreviations); the gate refuses it for every Torque command,
+# which for those is only the cautious side.
 TORQUE_DECIDING_OPTIONS = frozenset({name for name in TORQUE_ORG_FLAGS if name.startswith("--")} | {
     "--workspace", "--client", "--initiative", "--write", "--dry-run", "--where", "--headed", "--capture-before",
     "--capture-before-record", "--capture-before-metadata", "--record", "--help", "--version"})
@@ -1297,8 +1300,8 @@ def _torque(rest: list[str], detail: str, paren: bool = False) -> Route:
                                              "together: write each option and its value as separate words)")
     short = _cut_short(rest)
     if short:
-        return Route("admin", None, detail + f" (`{short}` is an option's name cut short, which the command would "
-                                             "still take as that option; write option names in full)")
+        return Route("admin", None, detail + f" (`{short}` is an option's name cut short, which a delegated "
+                                             "command would still take as that option; write option names in full)")
     filled = _filled_decider(rest)
     if filled:
         return Route("admin", None, detail + f" (the shell fills in the value of `{filled}` at run time, and the "
@@ -1387,16 +1390,62 @@ def _inner_start(words: list[str]) -> int | None:
     return None
 
 
+# The options of the wrapper commands: short ones that take no value, short ones that take
+# the next word (or the rest of their own word) as their value, and the same for the long
+# ones. `time -o FILE command` runs the command, and FILE can be any word, `echo` among
+# them. An option in none of these lists is one the gate does not know: it could take the
+# next word as its value too, so the command is asked about.
+_WRAPPERS = {
+    "command": ("pvV", "", (), ()), "builtin": ("", "", (), ()), "exec": ("cl", "a", (), ()),
+    "nohup": ("", "", (), ()), "noglob": ("", "", (), ()), "nocorrect": ("", "", (), ()),
+    "time": ("pavqlh", "of", ("--append", "--verbose", "--quiet", "--portability"), ("--output", "--format")),
+    "nice": ("", "n", (), ("--adjustment",)), "stdbuf": ("", "ioe", (), ("--input", "--output", "--error")),
+    "timeout": ("v", "sk", ("--preserve-status", "--foreground", "--verbose"), ("--signal", "--kill-after")),
+    "caffeinate": ("dimsu", "tw", (), ()),
+}
+
+
+# env's options: those that take no value, those that take the next word (`-a NAME` is the
+# name the command is started under, `-P PATH` where BSD env looks for it), and the long
+# ones written with `=`.
+_ENV_FLAGS = ("-i", "-", "-0", "-v", "--ignore-environment", "--null", "--debug", "--list-signal-handling")
+_ENV_VALUES = ("-u", "--unset", "-C", "--chdir", "-a", "--argv0", "-P")
+_ENV_ATTACHED = ("--unset", "--chdir", "--argv0", "--block-signal", "--default-signal", "--ignore-signal")
+
+
+def _wrapper_options(head: str, rest: list[str]) -> tuple[int, bool]:
+    """(how many of the words after a wrapper command are its options and their values,
+    whether one of them is an option the gate does not know)."""
+    flags, values, long_flags, long_values = _WRAPPERS.get(head, ("", "", (), ()))
+    i, unknown = 0, False
+    while i < len(rest) and rest[i].startswith("-") and len(rest[i]) > 1:
+        word = str(rest[i])
+        if word == "--":
+            i += 1
+            break
+        if word.startswith("--"):
+            name = word.split("=", 1)[0]
+            unknown = unknown or name not in long_flags + long_values
+            i += 2 if name in long_values and "=" not in word else 1
+            continue
+        took = 1
+        for at, letter in enumerate(word[1:]):
+            if letter in values:
+                # the rest of the word is its value (`-oL`), or the next word is (`-o L`)
+                took = 1 if at + 2 < len(word) else 2
+                break
+            if letter not in flags and not (head == "nice" and word[1:].isdigit()):
+                unknown = True
+                break
+        i += took
+    return i, unknown
+
+
 def _strip_benign(head: str, words: list[str]) -> list[str]:
     rest = words[1:]
-    while rest and rest[0].startswith("-"):
-        takes_value = (head == "nice" and rest[0] == "-n") or (head == "timeout" and rest[0] in ("-s", "-k",
-                                                                                                "--signal",
-                                                                                                "--kill-after")) \
-            or (head == "exec" and re.fullmatch(r"-[cl]*a", rest[0]) is not None)      # exec -a NAME command
-        rest = rest[2:] if takes_value else rest[1:]
+    rest = rest[_wrapper_options(head, rest)[0]:]
     if head == "timeout" and rest:
-        rest = rest[1:]
+        rest = rest[1:]         # its duration
     return rest
 
 
@@ -1502,16 +1551,21 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if "$" in first or "`" in first:
         return [Route("unverifiable", None, detail + " (command built at run time)")]
     if head == "env":
-        i = 0
+        i, unknown = 0, False
         while i < len(rest) and (rest[i].startswith("-") or _ASSIGN_RE.match(rest[i])):
-            if rest[i] in ("-S", "--split-string") or rest[i].startswith("-S"):
+            if rest[i] in ("-S", "--split-string") or rest[i].startswith(("-S", "--split-string=")):
                 return [Route("unverifiable", None, detail)]
-            i += 2 if rest[i] in ("-u", "--unset", "-C", "--chdir") else 1
+            unknown = unknown or not (_ASSIGN_RE.match(rest[i]) or rest[i] in _ENV_FLAGS + _ENV_VALUES
+                                      or rest[i].split("=", 1)[0] in _ENV_ATTACHED)
+            i += 2 if rest[i] in _ENV_VALUES else 1
         inner = rest[i:]
         if not inner:
             return [Route("local", None, detail)]
         assigned = any(_ASSIGN_RE.match(w) for w in rest[:i])
         routes = _segment(["X=1", *inner] if assigned else inner, depth)
+        if unknown:
+            # an option this reading does not know could take the next word as its value
+            routes = [Route("unverifiable", None, detail + " (an option of `env` the gate does not know)"), *routes]
         if any(w in ("-C", "--chdir") or w.startswith(("-C", "--chdir=")) for w in rest[:i]):
             # The command runs in another folder than the one the gate reads paths from.
             routes = [Route("unverifiable", None, detail + " (runs in another folder)"), *routes]
@@ -1565,7 +1619,11 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
         inner = _strip_benign(head, words)
         if head == "command" and rest[:1] in (["-v"], ["-V"]):
             return [Route("local", None, detail)]
-        return _segment(inner, depth) if inner else [Route("local", None, detail)]
+        routes = _segment(inner, depth) if inner else [Route("local", None, detail)]
+        if _wrapper_options(head, rest)[1]:
+            routes = [Route("unverifiable", None, detail + f" (an option of `{head}` the gate does not know)"),
+                      *routes]
+        return routes
     if head in NETWORK or head in ("open", "xdg-open", "start"):
         if any(SF_HOSTS.search(w) for w in rest):
             return [Route("unverifiable", None, detail + " (reaches a Salesforce host)")]
@@ -1603,14 +1661,42 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
 _BASH_RUNS = frozenset({"PS0", "PS1", "PS2", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV"})
 # Names programs and the shell read whether or not this session's environment has them
 # yet: where commands and the home folder are found, how words split, what sf, Node and
-# Torque are configured by, proxies and certificates.
-_READ_NAMES = re.compile(r"(?i)(?:PATH|HOME|IFS|CDPATH|EXECIGNORE|GLOBIGNORE|POSIXLY_CORRECT|SHELLOPTS|BASHOPTS|"
+# Torque are configured by, proxies and certificates. A shell tells `path` from `PATH`
+# (checked in Git Bash, on Windows too), so the names are matched as written: the
+# upper-case ones, the lower-case spellings programs read as well (`http_proxy`,
+# `npm_config_...`), and `path` and `cdpath`, which zsh ties to PATH and CDPATH.
+_READ_NAMES = re.compile(r"(?:PATH|HOME|IFS|CDPATH|EXECIGNORE|GLOBIGNORE|POSIXLY_CORRECT|SHELLOPTS|BASHOPTS|"
                          r"BASH_XTRACEFD|TMPDIR|TEMP|TMP|DEBUG|PWDEBUG|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|"
-                         r"LOCALAPPDATA|COMSPEC|PATHEXT|(?:SF|SFDX|TORQUE|JSC|NODE|NPM|LD|DYLD|XDG|GIT|PYTHON|SSL|"
-                         r"CURL)_\w*|\w*_PROXY)\Z")
+                         r"LOCALAPPDATA|COMSPEC|PATHEXT|(?:SF|SFDX|TORQUE|JSC|NODE|NPM|npm|LD|DYLD|XDG|GIT|SSL|CURL|"
+                         r"OPENSSL)_\w*|PYTHON\w*|\w*_PROXY|\w*_proxy|path|cdpath)\Z")
 _ASSIGNING_BUILTINS = frozenset({"read", "printf", "declare", "typeset", "local", "readonly", "export", "unset",
-                                 "let", "getopts", "mapfile", "readarray"})
+                                 "let", "getopts", "mapfile", "readarray", "wait"})
+# Places where Bash evaluates arithmetic, and arithmetic can assign: `$[ NAME = 1 ]` (the old
+# form) and an array index, wherever a name with one is taken (`${a[NAME=1]}`, `printf -v
+# 'a[NAME=1]'`, `read 'a[NAME=1]'`): a bracket directly after a name or a `$`. The brackets
+# of `[ ... ]` and `[[ ... ]]` are not these. `$(( ))` and `(( ))` are read as commands
+# the gate does not know, and are asked about for that.
+_ARITHMETIC = re.compile(r"(?<=[A-Za-z0-9_$])\[([^\[\]\n]*)\]")
+_ARITHMETIC_SETS = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+\+|--|(?:[-+*/%&|^]|<<|>>)?=(?!=))"
+                              r"|(?:\+\+|--)\s*([A-Za-z_][A-Za-z0-9_]*)")
+# `{NAME}>file`: Bash opens the file on a descriptor of its choosing and stores the number in NAME.
+_DESCRIPTOR_NAME = re.compile(r"(?:^|[\s;|&(])\{([A-Za-z_][A-Za-z0-9_]*)\}(?=[<>])")
+# `${NAME:=value}` and `${NAME=value}`: an expansion that assigns when the variable is unset
+# (or, with the colon, empty), also to one element of an array.
+_PARAMETER_SETS = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]\n]*\])?:?=")
 _NAME_AT_START = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\+?=|\[|\Z)")
+
+
+def _set_in_passing(command: str) -> list[str]:
+    """The names a line sets without an assignment statement: by an expansion that assigns
+    (`echo ${HOME:=/x}`, when the variable is unset or empty), in arithmetic (`$[ HOME = 9 ]`,
+    `${a[HOME=1]}`; the value is a number, and `PATH=3` makes a folder named 3 the place
+    commands are found) and by a redirection that stores its descriptor (`{HOME}>file`).
+    Checked in real Bash. Read from the line as written: inside double quotes they are
+    evaluated all the same."""
+    names = [first or second for inside in _ARITHMETIC.findall(command)
+             for first, second in _ARITHMETIC_SETS.findall(inside)]
+    return names + _DESCRIPTOR_NAME.findall(command) + _PARAMETER_SETS.findall(command)
 
 
 def _assigned_names(words: list[str]) -> list[str]:
@@ -1639,14 +1725,21 @@ def _assigned_names(words: list[str]) -> list[str]:
     head, rest = words[0], words[1:]
     if head not in _ASSIGNING_BUILTINS:
         return []
-    if head == "printf":                # only `-v NAME` is a name; the other words are text
-        given = [rest[i + 1] for i, word in enumerate(rest[:-1]) if word == "-v"]
+    if head in ("printf", "wait"):      # only `-v NAME` (`wait -p NAME`) is a name; the other words are not
+        given = [rest[i + 1] for i, word in enumerate(rest[:-1]) if word == ("-v" if head == "printf" else "-p")]
     elif head == "read":                # the word after one of these options is its value, not a name
         given = [word for i, word in enumerate(rest)
                  if not word.startswith("-") and not (i and rest[i - 1] in ("-d", "-i", "-n", "-N", "-p", "-t", "-u"))]
     else:
         given = [word for word in rest if not word.startswith(("-", "+"))]
     names = []
+    for word in rest:
+        # An option written together with its value (`printf -vHOME x`, `read -aHOME`, `wait
+        # -pHOME`): every ending of an option word that is a name could be the name it sets.
+        if word.startswith("-") and not (_filled(word) or _LOOSE_CHARS & set(_raw(word))):
+            names += [str(word)[at:] for at in range(2, len(word)) if _NAME_AT_START.fullmatch(str(word)[at:])]
+        elif word.startswith("-"):
+            names.append("$")
     for word in given:
         if _filled(word) or _LOOSE_CHARS & set(_raw(word)):
             names.append("$")           # the shell builds the name: it can be any name
@@ -1662,9 +1755,15 @@ def _assigned_names(words: list[str]) -> list[str]:
 def _read_by_later_commands(name: str) -> bool:
     """A variable whose value reaches the commands after it once the shell holds it: one
     that is in the environment already (an assignment to an exported variable changes
-    the environment; names compared without case, as Windows has them), or one of the
-    names programs and the shell read (_READ_NAMES)."""
-    return name == "$" or bool(_READ_NAMES.match(name)) or name.upper() in {key.upper() for key in os.environ}
+    the environment), or one of the names programs and the shell read (_READ_NAMES).
+    The name is compared as written: `tmp=x` does not touch TMP. On Windows the gate
+    sees its own environment's names in upper case only, so there a name with a capital
+    in it is compared without case (`Path`, `ProgramData`), and an all-lower-case one,
+    the usual spelling of a variable of the line's own, is not."""
+    if name == "$" or _READ_NAMES.match(name):
+        return True
+    names = set(os.environ)
+    return name in names or (_WINDOWS and not name.islower() and name.upper() in names)
 
 
 def _exports(words: list[str]) -> bool:
@@ -1716,6 +1815,12 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
     else:
         segments = parsed[0]
     exported = ""
+    passing = _set_in_passing(command or "")
+    if any(_read_by_later_commands(name) for name in passing):
+        exported = " (after a variable that the commands after it read was set)"
+    if _BASH_RUNS & set(passing):
+        routes.append(Route("unverifiable", None, "${" + sorted(_BASH_RUNS & set(passing))[0]
+                            + "...} (Bash runs commands from this variable)"))
     for words in segments:
         found = _segment(words, _depth)
         if exported:
@@ -1744,6 +1849,14 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
     # quoted one: the substitutions are also found with their own quotes.
     for nested in dict.fromkeys([*g._direct_substitutions(text), *_substitutions(command or "")]):
         routes.extend(r for r in classify_bash(nested, _depth + 1) if r.kind != "local")
+    # A word is read once more as it stands with its quotes removed: `'a[$'"(sf ...)]"` is
+    # the text `a[$(sf ...)]`. Where Bash evaluates a word's text a second time, the
+    # substitution in it runs: an array subscript given to read, printf -v, unset, declare,
+    # `test -v` or `[[ ]]`, a value put into PS4 or expanded with `${y@P}` (checked in real
+    # Bash). The gate does not follow where a value goes; it reads every word this way.
+    for word in dict.fromkeys(str(word) for words in segments for word in words if "$(" in word or "`" in word):
+        for nested in dict.fromkeys([*g._direct_substitutions(word), *_substitutions(word)]):
+            routes.extend(r for r in classify_bash(nested, _depth + 1) if r.kind != "local")
     if "\\\r\n" in (command or ""):
         # A backslash before CR LF. Bash on Linux and macOS takes the CR for an escaped
         # character and ends the command at the LF (the reading above); Git Bash on
@@ -2115,7 +2228,7 @@ _PS_METHOD = re.compile(r"(?:\.|::)(?:\"[^\"]*\"|'[^']*'|\S)*\Z")
 # The same call written with a script block for its argument and no parentheses
 # (`$x.ForEach{ ... }`, `$x.Where{ ... }`): a member directly before a brace. A `${name}`
 # or a hash literal there is not one.
-_PS_METHOD_BLOCK = re.compile(r"(?:\.|::)(?:\"[^\"]*\"|'[^']*'|[^\s{}();|&])*(?<![$@.:])\{")
+_PS_METHOD_BLOCK = re.compile(r"(?:\.|::)(?:\"[^\"]*\"|'[^']*'|\$\{[^}\n]*\}|[^\s{}();|&])*(?<![$@.:])\{")
 _PS_METHOD_NOTE = " (a method call: the gate cannot tell what it runs)"
 # PowerShell's escaped dollar (`` `$5 ``), which is not the last of a pair of backticks.
 _PS_ESCAPED_DOLLAR = re.compile(r"(?<!`)((?:``)*)`\$")

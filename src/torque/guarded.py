@@ -347,9 +347,11 @@ def config(workspace, client, alias, sobject, fields=(), limit=core.CONFIG_LIMIT
     infos = core.select_names(names, describe, default_all=True)
     found = _rows(run, alias, infos, lambda group: core.build_config_query(describe, ctx.policy, group, limit), "rows")
     rows = [core.show_config_row(describe, infos, record, ctx.policy, facts) for record in found]
-    shown = sorted(i.name for i in infos if i.name == "Id" or core.config_shown(describe, i, ctx.policy, facts))
+    # What was shown is what the rows hold, not what the release would allow: a value the
+    # rules could not read prints as a mask, and with no rows nothing was shown at all.
+    shown = sorted(i.name for i in infos if any(_how(row[i.name]) == "shown" for row in rows))
     _record(ctx, "config", {"object": describe.name, "fields_shown": shown,
-                            "fields_masked": sorted(i.name for i in infos if i.name not in shown),
+                            "fields_masked": sorted(i.name for i in infos if i.name not in shown) if rows else [],
                             "rows_shown": len(rows)})
     return {"lane": "config", "org": alias, "object": describe.name, "rows": rows, "limit": limit}
 

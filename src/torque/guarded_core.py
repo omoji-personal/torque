@@ -312,10 +312,10 @@ def _words(text: str) -> set:
 
 def sensitive_word(info: FieldInfo) -> str:
     """A sensitive word that is a whole word of the field's API name or label, in the
-    singular or as a plain plural (`Salaries`, `Ages`), or ''."""
+    singular or as a plain plural (`Salaries`, `Ages`, `Diagnoses`), or ''."""
     words = _words(info.name) | _words(info.label)
     words |= {w[:-1] for w in words if w.endswith("s")} | {w[:-2] for w in words if w.endswith("es")} \
-        | {w[:-3] + "y" for w in words if w.endswith("ies")}
+        | {w[:-3] + "y" for w in words if w.endswith("ies")} | {w[:-2] + "is" for w in words if w.endswith("ses")}
     found = sorted(words & SENSITIVE_WORDS)
     return found[0] if found else ""
 

@@ -326,7 +326,8 @@ METHOD_FORMS = [
     "echo \"$x\".ToUpper()", "echo \"a$($x.Invoke())b\"", "echo $x.Invoke(1)(2)", "echo @{1=$x.Invoke()}",
     "echo @{1=$x.${name}()}", "echo $x.Where{ $_ }", "echo 1 | select @{n='x';e={$_.Run()}}", "echo $x.$y.$z()",
     "echo 'abc'.$env:NAME()", "echo $x.\"$a $b\"()", "echo $x::$name()", "echo @{a=1; b=[type]::$env:NAME()}",
-    "echo $x.Invoke( )", "echo $x.'a b'{ 1 }", "echo $x.$name{ 1 }",
+    "echo $x.Invoke( )", "echo $x.'a b'{ 1 }", "echo $x.$name{ 1 }", "echo $x.${name}{ 1 }", "echo $x.\"$name\"{ 1 }",
+    "echo $x::$name{ 1 }", "echo $x.$env:NAME{ 1 }", "echo @{1=$x.${name}{ 1 }}", "echo $x.\"a $b\"{ 1 }",
     # no call: a property, a text, a type's member that is only named
     "echo $x.Name", "echo $x.y.z", "echo [math]::Pi", "echo $env:X.Length", "echo 'see a.b() there'", "echo $x.${name}",
     "echo @{a=$x.Name; b=$y.Count}", "echo 1 | select @{n='x';e={$_.Name}}",
