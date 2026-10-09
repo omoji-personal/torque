@@ -1434,10 +1434,10 @@ def test_the_powershell_rewriting_follows_a_subexpression_in_a_string():
 
 def test_an_equals_sign_outside_a_hash_literal_is_left_alone(w):
     convert = routes._powershell_escapes
-    assert convert("echo @{1=sf a; b = 2} c=d", braces=True) == "echo @ ; 1 ; sf a; b  ;  2 ;  c=d"
-    assert convert("echo @{a = sf x --target-org=dev}", braces=True) == "echo @ ; a  ;  sf x --target-org=dev ; "
+    assert convert("echo @{1=sf a; b = 2} c=d", braces=True) == "echo @ ; 1 ; sf a; 'b'  ;  2 ;  c=d"
+    assert convert("echo @{a = sf x --target-org=dev}", braces=True) == "echo @ ;  'a'  ;  sf x --target-org=dev ; "
     assert convert("if ($a) { sf x -v Name=A } ; @{ k = { sf y -v N=B } }", braces=True) == \
-        "if ($a)  ;  sf x -v Name=A  ;  ; @ ;  k  ;   ;  sf y -v N=B  ;   ; "
+        "if ($a)  ;  sf x -v Name=A  ;  ; @ ;  'k'  ;   ;  sf y -v N=B  ;   ; "
     for command in ("sf sobject describe -s Account --target-org=acme-prod",
                     "if ($true) { sf sobject describe -s Account --target-org=acme-prod }"):
         assert "read" in KINDS(command, "PowerShell") and "no_org" not in KINDS(command, "PowerShell"), command
@@ -1557,3 +1557,140 @@ def test_a_continued_line_is_one_command():
     for command in ("torque x \\\r\n --y", "torque x\ntorque y", "torque x # c \\\ntorque y", "cd elsewhere # \\\ntorque guarded counts",
                     "torque x <<E\nbody\nE", "torque x ; torque y", "torque x \\\n ; torque y"):
         assert not simple(command), command
+
+
+# ---- round 13: backslashes between backticks, an escaped dollar in PowerShell, what braces hold under a
+# ---- local command, an assignment inside the line, a value the shell fills in for an option the gate decides by
+
+BT_QUERY = "sf data query -q 'SELECT Email FROM Contact' -o acme-prod"
+
+
+@pytest.mark.parametrize("command", [
+    'echo `echo \\\\"x; ' + BT_QUERY + ' #\\\\"`',                  # \\" becomes \", a quote that opens nothing
+    "echo `echo \\\\'x; " + BT_QUERY + " #\\\\'`",
+    'echo "`echo \\\\"x; ' + BT_QUERY + ' #\\\\"`"',
+    'echo `echo \\`echo \\\\\\\\"x; ' + BT_QUERY + ' #\\\\\\\\"\\``',     # one backtick pair inside another
+    'x=`echo \\\\"x; ' + BT_QUERY + ' #\\\\"`',
+    "echo `echo \\$(" + BT_QUERY + ")`",
+])
+def test_bash_takes_a_backslash_off_between_backticks_before_it_reads_the_command(w, command):
+    assert ("read", "acme-prod", "records") in B(command), (command, B(command))
+    assert run(w, command, "dontAsk").action == "deny"
+    owner = command.replace(BT_QUERY, "torque workspace ai-access full --path .")
+    assert "admin" in KINDS(owner), (owner, KINDS(owner))
+
+
+def test_the_readings_of_a_backtick_substitution():
+    read = routes._backtick_readings
+    assert read("echo a") == ["echo a"]
+    assert read('echo \\\\"x; y #\\\\"') == ['echo \\\\"x; y #\\\\"', 'echo \\"x; y #\\"']
+    assert read('echo \\"x\\" \\$a \\`b\\`') == ['echo \\"x\\" \\$a \\`b\\`', 'echo \\"x\\" $a `b`', 'echo "x" $a `b`']
+    # `$(...)` takes nothing off, and a plain backtick substitution is read as before
+    assert B('echo $(echo \\\\"x; ' + BT_QUERY + ' #\\\\")') == [("local", None, None), ("local", None, None)]
+    assert B("echo `hostname`") == [("local", None, None), ("local", None, None)]
+
+
+def test_an_escaped_dollar_in_a_powershell_string_is_plain_text(w):
+    summary = 'torque session add --workspace . --client acme --summary "Paid `$5" --status executed'
+    assert KINDS(summary, "PowerShell") == ["local"], KINDS(summary, "PowerShell")
+    assert KINDS("echo `$5 ; echo \"a `$b\"", "PowerShell") == ["local", "local"]
+    # a dollar that is not escaped still is a variable, and an escaped backtick before one escapes nothing
+    assert "admin" in KINDS(summary.replace("`$5", "$5"), "PowerShell")
+    assert "admin" in KINDS(summary.replace("`$5", "``$5"), "PowerShell")
+    assert "unverifiable" in KINDS('sf data query -o acme-prod -q "a ``$x"', "PowerShell")
+    # and the parentheses after an escaped dollar are still code outside a string
+    hidden = 'echo `$(sf data query -q "SELECT Email FROM Contact" -o acme-prod)'
+    assert ("read", "acme-prod", "records") in B_PS(hidden), B_PS(hidden)
+
+
+@pytest.mark.parametrize("command", [
+    "echo @{1=python x.py}", "echo @{1=x.cmd}", "echo @{1=./x.ps1}", "echo @{1=. './x.ps1'}",
+    "echo @{a='b'; c=node x.js}", "echo @{a=1\n b=npx thing}", "echo @{1=@{2=python x.py}}",
+    "echo 1 | select @{n='x';e={x.cmd}}", "echo 1 | select @{n='x';e={x.cmd echo }}", "echo @{1=7z a b}",
+    "echo @{1=Set-Item env:TQ_X q}", "echo @{1=return python x.py}", "ls @{1=Get-Content x}",
+])
+def test_a_command_inside_powershell_braces_is_asked_about_as_on_a_line_of_its_own(w, command):
+    # PowerShell runs the value of a hash literal's entry before the command that gets the literal starts
+    assert "unverifiable" in KINDS(command, "PowerShell"), (command, KINDS(command, "PowerShell"))
+    assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+    # beside a write it is one more statement than the approved command
+    write = command + "; sf data update record -o acme-prod -s Account -i 001000000000001AAA -v \"Name=x\""
+    assert "unverifiable" in KINDS(write, "PowerShell")
+
+
+@pytest.mark.parametrize("command", [
+    "echo @{name='text'; count=5; on=$true; kind=[int]1; ratio=1.5; size=10mb; neg=-1}", "echo @{n='x'}",
+    "echo 1 | select @{n='x';e={$_.Name}}", "echo @{1=hostname}", "echo @{1=echo hi}", "echo @{ name = 'a b' }",
+    "echo @{a=@{b='c'}}", "echo @{a=1\n b='x'}", "echo @{a=$x.y; b=\"z\"}", "echo @{a=.5; b=0x1F; c=1e3}",
+])
+def test_text_numbers_and_variables_inside_powershell_braces_stay_local(command):
+    assert set(KINDS(command, "PowerShell")) == {"local"}, (command, KINDS(command, "PowerShell"))
+
+
+def test_a_bare_hash_key_is_written_as_text():
+    convert = routes._powershell_escapes
+    assert convert("echo @{name=1; b_2 = x}", True, True) == "echo @ ;  'name'  ; 1; 'b_2'  ;  x ; "
+    assert convert("echo @{1=a; 'k'=b; $k=c}", True, True) == "echo @ ; 1 ; a; 'k'  ; b; $k ; c ; "
+    assert convert("echo @{name=1}") == "echo @{name=1}"                 # only where braces end statements
+    seen: list = []
+    convert("echo @{1=$env:TQ_X='q'}; $a = 1; [int]$b = 2; echo c=d", True, True, seen)
+    assert len(seen) == 3 and seen[0].endswith("$env:TQ_X")
+
+
+@pytest.mark.parametrize("setter", [
+    "echo @{1=$env:TQ_X='q'}", "echo @{a=1; b=${env:TQ_X}='q'}", "echo @{1=$function:sf={ other }}",
+    "echo @{1=$alias:sf='other'}", "echo 1 | select @{n='x';e={$env:TQ_X='q'}}", "echo @{1=[int]$x=1}",
+    "echo @{1=$x+='q'}", "echo @{a=@{b=$env:TQ_X='q'}}",
+])
+def test_an_assignment_inside_a_powershell_line_is_asked_about(w, monkeypatch, setter):
+    # set this way, a variable reaches the commands after it: a .cmd launcher fills in %NAME% from it, and
+    # `$function:sf` or `$alias:sf` replaces the command itself
+    monkeypatch.delenv("TQ_X", raising=False)
+    command = setter + '; sf sobject describe -o acme-prod -s "Contact%TQ_X% "'
+    kinds = KINDS(command, "PowerShell")
+    assert "unverifiable" in kinds and "read" in kinds, (command, kinds)
+    assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+    assert KINDS('sf sobject describe -o acme-prod -s "Contact%TQ_X% "', "PowerShell") == ["read"]
+    # an equals sign that assigns nothing is left alone
+    assert KINDS("sf data create record -o acme-prod -s Account -v Name=x --json=true", "PowerShell") == ["org_write"]
+    assert KINDS("echo a=b ; echo 'c = d'", "PowerShell") == ["local", "local"]
+
+
+@pytest.mark.parametrize("command", [
+    "cp env:SystemRoot env:TQ_X", "cp function:prompt function:sf", "cd alias:; cp iex echo", "rm env:HOME",
+    "mv -Path:env:A env:B", "cp Environment::A Environment::B", "cp 'env:A' \"env:B\"", "cd Env:\\",
+    "cp Microsoft.PowerShell.Core\\Environment::A x", "ls variable:",
+])
+def test_a_powershell_drive_of_variables_functions_or_aliases_is_asked_about(w, command):
+    # commands the gate takes for local change what these hold: a copy sets a variable or replaces a command
+    assert "unverifiable" in KINDS(command, "PowerShell"), (command, KINDS(command, "PowerShell"))
+    query = command + '; sf sobject describe -o acme-prod -s Contact'
+    assert run(w, query, "dontAsk", tool="PowerShell").action == "deny"
+
+
+def test_reading_a_variable_or_writing_about_a_drive_is_not_naming_one():
+    for command in ("echo $env:PATH", "echo \"$env:TEMP\\x\"", "cd C:\\Projects", "echo 'see function: x'",
+                    'torque session add --workspace . --client acme --summary "env: updated the alias: list"',
+                    "sf data query -o acme-prod -q \"SELECT Id FROM Account WHERE Name = 'alias:x'\""):
+        assert "unverifiable" not in KINDS(command, "PowerShell"), (command, KINDS(command, "PowerShell"))
+    assert routes._powershell_drive("cp env:A env:B") == "env:A" and routes._powershell_drive("echo $env:A") == ""
+
+
+@pytest.mark.parametrize("command", [
+    'torque context --workspace . --client "$acme"', 'torque context --workspace . --client="$acme"',
+    'torque logs --client $acme --target-org acme-prod --since 1h', 'torque logs --target-org acme-* --since 1h',
+    'torque context --workspace . --initiative "$x"', 'torque context --workspace . --initiative="$x"',
+    'torque context --workspace . --client "ac$me"', 'torque context --workspace . --client "`echo acme`"',
+    'torque logs --target-org "$ORG" --since 1h', 'torque logs --org="$ORG" --since 1h',
+])
+def test_a_value_the_shell_fills_in_for_an_option_the_gate_decides_by_is_refused(w, command):
+    # a session bound to acme would read `--client "$acme"` as acme and run it for whatever the variable holds
+    assert "admin" in KINDS(command) and "local" not in KINDS(command), (command, KINDS(command))
+    assert run(w, command).action == "deny"
+
+
+def test_values_written_out_and_filled_values_of_other_options_are_as_before(w):
+    assert KINDS("torque context --workspace . --client acme") == ["local"]
+    assert KINDS("torque context --workspace . --client '$acme'") == ["local"]       # single quotes: plain text
+    assert KINDS('torque session add --workspace . --client acme --summary "$TEXT" --status executed') == ["local"]
+    assert run(w, 'torque session add --workspace . --client acme --summary "$TEXT" --status executed').action == "allow"

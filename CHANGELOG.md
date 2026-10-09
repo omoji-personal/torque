@@ -65,7 +65,14 @@ off-by-default feature, guarded reads, answers build questions about an org with
   quoted string ends at its closing quote (`"x"--target-org other` is three words); any variable in a quoted
   PowerShell argument counts as a value that is not on the line; a backslash before a Windows line ending in
   Bash is read both ways (Git Bash joins the lines, Bash elsewhere does not); `exec -a NAME command` is read
-  as the command; and with guarded reads off the gate refuses every `torque guarded` read.
+  as the command; and with guarded reads off the gate refuses every `torque guarded` read. The text between
+  backticks is read as Bash reads it, with one backslash taken off (`\\"` becomes `\"`, a quote that opens
+  nothing, and the command after it runs). In PowerShell, a command inside a hash literal or a script block
+  is asked about as on a line of its own (`echo @{1=python x.py}` runs python), and so is an assignment
+  wherever it stands (`echo @{1=$env:NAME='...'}` sets a variable that `sf.cmd` fills in); an escaped dollar
+  (`` "Paid `$5" ``) is plain text. One of Torque's commands whose client, initiative or org
+  option gets its value from the shell (`--client "$NAME"`) is refused. A PowerShell word that names the
+  environment, function, alias or variable drive (`cp env:A env:B`, `cd alias:`) is asked about.
 - Guarded reads and older versions: while guarded reads are on, `workspace.json` names the mode
   `connected-guarded`. A Torque from before guarded reads treats that as build-only and refuses org work in
   the workspace, instead of applying its own older reading of connected mode.

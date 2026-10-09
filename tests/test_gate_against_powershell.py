@@ -33,7 +33,8 @@ LINES = [
     # escapes and doubled quotes
     f'echo "a`"" ; {S}', f'echo "x`"; echo `"y"; {S}', f'echo "a""b" ; {S}', f"echo 'a''b' ; {S}",
     f"echo 'it''s' ; {S} # '", f'echo "a`$b" ; {S}', f"echo a`;b ; {S}", f"echo `\n a ; {S}", f"echo 'a' `\n ; {S}",
-    f'echo "C:\\x\\" ; {S}', f"echo C:\\x\\ ; {S}", f"echo ok \\\n{S}",
+    f'echo "C:\\x\\" ; {S}', f"echo C:\\x\\ ; {S}", f"echo ok \\\n{S}", f"echo `$({S})", f"echo a`$ ; {S}",
+    f'echo "Paid `$5" ; {S}', f"echo ``$({S})", f'echo "``$({S})"',
     # the quote and space characters PowerShell accepts beside the ASCII ones
     f"echo “ ' ” ; {S} #'", f"echo ‘ \" ’ ; {S} #\"", f"echo “ ' \" ; {S} #'",
     f"echo „ ' “ ; {S} #'", f"echo @“\n ' \n”@\n{S} #'", S.replace(" ", " "),
@@ -219,6 +220,41 @@ def test_a_cmd_launcher_fills_in_percent_names_and_the_gate_asks(tmp_path, monke
     for form in forms:
         kinds = {route.kind for route in classify("PowerShell", {"command": "sf apex get log" + form[4:]})}
         assert "unverifiable" in kinds, (form, kinds)
+
+
+def test_a_variable_set_on_the_same_line_reaches_the_launcher_and_the_gate_asks(tmp_path):
+    # The name is not set where the gate runs: the line itself sets it, inside braces, before the launcher starts.
+    import json
+    import sys
+    (tmp_path / "argv.py").write_text(RECORDER, encoding="utf-8")
+    (tmp_path / "viacmd.cmd").write_text(f'@"{sys.executable}" "%~dp0argv.py" "%~dp0argv.out" %*\r\n', encoding="utf-8")
+    value = "'x\" --target-org org1 \"'"
+    setters = [f"echo @{{1=$env:TQ_SET0={value}}}", f"echo @{{a=1; b=${{env:TQ_SET1}}={value}}}",
+               f"echo @{{1=Set-Item env:TQ_SET2 {value}}}", f"echo 1 | select @{{n='x';e={{$env:TQ_SET3={value}}}}}",
+               f"echo @{{a=@{{b=$env:TQ_SET4={value}}}}}"]
+    lines = [f"{setter}; PROGRAM --target-org org0 --since \"a%TQ_SET{n}% \"" for n, setter in enumerate(setters)]
+    system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+    env = {"PATH": os.pathsep.join([str(tmp_path), system, os.path.join(system, "WindowsPowerShell", "v1.0")]),
+           "SystemRoot": os.environ.get("SystemRoot", r"C:\Windows"), "TEMP": str(tmp_path), "TMP": str(tmp_path),
+           "USERPROFILE": os.environ.get("USERPROFILE", str(tmp_path)), "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+           "ComSpec": os.path.join(system, "cmd.exe")}
+    script = "".join(line.replace("PROGRAM", "viacmd read") + "\n" for line in lines)
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cwd=tmp_path, env=env,
+                   capture_output=True, timeout=180, stdin=subprocess.DEVNULL)
+    out = tmp_path / "argv.out"
+    if not out.exists():
+        pytest.skip("Windows PowerShell is present but did not run the launcher here")
+    rows = [json.loads(row) for row in out.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == len(lines) and all("org1" in row for row in rows), rows        # the program got a second org
+    for number, line in enumerate(lines):
+        assert f"TQ_SET{number}" not in os.environ
+        command = line.replace("PROGRAM", "sf apex get log")
+        kinds = {route.kind for route in classify("PowerShell", {"command": command})}
+        assert "unverifiable" in kinds, (command, kinds)
+    # without the statement that sets the name, the same call is a plain read
+    plain = classify("PowerShell", {"command": 'sf apex get log --target-org org0 --since "a%TQ_SET0% "'})
+    assert [(route.kind, route.org) for route in plain] == [("read", "org0")], plain
 
 
 def test_the_gate_reports_every_sf_command_powershell_runs(tmp_path):

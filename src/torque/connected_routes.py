@@ -139,6 +139,9 @@ TORQUE_ORG_FLAGS = set(g.ORG_FLAGS) | {"--org"}
 TORQUE_DECIDING_OPTIONS = frozenset({name for name in TORQUE_ORG_FLAGS if name.startswith("--")} | {
     "--workspace", "--client", "--initiative", "--write", "--dry-run", "--where", "--headed", "--capture-before",
     "--capture-before-record", "--capture-before-metadata", "--record", "--help", "--version"})
+# The options whose value the gate decides by: which org, client or initiative. (A guarded
+# read's `--workspace` is compared as a path with the workspace the session works in.)
+TORQUE_VALUE_DECIDES = frozenset(TORQUE_ORG_FLAGS | {"--client", "--initiative"})
 # torque commands another package's parser reads (cli.DELEGATES and cli.PUBLIC_ROUTES).
 # Everything else is read by Torque's own parser, which the gate follows exactly.
 TORQUE_DELEGATED = frozenset({"advisory", "qa", "revert", "logs", "browser", "meeting", "lesson", "probes",
@@ -355,8 +358,25 @@ def _substitutions(command: str) -> list[str]:
         if mark.startswith("${"):
             continue            # an expansion, kept for the net (_substitution_tails)
         stop = _substitution_end(command, i) if mark == "$(" else _closing(command, i + 1, "`")
-        found.append(command[i + len(mark):len(command) if stop is None else stop - 1])
+        text = command[i + len(mark):len(command) if stop is None else stop - 1]
+        found.extend(_backtick_readings(text) if mark == "`" else [text])
     return [text for text in found if text.strip()]
+
+
+_BACKTICK_ESCAPE = re.compile(r"\\([$`\\])")
+_BACKTICK_ESCAPE_QUOTED = re.compile(r"\\([$`\\\"])")
+
+
+def _backtick_readings(text: str) -> list[str]:
+    """The text between two backticks as Bash can read it. Before it reads that text as a
+    command, Bash takes one backslash off in front of a `$`, a backtick and a backslash,
+    and in front of a double quote too when the backticks stand inside double quotes
+    (checked in real Bash): ``echo `echo \\\\"x; sf data query ... #\\\\"` `` runs the query,
+    because `\\\\"` has become `\\"`, a quote that opens nothing. `$(...)` takes nothing
+    off. Each of these is a reading, the text as written among them, and each has to pass."""
+    if "\\" not in text:
+        return [text]
+    return list(dict.fromkeys([text, _BACKTICK_ESCAPE.sub(r"\1", text), _BACKTICK_ESCAPE_QUOTED.sub(r"\1", text)]))
 
 
 def _substitution_tails(command: str) -> list[str]:
@@ -380,7 +400,9 @@ def _substitution_tails(command: str) -> list[str]:
             elif mark == "`":
                 # Its closing backtick would read as the start of another substitution.
                 stop = _closing(text, i + 1, "`")
-                found = [text[i + 1:] if stop is None else text[i + 1:stop - 1] + " ; " + text[stop:]]
+                after = "" if stop is None else " ; " + text[stop:]
+                found = [reading + after
+                         for reading in _backtick_readings(text[i + 1:] if stop is None else text[i + 1:stop - 1])]
             else:
                 found = [text[i + len(mark):]]
             for tail in found:
@@ -1180,6 +1202,21 @@ def _cut_short(rest: list[str]) -> str:
     return ""
 
 
+def _filled_decider(rest: list[str]) -> str:
+    """The first option the gate decides by whose value the shell fills in at run time
+    (`--client "$NAME"`, `--initiative="$I"`, `--client $NAME`), or ''. A double-quoted
+    variable is one word, so the command's shape is known, but not what the word says:
+    a session bound to one client would read `--client "$acme"` as that client and run
+    it for whatever the variable holds."""
+    for i, tok in enumerate(rest):
+        if tok.split("=", 1)[0] not in TORQUE_VALUE_DECIDES:
+            continue
+        value = tok if "=" in tok or i + 1 == len(rest) else rest[i + 1]
+        if _filled(value) or _LOOSE_CHARS & set(_raw(value)):
+            return tok.split("=", 1)[0]
+    return ""
+
+
 def _built_at_run_time(rest: list[str], paren: bool = False) -> str:
     """Why the gate cannot tell which of Torque's own commands this line runs, or ''.
     `torque workspace ${x:-ai-access} full` runs `workspace ai-access`, and `torque
@@ -1253,6 +1290,10 @@ def _torque(rest: list[str], detail: str, paren: bool = False) -> Route:
     if short:
         return Route("admin", None, detail + f" (`{short}` is an option's name cut short, which the command would "
                                              "still take as that option; write option names in full)")
+    filled = _filled_decider(rest)
+    if filled:
+        return Route("admin", None, detail + f" (the shell fills in the value of `{filled}` at run time, and the "
+                                             "gate decides by that value; write it out)")
     workspaces = _flag_values(rest, {"--workspace"})
     rest, client = _strip_context(rest)
     head = rest[0] if rest else ""
@@ -1691,7 +1732,8 @@ _PS_NATIVE = "${native}"
 _PS_CMD_CHARS = frozenset("&|<>^")
 
 
-def _powershell_escapes(command: str, braces: bool = False, commas: bool = False) -> str:
+def _powershell_escapes(command: str, braces: bool = False, commas: bool = False,
+                        assigned: list | None = None) -> str:
     """A PowerShell line rewritten in Bash's quoting, so that its words split as
     PowerShell passes them: a backtick makes the next character plain (`` `" `` inside
     double quotes, `` `$ ``), a doubled quote inside quotes is one quote, a backtick at
@@ -1707,9 +1749,11 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
 
     With `braces`, a brace ends a statement: what a script block or a hash literal
     holds is read as statements (`&{sf ...}`, `echo @{rows = sf ...}`), and so does the
-    first `=` of a hash literal's entry, whatever its key is (`@{1=sf ...}`). With `commas`,
-    every comma outside quotes separates words: one comma with a space beside it makes
-    the whole list an array (`'a',--target-org, B`).
+    first `=` of a hash literal's entry, whatever its key is (`@{1=sf ...}`); a key that is
+    a bare name is written in quotes, since it is text and never a command (`@{name = ...}`).
+    With `commas`, every comma outside quotes separates words: one comma with a space
+    beside it makes the whole list an array (`'a',--target-org, B`). `assigned` gets an
+    item for each assignment met (`$x = ...`, `$env:NAME = ...`, `[int]$n = ...`).
 
     Windows PowerShell builds one command line for a native program and does not
     escape what an argument holds, so the program can receive other words than
@@ -1727,6 +1771,7 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
     subs: list = []                     # the open `"...$(`: [parentheses open inside it, the string's state]
     later: list = []                    # text to read once more as code, after a `--%`
     head = ""                           # the first character of the statement being read
+    entry = 0                           # where the key of a hash literal's entry began in `out`
 
     def closed(mark: str) -> None:
         """The string ends here. An empty one that is a word of its own is not handed on at
@@ -1750,6 +1795,7 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
         else:
             if nested and nested[-1] == "value" and c in ";\n":
                 nested[-1] = "key"      # the next entry of the hash literal
+                entry = len(out) + 1    # after this separator, which is copied below
             if c in ";\n|{}(&":
                 head = ""
             elif not head and c not in " \t\r":
@@ -1813,10 +1859,14 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             elif nested:
                 nested.pop()
             out.append(" ; ")
+            entry = len(out)
         elif braces and not quote and c == "=" and nested and nested[-1] == "key":
             # In a hash literal the first `=` of an entry follows its key, whatever the key is
             # (`@{1=sf ...}`, `@{-1=...}`, `@{[int] 1 = ...}`): the value is a statement. A
             # later `=` in the same entry belongs to the value (`--target-org=dev`).
+            key = "".join(out[entry:]).strip()
+            if re.fullmatch(r"[A-Za-z_]\w*", key):
+                out[entry:] = [" '" + key + "' "]       # a bare name is text, never a command
             nested[-1] = "value"
             head = ""
             out.append(" ; ")
@@ -1826,6 +1876,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             # What stands on its right is a statement, and may be another assignment.
             head = ""
             out.append(" ; ")
+            if assigned is not None:
+                assigned.append(command[max(0, i - 24):i].strip())
         elif not quote and c == ",":
             # A comma with a space beside it makes an array, and a native program gets its
             # items as words of their own: `-q x, -o, prod` reaches sf as `-q x -o prod`.
@@ -1907,7 +1959,7 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             last = c
             out.append(c)
         i += 1
-    return "".join(out) + "".join("\n" + _powershell_escapes(text, braces, commas) for text in later)
+    return "".join(out) + "".join("\n" + _powershell_escapes(text, braces, commas, assigned) for text in later)
 
 
 # `$x = `, `$env:NAME += `, `[int]$n = `, `$a, $b = `, `${x} = ` at the start of a statement:
@@ -1945,6 +1997,50 @@ def _powershell_statements(text: str) -> str:
         text = shorter
 
 
+# What a statement begins with when it runs nothing by itself: a quoted string, a
+# variable, a type, an array or hash literal, a sign, a brace, a redirection, a comment.
+_PS_INERT_HEAD = frozenset("'\"$[@-+!{}=,<>#")
+_PS_NUMBER = re.compile(r"(?i)(?:0x[0-9a-f]+|\d+\.?\d*(?:e[+-]?\d+)?|\.\d+)(?:[dl]|[kmgtp]b)*\Z")
+_PS_STATEMENT_END = re.compile(r"([;\n|&()]+)")
+# PowerShell's escaped dollar (`` `$5 ``), which is not the last of a pair of backticks.
+_PS_ESCAPED_DOLLAR = re.compile(r"(?<!`)((?:``)*)`\$")
+_PS_HIDDEN_NOTE = " (inside braces, where PowerShell runs it as a command)"
+# A word that names one of PowerShell's own stores as a drive (`env:NAME`, `function:sf`, `alias:`,
+# `Environment::NAME`). `$env:NAME` reads a variable and is not one of these.
+_PS_DRIVE = re.compile(r"(?i)(?:^|[:=,(@\\])(?:(?:env|function|alias|variable):(?!\s)"
+                       r"|(?:environment|function|alias|variable)::)")
+
+
+def _powershell_drive(text: str) -> str:
+    """The first word that names PowerShell's store of environment variables, functions,
+    aliases or variables as a drive, or ''. Commands the gate takes for local change what
+    is in them: `cp env:A env:B` sets a variable for the commands after it, `cp
+    function:prompt function:sf` and `cd alias:; cp iex echo` replace a command (checked
+    in real Windows PowerShell)."""
+    words = _tokens(text)
+    for word in (text.split() if words is None else words):
+        if _PS_DRIVE.search(str(word)):
+            return " ".join(str(word).split())[:40]
+    return ""
+
+
+def _powershell_hidden(text: str, depth: int) -> list[Route]:
+    """What the gate would ask about on a line of its own, among the statements of a
+    PowerShell text rewritten with every brace ending a statement (_powershell_escapes).
+    PowerShell runs the value of a hash literal's entry as a statement before the command
+    that gets the literal starts (`echo @{1=python x.py}` runs python), and many commands
+    run a script block they are given (`select @{n='x';e={./x.cmd}}`). A statement that
+    begins with a string, a number, a variable or a type runs nothing by itself."""
+    found = []
+    for piece in _PS_STATEMENT_END.split(_mask(text))[::2]:
+        first = piece.split()[:1]
+        if not first or first[0][0] in _PS_INERT_HEAD or _PS_NUMBER.match(first[0]):
+            continue
+        found += [route for route in classify_bash(piece.translate(_UNMASK), depth + 1, _net=False)
+                  if route.kind == "unverifiable" and not route.detail.endswith(_ADDS_WORDS_NOTE)]
+    return found
+
+
 def _powershell_texts(command: str) -> tuple[str, list[str]]:
     """(the command with the quote, dash and space characters PowerShell accepts written
     as the ASCII ones, that text rewritten in Bash's quoting: as it stands, with every
@@ -1977,7 +2073,9 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
       above found, the consultant is asked.
     A write found only by one of the added readings counts; the same write (to the
     same org) read again is not counted twice."""
-    routes = classify_bash(command, depth)
+    # Bash would take PowerShell's escaped dollar (`` "Paid `$5" ``) for the start of a
+    # backtick substitution; it is a plain `$`, which Bash writes with a backslash.
+    routes = classify_bash(_PS_ESCAPED_DOLLAR.sub(r"\1\\$", command), depth)
     added: list[Route] = []
     plain, readings = _powershell_texts(command)
     if plain != command:
@@ -2017,6 +2115,24 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
             # org is, and two writes are never one approved command.
             written.add((route.kind, route.org))
             routes.append(route)
+    # What braces hold is run too: a command the gate would ask about on a line of its own
+    # is asked about inside a hash literal or a script block, and so is an assignment
+    # wherever it stands (`echo @{1=$env:NAME='...'}` sets a variable for the commands
+    # after it, as `$env:NAME='...'` at the start of the line does). These stand beside a
+    # write too: they are other statements than the write, as they would be on a line of their own.
+    assigned: list = []
+    braced = _powershell_escapes(plain, True, True, assigned)
+    known = {route.detail for route in routes if route.kind == "unverifiable"}     # asked about already
+    for text in dict.fromkeys((braced, _powershell_statements(braced))):
+        routes += [replace(route, detail=route.detail + _PS_HIDDEN_NOTE)
+                   for route in _powershell_hidden(text, depth) if route.detail not in known]
+    if assigned:
+        routes.append(Route("unverifiable", None, assigned[0] + "= (an assignment: what it sets can change what "
+                                                                "the commands after it run)"))
+    drive = _powershell_drive(readings[0])
+    if drive:
+        routes.append(Route("unverifiable", None, drive + " (names PowerShell's store of environment variables, "
+                                                          "functions or aliases, which a copy or a move changes)"))
     if not written:
         routes += asked         # beside a write nothing only asks: the write needs its approval
     if not written and (

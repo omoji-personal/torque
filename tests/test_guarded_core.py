@@ -247,7 +247,7 @@ def test_accepted_filters(text, soql):
 
 
 @pytest.mark.parametrize("text,why", [
-    ("Name = 'Jane Doe'", "not released"), ("Notes__c = x", "not released"), ("Email__c = 'a@b.org'", "not released"),
+    ("Name = 'Jane Doe'", "not released"), ("Notes__c = x", "not released"), ("Email__c = 'a@example.org'", "not released"),
     ("AccountId = 001000000000001", "not released"), ("Id = 006000000000001", "not released"),
     ("Gender__c = F", "not released"), ("Birthdate__c >= 1984-01-01", "not released"),
     ("Gender__c != null", "the word 'gender'"), ("Birthdate__c = null", "the word 'birthdate'"),

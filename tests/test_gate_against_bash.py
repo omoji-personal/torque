@@ -75,6 +75,16 @@ LINES += [f"cat <<{opening}\necho '\n{closing}\n{S}\n#'" for opening, closing in
 LINES += [f"echo ok \\\r\n{S}", f"echo ok \\\r\n{S} \\\r\n", f"echo ok \\\n ; {S}", f"(exec -a echo {S})",
           f"(exec -cla x {S})", f"echo a \\\r\n; {S}", "sf sobject \\\r\n describe -s A -o org0",
           "sf sobject describe -s A \\\r\n -o org0", f"echo a \\\r\n b ; {S}"]
+# Between backticks Bash takes one backslash off before `$`, a backtick and a backslash (and before a
+# double quote too when the backticks stand in double quotes), and reads what is left as the command:
+# `\\"` becomes `\"`, a quote that opens nothing. `$(...)` takes nothing off.
+LINES += [f'echo `echo \\\\"x; {S} #\\\\"`', f"echo `echo \\\\'x; {S} #\\\\'`", f'echo "`echo \\\\"x; {S} #\\\\"`"',
+          f'echo `echo \\"x; {S} #\\"`', f'echo `echo \\`echo \\\\\\\\"x; {S} #\\\\\\\\"\\``',
+          f'x=`echo \\\\"x; {S} #\\\\"`', f"echo `echo \\$({S})`", f'echo "`echo \\$({S})`"',
+          f'echo `echo \\\\"x; {S} #\\\\"` ; {T}', f"echo `: \\\\'; {S} #\\\\'` `: \\\\\"; {T} #\\\\\"`",
+          # Bash does not run these; the gate may report them or not
+          f'echo `echo \\\\\\\\"x; {S} #\\\\\\\\"`', f'echo "`echo \\"x; {S} #\\"`"',
+          f'echo $(echo \\\\"x; {S} #\\\\")']
 LINES += [f"cat <<-E\n\techo '\n\tE\n{S}\n#'", f"cat <<A <<'B C'\necho '\nA\necho \"\nB C\n{S}\n#'",
           f"cat <<\\! ; {T}\necho '\n!\n{S}\n#'", f"echo \"$(cat <<\\!\necho '\n!\n)\" ; {S} #'"]
 
