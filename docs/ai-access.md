@@ -305,7 +305,10 @@ torque workspace ai-access connected --approval required --path /path/to/workspa
 ```
 
 Connected mode also needs a person at a real terminal outside the AI session, and has its
-own setup steps: [connected mode](connected-approval.md).
+own setup steps: [connected mode](connected-approval.md). Leaving connected mode needs that
+person too, so a session cannot switch the mode off. For an org whose client agreed to
+metadata only, a connected workspace can add [guarded reads](guarded-reads.md), off by
+default: `torque workspace guarded-reads on --path /path/to/workspace`.
 
 ## Wiring the Claude Code hook
 

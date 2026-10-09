@@ -188,6 +188,18 @@ def browser_org(item: dict | None, url: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def _other_workspace(route: Route, cwd, workspace) -> bool:
+    """A route that names its workspace (a guarded read) names another one than the
+    workspace this decision is for."""
+    if route.workspace is None:
+        return False
+    try:
+        named = os.path.realpath(os.path.join(str(cwd), os.path.expanduser(route.workspace)))
+        return os.path.normcase(named) != os.path.normcase(os.path.realpath(str(workspace)))
+    except (OSError, ValueError):
+        return True
+
+
 def _route_client(route: Route) -> str | None:
     if route.client is None:
         return None
@@ -220,7 +232,8 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     if protected:
         return _deny(protected + ".")
     routes = classify(tool_name, tool_input)
-    if all(r.kind == "local" and _route_client(r) in (None, bound) for r in routes):
+    if all(r.kind == "local" and _route_client(r) in (None, bound) and not _other_workspace(r, cwd, workspace)
+           for r in routes):
         return Decision("allow", "")
     from . import permissions
     if permissions.load_profile(workspace) == "invalid":
@@ -233,7 +246,6 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     config = ws.load_workspace(workspace)[1]
     item = consent.load_consent(workspace, bound) if bound else None
     problems = consent.consent_problems(item, client=bound)
-    allowed_data = consent.data_allowed(item)
     command = tool_input.get("command") if isinstance(tool_input.get("command"), str) else ""
     writes = [r for r in routes if r.kind == "org_write"]
     decisions: list[Decision] = []
@@ -263,6 +275,12 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
             owner = (f"the internal initiative {route.client[len(INITIATIVE_OWNER):]}"
                      if client == "<initiative>" else route.client)
             decisions.append(_deny(f"this session is bound to {bound}; it cannot act for {owner}."))
+        elif _other_workspace(route, cwd, workspace):
+            decisions.append(_deny("a guarded read names another workspace than the one this session works in."))
+        elif route.workspace is not None and route.kind == "read" and command and not is_simple(command, tool_name):
+            # `cd elsewhere && torque guarded ... --workspace .` would read another folder's
+            # workspace than the one the path was checked against.
+            decisions.append(_deny("run a guarded read on its own, with nothing chained, piped or redirected."))
         elif route.kind not in ("local", "admin") and route.org is not None and problems:
             decisions.append(_deny(f"{bound}'s consent is not usable: " + "; ".join(problems) + "."))
         elif route.kind not in ("local", "admin") and route.org is not None \
@@ -294,9 +312,19 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
             decisions.append(_deny(f"org {route.org!r} is not in {bound}'s consent."))
         elif route.kind in ("read", "check_only"):
             category = route.data or "metadata"
-            if category not in allowed_data:
-                label = {"records": "record data", "debug_logs": "debug logs"}.get(category, category)
-                decisions.append(_deny(f"{bound}'s consent does not cover {label}."))
+            allowed_data = consent.data_allowed(item, route.org)
+            lane = category in consent.GUARDED_CLASSES
+            # Every `torque guarded` read carries its workspace: the two that read only
+            # metadata (`org`, `policy candidates`) are behind the same switch.
+            if (lane or route.workspace is not None) and not ws.guarded_reads_on(config):
+                decisions.append(_deny("guarded reads are off for this workspace. The owner turns them on at a "
+                                       "real terminal with `torque workspace guarded-reads on --path W`."))
+            elif (category not in allowed_data and not (lane and "records" in allowed_data)) \
+                    or (lane and "metadata" not in allowed_data):
+                label = {"records": "record data", "debug_logs": "debug logs", "config_records":
+                         "configuration records", "test_records": "test records"}.get(category, category)
+                decisions.append(_deny(f"{bound}'s consent does not cover {label} for {route.org}."
+                                       if lane else f"{bound}'s consent does not cover {label}."))
             else:
                 if route.kind == "check_only":
                     after_allow.append(lambda org=route.org: approval.log_activity(
@@ -310,7 +338,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                                    "--target-org ORG`, which checks each request's org against a granted "
                                    "window; external browser tools have no verified org context."))
         elif route.kind == "browser_write":
-            if not set(BROWSER_DATA_CLASSES) <= allowed_data:
+            if not set(BROWSER_DATA_CLASSES) <= consent.data_allowed(item, route.org):
                 decisions.append(_deny(f"{bound}'s browser consent must cover metadata and record data."))
                 continue
             window = approval.find_browser_approval(workspace, bound, route.org, config=config)
@@ -327,7 +355,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                                        "`torque approval request --browser --purpose TEXT ...`, "
                                        "then the consultant grants it."))
         elif route.kind == "org_write":
-            if len(writes) != 1 or (command and not is_simple(command)):
+            if len(writes) != 1 or (command and not is_simple(command, tool_name)):
                 decisions.append(_deny("run one approved write command on its own, with nothing chained, "
                                        "piped or redirected."))
                 continue
@@ -337,6 +365,12 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         else:
             decisions.append(_deny(f"unrecognized route {route.kind}."))
     worst = _worst(decisions)
+    if worst.action == "ask" and pending_write is not None:
+        # A yes at the prompt must not stand in for the write's approval: one reading of
+        # the line found the write, another found something the gate cannot check
+        # (`$result = sf project deploy start ...` in PowerShell, `env -C DIR sf ...`).
+        return _deny("this command holds an org write and something the gate cannot check. Run the one "
+                     "approved write command on its own, with nothing before it.")
     if worst.action != "allow":
         return worst
     if pending_write is not None:

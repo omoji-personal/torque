@@ -31,6 +31,12 @@ def ctx(command="jsc deploy -o acme-prod -m Flow:X"):
 
 def test_scope_is_read_from_workspace_json(connected, monkeypatch):
     assert c._connected_scope() == (connected, "acme")
+    # connected mode as it is written while guarded reads are on
+    (connected / "workspace.json").write_text(json.dumps({"schema": "torque.workspace/2", "name": "F",
+                                                          "profile": "generic", "ai_access": "connected-guarded",
+                                                          "approval": "required", "guarded_reads": "on"}),
+                                              encoding="utf-8")
+    assert c._connected_scope() == (connected, "acme")
     (connected / "workspace.json").write_text(json.dumps({"ai_access": "connected"}), encoding="utf-8")
     assert c._connected_scope() is None
     monkeypatch.delenv("TORQUE_WORKSPACE")

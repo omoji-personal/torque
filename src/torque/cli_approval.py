@@ -149,8 +149,14 @@ def register_consent(client_sub) -> None:
     record.add_argument("--agreed-on", required=True, help="YYYY-MM-DD")
     record.add_argument("--evidence", required=True, help="the signed agreement file; a copy is kept with its hash")
     record.add_argument("--data", action="append", required=True,
-                        help="metadata, records, debug_logs or local_artifacts (repeatable)")
+                        help="metadata, records, debug_logs or local_artifacts (repeatable). `metadata` is schema, "
+                             "configuration and code, and what comes with them: test and deployment output, the "
+                             "names of the client's staff where configuration holds them, values written into "
+                             "configuration, how many records an object holds, and files stored as metadata. "
+                             "See docs/connected-approval.md, \"What each data class covers\"")
     record.add_argument("--org", action="append", required=True, help="an approved org alias (repeatable)")
+    record.add_argument("--org-data", action="append", default=[], metavar="ALIAS=class,class",
+                        help="classes agreed for one org beyond --data, such as records for a sandbox (repeatable)")
     record.add_argument("--suspend-contact", action="append", default=[], help="who can suspend access")
     record.add_argument("--delegated", action="store_true",
                         help="the workspace's setup delegate is running this, not the consultant")
@@ -307,7 +313,7 @@ def _request(p, tail) -> int:
         raise ws.WorkspaceError("--capture-before needs --metadata TYPE:NAME or --record OBJECT:ID")
     if metadata and records:
         raise ws.WorkspaceError("capture metadata or records for one request, not both")
-    if records and "records" not in consent.data_allowed(item):
+    if records and "records" not in consent.data_allowed(item, p.org):
         raise ws.WorkspaceError("this client's consent does not cover record data; use --manual-recovery")
     # The org is checked live against the consent before anything is read from it.
     org_id, _ = approval._org_identity(item, p.org, None)
@@ -580,8 +586,15 @@ def run_consent(p) -> int:
     from . import consent
     action = p.consent_action
     if action == "record":
+        org_data = {}
+        for text in p.org_data:
+            alias, found, classes = text.partition("=")
+            if not found or not alias.strip() or alias.strip() in org_data:
+                raise ws.WorkspaceError("--org-data is ALIAS=class,class, once per org")
+            org_data[alias.strip()] = [c.strip() for c in classes.split(",") if c.strip()]
         item = consent.record_consent(p.workspace, p.client, p.agreed_on, p.evidence, p.data, p.org,
-                                      p.suspend_contact, delegated=p.delegated, model_id=p.model_id)
+                                      p.suspend_contact, delegated=p.delegated, model_id=p.model_id,
+                                      org_data=org_data or None)
     elif action == "sign-off":
         item = consent.sign_off(p.workspace, p.client, p.reviewer, delegated=p.delegated, model_id=p.model_id)
     elif action == "suspend":
@@ -598,5 +611,8 @@ def run_consent(p) -> int:
     print(f"Consent for {item['client']}: {item['status']}; agreed on {item['agreed_on']}.")
     print("Orgs: " + ", ".join(f"{o['alias']} ({o['kind']}, {o['org_id_18']})" for o in item["approved_orgs"]))
     print("Data: " + ", ".join(item["data_allowed"]))
+    for org in item["approved_orgs"]:
+        if isinstance(org, dict) and isinstance(org.get("extra_data"), list) and org["extra_data"]:
+            print(f"{org.get('alias')}: also " + ", ".join(map(str, org["extra_data"])))
     print("Usable for connected work." if not problems else "Not usable: " + "; ".join(problems))
     return 0

@@ -15,7 +15,9 @@ evidence limitations. Stronger enforcement requires signing, consumption state a
 execution authorization outside the agent account, with grants bound to an immutable
 workspace identity and a verified org identity. This release does not provide that boundary.
 
-It is opt-in. A workspace without `"ai_access": "connected"` behaves exactly as before
+It is opt-in. A workspace that is not in connected mode (`"ai_access": "connected"` in
+`workspace.json`, written `"connected-guarded"` while [guarded reads](guarded-reads.md) are on)
+behaves exactly as before
 (`full` by default, or [build-only](ai-access.md)). Like build-only mode, it is a
 best-effort gate on recognized tool calls in Claude Code, not an operating-system
 sandbox. The limits are listed below.
@@ -27,17 +29,66 @@ sandbox. The limits are listed below.
 | Local work | file tools, `torque change`, `torque approval request/status/list/log` | allowed |
 | Reads of the bound client's approved orgs | `sf data query -o acme-prod`, `sf project retrieve start`, Salesforce MCP query, get and describe tools, `sf api request rest` GET | allowed when the consent covers the org and the data class. Schema and metadata reads need `metadata`. Record data (queries, searches, exports, record gets, REST record and query paths, the same reads in legacy `sfdx` and MCP form) needs `records`; Apex logs need `debug_logs`; a REST path Torque cannot place counts as record data |
 | Check-only | `sf project deploy validate`, `--dry-run`, `sf apex run test` | allowed with metadata consent and logged in `clients/<slug>/approvals/activity.jsonl` |
+| Guarded reads (off by default) | `torque guarded counts`, `fill`, `config`, `record`, `related` | for an org without record consent: allowed when the workspace has guarded reads on and the consent gives that org the lane's class. See [guarded reads](guarded-reads.md) |
 | Org writes | any other `sf`/`sfdx` command with an org flag, `sf api request` other than a plain GET, `torque deploy/data/org/recover`, `jsc` write verbs, Salesforce MCP tools that are not clearly reads | allowed once, by consuming a matching approval |
 | Torque browser | `torque browser ... --target-org ORG` (and `torque qa` with an org) | needs metadata and record-data consent and a granted browser window for that org; Torque starts an isolated browser and checks its org (see below) |
 | External browser and desktop tools | screenshots, page reads, navigation, clicks, typing, scripts and form input through browser MCP, devtools or desktop servers, and Antigravity's own browser tools (`open_browser_url`, `read_browser_page`, `browser_*` and the rest) | refused: tool arguments, URLs and tab IDs do not establish the current context. The tools are recognized by name, the same names build-only mode blocks ([build-only](ai-access.md#what-build-only-blocks)) |
 | Credentials and org listings | `sf org display` and `sf org display user` (they print an access token), `sf org open` with `--url-only`, `-r` or `--json` (a login URL), `sf org generate password`, `sf org login ...`, `sf org auth ...`; `sf org list`, `sf org list auth`, `sf alias list`, `sf auth list`, `sf env list` (every org this machine is logged in to, other clients' included); Salesforce MCP tools named for a token, password or credential, or for listing all orgs | refused, with or without an approval, in every permission mode and whether or not a client is bound. No approval can be requested for them. The reason names the query to use instead: `sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"` (a record read, so the consent must cover `records`). See "Credential and org-listing commands" below |
 | Programs the gate cannot check | `git`, `hg`, `gh`, linters/formatters, `sf code-analyzer`, `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, an MCP tool under a neutral name whose arguments name a Salesforce host, any program it does not recognize | classified as unverifiable; the gate requests review in prompting modes. Run untrusted project tooling without Salesforce credentials in an isolated account or container; a prompt does not constrain its environment |
-| Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access`, `torque approval permissions --write`, `sf alias set`, `sf config set`, an `sf` command whose command words the shell builds at run time (`sf org $X`, `sf org d*`), a command that sets `SF_CONTAINER_MODE` or `SFDX_CONTAINER_MODE`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
+| Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access` and `guarded-reads`, `torque approval permissions --write`, `torque guarded policy` and `test-records` changes, `sf alias set`, `sf config set`, an `sf` command whose command words the shell builds at run time (`sf org $X`, `sf org d*`), a command that sets `SF_CONTAINER_MODE` or `SFDX_CONTAINER_MODE`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
+| A command the gate cannot read the way it runs | one of Torque's own commands with a word the shell builds (`torque workspace ${x:-ai-access} full`, an unquoted `$VAR`, a glob, `--summary=$x`), with `--` where the command takes none (`torque -- workspace ai-access full`), or with PowerShell's `--%`, `@args` or a computed `(...)` argument; any Torque command with an option's name cut short (`--target other` for `--target-org other`: the command's parser would take it as that option, and the last one given wins); an `sf` command whose words are only part of a record or log read (`sf query`, `sf log`), which the CLI offers to complete; an `sf` or delegated Torque command with a value attached to a short option or short options written together (`-XDELETE`, `-oALIAS`, `-to ALIAS`) | refused. Quote text (`--summary 'costs $5'`), write the command's words and option names out in full, and write each option and its value as separate words. A double-quoted variable is accepted as an option's value (`--summary "$TEXT"`) in Bash; in a PowerShell call it is not (see "What Windows PowerShell hands a program") |
+| A comment on the line | `sf data query ... --json # -o dev`, `sf project deploy start ... # --dry-run` | Bash and PowerShell drop the words after an unquoted `#`; cmd.exe runs them. The gate reads the line both ways and both readings have to pass: the first example has no org, the second is a write. A trailing comment on a command that names its org changes nothing, and a line that is only a comment has no effect. A command that needs no org (`sf --version # check`) is refused with a trailing comment, because with the comment's words it is no longer that command: write the comment on its own line. Inside a comment, as inside the body of a here-document, nothing is quoting and a backslash does not join the next line: the next line is read as the command it is. A here-document's delimiter is read as Bash reads it, whatever word it is (`<<\!`, `<<'E F'`), and with a here-document on the line each line is also read on its own. A backslash before a Windows line ending (CR LF) is read both ways, because Bash on Linux and macOS ends the command there and Git Bash on Windows joins the lines |
+| A command substitution | `echo "$(sf data query ... -o dev)"`, backticks, at any depth, also in the body of a here-document | what it runs is read as a command of its own. The gate also reads everything after a substitution's start as command text, so a construct it does not know (it does know quotes, `case` patterns, comments and here-documents) cannot hide a command inside one. A `${...}` expansion is read the same way: the word in its braces has quoting of its own, also inside double quotes (`"${x:-"'"}"` is one word). `tests/test_gate_against_bash.py` checks this against real Bash |
+| PowerShell's own quoting | a here-string (`@"` ... `"@`), a block comment (`<# ... #>`), a backtick before a quote, a doubled quote, curly quotes and the no-break space, the stop-parsing token (`--%`), `${any name}`; a command that is not the first word of its statement (`$rows = sf data query ... -o dev`, an assignment to any target and a chain of them such as `$a = $b.'c d' = sf ...`, `return sf ...`, `foreach ($r in sf ...)`, `&{sf ...}`); what a hash literal or a script block holds, under any command (`echo @{rows = sf ...}`, `echo @{1=sf ...}`, `1 \| sort { sf ... }`), also behind a string that holds a subexpression (`"$( "..." )"`) | a PowerShell call, and a `powershell -Command '...'` string in a Bash call, is read as written and once more with PowerShell's quoting written the way Bash writes it and without what stands before the command. Each line is also read on its own, so quoting the gate does not know cannot hide the command on a later line; a line of text inside a here-string that reads as an `sf` command is therefore treated as one. Every reading has to pass. `tests/test_gate_against_powershell.py` checks this against real Windows PowerShell |
+| What Windows PowerShell hands a program | `torque logs --target-org dev --since 'x" --target-org other'`, `--since "from $DATE"`, `--source-dir 'C:\my app\'`, `--since 'x',--target-org, other`, `--target-org '' other` | Windows PowerShell builds one command line for a program and does not escape what an argument holds. A double quote inside an argument can end it there, so can the value of a variable inside a double-quoted string, a backslash before the closing quote swallows the words after it, an empty argument is not handed on, and one comma with a space beside it makes the whole list separate words. An argument of the first three kinds is read as words the shell adds later (the read is asked about, one of Torque's own commands is refused); a comma list is read as separate words; an org option with an empty value names no org and is refused. A word that begins with a quoted string ends at its closing quote for PowerShell, so `--since "x"--target-org other` is three words, and the gate reads it so. A variable inside a quoted argument (`"$ID"`, `"$1"`) counts as a value that is not on the line. Write values out, without a double quote inside them. `tests/test_gate_against_powershell.py` checks this with a program that records what it receives |
+| A `.cmd` launcher (Windows) | `sf apex get log -o dev --log-id %ID%`, `sf ... 'a&b'`, from PowerShell or Git Bash | `sf` on Windows is usually `sf.cmd`, and cmd.exe reads each argument again on its way to the program: it fills in `%NAME%` (with `x -o other` in the variable, the program gets a second org), a double quote inside an argument ends its quoting, and `&`, `\|`, `<`, `>`, `^` in a word without spaces are its own. An `sf` command with one of these is asked about, and refused when prompts are skipped. A `%NAME%` inside a longer quoted argument (`LIKE '%acme%'`) is asked about only when a variable of that name is set |
+| Text that names a command, in PowerShell | `echo "sf data query -q ... -o dev" # note` | a line of plain words and plain quotes is read the same by PowerShell and Bash, and text is text. When the line holds anything else (PowerShell's own quoting, an assignment, a brace, a parenthesis, a variable, a pipe, a comma, a character outside ASCII) and the text names `sf` or `torque`, the gate reads the text from that name; if that gives a route no other reading found, the consultant is asked, and the call is refused when prompts are skipped. A line with a write is not asked about this way: the write needs its approval |
+| Words the shell adds later | an `sf` or delegated Torque read with an unquoted `$VAR`, a brace expansion, a glob that begins a word, or a double-quoted variable standing alone (`sf data query -q ... -o dev $MORE`); in PowerShell also a splatted `@MORE`, `--%` and a computed `(...)` argument; in Bash a string the shell may translate (`$"..."`); a command with a variable set for it (`X=1 sf ...`) or after `export` | the read still has to pass (consent and data class), and the consultant is asked as well; refused when prompts are skipped. A write keeps needing an approval for its exact text, and a write beside something the gate can only ask about (`$r = sf project deploy start ...`, `env -C DIR sf project deploy start ...`) is refused: run the write on its own. In PowerShell a comma with a space beside it separates words for the program (`-q x, -o, other` reaches `sf` as `-q x -o other`), and the gate reads it that way |
 | Out of scope | another client's folder or `--client`, `torque client list`, an org not in the consent (whatever the route), an `sf` call without an explicit org | refused |
 | Prompts skipped | any org write, browser change or unchecked program while the session's permission mode is not `default`, `acceptEdits` or `plan` (`bypassPermissions`, `auto`, `dontAsk`, or a mode this version does not know) | refused, even with an approval, which stays unused |
 
 A session that was not started with `torque launch` has no client binding: every org,
 client and browser route is refused.
+
+## What each data class covers
+
+The consent names data classes for the client (`--data`), and can add classes for one org
+(`--org-data ALIAS=class,class`): `records` for a development sandbox that holds no client
+records, say, with `metadata` alone for production. The gate uses the client's list plus the
+org's own for a call to that org.
+
+- `metadata`: schema, configuration and code. By decision this includes what comes with
+  them and cannot be separated without taking the capability away:
+  - Apex, Flow and logic test runs and results, deployment validation and deployment errors.
+    A test marked `SeeAllData=true`, or an error message, can name a record's value;
+  - who created and last changed a component (`sf org list metadata` prints a name and a
+    user id for each, and names the signed-in user when the listing is empty), and the
+    client's staff where configuration names them: alert recipients, running users,
+    approvers, queue and group members. The Salesforce CLI prints the signed-in username in
+    the output of many commands;
+  - values written into configuration: a list view or report filter, a field default, a
+    custom label, a formula literal;
+  - how many records each object holds (`sf org list sobject record-counts`, and
+    `torque advisory impact` without `--where`, which also counts the child records that
+    point at the object), as plain numbers;
+  - files Salesforce stores as metadata: documents, static resources, content assets, email
+    templates. A retrieve brings back whatever was uploaded there.
+  So `metadata` is not a promise that no personal data comes back. A client that cannot
+  accept this needs a narrower agreement than this class.
+- `records`: record data. Queries, searches, exports and record gets in any word order
+  (`sf query data`) or colon spelling, `sf org list users`, `sf cmdt generate fromorg`,
+  `torque advisory impact` or `receipt` with `--where` (the count of any filter), REST
+  record and query paths, a Tooling API row, and a Tooling query that is not a plain schema
+  query: one `SELECT` from one schema entity (`ApexClass`, `CustomField`, `Flow`,
+  `FieldDefinition`, `ValidationRule`, `Profile`, `PermissionSet` and the like) that names
+  no person (`CreatedBy`, `LastModifiedBy`, `Owner`, a user). A REST path with a `..`
+  segment is never read as schema. A REST request is a read only as a GET with options the
+  gate knows (`--method GET`, `--header`, `--target-org`, `--include`, `--json`,
+  `--api-version`, `--stream-to-file`); with a body, a file, another option, or a word the
+  shell fills in, it is a write that needs an approval.
+- `debug_logs`: Apex logs: `sf apex get log`, `sf apex list log`, an `ApexLog` row, and a query whose
+  source is `ApexLog`. A query that merely mentions the word is classed by what it reads.
+- `counts`, `config_records`, `test_records`: per org only, for [guarded reads](guarded-reads.md).
 
 ## Setting it up
 
@@ -51,7 +102,8 @@ Each "present" step also prints a six-character code the owner types back.
    (tier 2: add `--verify owner-uid --approver-uid UID`, see below; not available on
    Windows). This also copies the
    rule file `production-approval.md` into `W/.claude/rules/`; leaving connected mode
-   removes it.
+   removes it. Leaving connected mode is a "present" step too: the session cannot switch
+   the mode off.
 2. Write the host permission rules (present):
    `torque approval permissions --workspace W --write`. It adds `ask` rules for every write
    route, interpreter and browser server, `deny` rules for approval administration and for
@@ -445,7 +497,12 @@ With the hook in force, on recognized routes:
   `sf org open --url-only`, `sf org generate password`, `sf org login`) or lists every org on
   the machine (`sf org list`, `sf alias list`), with or without an approval. The forms read
   and the forms that get past are in "Credential and org-listing commands";
-- recognized reads of metadata, record data or debug logs the consent does not cover;
+- recognized reads of metadata, record data or debug logs the consent does not cover for
+  that org, in any word order or spelling the CLI accepts, with or without a variable set
+  for the command;
+- leaving connected mode from the session: the gate refuses the command in every spelling it
+  reads (a word built at run time, `--`, a line continuation, a quoted operator, a
+  PowerShell escape), and the command itself needs a person at a real terminal;
 - org access for a client without active, signed-off consent;
 - a production approval of any kind (browser windows included) without an independent
   before-state or a written recovery path;
@@ -500,6 +557,25 @@ With the hook in force, on recognized routes:
   name that says so, or leave them out of a connected session.
 - A credential printed by a command the gate cannot read, and the other forms listed at the
   end of "Credential and org-listing commands".
+- What `metadata` covers ("What each data class covers"), and what a write the consultant
+  approved prints: anonymous Apex prints whatever its script prints, with a debug log. Read
+  the command and the script before approving.
+- A double-quoted variable right after an `sf` option that takes no value (`--json "$X"`):
+  the gate does not know which of sf's options take a value, so it reads `$X` as one.
+- PowerShell beyond what is listed under "Credential and org-listing commands": it is read
+  as text. `Start-Process ... -ArgumentList`, a script or `python -c` is asked about, not
+  refused; so is a command whose name is in a variable or behind an alias (`& $c ...`,
+  `Set-Alias q sf; q ...`). The owner commands still need a person at a real terminal.
+- A PowerShell line is also read as Bash reads it, and every reading has to pass. An `sf`
+  command written with a backtick (continued over lines, or with an escaped quote inside
+  it) is refused or asked about although PowerShell runs it as one command. Write it on
+  one line with plain quotes.
+- A `%NAME%` that a `.cmd` launcher fills in from a variable the gate cannot see: one set
+  only inside a shell that the host keeps between calls. (A variable set on the same line is
+  asked about; one set in the environment the gate runs in is seen.)
+- The gate cannot tell which PowerShell runs a line. It reads an argument the way Windows
+  PowerShell 5.1 hands it to a program, which is the cautious reading; PowerShell 7 escapes
+  arguments, and a read that is asked about for this reason would have run as written there.
 - Commands built at run time after a program has been permitted, configured subprocesses
   (`tar --to-command`, `rsync -e`, `zip -TT`, GNU `sed`'s `e`), and every route
   [build-only mode](ai-access.md#what-it-cannot-stop) lists as unparsed.

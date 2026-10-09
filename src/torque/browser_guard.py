@@ -126,7 +126,7 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
         item = approval._usable_consent(workspace, client)
     except ws.WorkspaceError as exc:
         raise GuardRefused(str(exc)) from exc
-    if not set(BROWSER_DATA_CLASSES) <= consent.data_allowed(item):
+    if not set(BROWSER_DATA_CLASSES) <= consent.data_allowed(item, target_org):
         raise GuardRefused("browser consent must cover metadata and record data")
     entry = consent.approved_org(item, target_org)
     if entry is None:
@@ -154,7 +154,7 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
         entry_now = consent.approved_org(item_now, target_org)
         return bool(current and current.get("id") == window.get("id")
                     and not consent.consent_problems(item_now, client=ws.slug_for(client))
-                    and set(BROWSER_DATA_CLASSES) <= consent.data_allowed(item_now)
+                    and set(BROWSER_DATA_CLASSES) <= consent.data_allowed(item_now, target_org)
                     and entry_now and entry_now.get("org_id_18") == info.org_id_18)
     from .namespaces import DEFAULT_MANAGED
     extra = config.get("managed_namespaces") if isinstance(config.get("managed_namespaces"), list) else []

@@ -93,7 +93,8 @@ B = lambda cmd: K("Bash", {"command": cmd})
     ("nice -n 5 sf apex run -o acme-prod", [("org_write", "acme-prod")]),
     ("timeout 60 sf apex run -o acme-prod", [("org_write", "acme-prod")]),
     ("env sf apex run -o acme-prod", [("org_write", "acme-prod")]),
-    ("HOME=/tmp/x sf data query -q x -o acme-prod", [("unverifiable", "acme-prod")]),
+    # A read with a variable set for it keeps its route (and so its data class) and is asked about.
+    ("HOME=/tmp/x sf data query -q x -o acme-prod", [("read", "acme-prod"), ("unverifiable", "acme-prod")]),
     ("env HOME=/tmp/x sf apex run -o acme-prod", [("unverifiable", "acme-prod")]),
     ("xargs sf apex run -o acme-prod", [("unverifiable", None), ("org_write", "acme-prod")]),
     ("script -q /dev/null torque approval grant req-1", [("unverifiable", None), ("admin", None)]),
@@ -101,6 +102,7 @@ B = lambda cmd: K("Bash", {"command": cmd})
     ("awk 'BEGIN{system(\"sf apex run -o acme-prod\")}'", [("unverifiable", None)]),
     ("awk '{print $1}' file", [("unverifiable", None)]),
     ("for f in a b; do sf apex run -f $f -o acme-prod; done", [("local", None), ("org_write", "acme-prod")]),
+    ('for f in a b; do sf apex run -f "$f" -o acme-prod; done', [("local", None), ("org_write", "acme-prod")]),
     ("{ sf apex run -o acme-prod; }", [("org_write", "acme-prod")]),
     ("eval 'sf apex run -o acme-prod'", [("unverifiable", None), ("org_write", "acme-prod")]),
     ("osascript -e 'tell app \"Terminal\" to do script \"x\"'", [("unverifiable", None)]),

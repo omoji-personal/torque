@@ -14,9 +14,17 @@ from uuid import uuid4
 from . import workspace as ws
 
 SCHEMA = "torque.consent/1"
+# A record that holds a guarded class. A Torque from before guarded reads does not
+# know this schema and refuses org access for the client.
+SCHEMA_GUARDED = "torque.consent/2"
+SCHEMAS = (SCHEMA, SCHEMA_GUARDED)
 FILE = "consent.json"
 EVIDENCE_DIR = "consent-evidence"
 DATA_CLASSES = ("metadata", "records", "debug_logs", "local_artifacts")
+# Classes for guarded reads (docs/guarded-reads.md). They are agreed per org, in an
+# approved org's `extra_data`, never in the client's list.
+GUARDED_CLASSES = ("counts", "config_records", "test_records")
+ORG_DATA_CLASSES = DATA_CLASSES + GUARDED_CLASSES
 STATUSES = ("pending", "active", "suspended")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 
@@ -70,7 +78,7 @@ def load_consent(workspace, client) -> dict | None:
     if not path.is_file():
         return None
     item = ws._read_json(path)
-    if item.get("schema") != SCHEMA:
+    if item.get("schema") not in SCHEMAS:
         raise ws.WorkspaceError(f"invalid consent record: {path}")
     return item
 
@@ -100,11 +108,14 @@ def _save(path: Path, item: dict, *, delegated: bool = False) -> None:
 
 def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: list[str], orgs: list[str],
                    suspend_contacts: list[str], presence=None, resolve=None, *, delegated: bool = False,
-                   model_id: str | None = None, env=None, ancestors=None, getuid=None, root_owner=None) -> dict:
+                   model_id: str | None = None, env=None, ancestors=None, getuid=None, root_owner=None,
+                   org_data: dict | None = None) -> dict:
     """Record (or replace) the agreement. A new record is pending until a second
     reviewer signs off. `delegated=True`: the workspace's setup delegate is
     recording this in place of the consultant at a real terminal; the record
-    gains `recorded_by_actor` (the delegate's identity and kind)."""
+    gains `recorded_by_actor` (the delegate's identity and kind). `org_data`
+    maps an approved org's alias to the classes agreed for that org beyond the
+    client's list (records for a sandbox, say); the guarded classes go only there."""
     ws.require_writable(workspace)
     if model_id is not None and not delegated:
         raise ws.WorkspaceError("--model-id applies only to a delegated call (pass --delegated too)")
@@ -117,6 +128,7 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
                                 f"(choose from {', '.join(DATA_CLASSES)})")
     if not orgs:
         raise ws.WorkspaceError("list at least one approved org alias")
+    org_data = _checked_org_data(workspace, org_data, orgs, data_allowed, delegated)
     resolve = resolve or _resolver()
     approved = []
     for alias in dict.fromkeys(orgs):
@@ -127,6 +139,8 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
         instance = getattr(info, "instance_url", None)
         if isinstance(instance, str) and instance:
             entry["instance_url"] = instance
+        if alias in org_data:
+            entry["extra_data"] = org_data[alias]
         approved.append(entry)
     folder, path = _path(workspace, client)
     source = Path(evidence).expanduser().resolve()
@@ -138,7 +152,9 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
     shutil.copyfile(source, target)
     if os.name != "nt":
         target.chmod(0o600)
-    item = {"schema": SCHEMA, "client": ws.slug_for(client), "status": "pending", "agreed_on": agreed_on,
+    guarded = any(c in GUARDED_CLASSES for classes in org_data.values() for c in classes)
+    item = {"schema": SCHEMA_GUARDED if guarded else SCHEMA, "client": ws.slug_for(client), "status": "pending",
+            "agreed_on": agreed_on,
             "evidence": {"path": target.relative_to(folder).as_posix(),
                          "sha256": hashlib.sha256(target.read_bytes()).hexdigest()},
             "data_allowed": list(dict.fromkeys(data_allowed)), "approved_orgs": approved,
@@ -149,6 +165,33 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
         item["recorded_by_actor"] = actor.as_dict()
     _save(path, item, delegated=delegated)
     return item
+
+
+def _checked_org_data(workspace, org_data, orgs, data_allowed, delegated: bool) -> dict:
+    """The per-org classes as given, checked: each alias is an approved org, each
+    class is known, and a guarded class is recorded only by the consultant, while
+    guarded reads are on, for an org that also has metadata."""
+    if org_data is None:
+        return {}
+    if not isinstance(org_data, dict):
+        raise ws.WorkspaceError("org data is given as ALIAS=class,class")
+    out = {}
+    for alias, classes in org_data.items():
+        if alias not in orgs:
+            raise ws.WorkspaceError(f"--org-data names {alias!r}, which is not one of the approved orgs")
+        if not isinstance(classes, (list, tuple)) or not classes or any(c not in ORG_DATA_CLASSES for c in classes):
+            raise ws.WorkspaceError(f"unknown data class for {alias} (choose from {', '.join(ORG_DATA_CLASSES)})")
+        out[alias] = list(dict.fromkeys(classes))
+        if not set(out[alias]) & set(GUARDED_CLASSES):
+            continue
+        if delegated:
+            raise ws.WorkspaceError("a guarded data class is recorded by the consultant at a real terminal")
+        if not ws.guarded_reads_on(ws.load_workspace(workspace)[1]):
+            raise ws.WorkspaceError("guarded reads are off for this workspace; the owner turns them on with "
+                                    "`torque workspace guarded-reads on --path W`")
+        if "metadata" not in set(data_allowed) | set(out[alias]):
+            raise ws.WorkspaceError(f"a guarded data class needs metadata for the same org ({alias})")
+    return out
 
 
 def _update(workspace, client, presence, change, *, delegated: bool = False, model_id: str | None = None,
@@ -216,7 +259,7 @@ def consent_problems(consent: dict | None, client: str | None = None) -> list[st
     if consent is None:
         return ["no consent record"]
     problems = []
-    if consent.get("schema") != SCHEMA:
+    if consent.get("schema") not in SCHEMAS:
         problems.append("the consent record has an unknown schema")
     if client is not None and consent.get("client") != client:
         problems.append("the consent record belongs to another client")
@@ -231,8 +274,17 @@ def consent_problems(consent: dict | None, client: str | None = None) -> list[st
     if not isinstance(orgs, list) or not orgs or len(_orgs(consent)) != len(orgs):
         problems.append("no approved orgs" if not orgs else "the approved org list is malformed")
     data = consent.get("data_allowed")
-    if not isinstance(data, list) or any(c not in DATA_CLASSES for c in data):
+    extras = [o["extra_data"] for o in orgs if isinstance(o, dict) and "extra_data" in o] if isinstance(orgs, list) else []
+    if not isinstance(data, list) or any(c not in DATA_CLASSES for c in data) \
+            or any(not isinstance(e, list) or any(c not in ORG_DATA_CLASSES for c in e) for e in extras):
         problems.append("the data classes are malformed")
+    else:
+        guarded = [e for e in extras if set(e) & set(GUARDED_CLASSES)]
+        if guarded and consent.get("schema") == SCHEMA:
+            # Written by hand: record_consent gives such a record the schema an older Torque refuses.
+            problems.append("a guarded data class needs the newer consent format")
+        if any("metadata" not in set(data) | set(e) for e in guarded):
+            problems.append("a guarded data class needs metadata for the same org")
     return problems
 
 
@@ -242,6 +294,12 @@ def approved_org(consent: dict | None, alias: str | None) -> dict | None:
     return next((o for o in _orgs(consent) if o["alias"] == alias), None)
 
 
-def data_allowed(consent: dict | None) -> set[str]:
+def data_allowed(consent: dict | None, alias: str | None = None) -> set[str]:
+    """The data classes the agreement covers: the client's list, and with `alias` also
+    the classes agreed for that one org (its `extra_data`)."""
     data = consent.get("data_allowed") if isinstance(consent, dict) else None
-    return {c for c in data if c in DATA_CLASSES} if isinstance(data, list) else set()
+    allowed = {c for c in data if c in DATA_CLASSES} if isinstance(data, list) else set()
+    extra = (approved_org(consent, alias) or {}).get("extra_data") if alias else None
+    if isinstance(extra, list):
+        allowed |= {c for c in extra if c in ORG_DATA_CLASSES}
+    return allowed

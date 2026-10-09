@@ -100,6 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
                            help="the workspace's setup delegate is running this, not the owner")
     ai_access.add_argument("--model-id", help="delegated only: the AI reviewer's model identifier")
     ai_access.add_argument("--json", action="store_true")
+    guarded_reads = work_sub.add_parser("guarded-reads", help="switch guarded reads on or off for a connected "
+                                                               "workspace; the owner runs this, not an AI session")
+    guarded_reads.add_argument("value", choices=("on", "off"))
+    guarded_reads.add_argument("--path", default=".", help="workspace directory; defaults to the current directory")
     delegate_p = work_sub.add_parser("delegate", help="name a delegated approver or setup delegate; the owner "
                                                        "at a real terminal, or an administrator provisioning "
                                                        "the workspace, runs this")
@@ -208,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     workflows.add_argument("--json", action="store_true")
     workflows.add_argument("--workspace", help="prefer a selected workspace local recipe; otherwise show the packaged reference")
     cli_approval.register(sub)
+    from . import guarded
+    guarded.register(sub)
     for route in PUBLIC_ROUTES:
         sub.add_parser(route, add_help=False, help=f"{route} operations with selected-client evidence; use {route} --help")
     for route in DELEGATES:
@@ -1084,6 +1090,9 @@ def main(argv: list[str] | None = None) -> int:
                                  **({"approval": parsed.approval} if parsed.approval else {})})
                 else:
                     print(shown)
+            elif parsed.action == "guarded-reads":
+                ws.set_guarded_reads(parsed.path, parsed.value)
+                print(f"guarded reads: {parsed.value}")
             elif parsed.action == "delegate":
                 root = delegation.set_delegate(parsed.path, parsed.role, parsed.account, parsed.uid, parsed.kind)
                 config = ws.load_workspace(root)[1]
@@ -1109,6 +1118,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("No Salesforce org, browser, model or paid account was used.")
         elif parsed.command in ("approval", "launch"):
             return cli_approval.run(parsed, tail)
+        elif parsed.command == "guarded":
+            from . import guarded
+            return guarded.run(parsed)
         elif parsed.command == "client":
             if parsed.action == "consent":
                 return cli_approval.run_consent(parsed)
