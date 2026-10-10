@@ -100,6 +100,42 @@ LINES += [f"read 'a[$'\"({S})]\" <<< 1", f"printf -v 'a[$'\"({S})]\" x", f"a=(1)
           f"read 'a[$'\"({S})]\" <<< 1 ; {T}"]
 
 
+# Brace expansion makes words from the text of the line alone: `{sf,sobject,describe}` is three words.
+LINES += ["{sf,sobject,describe,-s,A,-o,org0}", "echo a; {sf,sobject,describe,-s,A,-o,org0}",
+          "{sf,sobject,describe} -s A -o org0", "sf {sobject,describe} -s A -o org0", "sf sobject describe -s A {-o,org0}",
+          "s{f,} sobject describe -s A -o org0", "{s,}f sobject describe -s A -o org0", "{sf,sobject,{describe,-s},A,-o,org0}",
+          "sf sobject describe -s A -o org{0..0}", "echo $({sf,sobject,describe,-s,A,-o,org0})",
+          f"{{sf,sobject,describe,-s,A,-o,org0}} ; {T}",
+          # Bash does not expand these; the gate may report them or not
+          "'{sf,sobject,describe,-s,A,-o,org0}'", "echo {sf,sobject,describe,-s,A,-o,org0}"]
+
+
+# A line continuation between a file descriptor's digits and the redirection is no gap for Bash:
+# `-o 1\<newline>>&2 org0` names the org org0, and sends the output to descriptor 2.
+LINES += ["sf sobject describe -s A -o 1\\\n>&2 org0", "sf sobject describe -s A -o 1\\\n\\\n>&2 org0",
+          "sf sobject describe -s A -o 1\\\n2>/dev/null org0", "sf sobject describe -s A 2\\\n>&1 -o org0"]
+
+
+# After the `)` of a substitution, a process substitution or an array the same word goes on: a `#` there
+# begins no comment, and the command after it runs with the org as its quotes give it. After the `)` of a
+# subshell a `#` does begin a comment.
+LINES += ['echo $(echo a)#b ; sf sobject describe -s A -o "org0"', "echo $(echo a)#b ; sf sobject describe -s A -o 'org0'",
+          'echo a$(echo 1)#b ; sf sobject describe -s A -o "org0"', 'echo $((1))#b ; sf sobject describe -s A -o "org0"',
+          'echo <(echo a)#b ; sf sobject describe -s A -o "org0"', 'x=(1 2)#b ; sf sobject describe -s A -o "org0"',
+          'echo $(echo $(echo a)#b)#c ; sf sobject describe -s A -o "org0"',
+          'echo $( (echo a) )#b ; sf sobject describe -s A -o "org0"', 'echo $(( (1) ))#b ; sf sobject describe -s A -o "org0"',
+          "echo $(echo a)#' ; sf sobject describe -s A -o org1 ; echo ' ; sf sobject describe -s A -o \"org0\"",
+          'x=(${x:-#=))} b)#c ; sf sobject describe -s A -o "org0"', "echo $(echo a)#b ; sf sobject describe -s A -o or\\g0",
+          # Bash does not run this one; the gate may report it or not
+          '( echo a )#b ; sf sobject describe -s A -o "org0"']
+# Bash runs the commands of a line before it reads the next one: these run their sf call, and then meet a
+# line whose quotes do not pair. (They are run with the random lines below: the runner there goes on after
+# a line Bash cannot finish.)
+BROKEN_LATER = ['sf sobject describe -s A -o o"r"g0 # "${x:-\'\'1\n}"', "sf sobject describe -s A -o or\\g0\necho a\necho '",
+                'sf sobject describe -s A -o "org0"\necho "', "echo 'a\nb' ; sf sobject describe -s A -o 'org0' # '\n'",
+                'echo a && sf sobject describe -s A -o org\\0 # "${x:- \\`\\"\\\n1}"']
+
+
 def bash_runs(line: str, folder: Path) -> set | None:
     out = folder / "..out"
     if out.exists():
@@ -131,3 +167,112 @@ def test_the_gate_reports_every_sf_command_bash_runs(tmp_path):
     assert not missed, missed
     assert compared >= len(LINES) - 6          # nearly every line is one Bash accepts
     assert ran_something >= 100                # and most of them really run their sf call
+
+
+# Random lines. Each is a few statement shapes with pieces of text in them (F) and one or two sf calls in
+# ordinary places (CALL). A piece is a quoted string, an ANSI-C string, an expansion with a default or a
+# bare word that holds characters which mean something elsewhere, written the way its kind keeps such a
+# character inside; the rest is chance. The seed is fixed, so the lines are the same in every run. Bash
+# runs each line in a subshell of its own, with sf as a function that records its arguments; the other
+# words on a line (a, b, x, E) name no program.
+RANDOM_INNER = ["'", '"', "`", "$", "{", "}", "(", ")", ";", "#", "<", ">", "|", "&", " ", " ", "a", "b", "\\", "\n", "=",
+                "!", "~", "%", "1", "2", "sf", "$(", "${", "$'", "<<", "\\\n", "\r\n", "\t", "x", ",", "-", ":", "\\\\",
+                "''", '""', "\\'", '\\"', "\\}", "\\)", "\\`", "\\$", "#'", '#"', "))", "((", "$((", "E", "<<E", "2>&1",
+                ">&2", "1>"]
+RANDOM_BARE = ["a", "1", "-x", "a\\;b", "a\\ b", "a\\'b", 'a\\"b', "a\\#b", "\\$x", "a\\&b", "{a,b}", "$x", "${x}", "~",
+               "a\\\nb", "a\\|b", "\\(a\\)", "a\\<b", "$'a'", "\"a\"'b'", "a\\\\"]
+RANDOM_SHAPES = [
+    "CALL", "echo F", "echo F; CALL", "echo F F; CALL", "x=F; CALL", 'echo "$(CALL)"', "( CALL )", "{ CALL; }",
+    "if true; then CALL; fi", "echo F | CALL", "CALL # F", "echo F # F\nCALL", "cat <<E\nF\nE\nCALL",
+    "echo ${x:-F}; CALL", "echo $(echo F); CALL", ": F; CALL", "echo F\nCALL", "echo F && CALL", "echo F || true; CALL",
+    "echo F > /dev/null; CALL", "echo F 2>&1; CALL", "CALL 2>&1", "echo `echo F`; CALL", "for i in F; do CALL; done",
+    "case x in x) CALL;; esac", 'echo F; echo "${x:-$(CALL)}"', "[[ -n F ]] ; CALL", "echo $((1+1)) F; CALL",
+    "echo F;CALL", "echo F F F", "cat <<'E'\nF\nE\nCALL", "echo F <<< F; CALL", "echo $(echo F # F\n); CALL",
+    "echo F \\\n F; CALL", "echo F; ( CALL ) 2>/dev/null", "CALL > /dev/null 2>&1", "echo $(echo F)#F ; CALL",
+    "echo a$(echo F)#F\nCALL", "echo <(echo F)#F ; CALL", "x=(F F)#F ; CALL", "echo $((1))#F ; CALL", "( echo F )#F\nCALL",
+    "echo `echo F`#F ; CALL", "echo ${x:-F}#F ; CALL", "echo F#F ; CALL", "echo $(echo F) #F\nCALL",
+]
+# other ways to write the org's name, and the command's
+RANDOM_ORG = ['"org%s"', "'org%s'", "or\\g%s", 'o"r"g%s', "org%s''", "$'org%s'"]
+RANDOM_CALL = ['"sf"', "'sf'", "s\\f", "\\sf", "s''f", 's"f"']
+# what can stand between an option and its value without being a word of the command
+RANDOM_BETWEEN = ["2>&1", "1\\\n>&2", ">/dev/null", "2>/dev/null", "<&0", "1>&2", "\\\n", "2\\\n>&1", "12>&1", "$'' ",
+                  "\"\"''", "2>&1 >/dev/null"]
+RUNNER = r"""
+sf() { { printf 'case %s sf' "$n"; for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; } >> "$out"; }
+out="$PWD/..out"
+n=0
+while IFS= read -r -d '' line; do
+  ( eval "$line" ) >/dev/null 2>&1 </dev/null
+  n=$((n+1))
+done < ..lines
+printf 'end\n' >> "$out"
+"""
+
+
+def random_fragment(rng) -> str:
+    inner = [rng.choice(RANDOM_INNER) for _ in range(rng.randint(0, 6))]
+    kind = rng.choice(["sq", "dq", "ansi", "param", "qparam", "bare", "sq", "dq", "param"])
+    if kind == "sq":
+        return "'" + "".join(c for c in inner if "'" not in c) + "'"
+    if kind == "dq":
+        return '"' + "".join('\\"' if c == '"' else c for c in inner) + '"'
+    if kind == "ansi":
+        return "$'" + "".join("\\'" if c == "'" else c for c in inner if c != "\\") + "'"
+    if kind in ("param", "qparam"):
+        text = "${x:-" + "".join("\\}" if c == "}" else c for c in inner) + "}"
+        return '"' + text + '"' if kind == "qparam" else text
+    return rng.choice(RANDOM_BARE)
+
+
+def random_lines(count: int, seed: int) -> list:
+    import random
+    rng, lines = random.Random(seed), []
+    for _ in range(count):
+        calls, made = rng.sample([S, T], 2), []
+        for _ in range(rng.randint(1, 3)):
+            body = rng.choice(RANDOM_SHAPES)
+            while "F" in body:
+                body = body.replace("F", "\0", 1).replace("\0", random_fragment(rng).replace("F", "\1"), 1)
+            body = body.replace("\1", "F")
+            while "CALL" in body:
+                call = calls.pop() if calls else "echo c"
+                if call.startswith("sf") and rng.random() < 0.25:
+                    call = call.replace("-o ", "-o " + rng.choice(RANDOM_BETWEEN) + " ")
+                elif call.startswith("sf") and rng.random() < 0.25:
+                    call = call[:-4] + rng.choice(RANDOM_ORG) % call[-1]
+                if call.startswith("sf") and rng.random() < 0.1:
+                    call = rng.choice(RANDOM_CALL) + call[2:]
+                body = body.replace("CALL", call, 1)
+            made.append(body)
+        if len(calls) == 2:             # no statement took a call
+            made.append(calls.pop())
+        lines.append(rng.choice([" ; ", "\n", "; ", " && "]).join(made))
+    return lines
+
+
+def test_random_lines_run_in_bash(tmp_path):
+    # The gate has to report the org of every sf call Bash ran, or refuse the line outright. A call only
+    # asked about without its org is a miss.
+    lines = BROKEN_LATER + random_lines(600, 17)
+    (tmp_path / "..lines").write_bytes(b"".join(line.encode("utf-8") + b"\0" for line in lines))
+    (tmp_path / "..runner").write_bytes(RUNNER.encode("utf-8"))
+    env = {"PATH": os.path.dirname(BASH), "HOME": str(tmp_path), "SystemRoot": os.environ.get("SystemRoot", "")}
+    subprocess.run([BASH, "--noprofile", "--norc", "..runner"], cwd=tmp_path, env=env, capture_output=True,
+                   timeout=900, stdin=subprocess.DEVNULL)
+    out = tmp_path / "..out"
+    text = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
+    if not text.rstrip().endswith("end"):
+        pytest.skip("Bash is present but did not run the lines here")
+    ran: dict = {}
+    for number, org in re.findall(r"case (\d+) sf .*?(org\d)", text):
+        ran.setdefault(int(number), set()).add(org)
+    missed = []
+    for number, orgs in ran.items():
+        routes = classify("Bash", {"command": lines[number]})
+        if not orgs <= {route.org for route in routes} \
+                and not {"no_org", "admin", "credential", "all_orgs"} & {route.kind for route in routes}:
+            missed.append((lines[number], sorted(orgs), sorted({route.org for route in routes if route.org})))
+    assert not missed, missed[:5]
+    assert len(ran) >= 300              # on most lines Bash really ran an sf call
+    assert all(ran.get(number) == {"org0"} for number in range(len(BROKEN_LATER))), ran

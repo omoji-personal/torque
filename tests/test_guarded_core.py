@@ -1091,3 +1091,11 @@ def test_the_plural_of_a_word_in_sis_is_found():
     quiet = describe(extra=[fld("Analyses__c", "boolean"), fld("Bases__c", "boolean"), fld("Phases__c", "boolean")])
     for name in ("Analyses__c", "Bases__c", "Phases__c"):
         assert core.sensitive_word(quiet.field(name)) == "", name
+
+
+def test_a_filter_is_recorded_as_typed():
+    # the spaces inside a value are part of the value: the record of the call keeps them
+    stages = describe(extra=[fld("Stage2__c", "picklist", values=["VALUE  SECOND", "a"])])
+    released = policy({"Opportunity.Stage2__c": "exact"})
+    found = core.parse_filter("  Stage2__c = 'VALUE  SECOND'  ", stages, released, FACTS)
+    assert found.typed == "Stage2__c = 'VALUE  SECOND'" and "VALUE  SECOND" in found.soql()

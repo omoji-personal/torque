@@ -773,7 +773,7 @@ def parse_filter(text, describe: Describe, policy: Policy, facts: OrgFacts) -> F
                            "=, !=, <, <=, >, >=, IN, NOT IN")
     name, symbol, word, raw = match.group(1), match.group(2), match.group(3), match.group(4)
     op = symbol or " ".join(word.upper().split())
-    typed = " ".join(text.split())
+    typed = text.strip()        # as typed: a value's own spaces are part of the value
     if raw == "":
         raise GuardedError(f"the filter {_show(text)} has no value")
     path = RECORD_TYPE_PATHS.get(name.casefold())

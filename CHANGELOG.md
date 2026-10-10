@@ -92,7 +92,15 @@ off-by-default feature, guarded reads, answers build questions about an org with
   (`${HOME:=x}`, `$[ HOME = 9 ]`, `{HOME}>file`, `printf -vHOME`), and a name is compared as written
   (`tmp=...` is left alone). `/usr/bin/time -o FILE command` is read as the command. The record of a
   configuration read goes by the rows that were printed. `docs/connected-approval.md` says what the gate
-  reads and what it cannot: a value that is not on the line.
+  reads and what it cannot: a value that is not on the line. The words a brace expansion makes are read as the
+  command they make (`{sf,data,query,-o,dev}`). A REST path counts as a schema read only as a whole path
+  (`/sobjects/Account/External__c/describe` is a record). In PowerShell a `#`, `<` or `>` in the middle of a
+  word is read both as part of the word and as a comment or a redirection, since PowerShell decides by where
+  it stands; `${...}` ends at an unescaped brace; a here-string begins only at the start of a token; a
+  subexpression inside a string or a word ends where PowerShell's tokenizer ends it. In Bash a `#` right after
+  the `)` of a substitution begins no comment (`echo $(date)#x ; sf ...` runs sf), and the lines before a line
+  whose quotes do not pair are read as written, since Bash runs them. The gate is now also compared with
+  PowerShell's parser and with real Bash on random lines, in the test suite.
 - Guarded reads and older versions: while guarded reads are on, `workspace.json` names the mode
   `connected-guarded`. A Torque from before guarded reads treats that as build-only and refuses org work in
   the workspace, instead of applying its own older reading of connected mode.

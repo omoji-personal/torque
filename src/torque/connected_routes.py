@@ -529,6 +529,13 @@ def _parameter_end(command: str, i: int, quoted: bool) -> int | None:
     return None
 
 
+# What stands directly before a `(` that is part of a word: a substitution (`$(`), a process
+# substitution (`<(`, `>(`) or an array (`x=(`). After its `)` the same word goes on, so a `#`
+# there begins no comment (`echo $(date)#x ; sf ...` runs sf; checked in real Bash). After the
+# `)` of a subshell or of a `case` pattern a new word begins.
+_JOINING = ("$", "<", ">", "=")
+
+
 def _substitution_end(command: str, i: int) -> int | None:
     """The index just past the `)` that closes the `$(` at `i`, or None when it does
     not close. The substitution is read as Bash reads it: with quotes of its own, and
@@ -537,6 +544,7 @@ def _substitution_end(command: str, i: int) -> int | None:
     here-document, and at the end of a `case` pattern."""
     depth, quote, j, size = 0, "", i + 1, len(command)
     word_start, cases, opened = False, [], []
+    joins: list = []        # for each open parenthesis: the word it stands in goes on after it closes
     while j < size:
         c = command[j]
         if quote == "'":
@@ -603,15 +611,18 @@ def _substitution_end(command: str, i: int) -> int | None:
                 found = _heredoc(command, j)
                 if found:
                     opened.append(found)
+            word_start = c in _WORD_BREAK
             if c in "'\"":
                 quote = c
             elif c == "(":
                 depth += 1
+                joins.append(command[j - 1:j] in _JOINING)
             elif c == ")" and not (cases and cases[-1] == depth):       # not the end of a case pattern
                 depth -= 1
                 if depth == 0:
                     return j + 1
-            word_start = c in _WORD_BREAK
+                if joins.pop():
+                    word_start = False      # it closed a process substitution or an array: the word goes on
         j += 1
     return None
 
@@ -621,7 +632,10 @@ def _mask(command: str) -> str:
 
 
 _BODY_SUBSTITUTION = re.compile(r"(?<!\\)(\$\(|`)")
-_FILE_DESCRIPTOR = re.compile(r"[0-9]+(?=[<>])")
+# A file descriptor's digits, directly before a redirection. A line continuation between
+# them, or between them and the operator, is no gap for Bash (`1\<newline>>&2` is `1>&2`).
+_FILE_DESCRIPTOR = re.compile(r"[0-9](?:[0-9]|\\\n)*(?=[<>])")
+_NAIVE_DESCRIPTOR = re.compile(r"(?<![^\s;|&()])[0-9]+(?=[<>])")
 _QUOTING = frozenset("'\"\\")
 
 
@@ -638,6 +652,9 @@ def _scan(command: str) -> tuple[str, list]:
     opened: list = []       # the here-documents opened on this line: (delimiter, leading tabs dropped)
     starts: list = []       # (index, "$(" or "`") of each substitution the shell would run
     in_backticks = False
+    expansion = 0           # where the `${...}` being read ends: no comment or here-document begins inside one
+    joins: list = []        # for each open parenthesis: the word it stands in goes on after it closes
+    cases: list = []        # for each open `case`: how many parentheses were open where it began
     while i < size:
         c = command[i]
         if quote == "'":
@@ -693,12 +710,18 @@ def _scan(command: str) -> tuple[str, list]:
             quote = "" if c == '"' else quote
             out.append(_FILLED.get(c) or _PLAIN.get(c, c))
         else:
-            if c == "#" and word_start:
+            if c == "#" and word_start and i >= expansion:
                 stop = command.find("\n", i)
                 stop = size if stop < 0 else stop
                 out.append(_inert(command[i:stop]))
                 i = stop
                 continue
+            if word_start and c in "ce" and _CASE_WORD.match(command, i):
+                # the `)` that ends a `case` pattern closes nothing
+                if c == "c":
+                    cases.append(len(joins))
+                elif cases:
+                    cases.pop()
             if c == "\n" and opened:
                 out.append(c)
                 i += 1
@@ -716,7 +739,7 @@ def _scan(command: str) -> tuple[str, list]:
                 opened, word_start = [], True
                 continue
             if c == "<" and command.startswith("<<", i) and not command.startswith("<<<", i) \
-                    and command[i - 1:i] != "<":
+                    and command[i - 1:i] != "<" and i >= expansion:
                 found = _heredoc(command, i)
                 if found:
                     opened.append(found)
@@ -724,6 +747,10 @@ def _scan(command: str) -> tuple[str, list]:
                 # ${x:-"}"} or ${x:-'}'}: the same outside double quotes. The `$` stays
                 # unmarked: the shell can turn this word into several.
                 stop = _parameter_end(command, i, False)
+                if stop is not None:
+                    # A `#` or `<<` inside the braces is part of the expansion's word
+                    # (`${x:-(#}`, `${x#y}`): no comment and no here-document begins there.
+                    expansion = max(expansion, stop)
                 if stop is None or _QUOTING & set(command[i + 2:stop - 1]):
                     starts.append((i, "${"))
                     if stop is not None:
@@ -766,6 +793,13 @@ def _scan(command: str) -> tuple[str, list]:
             quote = c if c in "'\"" else ""
             out.append(c)
             word_start = c in _WORD_BREAK
+            if i < expansion:
+                pass                    # a parenthesis inside `${...}` is a character of its word
+            elif c == "(":
+                before = command[i - 1:i]
+                joins.append(before in _JOINING or (before == "(" and bool(joins) and joins[-1]))
+            elif c == ")" and not (cases and cases[-1] == len(joins)) and joins and joins.pop():
+                word_start = False      # it closed a substitution or an array: the word goes on (_JOINING)
         i += 1
     return "".join(out), starts
 
@@ -816,6 +850,57 @@ def _adds_words(words: list[str]) -> bool:
         if raw[:1] in _FILLED_MARKS and not (i and words[i - 1].startswith("-")):
             return True
     return bool(words) and bool(getattr(words[-1], "paren", False))
+
+
+_BRACE_SEQUENCE = re.compile(r"(-?\d+)\.\.(-?\d+)(?:\.\.-?(\d+))?\Z|([A-Za-z])\.\.([A-Za-z])(?:\.\.-?(\d+))?\Z")
+_BRACE_LIMIT = 64
+
+
+def _brace_sequence(found) -> list[str] | None:
+    """The items of `{1..5}`, `{05..01..2}` or `{a..e}`, or None when there are too many."""
+    numbers = found.group(1) is not None
+    first, last = (int(found.group(1)), int(found.group(2))) if numbers else (ord(found.group(4)), ord(found.group(5)))
+    step = int(found.group(3 if numbers else 6) or 1) or 1
+    if abs(last - first) // step >= _BRACE_LIMIT:
+        return None
+    items = list(range(first, last + (1 if last >= first else -1), step if last >= first else -step))
+    if not numbers:
+        return [chr(item) for item in items]
+    ends = [text.lstrip("-") for text in (found.group(1), found.group(2))]
+    width = max(map(len, ends)) if any(len(text) > 1 and text.startswith("0") for text in ends) else 0
+    return [("-" if item < 0 else "") + str(abs(item)).zfill(width) for item in items]
+
+
+def _brace_expand(raw: str) -> list[str]:
+    """The words Bash makes of one word by brace expansion (`{a,b}c`, `{1..3}`, one inside
+    another), from the word as written: a brace inside quotes is marked in `raw` and is
+    none. Brace expansion needs nothing but the text of the line, so what it makes is
+    read as the command it is: `{sf,data,query,-o,B}` runs `sf data query -o B`. More
+    than _BRACE_LIMIT words are not worked out, and the word is left as it stands."""
+    start = raw.find("{")
+    while start >= 0:
+        level, commas, end = 0, [], -1
+        for at in range(start, len(raw)):
+            if raw[at] == "{":
+                level += 1
+            elif raw[at] == "}":
+                level -= 1
+                if not level:
+                    end = at
+                    break
+            elif raw[at] == "," and level == 1:
+                commas.append(at)
+        if end > 0 and raw[start - 1:start] != "$":         # `${...}` is an expansion, not this
+            cuts = [start, *commas, end]
+            sequence = _BRACE_SEQUENCE.match(raw[start + 1:end])
+            parts = [raw[a + 1:b] for a, b in zip(cuts, cuts[1:])] if commas else \
+                _brace_sequence(sequence) if sequence else None
+            if parts is not None:
+                out = [raw[:start] + piece + tail for part in parts for piece in _brace_expand(part)
+                       for tail in _brace_expand(raw[end + 1:])]
+                return out if len(out) <= _BRACE_LIMIT else [raw]
+        start = raw.find("{", start + 1)
+    return [raw]
 
 
 def _tokens(command: str) -> list[str] | None:
@@ -876,8 +961,8 @@ def is_simple(command: str, tool_name: str = "Bash") -> bool:
     operator at its start is not a chain: it is how PowerShell runs a quoted path
     (`& "C:/Program Files/Torque/torque.exe" guarded counts ...`)."""
     if "powershell" in tool_name.casefold():
-        plain, readings = _powershell_texts(command)
-        return all(_one_command(re.sub(r"\A\s*&\s*(?=\S)", "", text)) for text in (command, plain, *readings))
+        plain, readings, more = _powershell_texts(command)
+        return not more and all(_one_command(re.sub(r"\A\s*&\s*(?=\S)", "", text)) for text in (command, plain, *readings))
     return _one_command(command)
 
 
@@ -1100,8 +1185,13 @@ def _sf_route(rest: list[str], detail: str) -> Route:
 # record data; Apex logs are debug logs. A Tooling row is record data too (it is
 # read whole, author included); a Tooling query is schema only as far as
 # _tooling_query_is_schema says.
+# The whole path has to be one of these: a record can be fetched by an external id whose
+# name or value is a word of this list (`/sobjects/Account/Describe__c/VALUE`,
+# `/sobjects/Account/Key__c/describe`), and that is a record read.
 _REST_METADATA = re.compile(
-    r"^/services/data/?(v[\d.]+/?)?$|/sobjects/?$|/sobjects/[^/?]+/describe|/describe/?$|/limits/?$",
+    r"^/?services/data/?(v[\d.]+/?)?$"
+    r"|^/?(services/data/v[\d.]+/)?(tooling/)?(sobjects/?|describe/?|limits/?"
+    r"|sobjects/[^/?]+/describe(/(layouts|compactLayouts|approvalLayouts|namedLayouts)(/[^/?]+)?)?/?)$",
     re.IGNORECASE)
 # Tooling API entities that hold schema, configuration or code. A query on any other
 # entity (User, TraceFlag, ApexExecutionOverlayResult, test results) reads records.
@@ -1175,7 +1265,7 @@ def rest_data_class(path: str) -> str | None:
                                                        re.IGNORECASE):
             return "debug_logs"
         return None if tooling and soql and _tooling_query_is_schema(soql.group(1)) else "records"
-    if _REST_METADATA.search(text):
+    if _REST_METADATA.search(re.sub(r"(?i)^https?://[^/]+", "", text)):
         return None
     return "records"
 
@@ -1553,6 +1643,11 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head == "env":
         i, unknown = 0, False
         while i < len(rest) and (rest[i].startswith("-") or _ASSIGN_RE.match(rest[i])):
+            if rest[i] == "--":             # the end of env's options: assignments may follow, then the command
+                i += 1
+                while i < len(rest) and _ASSIGN_RE.match(rest[i]):
+                    i += 1
+                break
             if rest[i] in ("-S", "--split-string") or rest[i].startswith(("-S", "--split-string=")):
                 return [Route("unverifiable", None, detail)]
             unknown = unknown or not (_ASSIGN_RE.match(rest[i]) or rest[i] in _ENV_FLAGS + _ENV_VALUES
@@ -1631,6 +1726,9 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
                                   (w.startswith("-") and not w.startswith("--") and "e" in w[1:]) for w in rest):
             # wget starts the program `--use-askpass` names, and `-e` gives it a line of its
             # start-up file, which can name one.
+            return [Route("unverifiable", None, detail + " (an option that names a program or a command to run)")]
+        if head == "aria2c" and any(w.startswith("--on-") for w in rest):
+            # aria2c's event hooks (`--on-download-complete=COMMAND`) run a command
             return [Route("unverifiable", None, detail + " (an option that names a program or a command to run)")]
         if head in NETWORK:
             return [Route("local", None, detail)]
@@ -1810,8 +1908,24 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
     routes: list[Route] = []
     if parsed is None:
         # Unbalanced quoting (a heredoc body, for example): read it the naive way,
-        # which splits more, never less.
+        # which splits more, never less. Whether a backslash at a line end continues the
+        # line cannot be told without the quoting, so the text is read both ways: as it
+        # stands, and with the continuations taken out and a file descriptor's digits
+        # with them (`-o 1\<newline>>&2 org` names org).
         segments = [g._without_redirections(toks) for toks, _ in g._segments_with_separators(text) if toks]
+        joined = _NAIVE_DESCRIPTOR.sub("", text.replace("\\\n", ""))
+        if joined != text:
+            segments += [g._without_redirections(toks) for toks, _ in g._segments_with_separators(joined) if toks]
+        # Bash runs the commands of a line before it reads the next one, so the lines before
+        # the one whose quotes do not pair still run (checked in real Bash). The longest run
+        # of whole lines from the start that does read is read as written as well: the naive
+        # reading leaves a quote or a backslash inside a word in it (`-o o"r"g` names org).
+        lines = (command or "").split("\n")
+        for count in range(len(lines) - 1, max(0, len(lines) - 50), -1):
+            head = "\n".join(lines[:count])
+            if head.strip() and _split(head) is not None:
+                routes += classify_bash(head, _depth + 1, _net)
+                break
     else:
         segments = parsed[0]
     exported = ""
@@ -1831,6 +1945,17 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
             # runs another sf, `HOME=/x; sf ...` reads other aliases; checked in real Bash).
             found = _asked_as_well(found, exported)
         routes.extend(found)
+        pieces = [_brace_expand(_raw(word)) for word in words]
+        if any(made != [_raw(word)] for made, word in zip(pieces, words)):
+            # Brace expansion is worked out from the text of the line alone, so the words it
+            # makes are read as well: `{sf,data,query,-o,B}` is the command `sf data query -o
+            # B`, with its org and its data class. (The reading above still asks about the
+            # braces.) A write both readings find is one write, as for PowerShell's readings,
+            # and a command both refuse is refused once.
+            made = _segment([_Word(piece) for made in pieces for piece in made], _depth)
+            made = _asked_as_well(made, exported) if exported else made
+            counted = {(route.kind, route.org) for route in routes if route.kind in ("org_write", "browser_write", "admin")}
+            routes.extend(route for route in made if route.kind != "local" and (route.kind, route.org) not in counted)
         names = _assigned_names(words)
         if _BASH_RUNS & set(names):
             routes.append(Route("unverifiable", None, " ".join(words[:5]) + " (Bash runs commands from this variable)"))
@@ -1947,10 +2072,27 @@ _PS_AFTER_COMMA = re.compile(r"[ \t]*(?:\r?\n[ \t]*)?")
 # can turn into several (_adds_words, _built_at_run_time).
 _PS_NATIVE = "${native}"
 _PS_CMD_CHARS = frozenset("&|<>^")
+# PowerShell's redirections: `>`, `>>`, `2>`, `2>>`, `2>&1`, `*>`, `<`. A stream's number
+# counts only at the start of a token, and only 1 to 6 (`7>x` is a word).
+_PS_REDIRECTION = re.compile(r"[*1-6]?>>?(?:&[12])?|<")
+# How many places of a line the gate reads each way (_powershell_ways).
+_PS_EACH_WAY = 3
+
+
+def _ps_inside(text: str, start: int) -> tuple[str, int]:
+    """(what stands between a parenthesis open before `start` and the `)` that closes it,
+    counting parentheses and nothing else; the index after that `)`). To the end of the
+    text when nothing closes it."""
+    depth = 1
+    for at in range(start, len(text)):
+        depth += (text[at] == "(") - (text[at] == ")")
+        if not depth:
+            return text[start:at], at + 1
+    return text[start:], len(text)
 
 
 def _powershell_escapes(command: str, braces: bool = False, commas: bool = False,
-                        assigned: list | None = None) -> str:
+                        assigned: list | None = None, choices: tuple = (), places: list | None = None) -> str:
     """A PowerShell line rewritten in Bash's quoting, so that its words split as
     PowerShell passes them: a backtick makes the next character plain (`` `" `` inside
     double quotes, `` `$ ``), a doubled quote inside quotes is one quote, a backtick at
@@ -1978,31 +2120,76 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
     B'` arrives as `x` and `--target-org B`), so can the value of a variable inside a
     double-quoted string, a backslash before the closing quote swallows the words after
     it, and a `.cmd` launcher reads `&`, `|`, `<`, `>` and `^` in an argument without
-    spaces. A string with any of these gets the mark _PS_NATIVE after it."""
+    spaces. A string with any of these gets the mark _PS_NATIVE after it.
+
+    A `#`, a `<#`, a `<` or a `>` at the start of a token is PowerShell's own: a comment, a
+    redirection. In the middle of a word PowerShell decides by what it is reading. Among
+    the arguments of a command the character is part of the word (`echo a#b`, `echo $x>b`
+    and `sf ... -o a<#b#>` each pass one word); in an expression it is the comment or the
+    redirection (`$n = 1#b`, `$x>b`). The gate does not follow which of the two PowerShell
+    is reading, so the caller reads the line each way (_powershell_ways): `choices` says
+    which way at each such place in turn (true: PowerShell's own; none left: part of the
+    word), and `places` gets an item for each place met. A subexpression in the middle of
+    a word is such a place too, when what it holds would end elsewhere as a token of its
+    own (`a$("x)")` is one word; after a parameter's name the same text is a parenthesis)."""
     out, quote, i = [], "", 0
+    places = [] if places is None else places
     risky = spaced = odd = False        # of the string being read
     last = ""                           # its last character
     opened = 0                          # where it began in `out`
     fresh = False                       # it began a word
     nested: list = []                   # the open braces: "block", or where a hash literal's entry is ("key", "value")
-    subs: list = []                     # the open `"...$(`: [parentheses open inside it, the string's state]
     later: list = []                    # text to read once more as code, after a `--%`
     head = ""                           # the first character of the statement being read
     entry = 0                           # where the key of a hash literal's entry began in `out`
+    joined = -1                         # how long `out` was right after a piece of a word that goes on
+    apart = -1                          # how long `out` was right after a token that ends where it is written
+    settled = False                     # the word being read holds a character read as part of it
+
+    def subexpression(text: str, start: int, strings: bool) -> tuple[str, int]:
+        """(the `$(...)` whose inside begins at `start` in `text`, rewritten; the index after
+        its `)`). Inside a string, a here-string or a word, PowerShell's tokenizer finds the
+        end of a subexpression by counting parentheses and nothing else: one inside quotes
+        or in a comment counts too. Outside a here-string (`strings`) it then takes a
+        doubled double quote, or one after a backtick, for one quote, and reads what it has
+        as code. (Checked against the tokenizer.) After a comment the closing parenthesis is
+        written on a line of its own, so the comment does not take it."""
+        inner, stop = _ps_inside(text, start)
+        if strings:
+            inner = re.sub('""|`"', '"', inner)
+        code = _powershell_escapes(inner, braces, commas, assigned, choices, places)
+        return "$(" + code + ("\n)" if "#" in code.rsplit("\n", 1)[-1] else ")"), stop
 
     def closed(mark: str) -> None:
         """The string ends here. An empty one that is a word of its own is not handed on at
         all (`--target-org '' other` reaches the program as `--target-org other`)."""
-        before = out[opened - 1][-1:] if opened else ""
-        if len(out) == opened + 1 and (not opened or before in _PS_TOKEN_START) \
+        nonlocal joined
+        if len(out) == opened + 1 and fresh \
                 and command[i + 1:i + 2] in ("", " ", "\t", "\r", "\n", ";", "|", "&", ")", "}"):
             del out[opened:]
             return
         out.append(mark + (_PS_NATIVE if risky or last == "\\" or (odd and not spaced) else ""))
-        if fresh and command[i + 1:i + 2] not in ("", " ", "\t", "\r", "\n", ";", "|", "&", ")", "}", ","):
+        if not fresh:
+            joined = len(out)           # a string inside a word: the word goes on after it (`x"a"#b`)
+        elif command[i + 1:i + 2] not in ("", " ", "\t", "\r", "\n", ";", "|", "&", ")", "}", ","):
             # A word that begins with a quoted string ends at its closing quote: what follows
             # is a word of its own (`"x"--target-org other`).
             out.append(" ")
+
+    def starts() -> bool:
+        """A token starts here: nothing written before this place belongs to the same word."""
+        return len(out) == apart or ((not out or out[-1][-1:] in _PS_TOKEN_START) and len(out) != joined)
+
+    def own() -> bool:
+        """Is the `#`, `<#`, `<` or `>` here PowerShell's own, and not a character of a word?"""
+        nonlocal settled
+        if starts():
+            return True
+        if settled:                     # the same word as a place read as part of it: one token, one answer
+            return False
+        places.append(i)
+        settled = not (len(places) <= len(choices) and choices[len(places) - 1])
+        return not settled
 
     while i < len(command):
         c, follower = command[i], command[i + 1:i + 2]
@@ -2013,6 +2200,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             if nested and nested[-1] == "value" and c in ";\n":
                 nested[-1] = "key"      # the next entry of the hash literal
                 entry = len(out) + 1    # after this separator, which is copied below
+            if c in _PS_TOKEN_START:
+                settled = False
             if c in ";\n|{}(&":
                 head = ""
             elif not head and c not in " \t\r":
@@ -2039,18 +2228,32 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
                 risky = True
                 if not quote:
                     out.append(_PS_NATIVE)
+            joined = len(out)           # an escaped character is part of a word, whatever it is (`` `;#b ``)
             last = follower
             i += 2
             continue
-        elif c == "$" and follower == "{":
-            stop = command.find("}", i + 2)
+        elif c == "$" and follower and follower in "$?^":
+            # `$$`, `$?` and `$^` are whole variables: what follows them begins something
+            # else (`"$${"` is the variable `$$` and a brace, not the start of `${...}`).
             out.append("${v}")
+            joined = len(out)
+            risky, last = risky or bool(quote), follower
+            i += 2
+            continue
+        elif c == "$" and follower == "{":
+            # `${any name}`: a backtick makes the next character part of the name, a closing
+            # brace among them (`${a`}b}` is one variable, and ends at the second brace).
+            stop = i + 2
+            while stop < len(command) and command[stop] != "}":
+                stop += 2 if command[stop] == "`" else 1
+            out.append("${v}")
+            joined = len(out)
             risky, last = risky or bool(quote), "}"
-            i = len(command) if stop < 0 else stop + 1
+            i = min(stop + 1, len(command))
             continue
         elif not quote and c == "$" and follower and follower in "'\"":
             out.append("\\$")
-        elif (not quote and command.startswith("--%", i) and (not out or out[-1][-1:] in _PS_TOKEN_START)
+        elif (not quote and command.startswith("--%", i) and starts()
               and command[i + 3:i + 4] in ("", " ", "\t", "\r", "\n", "|")):
             end = command.find("\n", i)
             end = len(command) if end < 0 else end
@@ -2114,21 +2317,45 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             i += 2
             continue
         elif not quote and c == "<" and follower == "#":
-            stop = command.find("#>", i + 2)
-            out.append(" ")
-            i = len(command) if stop < 0 else stop + 2
+            if own():
+                stop = command.find("#>", i + 2)
+                out.append(" ")
+                i = len(command) if stop < 0 else stop + 2
+            else:                       # two characters of a word
+                out.append("\\<#")
+                i += 2
             continue
-        elif not quote and c == "#" and (not out or out[-1][-1:] in _PS_TOKEN_START):
-            # A line comment: its text is copied as it stands (a quote in it opens nothing).
+        elif not quote and (c in "<>" or (c in "*123456" and follower == ">" and starts())):
+            # A redirection is no word of the command (`-o *>&1 org` names org), and what
+            # follows it is a token of its own (`2>&1#x` ends in a comment). `*>` is written
+            # as the plain redirection it is.
+            if c not in "<>" or own():
+                found = _PS_REDIRECTION.match(command, i)
+                out.append(found.group().lstrip("*"))
+                apart = len(out)
+                i = found.end()
+            else:                       # a character of a word
+                out.append("\\" + c)
+                i += 1
+            continue
+        elif not quote and c == "#" and own():
+            # A line comment: its text is copied as it stands (a quote in it opens nothing),
+            # after a space, since for Bash a comment begins only where a word would.
             stop = command.find("\n", i)
             stop = len(command) if stop < 0 else stop
-            out.append(command[i:stop])
+            out.append((" " if out and out[-1][-1:] not in " \t\r\n" else "") + command[i:stop])
             i = stop
             continue
-        elif not quote and c == "@" and _PS_HERE.match(command, i):
+        elif not quote and c == "@" and starts() and _PS_HERE.match(command, i):
+            # (in the middle of a word `@"` is an `@` and an ordinary string: `x@"`)
             opener = _PS_HERE.match(command, i)
             mark = opener.group(1)
             stop = command.find("\n" + mark + "@", opener.end() - 1)
+            while stop >= 0 and mark == '"' and (stop - len(command[:stop].rstrip("`"))) % 2:
+                # In an expandable here-string a backtick directly before a line end escapes it,
+                # and a `"@` on the next line is then text of the body (PowerShell's parser
+                # says so; with CR LF the backtick takes the CR, and the string ends).
+                stop = command.find("\n" + mark + "@", stop + 1)
             body = command[opener.end():len(command) if stop < 0 else stop]
             native = _PS_NATIVE if '"' in body or body.endswith("\\") or (mark == '"' and "$" in body) else ""
             if mark == "'":
@@ -2140,36 +2367,41 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
                         text.append("\\" + body[j + 1] if body[j + 1] in '"$`' else body[j + 1])
                         j += 2
                         continue
+                    if body.startswith("$(", j):
+                        piece, j = subexpression(body, j + 2, False)
+                        text.append(piece)
+                        continue
                     text.append({"\\": "\\\\", '"': '\\"'}.get(body[j], body[j]))
                     j += 1
                 out.append('"' + "".join(text) + '"' + native)
+            apart = len(out)            # the here-string is a token: what follows its end is another
             i = len(command) if stop < 0 else stop + 3
             continue
         elif not quote and c in "'\"":
             quote, risky, spaced, odd, last, opened = c, False, False, False, "", len(out)
-            fresh = not out or out[-1][-1:] in _PS_TOKEN_START
+            fresh = starts()
             out.append(c)
         elif quote and c == '"':
             quote = ""
             closed(c)
         elif quote and c == "$" and follower == "(":
             # "... $( ... ) ...": inside the parentheses PowerShell reads code again, with
-            # quotes of its own. A `"` there opens a string; it does not end this one.
-            subs.append([0, (spaced, odd, opened, fresh)])
-            quote = ""
-            out.append("$(")
-            i += 2
+            # quotes of its own. A `"` there opens a string; it does not end this one. The
+            # string now holds a value that is not on the line.
+            text, i = subexpression(command, i + 2, True)
+            out.append(text)
+            risky, last = True, ")"
             continue
-        elif not quote and subs and c == "(":
-            subs[-1][0] += 1
-            out.append(c)
-        elif not quote and subs and c == ")":
-            if subs[-1][0]:
-                subs[-1][0] -= 1
-            else:                       # back in the string, which now holds a value that is not on the line
-                spaced, odd, opened, fresh = subs.pop()[1]
-                quote, risky, last = '"', True, c
-            out.append(c)
+        elif not quote and c == "$" and follower == "(" and not starts() and (
+                not re.search("[\"'`#]", _ps_inside(command, i + 2)[0]) or not own()):
+            # `a$(...)#b`: a subexpression in the middle of a word is part of that word, and
+            # the word goes on after its parenthesis. When what it holds could end elsewhere
+            # for a token of its own (`-x$(...)` is a parameter and a parenthesis), this is
+            # one more place that is read each way: the other way is the plain reading below.
+            text, i = subexpression(command, i + 2, True)
+            out.append(text)
+            joined = len(out)
+            continue
         else:
             if quote and c == "$" and follower and follower not in ' \t\r\n"':
                 risky = True            # a variable (`$x`, `$1`, `$_`, `$?`): its value is not on the line
@@ -2181,15 +2413,16 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
 
 # `$x = `, `$env:NAME += `, `[int]$n = `, `$a, $b = `, `${x} = ` at the start of a statement:
 # PowerShell runs the command on the right of it.
-_PS_VARIABLE = r"(?:\[[\w.\[\], ]+\][ \t]*)?\$(?:[A-Za-z_][\w:.]*|\{[^}\n]*\})(?:\[[^\]\n]*\]|\.\w+)*"
+_PS_VARIABLE = r"(?:\[[\w.\[\], ]+\][ \t]*)?\$(?:[A-Za-z_][\w:.]*|\{(?:[^}`\n]|`.)*\})(?:\[[^\]\n]*\]|\.\w+)*"
 _PS_ASSIGNMENT = re.compile(r"(?m)(^[ \t]*|[;{(|][ \t]*)" + _PS_VARIABLE + r"(?:(?:[ \t]*,[ \t]*|[ \t]+)" + _PS_VARIABLE
                             + r")*[ \t]*(?:[-+*/%]|\?\?)?=(?!=)[ \t]*")
 # What else can stand before a command at the start of a statement: `return`, `throw` and
 # `exit` run the pipeline after them, a dot runs a command in the current scope, `$x in`
-# begins the list a `foreach` goes through, `name =` begins a value in a hash literal.
+# begins the list a `foreach` goes through, `name =` begins a value in a hash literal
+# (a quoted name ends at its closing quote, not at an escaped one inside it).
 _PS_BEFORE = re.compile(r"(?im)(^[ \t]*|[;{(|][ \t]*)(?:(?:return|throw|exit)\b[ \t]*|\.[ \t]+"
-                        r"|\$(?:[\w:]+|\{[^}\n]*\})[ \t]+in[ \t]+"
-                        r"|(?:[A-Za-z_]\w*|'[^'\n]*'|\"[^\"\n]*\")[ \t]*=(?!=)[ \t]*)")
+                        r"|\$(?:[\w:]+|\{(?:[^}`\n]|`.)*\})[ \t]+in[ \t]+"
+                        r"|(?:[A-Za-z_]\w*|'[^'\n]*'|\"(?:[^\"\\\n]|\\.)*\")[ \t]*=(?!=)[ \t]*)")
 # A line with none of these is plain words and plain quotes, which PowerShell and Bash
 # read alike: a backtick, a comment, a character outside printable ASCII, a here-string,
 # `--%`, `${`, a `$` before a quote, a doubled quote, a backslash before anything but a
@@ -2206,11 +2439,15 @@ _PS_NAMED = re.compile(r"(?i)(?<![\w\\/.:$-])(?:sf|sfdx|torque|jsc)(?:\.(?:exe|c
 def _powershell_statements(text: str) -> str:
     """PowerShell text with what stands before a command at the start of a statement
     taken away (an assignment, `return`, a hash literal's `name =`), so that the
-    command is read as one."""
+    command is read as one. The patterns look at the text with its quoted characters
+    marked (_mask): a line that begins inside a string that holds a line end is no start
+    of a statement, and a quote in a comment pairs with nothing (`echo "<newline>" ;
+    sf ... #"="` lost its command to the pattern for a quoted name before `=`)."""
+    text = _mask(text)
     while True:                         # each pass that changes the text shortens it
         shorter = _PS_BEFORE.sub(r"\1", _PS_ASSIGNMENT.sub(r"\1", text))
         if shorter == text:
-            return text
+            return text.translate(_UNMASK)
         text = shorter
 
 
@@ -2279,14 +2516,38 @@ def _powershell_hidden(text: str, depth: int) -> list[Route]:
     return found
 
 
-def _powershell_texts(command: str) -> tuple[str, list[str]]:
+def _powershell_ways(command: str, braces: bool = False, commas: bool = False,
+                     assigned: list | None = None) -> tuple[list[str], bool]:
+    """(the line rewritten in Bash's quoting (_powershell_escapes) once for each way its
+    `#`, `<`, `>` and `$(` in the middle of a word can be read, the reading with each of
+    them part of its word first; whether the line has more such places than the gate reads
+    each way)."""
+    texts, pending, more = [], [()], False
+    while pending:
+        choices = pending.pop(0)
+        places: list = []
+        texts.append(_powershell_escapes(command, braces, commas, assigned, choices, places))
+        more = more or len(places) > _PS_EACH_WAY
+        # (this reading took every place after its choices as part of a word: each other
+        # reading differs from it at one of those places first)
+        pending += [choices + (False,) * (at - len(choices)) + (True,)
+                    for at in range(len(choices), min(len(places), _PS_EACH_WAY))]
+    return list(dict.fromkeys(texts)), more
+
+
+def _powershell_texts(command: str) -> tuple[str, list[str], bool]:
     """(the command with the quote, dash and space characters PowerShell accepts written
-    as the ASCII ones, that text rewritten in Bash's quoting: as it stands, with every
+    as the ASCII ones; that text rewritten in Bash's quoting: as it stands, with every
     brace ending a statement and every comma separating words, and with the commas
-    alone)."""
+    alone, each of them every way it reads (_powershell_ways); whether it reads more ways
+    than those)."""
     plain = command.translate(_PS_CHARACTERS)
-    return plain, list(dict.fromkeys(_powershell_statements(_powershell_escapes(plain, braces, commas))
-                                     for braces, commas in ((False, False), (True, True), (False, True))))
+    texts, more = [], False
+    for braces, commas in ((False, False), (True, True), (False, True)):
+        ways, beyond = _powershell_ways(plain, braces, commas)
+        texts += [_powershell_statements(text) for text in ways]
+        more = more or beyond
+    return plain, list(dict.fromkeys(texts)), more
 
 
 def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
@@ -2315,7 +2576,8 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
     # backtick substitution; it is a plain `$`, which Bash writes with a backslash.
     routes = classify_bash(_PS_ESCAPED_DOLLAR.sub(r"\1\\$", command), depth)
     added: list[Route] = []
-    plain, readings = _powershell_texts(command)
+    plain, readings, more = _powershell_texts(command)
+    stands = [_powershell_statements(text) for text in _powershell_ways(plain)[0]]     # as it stands, each way
     if plain != command:
         added += classify_bash(plain, depth) + _powershell_refusals(command)
     apart = re.sub(r"\\(?=\r?\n)", "", plain)
@@ -2328,13 +2590,19 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
         # Something here runs a string (Invoke-Expression, cmd /c, powershell -Command):
         # every quoted piece of more than one word is read as a command, from the same
         # quote-aware words as the rest.
-        for word in _tokens(readings[0]) or []:
+        for word in dict.fromkeys(word for text in stands for word in _tokens(text) or []):
             if re.search(r"\S\s+\S", word) and "\n" not in word[:1]:
                 added += [r for r in classify_bash(str(word).replace(_PS_NATIVE, ""), depth + 1) if r.kind != "local"]
     # The net: each line on its own, as written and as rewritten (a block comment on the
     # same line as a command is gone only in the rewritten one).
-    lines = _powershell_statements(re.sub(r"`\r?\n", " ", plain)).splitlines()
-    for line in dict.fromkeys([*(lines if len(lines) > 1 else []), *(line for text in readings for line in text.splitlines())]):
+    # Each line is taken on its own before anything is stripped from it: a quote that the
+    # readers pair wrongly must not reach into the next line.
+    alone = re.sub(r"`\r?\n", " ", plain).splitlines()
+    lines = [_powershell_statements(line) for line in alone] if len(alone) > 1 else []
+    for line in dict.fromkeys([*lines,
+                               *(_powershell_statements(text) for line in alone[:len(lines)]
+                                 for text in _powershell_ways(line)[0]),
+                               *(_powershell_statements(line) for text in readings for line in text.splitlines())]):
         added += [r for r in classify_bash(line, depth + 1) if r.kind in _NET_KINDS]
     written = {(r.kind, r.org) for r in routes if r.kind in ("org_write", "browser_write")}
     asked = []
@@ -2359,20 +2627,26 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
     # after it, as `$env:NAME='...'` at the start of the line does). These stand beside a
     # write too: they are other statements than the write, as they would be on a line of their own.
     assigned: list = []
-    braced = _powershell_escapes(plain, True, True, assigned)
+    braced = _powershell_ways(plain, True, True, assigned)[0]
     known = {route.detail for route in routes if route.kind == "unverifiable"}     # asked about already
-    for text in dict.fromkeys((braced, _powershell_statements(braced))):
-        routes += [route if route.detail.endswith(_PS_METHOD_NOTE)
-                   else replace(route, detail=route.detail + _PS_HIDDEN_NOTE)
-                   for route in _powershell_hidden(text, depth) if route.detail not in known]
+    for text in dict.fromkeys(text for way in braced for text in (way, _powershell_statements(way))):
+        hidden = [route if route.detail.endswith(_PS_METHOD_NOTE)
+                  else replace(route, detail=route.detail + _PS_HIDDEN_NOTE)
+                  for route in _powershell_hidden(text, depth) if route.detail not in known]
+        routes += [route for route in hidden if route not in routes]
     if assigned:
         routes.append(Route("unverifiable", None, assigned[0] + "= (an assignment: what it sets can change what "
                                                                 "the commands after it run)"))
-    drive = _powershell_drive(readings[0])
+    if more:
+        routes.append(Route("unverifiable", None, "a `#`, `<`, `>` or `$(` in the middle of a word in more than "
+                            f"{_PS_EACH_WAY} places (PowerShell takes each for part of the word or for a comment, "
+                            "a redirection or a token of its own by where it stands; the gate reads only that "
+                            "many each way)"))
+    drive = next(filter(None, map(_powershell_drive, stands)), "")
     if drive:
         routes.append(Route("unverifiable", None, drive + " (names PowerShell's store of environment variables, "
                                                           "functions or aliases, which a copy or a move changes)"))
-    block = _PS_METHOD_BLOCK.search(_mask(readings[0]))
+    block = next(filter(None, (_PS_METHOD_BLOCK.search(_mask(text)) for text in stands)), None)
     if block:
         routes.append(Route("unverifiable", None,
                             block.group().translate(_UNMASK)[-60:] + " ...}" + _PS_METHOD_NOTE))
@@ -2382,8 +2656,8 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
             plain != command or _PS_OWN_QUOTING.search(plain) or _PS_NOT_PLAIN.search(plain)):
         # The second net. A write is left out: it needs an approval of this exact text.
         found = {(r.kind, r.org, r.data) for r in routes}
-        for name in _PS_NAMED.finditer(readings[0]):
-            tail = readings[0][name.start():].split("\n", 1)[0]
+        for tail in dict.fromkeys(text[name.start():].split("\n", 1)[0]
+                                  for text in stands for name in _PS_NAMED.finditer(text)):
             if any(r.kind in _NET_KINDS and (r.kind, r.org, r.data) not in found for r in classify_bash(tail, depth + 1)):
                 routes.append(Route("unverifiable", None, " ".join(tail.split()[:5])
                                     + " (text that names a command, in PowerShell quoting the gate cannot be sure of)"))

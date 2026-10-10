@@ -44,6 +44,8 @@ LINES = [
     # strings Bash has and PowerShell does not, and a variable name that holds a quote
     f"echo $'a\\' ; {S} #'", f"echo $\"a\\\" ; {S} #\"", f"echo ${{a'b}} ; {S} #'", f"echo \"${{a\"b}}\" ; {S} #\"",
     f"echo $(({S}))", f"(({S}))",
+    # a backtick inside `${...}` makes the next character part of the name, a closing brace among them
+    f"echo ${{v`}}' }}; {S} #'", f"echo \"${{v`}}\\\" }}\" ; {S} #\"", f"${{a`}}b}} = 1; {S}", f"echo ${{v``}} ; {S}",
     # what can stand before a command in a statement
     f"& {{ return {S} }}", f"try {{ throw {S} }} catch {{ }}", f". {S}", f"foreach ($x in {S}) {{ }}",
     f"@{{a = {S}}}", f"@{{'a' = {S}; b = {T}}}", f"$x, $y = {S}", f"${{x}} = {S}", f"$x = $y = {S}",
@@ -365,3 +367,227 @@ def test_the_gate_asks_about_every_method_call_powershells_parser_finds(tmp_path
     # and where the parser finds no call and nothing else is unusual, the gate does not ask
     for form in METHOD_FORMS[-8:]:
         assert calls[form] == 0 and not asked(form), (form, calls[form])
+
+
+# Lines where a `#`, a `<` or a `>` stands in the middle of a word, or where a string, a comment or a
+# here-string ends in an unusual place. PowerShell reads such a character as part of the word among the
+# arguments of a command and as a comment or a redirection in an expression; its parser says which sf
+# commands each line holds, and with which org (`-o org0>x` names the org `org0>x`).
+WORD_LINES = [
+    'echo "\n" ; sf sobject describe -s A -o org0 #"="',
+    'echo "$${" ; sf sobject describe -s A -o org0 ; echo "}"',
+    'echo @"\n`\n"@ ; sf sobject describe -s A -o org0\n"@\nsf sobject describe -s A -o org1',
+    "sf sobject describe -s A -o *>&1 org0",
+    "echo ${x}#y ; sf sobject describe -s A -o org0",
+    "echo $$#y ; sf sobject describe -s A -o org0",
+    "echo a<#b ; sf sobject describe -s A -o org0 ; echo #>",
+    "echo '''\"\"'`{<#''\nsf sobject describe -s A -o *>&1 org0",
+    "$n = 1<# ' #> ; sf sobject describe -s A -o org0 #'",
+    "$n = 1#'\nsf sobject describe -s A -o org0 #'",
+    "$n = $x#'\nsf sobject describe -s A -o org0 #'",
+    "echo $x.y#'\nsf sobject describe -s A -o org0 #'",
+    "echo [int]#b ; sf sobject describe -s A -o org0",
+    "$n = [int]#'\nsf sobject describe -s A -o org0 #'",
+    'echo x@"\n" ; sf sobject describe -s A -o org0 ; echo "\n"',
+    "sf sobject describe -s A -o org0>x",
+    "sf sobject describe -s A -o org1<x",
+    "sf sobject describe -s A -o org0#x",
+    "sf sobject describe -s A -o org1<#x#>",
+    "sf sobject describe -s A -o org0>>x",
+    "sf sobject describe -s A -o 2>&1<# c #> org0",
+    "sf sobject describe -s A -o 2>&1#c\necho a ; sf sobject describe -s A -o org1",
+    'echo @{k="b""`=`$"}; sf sobject describe -s A -o org0',
+    "echo 'a'#'\nsf sobject describe -s A -o org0",
+    "echo a`;#b ; sf sobject describe -s A -o org0",
+    "sf sobject describe -s A -o >a>b org0",
+    "echo @'\na\n'@#'\nsf sobject describe -s A -o org0",
+    "echo a#b c#d e#f g#h ; sf sobject describe -s A -o org0",
+    "$x>'a' ; sf sobject describe -s A -o org0",
+    "echo a 2>&1#' \nsf sobject describe -s A -o org0",
+    "echo {1}#'\nsf sobject describe -s A -o org0",
+    "echo (1)<# ' #> ; sf sobject describe -s A -o org0",
+    # A subexpression inside a word or a string: its end is found by counting parentheses and nothing else,
+    # a doubled quote inside it is one quote, and after its parenthesis the same word goes on. At the start
+    # of a token, or after a parameter's name or a member, it is read as code of its own.
+    'echo a$("#|#><")#c ; sf sobject describe -s A -o org0',
+    "echo a$(1)#b ; sf sobject describe -s A -o org0",
+    "echo -x$(1)#'\nsf sobject describe -s A -o org0",
+    'echo "a$(""b"")c" ; sf sobject describe -s A -o org0',
+    'echo a$("\'\'``"-")#<#`$""--%#> ; sf sobject describe -s A -o org0',
+    "echo $x.y$(1)#'\nsf sobject describe -s A -o org0",
+    'echo [int]#<#$()#`"#> ; sf sobject describe -s A -o org1<#x#>',
+    'echo a$("#|#><“`"")#@\'\na\n\'@ ; sf sobject describe -s A -o org0<#x#>',
+    "echo -x$(\"(\")#'\nsf sobject describe -s A -o org0",
+    'echo $x.y$(")") ; sf sobject describe -s A -o org0',
+    'echo "a$("“")z" ; sf sobject describe -s A -o org0',
+    'echo a$(echo "“-`\'=->")<#${\'\'" <#<}#> ; sf sobject describe -s A -o <# c #> org0',
+]
+TREE = r"""
+$P = [System.Management.Automation.Language.Parser]
+$lines = Get-Content -LiteralPath 'lines.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+foreach ($line in $lines) {
+  $t = $null; $e = $null
+  $ast = $P::ParseInput([string]$line, [ref]$t, [ref]$e)
+  $orgs = @()
+  foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+    if ($c.GetCommandName() -eq 'sf') {
+      $els = $c.CommandElements
+      for ($k = 0; $k -lt $els.Count - 1; $k++) {
+        if ($els[$k].Extent.Text -eq '-o') {
+          $v = $els[$k + 1]     # a word or a string without variables has its value in the tree
+          if ($v -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $orgs += $v.Value }
+          else { $orgs += $v.Extent.Text }
+        }
+      }
+    }
+  }
+  '{0} {1}' -f $e.Count, ($orgs -join ' ')
+}
+"""
+
+
+def test_the_gate_reports_the_org_of_every_sf_command_in_powershells_tree(tmp_path):
+    # Nothing runs: each line is parsed, and the parser is asked for the org of every sf command in its tree.
+    import json
+    (tmp_path / "lines.json").write_text(json.dumps(WORD_LINES), encoding="utf-8")
+    encoded = base64.b64encode(TREE.encode("utf-16-le")).decode("ascii")
+    done = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cwd=tmp_path,
+                          capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    rows = [row.split() for row in done.stdout.splitlines() if row.strip()]
+    if len(rows) != len(WORD_LINES):
+        pytest.skip("Windows PowerShell is present but its parser could not be asked here")
+    missed = []
+    for line, (errors, *orgs) in zip(WORD_LINES, rows):
+        assert errors == "0" and orgs, (line, errors)      # each line is one PowerShell runs an sf command from
+        seen = {route.org for route in classify("PowerShell", {"command": line})}
+        if not set(orgs) <= seen:
+            missed.append((line, orgs, sorted(filter(None, seen))))
+    assert not missed, missed
+
+
+# Random lines. Each is a few statement shapes with pieces of text in them (F) and one or two sf calls in
+# ordinary places (CALL). A piece is a quoted string, a braced variable, a comment, a here-string or a bare
+# word that holds characters which mean something elsewhere, written the way its kind keeps such a
+# character inside; the rest is chance. Some lines are raw pieces in any order. The seed is fixed.
+RANDOM_INNER = ["'", '"', "`", "$", "{", "}", "(", ")", ";", "#", "<", ">", "@", "|", "&", " ", " ", "a", "b", "-", "\\",
+                "\n", "=", ",", "%", "’", "“", " ", "sf", "<#", "#>", "--%", "''", '""', "`}", "`{", "`'",
+                '`"', "`$", "``", "${", "$(", "@{", "\r\n", "\t", "x"]
+RANDOM_BARE = ["a", "1", "-x", "a`;b", "a`'b", 'a`"b', "a`#b", "$x", "$x.y", "[int]1", "a,b", "`$y", "a`}b", "a#b", "a<#b",
+               "a>b", "a<b", "$x#b", "a#>", "1#", "-x#b", 'x@"q"', "a`{", "`;", "$$", "${x}", "a$(1)#b", "$(1)#b",
+               "a$(1)", "$x$(1)>b"]
+RANDOM_SHAPES = [
+    "CALL", "echo F", "echo F F", "$x = F", "echo F ; CALL", "echo @{k=CALL}", "& { CALL }", 'echo "a $(CALL) b"',
+    "if ($true) { CALL }", "echo F | % { CALL }", "echo F # F", "CALL # F", "echo F F ; CALL", "$x = F ; CALL",
+    "echo @{F=1; k=CALL}", "echo F; echo @{k=CALL} #F", "function f { CALL }", "echo (CALL)", "F", "echo F,F",
+    "CALL | % { echo F }", "$n = 1#F\nCALL", "$n = $x<#F#> ; CALL", "echo a#F ; CALL", "echo a<#F#> ; CALL",
+    "echo $x#F ; CALL", 'echo x@"\n" ; CALL ; echo "\n"@', "echo a>F ; CALL", "$x>F ; CALL", "echo ${x}#F ; CALL",
+    'echo "a"#F\nCALL', "echo a 2>&1#F\nCALL", 'echo x"a"#F ; CALL', "echo $x.y#F\nCALL", "echo [int]#F ; CALL",
+    "$n = [int]#F\nCALL", "echo F#F ; CALL", "echo F<#F#> ; CALL", "$n = F#F\nCALL", "$n = F<#F#> ; CALL",
+    "echo F>F ; CALL", "echo F<F ; CALL", "echo a#F<#F#>F ; CALL", "$n = 1 + 2#F\nCALL", "echo @'\nF\n'@#F\nCALL",
+    "echo x@'\n' ; CALL ; echo '\n'@", "switch (1) { 1 { CALL } }", "try { CALL } catch { echo F }",
+    "foreach ($i in F) { CALL }", "while ($false) { CALL }", "do { CALL } while ($false)", "$x = CALL", "$x, $y = CALL",
+    "[void](CALL)", "@(CALL)", "$(CALL)", "CALL | Out-Null", "echo F > x.txt ; CALL", ". { CALL }", '"$(echo F)" ; CALL',
+    "echo @(F, F) ; CALL", "echo $(F) ; CALL", "echo F -f F ; CALL", "echo F[0] ; CALL", "echo F | CALL",
+    "echo F.Length ; CALL", "$x = F + F ; CALL", "echo @{F=F; F=F} ; CALL", "if (F -eq F) { CALL } else { echo F }",
+    "echo F`\n ; CALL", "echo F <# F #> ; CALL", "& { echo F ; CALL }", "echo F ; & CALL", "return CALL",
+    "echo @{k=F}; echo @{k=CALL}", "$x = @{k=CALL}", "echo F;CALL", "echo F\nCALL", "echo a$(F)#F ; CALL",
+    "echo $(F)#F\nCALL", "echo a$(echo F)<#F#> ; CALL", "echo -x$(F)#F\nCALL", "echo F$(F)F ; CALL", "echo F(F)#F\nCALL",
+]
+# what can stand between an option and its value without being a word of the command, and what an org can
+# end in that is PowerShell's own at the start of a token
+RANDOM_BETWEEN = ["2>&1", "<# c #>", "`\n", "2>$null", "*>&1", "<#'#>", '<#"#>', "`\r\n", "3>&1 2>&1", "2>x#c", ">a>b",
+                  "2>&1<#c#>", ">x<#c", "2>>a<b", "*>>x"]
+RANDOM_ENDING = ["#x", ">x", "<#x#>", "<x", "#", "<#", ">>x"]
+# other ways to write the org's name, and to call the command
+RANDOM_ORG = ["'org%s'", '"org%s"', 'o"r"g%s', "org%s''", "or`g%s", "'o'rg%s", '"or"\'g\'%s']
+RANDOM_CALL = ["& sf", "& 'sf'", '& "sf"', ". sf", "&sf"]
+RANDOM_PIECES = [
+    " ", " ", " ", ";", "\n", "|", "&", "(", ")", "{", "}", "@{", "@(", "$(", '"', '"', "'", "'", "`", "`", "$", "${",
+    "#", "<#", "#>", '@"\n', '\n"@', "@'\n", "\n'@", "=", ",", "--%", "$x", "k=", "1", "-", ".", "::", "[", "]", "\\",
+    ">", "2>&1", " ", "“", "’", " ", "\r\n", "if", "else", "function f", "return", "echo", "a",
+    "x", "&&", "||", "%", "?", "!", ":", "+", "*", "\t", "}}", "{{", "''", '""', "`n", "`$", '`"', "`}", "`{", "$_",
+    "@x", "[int]", "-eq", "foreach", "in", "try", "catch", "while", "do", "switch", "param", "-join", "..",
+]
+
+
+def random_fragment(rng) -> str:
+    inner = [rng.choice(RANDOM_INNER) for _ in range(rng.randint(0, 6))]
+    kind = rng.choice(["sq", "dq", "var", "comment", "here", "bare", "sq", "dq", "var"])
+    if kind == "sq":
+        return "'" + "".join("''" if c == "'" else c for c in inner) + "'"
+    if kind == "dq":
+        return '"' + "".join('`"' if c == '"' else c for c in inner) + '"'
+    if kind == "var":
+        return "${" + "".join("`}" if c == "}" else c for c in inner if c not in ("\n", "\r\n")) + "}"
+    if kind == "comment":
+        return "<#" + "".join(c for c in inner if c != "#>") + "#>"
+    if kind == "here":
+        mark = rng.choice("'\"")
+        return "@" + mark + "\n" + "".join(c for c in inner if c not in ("\n", "\r\n")) + "\n" + mark + "@"
+    return rng.choice(RANDOM_BARE)
+
+
+def random_statement(rng, calls: list) -> str:
+    body = rng.choice(RANDOM_SHAPES)
+    while "F" in body:
+        body = body.replace("F", "\0", 1).replace("\0", random_fragment(rng).replace("F", "\1"), 1)
+    body = body.replace("\1", "F")
+    while "CALL" in body:
+        call = calls.pop() if calls else "echo c"
+        if call.startswith("sf") and rng.random() < 0.25:
+            call = call.replace("-o ", "-o " + rng.choice(RANDOM_BETWEEN) + " ")
+        elif call.startswith("sf") and rng.random() < 0.1:
+            call += rng.choice(RANDOM_ENDING)
+        elif call.startswith("sf") and rng.random() < 0.2:
+            call = call[:-4] + rng.choice(RANDOM_ORG) % call[-1]
+        if call.startswith("sf") and rng.random() < 0.1:
+            call = rng.choice(RANDOM_CALL) + call[2:]
+        body = body.replace("CALL", call, 1)
+    return body
+
+
+def random_lines(count: int, seed: int) -> list:
+    import random
+    rng, lines = random.Random(seed), []
+    for _ in range(count):
+        if rng.random() < 0.15:
+            parts = [rng.choice(RANDOM_PIECES) for _ in range(rng.randint(3, 12))]
+            for call in rng.sample([S, T], rng.randint(1, 2)):
+                parts.insert(rng.randint(0, len(parts)), " " + call + " ")
+            lines.append("".join(parts))
+            continue
+        calls = rng.sample([S, T], 2)
+        made = [random_statement(rng, calls) for _ in range(rng.randint(1, 4))]
+        if len(calls) == 2:             # no statement took a call
+            made.append(calls.pop())
+        lines.append(rng.choice([" ; ", "\n", ";", "\r\n"]).join(made))
+    return lines
+
+
+def test_random_lines_read_beside_powershells_parser(tmp_path):
+    # Nothing runs. For every line PowerShell can parse, the gate has to report the org of each sf command
+    # in the tree, as that command's own words give it; or refuse the line outright, or say that it holds
+    # more places to read each way than it reads. A command only asked about without its org is a miss.
+    import json
+    lines = random_lines(4000, 17)
+    (tmp_path / "lines.json").write_text(json.dumps(lines), encoding="utf-8")
+    encoded = base64.b64encode(TREE.encode("utf-16-le")).decode("ascii")
+    done = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], cwd=tmp_path,
+                          capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
+    rows = [row.split() for row in done.stdout.splitlines() if row.strip()]
+    if len(rows) != len(lines):
+        pytest.skip("Windows PowerShell is present but its parser could not be asked here")
+    held, missed = 0, []
+    for line, (errors, *orgs) in zip(lines, rows):
+        orgs = {org for org in orgs if re.match(r"org\d", org)}
+        if errors != "0" or not orgs:
+            continue                    # PowerShell runs nothing from a line it cannot parse
+        held += 1
+        routes = classify("PowerShell", {"command": line})
+        if orgs <= {route.org for route in routes}:
+            continue
+        if not {"no_org", "admin", "credential", "all_orgs"} & {route.kind for route in routes} \
+                and not any("in the middle of a word in more than" in route.detail for route in routes):
+            missed.append((line, sorted(orgs), sorted({route.org for route in routes if route.org})))
+    assert not missed, missed[:5]
+    assert held >= 1500                 # about half of the lines parse and hold an sf command

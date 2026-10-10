@@ -155,7 +155,8 @@ def test_value_options_are_the_ones_torques_own_parser_gives_one_value():
     ('torque logs analyze --file "$FILE"', ["local"]),
     ("torque browser multiprofile visit --target-org acme-prod -- --headed", ["browser_write"]),
     ("sf data query -q 'SELECT Id FROM Account' -o acme-prod $MORE", ["read", "unverifiable"]),
-    ("sf data query -q 'SELECT Id FROM Account' -o acme-prod {-o,other}", ["read", "unverifiable"]),
+    # the words a brace expansion makes are on the line, so they are read too: a second org, refused
+    ("sf data query -q 'SELECT Id FROM Account' -o acme-prod {-o,other}", ["read", "unverifiable", "no_org"]),
     ("sf sobject describe -s Account -o acme-prod `cat more`", None),
     ("sf project retrieve start -m ApexClass:Acct* -o acme-prod", ["read"]),
     ("sf project retrieve start -d force-app/main/* -o acme-prod", ["read"]),
@@ -1426,7 +1427,17 @@ def test_powershell_nesting_found_by_running_every_pair_of_forms(w, command):
 def test_the_powershell_rewriting_follows_a_subexpression_in_a_string():
     convert = routes._powershell_escapes
     assert convert('echo "$( "x y" ; a )" ; b <# c #> d') == 'echo "$( "x y" ; a )"${native} ; b   d'
-    assert convert('echo "a $( (1) + "x)" ) b" ; c') == 'echo "a $( (1) + "x)" ) b"${native} ; c'
+    assert convert('echo "a $( (1) + "x" ) b" ; c') == 'echo "a $( (1) + "x" ) b"${native} ; c'
+    # (after a comment the closing parenthesis is written on a line of its own, so the comment does not take it)
+    assert convert('echo "a $( 1 # " )" ; c') == 'echo "a $( 1 # " \n)"${native} ; c'
+    # PowerShell's tokenizer finds the end of a subexpression inside a string by counting parentheses and
+    # nothing else, so one inside an inner string ends it (PowerShell then rejects this line); and a doubled
+    # quote inside it is one quote
+    assert convert('echo "a $( (1) + "x)" ) b" ; c') == 'echo "a $( (1) + "x)"${native} ) b" ; c'
+    assert convert('echo "a$(""b"")c" ; d') == 'echo "a$("b")c"${native} ; d'
+    # the same inside a word and inside a here-string; at the start of a token a subexpression is read as code
+    assert convert("echo a$(1)#b") == "echo a$(1)#b" and convert('echo $("x)") ; c') == 'echo $("x)") ; c'
+    assert convert('echo @"\na $( "x" ) b\n"@ ; c') == 'echo "a $( "x" ) b"${native} ; c'
     # what follows --% runs to a pipe outside double quotes; the text after the first pipe is read once more
     assert convert('echo --% " | a #" ; 1 | b') == "echo --% '\" | a #\" ; 1' | b\n a #\" ; 1 | b"
     assert convert("echo --% a | b") == "echo --% 'a' | b"
@@ -1983,3 +1994,256 @@ def test_the_wrappers_known_options_are_read_as_before():
     assert options("exec", ["-cla", "n", "sf"]) == (2, False) and options("nice", ["-5", "sf"]) == (1, False)
     assert options("time", ["-x", "sf"]) == (1, True) and options("nohup", ["sf"]) == (0, False)
 
+
+def test_aria2c_event_hooks_are_asked_about(w):
+    for command in ("aria2c --on-download-complete=./x.sh http://example.org/x", "aria2c --on-download-error ./x.sh -o y http://example.org/x"):
+        assert "unverifiable" in KINDS(command), (command, KINDS(command))
+        assert run(w, command, "dontAsk").action == "deny"
+    assert KINDS("aria2c -o y http://example.org/x") == ["local"]
+
+
+# ---- round 17: brace expansion is worked out from the line alone, so the words it makes are read
+
+@pytest.mark.parametrize("command", [
+    "{sf,data,query,-q,x,-o,acme-prod}", "{sf,data,query} -q x -o acme-prod", "sf {data,query} -q x -o acme-prod",
+    "sf data query -q x {-o,acme-prod}", "echo a; {sf,data,query,-q,x,-o,acme-prod}",
+    "{sf,data,{query,-q},x,-o,acme-prod}", "echo $({sf,data,query,-q,x,-o,acme-prod})", "{sf,data,query,-q,x,-o,acme-pro{d..d}}",
+])
+def test_a_command_made_by_brace_expansion_is_read_as_that_command(w, command):
+    assert ("read", "acme-prod", "records") in B(command), (command, B(command))
+    assert run(w, command).action == "deny"                                # this consent has no records class
+    owner = "{torque,workspace,ai-access,full,--path,.}"
+    assert "admin" in KINDS(owner) and run(w, owner).action == "deny"
+
+
+def test_brace_expansion_as_bash_makes_it():
+    expand = routes._brace_expand
+    assert expand("{a,b}") == ["a", "b"] and expand("x{a,b}y") == ["xay", "xby"]
+    assert expand("{a,b}{c,d}") == ["ac", "ad", "bc", "bd"] and expand("{a,{b,c}}") == ["a", "b", "c"]
+    assert expand("{1..3}") == ["1", "2", "3"] and expand("{3..1}") == ["3", "2", "1"] and expand("{a..c}") == ["a", "b", "c"]
+    assert expand("{01..03}") == ["01", "02", "03"] and expand("{1..5..2}") == ["1", "3", "5"]
+    assert expand("{a,}") == ["a", ""] and expand("{,a}b") == ["b", "ab"]
+    for plain in ("{}", "{a}", "a{b", "a}b", "${x,y}", "{", "}", "x", "${a:-{b,c}}"[:6]):
+        assert expand(plain) == [plain], plain
+    assert expand("{1..500}") == ["{1..500}"]                              # too many words to work out
+    assert expand("{a,b}" * 7) == ["{a,b}" * 7]
+
+
+def test_ordinary_brace_expansion_stays_what_it_was(w):
+    for command in ("mkdir -p src/{a,b,c}", "cp notes.{txt,bak}", "echo {1..3}", "touch file{1,2}.txt"):
+        assert set(KINDS(command)) == {"local"}, (command, KINDS(command))
+    # a write whose argument holds braces is still the one write, and a read still a read
+    write = UPDATE.replace("-o acme-prod", "-o acme-prod --json") + " Name={a,b}"
+    assert [kind for kind in KINDS(write) if kind == "org_write"] == ["org_write"], KINDS(write)
+    read = "sf project retrieve start -m ApexClass:{A,B} -o acme-prod"
+    assert ("read", "acme-prod", None) in B(read) and "no_org" not in KINDS(read)
+
+
+# ---- round 17: an escaped brace in a PowerShell variable's name, a continued file descriptor, REST paths
+# ---- that only look like a describe, env's end of options
+
+def test_a_backtick_inside_a_braced_powershell_variable_keeps_the_name_going(w):
+    # `${v`}' }` is one variable: the first closing brace is escaped. The gate ended the name there and
+    # took the rest for a quoted string
+    query = "sf data query -q \"SELECT Email FROM Contact\" -o acme-prod"
+    for command in ("echo ${v`}' }; " + query + " #'", "echo ${v`}' }; echo @{k=" + query + "} #'",
+                    "${a`}' } = 1; " + query + " #'", "echo \"${v`}\\\" }\" ; " + query + " #\""):
+        assert ("read", "acme-prod", "records") in B_PS(command), (command, B_PS(command))
+        assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+    owner = "echo ${v`}' }; torque workspace ai-access full --path . #'"
+    assert "admin" in KINDS(owner, "PowerShell"), KINDS(owner, "PowerShell")
+    convert = routes._powershell_escapes
+    assert convert("echo ${v`}' }; x #'") == "echo ${v}; x #'" and convert("echo ${a``} ; x") == "echo ${v} ; x"
+    assert convert("echo ${plain} ; x") == "echo ${v} ; x"
+
+
+def test_a_continued_file_descriptor_is_still_a_file_descriptor(w):
+    # `-o 1\<newline>>&2 acme-prod`: Bash drops the continuation, so `1>&2` is a redirection and the org is acme-prod
+    for command in ("sf data query -q x -o 1\\\n>&2 acme-prod", "sf data query -q x -o 1\\\n\\\n>&2 acme-prod",
+                    "sf data query -q x -o 1\\\n2>/dev/null acme-prod"):
+        assert B(command) == [("read", "acme-prod", "records")], (command, B(command))
+    assert B("torque logs --target-org 123 >&2") == [("read", "123", "debug_logs")]        # with a space it is a word
+    assert routes._mask("a 1\\\n>&2 b") == routes._mask("a >&2 b")
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("/services/data/v60.0/sobjects/Account/Describe__c/VALUE", "records"),
+    ("/services/data/v60.0/sobjects/Account/Key__c/describe", "records"),
+    ("/services/data/v60.0/sobjects/Account/Key__c/limits", "records"),
+    ("/services/data/v60.0/sobjects/Account/Key__c/sobjects", "records"),
+    ("/services/data/v60.0/sobjects/Account/describeX", "records"),
+    ("/services/data/v60.0/sobjects/Account/describe/001000000000001", "records"),
+    ("/services/data/v60.0/sobjects/Account/describe", None), ("/services/data/v60.0/sobjects/Account/describe/", None),
+    ("/services/data/v60.0/sobjects/Account/describe/layouts", None),
+    ("/services/data/v60.0/sobjects/Account/describe/layouts/012000000000001", None),
+    ("/services/data/v60.0/sobjects/Account/describe/compactLayouts", None),
+    ("/services/data/v60.0/sobjects", None), ("/services/data/v60.0/sobjects/", None),
+    ("/services/data/v60.0/limits", None), ("/services/data/v60.0/", None), ("/services/data", None),
+    ("/services/data/v60.0/tooling/sobjects", None), ("/services/data/v60.0/tooling/sobjects/ApexClass/describe", None),
+    ("/services/data/v60.0/tooling/describe", None), ("sobjects/Account/describe", None), ("limits", None),
+    ("https://acme.my.salesforce.com/services/data/v60.0/limits", None),
+    ("https://acme.my.salesforce.com/services/data/v60.0/sobjects/Account/Key__c/limits", "records"),
+])
+def test_only_the_whole_path_makes_a_rest_read_a_schema_read(path, expected):
+    assert rest_data_class(path) == expected, path
+
+
+def test_env_ends_its_options_at_two_dashes(w):
+    assert B("env -- " + R15_QUERY) == [("read", "acme-prod", "records")]
+    assert B("env -i -- " + R15_QUERY) == [("read", "acme-prod", "records")]
+    assert set(KINDS("env -- echo VALUE")) == {"local"}
+    kinds = KINDS("env -- HOME=/other " + R15_QUERY)
+    assert "read" in kinds and "unverifiable" in kinds          # a variable set for the command, as before
+
+
+# ---- round 17, found by reading random lines beside PowerShell's parser and real Bash: a `#`, `<` or `>` in
+# ---- the middle of a PowerShell word, where a string, a comment or a here-string ends, a quoted key
+
+# (line, the orgs of the sf commands PowerShell's parser finds in it); tests/test_gate_against_powershell.py
+# asks the parser about the same lines where Windows PowerShell is installed
+POWERSHELL_WORDS = [
+    ('echo "\n" ; sf sobject describe -s A -o org0 #"="', {"org0"}),
+    ('echo "$${" ; sf sobject describe -s A -o org0 ; echo "}"', {"org0"}),
+    ('echo @"\n`\n"@ ; sf sobject describe -s A -o org0\n"@\nsf sobject describe -s A -o org1', {"org1"}),
+    ("sf sobject describe -s A -o *>&1 org0", {"org0"}),
+    ("echo ${x}#y ; sf sobject describe -s A -o org0", {"org0"}),
+    ("echo $$#y ; sf sobject describe -s A -o org0", {"org0"}),
+    ("echo a<#b ; sf sobject describe -s A -o org0 ; echo #>", {"org0"}),
+    ("echo '''\"\"'`{<#''\nsf sobject describe -s A -o *>&1 org0", {"org0"}),
+    ("$n = 1<# ' #> ; sf sobject describe -s A -o org0 #'", {"org0"}),
+    ("$n = 1#'\nsf sobject describe -s A -o org0 #'", {"org0"}),
+    ("$n = $x#'\nsf sobject describe -s A -o org0 #'", {"org0"}),
+    ("echo $x.y#'\nsf sobject describe -s A -o org0 #'", {"org0"}),
+    ("echo [int]#b ; sf sobject describe -s A -o org0", {"org0"}),
+    ("$n = [int]#'\nsf sobject describe -s A -o org0 #'", {"org0"}),
+    ('echo x@"\n" ; sf sobject describe -s A -o org0 ; echo "\n"', {"org0"}),
+    ("sf sobject describe -s A -o org0>x", {"org0>x"}),
+    ("sf sobject describe -s A -o org1<x", {"org1<x"}),
+    ("sf sobject describe -s A -o org0#x", {"org0#x"}),
+    ("sf sobject describe -s A -o org1<#x#>", {"org1<#x#>"}),
+    ("sf sobject describe -s A -o org0>>x", {"org0>>x"}),
+    ("sf sobject describe -s A -o 2>&1<# c #> org0", {"org0"}),
+    ("sf sobject describe -s A -o 2>&1#c\necho a ; sf sobject describe -s A -o org1", {"org1"}),
+    ('echo @{k="b""`=`$"}; sf sobject describe -s A -o org0', {"org0"}),
+    ("echo 'a'#'\nsf sobject describe -s A -o org0", {"org0"}),
+    ("echo a`;#b ; sf sobject describe -s A -o org0", {"org0"}),
+    ("sf sobject describe -s A -o >a>b org0", {"org0"}),
+    ("echo @'\na\n'@#'\nsf sobject describe -s A -o org0", {"org0"}),
+    ("echo a#b c#d e#f g#h ; sf sobject describe -s A -o org0", {"org0"}),
+    ("$x>'a' ; sf sobject describe -s A -o org0", {"org0"}),
+    ("echo a 2>&1#' \nsf sobject describe -s A -o org0", {"org0"}),
+    ("echo {1}#'\nsf sobject describe -s A -o org0", {"org0"}),
+    ("echo (1)<# ' #> ; sf sobject describe -s A -o org0", {"org0"}),
+    # a subexpression inside a word or a string
+    ('echo a$("#|#><")#c ; sf sobject describe -s A -o org0', {"org0"}),
+    ("echo a$(1)#b ; sf sobject describe -s A -o org0", {"org0"}),
+    ("echo -x$(1)#'\nsf sobject describe -s A -o org0", {"org0"}),
+    ('echo "a$(""b"")c" ; sf sobject describe -s A -o org0', {"org0"}),
+    ('echo a$("\'\'``"-")#<#`$""--%#> ; sf sobject describe -s A -o org0', {"org0"}),
+    ("echo $x.y$(1)#'\nsf sobject describe -s A -o org0", {"org0"}),
+    ('echo [int]#<#$()#`"#> ; sf sobject describe -s A -o org1<#x#>', {"org1<#x#>"}),
+    ('echo a$("#|#><“`"")#@\'\na\n\'@ ; sf sobject describe -s A -o org0<#x#>', {"org0<#x#>"}),
+    ("echo -x$(\"(\")#'\nsf sobject describe -s A -o org0", {"org0"}),
+    ('echo $x.y$(")") ; sf sobject describe -s A -o org0', {"org0"}),
+    ('echo "a$("“")z" ; sf sobject describe -s A -o org0', {"org0"}),
+    ('echo a$(echo "“-`\'=->")<#${\'\'" <#<}#> ; sf sobject describe -s A -o <# c #> org0', {"org0"}),
+]
+
+
+@pytest.mark.parametrize("line,orgs", POWERSHELL_WORDS)
+def test_a_powershell_word_is_read_as_powershell_ends_it(line, orgs):
+    seen = {route.org for route in classify("PowerShell", {"command": line})}
+    assert orgs <= seen, (line, sorted(filter(None, seen)))
+
+
+def test_a_hash_or_an_angle_bracket_inside_a_powershell_word_is_read_each_way(w):
+    ways, convert = routes._powershell_ways, routes._powershell_escapes
+    # among a command's arguments the character is part of the word; in an expression it is PowerShell's own
+    assert ways("echo a#b ; x") == (["echo a#b ; x", "echo a #b ; x"], False)
+    assert ways("echo a>b") == (["echo a\\>b", "echo a>b"], False)
+    assert ways("echo a<#b#> c") == (["echo a\\<#b#\\> c", "echo a  c"], False)       # one word, one answer
+    assert ways("echo $x#b") == (["echo $x#b", "echo $x #b"], False)
+    assert ways("echo a`;#b") == (["echo a\\;#b", "echo a\\; #b"], False)
+    # at the start of a token there is one reading: after a space, a separator, a string that began its
+    # word, a redirection, a here-string
+    for line, text in (("echo a #b", "echo a #b"), ("echo a;#b", "echo a; #b"), ("echo 'a'#b", "echo 'a' #b"),
+                       ("echo a 2>&1#b", "echo a 2>&1 #b"), ("echo a > b", "echo a > b"), ("echo a *>&1", "echo a >&1"),
+                       ("echo a <# b #> c", "echo a   c"), ("echo @'\na\n'@#b", "echo 'a' #b"), ("echo (1)#b", "echo (1) #b")):
+        assert ways(line) == ([text], False), line
+    # `x@"` is a word with a string in it, not a here-string
+    assert convert('echo x@"\n" ; y') == 'echo x@"\n" ; y' and convert('echo @"\na\n"@ ; y') == 'echo "a" ; y'
+    # three such places are read every way; with more, the gate says so and asks
+    texts, more = ways("echo a>b c>d e>f")
+    assert len(texts) == 8 and not more
+    texts, more = ways("echo a>b c>d e>f g>h")
+    assert len(texts) == 8 and more
+    # (a comment takes the rest of its line with it: the places after it are in no reading that has it)
+    assert ways("echo a#b c#d e#f") == (["echo a#b c#d e#f", "echo a #b c#d e#f", "echo a#b c #d e#f",
+                                         "echo a#b c#d e #f"], False)
+    many = "echo a#b c#d e#f g#h ; sf data query -q \"SELECT Email FROM Contact\" -o acme-prod"
+    found = classify("PowerShell", {"command": many})
+    assert ("read", "acme-prod", "records") in [(r.kind, r.org, r.data) for r in found]
+    assert any(r.kind == "unverifiable" and "in the middle of a word" in r.detail for r in found), found
+    assert run(w, many, "dontAsk", tool="PowerShell").action == "deny"
+    assert not routes.is_simple("torque a#b c#d e#f g#h", "PowerShell")
+    # a record read behind such a place is found whichever way PowerShell reads it
+    query = "sf data query -q \"SELECT Email FROM Contact\" -o acme-prod"
+    for command in ("$n = 1#'\n" + query + " #'", "$n = 1<# ' #> ; " + query + " #'", "echo a<#b ; " + query + " ; echo #>",
+                    'echo x@"\n" ; ' + query + ' ; echo "\n"', 'echo @{k="b""`=`$"}; ' + query):
+        assert ("read", "acme-prod", "records") in B_PS(command), (command, B_PS(command))
+        assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+
+
+def test_ordinary_powershell_redirections_and_comments_read_as_before():
+    for line in ("sf sobject describe -s Account -o acme-prod > out.txt", "sf sobject describe -s Account -o acme-prod 2>&1",
+                 "sf sobject describe -s Account -o acme-prod # note", "sf sobject describe -s Account -o acme-prod >> out.txt",
+                 "sf sobject describe -s Account -o acme-prod 2>$null", "sf sobject describe -s Account -o acme-prod <# note #>"):
+        found = classify("PowerShell", {"command": line})
+        assert {(r.kind, r.org) for r in found if r.kind != "local"} <= {("read", "acme-prod"), ("unverifiable", "acme-prod")}, line
+        assert ("read", "acme-prod") in {(r.kind, r.org) for r in found}, line
+    plain = classify("PowerShell", {"command": "sf sobject describe -s Account -o acme-prod # note"})
+    assert [(r.kind, r.org) for r in plain] == [("read", "acme-prod")]
+
+
+def test_a_hash_inside_a_bash_expansion_begins_no_comment():
+    # `${x:-(#}` and `${x:- #}`: the `#` is part of the expansion's word, and the command after it runs
+    for line in ("echo ${x:-(#} ; sf sobject describe -s A -o org0", "echo ${x:- #} ; sf sobject describe -s A -o org0",
+                 "echo ${x:-;#} ; sf sobject describe -s A -o org0", "echo ${x#y} ; sf sobject describe -s A -o org0"):
+        assert "org0" in {route.org for route in classify("Bash", {"command": line})}, line
+    # a quote after such a `#` is a real quote: it pairs with the next one, and what stands between is text
+    quoted = "echo ${x:-(#} ' ; sf sobject describe -s A -o org1 ; ' ; sf sobject describe -s A -o org0"
+    assert {route.org for route in classify("Bash", {"command": quoted}) if route.org} == {"org0"}
+
+
+def test_a_hash_after_a_substitution_inside_a_bash_word_begins_no_comment():
+    # `echo $(date)#x ; sf ...` runs sf: after the `)` of a substitution, a process substitution or an array
+    # the word goes on (checked in real Bash). The org is read as its quotes give it, not as comment text.
+    for line in ('echo $(echo a)#b ; sf sobject describe -s A -o "org0"', 'echo a$(echo 1)#b ; sf sobject describe -s A -o "org0"',
+                 'echo $((1))#b ; sf sobject describe -s A -o "org0"', 'echo <(echo a)#b ; sf sobject describe -s A -o "org0"',
+                 'x=(1 2)#b ; sf sobject describe -s A -o "org0"', 'echo $( (echo a) )#b ; sf sobject describe -s A -o "org0"',
+                 'x=(${x:-#=))} b)#c ; sf sobject describe -s A -o "org0"',
+                 'echo $(case x in x) echo a;; esac)#b ; sf sobject describe -s A -o "org0"'):
+        assert "org0" in {route.org for route in classify("Bash", {"command": line})}, line
+    # a query behind such a word is read with its data class
+    hidden = 'echo $(date)#x ; sf data query -q "SELECT Email FROM Contact" -o "acme-prod"'
+    assert ("read", "acme-prod", "records") in B(hidden), B(hidden)
+    # after a subshell, a separator or a space a `#` still begins a comment
+    assert routes._mask("( a )#'b") == routes._mask("( a ) #'b").replace(" #", "#", 1)
+    assert routes._mask("echo $(a) #'b").endswith(routes._inert("#'b"))
+
+
+def test_the_lines_before_one_whose_quotes_do_not_pair_are_read_as_written():
+    # Bash runs the commands of a line before it reads the next one (checked in real Bash), so these run
+    # their sf call although a later line cannot be read; the org is the word as its quotes give it
+    for line in ('sf sobject describe -s A -o o"r"g0 # "${x:-\'\'1\n}"', "sf sobject describe -s A -o or\\g0\necho a\necho '",
+                 'sf sobject describe -s A -o "org0"\necho "', "echo 'a\nb' ; sf sobject describe -s A -o 'org0' # '\n'"):
+        assert "org0" in {route.org for route in classify("Bash", {"command": line})}, line
+
+
+def test_a_line_with_unpaired_quotes_is_read_with_and_without_its_continuations():
+    # The quotes do not pair, so the line is read the naive way. A continuation between a file descriptor
+    # and its redirection is taken out in one of the two readings: the org is the word after the redirection.
+    line = "echo ' ; sf sobject describe -s A -o 1\\\n>out org0"
+    assert "org0" in {route.org for route in classify("Bash", {"command": line})}
+    # with `>&2` the naive reading splits at the `&`: the command is refused for naming no org it can read
+    assert "no_org" in KINDS("echo ' ; sf sobject describe -s A -o 1\\\n>&2 org0")
