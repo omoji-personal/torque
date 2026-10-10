@@ -564,6 +564,9 @@ def random_lines(count: int, seed: int) -> list:
     return lines
 
 
+# (The gate's older ANSI-C helper decodes with Python's own codec, which warns about an escape it does not
+# know; it keeps such an escape as written. The random strings hold many.)
+@pytest.mark.filterwarnings("ignore:invalid escape sequence:DeprecationWarning")
 def test_random_lines_read_beside_powershells_parser(tmp_path):
     # Nothing runs. For every line PowerShell can parse, the gate has to report the org of each sf command
     # in the tree, as that command's own words give it; or refuse the line outright, or say that it holds
