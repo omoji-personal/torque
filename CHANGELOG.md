@@ -100,7 +100,12 @@ off-by-default feature, guarded reads, answers build questions about an org with
   subexpression inside a string or a word ends where PowerShell's tokenizer ends it. In Bash a `#` right after
   the `)` of a substitution begins no comment (`echo $(date)#x ; sf ...` runs sf), and the lines before a line
   whose quotes do not pair are read as written, since Bash runs them. The gate is now also compared with
-  PowerShell's parser and with real Bash on random lines, in the test suite.
+  PowerShell's parser and with real Bash on random lines, in the test suite. Bash keeps the completed
+  lines before an unfinished quote even in long scripts, reads through `time -p` and named coprocesses,
+  and asks about alias definitions and functions that replace a command it knows. PowerShell asks about
+  command words beginning with `-`, `=` or `!` inside a hash or script block and about parenthesized call
+  targets, while expressions stay quiet. REST query endpoints are matched as whole paths, so an
+  external-id value named `query` remains a record read.
 - Guarded reads and older versions: while guarded reads are on, `workspace.json` names the mode
   `connected-guarded`. A Torque from before guarded reads treats that as build-only and refuses org work in
   the workspace, instead of applying its own older reading of connected mode.

@@ -639,15 +639,17 @@ _NAIVE_DESCRIPTOR = re.compile(r"(?<![^\s;|&()])[0-9]+(?=[<>])")
 _QUOTING = frozenset("'\"\\")
 
 
-def _scan(command: str) -> tuple[str, list]:
+def _scan(command: str) -> tuple[str, list, int | None, int]:
     """(the command with its plain, filled-in and inert characters marked (see above),
-    where its command substitutions start), from one pass, so both agree on what is
+    where its command substitutions start, where a quote left open began, where the
+    last whole line ends), from one pass, so all agree on what is
     quoted. The line is read the way Bash reads quoting: single and double quotes, the backslash, ANSI-C
     quoting, a comment from an unquoted `#` that begins a word to the line end (a
     backslash before that line end does not continue it), and the body of a
     here-document. What is in a comment or a body is still split into words: cmd.exe
     runs the words after a `#`, and a body can be a script handed to a shell."""
     out, quote, i, size = [], "", 0, len(command)
+    quote_start, unfinished, completed = None, None, 0
     word_start = True       # where an unquoted # begins a comment
     opened: list = []       # the here-documents opened on this line: (delimiter, leading tabs dropped)
     starts: list = []       # (index, "$(" or "`") of each substitution the shell would run
@@ -657,6 +659,8 @@ def _scan(command: str) -> tuple[str, list]:
     cases: list = []        # for each open `case`: how many parentheses were open where it began
     while i < size:
         c = command[i]
+        if c == "\n" and not quote:
+            completed = i
         if quote == "'":
             quote = "" if c == "'" else quote
             out.append(_PLAIN.get(c, c))
@@ -782,6 +786,7 @@ def _scan(command: str) -> tuple[str, list]:
                     i = stop + 1
                     word_start = False
                     continue
+                unfinished = i
             if c == "$" and command[i + 1:i + 2] == '"':
                 # $"..." is a string the shell may translate (locale quoting): with a message
                 # catalogue in place its text is another. The `$` stays, so the word counts
@@ -791,6 +796,8 @@ def _scan(command: str) -> tuple[str, list]:
                 word_start = False
                 continue
             quote = c if c in "'\"" else ""
+            if quote:
+                quote_start = i
             out.append(c)
             word_start = c in _WORD_BREAK
             if i < expansion:
@@ -801,7 +808,8 @@ def _scan(command: str) -> tuple[str, list]:
             elif c == ")" and not (cases and cases[-1] == len(joins)) and joins and joins.pop():
                 word_start = False      # it closed a substitution or an array: the word goes on (_JOINING)
         i += 1
-    return "".join(out), starts
+    return ("".join(out), starts,
+            unfinished if unfinished is not None else quote_start if quote else None, completed)
 
 
 class _Word(str):
@@ -811,6 +819,7 @@ class _Word(str):
     when an opening parenthesis follows the word directly: in PowerShell that is
     an argument computed at run time (`torque (Get-Content words.txt)`)."""
     paren = False
+    function = False
 
     def __new__(cls, raw: str):
         word = super().__new__(cls, raw.translate(_UNMASK))
@@ -934,7 +943,7 @@ def _split(command: str) -> tuple[list[list[str]], list[str]] | None:
     segments: list[list[str]] = [[]]
     operators: list[str] = []
     skip, backticks = False, 0
-    for tok in toks:
+    for at, tok in enumerate(toks):
         if skip:
             skip = False
             if not _is_operator(tok):
@@ -944,6 +953,14 @@ def _split(command: str) -> tuple[list[list[str]], list[str]] | None:
             if segments[-1] and (tok.startswith("(") or (tok.startswith("`") and backticks % 2 == 0)):
                 # WORD (...) or WORD `...`: an argument computed at run time follows the word.
                 segments[-1][-1].paren = True
+                end, parens = at + 1, str(tok)
+                if parens.rstrip("\n") == "(" and end < len(toks) and _is_operator(toks[end]):
+                    parens += toks[end]
+                    end += 1
+                if parens.replace("\n", "").startswith("()(") or (
+                        parens.replace("\n", "") == "()" and end < len(toks) and _raw(toks[end]) in ("{", "(")):
+                    # A function's name defines what later calls run; its body is read separately.
+                    segments[-1][-1].function = True
             backticks += tok.count("`")
             if _is_redirect(tok):
                 skip = True         # a file descriptor before it (`2>&1`) is not among the words: _scan
@@ -1193,6 +1210,8 @@ _REST_METADATA = re.compile(
     r"|^/?(services/data/v[\d.]+/)?(tooling/)?(sobjects/?|describe/?|limits/?"
     r"|sobjects/[^/?]+/describe(/(layouts|compactLayouts|approvalLayouts|namedLayouts)(/[^/?]+)?)?/?)$",
     re.IGNORECASE)
+# An external-id value can be named query, so only a whole query endpoint reads SOQL.
+_REST_QUERY = re.compile(r"^/?(services/data/v\d+\.\d+/)?(query(All)?|tooling/query)/?$", re.IGNORECASE)
 # Tooling API entities that hold schema, configuration or code. A query on any other
 # entity (User, TraceFlag, ApexExecutionOverlayResult, test results) reads records.
 TOOLING_SCHEMA_ENTITIES = frozenset(name.casefold() for name in (
@@ -1252,8 +1271,9 @@ def rest_data_class(path: str) -> str | None:
         return "records"
     if re.search(r"/sobjects/apexlog(/|$)", text, re.IGNORECASE):
         return "debug_logs"
-    tooling = re.search(r"/tooling/query/?$", text, re.IGNORECASE)
-    if tooling or re.search(r"/query/?$", text, re.IGNORECASE):
+    endpoint = _REST_QUERY.fullmatch(re.sub(r"(?i)^https?://[^/]+", "", text))
+    tooling = endpoint and endpoint.group(2).casefold() == "tooling/query"
+    if endpoint:
         # The class comes from what the query reads, never from a word in its text
         # (`... WHERE LastName != 'ApexLog'` is a read of contacts).
         soql = re.fullmatch(r"q=(.*)", query, re.IGNORECASE | re.DOTALL)
@@ -1555,14 +1575,30 @@ def _segment(words: list[str], depth: int) -> list[Route]:
 
 def _segment_words(words: list[str], depth: int) -> list[Route]:
     had_assignment = False
+    questions = []
     if words and words[0] in ("for", "select", "case"):
         return [Route("local", None, " ".join(words[:5]))]
-    while words and (words[0] in _KEYWORDS or _ASSIGN_RE.match(words[0])):
+    while words and (words[0] in _KEYWORDS or _ASSIGN_RE.match(words[0])
+                     or getattr(words[0], "function", False)):
+        if words[0] == "time" and len(words) > 1 and words[1] == "-p":
+            words = words[2:]             # the reserved word's portable option
+            continue
+        if words[0] == "coproc" and len(words) > 1 and (
+                (len(words) > 2 and _raw(words[2]) == "{")
+                or (len(words) == 2 and getattr(words[1], "paren", False))):
+            words = words[2:]             # a name before a compound command names the coprocess
+            continue
+        if getattr(words[0], "function", False) or (words[0] == "function" and len(words) > 1):
+            name = words[0] if getattr(words[0], "function", False) else words[1]
+            if name in {"sf", "sfdx", "torque", "jsc"} | LOCAL_COMMANDS | BENIGN_WRAPPERS:
+                questions.append(Route("unverifiable", None, str(name) + " (defines what this command name runs)"))
+            words = words[1:] if getattr(words[0], "function", False) else words[2:]
+            continue
         had_assignment = had_assignment or bool(_ASSIGN_RE.match(words[0]))
         words = words[1:]
     if not words:
-        return [] if not had_assignment else [Route("local", None, "")]
-    routes = _segment_core(words, depth)
+        return questions + ([] if not had_assignment else [Route("local", None, "")])
+    routes = questions + _segment_core(words, depth)
     if had_assignment:
         # A variable set for one command (HOME, SF_*) can point an alias at another org.
         routes = _asked_as_well(routes, " (with a variable assignment)")
@@ -1742,6 +1778,8 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head in EXTENSIBLE_COMMANDS:
         return [Route("unverifiable", None, detail + " (can run hooks, plugins or configured commands)")]
     known_path = re.search(r"[/\\]", first) is None
+    if head == "alias" and any("=" in word for word in rest):
+        return [Route("unverifiable", None, detail + " (makes a name run another command)")]
     if head == "hash" and any(w.startswith("-") and "p" in w for w in rest):
         # `hash -p FILE NAME`: from here on the shell runs FILE for NAME (`hash -p ./x sf`).
         return [Route("unverifiable", None, detail + " (makes a name run another program)")]
@@ -1920,12 +1958,20 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
         # the one whose quotes do not pair still run (checked in real Bash). The longest run
         # of whole lines from the start that does read is read as written as well: the naive
         # reading leaves a quote or a backslash inside a word in it (`-o o"r"g` names org).
-        lines = (command or "").split("\n")
-        for count in range(len(lines) - 1, max(0, len(lines) - 50), -1):
-            head = "\n".join(lines[:count])
+        scanned = _scan(command or "")
+        before = (command or "").rfind("\n", 0, len(command or "") if scanned[2] is None else scanned[2])
+        heads = dict.fromkeys(((command or "")[:max(0, before)], (command or "")[:scanned[3]]))
+        read = False
+        for head in heads:
             if head.strip() and _split(head) is not None:
                 routes += classify_bash(head, _depth + 1, _net)
-                break
+                read = True
+        if not read:
+            # If another quoting form prevents those readings, each whole line is read
+            # on its own. Their total length is bounded by the text, unlike prefixes.
+            for line in dict.fromkeys((command or "")[:max(0, before)].split("\n")):
+                if _split(line) is not None:
+                    routes += classify_bash(line, _depth + 1, _net=False)
     else:
         segments = parsed[0]
     exported = ""
@@ -2452,9 +2498,11 @@ def _powershell_statements(text: str) -> str:
 
 
 # What a statement begins with when it runs nothing by itself: a quoted string, a
-# variable, a type, an array or hash literal, a sign, a brace, a redirection, a comment.
-_PS_INERT_HEAD = frozenset("'\"$[@-+!{}=,<>#")
+# variable, a type, an array or hash literal, a brace, a redirection, a comment.
+# `-hostname`, `=hostname` and `!hostname` are commands, but unary expressions are not.
+_PS_INERT_HEAD = frozenset("'\"$[@+{},<>#")
 _PS_NUMBER = re.compile(r"(?i)(?:0x[0-9a-f]+|\d+\.?\d*(?:e[+-]?\d+)?|\.\d+)(?:[dl]|[kmgtp]b)*\Z")
+_PS_EXPRESSION_HEAD = re.compile(r"(?i)-(?:not|bnot|join|split)(?!\w)|[-!]+(?=[$'\"[@])")
 _PS_STATEMENT_END = re.compile(r"([;\n|&()]+)")
 # What stands directly before a `(` when that is a method call: a member after a dot or
 # `::`, whatever names it (`$x.Invoke`, `[scriptblock]::Create`, `(...).Invoke`, `$x.'Invoke'`,
@@ -2509,7 +2557,12 @@ def _powershell_hidden(text: str, depth: int) -> list[Route]:
         if at + 1 < len(pieces) and pieces[at + 1].startswith("(") and _PS_METHOD.search(pieces[at]):
             found.append(Route("unverifiable", None,
                                words[-1].translate(_UNMASK)[-60:] + "(...)" + _PS_METHOD_NOTE))
-        if words[0][0] in _PS_INERT_HEAD or _PS_NUMBER.match(words[0]):
+        if (words[0][0] in _PS_INERT_HEAD or _PS_NUMBER.match(words[0].lstrip("-!"))
+                or _PS_EXPRESSION_HEAD.match(words[0])):
+            continue
+        if words[0][0] in "-!=" and (not words[0].strip("-!=") or (at and pieces[at - 1].endswith(")"))):
+            # A sign alone, or an operator after a parenthesis (`(Get-Date) -gt $d`, `-(1 + 2)`),
+            # goes on with an expression: no command begins there.
             continue
         found += [route for route in classify_bash(pieces[at].translate(_UNMASK), depth + 1, _net=False)
                   if route.kind == "unverifiable" and not route.detail.endswith(_ADDS_WORDS_NOTE)]
@@ -2650,6 +2703,10 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
     if block:
         routes.append(Route("unverifiable", None,
                             block.group().translate(_UNMASK)[-60:] + " ...}" + _PS_METHOD_NOTE))
+    # A call operator takes the command name from the parenthesized pipeline's output.
+    if any(re.search(r"&[ \t\r\n]*\(", _mask(text)) for text in stands):
+        routes.append(Route("unverifiable", None,
+                            "& (...) (a computed command: the gate cannot tell what it runs)"))
     if not written:
         routes += asked         # beside a write nothing only asks: the write needs its approval
     if not written and (

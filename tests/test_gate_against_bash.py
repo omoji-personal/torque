@@ -279,3 +279,28 @@ def test_random_lines_run_in_bash(tmp_path):
     assert not missed, missed[:5]
     assert len(ran) >= 300              # on most lines Bash really ran an sf call
     assert all(ran.get(number) == {"org0"} for number in range(len(BROKEN_LATER))), ran
+
+
+# Completed lines still run when a quote opens much earlier than the final line.
+BROKEN_LATER += [
+    S.replace("org0", 'o"r"g0') + ' # "\necho \'\n' + '\n'.join(['echo VALUE'] * 49),
+    S.replace("org0", 'o"r"g0') + ' # "\necho \\\necho \'\n' + '\n'.join(['echo VALUE'] * 49),
+    S.replace("org0", 'o"r"g0') + '\necho $\'\n' + '\n'.join(['echo VALUE'] * 49),
+    S + '\n' + '\n'.join(['echo VALUE'] * 4998) + '\necho "',
+    S.replace("org0", 'o"r"g0') + ' "VALUE\nSECOND" # "\necho \\\necho \'\n'
+    + '\n'.join(['echo VALUE'] * 49),
+]
+
+
+# ---- round 18: portable timing, a coprocess name before a compound command, command definitions
+LINES += [
+    f"time -p {S}", f"time -p command {S}", f"time -p {{ {S}; }}", f"time -p ( {S} ); {T}",
+    f"coproc echo {{ {S}; }}; wait", f"coproc sf {{ {S}; }}; wait",
+    f"coproc worker {{ {S}; {T}; }}; wait", f"coproc echo ( {S} ); wait",
+    f"coproc sf ( {S} ); wait", f"coproc worker ( {S}; {T} ); wait", f"coproc {S}; wait",
+    f"alias echo=hostname; {S}", f"alias user_name='echo VALUE'; {S}",
+    f"echo() {{ {S}; }}; echo", f"function echo {{ {S}; }}; echo", f"function echo() {{ {S}; }}; echo",
+    f"f() {{ {S}; }}; f; {T}", f"function deploy_all {{ {S}; }}; deploy_all",
+    f"function deploy_all() {{ {S}; }}; deploy_all", f"function echo\n{{ {S}; }}; echo",
+    f"echo() ( {S} ); echo", f"echo()( {S} ); echo",
+]

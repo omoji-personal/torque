@@ -2247,3 +2247,195 @@ def test_a_line_with_unpaired_quotes_is_read_with_and_without_its_continuations(
     assert "org0" in {route.org for route in classify("Bash", {"command": line})}
     # with `>&2` the naive reading splits at the `&`: the command is refused for naming no org it can read
     assert "no_org" in KINDS("echo ' ; sf sobject describe -s A -o 1\\\n>&2 org0")
+
+
+# ---- round 18: completed Bash lines, PowerShell command targets, REST paths and Bash wrappers
+
+def test_completed_bash_lines_before_an_unfinished_quote_have_no_distance_limit():
+    command = 'sf data query -o o"r"g0 # "\necho \'\n' + '\n'.join(['echo VALUE'] * 49)
+    assert ("read", "org0", "records") in B(command)
+    for quote in ("'", '"', "$'"):
+        for count in (48, 49, 4998):
+            command = 'sf data query -o a"c"me-prod # "\necho ' + quote + '\n' + '\n'.join(['echo VALUE'] * count)
+            assert ("read", "acme-prod", "records") in B(command), (quote, count, B(command))
+    # A continued line belongs to the unfinished command. Earlier completed commands
+    # are still read together, including a query string that spans several lines.
+    command = 'sf data query -o a"c"me-prod # "\necho \\\necho \'\n' + '\n'.join(['echo VALUE'] * 49)
+    assert ("read", "acme-prod", "records") in B(command)
+    command = ('sf data query -o a"c"me-prod -q \'SELECT Id\nFROM Contact\' # "\necho \\\necho \'\n'
+               + '\n'.join(['echo VALUE'] * 49))
+    assert ("read", "acme-prod", "records") in B(command)
+    for command in ("echo 'VALUE\nSECOND'\necho VALUE", 'echo "VALUE\nSECOND"\necho VALUE',
+                    "echo $'VALUE\\nSECOND'\necho VALUE", "echo '\nsf data query -o acme-prod -q VALUE\n'\necho VALUE"):
+        assert set(KINDS(command)) == {"local"}, command
+
+
+def test_completed_bash_prefixes_require_only_linear_scanning(monkeypatch):
+    scanned = 0
+    scan = routes._scan
+
+    def counted(command):
+        nonlocal scanned
+        scanned += len(command)
+        return scan(command)
+
+    monkeypatch.setattr(routes, "_scan", counted)
+    for command, data in (
+            ('sf sobject describe -s Account -o a"c"me-prod\n' + '\n'.join(['echo VALUE'] * 4998) + '\necho "', None),
+            ('sf data query -o a"c"me-prod # "\necho \\\necho \'\n' + '\n'.join(['echo VALUE'] * 4997), "records")):
+        scanned = 0
+        assert len(command.splitlines()) == 5000
+        assert ("read", "acme-prod", data) in B(command)
+        assert scanned <= 12 * len(command), (scanned, len(command))
+
+
+@pytest.mark.parametrize("head", ["-hostname", "=hostname", "!hostname", "-notx", "-joinx", "-1foo"])
+def test_a_powershell_command_word_inside_braces_is_asked_about(w, head):
+    # PowerShell's parser gives these values a CommandAst, including the initial punctuation.
+    for command in (f"echo @{{a={head}}}", f"echo {{{head}}}"):
+        assert "unverifiable" in KINDS(command, "PowerShell"), (command, B_PS(command))
+        assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+
+
+@pytest.mark.parametrize("value", [
+    "-1", "-not $x", "!$x", "-join $list", "'x'", "$x", "1", "+1", "-bnot $x", "-split $list",
+    "-not$x", "!1", "-[int]1", "echo VALUE", "hostname",
+])
+def test_a_powershell_expression_inside_braces_stays_quiet(value):
+    # The unary forms are CommandExpressionAst values, so they do not resolve a command name.
+    for command in (f"echo @{{a={value}}}", f"echo {{{value}}}"):
+        assert set(KINDS(command, "PowerShell")) == {"local"}, (command, B_PS(command))
+
+
+@pytest.mark.parametrize("command", [
+    "& (echo hostname)", "&(echo hostname)", "echo @{a=&(echo hostname)}", "echo { & (echo hostname) }",
+    "& $(echo hostname)", "& @(echo hostname)", "echo @{a=&$(echo hostname)}", "echo @{a=&@(echo hostname)}",
+])
+def test_a_powershell_computed_call_target_is_asked_about(w, command):
+    assert "unverifiable" in KINDS(command, "PowerShell"), (command, B_PS(command))
+    assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+
+
+def test_ordinary_powershell_parentheses_and_written_call_names_are_as_before():
+    for command in ("echo (echo hostname)", "echo @{a=(echo hostname)}", "echo '& (echo hostname)'",
+                    'echo "& (echo hostname)"', "echo VALUE"):
+        assert set(KINDS(command, "PowerShell")) == {"local"}, (command, B_PS(command))
+    command = "& sf sobject describe -o acme-prod -s Account"
+    assert B_PS(command) == [("read", "acme-prod", None)]
+
+
+@pytest.mark.parametrize("endpoint,expected", [
+    ("query", "records"), ("queryAll", "records"), ("tooling/query", None),
+    ("sobjects/Account/External__c/query", "records"),
+    ("sobjects/Account/External__c/queryAll", "records"),
+    ("sobjects/Account/External__c/tooling/query", "records"),
+    ("tooling/sobjects/ApexClass/External__c/query", "records"),
+    ("query/01g000000000001-2000", "records"), ("tooling/queryAll", "records"),
+])
+@pytest.mark.parametrize("host", ["", "https://acme.my.salesforce.com"])
+@pytest.mark.parametrize("slash", ["", "/"])
+def test_round_18_only_whole_query_endpoints_read_soql(endpoint, expected, host, slash):
+    path = host + "/services/data/v60.0/" + endpoint + slash + "?q=SELECT+Id+FROM+ApexClass"
+    assert rest_data_class(path) == expected, path
+    assert B("sf api request rest '" + path + "' -o acme-prod") == [("read", "acme-prod", expected)]
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("/services/data/v60.0/sobjects/Account/External__c/query?q=SELECT+Id+FROM+ApexLog", "records"),
+    ("/services/data/v60.0/sobjects/Account/External__c/queryAll?q=SELECT+Id+FROM+ApexLog", "records"),
+    ("/services/data/v60.0/sobjects/Account/External__c/tooling/query?q=SELECT+Id+FROM+ApexLog", "records"),
+    ("/services/data/v60.0/query?q=SELECT+Id+FROM+ApexLog", "debug_logs"),
+    ("/services/data/v60.0/queryAll/?q=SELECT+Id+FROM+ApexLog", "debug_logs"),
+    ("https://acme.my.salesforce.com/services/data/v60.0/tooling/query/?q=SELECT+Id+FROM+ApexLog", "debug_logs"),
+    ("/other/query?q=SELECT+Id+FROM+ApexClass", "records"),
+    ("/other/tooling/query?q=SELECT+Id+FROM+ApexClass", "records"),
+    ("/query?q=SELECT+Id+FROM+ApexLog", "debug_logs"),
+    ("/tooling/query/?q=SELECT+Id+FROM+ApexClass", None),
+    ("/services/data/v60.0/sobjects/Account/describe", None),
+    ("/services/data/v60.0/sobjects/ApexLog/07L000000000001AAA/Body", "debug_logs"),
+])
+def test_round_18_query_names_and_ordinary_rest_paths(path, expected):
+    assert rest_data_class(path) == expected, path
+    assert B("sf api request rest '" + path + "' -o acme-prod") == [("read", "acme-prod", expected)]
+
+
+def test_round_18_an_external_id_named_query_needs_record_consent(w):
+    command = ("sf api request rest '/services/data/v60.0/sobjects/Account/External__c/query"
+               "?q=SELECT+Id+FROM+ApexLog' -o acme-prod")
+    assert B(command) == [("read", "acme-prod", "records")]
+    decision = run(w, command)
+    assert decision.action == "deny" and "record data" in decision.reason
+
+
+def test_portable_bash_timing_reads_the_command_after_its_option():
+    assert set(KINDS("time -p echo VALUE")) == {"local"}
+    assert B("time -p sf sobject describe -o acme-prod -s Account") == [("read", "acme-prod", None)]
+    assert B("time -p sf data query -o acme-prod -q VALUE") == [("read", "acme-prod", "records")]
+    for command in ("time echo VALUE", "time -p :", "time -p command echo VALUE", "time -p true"):
+        assert set(KINDS(command)) == {"local"}, (command, B(command))
+    assert "admin" in KINDS("time -p torque workspace guarded-reads off --path .")
+    assert "unverifiable" in KINDS("time -p export DEBUG=x; sf sobject describe -s Account -o acme-prod")
+
+
+def test_a_named_bash_coprocess_reads_its_compound_command(w):
+    query = "sf data query -o acme-prod -q VALUE"
+    owner = "torque workspace guarded-reads off --path ."
+    for name in ("echo", "sf", "torque", "worker"):
+        for body in ("{ " + query + "; }", "( " + query + " )"):
+            command = "coproc " + name + " " + body + "; wait"
+            assert ("read", "acme-prod", "records") in B(command), (command, B(command))
+            assert set(KINDS(command)) <= {"read", "local"}, (command, B(command))
+            assert run(w, command, "dontAsk").action == "deny"
+        for body in ("{ " + owner + "; }", "( " + owner + " )"):
+            command = "coproc " + name + " " + body + "; wait"
+            assert "admin" in KINDS(command), (command, B(command))
+    assert B("coproc " + query) == [("read", "acme-prod", "records")]
+    assert ("read", "acme-prod", "records") in B("coproc { " + query + "; }; wait")
+    for command in ("coproc echo VALUE; wait", "coproc worker { echo VALUE; }; wait",
+                    "coproc worker ( echo VALUE ); wait"):
+        assert set(KINDS(command)) == {"local"}, (command, B(command))
+
+
+def test_bash_alias_definitions_are_asked_about(w):
+    for command in ("alias echo=hostname", "alias sf='echo VALUE'", "alias user_name=hostname",
+                    "alias -- user_name='echo VALUE'", "command alias echo=hostname",
+                    "builtin alias echo=hostname"):
+        assert "unverifiable" in KINDS(command), (command, B(command))
+        assert run(w, command, "dontAsk").action == "deny"
+    for command in ("alias", "alias echo", "alias -p", "unalias echo", "echo 'alias echo=hostname'"):
+        assert set(KINDS(command)) == {"local"}, (command, B(command))
+
+
+def test_bash_functions_that_replace_a_known_command_are_asked_about():
+    query = "sf data query -o acme-prod -q VALUE"
+    names = {"sf", "sfdx", "torque", "jsc"} | routes.LOCAL_COMMANDS | routes.BENIGN_WRAPPERS
+    for name in names:
+        for opening in (name + "()", "function " + name, "function " + name + "()"):
+            command = opening + " { " + query + "; }"
+            assert ("read", "acme-prod", "records") in B(command), (command, B(command))
+            assert "unverifiable" in KINDS(command), (command, B(command))
+            assert "no_org" not in KINDS(command), (command, B(command))
+    for opening in ("echo ( )", "echo()\n", "echo ( )\n", "function echo\n"):
+        command = opening + " { hostname; }; echo"
+        assert "unverifiable" in KINDS(command), (command, B(command))
+    assert "unverifiable" in KINDS("function echo { hostname; }; echo")
+    for opening in ("sf()", "sf()\n", "function sf"):
+        assert "unverifiable" in KINDS(opening + " ( echo VALUE )")
+        assert "unverifiable" in KINDS(opening + "( echo VALUE )")
+    assert "admin" in KINDS("function torque { torque workspace guarded-reads off --path .; }")
+
+
+def test_bash_functions_with_a_users_own_name_read_their_body_without_a_new_question():
+    read = "sf sobject describe -s A -o org0"
+    for name in ("f", "deploy_all"):
+        for opening in (name + "()", "function " + name, "function " + name + "()", "function " + name + "\n"):
+            assert B(opening + " { " + read + "; }") == [("read", "org0", None)]
+            found = classify("Bash", {"command": opening + " { " + read + "; }; " + name})
+            assert {(r.kind, r.org, r.data) for r in found} == {
+                ("read", "org0", None), ("unverifiable", None, None)}
+            assert [r.detail for r in found if r.kind == "unverifiable"] == [name]
+    ordinary = classify("Bash", {"command": "f() { echo a; }; f"})
+    assert {(r.kind, r.org, r.data, r.detail) for r in ordinary} == {
+        ("local", None, None, "echo a"), ("unverifiable", None, None, "f")}
+    for command in ("echo '( ) { hostname; }'", "echo VALUE", "echo (hostname)"):
+        assert set(KINDS(command)) == {"local"}, (command, B(command))
