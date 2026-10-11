@@ -308,47 +308,84 @@ def org_value(args: list[str]) -> str | None:
 # nothing. _mask replaces the plain ones and the filled-in ones by private marks
 # before the words are split, and drops a backslash at a line end with the line end
 # (outside single quotes), as Bash does: `work\<newline>space` is `workspace`.
-_PLAIN = {c: chr(0xE000 + i) for i, c in enumerate("$`{}*?[@();<>|&\n#")}
-_FILLED = {c: chr(0xE100 + i) for i, c in enumerate("$`")}
+_PLAIN = {c: chr(0xE000 + i) for i, c in enumerate("$`{}*?[@();<>|&\n#,\r")}
+_FILLED = {c: chr(0xE100 + i) for i, c in enumerate("$`<>")}
 # Inside a comment or a here-document's body the shell takes nothing as quoting: the
 # quotes and backslashes there are marked, so the splitter does not pair them with real
 # ones (`echo a # it's` followed by a line with another apostrophe).
 _INERT = {c: chr(0xE200 + i) for i, c in enumerate("'\"\\")}
 _UNMASK = {ord(mark): c for table in (_PLAIN, _FILLED, _INERT) for c, mark in table.items()}
+_LITERAL_MARK = re.compile(r"\uefff([0-9a-f]{4})")
 _WORD_BREAK = frozenset(" \t\r\n;|&()<>")
+_HEREDOC_OPERATOR = re.compile(r"<(?:\\\n)*<(?!(?:\\\n)*<)")
+class _Delimiter(str):
+    quoted: bool
+
+    def __new__(cls, value: str, quoted: bool) -> _Delimiter:
+        delimiter = str.__new__(cls, value)
+        delimiter.quoted = quoted
+        return delimiter
+
+
 def _heredoc(command: str, i: int) -> tuple[str, bool] | None:
     """(delimiter, leading tabs dropped) of the here-document the `<<` at `i` opens, or
     None when no word follows it. The delimiter is the word after `<<` with its quoting
     removed, as Bash takes it, whatever characters it holds: `<<E`, `<<-E`, `<< 'E F'`,
     `<<"E"`, `<<\\E`, `<<\\!`, `<<E"O"F`, `<<@E@`. Nothing in it is expanded."""
-    j, size = i + 2, len(command)
+    operator = _HEREDOC_OPERATOR.match(command, i)
+    if operator is None:
+        return None
+    before = i
+    while before >= 2 and command[before - 2:before] == "\\\n":
+        before -= 2
+    if before and command[before - 1] == "<":
+        return None
+    j, size = operator.end(), len(command)
+    while command.startswith("\\\n", j):
+        j += 2
     tabs = command[j:j + 1] == "-"
     j += tabs
-    while command[j:j + 1] in (" ", "\t"):
-        j += 1
-    out, start = [], j
+    while command[j:j + 1] in (" ", "\t") or command.startswith("\\\n", j):
+        j += 2 if command.startswith("\\\n", j) else 1
+    out, start, quoted = [], j, False
     while j < size and command[j] not in " \t\r\n;|&()<>":
         c = command[j]
-        if c == "'":
+        if c == "$" and command[j + 1:j + 2] == "'":
+            quoted = True
+            stop = _closing(command, j + 2, "'")
+            if stop is None:
+                return None
+            out.append(_ansi_c(command[j + 2:stop - 1]))
+            j = stop
+        elif c == "$" and command[j + 1:j + 2] == '"':
+            j += 1
+        elif c == "'":
+            quoted = True
             stop = command.find("'", j + 1)
             stop = size if stop < 0 else stop
             out.append(command[j + 1:stop])
             j = stop + 1
         elif c == '"':
+            quoted = True
             j += 1
             while j < size and command[j] != '"':
+                if command.startswith("\\\n", j):
+                    j += 2
+                    continue
                 if command[j] == "\\" and command[j + 1:j + 2] in ('"', "\\", "$", "`"):
                     j += 1
                 out.append(command[j])
                 j += 1
             j += 1
         elif c == "\\" and j + 1 < size:
-            out.append(command[j + 1])
+            if command[j + 1] != "\n":
+                quoted = True
+                out.append(command[j + 1])
             j += 2
         else:
             out.append(c)
             j += 1
-    return ("".join(out), bool(tabs)) if j > start else None
+    return (_Delimiter("".join(out), quoted), bool(tabs)) if j > start else None
 _FILLED_MARKS = frozenset(_FILLED.values())
 _LOOSE_CHARS = _EXPANSION_CHARS | _GLOB_CHARS
 
@@ -367,9 +404,11 @@ def _substitutions(command: str) -> list[str]:
     end of the line."""
     found = []
     for i, mark in _substitution_starts(command):
-        if mark.startswith("${"):
+        syntax = mark.replace("\\\n", "")
+        if syntax.startswith("${"):
             continue            # an expansion, kept for the net (_substitution_tails)
-        stop = _substitution_end(command, i) if mark == "$(" else _closing(command, i + 1, "`")
+        stop = (_substitution_end(command, i) if syntax in ("$(", "<(", ">(")
+                else _closing(command, i + 1, "`"))
         text = command[i + len(mark):len(command) if stop is None else stop - 1]
         found.extend(_backtick_readings(text) if mark == "`" else [text])
     return [text for text in found if text.strip()]
@@ -404,7 +443,7 @@ def _substitution_tails(command: str) -> list[str]:
     while queue and len(tails) < 64:
         text = queue.pop()
         for i, mark in _substitution_starts(text):
-            if mark.startswith("${"):
+            if mark.replace("\\\n", "").startswith("${"):
                 found, k = [], text.find("}", i)
                 while k >= 0 and len(found) < 6:
                     found.append(('"' if mark.endswith('"') else "") + text[k + 1:])
@@ -425,19 +464,24 @@ def _substitution_tails(command: str) -> list[str]:
     return tails
 
 
+def _literal(text: str) -> str:
+    """Keep the shell's original private-use characters apart from the reader's marks."""
+    return "".join("\uefff" + f"{ord(c):04x}" if "\ue000" <= c <= "\uf8ff" else c for c in text)
+
+
 def _plain_word(text: str) -> str:
     """Text as one single-quoted piece for the splitter, every special character marked plain."""
-    return "'" + "".join(_PLAIN.get(c, c) for c in text).replace("'", "'\\''") + "'"
+    return "'" + "".join(_PLAIN.get(c, c) for c in _literal(text)).replace("'", "'\\''") + "'"
 
 
 def _inert(text: str) -> str:
-    return "".join(_INERT.get(c, c) for c in text)
+    return "".join(_INERT.get(c, c) for c in _literal(text))
 
 
 def _sealed(text: str) -> str:
     """Text inside a double-quoted word that the splitter must take whole: a command
     substitution, with quotes of its own."""
-    return "".join(_INERT.get(c) or _PLAIN.get(c, c) for c in text)
+    return "".join(_INERT.get(c) or _PLAIN.get(c, c) for c in _literal(text))
 
 
 _ANSI_C = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
@@ -454,27 +498,40 @@ def _ansi_c(text: str) -> str:
         c = text[i]
         follower = text[i + 1:i + 2]
         if c != "\\" or not follower:
-            out.append(c)
+            out.append(c.encode("utf-8", "surrogateescape"))
             i += 1
         elif follower in _ANSI_C:
-            out.append(_ANSI_C[follower])
+            out.append(_ANSI_C[follower].encode("utf-8"))
             i += 2
         elif follower in "01234567":
             digits = re.match(r"[0-7]{1,3}", text[i + 1:]).group()
-            out.append(chr(int(digits, 8) & 0xFF))
+            out.append(bytes([int(digits, 8) & 0xFF]))
             i += 1 + len(digits)
         elif follower in "xuU" and re.match(r"[0-9A-Fa-f]", text[i + 2:i + 3]):
             digits = re.match(r"[0-9A-Fa-f]{1,%d}" % {"x": 2, "u": 4, "U": 8}[follower], text[i + 2:]).group()
             value = int(digits, 16)
-            out.append(chr(value) if value < 0x110000 else "\ufffd")
+            if follower == "x":
+                out.append(bytes([value]))
+            elif value < 0x110000:
+                out.append(chr(value).encode("utf-8", "surrogatepass"))
+            elif value < 0x80000000:
+                # Bash still writes the older five-byte and six-byte UTF-8 forms.
+                length = 4 if value < 0x200000 else 5 if value < 0x4000000 else 6
+                prefix = {4: 0xF0, 5: 0xF8, 6: 0xFC}[length]
+                out.append(bytes([prefix | value >> (6 * (length - 1))] +
+                                 [0x80 | (value >> shift) & 0x3F
+                                  for shift in range(6 * (length - 2), -1, -6)]))
             i += 2 + len(digits)
         elif follower == "c" and text[i + 2:i + 3]:
-            out.append(chr(ord(text[i + 2].upper()) ^ 0x40))
-            i += 3
+            # Bash controls the first byte, then keeps the rest of a UTF-8 character.
+            value = text[i + 2].encode("utf-8", "surrogateescape")
+            control = 0x7F if value[0] == 0x3F else value[0] & 0x1F
+            out.append(bytes([control]) + value[1:])
+            i += 4 if text[i + 2:i + 4] == "\\\\" else 3
         else:
-            out.append(c + follower)
+            out.append((c + follower).encode("utf-8", "surrogateescape"))
             i += 2
-    return "".join(out).split("\0", 1)[0]
+    return b"".join(out).split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
 
 
 _CASE_WORD = re.compile(r"(case|esac)(?![A-Za-z0-9_./-])")
@@ -491,6 +548,31 @@ def _closing(command: str, j: int, close: str) -> int | None:
 _PARAMETER_NAME = re.compile(r"[!#]?(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])(?:\[[^\]\n]*\])?")
 
 
+def _after_continuations(command: str, i: int) -> int:
+    while command.startswith("\\\n", i):
+        i += 2
+    return i
+
+
+def _before_continuations(command: str, i: int) -> str:
+    while i >= 2 and command[i - 2:i] == "\\\n":
+        i -= 2
+    return command[i - 1:i]
+
+
+def _case_word(command: str, i: int) -> tuple[str, int] | None:
+    for word in ("case", "esac"):
+        j = i
+        for letter in word:
+            if command[j:j + 1] != letter:
+                break
+            j = _after_continuations(command, j + 1)
+        else:
+            if not re.match(r"[A-Za-z0-9_./-]", command[j:j + 1]):
+                return word, j
+    return None
+
+
 def _parameter_end(command: str, i: int, quoted: bool) -> int | None:
     """The index just past the `}` that closes the `${` at `i`, or None when it does not
     close. Bash reads the word inside the braces with quoting of its own, also when
@@ -500,14 +582,17 @@ def _parameter_end(command: str, i: int, quoted: bool) -> int | None:
     expansion whose operator takes a word (`:-`, `:=`, `:+`, `:?`, with or without
     the colon) a single quote is an ordinary character; with a pattern operator
     (`#`, `%`, `/`) it quotes, as it does outside double quotes."""
-    j, size = i + 2, len(command)
-    name = _PARAMETER_NAME.match(command, j)
-    operator = command[name.end() if name else j:][:2]
+    j, size = _after_continuations(command, i + 1) + 1, len(command)
+    logical = command[j:].replace("\\\n", "")
+    name = _PARAMETER_NAME.match(logical)
+    operator = logical[name.end() if name else 0:][:2]
     plain_quote = quoted and (operator[:1] in ("-", "=", "+", "?") or (operator[:1] == ":" and operator[1:2] in
                                                                          ("-", "=", "+", "?")))
     inner = False           # inside a double-quoted piece of the word
     while j < size:
-        c, follower = command[j], command[j + 1:j + 2]
+        c = command[j]
+        after = _after_continuations(command, j + 1)
+        follower = command[after:after + 1]
         if c == "\\":
             j += 2
             continue
@@ -518,7 +603,7 @@ def _parameter_end(command: str, i: int, quoted: bool) -> int | None:
         elif c == "`":
             stop = _closing(command, j + 1, "`")
         elif c == "$" and follower == "'" and not inner and not plain_quote:
-            stop = _closing(command, j + 2, "'")
+            stop = _closing(command, after + 1, "'")
         elif c == "'" and not inner and not plain_quote:
             stop = command.find("'", j + 1) + 1 or None
         else:
@@ -552,19 +637,21 @@ def _substitution_end(command: str, i: int) -> int | None:
     joins: list = []        # for each open parenthesis: the word it stands in goes on after it closes
     while j < size:
         c = command[j]
+        after = _after_continuations(command, j + 1)
+        follower = command[after:after + 1]
         if quote == "'":
             quote = "" if c == "'" else quote
             word_start = False
         elif c == "\\":
             j += 1
             word_start = False
-        elif c == "$" and command[j + 1:j + 2] == "(":
+        elif c == "$" and follower == "(":
             inner = _substitution_end(command, j)       # a substitution inside this one, quoted or not
             if inner is None:
                 return None
             j, word_start = inner, False
             continue
-        elif c == "$" and command[j + 1:j + 2] == "{":
+        elif c == "$" and follower == "{":
             inner = _parameter_end(command, j, bool(quote))     # an expansion, with quotes of its own
             if inner is None:
                 return None
@@ -596,23 +683,22 @@ def _substitution_end(command: str, i: int) -> int | None:
                         break
             opened, word_start = [], True
             continue
-        elif c == "$" and command[j + 1:j + 2] == "'":
-            inner = _closing(command, j + 2, "'")
+        elif c == "$" and follower == "'":
+            inner = _closing(command, after + 1, "'")
             if inner is None:
                 return None
             j, word_start = inner, False
             continue
-        elif word_start and _CASE_WORD.match(command, j):
-            word = _CASE_WORD.match(command, j)
-            if word.group(1) == "case":
+        elif word_start and _case_word(command, j):
+            word = _case_word(command, j)
+            if word[0] == "case":
                 cases.append(depth)
             elif cases:
                 cases.pop()
-            j, word_start = word.end(), False
+            j, word_start = word[1], False
             continue
         else:
-            if c == "<" and command.startswith("<<", j) and not command.startswith("<<<", j) \
-                    and command[j - 1:j] != "<":
+            if c == "<":
                 found = _heredoc(command, j)
                 if found:
                     opened.append(found)
@@ -621,7 +707,7 @@ def _substitution_end(command: str, i: int) -> int | None:
                 quote = c
             elif c == "(":
                 depth += 1
-                joins.append(command[j - 1:j] in _JOINING)
+                joins.append(_before_continuations(command, j) in _JOINING)
             elif c == ")" and not (cases and cases[-1] == depth):       # not the end of a case pattern
                 depth -= 1
                 if depth == 0:
@@ -632,19 +718,71 @@ def _substitution_end(command: str, i: int) -> int | None:
     return None
 
 
-def _mask(command: str) -> str:
-    return _scan(command)[0]
+def _mask(command: str, _join: bool = False) -> str:
+    return _scan(command, _join)[0]
 
 
-_BODY_SUBSTITUTION = re.compile(r"(?<!\\)(\$\(|`)")
+_BODY_SUBSTITUTION = re.compile(r"(?<!\\)(\$(?:\\\n)*\(|`)")
 # A file descriptor's digits, directly before a redirection. A line continuation between
 # them, or between them and the operator, is no gap for Bash (`1\<newline>>&2` is `1>&2`).
 _FILE_DESCRIPTOR = re.compile(r"[0-9](?:[0-9]|\\\n)*(?=[<>])")
+_NAMED_DESCRIPTOR = re.compile(r"\{(?:\\\n)*[A-Za-z_](?:[A-Za-z0-9_]|\\\n)*(?=[\[}])")
 _NAIVE_DESCRIPTOR = re.compile(r"(?<![^\s;|&()])[0-9]+(?=[<>])")
 _QUOTING = frozenset("'\"\\")
 
 
-def _scan(command: str) -> tuple[str, list, int | None, int]:
+def _descriptor_end(command: str, i: int) -> int | None:
+    """The end of a {name} or {array[index]} descriptor before a redirection."""
+    name = _NAMED_DESCRIPTOR.match(command, i)
+    if name is None:
+        return None
+    j, size = name.end(), len(command)
+    if command[j:j + 1] == "[":
+        j, depth, quote = j + 1, 1, ""
+        while j < size and depth:
+            c = command[j]
+            after = _after_continuations(command, j + 1)
+            follower = command[after:after + 1]
+            if quote == "'":
+                quote = "" if c == "'" else quote
+            elif c == "\\":
+                j += 2
+                continue
+            elif (((c == "$" or (c in "<>" and not quote)) and follower == "(")
+                  or (c == "$" and follower == "{")):
+                stop = _parameter_end(command, j, bool(quote)) if follower == "{" else _substitution_end(command, j)
+                if stop is None:
+                    return None
+                j = stop
+                continue
+            elif c == "`" or (c == "$" and follower == "'" and not quote):
+                stop = _closing(command, after + 1 if c == "$" else j + 1, "'" if c == "$" else "`")
+                if stop is None:
+                    return None
+                j = stop
+                continue
+            elif quote:
+                quote = "" if c == '"' else quote
+            elif c in "'\"":
+                quote = c
+            elif c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+            elif c in _WORD_BREAK and c != "\r":
+                return None
+            j += 1
+        if depth:
+            return None
+    if command[j:j + 1] != "}":
+        return None
+    j += 1
+    while command.startswith("\\\n", j):
+        j += 2
+    return j if command[j:j + 1] in ("<", ">") else None
+
+
+def _scan(command: str, _join: bool = False, _tails: list[str] | None = None) -> tuple[str, list, int | None, int]:
     """(the command with its plain, filled-in and inert characters marked (see above),
     where its command substitutions start, where a quote left open began, where the
     last whole line ends), from one pass, so all agree on what is
@@ -664,8 +802,15 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
     cases: list = []        # for each open `case`: how many parentheses were open where it began
     while i < size:
         c = command[i]
+        after = _after_continuations(command, i + 1)
+        follower = command[after:after + 1]
         if c == "\n" and not quote:
             completed = i
+        if "\ue000" <= c <= "\uf8ff":
+            out.append(_literal(c))
+            i += 1
+            word_start = False
+            continue
         if quote == "'":
             quote = "" if c == "'" else quote
             out.append(_PLAIN.get(c, c))
@@ -677,26 +822,26 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
                 # ordinary character, and the LF still ends the command.
                 i += 1
                 continue
-            out.append(c + _PLAIN.get(command[i], command[i]))
+            out.append(c + _PLAIN.get(command[i], _literal(command[i])))
             word_start = False
         elif quote:
             word_start = False
-            if c == "$" and command[i + 1:i + 2] == "{":
+            if c == "$" and follower == "{":
                 # "${x:-"'"}": the word in the braces has quoting of its own, and the
                 # expansion is part of this one word.
                 stop = _parameter_end(command, i, True)
                 if stop is None or _QUOTING & set(command[i + 2:stop - 1]):
-                    starts.append((i, '${"'))
+                    starts.append((i, command[i:after + 1] + '"'))
                     if stop is not None:
                         starts += [(i + 2 + found.start(), found.group())
                                    for found in _BODY_SUBSTITUTION.finditer(command[i + 2:stop - 1])]
                         out.append(_FILLED["$"] + _sealed(command[i + 1:stop]))
                         i = stop
                         continue
-            if c == "$" and command[i + 1:i + 2] == "(":
+            if c == "$" and follower == "(":
                 # "$(printf "x;echo ")": the substitution has quotes of its own, and its
                 # output is part of this one word.
-                starts.append((i, "$("))
+                starts.append((i, command[i:after + 1]))
                 stop = _substitution_end(command, i)
                 if stop is not None:
                     out.append(_FILLED["$"] + _sealed(command[i + 1:stop]))
@@ -717,15 +862,21 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
                     i = stop + 1
                     continue
             quote = "" if c == '"' else quote
-            out.append(_FILLED.get(c) or _PLAIN.get(c, c))
+            out.append((_FILLED.get(c) if c in "$`" else None) or _PLAIN.get(c, c))
         else:
+            if _join and c == "\r":
+                # Unix Bash keeps a CR inside an unquoted word.
+                out.append(_PLAIN[c])
+                word_start = False
+                i += 1
+                continue
             if c == "#" and word_start and i >= expansion:
                 stop = command.find("\n", i)
                 stop = size if stop < 0 else stop
                 out.append(_inert(command[i:stop]))
                 i = stop
                 continue
-            if word_start and c in "ce" and _CASE_WORD.match(command, i):
+            if word_start and c in "ce" and _case_word(command, i):
                 # the `)` that ends a `case` pattern closes nothing
                 if c == "c":
                     cases.append(len(joins))
@@ -735,6 +886,7 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
                 out.append(c)
                 i += 1
                 for delimiter, tabs in opened:
+                    body, joined, continued = i, "", False
                     while i < size:
                         stop = command.find("\n", i)
                         stop = size if stop < 0 else stop
@@ -743,16 +895,26 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
                         # The shell expands a substitution in a body (unless its delimiter is quoted).
                         starts += [(i + found.start(), found.group()) for found in _BODY_SUBSTITUTION.finditer(line)]
                         i = min(stop + 1, size)
+                        if _tails is not None and not getattr(delimiter, "quoted", True):
+                            # Bash joins escaped line ends before testing an unquoted delimiter.
+                            joined += line
+                            if (len(line) - len(line.rstrip("\\"))) % 2 and stop < size:
+                                joined, continued = joined[:-1], True
+                            else:
+                                if continued and (joined.lstrip("\t") if tabs else joined).rstrip("\r") == delimiter:
+                                    _tails.append(command[i:])
+                                joined, continued = "", False
                         if (line.lstrip("\t") if tabs else line).rstrip("\r") == delimiter:
                             break
+                    starts += [(body + found.start(), found.group())
+                               for found in _BODY_SUBSTITUTION.finditer(command[body:i]) if "\\\n" in found.group()]
                 opened, word_start = [], True
                 continue
-            if c == "<" and command.startswith("<<", i) and not command.startswith("<<<", i) \
-                    and command[i - 1:i] != "<" and i >= expansion:
+            if c == "<" and i >= expansion:
                 found = _heredoc(command, i)
                 if found:
                     opened.append(found)
-            if c == "$" and command[i + 1:i + 2] == "{":
+            if c == "$" and follower == "{":
                 # ${x:-"}"} or ${x:-'}'}: the same outside double quotes. The `$` stays
                 # unmarked: the shell can turn this word into several.
                 stop = _parameter_end(command, i, False)
@@ -761,15 +923,30 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
                     # (`${x:-(#}`, `${x#y}`): no comment and no here-document begins there.
                     expansion = max(expansion, stop)
                 if stop is None or _QUOTING & set(command[i + 2:stop - 1]):
-                    starts.append((i, "${"))
+                    starts.append((i, command[i:after + 1]))
                     if stop is not None:
                         starts += [(i + 2 + found.start(), found.group())
                                    for found in _BODY_SUBSTITUTION.finditer(command[i + 2:stop - 1])]
                         out.append('$"' + _sealed(command[i + 1:stop]) + '"')
                         i, word_start = stop, False
                         continue
-            if c == "$" and command[i + 1:i + 2] == "(":
-                starts.append((i, "$("))
+            if c in "$<>" and follower == "(":
+                starts.append((i, command[i:after + 1]))
+                if _join:
+                    # A substitution belongs to the outer command. Keep the old reading
+                    # too, so its body and ordinary local commands still have their routes.
+                    stop = _substitution_end(command, i)
+                    if stop is not None:
+                        out.append(("$" if c == "$" else _FILLED[c]) + '"' + _sealed(command[after:stop]) + '"')
+                        i, word_start = stop, False
+                        continue
+            if word_start and c == "{":
+                stop = _descriptor_end(command, i)
+                if stop is not None:
+                    # A named descriptor contributes no argument, but its index can run code.
+                    starts += [(i + at, mark) for at, mark in _substitution_starts(command[i:stop])]
+                    i = stop
+                    continue
             if word_start and c in "0123456789" and _FILE_DESCRIPTOR.match(command, i):
                 # A number directly before a redirection is a file descriptor (`2>&1`) and not
                 # a word of the command. With a space between, it is a word: `--target-org 123
@@ -779,20 +956,26 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
             if c == "`":
                 if not in_backticks:
                     starts.append((i, "`"))
+                    if _join:
+                        stop = _closing(command, i + 1, "`")
+                        if stop is not None:
+                            out.append('"`' + _sealed(command[i + 1:stop - 1]) + '`"')
+                            i, word_start = stop, False
+                            continue
                 in_backticks = not in_backticks
-            if c == "$" and command[i + 1:i + 2] == "'":
+            if c == "$" and follower == "'":
                 # $'...' outside quotes is ANSI-C quoting: its escapes are decoded and the
                 # result is plain text. Inside double quotes the same characters are not.
-                stop = i + 2
+                stop = after + 1
                 while stop < size and command[stop] != "'":
                     stop += 2 if command[stop] == "\\" else 1
                 if stop < size:
-                    out.append(_plain_word(_ansi_c(command[i + 2:stop])))
+                    out.append(_plain_word(_ansi_c(command[after + 1:stop])))
                     i = stop + 1
                     word_start = False
                     continue
                 unfinished = i
-            if c == "$" and command[i + 1:i + 2] == '"':
+            if c == "$" and follower == '"':
                 # $"..." is a string the shell may translate (locale quoting): with a message
                 # catalogue in place its text is another. The `$` stays, so the word counts
                 # as one the shell builds.
@@ -808,13 +991,22 @@ def _scan(command: str) -> tuple[str, list, int | None, int]:
             if i < expansion:
                 pass                    # a parenthesis inside `${...}` is a character of its word
             elif c == "(":
-                before = command[i - 1:i]
+                before = _before_continuations(command, i)
                 joins.append(before in _JOINING or (before == "(" and bool(joins) and joins[-1]))
             elif c == ")" and not (cases and cases[-1] == len(joins)) and joins and joins.pop():
                 word_start = False      # it closed a substitution or an array: the word goes on (_JOINING)
         i += 1
     return ("".join(out), starts,
             unfinished if unfinished is not None else quote_start if quote else None, completed)
+
+
+_QUOTED = "\ue300"
+
+
+def _continued_heredoc_tails(command: str) -> list[str]:
+    tails: list[str] = []
+    _scan(command, _tails=tails)
+    return tails
 
 
 class _Word(str):
@@ -827,8 +1019,15 @@ class _Word(str):
     function = False
 
     def __new__(cls, raw: str):
-        word = super().__new__(cls, raw.translate(_UNMASK))
-        word.raw = raw
+        quoted, assignment = _QUOTED + "Q" in raw, bool(_ASSIGN_RE.match(raw))
+        written = raw
+        raw = raw.replace(_QUOTED + "Q", "").replace(_QUOTED + "L", _QUOTED)
+        text = raw.translate(_UNMASK)
+        text = _LITERAL_MARK.sub(lambda found: chr(int(found.group(1), 16)), text)
+        text = text.encode("utf-8", "surrogateescape").decode("utf-8", "surrogateescape")
+        word = super().__new__(cls, text)
+        word.raw, word.written = raw, written
+        word.quoted, word.assignment = quoted, assignment
         return word
 
 
@@ -836,6 +1035,14 @@ def _raw(tok: str) -> str:
     """The word as written. A word whose writing is not known (the command's quotes
     did not pair, or the gate put the word together) is read as unquoted."""
     return getattr(tok, "raw", tok)
+
+
+def _is_keyword(tok: str) -> bool:
+    return tok in _KEYWORDS and not getattr(tok, "quoted", False)
+
+
+def _is_assignment(tok: str) -> bool:
+    return getattr(tok, "assignment", bool(_ASSIGN_RE.match(tok)))
 
 
 def _filled(tok: str) -> bool:
@@ -866,23 +1073,39 @@ def _adds_words(words: list[str]) -> bool:
     return bool(words) and bool(getattr(words[-1], "paren", False))
 
 
-_BRACE_SEQUENCE = re.compile(r"(-?\d+)\.\.(-?\d+)(?:\.\.-?(\d+))?\Z|([A-Za-z])\.\.([A-Za-z])(?:\.\.-?(\d+))?\Z")
+_BRACE_SEQUENCE = re.compile(r"([-+]?[0-9]+)\.\.([-+]?[0-9]+)(?:\.\.([-+]?[0-9]+))?\Z"
+                             r"|([A-Za-z])\.\.([A-Za-z])(?:\.\.([-+]?[0-9]+))?\Z")
 _BRACE_LIMIT = 64
 
 
 def _brace_sequence(found) -> list[str] | None:
-    """The items of `{1..5}`, `{05..01..2}` or `{a..e}`, or None when there are too many."""
+    """The items of `{1..5}`, `{05..01..2}` or `{a..e}`, or None when invalid or too many."""
     numbers = found.group(1) is not None
-    first, last = (int(found.group(1)), int(found.group(2))) if numbers else (ord(found.group(4)), ord(found.group(5)))
-    step = int(found.group(3 if numbers else 6) or 1) or 1
+
+    def integer(text: str) -> int:
+        return int(re.sub(r"\A([-+]?)0+(?=[0-9])", r"\1", text))
+
+    try:
+        first, last = (integer(found.group(1)), integer(found.group(2))) if numbers else (
+            ord(found.group(4)), ord(found.group(5)))
+        step = integer(found.group(3 if numbers else 6) or "1")
+    except ValueError:
+        return None
+    # Bash leaves an overflowing integer sequence as written, including its braces.
+    if any(not -(1 << 63) <= item < (1 << 63) for item in (first, last, step)) or (
+            first > 0 and last < -(1 << 63) + 3 + first or
+            first < 0 and last > (1 << 63) - 3 + first) or (step == -(1 << 63) and first < last):
+        return None
+    step = abs(step) or 1
     if abs(last - first) // step >= _BRACE_LIMIT:
         return None
     items = list(range(first, last + (1 if last >= first else -1), step if last >= first else -step))
     if not numbers:
         return [chr(item) for item in items]
-    ends = [text.lstrip("-") for text in (found.group(1), found.group(2))]
-    width = max(map(len, ends)) if any(len(text) > 1 and text.startswith("0") for text in ends) else 0
-    return [("-" if item < 0 else "") + str(abs(item)).zfill(width) for item in items]
+    ends = (found.group(1), found.group(2))
+    width = max(map(len, ends)) if any(len(text) > 1 and text.startswith("0") or
+                                     len(text) > 2 and text.startswith("-0") for text in ends) else 0
+    return [str(item).zfill(width) for item in items]
 
 
 def _brace_expand(raw: str) -> list[str]:
@@ -910,17 +1133,41 @@ def _brace_expand(raw: str) -> list[str]:
             parts = [raw[a + 1:b] for a, b in zip(cuts, cuts[1:])] if commas else \
                 _brace_sequence(sequence) if sequence else None
             if parts is not None:
-                out = [raw[:start] + piece + tail for part in parts for piece in _brace_expand(part)
-                       for tail in _brace_expand(raw[end + 1:])]
-                return out if len(out) <= _BRACE_LIMIT else [raw]
+                try:
+                    tails, out = _brace_expand(raw[end + 1:]), []
+                    for part in parts:
+                        for piece in _brace_expand(part):
+                            for tail in tails:
+                                out.append(raw[:start] + piece + tail)
+                                if len(out) > _BRACE_LIMIT:
+                                    return [raw]
+                except RecursionError:
+                    return [raw]
+                return out
         start = raw.find("{", start + 1)
     return [raw]
 
 
-def _tokens(command: str) -> list[str] | None:
+def _tokens(command: str, _join: bool = False) -> list[str] | None:
     """Quote-aware words and operator tokens, or None when the quoting does not parse.
     Each is a _Word: a str that remembers how it was written."""
-    lex = shlex.shlex(_mask(command), posix=True, punctuation_chars=_PUNCTUATION)
+    # Quoting any part of a word prevents reserved-word recognition; quoting a
+    # name or its equals sign prevents assignment recognition. Keep that fact
+    # before shlex removes the quotes and backslashes, also for empty quotes.
+    text, out, quote, i = _mask(command, _join).replace(_QUOTED, _QUOTED + "L"), [], "", 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":
+            out.append(_QUOTED + "Q" + text[i:i + 2])
+            i += 2
+            continue
+        if c in "'\"" and (not quote or c == quote):
+            if not quote:
+                out.append(_QUOTED + "Q")
+            quote = "" if quote else c
+        out.append(c)
+        i += 1
+    lex = shlex.shlex("".join(out), posix=True, punctuation_chars=_PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"
     lex.commenters = ""
@@ -937,12 +1184,13 @@ def _is_operator(tok: str) -> bool:
 
 
 def _is_redirect(tok: str) -> bool:
-    return _is_operator(tok) and ("<" in tok or ">" in tok) and not (set(tok) & _SEPARATOR_CHARS)
+    return _is_operator(tok) and ("<" in tok or ">" in tok) and (
+        tok == ">|" or not (set(tok) & _SEPARATOR_CHARS))
 
 
-def _split(command: str) -> tuple[list[list[str]], list[str]] | None:
+def _split(command: str, _join: bool = False) -> tuple[list[list[str]], list[str]] | None:
     """(segments of command words without redirections, operator tokens seen)."""
-    toks = _tokens(command)
+    toks = _tokens(command, _join)
     if toks is None:
         return None
     segments: list[list[str]] = [[]]
@@ -1535,11 +1783,34 @@ def _torque(rest: list[str], detail: str, paren: bool = False) -> Route:
 def _inner_start(words: list[str]) -> int | None:
     """Index of the first word (after the head) that starts a recognized org-capable
     command: sf/sfdx, a Torque console script, or a Python launcher running torque."""
-    for i, word in enumerate(words[1:], 1):
+    start, end, exact = 1, len(words), False
+    head = g._basename(words[0]) if words else ""
+    if head in ("xargs", "sudo"):
+        unknown, options = False, []
+        while start < len(words):
+            took, unknown = _wrapper_options(head, words[start:], options)
+            start += took
+            if unknown or head != "sudo" or start >= len(words) or (took and words[start - 1] == "--") or \
+                    "=" not in words[start] or words[start].startswith(("/", "=")):
+                break
+            start += 1
+        stopped = ({"-e", "-h", "-l", "-v", "-V", "-K", "--edit", "--help", "--list", "--validate",
+                    "--version", "--remove-timestamp"} if head == "sudo" else {"--help", "--version"})
+        if not unknown and stopped & set(options):
+            return None
+        if not unknown and (start >= len(words) or not (_filled(words[start]) or
+                _LOOSE_CHARS & set(_raw(words[start])))):
+            # A known runner's later words are its command's data. Unknown options
+            # and commands built at run time keep the loose reading.
+            end, exact = min(start + 1, len(words)), True
+        else:
+            start = 1
+    for i in range(start, end):
+        word = words[i]
         base = g._basename(word)
         if g._is_sf_token(word) or base in g.CONSOLE_SCRIPTS or base in SHELLS or base == "env":
             return i
-        if g.PY_LAUNCHER_RE.match(base):
+        if g.PY_LAUNCHER_RE.match(base) or (exact and base in BENIGN_WRAPPERS | {"xargs", "sudo", "find"}):
             return i
     return None
 
@@ -1556,6 +1827,16 @@ _WRAPPERS = {
     "nice": ("", "n", (), ("--adjustment",)), "stdbuf": ("", "ioe", (), ("--input", "--output", "--error")),
     "timeout": ("v", "sk", ("--preserve-status", "--foreground", "--verbose"), ("--signal", "--kill-after")),
     "caffeinate": ("dimsu", "tw", (), ()),
+    "xargs": ("0eiloprtx", "adEIJLnPRSs",
+              ("--null", "--eof", "--replace", "--max-lines", "--open-tty", "--interactive",
+               "--no-run-if-empty", "--show-limits", "--verbose", "--exit", "--help", "--version"),
+              ("--arg-file", "--delimiter", "--max-args", "--max-chars", "--max-procs", "--process-slot-var")),
+    "sudo": ("ABbEeHiKklnNPSsVv", "aCcDgpRrTtUu",
+             ("--askpass", "--bell", "--background", "--preserve-env", "--edit", "--set-home", "--login",
+              "--remove-timestamp", "--list", "--preserve-groups", "--shell", "--validate", "--help",
+              "--reset-timestamp", "--no-update", "--non-interactive", "--stdin", "--version"),
+             ("--auth-type", "--close-from", "--login-class", "--chdir", "--group", "--host", "--prompt",
+              "--chroot", "--role", "--command-timeout", "--type", "--other-user", "--user")),
 }
 
 
@@ -1567,7 +1848,7 @@ _ENV_VALUES = ("-u", "--unset", "-C", "--chdir", "-a", "--argv0", "-P")
 _ENV_ATTACHED = ("--unset", "--chdir", "--argv0", "--block-signal", "--default-signal", "--ignore-signal")
 
 
-def _wrapper_options(head: str, rest: list[str]) -> tuple[int, bool]:
+def _wrapper_options(head: str, rest: list[str], options: list[str] | None = None) -> tuple[int, bool]:
     """(how many of the words after a wrapper command are its options and their values,
     whether one of them is an option the gate does not know)."""
     flags, values, long_flags, long_values = _WRAPPERS.get(head, ("", "", (), ()))
@@ -1579,15 +1860,31 @@ def _wrapper_options(head: str, rest: list[str]) -> tuple[int, bool]:
             break
         if word.startswith("--"):
             name = word.split("=", 1)[0]
+            if head in ("xargs", "sudo") and name not in long_flags + long_values:
+                matches = [option for option in long_flags + long_values if option.startswith(name)]
+                if len(matches) == 1:
+                    name = matches[0]
             unknown = unknown or name not in long_flags + long_values
+            if options is not None and name in long_flags + long_values:
+                options.append(name)
             i += 2 if name in long_values and "=" not in word else 1
             continue
         took = 1
         for at, letter in enumerate(word[1:]):
+            if head == "xargs" and letter in "eil":
+                break                   # These optional values only take text in the same word.
+            if head == "sudo" and letter == "h":
+                took = 2 if word == "-h" and i + 1 < len(rest) and \
+                    not rest[i + 1].startswith("-") and "=" not in rest[i + 1] else 1
+                if options is not None and took == 1 and at + 2 == len(word):
+                    options.append("-h")
+                break                   # An attached host, or one after -h, is its optional value.
             if letter in values:
                 # the rest of the word is its value (`-oL`), or the next word is (`-o L`)
                 took = 1 if at + 2 < len(word) else 2
                 break
+            if options is not None and letter in flags:
+                options.append("-" + letter)
             if letter not in flags and not (head == "nice" and word[1:].isdigit()):
                 unknown = True
                 break
@@ -1620,17 +1917,20 @@ def _segment(words: list[str], depth: int) -> list[Route]:
 def _segment_words(words: list[str], depth: int) -> list[Route]:
     had_assignment = False
     questions = []
-    if words and words[0] in ("for", "select", "case"):
+    if words and _is_keyword(words[0]) and words[0] in ("for", "select", "case"):
         return [Route("local", None, " ".join(words[:5]))]
-    while words and (words[0] in _KEYWORDS or _ASSIGN_RE.match(words[0])
+    while words and ((_is_keyword(words[0]) and not had_assignment) or _is_assignment(words[0])
                      or getattr(words[0], "function", False)):
         if words[0] == "time" and len(words) > 1 and words[1] == "-p":
             words = words[2:]             # the reserved word's portable option
             continue
         if words[0] == "coproc" and len(words) > 1 and (
-                (len(words) > 2 and _raw(words[2]) == "{")
+                (len(words) > 2 and not getattr(words[2], "quoted", False)
+                 and words[2] in ("{", "if", "while", "until", "for", "select", "case", "[["))
                 or (len(words) == 2 and getattr(words[1], "paren", False))):
             words = words[2:]             # a name before a compound command names the coprocess
+            if words and words[0] in ("for", "select", "case"):
+                return questions + [Route("local", None, " ".join(words[:5]))]
             continue
         if getattr(words[0], "function", False) or (words[0] == "function" and len(words) > 1):
             name = words[0] if getattr(words[0], "function", False) else words[1]
@@ -1638,10 +1938,12 @@ def _segment_words(words: list[str], depth: int) -> list[Route]:
                 questions.append(Route("unverifiable", None, str(name) + " (defines what this command name runs)"))
             words = words[1:] if getattr(words[0], "function", False) else words[2:]
             continue
-        had_assignment = had_assignment or bool(_ASSIGN_RE.match(words[0]))
+        had_assignment = had_assignment or _is_assignment(words[0])
         words = words[1:]
     if not words:
         return questions + ([] if not had_assignment else [Route("local", None, "")])
+    if words[0] == "[[" and not had_assignment and not getattr(words[0], "quoted", False):
+        return questions + [Route("local", None, " ".join(words[:5]))]
     routes = questions + _segment_core(words, depth)
     if had_assignment:
         # A variable set for one command (HOME, SF_*) can point an alias at another org.
@@ -1704,7 +2006,21 @@ def _with_run_time_words(words: list[str], route: Route, detail: str, launcher: 
     if route.kind in ("admin", "org_write", "browser_write", *REFUSED_KINDS) \
             or not (_adds_words(words[1:]) or (launcher and _cmd_fills(words[1:]))):
         return [route]
-    return [route, Route("unverifiable", route.org, detail + _ADDS_WORDS_NOTE, route.client)]
+    routes = [route, Route("unverifiable", route.org, detail + _ADDS_WORDS_NOTE, route.client)]
+    names = _sf_org_flags(_topic(words[1:])) if launcher else TORQUE_ORG_FLAGS
+    # An unquoted substitution can add org options to the outer command. Read the
+    # literal options in its words as candidates, since its output can split again.
+    for word in words[1:]:
+        if not _EXPANSION_CHARS & set(_raw(word)):
+            continue
+        for nested in _substitutions(str(word)):
+            tokens = _tokens(nested, _join=True)
+            if tokens is not None:
+                args = [part for token in tokens for made in _brace_expand(token.written)
+                        for part in re.split(r"[ \t\n]+", str(_Word(made))) if part]
+                routes += [Route("unverifiable", org, detail + _ADDS_WORDS_NOTE, route.client)
+                           for org in org_values(args, names)]
+    return routes
 
 
 def _torque_routes(words: list[str], rest: list[str], detail: str) -> list[Route]:
@@ -1730,18 +2046,38 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
                 break
             if rest[i] in ("-S", "--split-string") or rest[i].startswith(("-S", "--split-string=")):
                 return [Route("unverifiable", None, detail)]
-            unknown = unknown or not (_ASSIGN_RE.match(rest[i]) or rest[i] in _ENV_FLAGS + _ENV_VALUES
-                                      or rest[i].split("=", 1)[0] in _ENV_ATTACHED)
-            i += 2 if rest[i] in _ENV_VALUES else 1
+            known = (_ASSIGN_RE.match(rest[i]) or rest[i] in _ENV_FLAGS + _ENV_VALUES
+                     or rest[i].split("=", 1)[0] in _ENV_ATTACHED)
+            took = 2 if rest[i] in _ENV_VALUES else 1
+            word = str(rest[i])
+            if word.startswith("-") and not word.startswith("--") and len(word) > 1:
+                # Short options can share a word. A value option consumes its remaining
+                # text, or the following word.
+                known = True
+                for at, letter in enumerate(word[1:]):
+                    if letter == "S":
+                        return [Route("unverifiable", None, detail)]
+                    if "-" + letter in _ENV_VALUES:
+                        took = 1 if at + 2 < len(word) else 2
+                        break
+                    if "-" + letter not in _ENV_FLAGS:
+                        known = False
+                        break
+                known = known and not (_filled(rest[i]) or _LOOSE_CHARS & set(_raw(rest[i])))
+            unknown = unknown or not known
+            i += took
         inner = rest[i:]
         if not inner:
             return [Route("local", None, detail)]
         assigned = any(_ASSIGN_RE.match(w) for w in rest[:i])
-        routes = _segment(["X=1", *inner] if assigned else inner, depth)
+        routes = _segment_core(inner, depth)
+        if assigned:
+            routes = _asked_as_well(routes, " (with a variable assignment)")
         if unknown:
             # an option this reading does not know could take the next word as its value
             routes = [Route("unverifiable", None, detail + " (an option of `env` the gate does not know)"), *routes]
-        if any(w in ("-C", "--chdir") or w.startswith(("-C", "--chdir=")) for w in rest[:i]):
+        if any(w == "--chdir" or w.startswith("--chdir=") or re.match(r"-[i0v]*C", w)
+               for w in rest[:i]):
             # The command runs in another folder than the one the gate reads paths from.
             routes = [Route("unverifiable", None, detail + " (runs in another folder)"), *routes]
         return routes
@@ -1772,6 +2108,28 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
         return list(dict.fromkeys([Route("unverifiable", None, detail), *found]))
     if head in SHELLS:
         inner = g._shell_c_strings(words)
+        i, given, no_run = 0, False, False
+        while i < len(rest) and rest[i].startswith(("-", "+")):
+            word = str(rest[i])
+            if word in ("-", "--"):
+                i += 1
+                break
+            if word in ("--help", "--version", "--dump-strings", "--dump-po-strings"):
+                no_run = True
+                break
+            short = word[1:] if not word.startswith("--") else ""
+            given = given or (word.startswith("-") and "c" in short)
+            if "n" in short:
+                no_run = word.startswith("-")
+            no_run = no_run or (word.startswith("-") and "D" in short)
+            # Other options can precede or follow -c. Its command is the first
+            # remaining argument; -o and --rcfile consume their values.
+            valued = word in ("--rcfile", "--init-file")
+            optional = bool(set("oO") & set(short))
+            i += 2 if i + 1 < len(rest) and (valued or (optional and
+                not rest[i + 1].startswith(("-", "+")))) else 1
+        if given and not no_run and i < len(rest) and rest[i] not in inner:
+            inner.append(rest[i])
         if inner:
             # A shell running a string is still an interpreter the host must ask about;
             # the calls inside it are classified too.
@@ -1792,9 +2150,10 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
         return [Route("unverifiable", None, detail), *classify_bash(" ".join(rest), depth + 1)]
     if head in BENIGN_WRAPPERS:
         inner = _strip_benign(head, words)
-        if head == "command" and rest[:1] in (["-v"], ["-V"]):
+        if head == "command" and any(w.startswith("-") and not w.startswith("--") and set("vV") & set(w[1:])
+                                     for w in rest[:_wrapper_options(head, rest)[0]]):
             return [Route("local", None, detail)]
-        routes = _segment(inner, depth) if inner else [Route("local", None, detail)]
+        routes = _segment_core(inner, depth) if inner else [Route("local", None, detail)]
         if _wrapper_options(head, rest)[1]:
             routes = [Route("unverifiable", None, detail + f" (an option of `{head}` the gate does not know)"),
                       *routes]
@@ -1822,12 +2181,15 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head in EXTENSIBLE_COMMANDS:
         return [Route("unverifiable", None, detail + " (can run hooks, plugins or configured commands)")]
     known_path = re.search(r"[/\\]", first) is None
-    if head == "alias" and any("=" in word for word in rest):
-        return [Route("unverifiable", None, detail + " (makes a name run another command)")]
-    if head == "hash" and any(w.startswith("-") and "p" in w for w in rest):
-        # `hash -p FILE NAME`: from here on the shell runs FILE for NAME (`hash -p ./x sf`).
-        return [Route("unverifiable", None, detail + " (makes a name run another program)")]
-    if head in LOCAL_COMMANDS and known_path:
+    if head in ("alias", "unalias") and rest and (head == "unalias" or any("=" in word for word in rest)):
+        return [Route("unverifiable", None, detail + " (changes what a command name runs)")]
+    flags = rest[:rest.index("--")] if "--" in rest else rest
+    if head == "unset" and any(w.startswith("-") and "f" in w[1:] for w in flags):
+        return [Route("unverifiable", None, detail + " (removes a function that a command name runs)")]
+    if head == "hash" and any(w.startswith("-") and set("pdr") & set(w[1:]) for w in flags):
+        # Setting or forgetting a cached path changes the program a later call runs.
+        return [Route("unverifiable", None, detail + " (changes the program a command name runs)")]
+    if head in LOCAL_COMMANDS and head != "[[" and known_path:
         return [Route("local", None, detail)]
     routes = [Route("unverifiable", None, detail)]
     start = _inner_start(words)
@@ -1860,7 +2222,7 @@ _ARITHMETIC = re.compile(r"(?<=[A-Za-z0-9_$])\[([^\[\]\n]*)\]")
 _ARITHMETIC_SETS = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+\+|--|(?:[-+*/%&|^]|<<|>>)?=(?!=))"
                               r"|(?:\+\+|--)\s*([A-Za-z_][A-Za-z0-9_]*)")
 # `{NAME}>file`: Bash opens the file on a descriptor of its choosing and stores the number in NAME.
-_DESCRIPTOR_NAME = re.compile(r"(?:^|[\s;|&(])\{([A-Za-z_][A-Za-z0-9_]*)\}(?=[<>])")
+_DESCRIPTOR_NAME = re.compile(r"(?:^|[\s;|&(])\{([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\n]*\])?\}(?=[<>])")
 # `${NAME:=value}` and `${NAME=value}`: an expansion that assigns when the variable is unset
 # (or, with the colon, empty), also to one element of an array.
 _PARAMETER_SETS = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]\n]*\])?:?=")
@@ -1874,6 +2236,7 @@ def _set_in_passing(command: str) -> list[str]:
     commands are found) and by a redirection that stores its descriptor (`{HOME}>file`).
     Checked in real Bash. Read from the line as written: inside double quotes they are
     evaluated all the same."""
+    command = command.replace("\\\n", "")
     names = [first or second for inside in _ARITHMETIC.findall(command)
              for first, second in _ARITHMETIC_SETS.findall(inside)]
     return names + _DESCRIPTOR_NAME.findall(command) + _PARAMETER_SETS.findall(command)
@@ -1887,15 +2250,16 @@ def _assigned_names(words: list[str]) -> list[str]:
     words such as command or builtin). A name the shell builds (`printf -v "$n"`) is given
     as `$`: it can be any name. A `NAME=value` before a command is set for that command
     alone, and is not one of these."""
-    if words and words[0] in ("for", "select"):
+    if words and _is_keyword(words[0]) and words[0] in ("for", "select"):
         return [str(words[1])] if len(words) > 1 else []
-    names = []
+    names, literal = [], False
     while words:
         if g._basename(words[0]) in BENIGN_WRAPPERS:
             words = _strip_benign(g._basename(words[0]), words)
-        elif words[0] in _KEYWORDS:
+            literal = True             # a wrapper's target is a command word, not shell syntax
+        elif not literal and _is_keyword(words[0]):
             words = words[1:]
-        elif _ASSIGN_RE.match(words[0]):
+        elif not literal and _is_assignment(words[0]):
             names.append(words[0].split("=", 1)[0])
             words = words[1:]
         else:
@@ -1903,6 +2267,13 @@ def _assigned_names(words: list[str]) -> list[str]:
     if not words:
         return names
     head, rest = words[0], words[1:]
+    if head == "[[":
+        # Both operands of a numeric comparison are arithmetic expressions, where
+        # an assignment or increment changes the shell's variable for later calls.
+        compare = {"-eq", "-ne", "-lt", "-le", "-gt", "-ge"}
+        return [first or second for i, word in enumerate(rest)
+                if (i and rest[i - 1] in compare) or (i + 1 < len(rest) and rest[i + 1] in compare)
+                for first, second in _ARITHMETIC_SETS.findall(str(word))]
     if head not in _ASSIGNING_BUILTINS:
         return []
     if head in ("printf", "wait"):      # only `-v NAME` (`wait -p NAME`) is a name; the other words are not
@@ -1952,11 +2323,13 @@ def _exports(words: list[str]) -> bool:
     `declare -x`/`typeset -x`/`local -x`/`readonly -x` (flags combined or not),
     `set -a`/`set -o allexport` (every later assignment is exported), or `set -k`/`set
     -o keyword` (a `NAME=value` word anywhere in a later command is set for it)."""
+    literal = False
     while words:
         if g._basename(words[0]) in BENIGN_WRAPPERS:
             # `command export ...`, `builtin declare -x ...`, `time -p export ...`
             words = _strip_benign(g._basename(words[0]), words)
-        elif words[0] in _KEYWORDS or _ASSIGN_RE.match(words[0]):
+            literal = True
+        elif not literal and (_is_keyword(words[0]) or _is_assignment(words[0])):
             words = words[1:]
         else:
             break
@@ -2035,8 +2408,8 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
             # runs another sf, `HOME=/x; sf ...` reads other aliases; checked in real Bash).
             found = _asked_as_well(found, exported)
         routes.extend(found)
-        pieces = [_brace_expand(_raw(word)) for word in words]
-        if any(made != [_raw(word)] for made, word in zip(pieces, words)):
+        pieces = [_brace_expand(getattr(word, "written", _raw(word))) for word in words]
+        if any(made != [getattr(word, "written", _raw(word))] for made, word in zip(pieces, words)):
             # Brace expansion is worked out from the text of the line alone, so the words it
             # makes are read as well: `{sf,data,query,-o,B}` is the command `sf data query -o
             # B`, with its org and its data class. (The reading above still asks about the
@@ -2053,6 +2426,29 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
             exported = " (after an exported variable)"
         elif not exported and any(_read_by_later_commands(name) for name in names):
             exported = " (after a variable that the commands after it read was set)"
+    # An unquoted substitution does not end the outer command. Read its whole words
+    # as well, retaining the original reading and adding only org-capable routes.
+    joined = _split(command or "", _join=True)
+    if joined is not None and (parsed is None or joined[0] != parsed[0]):
+        joined_exported = " (after a variable that the commands after it read was set)" if any(
+            _read_by_later_commands(name) for name in passing) else ""
+        counted = {(route.kind, route.org, route.data) for route in routes}
+        for words in joined[0]:
+            found = _segment(words, _depth)
+            pieces = [_brace_expand(getattr(word, "written", _raw(word))) for word in words]
+            if any(made != [getattr(word, "written", _raw(word))] for made, word in zip(pieces, words)):
+                found += _segment([_Word(piece) for made in pieces for piece in made], _depth)
+            found = _asked_as_well(found, joined_exported) if joined_exported else found
+            for route in found:
+                if (route.kind in _NET_KINDS or route.kind == "unverifiable" and (
+                        route.org is not None or words and "\r" in words[0])) \
+                        and (route.kind, route.org, route.data) not in counted:
+                    routes.append(route)
+                    counted.add((route.kind, route.org, route.data))
+            if not joined_exported and _exports(words):
+                joined_exported = " (after an exported variable)"
+            elif not joined_exported and any(_read_by_later_commands(name) for name in _assigned_names(words)):
+                joined_exported = " (after a variable that the commands after it read was set)"
     setting = _CONTAINER_SET_RE.search(text)
     if setting:
         # NAME=true sf org open, export NAME=..., $env:NAME = ...: with it set, an
@@ -2072,19 +2468,20 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
     for word in dict.fromkeys(str(word) for words in segments for word in words if "$(" in word or "`" in word):
         for nested in dict.fromkeys([*g._direct_substitutions(word), *_substitutions(word)]):
             routes.extend(r for r in classify_bash(nested, _depth + 1) if r.kind != "local")
-    if "\\\r\n" in (command or ""):
-        # A backslash before CR LF. Bash on Linux and macOS takes the CR for an escaped
-        # character and ends the command at the LF (the reading above); Git Bash on
-        # Windows drops the CR and joins the lines (checked there). The gate cannot tell
-        # which Bash reads the line, so both readings have to pass.
-        routes.extend(r for r in classify_bash(command.replace("\\\r\n", ""), _depth + 1) if r.kind != "local")
+    if "\r" in (command or ""):
+        # Bash on Unix keeps literal CR characters. Git Bash on Windows drops them
+        # before reading the script (checked there), so read the command without them
+        # as well. This also joins a backslash before CR LF.
+        routes.extend(r for r in classify_bash(command.replace("\r", ""), _depth + 1) if r.kind != "local")
     if _net:
         for tail in _substitution_tails(command or ""):
             routes.extend(r for r in classify_bash(tail, _depth + 1, _net=False) if r.kind in _NET_KINDS)
-        if "<<" in (command or "") and "\n" in command:
+        if ("<<" in (command or "") or _HEREDOC_OPERATOR.search(command or "")) and "\n" in command:
             # The net under the here-document reader: each line on its own, in a fresh
             # quoting context. Wherever a body really ends, the command after it begins
             # a line. (A body's own lines are read as commands in any case.)
+            for tail in dict.fromkeys(_continued_heredoc_tails(command)):
+                routes.extend(r for r in classify_bash(tail, _depth + 1, _net=False) if r.kind in _NET_KINDS)
             for line in dict.fromkeys(command.splitlines()):
                 routes.extend(r for r in classify_bash(line, _depth + 1, _net=False) if r.kind in _NET_KINDS)
     return list(dict.fromkeys(routes)) or [Route("local", None, "")]

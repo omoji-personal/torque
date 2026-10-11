@@ -1804,7 +1804,9 @@ def test_what_makes_bash_or_a_local_program_run_another_program_is_asked_about(w
 def test_ordinary_uses_of_the_same_commands_stay_local():
     for command in ("hash -r", "hash", "hash sf", "wget http://example.org/x.zip", "wget -q -O x.zip http://example.org/x",
                     "set -x; true", "set -e; true", "PS5=x; true"):
-        assert set(KINDS(command)) == {"local"}, (command, KINDS(command))
+        # Resetting cached programs can change what a later command runs.
+        expected = {"unverifiable"} if command == "hash -r" else {"local"}
+        assert set(KINDS(command)) == expected, (command, KINDS(command))
 
 
 def test_a_number_is_a_file_descriptor_only_directly_before_a_redirection(w):
@@ -1974,7 +1976,7 @@ def test_every_wrapper_option_that_takes_a_value_is_known(w, wrapper):
 
 @pytest.mark.parametrize("wrapper", [
     "/usr/bin/time -x echo", "env -x echo", "stdbuf --mode echo", "nice -z echo", "timeout --what echo 5",
-    "caffeinate -x echo", "env -uNAME", "command -x echo", "/usr/bin/time --wait echo",
+    "caffeinate -x echo", "command -x echo", "/usr/bin/time --wait echo",
 ])
 def test_a_wrapper_option_the_gate_does_not_know_is_asked_about(w, wrapper):
     # it could take the next word as its value, as `time -o` does
@@ -1986,7 +1988,8 @@ def test_a_wrapper_option_the_gate_does_not_know_is_asked_about(w, wrapper):
 def test_the_wrappers_known_options_are_read_as_before():
     for wrapper in ("nice -5", "nice -n 5", "nice -n5", "command -p", "exec -c", "stdbuf -oL -eL", "nohup",
                     "timeout --preserve-status 5", "timeout -k 5 10", "caffeinate -dims", "/usr/bin/time -p",
-                    "/usr/bin/time --output=x.txt", "command --", "env -i", "env -u NAME", "env --unset=NAME"):
+                    "/usr/bin/time --output=x.txt", "command --", "env -i", "env -u NAME", "env -uNAME",
+                    "env --unset=NAME"):
         command = wrapper + " " + R15_QUERY
         assert B(command) == [("read", "acme-prod", "records")], (command, B(command))
     options = routes._wrapper_options
@@ -2274,10 +2277,10 @@ def test_completed_bash_prefixes_require_only_linear_scanning(monkeypatch):
     scanned = 0
     scan = routes._scan
 
-    def counted(command):
+    def counted(command, _join=False, _tails=None):
         nonlocal scanned
         scanned += len(command)
-        return scan(command)
+        return scan(command, _join, _tails)
 
     monkeypatch.setattr(routes, "_scan", counted)
     for command, data in (
@@ -2399,10 +2402,10 @@ def test_a_named_bash_coprocess_reads_its_compound_command(w):
 def test_bash_alias_definitions_are_asked_about(w):
     for command in ("alias echo=hostname", "alias sf='echo VALUE'", "alias user_name=hostname",
                     "alias -- user_name='echo VALUE'", "command alias echo=hostname",
-                    "builtin alias echo=hostname"):
+                    "builtin alias echo=hostname", "unalias echo"):
         assert "unverifiable" in KINDS(command), (command, B(command))
         assert run(w, command, "dontAsk").action == "deny"
-    for command in ("alias", "alias echo", "alias -p", "unalias echo", "echo 'alias echo=hostname'"):
+    for command in ("alias", "alias echo", "alias -p", "echo 'alias echo=hostname'"):
         assert set(KINDS(command)) == {"local"}, (command, B(command))
 
 
@@ -3094,3 +3097,501 @@ def test_r19_ordinary_mcp_read_classes_are_unchanged():
             ("mcp__salesforce__run_soql_query", {"query": "SELECT Id FROM Contact"}, "records")):
         assert [(r.kind, r.org, r.data) for r in classify(tool, {"usernameOrAlias": "acme-prod", **inp})] == [
             ("read", "acme-prod", data)]
+
+
+# ---- round 19, Bash reading: redirections, substitution words and heredoc syntax
+
+@pytest.mark.parametrize("descriptor", ["{fd}", "{fds[0]}", "{fds[a[0]]}", "{f\\\nd}", "{fds[0]}\\\n"])
+def test_r19_bash_named_descriptors_are_not_org_arguments(descriptor):
+    command = "sf data query -q VALUE -o " + descriptor + ">/dev/null acme-prod"
+    assert B(command) == [("read", "acme-prod", "records")]
+
+
+@pytest.mark.parametrize("redirect", [">|/dev/null", ">\\\n|/dev/null", "> >(cat)", "> >\\\n(cat)", "> >(cat <(echo VALUE))"])
+def test_r19_bash_redirections_do_not_hide_owner_commands(redirect):
+    assert "admin" in KINDS("torque " + redirect + " workspace guarded-reads off --path .")
+
+
+@pytest.mark.parametrize("redirect", [">|/dev/null", ">\\\n|/dev/null", "> >(cat)", "> >\\\n(cat)", "> >(cat <(echo VALUE))"])
+def test_r19_bash_redirections_do_not_hide_a_rest_write(redirect):
+    command = ("sf api request rest /services/data/v60.0/tooling/query?q=SELECT+Id+FROM+ApexClass "
+               "-o acme-prod " + redirect + " -X POST")
+    assert ("org_write", "acme-prod", None) in B(command)
+
+
+@pytest.mark.parametrize("value", ["$(echo A)", "`echo A`", "<(echo A)", ">(cat)", "pre$(echo A)post"])
+def test_r19_bash_substitutions_keep_outer_command_words(value):
+    assert ("read", "acme-prod", None) in B("sf sobject describe -s " + value + " -o acme-prod")
+
+
+def test_r19_bash_joined_reading_keeps_environment_changes_in_order():
+    command = ("sf api request rest /services/data/v60.0/tooling/query?q=SELECT+Id+FROM+ApexClass "
+               "-o acme-prod > >(cat) -X POST; HOME=VALUE")
+    assert ("org_write", "acme-prod", None) in B(command)
+    command = "HOME=VALUE; sf sobject describe -s $(echo A) -o acme-prod"
+    assert ("read", "acme-prod", None) in B(command)
+    assert ("unverifiable", "acme-prod", None) in B(command)
+    assert ("read", "org0", None) in B("sf sobject describe -s $(echo A) -o org{+0..+0}")
+
+
+@pytest.mark.parametrize("opening,closing", [
+    ("<\\\n<E", "E"), ("<\\\n<-E", "\tE"), ("<<E\\\nOF", "EOF"),
+    ('<<E"\\\nO"F', "EOF"), ("<<$'END'", "END"), ("<<$'\\105ND'", "END"),
+    ("<<$\"END\"", "END"),
+])
+def test_r19_bash_heredoc_spelling_keeps_the_following_command(opening, closing):
+    command = f'cat {opening}\n\'\n{closing}\nsf data query -o "acme-\\\nprod"\n#\''
+    assert ("read", "acme-prod", "records") in B(command)
+    owner = f"cat {opening}\n'\n{closing}\ntorque workspace \\\n guarded-reads off --path .\n#'"
+    assert "admin" in KINDS(owner)
+
+
+@pytest.mark.parametrize("join", ["\\\n", "\\\n\\\n"])
+@pytest.mark.parametrize("template", [
+    'unset x; echo "${x:-$JOIN(sf data query -q VALUE -o acme-prod)}"',
+    'unset x; echo "$JOIN{x:-$(sf data query -q VALUE -o acme-prod)}"',
+    'unset x; echo "${xJOIN:-$(sf data query -q VALUE -o acme-prod)}"',
+    "sf data query -q VALUE -o $JOIN'acme-prod'",
+    'echo $JOIN(echo VALUE)#x ; sf data query -q VALUE -o "acme-prod"',
+    'echo <JOIN(echo VALUE)#x ; sf data query -q VALUE -o "acme-prod"',
+    'echo "$(caJOINse VALUE in (V*) sf data query -q VALUE -o acme-prod;; eJOINsac)"',
+])
+def test_r19_bash_continuations_in_syntax_keep_the_first_reading(template, join):
+    assert ("read", "acme-prod", "records") in B(template.replace("JOIN", join))
+
+
+def test_r19_bash_single_quoted_continuation_is_an_org_character():
+    assert B("sf data query -q VALUE -o 'org\\\n0'") == [("read", "org\\\n0", "records")]
+
+
+@pytest.mark.parametrize("opening,first,second", [
+    ("<<EOF", "EO\\", "F"), ("<<-EOF", "\tEO\\", "F"), ("<<EOF", "E\\", "OF"),
+])
+def test_r19_bash_unquoted_body_continuation_can_end_a_heredoc(opening, first, second):
+    command = f'cat {opening}\n{first}\n{second}\nsf data query -o "acme-\\\nprod"\n#\''
+    assert ("read", "acme-prod", "records") in B(command)
+
+
+@pytest.mark.parametrize("opening", ["<<'EOF'", '<<"EOF"', "<<\\EOF", "<<$'EOF'"])
+def test_r19_bash_quoted_body_keeps_its_line_ends(opening):
+    command = f"cat {opening}\nEO\\\nF\ntorque workspace \\\n guarded-reads off --path .\n#'"
+    assert "admin" not in KINDS(command)
+
+
+def test_r19_bash_substitution_opener_can_continue_across_heredoc_body_lines():
+    command = "cat <<EOF\n$\\\n(sf data query -q VALUE -o acme-prod)\nEOF"
+    assert ("read", "acme-prod", "records") in B(command)
+
+
+@pytest.mark.parametrize("command,org", [
+    ('echo VALUE\r#x ; sf data query -o "acme-prod"', "acme-prod"),
+    ("sf data query -o acme-prod\rVALUE", "acme-prod\rVALUE"),
+])
+def test_r19_bash_unix_cr_is_part_of_the_word(command, org):
+    assert ("read", org, "records") in B(command)
+
+
+def test_r19_bash_unix_cr_in_a_command_name_needs_a_person():
+    assert "unverifiable" in KINDS("echo\r sf data query -o acme-prod")
+
+
+# ---- round 19, Bash reading: quoted braces, integer sequences and literal marks
+
+@pytest.mark.parametrize("word,org", [
+    ('{acme-prod",extra",other}', "acme-prod,extra"),
+    ('{"acme-prod,extra",other}', "acme-prod,extra"),
+    (r'{acme-prod\,extra,other}', "acme-prod,extra"),
+    ("{acme-prod',extra',other}", "acme-prod,extra"),
+    ('{org{"0".."0"},other}', "org{0..0}"),
+    (r'{org{0\.\.0},other}', "org{0..0}"),
+    ("{org{0..''0},other}", "org{0..0}"),
+    ("org{+0..+0}", "org0"), ("org{0..0..+1}", "org0"),
+    ("org{+01..+01}", "org1"), ("org{+2..01}", "org02"),
+    ("org{a..a..+1}", "orga"), ("org{3..1..+2}", "org3"),
+    ("org{0..-01}", "org000"), ("org{-1..01}", "org-1"),
+    ("org{02..-01}", "org002"), ("org{-00..-00}", "org000"),
+    ("org{-05..-01}", "org-05"), ("org{-0..-0}", "org0"),
+    ("org{05..01..-2}", "org05"), ("org{0..0..0}", "org0"),
+    ("{org{9223372036854775808..9223372036854775808},other}",
+     "org{9223372036854775808..9223372036854775808}"),
+    ("{org{0..0..9223372036854775808},other}", "org{0..0..9223372036854775808}"),
+    ("{org{0..1..-9223372036854775808},other}", "org{0..1..-9223372036854775808}"),
+    ("{org{0..9223372036854775807..9223372036854775807},other}", "org0"),
+    ("{org{\u0660..\u0660},other}", "org{\u0660..\u0660}"),
+])
+def test_r19_bash_brace_arguments(word, org):
+    assert ("read", org, None) in B("sf sobject describe -s A -o " + word)
+
+
+@pytest.mark.parametrize("word,wrong", [
+    ('{acme-prod",extra",other}', "acme-prod"),
+    (r'{acme-prod\,extra,other}', "acme-prod"),
+    ('{org{"0".."0"},other}', "org0"),
+    (r'{org{0\.\.0},other}', "org0"),
+    ("{org{0..''0},other}", "org0"),
+    ("{org{9223372036854775808..9223372036854775808},other}", "org9223372036854775808"),
+    ("{org{0..0..9223372036854775808},other}", "org0"),
+])
+def test_r19_bash_braces_do_not_invent_an_argument(word, wrong):
+    assert ("read", wrong, None) not in B("sf sobject describe -s A -o " + word)
+
+
+@pytest.mark.parametrize("mark", ["\ue000", "\ue013", "\ue100", "\ue101", "\ue200",
+                                 "\ue202", "\ue300", "\uefff", "\uf8ff"])
+@pytest.mark.parametrize("form", ["bare", "single", "double", "escaped", "ansi"])
+def test_r19_bash_original_private_use_characters(mark, form):
+    org = "acme-prod" + mark + "Qe000"
+    word = {"bare": org, "single": "'" + org + "'", "double": '"' + org + '"',
+            "escaped": "acme-prod\\" + mark + "Qe000",
+            "ansi": "acme-prod$'\\u%04xQe000'" % ord(mark)}[form]
+    assert B("sf data query -o " + word + " -q VALUE") == [("read", org, "records")]
+
+
+def test_r19_bash_brace_resource_limits():
+    assert routes._brace_expand("{1..8}{1..8}") == [
+        str(first) + str(last) for first in range(1, 9) for last in range(1, 9)]
+    assert routes._brace_expand("{1..8}{1..9}") == ["{1..8}{1..9}"]
+    nested = "{a," * 1000 + "b" + "}" * 1000
+    assert KINDS("echo " + nested) == ["local"]
+    assert "unverifiable" in KINDS(nested)
+    assert KINDS("echo " + "{1..64}" * 20) == ["local"]
+    assert routes._brace_expand("org{" + "0" * 5000 + "..0}") == ["org" + "0" * 5000]
+
+
+@pytest.mark.parametrize("word,org", [
+    (r"org$'\c0'", "org\x10"), (r"org$'\c{'", "org\x1b"),
+    (r"org$'\c\\'", "org\x1c"), (r"org$'\c\\VALUE'", "org\x1cVALUE"),
+    (r"org$'\c?'", "org\x7f"), (r"org$'\c@'", "org"),
+    (r"org$'\ca'", "org\x01"), (r"org$'\cA'", "org\x01"),
+    ("org$'\\c\u00df'", "org\x03\udc9f"),
+    (r"org$'\xC3\x9F'", "org\u00df"), (r"org$'\303\237'", "org\u00df"),
+    (r"org$'\xE9'", "org\udce9"), (r"org$'\uD800'", "org\udced\udca0\udc80"),
+    (r"org$'\U00110000'", "org\udcf4\udc90\udc80\udc80"),
+    (r"org$'\U80000000'", "org"),
+])
+def test_r19_bash_ansi_escapes_write_bytes(word, org):
+    assert B("sf data query -o " + word + " -q VALUE") == [("read", org, "records")]
+
+
+# ---- round 19, Bash reading: command positions, coprocesses and direct setters
+
+@pytest.mark.parametrize("name", [
+    "for", "select", "case", "if", "then", "else", "elif", "fi", "do", "done",
+    "while", "until", "in", "esac", "function", "coproc", "!", "{", "}", "[[",
+])
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_r19_bash_quoted_syntax_names_are_commands(name, quote):
+    assert KINDS(quote + name + quote + " VALUE") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("command", [
+    r"\for VALUE", 'f"o"r VALUE', "fo''r VALUE", 'fo""r VALUE',
+    '"PATH=VALUE"', 'PA"TH"=VALUE', r"x\=VALUE", 'x"=VALUE"',
+    "command for VALUE", "builtin for VALUE", "env for VALUE",
+    "exec for VALUE", "nohup for VALUE", "command x=VALUE",
+    "env X=VALUE for VALUE", "command [[ VALUE", "env [[ VALUE",
+    "x=VALUE if echo VALUE", "x=VALUE [[ VALUE",
+])
+def test_r19_bash_runtime_targets_are_not_shell_syntax(command):
+    assert "unverifiable" in KINDS(command)
+
+
+@pytest.mark.parametrize("head", ['"sf"', 's"f"', r"\sf", "$'sf'"])
+def test_r19_bash_quoted_known_commands_keep_their_read(head):
+    assert B(head + " sobject describe -s Account -o acme-prod") == [("read", "acme-prod", None)]
+
+
+@pytest.mark.parametrize("command", [
+    "coproc echo if sf data query -o acme-prod -q VALUE; then :; fi; wait",
+    "coproc echo while sf data query -o acme-prod -q VALUE && false; do :; done; wait",
+    "coproc echo until sf data query -o acme-prod -q VALUE || true; do :; done; wait",
+    "coproc echo for value in VALUE; do sf data query -o acme-prod -q VALUE; done; wait",
+    "coproc echo case VALUE in VALUE) sf data query -o acme-prod -q VALUE;; esac; wait",
+    "coproc echo { sf data query -o acme-prod -q VALUE; }; wait",
+    "coproc echo ( sf data query -o acme-prod -q VALUE ); wait",
+])
+def test_r19_bash_named_coprocess_compound_commands_keep_their_routes(command):
+    assert ("read", "acme-prod", "records") in B(command)
+
+
+@pytest.mark.parametrize("command", [
+    "command -pv sf data query", "command -pV sf sobject describe -o acme-prod",
+    "command -p -V sf data query", "command -Vp sf sobject describe -o acme-prod",
+])
+def test_r19_bash_command_queries_do_not_run_their_arguments(command):
+    assert B(command) == [("local", None, None)]
+
+
+@pytest.mark.parametrize("command", [
+    "unalias echo", "unalias -a", "unset -f echo", "unset -fv echo",
+    "builtin unset -f echo", "hash -r", "hash -d sf", "command hash -rd sf",
+])
+def test_r19_bash_removing_a_command_definition_or_cached_program_is_asked(command):
+    assert KINDS(command) == ["unverifiable"]
+
+
+@pytest.mark.parametrize("expression", [
+    "[[ 0 -eq 'HOME=1' ]]", "[[ 'HOME=1' -eq 0 ]]",
+    "[[ 0 -ne 'HOME+=1' ]]", "[[ 'HOME++' -lt 2 ]]",
+    "[[ 0 -ge '++HOME' ]]", "[[ 0 -eq 'HOM'\"E=1\" ]]",
+])
+def test_r19_bash_comparison_arithmetic_assignment_reaches_later_reads(expression):
+    command = expression + "; sf sobject describe -s Account -o acme-prod"
+    assert ("read", "acme-prod", None) in B(command)
+    assert ("unverifiable", "acme-prod", None) in B(command)
+
+
+@pytest.mark.parametrize("command", [
+    'x="VALUE"; echo "$x"', ': "for" "PATH=VALUE"', "if true; then echo VALUE; fi",
+    "time -p echo VALUE", 'command printf "%s\\n" VALUE', "env -- echo VALUE",
+    "alias -p", "alias echo", "unset -v value", "unset -- -f",
+    "hash -t sf", "hash -l", "[[ 0 -eq 'x=1' ]]; echo VALUE",
+    '[[ "$HOME" = "$PWD" ]]; echo VALUE', "test 0 -eq 'HOME=1'",
+    "echo 'a,b'", r"echo a\,b", r"printf '%s\n' 'a,b'",
+    "echo {+0..+0}", "echo {0..-01}", "echo $'\\c0'", "echo $'\\c\\\\'",
+    "echo \ue000Qe000", ": {fd}>/dev/null", "echo VALUE >|/dev/null",
+    "echo VALUE > >(cat); wait", "cat < <(echo VALUE)",
+])
+def test_r19_bash_ordinary_lines_stay_quiet(command):
+    assert set(KINDS(command)) == {"local"}
+
+
+def test_r19_bash_quoted_query_braces_stay_records():
+    assert B('sf data query -q "SELECT Id, Name FROM Account WHERE Name = \'{a,b}\'" '
+             '-o acme-prod') == [("read", "acme-prod", "records")]
+
+
+def test_r19_bash_new_asks_and_owner_commands_reach_the_gate(w):
+    for command in ('"for" VALUE', "command for VALUE", "unalias echo", "hash -r",
+                    "[[ 0 -eq 'HOME=1' ]]; sf sobject describe -s Account -o acme-prod"):
+        assert run(w, command).action == "ask", command
+        assert run(w, command, mode="dontAsk").action == "deny", command
+    for command in ("coproc echo if torque workspace guarded-reads off --path .; then :; fi; wait",
+                    "torque >|/dev/null workspace guarded-reads off --path .",
+                    "torque > >(cat) workspace guarded-reads off --path .",
+                    "cat <<EOF\nEO\\\nF\ntorque workspace \\\n guarded-reads off --path .\n#'"):
+        assert "admin" in KINDS(command), command
+        assert run(w, command).action == "deny", command
+
+
+# ---- round 19, Bash reading: attached env options and adjacent ANSI-C byte pieces
+
+@pytest.mark.parametrize("options", ["-uVALUE", "-iv", "-iuVALUE", "-iu VALUE", "-vuVALUE", "-uCfolder", "-uSvalue"])
+def test_r19_bash_env_short_options_are_read(options):
+    assert B(f"env {options} sf sobject describe -o acme-prod") == [("read", "acme-prod", None)]
+
+
+@pytest.mark.parametrize("options", ["-Cfolder", "-ivCfolder", "-ivC folder", "--chdir=folder", "--chdir folder"])
+def test_r19_bash_env_clustered_chdir_still_asks(options):
+    command = f"env {options} sf sobject describe -o acme-prod"
+    assert ("read", "acme-prod", None) in B(command)
+    assert any("runs in another folder" in r.detail for r in classify("Bash", {"command": command}))
+
+
+@pytest.mark.parametrize("options", ['-u"$name"', "-iu${name}", "-ix", "-uNAME*"])
+def test_r19_bash_env_dynamic_or_unknown_short_options_still_ask(options):
+    command = f"env {options} sf sobject describe -o acme-prod"
+    assert ("read", "acme-prod", None) in B(command)
+    assert "unverifiable" in KINDS(command)
+
+
+@pytest.mark.parametrize("options", ["-S", "-iS", "-viS"])
+def test_r19_bash_env_clustered_split_string_still_asks(options):
+    assert KINDS(f"env {options} 'sf sobject describe -o acme-prod'") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("word,org", [
+    (r"org$'\xC3'$'\x9F'", "org\u00df"), (r"org$'\303'$'\237'", "org\u00df"),
+    (r"org$'\377'", "org\udcff"), (r"org$'\xC3'VALUE", "org\udcc3VALUE"),
+    (r"org$'\u00DF'", "org\u00df"), (r"org$'\U0001F600'", "org\U0001f600"),
+    (r"org$'\U00200000'", "org\udcf8\udc88\udc80\udc80\udc80"),
+    (r"org$'\U04000000'", "org\udcfc\udc84\udc80\udc80\udc80\udc80"),
+    (r"org$'\x00VALUE'", "org"), (r"org$'\777'", "org\udcff"),
+])
+def test_r19_bash_ansi_c_encoded_bytes_join(word, org):
+    assert B("sf data query -o " + word + " -q VALUE") == [("read", org, "records")]
+
+
+def test_r19_bash_heredoc_continuation_preserves_interior_tabs():
+    command = "cat <<-EOF\n\tEO\\\n\tF\ntorque workspace \\\n guarded-reads off --path .\nEOF"
+    assert "admin" not in KINDS(command)
+
+
+# ---- round 19, Bash reading: options around a shell command string
+
+@pytest.mark.parametrize("prefix", [
+    "bash --noprofile -c", "bash --norc -c", "bash --noprofile --norc -c",
+    "bash -l -c", "bash -x -c", "bash -o pipefail -c", "bash -xeo pipefail -c",
+    "bash -O extglob -c", "bash +O extglob -c", "bash --rcfile VALUE -c",
+    "bash --init-file VALUE -c", "bash -c -e", "bash -c -o pipefail",
+    "bash -c --", "bash -n +n -c", "sh -e -c", "zsh -e -c", "dash -c", "ksh -c", "fish -c",
+])
+def test_r19_bash_shell_options_do_not_hide_read(prefix):
+    command = prefix + " 'sf data query -o acme-prod'"
+    assert ("read", "acme-prod", "records") in B(command)
+    assert "unverifiable" in KINDS(command)
+
+
+@pytest.mark.parametrize("prefix", ["bash --noprofile -c", "bash -o pipefail -c", "bash -c -e", "dash -c"])
+def test_r19_bash_shell_options_do_not_hide_owner_command(prefix):
+    assert "admin" in KINDS(prefix + " 'torque workspace guarded-reads off'")
+
+
+@pytest.mark.parametrize("command", [
+    "bash -- -c 'sf data query -o acme-prod'", "bash - -c 'sf data query -o acme-prod'",
+    "bash VALUE -c 'sf data query -o acme-prod'", "bash -n -c 'sf data query -o acme-prod'",
+    "bash --rcfile -c 'sf data query -o acme-prod'",
+])
+def test_r19_bash_shell_script_arguments_stay_asked_without_read(command):
+    assert KINDS(command) == ["unverifiable"]
+
+
+@pytest.mark.parametrize("command", ["bash --help -c 'sf data query -o acme-prod'",
+                                   "bash --version -c 'sf data query -o acme-prod'"])
+def test_r19_bash_shell_help_stays_local(command):
+    assert KINDS(command) == ["local"]
+
+
+def test_r19_bash_shell_option_read_meets_record_consent(w):
+    assert run(w, "bash --noprofile -c 'sf data query -o acme-prod'").action == "deny"
+
+
+# ---- round 19, Bash reading: runner options and command positions
+
+@pytest.mark.parametrize("prefix", [
+    "sudo -u sf", "sudo --user sf", "sudo --us sf", "sudo -usf", "sudo -nHu sf",
+    "sudo -g sf", "sudo -p sf", "sudo --prompt sf", "sudo -h sf", "sudo -hsf",
+    "xargs -I sf", "xargs -Isf", "xargs -E sf", "xargs --replace=sf",
+    "xargs --arg-file sf", "xargs -a sf", "xargs -0I sf", "xargs --rep=sf",
+])
+def test_r19_bash_runner_option_values_are_data(prefix):
+    assert KINDS(prefix + " echo VALUE") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("prefix", ["sudo", "sudo -u USER", "xargs", "xargs -r"])
+def test_r19_bash_runner_command_arguments_are_data(prefix):
+    assert KINDS(prefix + " echo sf data query -o acme-prod") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("prefix", [
+    "sudo -u USER", "sudo -nHu USER", "sudo --user=USER", "sudo --us USER",
+    "sudo --group GROUP --prompt VALUE", "sudo -h HOST", "sudo -hHOST",
+    "sudo NAME=VALUE -u USER", "sudo -u USER NAME=VALUE", "sudo A.B=VALUE -u USER",
+    "sudo --", "xargs -0", "xargs -rI VALUE", "xargs -rI{}", "xargs -E VALUE",
+    "xargs -a VALUE", "xargs -n1", "xargs --max-procs 1", "xargs --delimiter ,",
+    "xargs --replace", "xargs --replace=VALUE", "xargs --rep",
+    "xargs -i", "xargs -iVALUE", "xargs -e", "xargs -eVALUE", "xargs -l", "xargs -l1",
+    "xargs --max-lines", "xargs --max-lines=1", "xargs --eof", "xargs --eof=VALUE",
+    "xargs --", "xargs -J VALUE",
+])
+def test_r19_bash_runner_options_keep_actual_sf_command(prefix):
+    command = prefix + " sf data query -o acme-prod"
+    assert ("read", "acme-prod", "records") in B(command)
+    assert "unverifiable" in KINDS(command)
+
+
+@pytest.mark.parametrize("prefix", [
+    "xargs -Z", "xargs --unknown VALUE", "xargs --m VALUE", 'xargs "$options"',
+    "sudo -Z", "sudo --unknown VALUE", 'sudo "$options"',
+    "sudo nohup", "xargs timeout 1", "xargs nohup", "xargs sudo -u USER",
+])
+def test_r19_bash_runner_uncertain_options_and_nested_wrappers_keep_read(prefix):
+    assert ("read", "acme-prod", "records") in B(prefix + " sf data query -o acme-prod")
+
+
+def test_r19_bash_sudo_end_of_options_keeps_assignment_as_command_data():
+    assert KINDS("sudo -- NAME=VALUE sf data query -o acme-prod") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("prefix", ["sudo -u USER", "xargs -I VALUE", "xargs -i", "xargs nohup"])
+def test_r19_bash_runner_options_keep_owner_command(prefix):
+    assert "admin" in KINDS(prefix + " torque workspace guarded-reads off")
+
+
+def test_r19_bash_runner_false_refusal_becomes_a_question(w):
+    assert run(w, "xargs -I sf echo VALUE").action == "ask"
+    assert run(w, "xargs -I sf echo VALUE", "dontAsk").action == "deny"
+
+
+# ---- round 19, Bash reading: runner modes that do not execute operands
+
+@pytest.mark.parametrize("options", [
+    "-e", "-l", "-v", "-V", "-K", "-nl", "--edit", "--list", "--lis", "--validate",
+    "--version", "--remove-timestamp", "--help", "-h -u USER", "-nh HOST",
+])
+def test_r19_bash_sudo_nonexecution_modes_keep_operands_as_data(options):
+    assert KINDS(f"sudo {options} sf data query -o acme-prod") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("options", ["--help", "--version"])
+def test_r19_bash_xargs_help_keeps_operands_as_data(options):
+    assert KINDS(f"xargs {options} sf data query -o acme-prod") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("prefix", [
+    "sudo -u e", "sudo -u Ve", "sudo -u l", "sudo --user=--help", "sudo -p --help",
+    "sudo -h HOST", "sudo -hHOST", "sudo -nhHOST", "sudo -k",
+    "xargs -I --help", "xargs -I --version", "xargs -I Ve", "xargs -l", "xargs -l1",
+])
+def test_r19_bash_runner_mode_names_in_values_do_not_hide_sf(prefix):
+    assert ("read", "acme-prod", "records") in B(prefix + " sf data query -o acme-prod")
+
+
+@pytest.mark.parametrize("command,org", [
+    ("sf data query -o acme-prod\rVALUE", "acme-prodVALUE"),
+    ("sf data query -o 'acme-prod\rVALUE'", "acme-prodVALUE"),
+    ("s\rf data query -o acme-prod", "acme-prod"),
+])
+def test_r19_bash_windows_script_reader_drops_literal_cr(command, org):
+    assert ("read", org, "records") in B(command)
+
+
+@pytest.mark.parametrize("value", [
+    "$(echo sf sobject describe -s A -o org1)", "$(echo -o org1)",
+    '$(echo "-o org1")', '$(printf "%s %s" -o org1)', "`echo -o org1`",
+    "$(echo -o org{1..1})",
+])
+def test_r19_bash_unquoted_substitution_keeps_literal_org_candidates(value):
+    found = B("sf sobject describe -s " + value + " -o acme-prod")
+    assert ("read", "acme-prod", None) in found
+    assert ("unverifiable", "acme-prod", None) in found
+    assert ("unverifiable", "org1", None) in found
+
+
+@pytest.mark.parametrize("value", ['"$(echo -o org1)"', '"`echo -o org1`"', "<(echo -o org1)"])
+def test_r19_bash_one_word_substitution_does_not_add_org_candidates(value):
+    found = B("sf sobject describe -s " + value + " -o acme-prod")
+    assert ("read", "acme-prod", None) in found
+    assert not any(org == "org1" for _, org, _ in found)
+
+
+@pytest.mark.parametrize("command,kind", [
+    ("sf project deploy start -o acme-prod $(echo -o org1)", "org_write"),
+    ("sf org display -o acme-prod $(echo -o org1)", "credential"),
+])
+def test_r19_bash_unquoted_substitution_keeps_write_approval_and_refusal(command, kind):
+    kinds = KINDS(command)
+    assert kind in kinds
+    assert "unverifiable" not in kinds
+
+
+@pytest.mark.parametrize("value", ["$(echo -o org1)", "`echo -o org1`", '"$(echo -o org1)"'])
+def test_r19_bash_local_output_of_an_org_option_stays_local(value):
+    assert set(KINDS("echo " + value)) == {"local"}
+
+
+def test_r19_bash_substitution_does_not_treat_a_data_value_as_an_org():
+    found = B('sf data get record -v $(echo "-v Name=VALUE") -o acme-prod')
+    assert ("read", "acme-prod", "records") in found
+    assert ("unverifiable", "acme-prod", None) in found
+    assert not any(org == "Name=VALUE" for _, org, _ in found)
+
+
+@pytest.mark.parametrize("command", [
+    "sf org list users -o acme-prod $(echo -v org1)",
+    "torque logs --target-org acme-prod $(echo --org org1)",
+])
+def test_r19_bash_substitution_keeps_each_commands_org_options(command):
+    found = B(command)
+    assert any(kind == "read" and org == "acme-prod" for kind, org, _ in found)
+    assert ("unverifiable", "org1", None) in found
