@@ -458,10 +458,9 @@ def test_the_gate_reports_the_org_of_every_sf_command_in_powershells_tree(tmp_pa
         pytest.skip("Windows PowerShell is present but its parser could not be asked here")
     missed = []
     for line, (errors, *orgs) in zip(WORD_LINES, rows):
-        assert errors == "0" and orgs, (line, errors)      # each line is one PowerShell runs an sf command from
         seen = {route.org for route in classify("PowerShell", {"command": line})}
-        if not set(orgs) <= seen:
-            missed.append((line, orgs, sorted(filter(None, seen))))
+        if errors != "0" or not orgs or not set(orgs) <= seen:
+            missed.append((line, errors, orgs, sorted(filter(None, seen))))
     assert not missed, missed
 
 
@@ -843,3 +842,139 @@ def test_r19_powershell_packaged_script_words_use_the_delegate_class(tmp_path, c
     assert got.get(1) == {"org0"}
     assert [(r.kind, r.org, r.data) for r in classify("PowerShell", {"command": command})] == [
         ("read", "org0", data)]
+
+# ---- round 20, PowerShell reading: native arrays, lookup and physical line-end values
+
+NATIVE_FORMS += [
+    "--since x,\r--target-org,\rorg1",
+    "--since x,\n\n--target-org,\n\norg1",
+    "--since x,\r\r--target-org,\r\rorg1",
+    "--since x,\r\n\r\n--target-org,\r\n\r\norg1",
+    "--since x, #VALUE\n--target-org, #VALUE\norg1",
+    "--since x,\n#VALUE\n#SECOND\n--target-org,\norg1",
+    "--since x,<##>\n--target-org,<##>\norg1",
+    "--since x,\n<#VALUE#>\n--target-org,\n<#VALUE#>\norg1",
+    "--since x,\x60\n\n--target-org,\x60\n\norg1",
+    "--since x,\x60\r\n\n--target-org,\x60\r\n\norg1",
+    "--since x,\x60\r--target-org,\rorg1",
+    "--since x,\x60\r\r--target-org,\rorg1",
+    '--target-org "org0\x60\norg1"',
+    '--target-org "org0\x60\r\norg1"',
+    '--target-org "org0\x60\rorg1"',
+    "--target-org org0\x60\norg1",
+    "--target-org org0\x60\r\norg1",
+    "--target-org org0\x60\rorg1",
+]
+WORD_LINES += [
+    "function SF() { echo VALUE }; sf sobject describe -s A -o org0",
+    "function ECHO() { echo VALUE }; sf sobject describe -s A -o org0",
+    "& 'exit' VALUE; sf sobject describe -s A -o org0",
+    "& 'return' VALUE; sf sobject describe -s A -o org0",
+    "& 'export' VALUE; sf sobject describe -s A -o org0",
+    "export VALUE; sf sobject describe -s A -o org0",
+    "builtin echo VALUE; sf sobject describe -s A -o org0",
+    "echo @{a=declare VALUE}; sf sobject describe -s A -o org0",
+    "& 'builtin' echo VALUE; sf sobject describe -s A -o org0",
+    "echo @{a=& 'command' echo VALUE}; sf sobject describe -s A -o org0",
+    "echo @{a=& 'EXIT' VALUE}; sf sobject describe -s A -o org0",
+]
+RANDOM_SHAPES += [
+    "echo @(F,\r(CALL))", "echo @(F,\n\n(CALL))", "echo @(F,\r\r(CALL))",
+    "echo @(F,\r\n\r\n(CALL))", "echo @(F, #VALUE\n(CALL))",
+    "echo @(F,\n#VALUE\n#SECOND\n(CALL))", "echo @(F,<##>\n(CALL))",
+    "echo @(F,\n<#VALUE#>\n(CALL))", "echo @(F,\r<#VALUE#>\r(CALL))",
+    "echo @(F,\r\n<#VALUE#>\r\n(CALL))", "echo @(F,\n\n<#VALUE#>\n\n(CALL))",
+    "echo @(F,\r\r<#VALUE#>\r\r(CALL))",
+    "echo @{a=@(F,\r(CALL))}", "echo @{a=@(F,\n\n(CALL))}", "echo @{a=@(F,\r\r(CALL))}",
+    "echo @{a=@(F,\r\n\r\n(CALL))}", "echo @{a=@(F, #VALUE\n(CALL))}",
+    "echo @{a=@(F,\n#VALUE\n#SECOND\n(CALL))}", "echo @{a=@(F,<##>\n(CALL))}",
+    "echo @{a=@(F,\n<#VALUE#>\n(CALL))}", "echo @{a=@(F,\r<#VALUE#>\r(CALL))}",
+    "echo @{a=@(F,\r\n<#VALUE#>\r\n(CALL))}", "echo @{a=@(F,\n\n<#VALUE#>\n\n(CALL))}",
+    "echo @{a=@(F,\r\r<#VALUE#>\r\r(CALL))}",
+    "& 'EXIT' F; CALL", "& 'RETURN' F; CALL", "& 'export' F; CALL", "& 'readonly' F; CALL",
+    "export F; CALL", "builtin echo F; CALL", "echo @{a=& 'EXIT' F}; CALL",
+    "echo @{a=& 'RETURN' F}; CALL",
+    "function ECHO() { CALL }; echo F", "function ECHO () { CALL }; echo F",
+    "function CAT() { CALL }; cat F", "function CAT () { CALL }; cat F",
+    "function GLOBAL:ECHO() { CALL }; echo F", "function PRIVATE:CAT() { CALL }; cat F",
+    "function LOCAL:ECHO() { CALL }; echo F", "function SCRIPT:CAT() { CALL }; cat F",
+]
+
+
+@pytest.mark.parametrize("quote", ["", '"'])
+@pytest.mark.parametrize("ending", ["\n", "\r\n", "\r"])
+def test_r20_native_physical_newline_org_values(tmp_path, quote, ending):
+    argument = quote + "org0\x60" + ending + "org1" + quote
+    expected = "org0\r" if not quote and ending == "\r\n" else "org0" + ending + "org1"
+    got = native_orgs([("", "--target-org " + argument)], tmp_path)
+    if got is None:
+        pytest.skip("Windows PowerShell is present but did not run the script here")
+    assert got == {0: ["org0", expected]}, (argument, got)
+    seen = classify("PowerShell", {"command": "sf sobject describe -s A -o " + argument})
+    assert expected in {route.org for route in seen}, (argument, seen)
+
+
+_R20_EVERYDAY_PS = [
+    "Get-Location",
+    "Get-ChildItem -LiteralPath . -File",
+    "Get-Content -LiteralPath .\\README.md -TotalCount 20",
+    "Select-String -Path .\\README.md -Pattern 'Torque'",
+    "Test-Path -LiteralPath .\\pyproject.toml",
+    "Resolve-Path -LiteralPath .",
+    "Write-Output 'working tree checked'",
+    "Write-Host 'review in progress'",
+    "Write-Warning 'fixture only'",
+    "Write-Verbose 'scanning files' -Verbose",
+    "Get-Date -Format yyyy-MM-dd",
+    "Get-Command python",
+    "Get-Help Get-Content -Examples",
+    "Get-ChildItem .\\docs | Sort-Object Name",
+    "Get-ChildItem .\\src -Recurse -File | Measure-Object",
+    "Get-Content .\\README.md | Select-Object -First 8",
+    "Get-ChildItem .\\tests | Where-Object { $_.Name -like 'test_gate*' }",
+    "'alpha','beta' | ForEach-Object { Write-Output $_ }",
+    "1..3 | ForEach-Object { $_ * 2 }",
+    "$items = @('alpha','beta'); $items.Count",
+    "$report = @{ name = 'VALUE'; count = 2 }; $report.count",
+    "$text = 'alpha'; Write-Output $text",
+    "$text = 'alpha'; Write-Output $text.Length",
+    "$numbers = 1,2,3; Write-Output $numbers[0]",
+    "$found = Test-Path .\\README.md; Write-Output $found",
+    "if (Test-Path .\\README.md) { Get-Content .\\README.md -TotalCount 3 }",
+    "foreach ($name in @('docs','tests')) { Write-Output $name }",
+    "for ($i = 0; $i -lt 2; $i++) { Write-Output $i }",
+    "try { Get-Content .\\README.md -ErrorAction Stop } catch { Write-Output 'unavailable' }",
+    "function Show-Label { param($label) Write-Output $label }; Show-Label VALUE",
+    "& 'git' status --short",
+    "& 'python' --version",
+    "git diff --stat",
+    "git log -5 --oneline",
+    "git show --format=oneline --no-patch HEAD",
+    "git ls-files docs",
+    "python -m torque --help",
+    "python -m torque workflows list",
+    "torque workflows show inspect",
+    "torque --version",
+    "torque workspace status --path .",
+    "torque client list --workspace .",
+    "sf --version",
+    "sf plugins --core",
+    "sf sobject describe -s Contact -o acme-prod --json",
+    "sf sobject describe -o acme-prod -s Account",
+    "sf org list metadata --metadata-type CustomObject -o acme-prod",
+    "sf data query -q 'SELECT Id FROM Account LIMIT 2' -o acme-prod --json",
+    "sf apex get log -i VALUE -o acme-prod",
+    "sf project deploy preview -o acme-prod",
+    "& sf sobject describe -s A -o acme-prod",
+    "& 'sf' sobject describe -s A -o acme-prod",
+    "sf sobject describe -s A -o acme-prod 2>$null",
+    "sf sobject describe -s A -o acme-prod >'describe.json'",
+    "sf sobject describe -s A >('describe.json') -o acme-prod",
+    "Write-Output @'\nplain label\n'@",
+    "Write-Output @\"\nplain label\n\"@",
+    "Write-Output 'note'; # a quoted ' label",
+    "Write-Output \"first`nsecond\"",
+    "Write-Output @{display='label';values=@('a','b')}",
+]
+# Each parser case needs an sf call with an org. A new line also ends any final comment.
+WORD_LINES += [line.replace("acme-prod", "org0") + "\n" + S for line in _R20_EVERYDAY_PS]

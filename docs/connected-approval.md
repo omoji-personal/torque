@@ -60,10 +60,24 @@ trace flag and needs write approval. A REST describe of ApexLog remains metadata
 Tooling fields that name people retain their class in every letter case. Custom
 Apex REST and executeAnonymous requests remain writes; those words inside query
 literals, headers or output filenames do not make an ordinary GET a write.
-An explicit REST Authorization header takes a credential and is refused. Tooling
-query URLs with extra parameters or a fragment remain record reads.
+An explicit REST Authorization header takes a credential and is refused, including
+subsequent values of a multiple-value header option. Complete Salesforce CLI read names
+retain their consent classes in the colon spelling and supported word orders. Tooling
+query URLs with extra parameters or a fragment remain record reads, and require debug-log
+consent as well when any query or the normalized request path can read ApexLog.
 The Salesforce MCP tool `resume_tool_operation` needs write approval for a `2SR`
 scratch-org creation job; deployment and test polling retain their read routes.
+
+PowerShell comma-separated native arguments continue through blank lines, comments
+and escaped line endings. A backtick at a token start continues a line; inside a word
+or string it preserves the escaped line-end character. Function replacement checks ignore
+letter case, and program
+targets that are builtins only in Bash need review. Bash listing and help modes retain
+their local routes; substitutions retain the outer command's org options.
+
+Bash readings share a cache within one classification call. More than 128 distinct
+readings, or recursion exhaustion in the scanner, refuse the whole line. Simplify a
+command that reaches this limit before running it in connected mode.
 
 A session that was not started with `torque launch` has no client binding: every org,
 client and browser route is refused.

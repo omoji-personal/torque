@@ -5,6 +5,16 @@
 Connected mode reads commands more exactly, a consent can give one org more than the others, and a new
 off-by-default feature, guarded reads, answers build questions about an org without record consent.
 
+- Fix, connected mode: computed Bash wrapper options retain their actual command; builtin listing,
+  option values and wrapper help no longer create false setter questions. Outer org options survive
+  substitutions and computed redirections. Nested Bash readings share a bounded cache and refuse
+  scanner exhaustion.
+- Fix, connected mode: PowerShell arrays retain org arguments across blank lines, comments and every
+  line ending, and backticks within words preserve physical newline values. Bash-only program names
+  need review and function replacement checks ignore letter case.
+- Fix, connected mode: complete CLI read aliases keep their consent classes. REST headers are checked
+  across all their values, and ambiguous REST requests that can read ApexLog require log consent too.
+
 - Fix, connected mode: packaged read scripts use their delegate's consent class; ApexLog CLI and MCP reads
   need debug-log consent. REST log paths match from their own root, and Tooling person fields retain their
   class in every letter case. ApexLog describes remain metadata. Custom endpoint words in query literals,

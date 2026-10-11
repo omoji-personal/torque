@@ -191,6 +191,10 @@ Torque does not create that isolation. External browser and desktop reads are re
 because their current org context cannot be verified. Torque's isolated browser requires
 an org window and consent for both metadata and record data.
 
+Connected checks preserve org and consent classes across supported shell forms and
+Salesforce CLI read aliases. REST requests that can return ApexLog also require log
+consent. Commands beyond the Bash reader's complexity budget are refused.
+
 Stronger enforcement requires signing, consumption state and execution authorization
 outside the agent account, with grants bound to an immutable workspace identity and a
 verified org identity. Tier 2 separates approval ownership but retains local replay and

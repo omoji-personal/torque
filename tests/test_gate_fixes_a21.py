@@ -942,7 +942,7 @@ def test_a_write_only_a_powershell_reading_finds_still_needs_its_approval(w):
     ("sf api request rest -o acme-prod /services/data/v66.0/sobjects/Account/describe", ("read", "acme-prod", None)),
     ("sf api request rest --target-org=acme-prod -X GET /services/data/v66.0/limits --json", ("read", "acme-prod", None)),
     ("sf api request rest -H 'Accept: x' /services/data/v66.0/sobjects/Contact/003000000000001 -o acme-prod",
-     ("read", "acme-prod", "records")),
+     ("org_write", "acme-prod", None)),  # the multiple-value header consumes the URL
     ("sf api request rest -o acme-prod", ("org_write", "acme-prod", None)),                      # no URL
     ("sf api request rest /services/data/v66.0/limits /services/data/v66.0/query -o acme-prod",
      ("org_write", "acme-prod", None)),                                                          # two
@@ -3595,3 +3595,336 @@ def test_r19_bash_substitution_keeps_each_commands_org_options(command):
     found = B(command)
     assert any(kind == "read" and org == "acme-prod" for kind, org, _ in found)
     assert ("unverifiable", "org1", None) in found
+
+# ---- round 20, classification tables: complete read names and REST argument consumption
+
+_R20_REST_LOGS = [
+    "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexLog#fragment",
+    "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexLog&x=VALUE",
+    "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass&q=SELECT+Id+FROM+ApexLog",
+    "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexLog&q=SELECT+Id+FROM+ApexClass",
+    "/services/data/v66.0/tooling/query?Q=SELECT+Id+FROM+ApexLog&x=VALUE",
+    "/services/data/v66.0/tooling/sobjects/ApexLog/07L000000000001AAA/Body#fragment",
+    "/services/data/v66.0/tooling/query/../sobjects/ApexLog/07L000000000001AAA/Body",
+    "/services/data/v66.0/tooling/sobjects/ApexLog/describe/../07L000000000001AAA/Body",
+    "/services/data/v66.0/tooling/query/%2e%2e/sobjects/ApexLog/07L000000000001AAA/Body",
+]
+_R20_HEADERS = [
+    '-H "X-Note: VALUE" "Authorization: Bearer VALUE"',
+    '--header "Accept: application/json" "authorization: Bearer VALUE"',
+    '--header="Accept: application/json" "aUtHoRiZaTiOn: Bearer VALUE"',
+    '-H "X-Note: VALUE" --include "Authorization: Bearer VALUE"',
+    '-H "X-Note: VALUE" --json "Authorization: Bearer VALUE"',
+]
+
+
+@pytest.mark.parametrize("name", [" ".join(words) for words in permutations(("api", "request", "rest"))]
+                         + [":".join(words) for words in permutations(("api", "request", "rest"))])
+@pytest.mark.parametrize("path,data", [
+    ("/services/data/v66.0/limits", None),
+    ("/services/data/v66.0/sobjects/Contact/003000000000001AAA", "records"),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexLog", "debug_logs"),
+])
+def test_r20_complete_rest_names(name, path, data):
+    command = f"sf {name} '{path}' -o acme-prod"
+    assert B(command) == B_PS(command) == [("read", "acme-prod", data)]
+
+
+@pytest.mark.parametrize("command,kind", [
+    ("sf sobject:describe -s Account -o acme-prod", "read"),
+    ("sf describe sobject -s Account -o acme-prod", "read"),
+    ("sf limits list org -o acme-prod", "read"),
+    ("sf project:retrieve:start -m ApexClass:VALUE -o acme-prod", "read"),
+    ("sf retrieve start project -m ApexClass:VALUE -o acme-prod", "read"),
+    ("sf report deploy project -i VALUE -o acme-prod", "read"),
+    ("sf list version package -v acme-prod", "read"),
+    ("sf apex:get:test -i VALUE -o acme-prod", "read"),
+    ("sf apex:run:test -n ExampleTests -o acme-prod", "check_only"),
+    ("sf validate deploy project -x package.xml -o acme-prod", "check_only"),
+    ("sf flow:run:test -n VALUE -o acme-prod", "check_only"),
+])
+def test_r20_complete_metadata_and_check_names(command, kind):
+    assert B(command) == B_PS(command) == [(kind, "acme-prod", None)]
+
+
+@pytest.mark.parametrize("path", _R20_REST_LOGS)
+def test_r20_ambiguous_rest_paths_also_require_logs(path):
+    assert rest_data_class(path) == "records"
+    for read in (B, B_PS):
+        found = read(f"sf api request rest '{path}' -o acme-prod")
+        assert ("read", "acme-prod", "records") in found
+        assert ("read", "acme-prod", "debug_logs") in found
+
+
+@pytest.mark.parametrize("path", [
+    "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass#ApexLog",
+    "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass&x=ApexLog",
+    "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass&x=q%3DSELECT+Id+FROM+ApexLog",
+    "/services/data/v66.0/query?q=SELECT+Id+FROM+Contact+WHERE+LastName='ApexLog'&x=VALUE",
+    "/services/data/v66.0/sobjects/Contact/External_Id__c/%2Fsobjects%2FApexLog%2FVALUE",
+])
+def test_r20_other_url_values_do_not_require_logs(path):
+    for read in (B, B_PS):
+        assert not any(kind == "read" and data == "debug_logs"
+                       for kind, _, data in read(f"sf api request rest '{path}' -o acme-prod"))
+
+
+@pytest.mark.parametrize("headers", _R20_HEADERS)
+def test_r20_every_header_value_is_checked(headers):
+    command = f"sf api request rest /services/data/v66.0/limits {headers} -o acme-prod"
+    assert B(command) == B_PS(command) == [("credential", None, None)]
+
+
+@pytest.mark.parametrize("headers", [
+    '-H "Accept: application/json" "X-Note: VALUE"',
+    '--header="Accept: application/json" "X-Note: VALUE"',
+    '-H "Accept: application/json" --include "X-Note: VALUE"',
+    '-H "Accept: application/json" --json "X-Note: VALUE"',
+    '-H "Accept: application/json" -H "X-Note: VALUE"',
+])
+def test_r20_benign_multiple_headers(headers):
+    command = f"sf api request rest /services/data/v66.0/limits {headers} -o acme-prod"
+    assert B(command) == B_PS(command) == [("read", "acme-prod", None)]
+
+
+@pytest.mark.parametrize("command,kind", [
+    ("sf data:export -o acme-prod x", "admin"),
+    ("sf future:read -o acme-prod", "org_write"),
+    ("sf api request graphql --body VALUE -o acme-prod", "org_write"),
+    ("sf rest request api /services/apexrest/VALUE -o acme-prod", "org_write"),
+    ("sf api:request:rest /services/data/v66.0/limits -X POST -o acme-prod", "org_write"),
+    ('sf api request rest /services/data/v66.0/limits -H "Accept: x" --body "Authorization: VALUE" '
+     '-o acme-prod', "org_write"),
+])
+def test_r20_nearby_write_rules(command, kind):
+    assert KINDS(command) == KINDS(command, "PowerShell") == [kind]
+
+
+@pytest.mark.parametrize("command", [
+    "sf rest request api '/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexLog' -o acme-prod",
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexLog#fragment' -o acme-prod",
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexLog&x=VALUE' -o acme-prod",
+])
+def test_r20_log_consent_is_not_replaced_by_approval(w, monkeypatch, command):
+    monkeypatch.setattr(consent, "data_allowed", lambda *args: {"metadata", "records"})
+    monkeypatch.setattr(gc.approval, "consume", lambda *args, **kwargs: pytest.fail("must not consume approval"))
+    decided = run(w, command)
+    assert decided.action == "deny"
+    assert "debug logs" in decided.reason
+
+
+@pytest.mark.parametrize("headers", _R20_HEADERS)
+def test_r20_credentials_cannot_use_approval(w, monkeypatch, headers):
+    monkeypatch.setattr(gc.approval, "consume", lambda *args, **kwargs: pytest.fail("must not consume approval"))
+    assert run(w, f"sf api request rest /services/data/v66.0/limits {headers} -o acme-prod").action == "deny"
+
+
+# ---- round 20, Bash reading: wrapper modes and builtin option values
+
+_R20_QUIET = [
+    "read -r -pHOME result <<< VALUE", "read -rpHOME result <<< VALUE",
+    "read -rdHOME result <<< VALUE", "read -riHOME result <<< VALUE",
+    "read -p HOME -r result <<< VALUE", "printf %s -vHOME", "printf -- %s -vHOME",
+    "declare -p HOME", "declare -xp HOME", "typeset -p HOME", "builtin declare -p HOME",
+    "command declare -xp HOME", "declare -x", "export", "export -p", "export -np",
+    "command -v export HOME", "command -pv read HOME", "command -V printf -vHOME",
+    "command -v declare HOME", "builtin command -v export HOME",
+    "read --help", "printf --help", "wait --help", "export --help HOME",
+    "declare --help HOME", "typeset --help HOME", "readonly --help HOME",
+    "builtin declare --help HOME", "command --help export HOME", "builtin --help export HOME",
+    "nohup --help export HOME", "nice --version export HOME", "stdbuf --help declare -x HOME",
+    "timeout --help declare -x HOME", "/usr/bin/time --version export HOME",
+]
+_R20_SETTERS = [
+    "read -raHOME <<< VALUE", "read -a HOME <<< VALUE", "read -r HOME <<< VALUE",
+    "printf -vHOME %s VALUE", "printf -v HOME %s VALUE", "wait -npHOME", "wait -n -p HOME",
+    "declare -x HOME=VALUE", "export -p HOME=VALUE", "export HOME",
+    'read -a"$name" <<< VALUE', 'printf -v"$name" %s VALUE',
+    'declare -"$params" HOME=VALUE', 'declare -p"$flags" HOME=VALUE',
+    "read -p --help HOME <<< VALUE", "printf -v HOME -- --help",
+    "getopts --help HOME VALUE", "mapfile -C --help HOME </dev/null",
+]
+
+
+@pytest.mark.parametrize("prefix", _R20_QUIET)
+def test_r20_builtin_data_and_queries_stay_quiet(prefix):
+    found = B(prefix + "; sf sobject describe -s A -o acme-prod")
+    assert ("read", "acme-prod", None) in found
+    assert "unverifiable" not in [kind for kind, _, _ in found]
+
+
+@pytest.mark.parametrize("prefix", _R20_SETTERS)
+def test_r20_actual_builtin_setters_still_ask(prefix):
+    found = B(prefix + "; sf sobject describe -s A -o acme-prod")
+    assert ("read", "acme-prod", None) in found
+    assert ("unverifiable", "acme-prod", None) in found
+
+
+@pytest.mark.parametrize("command", [
+    "nohup --help", "nohup --version", "nice --help", "nice --version", "stdbuf --help",
+    "stdbuf --version", "timeout --help", "timeout --version", "/usr/bin/time --help",
+    "/usr/bin/time --version", "command --help", "builtin --help", "exec --help",
+    "nice -n 5 --help sf data query -o acme-prod", "timeout --help sf data query -o acme-prod",
+    "command --help sf data query -o acme-prod",
+])
+def test_r20_wrapper_help_is_local(command):
+    assert KINDS(command) == ["local"]
+
+
+@pytest.mark.parametrize("prefix", [
+    "nohup --", "nice -n 5", "stdbuf -oL", "timeout 5",
+    "/usr/bin/time -o --help", "/usr/bin/time -f --version",
+])
+def test_r20_wrapper_option_values_do_not_hide_the_command(prefix):
+    assert ("read", "acme-prod", None) in B(prefix + " sf sobject describe -s A -o acme-prod")
+
+
+@pytest.mark.parametrize("prefix", [
+    'v=p; command -"$v"', 'pv=p; command -"$pv"', 'value=p; command -"$value"',
+    'V=p; command -"$V"', 'args=a; exec -"$args" --help',
+    'args=f; /usr/bin/time -"$args" --help', 'value=f; /usr/bin/time -"$value" --version',
+])
+def test_r20_computed_wrapper_modes_retain_the_target(prefix):
+    found = B(prefix + " sf data query -o acme-prod")
+    assert ("read", "acme-prod", "records") in found
+    assert "unverifiable" in [kind for kind, _, _ in found]
+    assert "admin" in KINDS(prefix + " torque workspace guarded-reads off --path .")
+
+
+@pytest.mark.parametrize("prefix", ["command -v", "command -pv", "command -V", "command -pV"])
+def test_r20_literal_query_modes_do_not_run_operands(prefix):
+    assert KINDS(prefix + " sf data query -o acme-prod") == ["local"]
+
+
+# ---- round 20, PowerShell reading: continued arrays, literal lookup and function names
+
+_R20_PS_GAPS = [
+    "\n", "\r\n", "\r", "\n\n", "\r\r", "\r\n\r\n", " #VALUE\n",
+    "\n#VALUE\n#SECOND\n", "<##>\n", "\n<#VALUE#>\n",
+    "\x60\n\n", "\x60\r\n\n", "\x60\r", "\x60\r\r",
+]
+
+
+@pytest.mark.parametrize("gap", _R20_PS_GAPS)
+@pytest.mark.parametrize("head", [
+    "sf sobject describe -s A -o acme-prod", "torque logs --target-org acme-prod --since VALUE",
+])
+def test_r20_ps_array_items_keep_every_org(gap, head):
+    assert "no_org" in KINDS(head + "," + gap + "--target-org," + gap + "other", "PowerShell")
+
+
+@pytest.mark.parametrize("name", [
+    "exit", "return", "export", "declare", "typeset", "readonly", "local", "unset",
+    "shift", "source", "alias", "unalias", "hash", "wait", "jobs", "fg", "bg", "dirs",
+    "read", "command", "builtin", "exec", "noglob", "nocorrect", ":", "[",
+    "EXIT", "RETURN", "FOR", "TIME", "COPROC",
+])
+@pytest.mark.parametrize("shape", ["& '{name}' echo VALUE", "echo @{{a=& '{name}' echo VALUE}}"])
+def test_r20_ps_literal_lookup_is_not_a_bash_builtin(name, shape):
+    assert "unverifiable" in KINDS(shape.format(name=name), "PowerShell")
+
+
+@pytest.mark.parametrize("name", [
+    "export", "declare", "typeset", "readonly", "local", "unset", "shift", "alias",
+    "unalias", "hash", "wait", "jobs", "fg", "bg", "dirs", "read", "command",
+    "builtin", "exec", "noglob", "nocorrect", ":", "EXPORT", "DECLARE",
+])
+@pytest.mark.parametrize("shape", ["{name} echo VALUE", "echo @{{a={name} echo VALUE}}"])
+def test_r20_ps_bare_bash_builtins_need_lookup(name, shape):
+    assert "unverifiable" in KINDS(shape.format(name=name), "PowerShell")
+
+
+@pytest.mark.parametrize("name", ["SF", "Sf", "sF", "SF.exe", "SFDX", "Torque", "ECHO", "CAT"])
+@pytest.mark.parametrize("parameters", ["()", " ()", ""])
+def test_r20_ps_function_names_ignore_case(name, parameters):
+    got = classify("PowerShell", {"command":
+        f"function {name}{parameters} {{ echo VALUE }}; sf sobject describe -s A -o acme-prod"})
+    assert any(r.kind == "read" and r.org == "acme-prod" for r in got)
+    assert any(r.kind == "unverifiable" and "(defines what this command name runs)" in r.detail for r in got)
+
+
+@pytest.mark.parametrize("command", [
+    "echo alpha,beta", "echo 'alpha,beta'", "& 'echo' VALUE", "& 'help' Get-Content",
+    "& 'cat' README.md", "& 'pwd'", "& 'set' VALUE", "& 'type' README.md",
+    "function labels() { echo VALUE }; echo VALUE",
+])
+def test_r20_ps_nearby_local_lines(command):
+    assert set(KINDS(command, "PowerShell")) == {"local"}
+
+
+# ---- round 20, combined reading: truncated prefixes and bounded nested reads
+
+@pytest.mark.parametrize("command", [
+    "sf sobject describe -s $(echo A) -o acme-prod",
+    "sf sobject describe -s pre$(echo A)post -o acme-prod",
+    "sf sobject describe -s A > >(cat) -o acme-prod",
+    "sf sobject describe > >(cat) -s A -o acme-prod",
+    "HOME=VALUE sf sobject describe -s $(echo A) -o acme-prod",
+])
+def test_r20_bash_outer_org_survives_a_substitution(command):
+    found = B(command)
+    assert ("read", "acme-prod", None) in found
+    assert "no_org" not in [kind for kind, _, _ in found]
+
+
+def test_r20_ps_outer_org_survives_computed_redirection():
+    found = B_PS("sf sobject describe -s A >('describe.json') -o acme-prod")
+    assert ("read", "acme-prod", None) in found
+    assert "no_org" not in [kind for kind, _, _ in found]
+
+
+@pytest.mark.parametrize("command", [
+    "sf sobject describe -s $(echo A)",
+    "sf sobject describe -s $(sf sobject describe -s A) -o acme-prod",
+    "sf sobject describe -s $(echo A) -o acme-prod; sf sobject describe -s A",
+    "sf sobject describe -s $(echo A) -o acme-prod -o other",
+])
+def test_r20_real_missing_or_multiple_orgs_remain_refused(command):
+    assert "no_org" in KINDS(command)
+
+
+@pytest.mark.parametrize("layers", [10, 20, 100, 600, 1000])
+@pytest.mark.parametrize("quoted", [False, True])
+def test_r20_deep_owner_commands_are_bounded_and_refused(layers, quoted):
+    command = "torque workspace guarded-reads off --path ."
+    for _ in range(layers):
+        command = 'echo "$(' + command + ')"' if quoted else "echo $(" + command + ")"
+    assert "admin" in KINDS(command)
+
+
+def test_r20_bash_read_cache_does_not_survive_a_call(monkeypatch):
+    command = "sf org open -o acme-prod"
+    monkeypatch.delenv("SF_CONTAINER_MODE", raising=False)
+    monkeypatch.delenv("SFDX_CONTAINER_MODE", raising=False)
+    assert "credential" not in KINDS(command)
+    monkeypatch.setenv("SF_CONTAINER_MODE", "true")
+    assert KINDS(command) == ["credential"]
+    assert B("echo VALUE") == [("local", None, None)]
+
+
+@pytest.mark.parametrize("quote", ["", '"'])
+@pytest.mark.parametrize("ending", ["\n", "\r\n", "\r"])
+def test_r20_ps_physical_newlines_inside_words_are_values(quote, ending):
+    argument = quote + "org0\x60" + ending + "org1" + quote
+    expected = "org0\r" if not quote and ending == "\r\n" else "org0" + ending + "org1"
+    got = B_PS("sf sobject describe -s A -o " + argument)
+    assert ("read", expected, None) in got
+
+
+@pytest.mark.parametrize("ending", ["\n", "\r\n", "\r"])
+def test_r20_ps_token_start_continuations(ending):
+    assert ("read", "acme-prod", None) in B_PS(
+        "sf sobject describe -s A -o \x60" + ending + "acme-prod")
+
+
+# ---- round 20 follow-up, everyday parser cases keep an sf call with an org
+
+POWERSHELL_WORDS += [
+    (prefix + "\nsf sobject describe -s A -o org0", {"org0"})
+    for prefix in (
+        "Get-Location",
+        "sf --version",
+        "sf plugins --core",
+        "Write-Output 'note'; # a quoted ' label",
+    )
+]

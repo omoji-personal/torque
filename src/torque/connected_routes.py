@@ -10,7 +10,9 @@ command substitutions, `bash -c` strings and wrapped commands are classified too
 See docs/connected-approval.md for what this cannot see."""
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import wraps
 import os
 import re
 import shlex
@@ -1317,7 +1319,7 @@ def _sf_refused(topic: tuple[str, ...], rest: list[str], anywhere: bool = False)
     if any(named(key) for key in SF_CREDENTIALS):
         return "credential", ""
     if named(("api", "request", "rest")):
-        headers = _flag_values(rest, {"-H", "--header"})
+        headers = [value for _, value in _rest_headers(rest)]
         if any(header.partition(":")[0].casefold() == "authorization" for header in headers):
             return "credential", ""
     given = set(words)
@@ -1336,12 +1338,42 @@ def _attached_short(rest: list[str]) -> bool:
     return any(re.fullmatch(r"-[A-Za-z].+", tok) for tok in rest)
 
 
+def _sf_read_words(rest: list[str]) -> list[str]:
+    """Complete read names in the CLI's colon spelling or any word order."""
+    names = sorted((SF_READ - SF_RECORD_READS - SF_LOG_READS) | SF_CHECK_ONLY
+                   | {("api", "request", "rest")},
+                   key=len, reverse=True)
+    for name in names:
+        for end in range(1, min(len(name), len(rest)) + 1):
+            words = [part for word in rest[:end] for part in word.casefold().split(":")]
+            if len(words) == len(name) and set(words) == set(name):
+                return [*name, *rest[end:]]
+    return rest
+
+
 # The options with which `sf api request rest` can only be a GET, and whether each
 # takes a value. Any other option (a body, a file, a flags folder, one this version
 # does not know) makes the request a write.
 REST_READ_OPTIONS = {"-o": True, "--target-org": True, "-X": True, "--method": True, "-H": True, "--header": True,
                      "--api-version": True, "-S": True, "--stream-to-file": True, "-i": False, "--include": False,
                      "--json": False}
+
+
+def _rest_headers(rest: list[str]) -> list[tuple[int, str]]:
+    """The header option takes every following value until another value option."""
+    found, taking = [], False
+    for index, word in enumerate(rest):
+        if word.startswith("-"):
+            name, attached, value = word.partition("=")
+            if name in ("-H", "--header"):
+                taking = True
+                if attached:
+                    found.append((index, value))
+            elif REST_READ_OPTIONS.get(name) or name in ("-f", "--file", "-b", "--body", "--flags-dir"):
+                taking = False
+        elif taking:
+            found.append((index, word))
+    return found
 
 
 def _rest_get(rest: list[str]) -> bool:
@@ -1367,11 +1399,15 @@ def _rest_path(rest: list[str]) -> str | None:
     """The one URL of an `sf api request rest` line, wherever it stands among the
     options the gate knows (`-o ALIAS /services/...`), or None when there is not
     exactly one."""
+    rest = _sf_read_words(rest)
+    headers = {index for index, _ in _rest_headers(rest)}
     found, i = [], 0
     while i < len(rest):
         if rest[i].startswith("-"):
             name, attached, _ = rest[i].partition("=")
             i += 1 if attached or not REST_READ_OPTIONS.get(name) else 2
+        elif i in headers:
+            i += 1
         else:
             found.append(rest[i])
             i += 1
@@ -1396,6 +1432,7 @@ def _sf(rest: list[str], detail: str) -> Route:
 
 
 def _sf_route(rest: list[str], detail: str) -> Route:
+    rest = _sf_read_words(rest)
     topic = _topic(rest)
     orgs = org_values(rest, _sf_org_flags(topic))
     org = orgs[0] if len(orgs) == 1 else None
@@ -1580,6 +1617,20 @@ def rest_data_class(path: str) -> str | None:
 # The route owner for a command that names an internal initiative. Connected mode
 # serves one client's work only, so an initiative is never the bound client.
 INITIATIVE_OWNER = "initiative:"
+
+
+def _rest_reads_logs(path: str | None) -> bool:
+    """Keep log consent beside a cautious record class when the request can read logs."""
+    import posixpath
+    from urllib.parse import parse_qsl, quote
+    text, _, query = (path or "").partition("#")[0].partition("?")
+    text = re.sub(r"(?i)^https?://[^/]+", "", _decoded(text)).replace("\\", "/")
+    text = posixpath.normpath("/" + text.lstrip("/"))
+    if rest_data_class(text) == "debug_logs":
+        return True
+    return any(name.casefold() == "q"
+               and rest_data_class(text + "?q=" + quote(value, safe="")) == "debug_logs"
+               for name, value in parse_qsl(query, keep_blank_values=True))
 
 
 def _strip_context(rest: list[str]) -> tuple[list[str], str | None]:
@@ -1852,6 +1903,10 @@ def _wrapper_options(head: str, rest: list[str], options: list[str] | None = Non
     """(how many of the words after a wrapper command are its options and their values,
     whether one of them is an option the gate does not know)."""
     flags, values, long_flags, long_values = _WRAPPERS.get(head, ("", "", (), ()))
+    if head in ("command", "builtin", "exec", "nohup", "nice", "stdbuf", "timeout", "time"):
+        long_flags += ("--help",)
+    if head in ("nohup", "nice", "stdbuf", "timeout", "time"):
+        long_flags += ("--version",)
     i, unknown = 0, False
     while i < len(rest) and rest[i].startswith("-") and len(rest[i]) > 1:
         word = str(rest[i])
@@ -2082,7 +2137,11 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
             routes = [Route("unverifiable", None, detail + " (runs in another folder)"), *routes]
         return routes
     if g._is_sf_token(first):
-        return _with_run_time_words(words, _sf(rest, detail), detail, launcher=True)
+        route = _sf(rest, detail)
+        found = _with_run_time_words(words, route, detail, launcher=True)
+        if route.kind == "read" and route.data == "records" and _rest_reads_logs(_rest_path(rest)):
+            found.append(replace(route, data="debug_logs"))
+        return found
     if head in g.CONSOLE_SCRIPTS:
         if g.CONSOLE_SCRIPTS[head] == "torque":
             return _torque_routes(words, rest, detail)
@@ -2149,9 +2208,14 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head == "eval":
         return [Route("unverifiable", None, detail), *classify_bash(" ".join(rest), depth + 1)]
     if head in BENIGN_WRAPPERS:
+        options = []
+        _, unknown = _wrapper_options(head, rest, options)
+        if not unknown and {"--help", "--version"} & set(options):
+            return [Route("local", None, detail)]
         inner = _strip_benign(head, words)
-        if head == "command" and any(w.startswith("-") and not w.startswith("--") and set("vV") & set(w[1:])
-                                     for w in rest[:_wrapper_options(head, rest)[0]]):
+        if head == "command" and not _wrapper_options(head, rest)[1] and any(
+                w.startswith("-") and not w.startswith("--") and set("vV") & set(w[1:])
+                for w in rest[:_wrapper_options(head, rest)[0]]):
             return [Route("local", None, detail)]
         routes = _segment_core(inner, depth) if inner else [Route("local", None, detail)]
         if _wrapper_options(head, rest)[1]:
@@ -2255,6 +2319,11 @@ def _assigned_names(words: list[str]) -> list[str]:
     names, literal = [], False
     while words:
         if g._basename(words[0]) in BENIGN_WRAPPERS:
+            options = []
+            _, unknown = _wrapper_options(g._basename(words[0]), words[1:], options)
+            if not unknown and ({"--help", "--version"} & set(options) or
+                                g._basename(words[0]) == "command" and {"-v", "-V"} & set(options)):
+                return []               # Query and help options do not run the assigning builtin named after them.
             words = _strip_benign(g._basename(words[0]), words)
             literal = True             # a wrapper's target is a command word, not shell syntax
         elif not literal and _is_keyword(words[0]):
@@ -2276,11 +2345,44 @@ def _assigned_names(words: list[str]) -> list[str]:
                 for first, second in _ARITHMETIC_SETS.findall(str(word))]
     if head not in _ASSIGNING_BUILTINS:
         return []
-    if head in ("printf", "wait"):      # only `-v NAME` (`wait -p NAME`) is a name; the other words are not
-        given = [rest[i + 1] for i, word in enumerate(rest[:-1]) if word == ("-v" if head == "printf" else "-p")]
-    elif head == "read":                # the word after one of these options is its value, not a name
-        given = [word for i, word in enumerate(rest)
-                 if not word.startswith("-") and not (i and rest[i - 1] in ("-d", "-i", "-n", "-N", "-p", "-t", "-u"))]
+    options_end = next((i for i, word in enumerate(rest) if word == "--" or
+                        not word.startswith(("-", "+"))), len(rest))
+    if head in ("declare", "typeset", "local", "readonly", "export", "unset") and "--help" in rest[:options_end]:
+        return []                       # Builtin help exits before changing a named variable.
+    if head in ("declare", "typeset", "local") and any(
+            word.startswith(("-", "+")) and not word.startswith("--") and "p" in word[1:]
+            and not (_filled(word) or _LOOSE_CHARS & set(_raw(word)))
+            for word in rest[:options_end]):
+        return []                       # Printing declarations does not change their values or attributes.
+    if head in ("printf", "read", "wait"):
+        flags, values, name_option = {"printf": ("", "v", "v"),
+                                     "read": ("ersE", "adinNptu", "a"),
+                                     "wait": ("fn", "p", "p")}[head]
+        given, i = [], 0
+        while i < len(rest) and rest[i].startswith("-") and len(rest[i]) > 1:
+            word = rest[i]
+            if word == "--":
+                i += 1
+                break
+            if word == "--help":
+                return []
+            if _filled(word) or _LOOSE_CHARS & set(_raw(word)):
+                return ["$"]            # A computed option can choose any variable name.
+            took = 1
+            for at, letter in enumerate(word[1:]):
+                if letter in values:
+                    attached = at + 2 < len(word)
+                    value = _Word(_raw(word)[at + 2:]) if attached else rest[i + 1:i + 2]
+                    if letter == name_option:
+                        given += [value] if attached else value
+                    took = 1 if attached else 2
+                    break
+                if letter not in flags:
+                    return ["$"]        # Unknown options retain the conservative setter reading.
+            i += took
+        if head == "read":
+            given += rest[i:]
+        rest = []                       # Option values and printf's format and data are not names.
     else:
         given = [word for word in rest if not word.startswith(("-", "+"))]
     names = []
@@ -2327,6 +2429,11 @@ def _exports(words: list[str]) -> bool:
     while words:
         if g._basename(words[0]) in BENIGN_WRAPPERS:
             # `command export ...`, `builtin declare -x ...`, `time -p export ...`
+            options = []
+            _, unknown = _wrapper_options(g._basename(words[0]), words[1:], options)
+            if not unknown and ({"--help", "--version"} & set(options) or
+                                g._basename(words[0]) == "command" and {"-v", "-V"} & set(options)):
+                return False            # Query and help options do not export anything.
             words = _strip_benign(g._basename(words[0]), words)
             literal = True
         elif not literal and (_is_keyword(words[0]) or _is_assignment(words[0])):
@@ -2335,11 +2442,22 @@ def _exports(words: list[str]) -> bool:
             break
     if not words:
         return False
-    head, flags = words[0], [w for w in words[1:] if w.startswith(("-", "+")) and w not in ("-", "--")]
+    head, rest = words[0], words[1:]
+    options_end = next((i for i, word in enumerate(rest) if word == "--" or
+                        not word.startswith(("-", "+"))), len(rest))
+    flags = rest[:options_end]
+    if head in ("export", "declare", "typeset", "local", "readonly") and "--help" in flags:
+        return False
+    if head == "set":
+        flags = [w for w in rest if w.startswith(("-", "+")) and w not in ("-", "--")]
+    operands = rest[options_end + (options_end < len(rest) and rest[options_end] == "--"):]
     if head == "export":
-        return True
+        return bool(operands)            # With no names export only prints the current declarations.
     if head in ("declare", "typeset", "local", "readonly"):
-        return any(f.startswith("-") and "x" in f[1:] for f in flags)
+        if head != "readonly" and any(not f.startswith("--") and "p" in f[1:] and
+                                     not (_filled(f) or _LOOSE_CHARS & set(_raw(f))) for f in flags):
+            return False
+        return bool(operands) and any(f.startswith("-") and "x" in f[1:] for f in flags)
     if head == "set":
         rest = words[1:]
         return any(f.startswith("-") and not f.startswith("--") and set("ak") & set(f[1:]) for f in flags) or any(
@@ -2352,6 +2470,38 @@ def _exports(words: list[str]) -> bool:
 _NET_KINDS = (*REFUSED_KINDS, "admin", "read", "check_only", "org_write", "browser_write", "no_org")
 
 
+_BASH_READINGS: ContextVar[dict[tuple[str, int, bool], list[Route]] | None] = ContextVar(
+    "torque_bash_readings", default=None)
+
+
+def _bounded_bash(reader):
+    """Reuse readings within one call, refusing text that exceeds the reader's budget."""
+    @wraps(reader)
+    def bounded(command: str, _depth: int = 0, _net: bool = True) -> list[Route]:
+        readings = _BASH_READINGS.get()
+        token = None
+        if readings is None:
+            readings = {}
+            token = _BASH_READINGS.set(readings)
+        try:
+            key = (command, _depth, _net)
+            if key not in readings:
+                refused = [Route("admin", None, "Bash command exceeds the reader's complexity limit")]
+                if len(readings) >= 128:
+                    return refused
+                readings[key] = refused
+                try:
+                    readings[key] = reader(command, _depth, _net)
+                except RecursionError:
+                    pass
+            return list(readings[key])
+        finally:
+            if token is not None:
+                _BASH_READINGS.reset(token)
+    return bounded
+
+
+@_bounded_bash
 def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Route]:
     """Routes for one shell command string, in order, without duplicates."""
     if _depth > 8:
@@ -2398,8 +2548,13 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
     if _BASH_RUNS & set(passing):
         routes.append(Route("unverifiable", None, "${" + sorted(_BASH_RUNS & set(passing))[0]
                             + "...} (Bash runs commands from this variable)"))
+    joined = _split(command or "", _join=True)
     for words in segments:
         found = _segment(words, _depth)
+        if parsed is not None and joined is not None and joined[0] != parsed[0]:
+            # The whole outer command is read below. A substitution can truncate this
+            # reading before its org option, so it cannot establish a missing org.
+            found = [route for route in found if route.kind != "no_org"]
         if exported:
             # An exported variable (DEBUG=pw:api prints the session URL, PWDEBUG forces a
             # visible browser, SF_* can point an alias at another org) reaches every later
@@ -2428,7 +2583,6 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
             exported = " (after a variable that the commands after it read was set)"
     # An unquoted substitution does not end the outer command. Read its whole words
     # as well, retaining the original reading and adding only org-capable routes.
-    joined = _split(command or "", _join=True)
     if joined is not None and (parsed is None or joined[0] != parsed[0]):
         joined_exported = " (after a variable that the commands after it read was set)" if any(
             _read_by_later_commands(name) for name in passing) else ""
@@ -2458,7 +2612,8 @@ def classify_bash(command: str, _depth: int = 0, _net: bool = True) -> list[Rout
     # What a substitution runs is a command too. The looser scan pairs parentheses
     # without reading quotes, so `"$(echo ")" ; sf data query ...)"` would end at the
     # quoted one: the substitutions are also found with their own quotes.
-    for nested in dict.fromkeys([*g._direct_substitutions(text), *_substitutions(command or "")]):
+    nested_texts = list(dict.fromkeys([*g._direct_substitutions(text), *_substitutions(command or "")]))
+    for nested in sorted(nested_texts, key=len) if len(nested_texts) > 8 else nested_texts:
         routes.extend(r for r in classify_bash(nested, _depth + 1) if r.kind != "local")
     # A word is read once more as it stands with its quotes removed: `'a[$'"(sf ...)]"` is
     # the text `a[$(sf ...)]`. Where Bash evaluates a word's text a second time, the
@@ -2561,7 +2716,8 @@ _PS_CHARACTERS = str.maketrans({
     **dict.fromkeys("\u00a0\u0085\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
                     "\u2028\u2029\u202f\u205f\u3000\f\v", " ")})
 _PS_TOKEN_START = " \t\r\n;|&(){}"
-_PS_AFTER_COMMA = re.compile(r"[ \t]*(?:\r?\n[ \t]*)?")
+# After a comma the array continues through blank lines, comments and line continuations.
+_PS_AFTER_COMMA = re.compile(r"(?:[ \t\r\n]|`(?:\r\n?|\n)|#[^\r\n]*(?:\r\n?|\n|\Z)|<#[\s\S]*?#>)*")
 # These backtick escapes hold control characters, also outside double quotes.
 _PS_ESCAPE_VALUES = {"0": "\0", "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
 # Put after a word that Windows PowerShell may not hand to a native program as the one
@@ -2758,7 +2914,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
     """A PowerShell line rewritten in Bash's quoting, so that its words split as
     PowerShell passes them: a backtick quotes the next character or gives a letter
     escape its control value, a doubled quote inside quotes is one quote, a backtick at
-    a line end joins the lines, a backslash is an ordinary character, a block comment
+    a token's start continues a line while one inside a word keeps the line-end
+    character, a backslash is ordinary, a block comment
     (`<# ... #>`) is nothing, a here-string (`@"` or `@'` at a line end, to a line
     that begins with `"@` or `'@`) is one quoted string whatever quotes it holds,
     `${any name}` is one variable whatever its name holds, a `$` before a quote is a
@@ -2885,8 +3042,15 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
                 last = c
                 out.append(c)
         elif c == "`" and follower:
-            if follower == "\n" or command[i + 1:i + 3] == "\r\n":
-                i += 2 if follower == "\n" else 3
+            if follower in "\r\n":
+                if not quote and starts():
+                    i += 3 if command[i + 1:i + 3] == "\r\n" else 2
+                    continue
+                # Within a word or string the backtick quotes the line-end character.
+                out.append(follower if quote else "'" + follower + "'")
+                spaced = True
+                joined, last = len(out), follower
+                i += 2
                 continue
             value = _PS_ESCAPE_VALUES.get(follower, follower)
             out.append(("'" + value + "'") if not quote and follower in _PS_ESCAPE_VALUES
@@ -3132,6 +3296,11 @@ def _powershell_statements(text: str) -> str:
 # variable, a type, an array or hash literal, a brace, a redirection, a comment.
 # `-hostname`, `=hostname` and `!hostname` are commands, but unary expressions are not.
 _PS_INERT_HEAD = frozenset("'\"$[@+{},<>#")
+# These Bash builtins are not PowerShell commands. A literal call operator target still needs lookup.
+_PS_BASH_BUILTINS = frozenset({"exit", "return", "export", "declare", "typeset", "readonly", "local",
+                               "unset", "shift", "source", "alias", "unalias", "hash", "wait", "jobs",
+                               "fg", "bg", "dirs", "read", "command", "builtin", "exec", "noglob",
+                               "nocorrect", ":", "["})
 _PS_NUMBER = re.compile(r"(?i)(?:0x[0-9a-f]+|\d+\.?\d*(?:e[+-]?\d+)?|\.\d+)(?:[dl]|[kmgtp]b)*\Z")
 _PS_EXPRESSION_HEAD = re.compile(r"(?i)-(?:not|bnot|join|split)(?!\w)|[-!]+(?=[$'\"[@])")
 _PS_STATEMENT_END = re.compile(r"([;\n|&()]+)")
@@ -3190,13 +3359,15 @@ def _powershell_hidden(text: str, depth: int) -> list[Route]:
         if not words:
             continue
         if words[0].casefold() == "function" and len(words) > 1:
-            # A scoped function still replaces the command with that name in its scope.
+            # PowerShell function names are case insensitive, with or without a scope.
             name = words[1].translate(_UNMASK)
             scope, colon, head = str(name).partition(":")
-            if (colon and scope.casefold() in ("global", "script", "local", "private")
-                    and g._basename(head) in {"sf", "sfdx", "torque", "jsc"} | LOCAL_COMMANDS | BENIGN_WRAPPERS):
+            if ((not colon or scope.casefold() in ("global", "script", "local", "private"))
+                    and g._basename(head if colon else name) in
+                    {"sf", "sfdx", "torque", "jsc"} | LOCAL_COMMANDS | BENIGN_WRAPPERS):
+                detail = ("function " if colon else "") + str(name)
                 found.append(Route("unverifiable", None,
-                                   "function " + str(name) + " (defines what this command name runs)"))
+                                   detail + " (defines what this command name runs)"))
         if at + 1 < len(pieces) and pieces[at + 1].startswith("(") and _PS_METHOD.search(pieces[at]):
             found.append(Route("unverifiable", None,
                                words[-1].translate(_UNMASK)[-60:] + "(...)" + _PS_METHOD_NOTE))
@@ -3207,7 +3378,12 @@ def _powershell_hidden(text: str, depth: int) -> list[Route]:
             # A sign alone, or an operator after a parenthesis (`(Get-Date) -gt $d`, `-(1 + 2)`),
             # goes on with an expression: no command begins there.
             continue
-        found += [route for route in classify_bash(pieces[at].translate(_UNMASK), depth + 1, _net=False)
+        commands = classify_bash(pieces[at].translate(_UNMASK), depth + 1, _net=False)
+        if words[0].casefold() in _PS_BASH_BUILTINS - {"exit", "return"} and not any(
+                route.kind == "unverifiable" for route in commands):
+            found.append(Route("unverifiable", None,
+                               words[0].translate(_UNMASK) + " (a PowerShell command name, not a Bash builtin)"))
+        found += [route for route in commands
                   if route.kind == "unverifiable" and not route.detail.endswith(_ADDS_WORDS_NOTE)]
     return found
 
@@ -3355,7 +3531,7 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
         for at, word in enumerate(words[:-1]):
             if _is_operator(word) and word == "&":
                 head = words[at + 1]
-                if head in _KEYWORDS | {"for", "select", "case"} or _ASSIGN_RE.match(head):
+                if str(head).casefold() in _KEYWORDS | _PS_BASH_BUILTINS or _ASSIGN_RE.match(head):
                     routes.append(Route("unverifiable", None,
                                         str(head) + " (a PowerShell command name, not shell syntax)"))
     # A call operator takes the command name from the parenthesized pipeline's output.
