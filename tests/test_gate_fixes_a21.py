@@ -2439,3 +2439,658 @@ def test_bash_functions_with_a_users_own_name_read_their_body_without_a_new_ques
         ("local", None, None, "echo a"), ("unverifiable", None, None, "f")}
     for command in ("echo '( ) { hostname; }'", "echo VALUE", "echo (hostname)"):
         assert set(KINDS(command)) == {"local"}, (command, B(command))
+
+
+# ---- round 19, PowerShell reading: targets, escapes and statement boundaries
+
+R19_PS_TARGETS = [
+    "('VALUE')",
+    "$('VALUE')",
+    "@('VALUE')",
+    "{echo VALUE}",
+    "@{a='VALUE'}",
+    "('VALUE')[0]",
+    "$x[0]",
+    "$x[$(echo VALUE)]",
+    "$x.Invoke('VALUE')",
+    "$x.ForEach{echo VALUE}",
+    "$x::Invoke('VALUE')",
+    "($x)::Invoke('VALUE')",
+    "'VALUE'.ToUpper()",
+    "\"VALUE\".ToUpper()",
+    "${a'b}[0]",
+    "${v)}[0]",
+    "$x.'Member'[0]",
+    "$x.${member}[0]",
+    "$x.('Member')[0]",
+    "$x.$('Member')[0]",
+    "$x.$name[0]",
+    "(echo '(')",
+    "$(echo \")\")",
+    "(echo a$(1)#)",
+    "(echo $x[0]#\n)",
+    "<# c #> ('VALUE')",
+    "`\n('VALUE')",
+    "@'\nVALUE\n'@",
+    "@\"\nVALUE\n\"@",
+    "x$('VALUE')suffix",
+    "$x.'Invoke'('VALUE')",
+]
+
+@pytest.mark.parametrize("target", R19_PS_TARGETS)
+def test_round19_ps_computed_redirection_preserves_following_arguments(target):
+    command = f"sf sobject describe -s A -o >{target} acme-prod"
+    assert ("read", "acme-prod", None) in B_PS(command), (command, B_PS(command))
+    command = f"sf data query -o 2>{target} acme-prod -q VALUE"
+    assert ("read", "acme-prod", "records") in B_PS(command), (command, B_PS(command))
+    owner = f"torque workspace >{target} guarded-reads off --path ."
+    assert "admin" in KINDS(owner, "PowerShell"), (owner, B_PS(owner))
+
+
+@pytest.mark.parametrize("command", [
+    "torque >('VALUE')workspace guarded-reads off --path .",
+    "torque >$x[0]workspace guarded-reads off --path .",
+    "torque >@'\nVALUE\n'@workspace guarded-reads off --path .",
+    "torque workspace 2>(echo VALUE) ai-access full --path .",
+    "torque approval *>(echo VALUE) grant req-000000000001",
+])
+def test_round19_ps_redirection_does_not_hide_an_owner_command(w, command):
+    assert "admin" in KINDS(command, "PowerShell"), B_PS(command)
+    assert run(w, command, tool="PowerShell").action == "deny"
+
+
+def test_round19_ps_redirection_target_keeps_its_own_commands():
+    command = "sf sobject describe -s A -o 2>$(sf data query -o acme-prod -q VALUE) org0"
+    assert ("read", "org0", None) in B_PS(command), B_PS(command)
+    assert ("read", "acme-prod", "records") in B_PS(command), B_PS(command)
+    command = "sf sobject describe -s A -o >$(unknown_program VALUE) org0"
+    assert ("read", "org0", None) in B_PS(command), B_PS(command)
+    assert "unverifiable" in KINDS(command, "PowerShell"), B_PS(command)
+    command = "sf sobject describe -s A -o >$x.In`voke('VALUE') org0"
+    assert ("read", "\voke", None) in B_PS(command), B_PS(command)
+
+
+@pytest.mark.parametrize("ending", ["\n", "\r", "\r\n"])
+@pytest.mark.parametrize("mark", ["'", '"'])
+def test_round19_ps_here_string_closing_mark_ends_its_argument(ending, mark):
+    command = f"sf sobject describe -s A -o @{mark}{ending}acme-prod{ending}{mark}@--json"
+    assert ("read", "acme-prod", None) in B_PS(command), B_PS(command)
+    command = f"& @{mark}{ending}sf{ending}{mark}@sobject describe -s A -o acme-prod"
+    assert ("read", "acme-prod", None) in B_PS(command), B_PS(command)
+
+
+@pytest.mark.parametrize("letter,value", [
+    ("a", "\a"), ("b", "\b"), ("f", "\f"), ("n", "\n"),
+    ("r", "\r"), ("t", "\t"), ("v", "\v"), ("e", "e"),
+])
+@pytest.mark.parametrize("form", ["org0`LETTER", '"org0`LETTER"', '@"\norg0`LETTER\n"@'])
+def test_round19_ps_backtick_control_escapes_hold_their_actual_value(letter, value, form):
+    command = "sf sobject describe -s A -o " + form.replace("LETTER", letter)
+    assert ("read", "org0" + value, None) in B_PS(command), B_PS(command)
+
+
+def test_round19_ps_single_quotes_keep_backticks_and_nul_is_refused():
+    command = "sf sobject describe -s A -o 'org0`b'"
+    assert ("read", "org0`b", None) in B_PS(command), B_PS(command)
+    assert "admin" in KINDS('sf sobject describe -s A -o "org0`0"', "PowerShell")
+
+
+@pytest.mark.parametrize("prefix", ["echo VALUE # '", "echo --% '"])
+@pytest.mark.parametrize("ending", ["\r", "\r\n", "\n"])
+def test_round19_ps_line_comments_and_stop_parsing_end_at_cr(prefix, ending):
+    command = prefix + ending + "echo @{a=sf data query -o acme-prod -q VALUE} #'"
+    assert ("read", "acme-prod", "records") in B_PS(command), B_PS(command)
+    assert not routes.is_simple(command, "PowerShell")
+    assert not routes.is_simple("echo VALUE\recho SECOND", "PowerShell")
+
+
+@pytest.mark.parametrize("head", ["for", "select", "case", "if", "then", "fi", "A=VALUE"])
+@pytest.mark.parametrize("form", ["& 'HEAD' VALUE", 'echo @{a=& "HEAD" VALUE}'])
+def test_round19_ps_literal_call_operator_target_is_a_command_name(head, form):
+    command = form.replace("HEAD", head)
+    assert "unverifiable" in KINDS(command, "PowerShell"), B_PS(command)
+
+
+R19_PS_METHODS = [
+    "echo @{a=$x. Invoke()}",
+    "echo @{a=$x.\tInvoke()}",
+    "echo @{a=$x. <#VALUE#> Invoke()}",
+    "echo @{a=$x.\necho()}",
+    "echo @{a=$x.\r\nhostname()}",
+    "echo @{a=$x.\rInvoke()}",
+    "echo @{a=[scriptblock]:: Create('hostname')}",
+    "echo @{a=[scriptblock]::\nCreate('hostname')}",
+    "echo @{a=$x. 'Invoke'()}",
+    "echo @{a=$x. \"Invoke\"()}",
+    "echo @{a=$x. $name()}",
+    "echo @{a=$x. ${name}()}",
+    "echo @{a=$x. ForEach{hostname}}",
+    "echo @{a=$x. 'ForEach'{hostname}}",
+    "echo @{a=$x.\nForEach{hostname}}",
+    "echo @{a=$x. Where{hostname}}",
+]
+
+@pytest.mark.parametrize("command", R19_PS_METHODS)
+def test_round19_ps_member_whitespace_still_calls_a_method(command):
+    found = classify("PowerShell", {"command": command})
+    assert any(routes._PS_METHOD_NOTE in r.detail for r in found), B_PS(command)
+
+
+@pytest.mark.parametrize("scope", ["global", "script", "local", "private", "GLOBAL"])
+@pytest.mark.parametrize("head", ["sf", "SF.EXE", "sfdx", "torque", "hostname"])
+def test_round19_ps_scoped_function_definitions_can_replace_a_known_command(scope, head):
+    command = f"function {scope}:{head} {{ hostname }}; sf sobject describe -s A -o acme-prod"
+    assert ("read", "acme-prod", None) in B_PS(command), B_PS(command)
+    found = classify("PowerShell", {"command": command})
+    assert any("defines what this command name runs" in r.detail for r in found), B_PS(command)
+
+
+@pytest.mark.parametrize("command", [
+    "echo @{a=$x. Invoke()}",
+    "function global:hostname { echo VALUE }; echo SECOND",
+    "& 'for' VALUE",
+])
+def test_round19_ps_unknown_execution_is_asked_about_and_denied_without_questions(w, command):
+    assert run(w, command, tool="PowerShell").action == "ask"
+    assert run(w, command, "dontAsk", tool="PowerShell").action == "deny"
+
+
+R19_PS_QUIET = [
+    "echo @{a=$x. Name}",
+    "echo $x. 'Name'",
+    "echo $x. \"Name\"",
+    "echo $x. ${name}",
+    "echo [math]:: Pi",
+    "echo [math]:: 'Pi'",
+    "echo 'notes. Invoke() is text'",
+    "echo \"& for VALUE\"",
+    "echo 'A=VALUE'",
+    "function global:helper { hostname }; echo VALUE",
+    "function script:helper { hostname }; echo VALUE",
+]
+
+@pytest.mark.parametrize("command", R19_PS_QUIET)
+def test_round19_ps_nearby_properties_and_literal_text_stay_quiet(command):
+    assert set(KINDS(command, "PowerShell")) == {"local"}, B_PS(command)
+
+
+@pytest.mark.parametrize("command", [
+    "sf sobject describe -s A -o acme-prod > x.txt",
+    "sf sobject describe -s A -o acme-prod > 'x.txt'",
+    "sf sobject describe -s A -o acme-prod 2>$null",
+])
+def test_round19_ps_plain_redirection_keeps_its_original_routes(command):
+    assert B_PS(command) == [("read", "acme-prod", None)], B_PS(command)
+
+
+POWERSHELL_WORDS += [
+    ("sf sobject describe -s A -o \"org0`b\"", {"org0\b"}),
+    ("sf sobject describe -s A -o org0`a", {"org0\u0007"}),
+    ("sf sobject describe -s A -o @\"\norg0`b\n\"@", {"org0\b"}),
+    ("echo \"VALUE`tSECOND\"; sf sobject describe -s A -o org0", {"org0"}),
+    ("echo @{a=& 'for' VALUE}; sf sobject describe -s A -o org0", {"org0"}),
+    ("echo @{a=& 'A=VALUE'}; sf sobject describe -s A -o org0", {"org0"}),
+    ("& 'case' VALUE; sf sobject describe -s A -o org0", {"org0"}),
+    ("function global:sf { hostname }; sf sobject describe -s A -o org0", {"org0"}),
+    ("function script:sf { hostname }; sf sobject describe -s A -o org0", {"org0"}),
+    ("function local:sf { hostname }; sf sobject describe -s A -o org0", {"org0"}),
+    ("function private:sf { hostname }; sf sobject describe -s A -o org0", {"org0"}),
+    ("function GLOBAL:SF.EXE { hostname }; sf sobject describe -s A -o org0", {"org0"}),
+    ("echo @{a=$x. Invoke((sf sobject describe -s A -o org0))}", {"org0"}),
+    ("echo @{a=$x. 'Invoke'((sf sobject describe -s A -o org0))}", {"org0"}),
+    ("echo @{a=$x. \"Invoke\"((sf sobject describe -s A -o org0))}", {"org0"}),
+    ("echo @{a=$x. <#VALUE#> Invoke((sf sobject describe -s A -o org0))}", {"org0"}),
+    ("echo @{a=$x.\necho((sf sobject describe -s A -o org0))}", {"org0"}),
+    ("echo @{a=[scriptblock]:: Create((sf sobject describe -s A -o org0))}", {"org0"}),
+    ("echo @{a=$x. ForEach{ sf sobject describe -s A -o org0 }}", {"org0"}),
+    ("echo @{a=$x. 'ForEach'{ sf sobject describe -s A -o org0 }}", {"org0"}),
+    ("echo @{a=$x.\nForEach{ sf sobject describe -s A -o org0 }}", {"org0"}),
+    ("echo @{k=(sf sobject describe -s A -o org0). ToString()}", {"org0"}),
+    ("sf sobject describe -s A -o @'\norg0\n'@--json", {"org0"}),
+    ("sf sobject describe -s A -o @\"\norg0\n\"@--json", {"org0"}),
+    ("& @'\nsf\n'@sobject describe -s A -o org0", {"org0"}),
+    ("sf sobject describe -s A -o @'\r\norg0\r\n'@", {"org0"}),
+    ("sf sobject describe -s A -o @'\rorg0\r'@--json", {"org0"}),
+    ("echo VALUE # '\recho @{a=sf sobject describe -s A -o org0} #'", {"org0"}),
+    ("echo --% '\recho @{a=sf sobject describe -s A -o org0} #'", {"org0"}),
+    ("sf sobject describe -s A -o >('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >$('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >@('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >{echo VALUE} org0", {"org0"}),
+    ("sf sobject describe -s A -o >@{a='VALUE'} org0", {"org0"}),
+    ("sf sobject describe -s A -o >('VALUE')[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x[$(echo VALUE)] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.Invoke('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.ForEach{echo VALUE} org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x::Invoke('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >($x)::Invoke('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >'VALUE'.ToUpper() org0", {"org0"}),
+    ("sf sobject describe -s A -o >\"VALUE\".ToUpper() org0", {"org0"}),
+    ("sf sobject describe -s A -o >${a'b}[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >${v)}[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.'Member'[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.${member}[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.('Member')[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.$('Member')[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.$name[0] org0", {"org0"}),
+    ("sf sobject describe -s A -o >(echo '(') org0", {"org0"}),
+    ("sf sobject describe -s A -o >$(echo \")\") org0", {"org0"}),
+    ("sf sobject describe -s A -o >(echo a$(1)#) org0", {"org0"}),
+    ("sf sobject describe -s A -o >(echo $x[0]#\n) org0", {"org0"}),
+    ("sf sobject describe -s A -o ><# c #> ('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >`\n('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >@'\nVALUE\n'@ org0", {"org0"}),
+    ("sf sobject describe -s A -o >@\"\nVALUE\n\"@ org0", {"org0"}),
+    ("sf sobject describe -s A -o >x$('VALUE')suffix org0", {"org0"}),
+    ("sf sobject describe -s A -o 2>$(sf sobject describe -s A -o org1) org0", {"org0", "org1"}),
+    ("sf sobject describe -s A -o *>{ sf sobject describe -s A -o org1 } org0", {"org0", "org1"}),
+    ("sf sobject describe -s A -o >('VALUE').Length org0", {"org0"}),
+    ("sf sobject describe -s A -o >'VALUE'org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.'Invoke'('VALUE') org0", {"org0"}),
+    ("sf sobject describe -s A -o >$x.In`koke('VALUE') org0; sf sobject describe -s A -o org1", {"koke", "org1"}),
+]
+
+
+# ---- round 19, classification tables and guarded lanes: packaged routes and Torque targets
+
+@pytest.mark.parametrize("command,data", [
+    ("jsc-loganalyzer --target-org acme-prod", "debug_logs"),
+    ("jsc-loganalyzer --target-org=acme-prod --since-deploy --json", "debug_logs"),
+    ("jsc-advisory impact --target-org acme-prod --sobject Contact --where \"Email = 'VALUE'\"", "records"),
+    ("jsc-advisory receipt --target-org acme-prod --sobject Contact --field Contact.Email "
+     "--where=\"Email = 'VALUE'\"", "records"),
+    ("jsc-advisory impact --target-org acme-prod --sobject Contact", None),
+    ("jsc-advisory flow --target-org acme-prod --api-name VALUE", None),
+])
+def test_r19_packaged_read_scripts_have_the_delegates_consent_class(command, data):
+    assert B(command) == [("read", "acme-prod", data)]
+    assert B_PS(command) == [("read", "acme-prod", data)]
+
+
+@pytest.mark.parametrize("command", [
+    "jsc-loganalyzer --target-org acme-prod",
+    "jsc-advisory impact --target-org acme-prod --sobject Contact --where \"Email = 'VALUE'\"",
+])
+def test_r19_a_packaged_read_cannot_use_a_write_approval_in_place_of_consent(w, monkeypatch, command):
+    def consume(*args, **kwargs):
+        pytest.fail("a read must not consume a write approval")
+    monkeypatch.setattr(gc.approval, "consume", consume)
+    assert run(w, command).action == "deny"
+    assert run(w, command, tool="PowerShell").action == "deny"
+
+
+def test_r19_packaged_script_routes_match_the_installed_entry_points():
+    import re as _re
+    source = (Path(cli.__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    section = source.split("[project.scripts]", 1)[1].split("\n[", 1)[0]
+    scripts = dict(_re.findall(r'^([A-Za-z0-9-]+) = "([^"]+):main"$', section, _re.MULTILINE))
+    for script, module in scripts.items():
+        if script == "torque":
+            continue
+        delegate = "revert" if script == "jsc" else next(
+            name for name, target in cli.DELEGATES.items() if target == module)
+        assert routes.TORQUE_CONSOLE_ROUTES[script] == delegate
+    assert set(routes.TORQUE_CONSOLE_ROUTES) == set(scripts) - {"torque"}
+
+
+@pytest.mark.parametrize("module", [
+    "jsc_revert_future", "jsc_revert_extra.cli", "jsc_revert.cli.extra", "jsc_revert.post_deploy_polling",
+])
+@pytest.mark.parametrize("option", ["--help", "--version"])
+def test_r19_only_the_known_revert_module_uses_its_route_table(module, option):
+    command = f"python -m {module} {option}"
+    assert KINDS(command) == ["unverifiable"]
+    assert KINDS(command, "PowerShell") == ["unverifiable"]
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("python -m jsc_revert.cli --help", "local"),
+    ("python -m jsc_revert.cli revert-token show", "admin"),
+    ("jsc revert-token show", "admin"),
+    ("jsc-loganalyzer --help", "local"),
+    ("jsc-advisory --version", "local"),
+    ("jsc-loganalyzer --target acme-prod", "admin"),
+    ("jsc-loganalyzer --target-org acme-prod --target-org other", "no_org"),
+    ("jsc-loganalyzer --target-org ''", "no_org"),
+    ("jsc-advisory impact --target-org acme-prod --sobject Contact --wh VALUE", "admin"),
+])
+def test_r19_nearby_packaged_calls_keep_their_existing_rules(command, expected):
+    assert KINDS(command) == [expected]
+    assert KINDS(command, "PowerShell") == [expected]
+
+
+@pytest.mark.parametrize("command", [
+    "torque client add Acme --workspace . --org acme-prod",
+    "torque change create --workspace . --client acme --title VALUE --outcome VALUE --org acme-prod",
+])
+def test_r19_a_planned_org_is_local(w, command):
+    assert B(command) == [("local", None, None)]
+    assert B_PS(command) == [("local", None, None)]
+    assert run(w, command).action == "allow"
+
+
+def test_r19_verifying_one_deploy_is_a_metadata_read(w, monkeypatch):
+    command = ("torque change verify-deploy chg-VALUE --workspace . --client acme "
+               "--org acme-prod --job-id VALUE --component ApexClass:VALUE")
+    def consume(*args, **kwargs):
+        pytest.fail("a deploy report must not consume a write approval")
+    monkeypatch.setattr(gc.approval, "consume", consume)
+    assert B(command) == [("read", "acme-prod", None)]
+    assert B_PS(command) == [("read", "acme-prod", None)]
+    assert run(w, command).action == "allow"
+    assert run(w, command.replace("--org acme-prod", "--org other")).action == "deny"
+    assert KINDS(command.replace("--org acme-prod", "--org ''")) == ["no_org"]
+    assert KINDS(command.replace("--org acme-prod", "")) == ["no_org"]
+    assert B("torque deploy --target-org acme-prod --metadata ApexClass:VALUE") == [
+        ("org_write", "acme-prod", None)]
+
+
+# ---- round 19, classification tables and guarded lanes: explicit sources and whole REST endpoints
+
+R19_USER_PERMISSION_FIELDS = [
+    "PermissionsChatterInternalUser", "PermissionsApiUserOnly", "PermissionsInboundMigrationToolsUser",
+    "PermissionsPortalSuperUser", "PermissionsOutboundMigrationToolsUser", "PermissionsDelegatedPortalUserAdmin",
+    "PermissionsContentHubUser", "PermissionsInsightsAppUser", "PermissionsInsightsAppUploadUser",
+    "PermissionsLightningExperienceUser", "PermissionsShowCompanyNameAsUserBadge", "PermissionsIotUser",
+    "PermissionsViewOnlyEmbeddedAppUser", "PermissionsLightningConsoleAllowedForUser",
+    "PermissionsSubscribeReportsRunAsUser", "PermissionsLtngPromoReserved01UserPerm",
+]
+
+
+@pytest.mark.parametrize("entity,field", [
+    ("FieldDefinition", "BusinessOwnerId"), ("FieldDefinition", "BusinessOwner"),
+    ("FieldDefinition", "RunningUserFieldAccessId"), ("FieldDefinition", "RunningUserFieldAccess"),
+    ("EntityDefinition", "RunningUserEntityAccessId"), ("EntityDefinition", "RunningUserEntityAccess"),
+    ("Profile", "UserLicenseId"), ("Profile", "UserLicense"), ("Profile", "UserType"),
+] + [(entity, field) for entity in ("Profile", "PermissionSet") for field in R19_USER_PERMISSION_FIELDS])
+@pytest.mark.parametrize("case", [str.lower, str.upper, lambda value: value.swapcase()])
+@pytest.mark.parametrize("position", ["select", "filter", "order"])
+@pytest.mark.parametrize("space", ["+", "%20"])
+def test_r19_tooling_person_policy_does_not_depend_on_field_case(entity, field, case, position, space):
+    field = case(field)
+    if position == "select":
+        query = f"SELECT Id,{field} FROM {entity}"
+    elif position == "filter":
+        query = f"SELECT Id FROM {entity} WHERE {field} = 'VALUE'"
+    else:
+        query = f"SELECT Id FROM {entity} ORDER BY {field}"
+    path = "/services/data/v66.0/tooling/query?q=" + query.replace(" ", space)
+    assert rest_data_class(path) == "records"
+    command = f'sf api request rest "{path}" -o acme-prod'
+    for read in (B, B_PS):
+        assert ("read", "acme-prod", "records") in read(command), (command, read(command))
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT COUNT(Id) HouseRule FROM ApexClass",
+    "SELECT COUNT(Id) houserule FROM ApexClass",
+    "SELECT COUNT(Id) PermissionsHouseRule FROM ApexClass",
+    "SELECT PermissionsManageUsers FROM Profile",
+    "SELECT permissionsmanageusers FROM Profile",
+    "SELECT PermissionsViewAllUsers FROM PermissionSet",
+    "SELECT PERMISSIONSVIEWALLUSERS FROM PermissionSet",
+    "SELECT Name FROM ApexClass WHERE Name = 'BusinessOwnerId'",
+    "SELECT BusinessStatus FROM FieldDefinition",
+])
+def test_r19_schema_words_and_plural_user_permissions_stay_schema(query):
+    path = "/services/data/v66.0/tooling/query?q=" + query.replace(" ", "+")
+    assert rest_data_class(path) is None
+    command = f'sf api request rest "{path}" -o acme-prod'
+    for read in (B, B_PS):
+        assert read(command) == [("read", "acme-prod", None)], (command, read(command))
+
+
+@pytest.mark.parametrize("command", [
+    'sf data query -t -q "SELECT Id,LogUserId FROM ApexLog" -o acme-prod',
+    'sf query data --use-tooling-api --query "SELECT Id FROM ApexLog" -o acme-prod',
+    'sf data:query --usetoolingapi --query="SELECT Id FROM apexlog" -o acme-prod',
+    'sfdx force:data:soql:query -t -q "SELECT Id FROM ApexLog" -u acme-prod',
+    "sf data get record -t -s ApexLog -i 07L000000000001AAA -o acme-prod",
+    "sf record get data --use-tooling-api --sobject ApexLog -i 07L000000000001AAA -o acme-prod",
+    "sf data:get:record --sobject=apexlog --use-tooling-api -i 07L000000000001AAA -o acme-prod",
+    "sfdx force:data:record:get --usetoolingapi --sobjecttype ApexLog -i 07L000000000001AAA -u acme-prod",
+])
+def test_r19_explicit_apexlog_cli_reads_need_debug_log_consent(command):
+    for read in (B, B_PS):
+        assert read(command) == [("read", "acme-prod", "debug_logs")], (command, read(command))
+
+
+@pytest.mark.parametrize("value", ["&", "#", ";", "%26", "%23"])
+def test_r19_direct_soql_literal_separators_do_not_hide_apexlog(value):
+    query = "SELECT Id FROM ApexLog WHERE Operation = 'VALUE" + value + "VALUE'"
+    command = f'sf data query -t -q "{query}" -o acme-prod'
+    for read in (B, B_PS):
+        assert ("read", "acme-prod", "debug_logs") in read(command), (command, read(command))
+
+
+@pytest.mark.parametrize("command", [
+    'sf data query -q "SELECT Id FROM Contact WHERE LastName = \'ApexLog\'" -o acme-prod',
+    'sf data query -t -q "SELECT Id FROM ApexClass" -o acme-prod --json',
+    'sf data query -t -q "SELECT Id FROM ApexClass WHERE Name = \'ApexLog\'" -o acme-prod',
+    "sf data query --file query.soql --result-format csv --output-file rows.csv -o acme-prod",
+    "sf data get record -s Contact -i 003000000000001AAA -o acme-prod",
+    "sf data get record -t -s ApexClass -i 01p000000000001AAA -o acme-prod",
+    "sf data export tree -q VALUE -o acme-prod",
+    "sf data bulk results -i VALUE -o acme-prod",
+    "sf data export resume -i VALUE -o acme-prod",
+])
+def test_r19_ordinary_record_cli_reads_keep_their_class(command):
+    for read in (B, B_PS):
+        assert read(command) == [("read", "acme-prod", "records")], (command, read(command))
+
+
+def test_r19_record_consent_does_not_cover_explicit_cli_log_reads(w, tmp_path):
+    letter = tmp_path / "r19.pdf"
+    letter.write_bytes(b"agreement")
+    consent.record_consent(w, "Acme", "2026-09-30", letter, ["metadata", "records"],
+                           ["acme-prod"], ["Contact"], presence=YES, resolve=ORGS.get)
+    consent.sign_off(w, "Acme", "Reviewer", presence=YES)
+    for tool in ("Bash", "PowerShell"):
+        for command in (
+            'sf data query -t -q "SELECT Id FROM ApexLog" -o acme-prod',
+            "sf data get record -t -s ApexLog -i 07L000000000001AAA -o acme-prod",
+        ):
+            assert run(w, command, tool=tool).action == "deny"
+        ordinary = 'sf data query -q "SELECT Id FROM Contact" -o acme-prod'
+        assert run(w, ordinary, tool=tool).action == "allow"
+
+
+@pytest.mark.parametrize("path,data", [
+    ("/services/data/v66.0/sobjects/Contact/External_Id__c/%2Fsobjects%2FApexLog%2FVALUE", "records"),
+    ("/services/data/v66.0/sobjects/Contact/External_Id__c/%2fsobjects%2fApexLog%2fVALUE", "records"),
+    ("/services/data/v66.0/sobjects/Contact/External_Id__c/sobjects/ApexLog/VALUE", "records"),
+    ("/services/data/v66.0/composite/sobjects/ApexLog", "records"),
+    ("/other/sobjects/ApexLog/VALUE", "records"),
+    ("/services/data/v66.0/sobjects/ApexLog__c/001000000000001AAA", "records"),
+    ("/services/data/v66.0/sobjects/ApexLog/describe", None),
+    ("/services/data/v66.0/tooling/sobjects/ApexLog/describe", None),
+    ("/services/data/v66.0/tooling/sobjects/ApexLog/describe/layouts", None),
+    ("https://acme.my.salesforce.com/services/data/v66.0/tooling/sobjects/ApexLog/describe", None),
+    ("/services/data/v66.0/sobjects/ApexLog", "debug_logs"),
+    ("/services/data/v66.0/sobjects/ApexLog/07L000000000001AAA", "debug_logs"),
+    ("/services/data/v66.0/tooling/sobjects/ApexLog/07L000000000001AAA/Body", "debug_logs"),
+    ("/tooling/sobjects/ApexLog/07L000000000001AAA/Body", "debug_logs"),
+])
+def test_r19_only_the_apexlog_endpoint_makes_a_rest_read_a_log_read(path, data):
+    assert rest_data_class(path) == data
+    command = f'sf api request rest "{path}" -o acme-prod'
+    for read in (B, B_PS):
+        assert ("read", "acme-prod", data) in read(command), (command, read(command))
+
+
+@pytest.mark.parametrize("path,data", [
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name='&q=SELECT+Email+FROM+User+LIMIT+1&x='",
+     "records"),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass&q=SELECT+Email+FROM+User", "records"),
+    ("/services/data/v66.0/tooling/query?Q=SELECT+Id+FROM+ApexClass&Q=SELECT+Email+FROM+User", "records"),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass&x=VALUE", "records"),
+    ("/services/data/v66.0/query?q=SELECT+Id+FROM+ApexLog&x=VALUE", "records"),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass#fragment", "records"),
+    ("/services/data/v66.0/query?q=SELECT+Id+FROM+ApexLog#fragment", "records"),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name='VALUE%26VALUE'", None),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name='VALUE%26q=VALUE'", None),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name='VALUE%23fragment'", None),
+    ("/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name='VALUE%3Bq=VALUE'", None),
+    ("/services/data/v66.0/tooling/sobjects/ApexLog/07L000000000001AAA/Body?fields=Body&x=VALUE",
+     "debug_logs"),
+])
+def test_r19_url_boundaries_are_read_before_soql_literals(path, data):
+    assert rest_data_class(path) == data
+    command = f'sf api request rest "{path}" -o acme-prod'
+    for read in (B, B_PS):
+        assert ("read", "acme-prod", data) in read(command), (command, read(command))
+
+
+@pytest.mark.parametrize("command,data", [
+    ('sf api request rest "/services/data/v66.0/query?q=SELECT+Name+FROM+Account+WHERE+Name=\'apexrest\'" -o acme-prod',
+     "records"),
+    ('sf api request rest /services/data/v66.0/limits -H "X-Note: executeanonymous" -o acme-prod', None),
+    ("sf api request rest /services/data/v66.0/limits -S apexrest.json -o acme-prod", None),
+    ("sf api request rest /services/data/v66.0/sobjects/ApexRestSettings__c/001000000000001AAA -o acme-prod",
+     "records"),
+    ("sf api request rest /services/data/v66.0/sobjects/Contact/External_Id__c/apexrest -o acme-prod", "records"),
+    ("sf api request rest /services/data/v66.0/sobjects/Contact/External_Id__c/executeanonymous -o acme-prod",
+     "records"),
+    ('sf api request rest "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name=\'executeanonymous\'" -o acme-prod',
+     None),
+])
+def test_r19_custom_endpoint_words_elsewhere_do_not_make_a_write(command, data):
+    for read in (B, B_PS):
+        assert read(command) == [("read", "acme-prod", data)], (command, read(command))
+
+
+@pytest.mark.parametrize("path", [
+    "/services/apexrest", "/services/apexrest/VALUE", "/services/apexrest/../apexrest/VALUE",
+    "/services/data/v66.0/tooling/executeAnonymous", "/services/data/v66.0/tooling/executeAnonymous/",
+    "/services/data/v66.0/limits/../tooling/executeAnonymous",
+    "/services/data/v66.0/tooling/%65xecuteAnonymous", "/services/data/v66.0/tooling/%45xecuteAnonymous",
+])
+def test_r19_real_custom_endpoints_still_need_write_approval(path):
+    command = f'sf api request rest "{path}" -o acme-prod'
+    for read in (B, B_PS):
+        assert ("org_write", "acme-prod", None) in read(command), (command, read(command))
+
+
+@pytest.mark.parametrize("command", [
+    "sf apex tail log -s -o acme-prod",
+    "sf apex tail log --skip-trace-flag -o acme-prod",
+    "sf apex:tail:log --skip-trace-flag -o acme-prod",
+    "sfdx force:apex:log:tail --skiptraceflag -u acme-prod",
+])
+def test_r19_tail_without_trace_flag_setup_is_a_log_read(command):
+    for read in (B, B_PS):
+        assert read(command) == [("read", "acme-prod", "debug_logs")], (command, read(command))
+
+
+@pytest.mark.parametrize("command", [
+    "sf apex tail log -o acme-prod", "sf apex:tail:log -o acme-prod", "sfdx force:apex:log:tail -u acme-prod",
+    "sf apex tail log --color -o acme-prod", "sf apex run --file script.apex -o acme-prod",
+    'sf api request graphql --body "{VALUE}" -o acme-prod', "sf data import tree --files tree.json -o acme-prod",
+])
+def test_r19_trace_setup_and_other_writes_keep_write_approval(command):
+    for read in (B, B_PS):
+        assert read(command) == [("org_write", "acme-prod", None)], (command, read(command))
+
+
+@pytest.mark.parametrize("header", [
+    '-H "Authorization: Bearer VALUE"', '-H "aUtHoRiZaTiOn: Bearer VALUE"',
+    '--header "authorization: Bearer VALUE"', '--header="AUTHORIZATION: Bearer VALUE"',
+    '-H "Accept: application/json" -H "Authorization: Bearer VALUE"',
+])
+def test_r19_an_explicit_rest_authorization_header_is_refused(header):
+    command = f"sf api request rest /services/data/v66.0/limits {header} -o acme-prod"
+    assert B(command) == [("credential", None, None)]
+    assert B_PS(command) == [("credential", None, None)]
+
+
+def test_r19_rest_authorization_cannot_use_consent_or_a_write_approval(w, monkeypatch):
+    def consume(*args, **kwargs):
+        pytest.fail("an explicit credential must not consume an approval")
+    monkeypatch.setattr(gc.approval, "consume", consume)
+    command = 'sf api request rest /services/data/v66.0/limits -H "Authorization: Bearer VALUE" -o acme-prod'
+    for tool in ("Bash", "PowerShell"):
+        for mode in (None, "default", "dontAsk", "bypassPermissions"):
+            assert run(w, command, tool=tool, mode=mode).action == "deny"
+
+
+@pytest.mark.parametrize("header", [
+    '-H "Accept: application/json"', '-H "X-Note: Authorization: Bearer VALUE"',
+    '-H "Cookie: theme=VALUE"', '-H "Cookie: sid=VALUE"', '-H "Host: OTHER.my.salesforce.com"',
+])
+def test_r19_other_rest_headers_keep_their_existing_route(header):
+    command = f"sf api request rest /services/data/v66.0/limits {header} -o acme-prod"
+    for read in (B, B_PS):
+        assert read(command) == [("read", "acme-prod", None)], (command, read(command))
+
+
+# ---- round 19, classification tables and guarded lanes: MCP SOQL logs and scratch resumption
+
+@pytest.mark.parametrize("tool", [
+    "mcp__salesforce__run_soql_query", "mcp__sf__query", "mcp__sfdx__runSoqlQuery",
+])
+@pytest.mark.parametrize("query,data", [
+    ("SELECT Id FROM ApexLog", "debug_logs"),
+    ("select id from apexlog", "debug_logs"),
+    ("SELECT Id FROM ApexLog WHERE Id = 'VALUE'", "debug_logs"),
+    ("SELECT Id FROM ApexLog WHERE Operation = 'SELECT ApexLog'", "debug_logs"),
+    ("SELECT Id FROM ApexLog WHERE Operation = 'a&b#c+d'", "debug_logs"),
+    ("SELECT Id FROM Contact WHERE LastName = 'ApexLog'", "records"),
+    ("SELECT Id, ApexLog__c FROM Contact", "records"),
+    ("SELECT Id FROM ApexClass", "records"),
+    ("SELECT Id FROM User", "records"),
+    ("SELECT Id FROM Contact WHERE Id IN (SELECT OwnerId FROM ApexLog)", "records"),
+    ("VALUE", "records"), ("", "records"), (None, "records"),
+])
+def test_r19_mcp_query_source_decides_whether_it_reads_logs(tool, query, data):
+    inp = {"usernameOrAlias": "acme-prod", "query": query, "useToolingApi": True, "directory": "."}
+    assert [(r.kind, r.org, r.data) for r in classify(tool, inp)] == [("read", "acme-prod", data)]
+
+
+def test_r19_mcp_log_queries_need_log_consent_for_the_named_org(w, monkeypatch):
+    item = consent.load_consent(w, "acme")
+    item["data_allowed"].append("records")
+    monkeypatch.setattr(consent, "load_consent", lambda *_: item)
+    inp = {"usernameOrAlias": "acme-prod", "query": "SELECT Id FROM ApexLog", "useToolingApi": True,
+           "directory": str(w)}
+    decision = gc.decide_connected("mcp__salesforce__run_soql_query", inp, w, w,
+                                   env={"TORQUE_CLIENT": "acme"}, permission_mode="dontAsk")
+    assert decision.action == "deny" and "debug logs" in decision.reason
+    item["approved_orgs"].append({"alias": "other", "org_id_18": "00D000000000001AAA", "kind": "sandbox",
+                                 "extra_data": ["debug_logs"]})
+    assert gc.decide_connected("mcp__salesforce__run_soql_query", inp, w, w,
+                              env={"TORQUE_CLIENT": "acme"}).action == "deny"
+    item["approved_orgs"][0]["extra_data"] = ["debug_logs"]
+    assert gc.decide_connected("mcp__salesforce__run_soql_query", inp, w, w,
+                              env={"TORQUE_CLIENT": "acme"}).action == "allow"
+
+
+@pytest.mark.parametrize("job,kind", [
+    ("2SR000000000001", "org_write"), ("2SR000000000001AAA", "org_write"),
+    ("0Af000000000001", "read"), ("4KB000000000001", "read"), ("0Oo000000000001", "read"),
+    ("X2SR000000000001", "read"), ("2sr000000000001", "read"), ("VALUE", "read"), ("", "read"),
+])
+def test_r19_mcp_scratch_resumption_is_a_write_and_polling_stays_a_read(job, kind):
+    inp = {"usernameOrAlias": "acme-prod", "jobId": job, "directory": "."}
+    assert [(r.kind, r.org, r.data) for r in classify("mcp__salesforce__resume_tool_operation", inp)] == [
+        (kind, "acme-prod", None)]
+    del inp["usernameOrAlias"]
+    assert [(r.kind, r.org) for r in classify("mcp__salesforce__resume_tool_operation", inp)] == [("no_org", None)]
+
+
+@pytest.mark.parametrize("mode", [None, "default", "dontAsk", "bypassPermissions"])
+def test_r19_mcp_scratch_resumption_cannot_run_without_approval(w, mode):
+    inp = {"usernameOrAlias": "acme-prod", "jobId": "2SR000000000001", "directory": str(w)}
+    assert gc.decide_connected("mcp__salesforce__resume_tool_operation", inp, w, w,
+                              env={"TORQUE_CLIENT": "acme"}, permission_mode=mode).action == "deny"
+
+
+def test_r19_ordinary_mcp_read_classes_are_unchanged():
+    for tool, inp, data in (
+            ("mcp__salesforce__describe_object", {"object": "Account"}, None),
+            ("mcp__salesforce__get_metadata", {}, None),
+            ("mcp__salesforce__get_record", {"id": "VALUE"}, "records"),
+            ("mcp__salesforce__get_apex_log", {"id": "VALUE"}, "debug_logs"),
+            ("mcp__salesforce__run_soql_query", {"query": "SELECT Id FROM Contact"}, "records")):
+        assert [(r.kind, r.org, r.data) for r in classify(tool, {"usernameOrAlias": "acme-prod", **inp})] == [
+            ("read", "acme-prod", data)]

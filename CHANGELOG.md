@@ -5,6 +5,15 @@
 Connected mode reads commands more exactly, a consent can give one org more than the others, and a new
 off-by-default feature, guarded reads, answers build questions about an org without record consent.
 
+- Fix, connected mode: packaged read scripts use their delegate's consent class; ApexLog CLI and MCP reads
+  need debug-log consent. REST log paths match from their own root, and Tooling person fields retain their
+  class in every letter case. ApexLog describes remain metadata. Custom endpoint words in query literals,
+  headers and output filenames no longer make ordinary REST GETs writes. Explicit REST Authorization
+  headers are refused as credentials, and ambiguous Tooling query URLs remain record reads.
+- Fix, connected mode: unknown Python module names no longer inherit the revert delegate's local routes.
+  Salesforce MCP scratch-org resumption requires write approval. Planned orgs are local records, and
+  verifying a deployment is a metadata read.
+
 - Fix, connected mode: a session could switch the mode off. `torque workspace ${x:-ai-access} full` and
   `torque -- workspace ai-access full` were read as local work, and leaving connected mode needed no person.
   Leaving connected mode now needs the owner at a real terminal and the confirmation code, as entering it does.

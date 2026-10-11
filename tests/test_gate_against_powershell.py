@@ -594,3 +594,252 @@ def test_random_lines_read_beside_powershells_parser(tmp_path):
             missed.append((line, sorted(orgs), sorted({route.org for route in routes if route.org})))
     assert not missed, missed[:5]
     assert held >= 1500                 # about half of the lines parse and hold an sf command
+
+
+# ---- round 19, PowerShell reading: additional parser comparisons
+
+WORD_LINES += [
+    "sf sobject describe -s A -o \"org0`b\"",
+    "sf sobject describe -s A -o org0`a",
+    "sf sobject describe -s A -o @\"\norg0`b\n\"@",
+    "echo \"VALUE`tSECOND\"; sf sobject describe -s A -o org0",
+    "echo @{a=& 'for' VALUE}; sf sobject describe -s A -o org0",
+    "echo @{a=& 'A=VALUE'}; sf sobject describe -s A -o org0",
+    "& 'case' VALUE; sf sobject describe -s A -o org0",
+    "function global:sf { hostname }; sf sobject describe -s A -o org0",
+    "function script:sf { hostname }; sf sobject describe -s A -o org0",
+    "function local:sf { hostname }; sf sobject describe -s A -o org0",
+    "function private:sf { hostname }; sf sobject describe -s A -o org0",
+    "function GLOBAL:SF.EXE { hostname }; sf sobject describe -s A -o org0",
+    "echo @{a=$x. Invoke((sf sobject describe -s A -o org0))}",
+    "echo @{a=$x. 'Invoke'((sf sobject describe -s A -o org0))}",
+    "echo @{a=$x. \"Invoke\"((sf sobject describe -s A -o org0))}",
+    "echo @{a=$x. <#VALUE#> Invoke((sf sobject describe -s A -o org0))}",
+    "echo @{a=$x.\necho((sf sobject describe -s A -o org0))}",
+    "echo @{a=[scriptblock]:: Create((sf sobject describe -s A -o org0))}",
+    "echo @{a=$x. ForEach{ sf sobject describe -s A -o org0 }}",
+    "echo @{a=$x. 'ForEach'{ sf sobject describe -s A -o org0 }}",
+    "echo @{a=$x.\nForEach{ sf sobject describe -s A -o org0 }}",
+    "echo @{k=(sf sobject describe -s A -o org0). ToString()}",
+    "sf sobject describe -s A -o @'\norg0\n'@--json",
+    "sf sobject describe -s A -o @\"\norg0\n\"@--json",
+    "& @'\nsf\n'@sobject describe -s A -o org0",
+    "sf sobject describe -s A -o @'\r\norg0\r\n'@",
+    "sf sobject describe -s A -o @'\rorg0\r'@--json",
+    "echo VALUE # '\recho @{a=sf sobject describe -s A -o org0} #'",
+    "echo --% '\recho @{a=sf sobject describe -s A -o org0} #'",
+    "sf sobject describe -s A -o >('VALUE') org0",
+    "sf sobject describe -s A -o >$('VALUE') org0",
+    "sf sobject describe -s A -o >@('VALUE') org0",
+    "sf sobject describe -s A -o >{echo VALUE} org0",
+    "sf sobject describe -s A -o >@{a='VALUE'} org0",
+    "sf sobject describe -s A -o >('VALUE')[0] org0",
+    "sf sobject describe -s A -o >$x[0] org0",
+    "sf sobject describe -s A -o >$x[$(echo VALUE)] org0",
+    "sf sobject describe -s A -o >$x.Invoke('VALUE') org0",
+    "sf sobject describe -s A -o >$x.ForEach{echo VALUE} org0",
+    "sf sobject describe -s A -o >$x::Invoke('VALUE') org0",
+    "sf sobject describe -s A -o >($x)::Invoke('VALUE') org0",
+    "sf sobject describe -s A -o >'VALUE'.ToUpper() org0",
+    "sf sobject describe -s A -o >\"VALUE\".ToUpper() org0",
+    "sf sobject describe -s A -o >${a'b}[0] org0",
+    "sf sobject describe -s A -o >${v)}[0] org0",
+    "sf sobject describe -s A -o >$x.'Member'[0] org0",
+    "sf sobject describe -s A -o >$x.${member}[0] org0",
+    "sf sobject describe -s A -o >$x.('Member')[0] org0",
+    "sf sobject describe -s A -o >$x.$('Member')[0] org0",
+    "sf sobject describe -s A -o >$x.$name[0] org0",
+    "sf sobject describe -s A -o >(echo '(') org0",
+    "sf sobject describe -s A -o >$(echo \")\") org0",
+    "sf sobject describe -s A -o >(echo a$(1)#) org0",
+    "sf sobject describe -s A -o >(echo $x[0]#\n) org0",
+    "sf sobject describe -s A -o ><# c #> ('VALUE') org0",
+    "sf sobject describe -s A -o >`\n('VALUE') org0",
+    "sf sobject describe -s A -o >@'\nVALUE\n'@ org0",
+    "sf sobject describe -s A -o >@\"\nVALUE\n\"@ org0",
+    "sf sobject describe -s A -o >x$('VALUE')suffix org0",
+    "sf sobject describe -s A -o 2>$(sf sobject describe -s A -o org1) org0",
+    "sf sobject describe -s A -o *>{ sf sobject describe -s A -o org1 } org0",
+    "sf sobject describe -s A -o >('VALUE').Length org0",
+    "sf sobject describe -s A -o >'VALUE'org0",
+    "sf sobject describe -s A -o >$x.'Invoke'('VALUE') org0",
+    "sf sobject describe -s A -o >$x.In`koke('VALUE') org0; sf sobject describe -s A -o org1",
+]
+
+METHOD_FORMS[:0] = [
+    "echo @{a=$x. Invoke()}",
+    "echo @{a=$x.\tInvoke()}",
+    "echo @{a=$x. <#VALUE#> Invoke()}",
+    "echo @{a=$x.\necho()}",
+    "echo @{a=$x.\r\nhostname()}",
+    "echo @{a=$x.\rInvoke()}",
+    "echo @{a=[scriptblock]:: Create('hostname')}",
+    "echo @{a=[scriptblock]::\nCreate('hostname')}",
+    "echo @{a=$x. 'Invoke'()}",
+    "echo @{a=$x. \"Invoke\"()}",
+    "echo @{a=$x. $name()}",
+    "echo @{a=$x. ${name}()}",
+    "echo @{a=$x. ForEach{hostname}}",
+    "echo @{a=$x. 'ForEach'{hostname}}",
+    "echo @{a=$x.\nForEach{hostname}}",
+    "echo @{a=$x. Where{hostname}}",
+]
+
+RANDOM_SHAPES += [
+    "if (CALL) { echo F }",
+    "if (F) { echo F } elseif (CALL) { echo F }",
+    "switch -Regex (CALL) { default { echo F } }",
+    "switch -Wildcard (F) { default { CALL } }",
+    "switch -CaseSensitive -Exact (F) { default { CALL } }",
+    "switch -Regex -CaseSensitive (F) { default { CALL } }",
+    "switch -file F { default { CALL } }",
+    "switch (F) { F { CALL }; default { echo F } }",
+    "for (;;) { CALL; break }",
+    "for ($i = CALL; $false; $i++) { echo F }",
+    "for ($i = 0; CALL; $i++) { echo F }",
+    "for ($i = 0; $false; CALL) { echo F }",
+    "foreach ($i in @(CALL)) { echo F }",
+    "foreach ($i in (CALL)) { echo F }",
+    "while (CALL) { break }",
+    "do { echo F } until (CALL)",
+    "do { CALL } until ($true)",
+    "try { echo F } catch { CALL }",
+    "try { echo F } finally { CALL }",
+    "try { echo F } catch [Exception] { CALL }",
+    "trap [Exception] { CALL; continue }",
+    "& { begin { CALL } }",
+    "& { process { CALL } }",
+    "& { end { CALL } }",
+    "& { begin { echo F } process { CALL } end { echo F } }",
+    "function f($x = (CALL)) { echo F }",
+    "filter f { param($x = (CALL)); echo F }",
+    "workflow f { inlineScript { CALL }; echo F }",
+    "class C { static [object] Read() { return (CALL) } }",
+    "enum E { A = 1; B = 2 }; CALL",
+    "& { param($x = (CALL)); echo F }",
+    "& { param([ValidateScript({ CALL })]$x = F); echo F }",
+    "using namespace System; CALL",
+    "data -SupportedCommand sf { CALL }",
+    "& { dynamicparam { CALL } begin { echo F } }",
+    "$x += CALL",
+    "$x -= CALL",
+    "$x *= CALL",
+    "$x /= CALL",
+    "$x %= CALL",
+    "$x[0] = CALL",
+    "$x.Name = CALL",
+    "$x.'Name' = CALL",
+    "$x.(F) = CALL",
+    "[string][object]$x = CALL",
+    "echo (F -f (CALL))",
+    "echo (F -split (CALL))",
+    "echo (1..(CALL))",
+    "echo @(F, (CALL))",
+    "echo F > (CALL)",
+    "echo F 2> (CALL)",
+    "echo F *> (CALL)",
+    ":outer while (F) { CALL; break outer }",
+    ":outer foreach ($i in F) { CALL; continue outer }",
+    ". { param($x = (CALL)); echo F }",
+    "echo (F -join (CALL))",
+    "echo (F -replace (CALL))",
+    "& { param([object]$x = F); CALL }",
+    "echo @{a=(F -f (CALL))}",
+    "echo @{a=(F -split (CALL))}",
+    "echo @{a=1..(CALL)}",
+    ". (echo hostname); CALL",
+    "echo F 3> (CALL)",
+    "echo F 4> (CALL)",
+    "echo F 5> (CALL)",
+    "echo F 6> (CALL)",
+    "switch -Exact -CaseSensitive (F) { { CALL } { echo F } }",
+    "echo $x. Invoke((CALL))",
+    "echo $x. foreach{ CALL }",
+    "echo [object]:: Equals(F, (CALL))",
+    "echo F ; & 'for' F ; CALL",
+    "echo F # F\rCALL",
+    "echo --% ' \rCALL",
+    "echo F >@'\rF\r'@ ; CALL",
+    "echo F >@\"\r\nF\r\n\"@ ; CALL",
+]
+
+RANDOM_BARE += [
+    "1.25",
+    "0x10",
+    "1e3",
+    "1kb",
+    "$x.'Name'",
+    "$x.${name}",
+    "[string[]]$x",
+    "@('VALUE')",
+    "@{k='VALUE'}",
+    ":outer",
+    "a`a",
+    "a`b",
+    "a`t",
+    "a`r",
+    "a`v",
+]
+
+RANDOM_BETWEEN += [
+    ">('VALUE')",
+    "2>$(echo VALUE)",
+    "*>@('VALUE')",
+    ">$x[0]",
+    ">$x.'Invoke'('VALUE')",
+    ">('VALUE').Length",
+    ">x$('VALUE')suffix",
+    ">@'\nVALUE\n'@",
+    ">@'\rVALUE\r'@",
+    ">@\"\r\nVALUE\r\n\"@",
+    "><# VALUE #> ('VALUE')",
+]
+
+NATIVE_FORMS += [
+    "--since x --target-org \"org1`b\"",
+    "--since x --target-org org1`a",
+    "--since x --target-org \"org1`tVALUE\"",
+    "--since x --target-org @\"\r\norg1`b\r\n\"@",
+    "--since x --target-org @'\norg1\n'@--json",
+]
+
+
+# ---- round 19, classification tables and guarded lanes: literal options and endpoint text
+
+LINES += [
+    'sf data query -t -q "SELECT Id,LogUserId FROM ApexLog" -o org0',
+    'sf data query -t -q "SELECT Id FROM ApexLog WHERE Operation = \'VALUE&VALUE\'" -o org0',
+    "sf data get record -t -s ApexLog -i 07L000000000001AAA -o org0",
+    "sf apex tail log --skip-trace-flag -o org0",
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+Id,businessownerid+FROM+FieldDefinition' -o org0",
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+permissionsapiuseronly+FROM+Profile' -o org0",
+    "sf api request rest '/services/data/v66.0/sobjects/Contact/External_Id__c/%2Fsobjects%2FApexLog%2FVALUE' -o org0",
+    'sf api request rest "/services/data/v66.0/query?q=SELECT+Name+FROM+Account+WHERE+Name=\'apexrest\'" -o org0',
+    'sf api request rest "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name=\'&q=SELECT+Email+FROM+User+LIMIT+1&x=\'" -o org0',
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass#fragment' -o org0",
+    'sf api request rest /services/data/v66.0/limits -H "X-Note: executeanonymous" -o org0',
+    "sf api request rest /services/data/v66.0/limits -S apexrest.json -o org0",
+]
+
+
+def test_r19_powershell_passes_the_literal_credential_header_and_the_gate_refuses_it(tmp_path):
+    command = 'sf api request rest /services/data/v66.0/limits -H "Authorization: Bearer VALUE" -o org0'
+    got = powershell_runs([S, command], tmp_path)
+    if got is None or got.get(0) != {"org0"}:
+        pytest.skip("Windows PowerShell is present but did not run the baseline line here")
+    assert got.get(1) == {"org0"}
+    assert [r.kind for r in classify("PowerShell", {"command": command})] == ["credential"]
+
+
+@pytest.mark.parametrize("command,data", [
+    ("jsc-loganalyzer --target-org org0", "debug_logs"),
+    ("jsc-advisory impact --target-org org0 --sobject Contact --where \"Email = 'VALUE'\"", "records"),
+])
+def test_r19_powershell_packaged_script_words_use_the_delegate_class(tmp_path, command, data):
+    stub = "function " + command.split()[0] + " { sf @args }; "
+    got = powershell_runs([S, stub + command], tmp_path)
+    if got is None or got.get(0) != {"org0"}:
+        pytest.skip("Windows PowerShell is present but did not run the baseline line here")
+    assert got.get(1) == {"org0"}
+    assert [(r.kind, r.org, r.data) for r in classify("PowerShell", {"command": command})] == [
+        ("read", "org0", data)]

@@ -48,6 +48,23 @@ sandbox. The limits are listed below.
 | Out of scope | another client's folder or `--client`, `torque client list`, an org not in the consent (whatever the route), an `sf` call without an explicit org | refused |
 | Prompts skipped | any org write, browser change or unchecked program while the session's permission mode is not `default`, `acceptEdits` or `plan` (`bypassPermissions`, `auto`, `dontAsk`, or a mode this version does not know) | refused, even with an approval, which stays unused |
 
+Packaged entry points such as `jsc-loganalyzer` and `jsc-advisory` follow their Torque
+delegate's routes and data classes. A planned `--org` on `torque client add` or
+`torque change create` records a local target; `torque change verify-deploy` reads one
+metadata deployment report. Unknown Python module names are asked about even when
+they begin with a delegate's package name.
+
+ApexLog queries and record gets through Salesforce CLI or MCP need `debug_logs`.
+`sf apex tail log --skip-trace-flag` is also a log read; ordinary tailing creates a
+trace flag and needs write approval. A REST describe of ApexLog remains metadata.
+Tooling fields that name people retain their class in every letter case. Custom
+Apex REST and executeAnonymous requests remain writes; those words inside query
+literals, headers or output filenames do not make an ordinary GET a write.
+An explicit REST Authorization header takes a credential and is refused. Tooling
+query URLs with extra parameters or a fragment remain record reads.
+The Salesforce MCP tool `resume_tool_operation` needs write approval for a `2SR`
+scratch-org creation job; deployment and test polling retain their read routes.
+
 A session that was not started with `torque launch` has no client binding: every org,
 client and browser route is refused.
 

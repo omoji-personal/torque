@@ -304,3 +304,42 @@ LINES += [
     f"function deploy_all() {{ {S}; }}; deploy_all", f"function echo\n{{ {S}; }}; echo",
     f"echo() ( {S} ); echo", f"echo()( {S} ); echo",
 ]
+
+
+# ---- round 19, classification tables and guarded lanes: literal options and endpoint text
+
+LINES += [
+    'sf data query -t -q "SELECT Id,LogUserId FROM ApexLog" -o org0',
+    'sf data query -t -q "SELECT Id FROM ApexLog WHERE Operation = \'VALUE&VALUE\'" -o org0',
+    "sf data get record -t -s ApexLog -i 07L000000000001AAA -o org0",
+    "sf apex tail log --skip-trace-flag -o org0",
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+Id,businessownerid+FROM+FieldDefinition' -o org0",
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+permissionsapiuseronly+FROM+Profile' -o org0",
+    "sf api request rest '/services/data/v66.0/sobjects/Contact/External_Id__c/%2Fsobjects%2FApexLog%2FVALUE' -o org0",
+    'sf api request rest "/services/data/v66.0/query?q=SELECT+Name+FROM+Account+WHERE+Name=\'apexrest\'" -o org0',
+    'sf api request rest "/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass+WHERE+Name=\'&q=SELECT+Email+FROM+User+LIMIT+1&x=\'" -o org0',
+    "sf api request rest '/services/data/v66.0/tooling/query?q=SELECT+Id+FROM+ApexClass#fragment' -o org0",
+    'sf api request rest /services/data/v66.0/limits -H "X-Note: executeanonymous" -o org0',
+    "sf api request rest /services/data/v66.0/limits -S apexrest.json -o org0",
+]
+
+
+def test_r19_bash_passes_the_literal_credential_header_and_the_gate_refuses_it(tmp_path):
+    if bash_runs(S, tmp_path) != {"org0"}:
+        pytest.skip("Bash is present but did not run the baseline line here")
+    command = 'sf api request rest /services/data/v66.0/limits -H "Authorization: Bearer VALUE" -o org0'
+    assert bash_runs(command, tmp_path) == {"org0"}
+    assert [r.kind for r in classify("Bash", {"command": command})] == ["credential"]
+
+
+@pytest.mark.parametrize("command,data", [
+    ("jsc-loganalyzer --target-org org0", "debug_logs"),
+    ("jsc-advisory impact --target-org org0 --sobject Contact --where \"Email = 'VALUE'\"", "records"),
+])
+def test_r19_bash_packaged_script_words_use_the_delegate_class(tmp_path, command, data):
+    if bash_runs(S, tmp_path) != {"org0"}:
+        pytest.skip("Bash is present but did not run the baseline line here")
+    stub = command.split()[0] + '() { sf "$@"; }; '
+    assert bash_runs(stub + command, tmp_path) == {"org0"}
+    assert [(r.kind, r.org, r.data) for r in classify("Bash", {"command": command})] == [
+        ("read", "org0", data)]

@@ -153,6 +153,11 @@ _SHELL_TILDE = re.compile(r"(?:--workspace=)?~[^/\\]")
 # Everything else is read by Torque's own parser, which the gate follows exactly.
 TORQUE_DELEGATED = frozenset({"advisory", "qa", "revert", "logs", "browser", "meeting", "lesson", "probes",
                               "ai-regression", "deploy", "data", "org", "recover"})
+# The installed scripts run the same delegates, so their reads need the same consent.
+TORQUE_CONSOLE_ROUTES = {
+    "jsc": "revert", "jsc-advisory": "advisory", "jsc-qa": "qa", "jsc-browser-tests": "browser",
+    "jsc-memory": "lesson", "jsc-loganalyzer": "logs", "jsc-probes": "probes",
+    "meeting-processor": "meeting", "jsc-ai-prompt-regression": "ai-regression"}
 # Options of Torque's own commands that take exactly one value wherever they exist
 # (tests/test_gate_fixes_a21.py checks this against the parser). Only after one of
 # these, or attached to an option with `=`, is a double-quoted variable a value and
@@ -1063,6 +1068,10 @@ def _sf_refused(topic: tuple[str, ...], rest: list[str], anywhere: bool = False)
         return "all_orgs", ""
     if any(named(key) for key in SF_CREDENTIALS):
         return "credential", ""
+    if named(("api", "request", "rest")):
+        headers = _flag_values(rest, {"-H", "--header"})
+        if any(header.partition(":")[0].casefold() == "authorization" for header in headers):
+            return "credential", ""
     given = set(words)
     if (named(("org", "open")) or ("open" in given and given <= SF_OPEN_WORDS)) and _prints_login_url(rest):
         return "credential", ""
@@ -1121,6 +1130,15 @@ def _rest_path(rest: list[str]) -> str | None:
     return found[3] if found[:3] == ["api", "request", "rest"] and len(found) == 4 else None
 
 
+def _rest_custom(path: str | None) -> bool:
+    """Only the endpoint can run Apex; a query value, header or output name cannot."""
+    import posixpath
+    text = re.sub(r"(?i)^https?://[^/]+", "", _decoded(path or "").partition("?")[0]).replace("\\", "/")
+    text = posixpath.normpath("/" + text.lstrip("/"))
+    return bool(re.match(r"^/(services/)?apexrest(/|$)"
+                         r"|^/(services/data/v\d+\.\d+/)?(tooling/)?executeanonymous/?$", text, re.IGNORECASE))
+
+
 def _sf(rest: list[str], detail: str) -> Route:
     route = _sf_route(rest, detail)
     if route.kind in ("read", "check_only", "org_write", "no_org", "unverifiable") and _attached_short(rest):
@@ -1152,7 +1170,19 @@ def _sf_route(rest: list[str], detail: str) -> Route:
         return Route("local", None, detail) if not orgs else Route("org_write", org, detail)
     words = tuple(part for word in topic for part in word.casefold().split(":") if part and part != "force")
     for data, name in SF_READ_NAMES:
-        if len(words) == len(name) and set(words) == set(name) and name != ("apex", "tail", "log"):
+        if len(words) == len(name) and set(words) == set(name):
+            if name == ("apex", "tail", "log"):
+                if not any(flag in rest for flag in ("-s", "--skip-trace-flag", "--skiptraceflag")):
+                    continue             # trace flag setup changes the org
+            elif name in (("data", "query"), ("data", "soql", "query")):
+                from urllib.parse import quote
+                queries = _flag_values(rest, {"-q", "--query"})
+                if queries and rest_data_class("/query?q=" + quote(queries[-1], safe="")) == "debug_logs":
+                    data = "debug_logs"
+            elif name == ("data", "get", "record"):
+                objects = _flag_values(rest, {"-s", "--sobject", "--sobjecttype"})
+                if objects and objects[-1].casefold() == "apexlog":
+                    data = "debug_logs"
             # sf query data, sf data:query: the same read in another spelling.
             return Route("read" if org else "no_org", org, detail, data=data)
     if ":" in topic[0] and topic[0] in SFDX_READ:
@@ -1171,8 +1201,7 @@ def _sf_route(rest: list[str], detail: str) -> Route:
         return Route("local", None, detail)
     if topic[:3] == ("api", "request", "rest"):
         # A custom Apex REST endpoint can change data on any method; a request file sets its own method.
-        custom = any("apexrest" in _decoded(w).casefold() or "executeanonymous" in _decoded(w).casefold()
-                     for w in rest)
+        custom = _rest_custom(_rest_path(rest))
         # A path or a method the shell fills in ("/sobjects/Contact/describe$suffix") is
         # not the one the gate reads: it can be a row, a query, or a custom endpoint.
         # The `?` of an unquoted URL is left alone: as a glob it stands for one character,
@@ -1221,7 +1250,13 @@ TOOLING_SCHEMA_ENTITIES = frozenset(name.casefold() for name in (
     "WorkflowRule"))
 # A field or relationship that names a person on those entities: who made or changed
 # a component, who owns it, a user.
-_TOOLING_PERSON = re.compile(r"(created|lastmodified)by(id)?$|^(owner|user|username|email)(id)?$", re.IGNORECASE)
+_TOOLING_PERSON = re.compile(
+    r"(created|lastmodified)by(id)?$|^(owner|user|username|email)(id)?$"
+    r"|^(businessowner|runninguser(field|entity)access|userlicense|usertype)(id)?$"
+    r"|^permissions(chatterinternaluser|apiuseronly|(in|out)boundmigrationtoolsuser|portalsuperuser"
+    r"|delegatedportaluseradmin|contenthubuser|insightsapp(upload)?user|lightningexperienceuser"
+    r"|showcompanynameasuserbadge|iotuser|viewonlyembeddedappuser|lightningconsoleallowedforuser"
+    r"|subscribereportsrunasuser|ltngpromoreserved01userperm)$", re.IGNORECASE)
 _SOQL_STRING = re.compile(r"'(?:[^'\\]|\\.)*'")
 
 
@@ -1265,15 +1300,21 @@ def rest_data_class(path: str) -> str | None:
     path is decoded first, so an escaped name is read as the server reads it."""
     full = _decoded(path)
     text, _, query = full.partition("?")
-    if re.search(r"(^|/)\.{1,2}(/|$)", text) or "\\" in text or "#" in text:
+    if re.search(r"(^|/)\.{1,2}(/|$)", text) or "\\" in text or "#" in text or "#" in (path or ""):
         # .../sobjects/User/describe/../005...: the client folds the dots away before it
         # sends the request, so the server gets the row, not the describe.
         return "records"
-    if re.search(r"/sobjects/apexlog(/|$)", text, re.IGNORECASE):
+    if _REST_METADATA.fullmatch(re.sub(r"(?i)^https?://[^/]+", "", text)):
+        return None
+    if re.match(r"^/?(services/data/v\d+\.\d+/)?(tooling/)?sobjects/apexlog(/|$)",
+                re.sub(r"(?i)^https?://[^/]+", "", text), re.IGNORECASE):
         return "debug_logs"
     endpoint = _REST_QUERY.fullmatch(re.sub(r"(?i)^https?://[^/]+", "", text))
     tooling = endpoint and endpoint.group(2).casefold() == "tooling/query"
     if endpoint:
+        # URL parameters are separated before their values are read as SOQL strings.
+        if "&" in (path or "").partition("?")[2]:
+            return "records"
         # The class comes from what the query reads, never from a word in its text
         # (`... WHERE LastName != 'ApexLog'` is a read of contacts).
         soql = re.fullmatch(r"q=(.*)", query, re.IGNORECASE | re.DOTALL)
@@ -1285,8 +1326,6 @@ def rest_data_class(path: str) -> str | None:
                                                        re.IGNORECASE):
             return "debug_logs"
         return None if tooling and soql and _tooling_query_is_schema(soql.group(1)) else "records"
-    if _REST_METADATA.search(re.sub(r"(?i)^https?://[^/]+", "", text)):
-        return None
     return "records"
 
 
@@ -1436,6 +1475,11 @@ def _torque(rest: list[str], detail: str, paren: bool = False) -> Route:
         # `--target-org '' other`: no org is named, and Windows PowerShell does not hand an
         # empty argument on at all, so the command would take the next word as its org.
         return Route("no_org", None, detail + " (an org option with an empty value)", client)
+    if (head, sub) in (("client", "add"), ("change", "create")):
+        # These org options record a planned target without connecting to it.
+        return Route("local", None, detail, client)
+    if (head, sub) == ("change", "verify-deploy"):
+        return Route("read" if org else "no_org", org, detail, client)
     if head == "launch" or (head == "workspace" and sub in ("ai-access", "delegate", "guarded-reads")):
         return Route("admin", None, detail, client)
     if head == "approval":
@@ -1706,11 +1750,11 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
     if head in g.CONSOLE_SCRIPTS:
         if g.CONSOLE_SCRIPTS[head] == "torque":
             return _torque_routes(words, rest, detail)
-        if head == "jsc":
-            return _torque_routes(words, ["revert", *rest], detail)
         if rest[:1] in (["--help"], ["-h"], ["--version"]):
             return [Route("local", None, detail)]
-        return [Route("org_write" if org_value(rest) else "unverifiable", org_value(rest), detail)]
+        if head in TORQUE_CONSOLE_ROUTES:
+            return _torque_routes(words, [TORQUE_CONSOLE_ROUTES[head], *rest], detail)
+        return [Route("unverifiable", None, detail)]
     if head in ("powershell", "pwsh"):
         # Its command strings are read as a PowerShell tool call's are (the first text is
         # this line itself), so an owner command or a read inside them is seen.
@@ -1739,7 +1783,7 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
         module, after = g._python_module(rest)
         if module in g.TORQUE_MAIN_MODULES:
             return _torque_routes(words, rest[after:], detail)
-        if module and module.startswith("jsc_revert"):
+        if module == "jsc_revert.cli":
             return _torque_routes(words, ["revert", *rest[after:]], detail)
         if rest[:1] in (["--version"], ["-V"]):
             return [Route("local", None, detail)]
@@ -2082,10 +2126,18 @@ def classify_mcp(tool_name: str, tool_input: dict) -> Route:
         if "orgs" in words and words & {"list", "all"}:
             return Route("all_orgs", None, tool_name)
         org = mcp_org(tool_input)
-        if words & MCP_WRITE_WORDS or not words & MCP_READ_WORDS:
+        # Resuming scratch org creation also authenticates and deploys its settings.
+        scratch = tool == "resume_tool_operation" and str(tool_input.get("jobId") or "").startswith("2SR")
+        if words & MCP_WRITE_WORDS or not words & MCP_READ_WORDS or scratch:
             return Route("org_write" if org else "no_org", org, tool_name)
         data = ("debug_logs" if words & {"log", "logs", "debug"} else
                 "records" if words & MCP_RECORD_WORDS else None)
+        # A SOQL tool can read logs without naming them in the tool's name.
+        query = tool_input.get("query")
+        if data == "records" and words & {"query", "soql"} and isinstance(query, str):
+            import urllib.parse
+            if rest_data_class("/query?q=" + urllib.parse.quote(query, safe="")) == "debug_logs":
+                data = "debug_logs"
         return Route("read" if org else "no_org", org, tool_name, data=data)
     host = g._salesforce_host(tool_input)
     if host:
@@ -2101,7 +2153,7 @@ def classify_mcp(tool_name: str, tool_input: dict) -> Route:
 _POWERSHELL_KINDS = (*REFUSED_KINDS, "admin", "read", "check_only", "no_org")
 
 
-_PS_HERE = re.compile(r"@([\"'])[ \t]*\r?\n")
+_PS_HERE = re.compile(r"@([\"'])[ \t]*(?:\r\n?|\n)")
 # Characters PowerShell's tokenizer reads as a quote, a dash or a space. The list is the
 # tokenizer's own: tests/test_gate_against_powershell.py asks it about every character of
 # the Basic Multilingual Plane. The line and paragraph separators (U+2028, U+2029) separate
@@ -2113,6 +2165,8 @@ _PS_CHARACTERS = str.maketrans({
                     "\u2028\u2029\u202f\u205f\u3000\f\v", " ")})
 _PS_TOKEN_START = " \t\r\n;|&(){}"
 _PS_AFTER_COMMA = re.compile(r"[ \t]*(?:\r?\n[ \t]*)?")
+# These backtick escapes hold control characters, also outside double quotes.
+_PS_ESCAPE_VALUES = {"0": "\0", "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
 # Put after a word that Windows PowerShell may not hand to a native program as the one
 # word it is in PowerShell: an unquoted expansion, so the word counts as one the shell
 # can turn into several (_adds_words, _built_at_run_time).
@@ -2137,11 +2191,176 @@ def _ps_inside(text: str, start: int) -> tuple[str, int]:
     return text[start:], len(text)
 
 
+def _ps_here_end(command: str, opener: re.Match) -> re.Match | None:
+    """The closing line of a here-string, including its whole line ending."""
+    ending = re.compile(r"(?:\r\n?|\n)" + re.escape(opener.group(1)) + "@")
+    found = ending.search(command, opener.end() - 1)
+    while (found and opener.group(1) == '"' and found.group().startswith("\n")
+           and (found.start() - len(command[:found.start()].rstrip("`"))) % 2):
+        # A backtick before LF escapes the closing line; before CR LF it takes only the CR.
+        found = ending.search(command, found.end())
+    return found
+
+
+def _ps_target(command: str, start: int, choices: tuple, places: list) -> int | None:
+    """The end of a structured redirection target, or None for a plain word. A group,
+    member or index belongs to the filename; the word after that expression does not.
+    Generic filenames can hold a subexpression but not a bare group."""
+    def variable(at: int) -> int:
+        if command[at + 1:at + 2] == "{":
+            at += 2
+            while at < len(command) and command[at] != "}":
+                at += 2 if command[at] == "`" else 1
+            return min(at + 1, len(command))
+        if command[at + 1:at + 2] in ("$", "?", "^"):
+            return at + 2
+        at += 1
+        while at < len(command) and (command[at].isalnum() or command[at] in "_:") \
+                and not command.startswith("::", at):
+            at += 1
+        return at
+
+    def quoted(at: int) -> int:
+        here = _PS_HERE.match(command, at)
+        if here:
+            stop = _ps_here_end(command, here)
+            return len(command) if stop is None else stop.end()
+        mark, at = command[at], at + 1
+        while at < len(command):
+            if command[at] == "`" and mark == '"':
+                at += 2
+            elif command.startswith("${", at) and mark == '"':
+                at = variable(at)
+            elif command.startswith("$(", at) and mark == '"':
+                at = _ps_inside(command, at + 2)[1]
+            elif command[at] == mark:
+                if command[at + 1:at + 2] != mark:
+                    return at + 1
+                at += 2
+            else:
+                at += 1
+        return len(command)
+
+    def group(at: int) -> int:
+        pairs = {"(": ")", "[": "]", "{": "}"}
+        stack = [(pairs[command[at]], command[at - 1:at] == "$" or command[at] == "[")]
+        at, fresh, settled = at + 1, True, False
+        while at < len(command):
+            c = command[at]
+            if c == "`":
+                at += 2
+                fresh = False
+                continue
+            if c in "'\"" or _PS_HERE.match(command, at):
+                at = quoted(at)
+                continue
+            if command.startswith("${", at):
+                at, fresh = variable(at), False
+                continue
+            if c == "#" or command.startswith("<#", at):
+                own = fresh
+                if not fresh and not settled:
+                    places.append(at)
+                    own = len(places) <= len(choices) and choices[len(places) - 1]
+                    settled = not own
+                if own:
+                    stop = (command.find("#>", at + 2) if c == "<"
+                            else min((command.find(mark, at) for mark in "\r\n"
+                                      if command.find(mark, at) >= 0), default=-1))
+                    at = len(command) if stop < 0 else stop + (2 if c == "<" else 1)
+                    fresh, settled = True, False
+                    continue
+                if c == "<":
+                    at += 2
+                    continue
+            if c in pairs:
+                stack.append((pairs[c], command[at - 1:at] == "$" or c == "["))
+                fresh, settled = True, False
+            elif c == stack[-1][0]:
+                fresh = not stack.pop()[1]
+                if not stack:
+                    return at + 1
+                settled = False
+            elif c in " \t\r\n;|&":
+                fresh, settled = True, False
+            else:
+                fresh = False
+            at += 1
+        return len(command)
+
+    at = start
+    while at < len(command):
+        if command[at] in " \t\r\n":
+            at += 1
+        elif command[at:at + 2] == "`\n" or command[at:at + 3] == "`\r\n":
+            at += 2 if command[at + 1] == "\n" else 3
+        elif command.startswith("<#", at):
+            stop = command.find("#>", at + 2)
+            at = len(command) if stop < 0 else stop + 2
+        elif command[at] == "#":
+            stop = min((command.find(mark, at) for mark in "\r\n"
+                        if command.find(mark, at) >= 0), default=-1)
+            at = len(command) if stop < 0 else stop + 1
+        else:
+            break
+    if at == len(command):
+        return None
+    first, computed, member = at, False, False
+    if command[at] in "({" or command[at:at + 2] in ("$(", "@(", "@{"):
+        at = group(at + (command[at] in "$@"))
+        computed, member = True, True
+    elif command[at] in "'\"" or _PS_HERE.match(command, at):
+        computed = bool(_PS_HERE.match(command, at))
+        at, member = quoted(at), True
+    elif command[at] == "$" and variable(at) > at + 1:
+        at = variable(at)
+        member = True
+    if member:
+        while at < len(command):
+            if command[at] == "[":
+                at, computed = group(at), True
+            elif command[at] == "." or command.startswith("::", at):
+                width = 2 if command.startswith("::", at) else 1
+                if command[at + width:at + width + 1] in ("", " ", "\t", "\r", "\n"):
+                    break
+                at += width
+                if command[at] in "'\"":
+                    at = quoted(at)
+                elif command[at] == "(":
+                    at = group(at)
+                elif command[at] == "$":
+                    at = group(at + 1) if command[at + 1:at + 2] == "(" else variable(at)
+                else:
+                    while at < len(command) and (command[at].isalnum() or command[at] == "_"):
+                        at += 1
+                computed = True
+                if command[at:at + 1] in ("(", "{"):
+                    at = group(at)
+            else:
+                break
+        if computed:
+            return at
+        if command[first] in "'\"(":
+            return None
+    while at < len(command) and command[at] not in " \t\r\n;|&(){}<>,":
+        if command[at] == "`":
+            at += 2
+        elif command[at] in "'\"":
+            at = quoted(at)
+        elif command.startswith("$(", at):
+            at, computed = group(at + 1), True
+        elif command.startswith("${", at):
+            at = variable(at)
+        else:
+            at += 1
+    return at if computed else None
+
+
 def _powershell_escapes(command: str, braces: bool = False, commas: bool = False,
                         assigned: list | None = None, choices: tuple = (), places: list | None = None) -> str:
     """A PowerShell line rewritten in Bash's quoting, so that its words split as
-    PowerShell passes them: a backtick makes the next character plain (`` `" `` inside
-    double quotes, `` `$ ``), a doubled quote inside quotes is one quote, a backtick at
+    PowerShell passes them: a backtick quotes the next character or gives a letter
+    escape its control value, a doubled quote inside quotes is one quote, a backtick at
     a line end joins the lines, a backslash is an ordinary character, a block comment
     (`<# ... #>`) is nothing, a here-string (`@"` or `@'` at a line end, to a line
     that begins with `"@` or `'@`) is one quoted string whatever quotes it holds,
@@ -2186,6 +2405,7 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
     fresh = False                       # it began a word
     nested: list = []                   # the open braces: "block", or where a hash literal's entry is ("key", "value")
     later: list = []                    # text to read once more as code, after a `--%`
+    targets: list = []                  # a computed filename still evaluates what it holds
     head = ""                           # the first character of the statement being read
     entry = 0                           # where the key of a hash literal's entry began in `out`
     joined = -1                         # how long `out` was right after a piece of a word that goes on
@@ -2239,6 +2459,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
 
     while i < len(command):
         c, follower = command[i], command[i + 1:i + 2]
+        if not quote and c == "\r":
+            c = "\n"                    # CR alone also ends a PowerShell statement
         if quote:
             spaced = spaced or c in " \t\r\n"
             odd = odd or c in _PS_CMD_CHARS
@@ -2269,13 +2491,16 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             if follower == "\n" or command[i + 1:i + 3] == "\r\n":
                 i += 2 if follower == "\n" else 3
                 continue
-            out.append("\\" + follower if not quote or follower in '"$`\\' else follower)
+            value = _PS_ESCAPE_VALUES.get(follower, follower)
+            out.append(("'" + value + "'") if not quote and follower in _PS_ESCAPE_VALUES
+                       else "\\" + follower if not quote or follower in '"$`\\' else value)
+            spaced = spaced or value in " \t\r\n"
             if follower == '"':
                 risky = True
                 if not quote:
                     out.append(_PS_NATIVE)
             joined = len(out)           # an escaped character is part of a word, whatever it is (`` `;#b ``)
-            last = follower
+            last = value
             i += 2
             continue
         elif c == "$" and follower and follower in "$?^":
@@ -2301,8 +2526,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             out.append("\\$")
         elif (not quote and command.startswith("--%", i) and starts()
               and command[i + 3:i + 4] in ("", " ", "\t", "\r", "\n", "|")):
-            end = command.find("\n", i)
-            end = len(command) if end < 0 else end
+            end = min((command.find(mark, i) for mark in "\r\n"
+                       if command.find(mark, i) >= 0), default=len(command))
             stop, inside = end, False
             for at in range(i + 3, end):
                 if command[at] == '"':
@@ -2380,6 +2605,15 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
                 out.append(found.group().lstrip("*"))
                 apart = len(out)
                 i = found.end()
+                end = None if "&" in found.group() else _ps_target(command, i, choices, places)
+                if end is not None:
+                    target = command[i:end].strip()
+                    out.append(" 'torque-redirection-target' ")
+                    ways, beyond = _powershell_ways("echo " + target, braces, commas, assigned)
+                    targets += ways
+                    if beyond:
+                        places += [i] * (_PS_EACH_WAY + 1)
+                    i = end
             else:                       # a character of a word
                 out.append("\\" + c)
                 i += 1
@@ -2387,8 +2621,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
         elif not quote and c == "#" and own():
             # A line comment: its text is copied as it stands (a quote in it opens nothing),
             # after a space, since for Bash a comment begins only where a word would.
-            stop = command.find("\n", i)
-            stop = len(command) if stop < 0 else stop
+            stop = min((command.find(mark, i) for mark in "\r\n"
+                        if command.find(mark, i) >= 0), default=len(command))
             out.append((" " if out and out[-1][-1:] not in " \t\r\n" else "") + command[i:stop])
             i = stop
             continue
@@ -2396,13 +2630,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             # (in the middle of a word `@"` is an `@` and an ordinary string: `x@"`)
             opener = _PS_HERE.match(command, i)
             mark = opener.group(1)
-            stop = command.find("\n" + mark + "@", opener.end() - 1)
-            while stop >= 0 and mark == '"' and (stop - len(command[:stop].rstrip("`"))) % 2:
-                # In an expandable here-string a backtick directly before a line end escapes it,
-                # and a `"@` on the next line is then text of the body (PowerShell's parser
-                # says so; with CR LF the backtick takes the CR, and the string ends).
-                stop = command.find("\n" + mark + "@", stop + 1)
-            body = command[opener.end():len(command) if stop < 0 else stop]
+            closing = _ps_here_end(command, opener)
+            body = command[opener.end():len(command) if closing is None else closing.start()]
             native = _PS_NATIVE if '"' in body or body.endswith("\\") or (mark == '"' and "$" in body) else ""
             if mark == "'":
                 out.append("'" + body.replace("'", "'\\''") + "'" + native)
@@ -2410,7 +2639,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
                 text, j = [], 0
                 while j < len(body):
                     if body[j] == "`" and j + 1 < len(body):
-                        text.append("\\" + body[j + 1] if body[j + 1] in '"$`' else body[j + 1])
+                        value = _PS_ESCAPE_VALUES.get(body[j + 1], body[j + 1])
+                        text.append("\\" + body[j + 1] if body[j + 1] in '"$`' else value)
                         j += 2
                         continue
                     if body.startswith("$(", j):
@@ -2420,8 +2650,11 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
                     text.append({"\\": "\\\\", '"': '\\"'}.get(body[j], body[j]))
                     j += 1
                 out.append('"' + "".join(text) + '"' + native)
+            if (closing and command[closing.end():closing.end() + 1]
+                    not in ("", " ", "\t", "\r", "\n", ";", "|", "&", ")", "}", ",")):
+                out.append(" ")         # a suffix after the closing mark is another token
             apart = len(out)            # the here-string is a token: what follows its end is another
-            i = len(command) if stop < 0 else stop + 3
+            i = len(command) if closing is None else closing.end()
             continue
         elif not quote and c in "'\"":
             quote, risky, spaced, odd, last, opened = c, False, False, False, "", len(out)
@@ -2454,7 +2687,8 @@ def _powershell_escapes(command: str, braces: bool = False, commas: bool = False
             last = c
             out.append(c)
         i += 1
-    return "".join(out) + "".join("\n" + _powershell_escapes(text, braces, commas, assigned) for text in later)
+    return ("".join(out) + "".join("\n" + _powershell_escapes(text, braces, commas, assigned) for text in later)
+            + "".join("\n" + text for text in targets))
 
 
 # `$x = `, `$env:NAME += `, `[int]$n = `, `$a, $b = `, `${x} = ` at the start of a statement:
@@ -2509,11 +2743,13 @@ _PS_STATEMENT_END = re.compile(r"([;\n|&()]+)")
 # `$x.$name`, `$x.$env:NAME`, `$x.${name}`, `$x."$name"`), or the dot alone when the name is
 # computed (`$x.('In' + 'voke')()`). So: a dot or `::` anywhere in the word the parenthesis
 # follows, a quoted piece of that word counting as part of it.
-_PS_METHOD = re.compile(r"(?:\.|::)(?:\"[^\"]*\"|'[^']*'|\S)*\Z")
+_PS_METHOD = re.compile(r"(?:\.|::)[ \t\r\n]*(?:\"[^\"]*\"|'[^']*'|\S)*"
+                        r"(?:(?<=[\"'])[ \t]*)?\Z")
 # The same call written with a script block for its argument and no parentheses
 # (`$x.ForEach{ ... }`, `$x.Where{ ... }`): a member directly before a brace. A `${name}`
 # or a hash literal there is not one.
-_PS_METHOD_BLOCK = re.compile(r"(?:\.|::)(?:\"[^\"]*\"|'[^']*'|\$\{[^}\n]*\}|[^\s{}();|&])*(?<![$@.:])\{")
+_PS_METHOD_BLOCK = re.compile(r"(?:\.|::)[ \t\r\n]*(?:\"[^\"]*\"|'[^']*'|\$\{[^}\n]*\}|[^\s{}();|&])*"
+                              r"(?<![$@.:])(?:(?<=[\"'])[ \t]*)?\{")
 _PS_METHOD_NOTE = " (a method call: the gate cannot tell what it runs)"
 # PowerShell's escaped dollar (`` `$5 ``), which is not the last of a pair of backticks.
 _PS_ESCAPED_DOLLAR = re.compile(r"(?<!`)((?:``)*)`\$")
@@ -2549,11 +2785,21 @@ def _powershell_hidden(text: str, depth: int) -> list[Route]:
     argument of a command (`echo $x.Invoke()`), so a method call (a member's name
     directly before a parenthesis) is asked about wherever it stands."""
     found = []
-    pieces = _PS_STATEMENT_END.split(_mask(text))
+    # A line end after a member's dot or :: still goes on with that member, not another statement.
+    marked = re.sub(r"((?:\.|::))[ \t]*(?:\r\n?|\n)[ \t\r\n]*", r"\1 ", _mask(text))
+    pieces = _PS_STATEMENT_END.split(marked)
     for at in range(0, len(pieces), 2):
         words = pieces[at].split()
         if not words:
             continue
+        if words[0].casefold() == "function" and len(words) > 1:
+            # A scoped function still replaces the command with that name in its scope.
+            name = words[1].translate(_UNMASK)
+            scope, colon, head = str(name).partition(":")
+            if (colon and scope.casefold() in ("global", "script", "local", "private")
+                    and g._basename(head) in {"sf", "sfdx", "torque", "jsc"} | LOCAL_COMMANDS | BENIGN_WRAPPERS):
+                found.append(Route("unverifiable", None,
+                                   "function " + str(name) + " (defines what this command name runs)"))
         if at + 1 < len(pieces) and pieces[at + 1].startswith("(") and _PS_METHOD.search(pieces[at]):
             found.append(Route("unverifiable", None,
                                words[-1].translate(_UNMASK)[-60:] + "(...)" + _PS_METHOD_NOTE))
@@ -2630,6 +2876,9 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
     routes = classify_bash(_PS_ESCAPED_DOLLAR.sub(r"\1\\$", command), depth)
     added: list[Route] = []
     plain, readings, more = _powershell_texts(command)
+    if any("\0" in text for text in readings):
+        # A NUL ends the command line Windows hands to a native program.
+        added.append(Route("admin", None, "a NUL in a PowerShell argument changes the native command line"))
     stands = [_powershell_statements(text) for text in _powershell_ways(plain)[0]]     # as it stands, each way
     if plain != command:
         added += classify_bash(plain, depth) + _powershell_refusals(command)
@@ -2703,6 +2952,15 @@ def _powershell_routes(command: str, depth: int = 0) -> list[Route]:
     if block:
         routes.append(Route("unverifiable", None,
                             block.group().translate(_UNMASK)[-60:] + " ...}" + _PS_METHOD_NOTE))
+    # The call operator makes its literal target a command name, even if Bash reads it as syntax.
+    for text in (*stands, *braced):
+        words = _tokens(text) or []
+        for at, word in enumerate(words[:-1]):
+            if _is_operator(word) and word == "&":
+                head = words[at + 1]
+                if head in _KEYWORDS | {"for", "select", "case"} or _ASSIGN_RE.match(head):
+                    routes.append(Route("unverifiable", None,
+                                        str(head) + " (a PowerShell command name, not shell syntax)"))
     # A call operator takes the command name from the parenthesized pipeline's output.
     if any(re.search(r"&[ \t\r\n]*\(", _mask(text)) for text in stands):
         routes.append(Route("unverifiable", None,

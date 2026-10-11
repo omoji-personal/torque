@@ -1099,3 +1099,52 @@ def test_a_filter_is_recorded_as_typed():
     released = policy({"Opportunity.Stage2__c": "exact"})
     found = core.parse_filter("  Stage2__c = 'VALUE  SECOND'  ", stages, released, FACTS)
     assert found.typed == "Stage2__c = 'VALUE  SECOND'" and "VALUE  SECOND" in found.soql()
+
+
+# ---- round 19, classification tables and guarded lanes: exact facts and suppression
+
+@pytest.mark.parametrize("listed", ["NotPlain__c", "Plain__cSuffix", "Plain__c.Other__c", "Other__cPlain__c"])
+def test_r19_a_classification_row_must_name_the_whole_field(listed):
+    thing = describe("Settings__c", customSetting=True, extra=[fld("Plain__c", "boolean")])
+    facts = core.require_facts(policy(), core.parse_facts([row(listed)]))
+    info = thing.field("Plain__c")
+    assert "no row" in core.hard_reason(thing, info, facts)
+    with pytest.raises(E, match="no row"):
+        core.parse_filter("Plain__c != null", thing, NOTHING, facts)
+    released = policy(objects={"Settings__c": ["Plain__c"]})
+    assert core.show_config_row(thing, [info], {"Plain__c": True}, released, facts) == {"Plain__c": "<set>"}
+    exact = core.require_facts(policy(), core.parse_facts([row("pLaIn__C")]))
+    assert core.hard_reason(thing, info, exact) == ""
+    assert core.parse_filter("Plain__c != null", thing, NOTHING, exact).soql() == "Plain__c != null"
+    assert core.show_config_row(thing, [info], {"Plain__c": True}, released, exact) == {"Plain__c": True}
+
+
+def test_r19_count_suppression_is_for_the_whole_combination():
+    dimensions = dims("StageName", "IsWon")
+    shaped = core.shape_counts(dimensions, [["d0"], ["d1"]],
+                               [rec(3, d0="Closed Won", d1=True), rec(2, d0="Closed Won", d1=False)], RELEASED)
+    assert shaped == core.shape_counts(dimensions, [["d0"], ["d1"]], [], RELEASED)
+    assert "Closed Won" not in repr(shaped)
+
+
+@pytest.mark.parametrize("minimum", [3, 5])
+def test_r19_fill_requires_both_sides_at_the_cell_boundary(minimum):
+    pol = policy(min_cell=minimum)
+    fields = core.parse_fill_fields(["Email__c"], D, NOTHING, FACTS)
+    shape = lambda total, filled: core.shape_fill(fields, [rec(total, f0=filled)], pol)
+    for filled in (minimum - 1, minimum):
+        assert shape(2 * minimum - 1, filled)["rows"] == [{"field": "Email__c", "filled": None}]
+    assert shape(2 * minimum, minimum)["rows"] == [{"field": "Email__c", "filled": minimum}]
+    assert shape(minimum, 0)["rows"] == [{"field": "Email__c", "filled": 0}]
+    assert shape(minimum, minimum)["rows"] == [{"field": "Email__c", "filled": minimum}]
+    assert shape(minimum - 1, 0) == {"total": None, "rows": [], "min_cell": minimum}
+
+
+@pytest.mark.parametrize("value", ["<set>", "<blank>", "<other>", "<unreadable>"])
+def test_r19_a_configuration_mask_and_its_literal_text_stay_distinct(value):
+    cfg = describe("Settings__c", customSetting=True, extra=[fld("Plain__c", "string")])
+    infos = [cfg.field("Plain__c"), cfg.field("Notes__c")]
+    shown = core.show_config_row(cfg, infos, {"Plain__c": value, "Notes__c": "VALUE"},
+                                policy(objects={"Settings__c": ["Plain__c"]}), FACTS)
+    assert shown["Plain__c"] == value and not isinstance(shown["Plain__c"], core.Mask)
+    assert shown["Notes__c"] == "<set>" and isinstance(shown["Notes__c"], core.Mask)
