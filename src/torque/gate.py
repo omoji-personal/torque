@@ -2986,8 +2986,10 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
 # hook_command runs it with -I (isolated mode, Python 3.4+): the working
 # directory, PYTHONPATH and the user site directory stay off sys.path, so a
 # torque/ folder or sitecustomize.py planted in the workspace is never imported.
-HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate "
-                  "could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',"
+# A host that reports a blocked call quotes this whole command before the gate's reason, so
+# the text inside it names no mode and reads as the fallback it is.
+HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate "
+                  "could not load: '+t.__name__+': '+str(e)+'; call blocked)',"
                   "file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())")
 
 

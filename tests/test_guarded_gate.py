@@ -292,3 +292,27 @@ def test_a_workspace_path_written_out_is_read_as_before(w):
         assert B(command) == [("read", "acme-prod", "counts")], (command, B(command))
     assert run(w, f"torque guarded counts {T} --object Opportunity").action == "allow"
 
+
+def test_a_refusal_says_what_the_session_can_do_instead(w):
+    """Wording a live trial showed to be missing; the decisions themselves are tested above."""
+    # A record read on an org with guarded classes and no record consent names the guarded reads,
+    told = run(w, 'sf data query -q "SELECT COUNT() FROM Contact" -o acme-prod').reason
+    assert "does not cover record data" in told and "`torque guarded counts`" in told
+    # and not on an org that has none of them.
+    assert "torque guarded" not in run(w, 'sf data query -q "SELECT Id FROM Contact" -o acme-dev').reason
+    # Which org an alias is: the Organization query is a record read, so with guarded reads on the refusal
+    # names the guarded command first, which the gate allows without record consent.
+    told = run(w, "sf org display -o acme-prod").reason
+    assert "run torque guarded org --workspace . --client acme --target-org ALIAS (or, where" in told
+    assert gc.ORG_IDENTITY_QUERY in told and run(w, f"torque guarded org {T}").action == "allow"
+    assert run(w, gc.ORG_IDENTITY_QUERY.replace("ALIAS", "acme-prod")).action == "deny"
+    assert run(w, gc.ORG_IDENTITY_QUERY.replace("ALIAS", "acme-full")).action == "allow"
+    assert "--client acme`" in run(w, "sf org list").reason
+    # A cut command line is marked as cut, and a mode that shows no prompt is the consultant's to change.
+    told = run(w, 'sf data create record -s Account -v "Name=T" -o acme-full', mode="auto").reason
+    assert "`sf data create record -s ...`" in told and "Tell the consultant" in told
+    assert "Do not change the mode yourself" in told and "torque approval request" in told
+    told = run(w, "torque workspace guarded-reads off --path .").reason
+    assert "torque workspace guarded-reads off --path ...: only the consultant" in told
+    assert "sf org list`" in run(w, "sf org list").reason      # nothing cut: no mark
+

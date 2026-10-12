@@ -500,8 +500,11 @@ def delegated_path_patterns(client: str, cwd: str) -> tuple[list[str], list[str]
 def _resolver(resolve):
     if resolve is not None:
         return resolve
+    # The same patience as when the consent was recorded: a command that waits a little is better than one
+    # that reports a working alias as unresolved because the Salesforce CLI started slowly.
+    from functools import partial
     from jsc_revert.org_detect import resolve_org
-    return resolve_org
+    return partial(resolve_org, timeout_seconds=consent._RESOLVE_SECONDS)
 
 
 def _usable_consent(workspace, client) -> dict:

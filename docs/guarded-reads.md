@@ -43,6 +43,8 @@ begins with `~+`, `~-` or `~name`, is refused.
    leaving connected mode, writes the plain name again.
 2. The client's consent, per org: `torque client consent record ... --data metadata --org acme-prod
    --org-data acme-prod=counts,config_records,test_records`, then the second reviewer's sign-off as usual.
+   In PowerShell put the value in quotes (`--org-data "acme-prod=counts,config_records,test_records"`):
+   there an unquoted comma makes a list, and the command receives the classes as separate words.
    A consent that holds one of these classes is written in a newer format that an older Torque refuses, so
    every machine that works on this client needs this version.
 3. What may be shown, per client:

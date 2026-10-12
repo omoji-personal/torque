@@ -156,7 +156,8 @@ def register_consent(client_sub) -> None:
                              "See docs/connected-approval.md, \"What each data class covers\"")
     record.add_argument("--org", action="append", required=True, help="an approved org alias (repeatable)")
     record.add_argument("--org-data", action="append", default=[], metavar="ALIAS=class,class",
-                        help="classes agreed for one org beyond --data, such as records for a sandbox (repeatable)")
+                        help="classes agreed for one org beyond --data, such as records for a sandbox (repeatable; "
+                             "in PowerShell put the value in quotes, where an unquoted comma makes a list)")
     record.add_argument("--suspend-contact", action="append", default=[], help="who can suspend access")
     record.add_argument("--delegated", action="store_true",
                         help="the workspace's setup delegate is running this, not the consultant")

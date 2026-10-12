@@ -14,7 +14,8 @@ work through delivery".
   Tell the consultant the request ID and stop. Run the exact command it prints,
   from the same folder, only after the consultant says it is granted.
 - One write per approval. Do not chain, pipe or redirect a write command.
-- Never run `torque approval grant` or `deny`, `torque client consent`,
+- Never run `torque approval grant` or `deny`, `torque client consent record`,
+  `sign-off` or `suspend` (`torque client consent show` only reads),
   `torque launch`, `torque workspace ai-access`, `sf alias set` or
   `sf config set`, and never edit consent, approval or Salesforce CLI files.
 - Never run a command that prints or takes a credential, or that lists every
@@ -22,7 +23,9 @@ work through delivery".
   (or `-r`, `--json`), `sf org generate password`, `sf org login`,
   `sf org list`, `sf alias list`. The gate refuses them, with or without an
   approval. To check which org an alias points to, run
-  `sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"`.
+  `sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"`
+  (a record read) or, where the consent has no record data and guarded reads
+  are on, `torque guarded org --workspace . --client NAME --target-org ALIAS`.
 - Before running a script or any program the gate cannot check, tell the
   consultant whether it reaches an org and what it does; the host will ask them.
 - Browser: use only Torque's own browser, `torque browser ... --target-org ALIAS`

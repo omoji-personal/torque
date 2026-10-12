@@ -419,7 +419,9 @@ their own terminal.
 
 To check which org an alias points to, the session runs
 `sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"`. It is a
-record read, so the client's consent must cover `records`.
+record read, so the client's consent must cover `records`. Where it does not and guarded reads are
+on, the session runs `torque guarded org --workspace . --client NAME --target-org ALIAS` instead; the
+gate's refusal names whichever of the two the session may run.
 
 What is refused:
 

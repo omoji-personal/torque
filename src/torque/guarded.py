@@ -187,7 +187,10 @@ def open_lane(workspace, client, alias, lane: str, *, env=None, resolve=None, re
     from . import approval
     try:
         org_id, kind = approval._org_identity(item, alias, resolve)
-    except ws.WorkspaceError:
+    except ws.WorkspaceError as exc:
+        if str(exc).startswith("could not resolve"):
+            raise Error("the Salesforce CLI did not confirm the org behind that alias (not signed in, or no "
+                        "answer in time); run the command again") from None
         raise Error("the alias does not resolve now to the org this client's consent names") from None
     return Context(root, slug, folder, alias, org_id, kind, policy, records)
 
@@ -421,8 +424,12 @@ def related(workspace, client, alias, parent, child, fields=(), every=False, lim
     printed = {i.name: "shown" if any(_how(row[i.name]) == "shown" for row in rows) else "masked" for i in infos}
     _record(ctx, "related", {"object": describe.name, "parent": parent, "lookup": lookup.name,
                              "fields": printed if rows else {}, "rows_shown": len(rows)})
+    capped = len(ids) > core.MAX_GROUPS       # the id answer itself was cut: the two counts below are not known
+    registered = sum(1 for i in ids if i in mine)
     return {"lane": "related", "org": alias, "object": describe.name, "parent": parent, "rows": rows,
-            "not_shown": f"more than {core.MAX_GROUPS}" if len(ids) > core.MAX_GROUPS else more}
+            "not_shown": f"more than {core.MAX_GROUPS}" if capped else more, "limit": limit,
+            "unregistered": None if capped else len(ids) - registered,
+            "past_limit": None if capped else registered - len(shown)}
 
 
 def org_info(workspace, client, alias, *, env=None, resolve=None) -> dict:
@@ -499,13 +506,15 @@ def policy_release(workspace, client, alias, target, level, *, sensitive=False, 
                    resolve=None, run=None, env=None) -> dict:
     """Release one field: its values may be shown for this client, exact or coarse."""
     _, _, _, folder = _admin(workspace, client)
-    _operator(presence, confirm, "a field is released by the consultant")
+    _at_terminal(presence, "a field is released by the consultant")       # before any org call
     ctx = open_lane(workspace, client, alias, "candidates", env=env, resolve=resolve)
     if not isinstance(target, str) or target.count(".") != 1:
         raise Error("name the field as Object.Field")
     describe = _describe(run, alias, target.split(".")[0])
     info = describe.field(target.split(".")[1])
     core.check_release(describe, info, level, _facts(run, alias, describe, ctx.policy), acknowledged=sensitive)
+    # The code is asked for last: a release that would be refused costs the consultant no typing.
+    _operator(presence, confirm, "a field is released by the consultant")
     payload = policy_payload(folder)
     key = f"{describe.name}.{info.name}"
     _drop(payload.setdefault("fields", {}), key)
@@ -518,11 +527,12 @@ def policy_release_object(workspace, client, alias, sobject, fields=(), *, recor
                           presence=None, confirm=None, resolve=None, run=None, env=None) -> dict:
     """Release an object as configuration, with the fields whose values show."""
     _, _, _, folder = _admin(workspace, client)
-    _operator(presence, confirm, "an object is released by the consultant")
+    _at_terminal(presence, "an object is released by the consultant")       # before any org call
     ctx = open_lane(workspace, client, alias, "candidates", env=env, resolve=resolve)
     describe = _describe(run, alias, sobject)
     names = core.check_object_release(describe, fields, _facts(run, alias, describe, ctx.policy), records=records,
                                       sensitive=sensitive)
+    _operator(presence, confirm, "an object is released by the consultant")
     payload = policy_payload(folder)
     _drop(payload.setdefault("objects", {}), describe.name)
     payload["objects"][describe.name] = names
@@ -675,8 +685,9 @@ def _lines(result) -> list[str]:
     if lane == "counts":
         floor = f"groups smaller than {result['min_cell']} are not shown"
         if not result["columns"]:
-            return [f"{result['object']}: {result['rows'][0]['count']} records" if result["rows"] else
-                    f"{result['object']}: not shown", f"({floor})"]
+            if result["rows"]:
+                return [f"{result['object']}: {result['rows'][0]['count']} records"]
+            return [f"{result['object']}: not shown", f"(a count smaller than {result['min_cell']} is not shown)"]
         lines = ["\t".join([*result["columns"], "count"])]
         lines += ["\t".join([*map(str, row["values"]), str(row["count"])]) for row in result["rows"]]
         return [*lines, f"({floor}; date buckets of a date/time field are in UTC)"]
@@ -691,10 +702,24 @@ def _lines(result) -> list[str]:
     if lane in ("config", "related"):
         lines = [json.dumps(row, ensure_ascii=False, sort_keys=False) for row in result["rows"]]
         if lane == "related" and result["not_shown"]:
-            lines.append(f"({result['not_shown']} more children are not shown: not registered, or past the limit)")
+            why = [f"{count} {text}" for count, text in (
+                (result.get("unregistered"), "not registered as test records"),
+                (result.get("past_limit"), f"registered but past the limit of {result.get('limit')} rows")) if count]
+            count = result["not_shown"]
+            lines.append(f"({count} {'more ' if result['rows'] else ''}"
+                         f"{'child is' if count == 1 else 'children are'} not shown: "
+                         + ("; ".join(why) or "not registered, or past the limit") + ")")
         return lines or ["(no rows)"]
     if lane == "record":
-        return [f"{name}\t{json.dumps(value, ensure_ascii=False)}" for name, value in result["fields"].items()]
+        values = [value for value in result["fields"].values() if isinstance(value, str)]
+        notes = []
+        if core.MASKED_SET in values or core.MASKED_BLANK in values:
+            notes.append(f"({core.MASKED_SET} or {core.MASKED_BLANK}: the value is not shown, only whether the "
+                         "field holds one)")
+        if any(value.startswith("<unregistered ") for value in values):
+            notes.append("(<unregistered XXX>: a link to a record that is not a registered test record; XXX is "
+                         "the first three characters of its id, which name its object)")
+        return [f"{name}\t{json.dumps(value, ensure_ascii=False)}" for name, value in result["fields"].items()] + notes
     return [json.dumps(result, indent=2, ensure_ascii=False)]
 
 

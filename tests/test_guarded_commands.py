@@ -315,7 +315,8 @@ def test_the_alias_must_still_be_the_consented_org(w):
     sf = Sf()
     with pytest.raises(E, match="does not resolve now"):
         guarded.counts(w, "Acme", "acme-prod", "Opportunity", resolve=moved.get, run=sf, env={})
-    with pytest.raises(E, match="does not resolve now"):
+    # an alias the Salesforce CLI does not confirm (not signed in, or no answer in time) says so
+    with pytest.raises(E, match="did not confirm the org behind that alias"):
         guarded.org_info(w, "Acme", "acme-prod", resolve=lambda alias: None, env={})
     assert sf.calls == []
     assert guarded.org_info(w, "Acme", "acme-prod", resolve=ORGS.get, env={}) == {
@@ -585,6 +586,21 @@ def test_registration_checks_that_the_record_found_is_the_one_asked_for(w):
 def test_wording_of_the_footer_and_of_the_classification_hint(w):
     out = {"lane": "related", "rows": [], "not_shown": 1}
     assert "not registered, or past the limit" in guarded._lines(out)[-1]
+    # With the two counts the line says which reason applies, and "more" only after rows that were shown.
+    told = {"lane": "related", "rows": [], "not_shown": 8, "unregistered": 8, "past_limit": 0, "limit": 20}
+    assert guarded._lines(told) == ["(8 children are not shown: 8 not registered as test records)"]
+    told = {"lane": "related", "rows": [{"Id": "x"}], "not_shown": 3, "unregistered": 1, "past_limit": 2, "limit": 1}
+    assert guarded._lines(told)[-1] == ("(3 more children are not shown: 1 not registered as test records; "
+                                        "2 registered but past the limit of 1 rows)")
+    # A count with no grouping carries no note about groups; a record's masks are explained once.
+    assert guarded._lines({"lane": "counts", "object": "Contact", "columns": [], "rows": [{"count": 105}],
+                           "min_cell": 5}) == ["Contact: 105 records"]
+    assert guarded._lines({"lane": "counts", "object": "Contact", "columns": [], "rows": [], "min_cell": 5}) == [
+        "Contact: not shown", "(a count smaller than 5 is not shown)"]
+    shown = guarded._lines({"lane": "record", "fields": {"Name": "A", "Phone": core.MASKED_BLANK,
+                                                         "OwnerId": core.Mask("<unregistered 005>")}})
+    assert len(shown) == 5 and "only whether the field holds one" in shown[3] and "first three" in shown[4]
+    assert guarded._lines({"lane": "record", "fields": {"Name": "A", "Fax": None}}) == ['Name\t"A"', "Fax\tnull"]
     with pytest.raises(E, match="set-classification --value ignore"):
         core.require_facts(core.parse_policy(None), core.parse_facts(None))
 

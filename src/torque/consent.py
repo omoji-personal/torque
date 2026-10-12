@@ -27,6 +27,9 @@ GUARDED_CLASSES = ("counts", "config_records", "test_records")
 ORG_DATA_CLASSES = DATA_CLASSES + GUARDED_CLASSES
 STATUSES = ("pending", "active", "suspended")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+# How long one Salesforce CLI call may take while consent is recorded (measured on Windows: 5 to 9 seconds
+# warm, more on a cold start, which the usual ten seconds did not cover).
+_RESOLVE_SECONDS = 60
 
 
 def _require_operator(presence, confirm=None) -> None:
@@ -84,8 +87,12 @@ def load_consent(workspace, client) -> dict | None:
 
 
 def _resolver():
+    """The org resolver for recording consent. The owner runs this at a terminal and would rather
+    wait than be told the org is not authenticated: on Windows the Salesforce CLI can take longer
+    than the resolver's usual ten seconds for one call when it starts cold."""
+    from functools import partial
     from jsc_revert.org_detect import resolve_org
-    return resolve_org
+    return partial(resolve_org, timeout_seconds=_RESOLVE_SECONDS)
 
 
 def _user() -> str:
@@ -134,7 +141,10 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
     for alias in dict.fromkeys(orgs):
         info = resolve(alias)
         if info is None:
-            raise ws.WorkspaceError(f"could not resolve org alias {alias!r}; authenticate it first")
+            raise ws.WorkspaceError(f"could not resolve org alias {alias!r}: the Salesforce CLI did not confirm "
+                                    f"it (not authenticated, or no answer within {_RESOLVE_SECONDS} seconds for "
+                                    "one call). Check it with `sf org display --target-org ALIAS`, then run "
+                                    "this again")
         entry = {"alias": alias, "org_id_18": info.org_id_18, "kind": info.detected_org_type}
         instance = getattr(info, "instance_url", None)
         if isinstance(instance, str) and instance:
@@ -197,8 +207,11 @@ def _checked_org_data(workspace, org_data, orgs, data_allowed, delegated: bool) 
 def _update(workspace, client, presence, change, *, delegated: bool = False, model_id: str | None = None,
            env=None, ancestors=None, getuid=None, root_owner=None) -> dict:
     ws.require_writable(workspace)
-    actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
     _, path = _path(workspace, client)
+    # Looked at before the code is asked for: with nothing to change, the consultant types nothing.
+    if load_consent(workspace, client) is None:
+        raise ws.WorkspaceError("no consent record; run torque client consent record first")
+    actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
     item = load_consent(workspace, client)
     if item is None:
         raise ws.WorkspaceError("no consent record; run torque client consent record first")
