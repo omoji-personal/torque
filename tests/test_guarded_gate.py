@@ -46,7 +46,7 @@ def run(root, command, mode=None, tool="Bash", cwd=None, client="acme"):
 @pytest.mark.parametrize("command,expected", [
     (f"torque guarded counts {T} --object Opportunity --group-by StageName", ("read", "acme-prod", "counts")),
     (f"torque guarded counts {T} --object Opportunity --where \"IsWon = true\"", ("read", "acme-prod", "counts")),
-    (f"torque guarded fill {T} --object Contact --fields Email,Phone", ("read", "acme-prod", "counts")),
+    (f"torque guarded fill-rate {T} --object Contact --fields Email,Phone", ("read", "acme-prod", "counts")),
     (f"torque guarded config {T} --object Settings__c", ("read", "acme-prod", "config_records")),
     (f"torque guarded record {T} --object Account --id 001000000000001 --all", ("read", "acme-prod", "test_records")),
     (f"torque guarded related {T} --id 001000000000001 --child Opportunity.AccountId", ("read", "acme-prod",
@@ -297,7 +297,9 @@ def test_a_refusal_says_what_the_session_can_do_instead(w):
     """Wording a live trial showed to be missing; the decisions themselves are tested above."""
     # A record read on an org with guarded classes and no record consent names the guarded reads,
     told = run(w, 'sf data query -q "SELECT COUNT() FROM Contact" -o acme-prod').reason
-    assert "does not cover record data" in told and "`torque guarded counts`" in told
+    assert "does not cover record data" in told and "even one that only counts them" in told
+    # The hint names the classes this org's consent has, each with its own commands.
+    assert "`counts` or `fill-rate` (class counts)" in told and "torque guarded --help" in told
     # and not on an org that has none of them.
     assert "torque guarded" not in run(w, 'sf data query -q "SELECT Id FROM Contact" -o acme-dev').reason
     # Which org an alias is: the Organization query is a record read, so with guarded reads on the refusal
@@ -310,9 +312,29 @@ def test_a_refusal_says_what_the_session_can_do_instead(w):
     assert "--client acme`" in run(w, "sf org list").reason
     # A cut command line is marked as cut, and a mode that shows no prompt is the consultant's to change.
     told = run(w, 'sf data create record -s Account -v "Name=T" -o acme-full', mode="auto").reason
-    assert "`sf data create record -s ...`" in told and "Tell the consultant" in told
-    assert "Do not change the mode yourself" in told and "torque approval request" in told
+    assert "`sf data create record ...`" in told and "Stop and tell the consultant" in told
+    assert "each change needs the consultant's approval" in told
+    assert "Do not change the permission mode yourself" in told and "torque approval request" in told
     told = run(w, "torque workspace guarded-reads off --path .").reason
-    assert "torque workspace guarded-reads off --path ...: only the consultant" in told
+    assert "torque workspace guarded-reads off ...`: only the consultant" in told
+    assert "tell the consultant" in told
     assert "sf org list`" in run(w, "sf org list").reason      # nothing cut: no mark
 
+
+
+def test_an_upgrade_says_when_the_connected_rule_is_from_another_version(w, capsys):
+    """`workspace upgrade` does not track Claude Code's copy of the connected rule; a
+    session that reads an older copy is told things the gate no longer does."""
+    import json
+    from torque import cli
+    rule = w / ".claude" / "rules" / ws.CONNECTED_RULE
+    assert not ws.connected_rule_stale(w)
+    assert cli.main(["workspace", "upgrade", str(w), "--check", "--json"]) == 0
+    assert "connected_rule" not in json.loads(capsys.readouterr().out)
+    rule.write_text(rule.read_text(encoding="utf-8") + "\n- a line of an older version\n", encoding="utf-8")
+    assert ws.connected_rule_stale(w)
+    assert cli.main(["workspace", "upgrade", str(w), "--check", "--json"]) == 0
+    told = json.loads(capsys.readouterr().out)["connected_rule"]
+    assert "torque workspace ai-access connected --approval required" in told and "does not update it" in told
+    rule.unlink()
+    assert not ws.connected_rule_stale(w)

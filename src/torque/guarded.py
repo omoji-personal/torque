@@ -449,8 +449,11 @@ def candidates(workspace, client, alias, sobject, *, env=None, resolve=None, run
         reason = core.blocked_reason(describe, info, facts)
         need = "" if reason else core.acknowledgement_reason(describe, info)
         can = "no" if reason else ("exact or coarse" if info.type in core.COARSE_TYPES else "exact")
+        note = reason or (f"needs --acknowledge-sensitive: {need}" if need else "")
+        if not note and info.name.casefold() == "recordtypeid":
+            note = "the one reference that can be released: a record type is configuration"
         rows.append({"field": info.name, "type": info.type, "release": can, "released": ctx.policy.level(describe, info),
-                     "note": reason or (f"needs --acknowledge-sensitive: {need}" if need else "")})
+                     "note": note})
     _record(ctx, "candidates", {"object": describe.name, "field_names_listed": len(rows)})
     return {"org": alias, "object": describe.name, "custom_setting": describe.custom_setting,
             "holds_people": core.holds_people(describe), "fields": rows}
@@ -692,7 +695,8 @@ def _lines(result) -> list[str]:
         lines += ["\t".join([*map(str, row["values"]), str(row["count"])]) for row in result["rows"]]
         return [*lines, f"({floor}; date buckets of a date/time field are in UTC)"]
     if lane == "fill":
-        floor = f"(counts where the filled or the blank part is smaller than {result['min_cell']} are not shown)"
+        floor = ("(a count is not shown where the filled or the blank part is between 1 and "
+                 f"{result['min_cell'] - 1} records)")
         if result["total"] is None:
             return [f"{result['object']}: not shown", floor]
         lines = [f"{result['object']}: {result['total']} records"]
@@ -706,16 +710,23 @@ def _lines(result) -> list[str]:
                 (result.get("unregistered"), "not registered as test records"),
                 (result.get("past_limit"), f"registered but past the limit of {result.get('limit')} rows")) if count]
             count = result["not_shown"]
-            lines.append(f"({count} {'more ' if result['rows'] else ''}"
-                         f"{'child is' if count == 1 else 'children are'} not shown: "
-                         + ("; ".join(why) or "not registered, or past the limit") + ")")
+            if not result["rows"] and result.get("unregistered") == count:
+                lines.append("(no rows: " + ("the 1 child is not a registered test record" if count == 1 else
+                                             f"none of the {count} children is a registered test record") + ")")
+            else:
+                lines.append(f"({count} {'more ' if result['rows'] else ''}"
+                             f"{'child is' if count == 1 else 'children are'} not shown: "
+                             + ("; ".join(why) or "not registered, or past the limit") + ")")
         return lines or ["(no rows)"]
     if lane == "record":
         values = [value for value in result["fields"].values() if isinstance(value, str)]
-        notes = []
+        notes = ["(a registered test record: its values are shown as stored, whatever the release of each field. "
+                 "Registering it said that the records behind its totals hold made-up data too.)"]
         if core.MASKED_SET in values or core.MASKED_BLANK in values:
-            notes.append(f"({core.MASKED_SET} or {core.MASKED_BLANK}: the value is not shown, only whether the "
-                         "field holds one)")
+            notes.append(f"({core.MASKED_BLANK} and {core.MASKED_SET}: a field that is not released and takes its "
+                         "value from another record (a roll-up summary, a formula that reaches a parent), or whose "
+                         f"type this version does not know. {core.MASKED_BLANK} means the field is empty; "
+                         f"{core.MASKED_SET} means it holds a value, which is not shown.)")
         if any(value.startswith("<unregistered ") for value in values):
             notes.append("(<unregistered XXX>: a link to a record that is not a registered test record; XXX is "
                          "the first three characters of its id, which name its object)")
@@ -743,7 +754,7 @@ def register(subparsers) -> None:
     p.add_argument("--object", required=True, dest="sobject")
     p.add_argument("--group-by", action="append", default=[], dest="group_by")
     p.add_argument("--where", action="append", default=[])
-    p = lane("fill", "how many records have each field filled in")
+    p = lane("fill-rate", "how many records have each field filled in (a read; it changes nothing)")
     p.add_argument("--object", required=True, dest="sobject")
     p.add_argument("--fields", required=True)
     p.add_argument("--where", action="append", default=[])
@@ -819,7 +830,7 @@ def _dispatch(a) -> object:
     w, c = a.workspace, a.client
     if a.action == "counts":
         return counts(w, c, a.target_org, a.sobject, a.group_by, a.where)
-    if a.action == "fill":
+    if a.action == "fill-rate":
         return fill(w, c, a.target_org, a.sobject, _names(a.fields), a.where)
     if a.action == "config":
         return config(w, c, a.target_org, a.sobject, _names(a.fields), a.limit)

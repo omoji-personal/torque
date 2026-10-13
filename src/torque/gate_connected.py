@@ -34,16 +34,19 @@ CREDENTIAL_REASON = ("`{detail}` prints or takes a credential (an access token, 
 ALL_ORGS_REASON = ("`{detail}` lists every org this machine is logged in to, including orgs outside "
                    "{client}'s consent, so the session never runs it. Use the org aliases in the client's "
                    "consent (`torque client consent show --workspace . --client {name}`).")
-GUARDED_HINT = (" Guarded reads are on for this org: use `torque guarded counts`, `fill`, `config`, `record` or "
-                "`related` (with --workspace, --client and --target-org; `torque guarded --help` lists them).")
+GUARDED_HINT = (" Record data is any plain query or export of the org's records, even one that only counts "
+                "them. What this org's consent covers instead is guarded reads: `torque guarded` with {lanes}; "
+                "each takes --workspace, --client and --target-org, and `torque guarded --help` lists them.")
+GUARDED_LANES = {"counts": ("counts", "fill-rate"), "config_records": ("config",),
+                 "test_records": ("record", "related")}
 # What the session is told when a route needs a prompt and its permission mode shows none.
-SKIPPED_REASON = ("`{detail}` {why}, and this session's permission mode ({mode}) shows no prompts, so it was "
-                  "refused and nothing ran. Tell the consultant: they run it in their own terminal, or start "
-                  "the session in the default, acceptEdits or plan mode{approval}. Do not change the mode "
-                  "yourself.")
+SKIPPED_REASON = ("`{detail}` {why}. This session cannot run it: its permission mode ({mode}) shows the "
+                  "consultant no prompts. Nothing ran. Stop and tell the consultant: they run it in their own "
+                  "terminal, or start a session in the default, acceptEdits or plan permission mode{approval}. "
+                  "Do not change the permission mode yourself.")
 SKIPPED_WHY = {"unverifiable": "is something the gate cannot check, so the consultant has to see it first",
-               "org_write": "changes an org, which the consultant approves",
-               "browser_write": "changes an org through a browser, which the consultant approves"}
+               "org_write": "changes an org, and each change needs the consultant's approval",
+               "browser_write": "changes an org through a browser, and each change needs the consultant's approval"}
 # Permission modes in which the host shows the consultant a prompt. Any other named
 # mode (bypassPermissions, auto, dontAsk, or one this version does not know) is refused
 # for routes the gate cannot check. A missing mode is treated as a prompting one: hosts
@@ -237,7 +240,11 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     if not ok:
         text = reason.replace("Build-only mode: ", "")
         if "client context" in text and bound:
-            text += f" This session is bound to {bound}; other clients' folders stay out of it."
+            # The bound client's own folder is open here, so the build-only sentence would say too much.
+            general = "client context stays out of the AI session"
+            text = (text.replace(general, f"this session is bound to {bound}, and other clients' folders stay "
+                                          "out of it", 1) if general in text
+                    else text + f" This session is bound to {bound}; other clients' folders stay out of it.")
         return _deny(text)
     protected = _protected_reason(tool_name, tool_input, Path(cwd), env)
     if protected:
@@ -267,10 +274,14 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     guarded_on = ws.guarded_reads_on(config)
     name = bound or "NAME"
 
-    def lanes(org) -> bool:
-        """Guarded reads can answer for this org, and a plain record read cannot."""
+    def lanes(org) -> str:
+        """What guarded reads can answer for this org where a plain record read cannot, or ''."""
         allowed = consent.data_allowed(item, org)
-        return guarded_on and "records" not in allowed and bool(allowed & set(consent.GUARDED_CLASSES))
+        classes = [name for name in consent.GUARDED_CLASSES if name in allowed]
+        if not guarded_on or "records" in allowed or not classes:
+            return ""
+        return GUARDED_HINT.format(lanes=", ".join(
+            " or ".join(f"`{lane}`" for lane in GUARDED_LANES[name]) + f" (class {name})" for name in classes))
 
     browser_tool = tool_name.startswith("mcp__") and gate._mcp_surface(tool_name) == "browser"
     if browser_tool:
@@ -312,12 +323,13 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         elif skipping and route.kind in ("unverifiable", "org_write", "browser_write"):
             decisions.append(_deny(SKIPPED_REASON.format(
                 detail=route.detail, why=SKIPPED_WHY[route.kind], mode=permission_mode,
-                approval="" if route.kind == "unverifiable" else ", where it also needs an approval "
-                         "(`torque approval request ... -- <the exact command>`)")))
+                approval="" if route.kind == "unverifiable" else ", where the session first asks for an "
+                         "approval (`torque approval request ... -- <the exact command>`)")))
         elif route.kind == "local":
             decisions.append(Decision("allow", ""))
         elif route.kind == "admin":
-            decisions.append(_deny(f"{route.detail}: only the consultant runs this, in their own terminal."))
+            decisions.append(_deny(f"`{route.detail}`: only the consultant runs this, in their own terminal. "
+                                   "If the work needs it, tell the consultant."))
         elif route.kind == "no_org":
             decisions.append(_deny(f"{route.detail}: name exactly one org with --target-org (-o); "
                                    "the default org is never used in connected mode."))
@@ -350,7 +362,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                          "configuration records", "test_records": "test records"}.get(category, category)
                 decisions.append(_deny(f"{bound}'s consent does not cover {label} for {route.org}."
                                        if lane else f"{bound}'s consent does not cover {label}."
-                                       + (GUARDED_HINT if category == "records" and lanes(route.org) else "")))
+                                       + (lanes(route.org) if category == "records" else "")))
             else:
                 if route.kind == "check_only":
                     after_allow.append(lambda org=route.org: approval.log_activity(

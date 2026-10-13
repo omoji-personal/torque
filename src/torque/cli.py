@@ -1103,6 +1103,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 from .template_updates import update_templates
                 report = update_templates(Path(parsed.path), check=parsed.check)
+                if ws.connected_rule_stale(parsed.path):
+                    report["connected_rule"] = (
+                        "`.claude/rules/production-approval.md` is from another version of Torque, and this "
+                        "command does not update it. The owner rewrites it with `torque workspace ai-access "
+                        "connected --approval required --path W` (with the --verify the workspace uses).")
                 if parsed.json:
                     _print_json(report)
                 else:

@@ -419,7 +419,9 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
         "local .claude/commands/NAME.md when present, then the packaged recipe as fallback. "
         "Without a selected workspace, show reads the packaged reference. These recipes support conversational work; "
         "use the user's actual authorization and existing Salesforce access for operations. "
-        "No Torque hooks, approval tokens or global sf replacement are required. "
+        "No Torque hooks, approval tokens or global sf replacement are required, unless the owner put "
+        "this workspace in build-only or connected mode: then a gate checks each tool call, and the rule "
+        "file in the rules folder (`build-only.md` or `production-approval.md`) says what to expect. "
         "Antigravity offers the same recipes as skills and slash commands from .agents/skills/; "
         "its own /help, /context and /undo keep those names, so those three recipes are "
         "/torque-help, /torque-context and /torque-undo.\n\n"
@@ -659,6 +661,19 @@ MODE_RULES = {"connected": (CONNECTED_RULE, ("connected", CONNECTED_RULE)),
 # mode rules existed: `_connected_rule` writes and removes it, and `torque
 # workspace upgrade` does not track it.
 _CONNECTED_RULE_PATH = ".claude/rules/" + CONNECTED_RULE
+
+
+def connected_rule_stale(workspace: str | Path) -> bool:
+    """Claude Code's copy of the connected rule differs from this version's text.
+    `torque workspace upgrade` does not track that file, so it says this instead."""
+    try:
+        root, config = load_workspace(workspace)
+        if access_mode(config) != "connected":
+            return False
+        packaged = resources.files("torque").joinpath("data", "connected", CONNECTED_RULE).read_text(encoding="utf-8")
+        return (root / ".claude" / "rules" / CONNECTED_RULE).read_text(encoding="utf-8") != packaged
+    except (OSError, ValueError, WorkspaceError):
+        return False
 
 
 def access_mode(config: dict) -> str:

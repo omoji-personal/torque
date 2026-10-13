@@ -13,7 +13,7 @@ what you chose to release. Every call is recorded, and `torque guarded exposure`
 | Question | Command |
 |---|---|
 | How many records are there, by stage, by month, by record type? | `torque guarded counts` |
-| How well is a field filled in? | `torque guarded fill` |
+| How well is a field filled in? | `torque guarded fill-rate` |
 | What is in a configuration object (trigger handlers, settings, mappings)? | `torque guarded config` |
 | What does the test record I built look like after the flow ran? | `torque guarded record`, `torque guarded related` |
 | Which org does this alias point at? | `torque guarded org` |
@@ -22,7 +22,7 @@ what you chose to release. Every call is recorded, and `torque guarded exposure`
 ```
 torque guarded counts --workspace W --client C --target-org A --object Opportunity \
     --group-by StageName --group-by CloseDate:month --where "IsWon = true" --where "Amount >= 5000"
-torque guarded fill   --workspace W --client C --target-org A --object Contact --fields Email,Phone
+torque guarded fill-rate --workspace W --client C --target-org A --object Contact --fields Email,Phone
 torque guarded config --workspace W --client C --target-org A --object npsp__Trigger_Handler__c
 torque guarded record --workspace W --client C --target-org A --object Account --id 001... --all
 torque guarded related --workspace W --client C --target-org A --id 001... --child Opportunity.AccountId --all
@@ -70,7 +70,7 @@ Counts
   whether there was one. An empty result and a small one look the same.
 - A picklist value that is not configured in the org prints as `<other>`: an unrestricted picklist can hold
   any text a record was given.
-- "Is it filled in" (`fill`, `= null`, `!= null`) needs no release, except for a field the org classifies or
+- "Is it filled in" (`fill-rate`, `= null`, `!= null`) needs no release, except for a field the org classifies or
   whose name marks it sensitive (birth date, gender, health and the like): those follow their release.
   The word has to stand as a word of the name or label (`BirthDate`, `SSNStatus`, `DOB2`, `Salaries`); one
   glued to another with no capital, digit or separator (`ssnstatus`) is not found, so name-based protection

@@ -440,7 +440,8 @@ def blocked_reason(describe: Describe, info: FieldInfo, facts: OrgFacts, _depth:
     if person_account_field(describe, info):
         return "it is a person-account field, whose classification the org keeps on Contact; use the Contact field"
     if info.name.casefold() != "recordtypeid" and info.type not in EXACT_TYPES:
-        return f"a {info.type} field cannot be released in this version"
+        article = "an" if info.type[:1].lower() in "aeio" else "a"
+        return f"{article} {info.type} field cannot be released in this version"
     if info.calculated:
         if formula_reaches_elsewhere(info, facts):
             return "its formula reads another record, or the org did not give its formula"

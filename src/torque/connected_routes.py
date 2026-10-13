@@ -179,7 +179,7 @@ TORQUE_VALUE_OPTIONS = frozenset({
     "--target-org", "--value", "--where", "--with-children"})
 # torque guarded: the lanes that read an org and the consent class each needs (None:
 # metadata), its local views, and everything else, which only the consultant runs.
-GUARDED_READS = {("counts",): "counts", ("fill",): "counts", ("config",): "config_records",
+GUARDED_READS = {("counts",): "counts", ("fill-rate",): "counts", ("config",): "config_records",
                  ("record",): "test_records", ("related",): "test_records", ("org",): None,
                  ("policy", "candidates"): None}
 GUARDED_LOCAL = {("exposure",), ("policy", "show"), ("test-records", "list")}
@@ -2088,8 +2088,12 @@ def _torque_routes(words: list[str], rest: list[str], detail: str) -> list[Route
 def _segment_core(words: list[str], depth: int) -> list[Route]:
     first = words[0]
     head, rest = g._basename(first), words[1:]
-    # The mark keeps a cut line from reading as if its last word were the problem.
-    detail = " ".join(words[:5]) + (" ..." if len(words) > 5 else "")
+    # The mark keeps a cut line from reading as if its last word were the problem, and a
+    # cut never ends on an option, whose value would then read as "...".
+    kept = words[:5]
+    while len(words) > 5 and len(kept) > 1 and kept[-1].startswith("-"):
+        kept = kept[:-1]
+    detail = " ".join(kept) + (" ..." if len(words) > 5 else "")
     if "$" in first or "`" in first:
         return [Route("unverifiable", None, detail + " (command built at run time)")]
     if head == "env":

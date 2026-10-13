@@ -588,7 +588,9 @@ def test_wording_of_the_footer_and_of_the_classification_hint(w):
     assert "not registered, or past the limit" in guarded._lines(out)[-1]
     # With the two counts the line says which reason applies, and "more" only after rows that were shown.
     told = {"lane": "related", "rows": [], "not_shown": 8, "unregistered": 8, "past_limit": 0, "limit": 20}
-    assert guarded._lines(told) == ["(8 children are not shown: 8 not registered as test records)"]
+    assert guarded._lines(told) == ["(no rows: none of the 8 children is a registered test record)"]
+    assert guarded._lines({**told, "not_shown": 1, "unregistered": 1}) == [
+        "(no rows: the 1 child is not a registered test record)"]
     told = {"lane": "related", "rows": [{"Id": "x"}], "not_shown": 3, "unregistered": 1, "past_limit": 2, "limit": 1}
     assert guarded._lines(told)[-1] == ("(3 more children are not shown: 1 not registered as test records; "
                                         "2 registered but past the limit of 1 rows)")
@@ -599,8 +601,19 @@ def test_wording_of_the_footer_and_of_the_classification_hint(w):
         "Contact: not shown", "(a count smaller than 5 is not shown)"]
     shown = guarded._lines({"lane": "record", "fields": {"Name": "A", "Phone": core.MASKED_BLANK,
                                                          "OwnerId": core.Mask("<unregistered 005>")}})
-    assert len(shown) == 5 and "only whether the field holds one" in shown[3] and "first three" in shown[4]
-    assert guarded._lines({"lane": "record", "fields": {"Name": "A", "Fax": None}}) == ['Name\t"A"', "Fax\tnull"]
+    assert len(shown) == 6 and "registered test record: its values are shown as stored" in shown[3]
+    # The note says which fields carry a mask and what each of the two masks means.
+    assert shown[4].startswith("(<blank> and <set>: ") and "roll-up summary" in shown[4]
+    assert "<blank> means the field is empty; <set> means it holds a value" in shown[4]
+    assert "first three" in shown[5]
+    plain = guarded._lines({"lane": "record", "fields": {"Name": "A", "Fax": None}})
+    assert plain[:2] == ['Name\t"A"', "Fax\tnull"] and len(plain) == 3 and "made-up data too" in plain[2]
+    # Zero is shown, so the note names the range that is not.
+    fill = {"lane": "fill", "object": "Contact", "total": 105, "min_cell": 5,
+            "rows": [{"field": "Email", "filled": 0}, {"field": "Phone", "filled": None}]}
+    assert guarded._lines(fill) == ["Contact: 105 records", "Email\t0 filled", "Phone\tnot shown",
+                                    "(a count is not shown where the filled or the blank part is between 1 and 4 "
+                                    "records)"]
     with pytest.raises(E, match="set-classification --value ignore"):
         core.require_facts(core.parse_policy(None), core.parse_facts(None))
 
