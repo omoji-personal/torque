@@ -22,7 +22,9 @@ separately in [validation](docs/validation.md).
   records and guides, it does not block. Two optional modes add a gate that checks
   each tool call. `build-only` keeps org access and client context out of the
   session. `connected` binds a session to one client and requires your approval,
-  from your own terminal, for each org write. See [AI access](docs/ai-access.md).
+  from your own terminal, for each org write. Reads require consent for their data
+  class, including ApexLog queries and gets. Packaged entry points use the same
+  rules as Torque commands. See [AI access](docs/ai-access.md).
 - **The gate is a seat belt, not a sandbox.** It reads the commands and tool calls
   it recognizes. Code the assistant writes and runs under your account can get
   past it, and under Claude Code a hook that cannot start does not block. The
@@ -188,6 +190,10 @@ without Salesforce credentials;
 Torque does not create that isolation. External browser and desktop reads are refused
 because their current org context cannot be verified. Torque's isolated browser requires
 an org window and consent for both metadata and record data.
+
+Connected checks preserve org and consent classes across supported shell forms and
+Salesforce CLI read aliases. REST requests that can return ApexLog also require log
+consent. Commands beyond the Bash reader's complexity budget are refused.
 
 Stronger enforcement requires signing, consumption state and execution authorization
 outside the agent account, with grants bound to an immutable workspace identity and a

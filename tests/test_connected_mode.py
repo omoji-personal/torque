@@ -70,7 +70,7 @@ def test_set_connected_refuses_without_operator(tmp_path):
 def test_leaving_connected_removes_approval_keys(tmp_path):
     root = ws.init_workspace(tmp_path / "w", "Example firm")
     ws.set_ai_access(root, "connected", approval="required", presence=present)
-    ws.set_ai_access(root, "full")
+    ws.set_ai_access(root, "full", presence=present)
     data = json.loads((root / "workspace.json").read_text(encoding="utf-8"))
     assert data["ai_access"] == "full"
     assert not {"approval", "approval_verify", "approver_uid"} & set(data)

@@ -21,6 +21,13 @@ AI_ACCESS_MODES = ("full", "build-only", "connected")
 APPROVAL_VALUES = ("required",)
 APPROVAL_VERIFY = ("hmac", "owner-uid")
 CONFIG = "workspace.json"
+SCHEMA = "torque.workspace/1"
+# The schema a workspace has while guarded reads are on (docs/guarded-reads.md). A
+# Torque from before guarded reads does not know it and refuses to read or change
+# the workspace: it cannot take the workspace out of connected mode, and its gate,
+# which lacks the fixes guarded reads rely on, blocks every org call there.
+SCHEMA_GUARDED = "torque.workspace/2"
+GUARDED_READS = "guarded_reads"
 MAINTENANCE_FLAG = ".torque/maintenance"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
 
@@ -373,7 +380,7 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     clients = _inside(root, root / "clients")
     clients.mkdir(mode=0o700, exist_ok=True)
-    firm = {"schema": "torque.workspace/1", "name": name.strip(),
+    firm = {"schema": SCHEMA, "name": name.strip(),
             "profile": profile, "created_at": _now()}
     focus_notes = ""
     if profile == "solution-lead":
@@ -412,7 +419,9 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
         "local .claude/commands/NAME.md when present, then the packaged recipe as fallback. "
         "Without a selected workspace, show reads the packaged reference. These recipes support conversational work; "
         "use the user's actual authorization and existing Salesforce access for operations. "
-        "No Torque hooks, approval tokens or global sf replacement are required. "
+        "No Torque hooks, approval tokens or global sf replacement are required, unless the owner put "
+        "this workspace in build-only or connected mode: then a gate checks each tool call, and the rule "
+        "file in the rules folder (`build-only.md` or `production-approval.md`) says what to expect. "
         "Antigravity offers the same recipes as skills and slash commands from .agents/skills/; "
         "its own /help, /context and /undo keep those names, so those three recipes are "
         "/torque-help, /torque-context and /torque-undo.\n\n"
@@ -448,7 +457,7 @@ def _validate_config(config: dict, path: Path) -> dict:
     holds a parsed dict from its own protected read (delegation.py's
     single-descriptor read, avoiding a TOCTOU between reading and checking the
     file) can reuse this instead of a second, separately-worded copy."""
-    if (not isinstance(config, dict) or config.get("schema") != "torque.workspace/1"
+    if (not isinstance(config, dict) or config.get("schema") not in (SCHEMA, SCHEMA_GUARDED)
             or not isinstance(config.get("name"), str) or not config["name"].strip()
             or config.get("profile") not in PROFILES):
         raise WorkspaceError(f"invalid workspace configuration: {path}")
@@ -491,6 +500,21 @@ def _owner_uid_supported() -> bool:
     return hasattr(os, "getuid")
 
 
+def _owner_at_terminal(presence, what: str) -> None:
+    """Require the owner at a real terminal, who types back a code (the code is
+    skipped only when a caller injects its own presence check)."""
+    injected = presence is not None
+    if presence is None:
+        from .presence import operator_present as presence
+    check = presence()
+    if not check.ok:
+        raise WorkspaceError(f"{what} by the owner at a real terminal: {check.reason}")
+    if not injected:
+        from .presence import confirm_code
+        if not confirm_code():
+            raise WorkspaceError("the confirmation code did not match; nothing was changed")
+
+
 def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
                   verify: str | None = None, approver_uid: int | None = None, presence=None, *,
                   delegated: bool = False, model_id: str | None = None, env=None, ancestors=None,
@@ -519,6 +543,10 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
     if delegated and mode != "connected":
         raise WorkspaceError("a delegated setup only sets connected mode")
     actor = None
+    if mode != "connected" and access_mode(load_workspace(workspace)[1]) == "connected":
+        # Leaving connected mode takes the gate off the session's org access, so it
+        # needs what entering it needs: a person at a real terminal, and the code.
+        _owner_at_terminal(presence, "connected mode is left")
     if mode == "connected":
         if approval not in APPROVAL_VALUES:
             raise WorkspaceError("connected mode needs --approval required")
@@ -544,22 +572,21 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
                 workspace, "setup", model_id=model_id, require_tier2=False, getuid=getuid, env=env,
                 ancestors=ancestors, root_owner=root_owner)
         else:
-            injected = presence is not None
-            if presence is None:
-                from .presence import operator_present as presence
-            check = presence()
-            if not check.ok:
-                raise WorkspaceError(f"connected mode is set by the owner at a real terminal: {check.reason}")
-            if not injected:
-                from .presence import confirm_code
-                if not confirm_code():
-                    raise WorkspaceError("the confirmation code did not match; nothing was changed")
+            _owner_at_terminal(presence, "connected mode is set")
     if delegated:
         root, config = delegated_root, delegated_config
         _inside(root, root / "clients")
     else:
         root, config = load_workspace(workspace)
-    config["ai_access"] = mode
+    from . import gate
+    if mode == "connected" and config.get("schema") == SCHEMA_GUARDED and config.get(GUARDED_READS) == "on":
+        config["ai_access"] = gate.CONNECTED_GUARDED    # guarded reads stay on, and so does how the mode is written
+    else:
+        # Guarded reads belong to connected mode: leaving it switches them off.
+        config["ai_access"] = mode
+        if config.get("schema") == SCHEMA_GUARDED:
+            config.pop(GUARDED_READS, None)
+            config["schema"] = SCHEMA
     for key in ("approval", "approval_verify", "approver_uid"):
         config.pop(key, None)
     if mode == "connected":
@@ -587,6 +614,43 @@ def set_ai_access(workspace: str | Path, mode: str, approval: str | None = None,
     return root
 
 
+def guarded_reads_on(config) -> bool:
+    """Guarded reads are on for this workspace.json: the setting, its schema and the
+    way the mode is written all say so (a hand-edited setting in an old-schema file
+    counts as off)."""
+    from . import gate
+    return (isinstance(config, dict) and config.get("schema") == SCHEMA_GUARDED
+            and config.get(GUARDED_READS) == "on" and config.get("ai_access") == gate.CONNECTED_GUARDED)
+
+
+def set_guarded_reads(workspace: str | Path, value: str, presence=None) -> Path:
+    """Switch guarded reads on or off for a connected workspace: the owner, at a real
+    terminal, with the confirmation code. On changes the workspace's schema and the
+    way its mode is written (gate.CONNECTED_GUARDED). A Torque from before guarded
+    reads then refuses to load the workspace file, and its hook, which reads the mode
+    without loading the file, takes the word it does not know for build-only: it
+    refuses org work there instead of applying its own older reading of connected mode."""
+    from . import gate
+    require_writable(workspace)
+    if value not in ("on", "off"):
+        raise WorkspaceError("guarded reads are on or off")
+    _owner_at_terminal(presence, "guarded reads are switched")
+    root, config = load_workspace(workspace)
+    if value == "on":
+        if access_mode(config) != "connected":
+            raise WorkspaceError("guarded reads work in a connected workspace; set connected mode first")
+        config[GUARDED_READS], config["schema"], config["ai_access"] = "on", SCHEMA_GUARDED, gate.CONNECTED_GUARDED
+    else:
+        config.pop(GUARDED_READS, None)
+        config["schema"] = SCHEMA
+        if config.get("ai_access") == gate.CONNECTED_GUARDED:
+            config["ai_access"] = "connected"
+    config["guarded_reads_changed_at"] = _now()
+    _atomic_replace_text(_inside(root, root / CONFIG), json.dumps(config, indent=2, ensure_ascii=False) + "\n",
+                         keep_mode=True)
+    return root
+
+
 CONNECTED_RULE = "production-approval.md"
 BUILD_ONLY_RULE = "build-only.md"
 # The rule file a mode adds to each host's playbook: mode -> (its name there, where
@@ -597,6 +661,19 @@ MODE_RULES = {"connected": (CONNECTED_RULE, ("connected", CONNECTED_RULE)),
 # mode rules existed: `_connected_rule` writes and removes it, and `torque
 # workspace upgrade` does not track it.
 _CONNECTED_RULE_PATH = ".claude/rules/" + CONNECTED_RULE
+
+
+def connected_rule_stale(workspace: str | Path) -> bool:
+    """Claude Code's copy of the connected rule differs from this version's text.
+    `torque workspace upgrade` does not track that file, so it says this instead."""
+    try:
+        root, config = load_workspace(workspace)
+        if access_mode(config) != "connected":
+            return False
+        packaged = resources.files("torque").joinpath("data", "connected", CONNECTED_RULE).read_text(encoding="utf-8")
+        return (root / ".claude" / "rules" / CONNECTED_RULE).read_text(encoding="utf-8") != packaged
+    except (OSError, ValueError, WorkspaceError):
+        return False
 
 
 def access_mode(config: dict) -> str:

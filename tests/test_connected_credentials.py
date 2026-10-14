@@ -147,8 +147,9 @@ def test_the_reason_for_a_shortened_command_names_the_full_one(w):
 @pytest.mark.parametrize("command,expected", [
     # Words from no refused command, or one word too many, are an ordinary unknown command.
     ("sf open -o acme-prod", [("org_write", "acme-prod")]),
-    ("sf query -q x -o acme-prod", [("org_write", "acme-prod")]),
-    ("sf list users -o acme-prod", [("org_write", "acme-prod")]),
+    # ... unless its words all come from a record or log read, which the CLI can complete it to.
+    ("sf query -q x -o acme-prod", [("admin", "acme-prod")]),
+    ("sf list users -o acme-prod", [("admin", "acme-prod")]),
     ("sf display limits -o acme-prod", [("org_write", "acme-prod")]),
     ("sf project generate --name demo", [("local", None)]),
     ("sf config list", [("local", None)]),
@@ -244,8 +245,11 @@ def test_command_words_built_at_run_time_are_refused_not_approvable(w):
         assert run(w, "Bash", {"command": command}).action == "deny", command
 
 
-def test_a_variable_in_a_flag_value_is_still_an_ordinary_command():
-    assert B("for f in a b; do sf apex run -f $f -o acme-prod; done") == [("local", None), ("org_write", "acme-prod")]
+def test_a_variable_in_a_flag_value_keeps_the_commands_route():
+    # A write needs an approval for this exact text, variable and all.
+    assert B("for f in a b; do sf apex run -f $f -o acme-prod; done") == [
+        ("local", None), ("org_write", "acme-prod")]
+    assert B('for f in a b; do sf apex run -f "$f" -o acme-prod; done') == [("local", None), ("org_write", "acme-prod")]
     assert B("sf api request rest '/services/data/v60.0/query?q=SELECT+Id+FROM+Account' -o acme-prod") == [
         ("read", "acme-prod")]
 

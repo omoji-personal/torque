@@ -113,7 +113,7 @@ uses for hooks when installed) as well as cmd:
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
+  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
 ```
 
 The `sys.excepthook` wrapper makes the hook exit 2 (block) if that interpreter cannot

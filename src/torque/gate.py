@@ -2900,6 +2900,13 @@ def _mcp_path_reason(tool_name: str, tool_input: dict, clients: Path, claude_dir
 MODE_STRICTNESS = {"build-only": 2, "connected": 1, "full": 0}
 
 
+# How connected mode is written in workspace.json while guarded reads are on. A Torque
+# from before guarded reads does not know the word, and anything it does not know
+# is build-only to it (below): its hook then refuses org work in that workspace
+# instead of applying its own, older reading of connected mode.
+CONNECTED_GUARDED = "connected-guarded"
+
+
 def _resolve_ai_access(value: object, approval: object = None) -> str:
     """Only an explicit "full" means full, and only "connected" together with
     approval "required" means connected. Everything else present (null, an
@@ -2908,7 +2915,7 @@ def _resolve_ai_access(value: object, approval: object = None) -> str:
     and means full, the documented default."""
     if value == "full":
         return "full"
-    if value == "connected" and approval == "required":
+    if value in ("connected", CONNECTED_GUARDED) and approval == "required":
         return "connected"
     return "build-only"
 
@@ -2979,8 +2986,10 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
 # hook_command runs it with -I (isolated mode, Python 3.4+): the working
 # directory, PYTHONPATH and the user site directory stay off sys.path, so a
 # torque/ folder or sitecustomize.py planted in the workspace is never imported.
-HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate "
-                  "could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',"
+# A host that reports a blocked call quotes this whole command before the gate's reason, so
+# the text inside it names no mode and reads as the fallback it is.
+HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate "
+                  "could not load: '+t.__name__+': '+str(e)+'; call blocked)',"
                   "file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())")
 
 

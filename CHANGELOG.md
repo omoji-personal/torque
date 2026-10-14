@@ -1,5 +1,153 @@
 # Changelog
 
+## Unreleased
+
+Connected mode reads commands more exactly, a consent can give one org more than the others, and a new
+off-by-default feature, guarded reads, answers build questions about an org without record consent.
+
+- Fix, connected mode: computed Bash wrapper options retain their actual command; builtin listing,
+  option values and wrapper help no longer create false setter questions. Outer org options survive
+  substitutions and computed redirections. Nested Bash readings share a bounded cache and refuse
+  scanner exhaustion.
+- Fix, connected mode: PowerShell arrays retain org arguments across blank lines, comments and every
+  line ending, and backticks within words preserve physical newline values. Bash-only program names
+  need review and function replacement checks ignore letter case.
+- Fix, connected mode: complete CLI read aliases keep their consent classes. REST headers are checked
+  across all their values, and ambiguous REST requests that can read ApexLog require log consent too.
+
+- Fix, connected mode: packaged read scripts use their delegate's consent class; ApexLog CLI and MCP reads
+  need debug-log consent. REST log paths match from their own root, and Tooling person fields retain their
+  class in every letter case. ApexLog describes remain metadata. Custom endpoint words in query literals,
+  headers and output filenames no longer make ordinary REST GETs writes. Explicit REST Authorization
+  headers are refused as credentials, and ambiguous Tooling query URLs remain record reads.
+- Fix, connected mode: unknown Python module names no longer inherit the revert delegate's local routes.
+  Salesforce MCP scratch-org resumption requires write approval. Planned orgs are local records, and
+  verifying a deployment is a metadata read.
+
+- Fix, connected mode: a session could switch the mode off. `torque workspace ${x:-ai-access} full` and
+  `torque -- workspace ai-access full` were read as local work, and leaving connected mode needed no person.
+  Leaving connected mode now needs the owner at a real terminal and the confirmation code, as entering it does.
+- Fix, connected mode: the gate keeps how each word was written. In one of Torque's own commands a word the
+  shell builds (an unquoted `$VAR`, a brace expansion, a glob, `--opt=$x`), a `--` where the command takes
+  none, PowerShell's `--%`, `@args` or `(...)`, and a command substitution after it are refused; a
+  double-quoted variable is accepted as an option's value only. Quoted text is plain text: `--summary 'costs
+  $5'` and `torque client add "Acme [EMEA]"` pass. A quoted operator (`--hook-python ">"`) no longer hides the
+  option after it, and a backslash at a line end joins the lines as the shell does.
+- Fix, connected mode: record and log reads are recognized in any word order and in the colon spelling
+  (`sf query data`, `sf data:query`), so an approval can no longer stand in for record consent. A command whose
+  words are only part of such a read (`sf query`, `sf log`) is refused. `sf cmdt generate fromorg` and `sf org
+  list users` need record consent. A Tooling API row, and a Tooling query that names a person or reads another
+  entity than a schema one, need record consent. A REST path with a `..` segment, or one the shell fills in, is
+  never a schema read.
+- Fix, connected mode: the words after an unquoted `#` do not run in Bash or PowerShell, but the gate read
+  them: `sf data query ... # -o sandbox` ran on the default org, and `sf project deploy start ... # --dry-run`
+  deployed without an approval. The line is now read both with and without them. A value attached to a short
+  option (`-XDELETE`, `-oALIAS`) or short options written together are refused: the CLI reads an option and a
+  value there, the gate read one unknown word. `sf api request rest` is a read only with options the gate
+  knows. `$'...'` is decoded only where the shell decodes it, with Bash's escapes. `sf force data soql query`
+  is the record read it is. A comment that ends in a backslash no longer swallows the next line, a quote inside
+  a comment or a here-document's body no longer pairs with a later one, a command substitution inside double
+  quotes keeps its own quotes, and a REST query is a debug-log read only when it reads `ApexLog`. In a
+  PowerShell call a backslash at a line end does not join lines, and PowerShell's escaped quotes do not end a
+  string. A PowerShell here-string or `<# ... #>` comment no longer hides the command after it, nor do curly
+  quotes, a no-break space, the stop-parsing token (`--%`) or a `${name}` that holds a quote; an assignment
+  (`$rows = sf data query ...`), `return`, `throw`, `exit`, a `foreach` list and a hash literal's value are
+  read as the command they run; and `powershell -Command '...'` in a Bash call gets the same readings as a
+  PowerShell call. On a PowerShell line that uses more than plain words and plain quotes, text that names an
+  `sf` or `torque` command the gate did not read as one is asked about. What a command substitution runs is read wherever the
+  substitution ends (a `case` pattern, a comment or a here-document inside it no longer hides the rest), and a
+  REST URL is found after its options too. Two new tests run the gate against real Bash and, on Windows, real
+  PowerShell.
+- Fix, connected mode: a read with a variable set for it (`X=1 sf data query ...`, after `export`) keeps its
+  data class and is asked about; it used to be asked about only. An `sf` or delegated Torque read with words
+  the shell adds later is asked about too. A PowerShell command string (`powershell -Command '...'`, also from
+  a Bash call) has its reads and owner commands checked.
+- Fix, connected mode: an option's name cut short on a Torque command is refused. The parser of a delegated
+  command takes `--target other` as `--target-org other`, and the last one given wins, so `torque advisory
+  impact --target-org A ... --target B` read org B while the gate checked A. (Torque's own commands refuse a
+  shortened name themselves.) A PowerShell hash literal or script block is read
+  under any command (`echo @{rows = sf data query ...}`), the word inside a Bash `${...}` keeps its own quotes
+  (`"${x:-"'"}"`), a splatted `@MORE` or `--%` on an `sf` read is asked about, and two writes on one
+  PowerShell line are never one approved command. Windows PowerShell does not escape what an argument
+  holds when it starts a program: an argument with a double quote in it, a double-quoted string with a
+  variable in it, or a string that ends in a backslash is read as words the shell adds later; a comma list
+  is read as the separate words it becomes; an org option with an empty value names no org. A Bash
+  here-document is read with any delimiter (`<<\!`). The guarded commands refuse a describe that does not
+  state each field's type and whether it is calculated and encrypted, and keep back a field whose type they
+  do not know. A PowerShell hash literal's value is read whatever its key is (`@{1=sf ...}`), also behind a
+  string that holds a subexpression. On Windows, where `sf` is usually a `.cmd` launcher, an `sf` command
+  with `%NAME%` or cmd's own characters in an argument is asked about. A PowerShell assignment is read
+  whatever its target looks like and however many are chained (`$a = $b.'c d' = sf ...`), and on any
+  PowerShell line that is more than plain words and quotes, text that names an `sf` or `torque` command the
+  gate did not read as one is asked about. Bash's `$"..."` counts as a word the shell builds. The guarded
+  commands keep back a field of an unknown type in every lane, and a formula made from one, and refuse a
+  describe that names a compound field's parent without listing it. A PowerShell word that begins with a
+  quoted string ends at its closing quote (`"x"--target-org other` is three words); any variable in a quoted
+  PowerShell argument counts as a value that is not on the line; a backslash before a Windows line ending in
+  Bash is read both ways (Git Bash joins the lines, Bash elsewhere does not); `exec -a NAME command` is read
+  as the command; and with guarded reads off the gate refuses every `torque guarded` read. The text between
+  backticks is read as Bash reads it, with one backslash taken off (`\\"` becomes `\"`, a quote that opens
+  nothing, and the command after it runs). In PowerShell, a command inside a hash literal or a script block
+  is asked about as on a line of its own (`echo @{1=python x.py}` runs python), and so is an assignment
+  wherever it stands (`echo @{1=$env:NAME='...'}` sets a variable that `sf.cmd` fills in); an escaped dollar
+  (`` "Paid `$5" ``) is plain text. One of Torque's commands whose client, initiative or org
+  option gets its value from the shell (`--client "$NAME"`) is refused. A PowerShell word that names the
+  environment, function, alias or variable drive (`cp env:A env:B`, `cd alias:`) is asked about. The line
+  and paragraph separators (U+2028, U+2029) separate words for PowerShell, and the gate's table of such
+  characters is now checked against PowerShell's own tokenizer. A PowerShell method call (`$x.Invoke()`) is
+  asked about wherever it stands. A guarded read names its workspace with a path written out
+  (`--workspace "$PWD/.."` is refused). The guarded commands do not use a describe that leaves out, or
+  misstates, which compound field a field is part of. In Bash, a statement that sets a variable the next
+  commands read without `export` (`PATH=/x:$PATH; sf ...`, `HOME=/x; sf ...`, also through `read`,
+  `printf -v`, `declare` or a `for` variable) makes those commands asked about, as `export` does; `hash -p`
+  and a variable Bash runs commands from (`PS4`) are asked about. A number is a file descriptor only directly
+  before a redirection, so `--target-org 123 >&2` keeps its org. A PowerShell method whose name comes from a
+  variable, or whose argument is a script block without parentheses, is a method call (checked against
+  PowerShell's parser). A sensitive word is found after an acronym (`SSNStatus`), beside a digit and in the
+  plural. The record of a guarded read tells a mask from a stored value that reads like one. A describe that
+  leaves out a field's label, or whether it is the record's name, is not used. A Bash word is read once
+  more with its quotes removed, so a command substitution written in pieces is seen where Bash evaluates the
+  word a second time (`read 'a[$'"(sf ...)]"`, `${y@P}`). A variable set in passing counts as set
+  (`${HOME:=x}`, `$[ HOME = 9 ]`, `{HOME}>file`, `printf -vHOME`), and a name is compared as written
+  (`tmp=...` is left alone). `/usr/bin/time -o FILE command` is read as the command. The record of a
+  configuration read goes by the rows that were printed. `docs/connected-approval.md` says what the gate
+  reads and what it cannot: a value that is not on the line. The words a brace expansion makes are read as the
+  command they make (`{sf,data,query,-o,dev}`). A REST path counts as a schema read only as a whole path
+  (`/sobjects/Account/External__c/describe` is a record). In PowerShell a `#`, `<` or `>` in the middle of a
+  word is read both as part of the word and as a comment or a redirection, since PowerShell decides by where
+  it stands; `${...}` ends at an unescaped brace; a here-string begins only at the start of a token; a
+  subexpression inside a string or a word ends where PowerShell's tokenizer ends it. In Bash a `#` right after
+  the `)` of a substitution begins no comment (`echo $(date)#x ; sf ...` runs sf), and the lines before a line
+  whose quotes do not pair are read as written, since Bash runs them. The gate is now also compared with
+  PowerShell's parser and with real Bash on random lines, in the test suite. Bash keeps the completed
+  lines before an unfinished quote even in long scripts, reads through `time -p` and named coprocesses,
+  and asks about alias definitions and functions that replace a command it knows. PowerShell asks about
+  command words beginning with `-`, `=` or `!` inside a hash or script block and about parenthesized call
+  targets, while expressions stay quiet. REST query endpoints are matched as whole paths, so an
+  external-id value named `query` remains a record read.
+- Guarded reads and older versions: while guarded reads are on, `workspace.json` names the mode
+  `connected-guarded`. A Torque from before guarded reads treats that as build-only and refuses org work in
+  the workspace, instead of applying its own older reading of connected mode.
+- Stricter for existing use: `sf query` and `sf list users` are refused instead of treated as writes; a read
+  with an unquoted `$VAR` asks; `torque ... -- ...` is refused except for `approval request`, `approval
+  require`, `launch` and the delegated commands. `torque advisory impact` and `receipt` with `--where` need the
+  `records` class (a filtered count answers a question about records). Option names on Torque commands are
+  written in full. A write beside something the gate can only ask about (`env -C DIR sf project deploy start
+  ...`) is refused, where it used to be asked about. In a PowerShell call a read with a double-quoted variable in
+  an argument (`-q "... WHERE Id = '$ID'"`) is asked about, and one of Torque's own commands with one
+  (`--summary "$TEXT"`) is refused; in Bash both are read as before.
+- Consent per org: `torque client consent record ... --org-data ALIAS=class,class` gives one approved org
+  classes beyond the client's list (`records` on a development sandbox, `metadata` alone on production). An
+  older Torque ignores the addition and applies the narrower list.
+- Guarded reads, off by default ([guide](docs/guarded-reads.md)): `torque guarded counts`, `fill`, `config`,
+  `record`, `related`, `org` and `exposure` for an org whose consent has no `records`. Counts and filters use
+  only fields the consultant released, small groups are not printed, rows of a configuration object show only
+  the fields its release names, and a record is read only when the consultant registered it as a test record.
+  The owner turns it on with `torque workspace guarded-reads on`; the consultant sets what may be shown with
+  `torque guarded policy` and `torque guarded test-records`, at a real terminal. A workspace with guarded
+  reads on, and a consent that holds a guarded class, are written in a format an older Torque refuses.
+- Docs: what the `metadata` class covers is stated in [connected-approval](docs/connected-approval.md).
+
 ## 2.0.0a20 - Windows and Antigravity, 2026-10-08 (not published to a package index)
 
 Torque now runs on Windows and under a second agent host, Antigravity, beside Claude Code. What was run live and what was only tested offline is in the [validation record](docs/validation-alpha20.md) and on the [hosts page](docs/hosts.md).

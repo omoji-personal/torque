@@ -579,7 +579,9 @@ def test_new1_uri_path_helper():
 def test_block_messages_use_the_build_only_name():
     allowed, reason = gate.decide("Read", {"file_path": "/w/clients/acme/notes.md"}, W, "build-only")
     assert not allowed and reason.startswith("Build-only mode:"), reason
-    assert "Build-only mode" in gate.HOOK_SHIM_CODE
+    # The hook command serves every mode, and a host quotes it before each refusal: it names none of them.
+    shim = gate.HOOK_SHIM_CODE.casefold()
+    assert "could not load" in shim and not any(name in shim for name in ("build-only", "connected", "de-identified"))
 
 
 @pytest.mark.parametrize("rel", ["README.md", "docs/ai-access.md", "docs/installation.md", "src/torque/gate.py",

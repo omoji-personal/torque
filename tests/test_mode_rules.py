@@ -88,10 +88,10 @@ def test_connected_writes_the_production_rule_for_both_hosts(root):
     lines = header(copy)
     assert lines[0] == "trigger: always_on" and lines[1].startswith("description: ") and len(lines[1]) > 14
     assert copy.endswith(text)
-    ws.set_ai_access(root, "build-only")
+    ws.set_ai_access(root, "build-only", presence=YES)
     assert present(root) == {CLAUDE_BUILD, AGY_BUILD}
     ws.set_ai_access(root, "connected", approval="required", presence=YES)
-    ws.set_ai_access(root, "full")
+    ws.set_ai_access(root, "full", presence=YES)
     assert present(root) == set()
 
 

@@ -86,7 +86,9 @@ def _config_mode(path: Path, selected_client: bool = False):
 
 
 def _is_connected(config) -> bool:
-    return isinstance(config, dict) and config.get("ai_access") == "connected" and config.get("approval") == "required"
+    # "connected-guarded" is how connected mode is written while guarded reads are on (torque.gate).
+    return (isinstance(config, dict) and config.get("ai_access") in ("connected", "connected-guarded")
+            and config.get("approval") == "required")
 
 
 def _connected_scope():

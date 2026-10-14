@@ -58,7 +58,7 @@ def test_rule_file_materialized_and_removed(tmp_path):
     ws.set_ai_access(root, "connected", approval="required", presence=YES)
     assert "propose, show the plan and stop" in rule.read_text(encoding="utf-8").lower()
     ws.set_ai_access(root, "connected", approval="required", presence=YES)
-    ws.set_ai_access(root, "full")
+    ws.set_ai_access(root, "full", presence=YES)
     assert not rule.exists()
     ws.set_ai_access(root, "build-only")
     assert not rule.exists()

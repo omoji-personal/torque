@@ -305,7 +305,10 @@ torque workspace ai-access connected --approval required --path /path/to/workspa
 ```
 
 Connected mode also needs a person at a real terminal outside the AI session, and has its
-own setup steps: [connected mode](connected-approval.md).
+own setup steps: [connected mode](connected-approval.md). Leaving connected mode needs that
+person too, so a session cannot switch the mode off. For an org whose client agreed to
+metadata only, a connected workspace can add [guarded reads](guarded-reads.md), off by
+default: `torque workspace guarded-reads on --path /path/to/workspace`.
 
 ## Wiring the Claude Code hook
 
@@ -338,7 +341,7 @@ and pass the file (`git commit -F msg.txt`).
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
+  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
 ```
 
 The hook reads the tool-call JSON on stdin and exits 0 to allow or 2 to block. Claude Code treats
