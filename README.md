@@ -8,7 +8,7 @@ of plain files per client: business context, requirements, decisions, evidence a
 a handoff another consultant can use. It also wraps Salesforce CLI operations so
 that a change leaves a record and, where supported, a way back.
 
-**Status: development alpha, version 2.0.0a20.** It has not been published to a
+**Status: development alpha, version 2.0.0a21.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
 have offline acceptance coverage; live operations have narrower coverage, stated
 separately in [validation](docs/validation.md).
@@ -102,7 +102,9 @@ The [alpha 16 record](docs/validation-alpha16.md) covers the runtime, and the
 The [alpha 18 record](docs/validation-alpha18.md) covers browser restoration and failure
 diagnostics, and the [alpha 19 record](docs/validation-alpha19.md) covers clients and
 initiatives. The [alpha 20 record](docs/validation-alpha20.md) covers Windows and
-Antigravity, and says which parts were run live. No industry-leadership claim is made.
+Antigravity, and says which parts were run live. The [alpha 21 record](docs/validation-alpha21.md)
+covers connected mode's command reading, consent per org and guarded reads. No
+industry-leadership claim is made.
 
 ## Continue real client work
 
