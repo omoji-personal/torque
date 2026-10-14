@@ -269,6 +269,7 @@ def random_lines(count: int, seed: int) -> list:
 # (The gate's older ANSI-C helper decodes with Python's own codec, which warns about an escape it does not
 # know, such as `\)`; it keeps such an escape as written, as Bash does. The random strings hold many.)
 @pytest.mark.filterwarnings("ignore:invalid escape sequence:DeprecationWarning")
+@needs_bash5        # macOS's Bash 3.2 once put another line's call against `\! "${x:->}"; sf ...`
 def test_random_lines_run_in_bash(tmp_path):
     # The gate has to report the org of every sf call Bash ran, or refuse the line outright. A call only
     # asked about without its org is a miss.
