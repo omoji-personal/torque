@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.0a21 - connected mode read as the shells run it, guarded reads, 2026-10-14 (not published to a package index)
 
 Connected mode reads commands more exactly, a consent can give one org more than the others, and a new
 off-by-default feature, guarded reads, answers build questions about an org without record consent.
@@ -139,7 +139,7 @@ off-by-default feature, guarded reads, answers build questions about an org with
 - Consent per org: `torque client consent record ... --org-data ALIAS=class,class` gives one approved org
   classes beyond the client's list (`records` on a development sandbox, `metadata` alone on production). An
   older Torque ignores the addition and applies the narrower list.
-- Guarded reads, off by default ([guide](docs/guarded-reads.md)): `torque guarded counts`, `fill`, `config`,
+- Guarded reads, off by default ([guide](docs/guarded-reads.md)): `torque guarded counts`, `fill-rate`, `config`,
   `record`, `related`, `org` and `exposure` for an org whose consent has no `records`. Counts and filters use
   only fields the consultant released, small groups are not printed, rows of a configuration object show only
   the fields its release names, and a record is read only when the consultant registered it as a test record.
@@ -147,6 +147,16 @@ off-by-default feature, guarded reads, answers build questions about an org with
   `torque guarded policy` and `torque guarded test-records`, at a real terminal. A workspace with guarded
   reads on, and a consent that holds a guarded class, are written in a format an older Torque refuses.
 - Docs: what the `metadata` class covers is stated in [connected-approval](docs/connected-approval.md).
+- Guarded reads after three live trials on a practice org: the fill lane is called `fill-rate`, since a host's
+  auto-mode check refused the word `fill` before the gate saw it (its records and consent class keep the name
+  `fill`). Refusals name one next step: tell the consultant, or use the guarded command that pairs with the
+  org's consent class. `record` and `related` explain what they show, including `<blank>` and `<set>`.
+  `torque workspace upgrade` says when Claude Code's copy of the connected rule is from another version.
+- Fix, delegated sign-off: who is calling is checked before the consent record is looked up, so an agent
+  session gets its own refusal. The early look, which spares the consultant a code when there is nothing to
+  sign off, stays for the consultant's own call.
+- Tests: the real-Bash comparisons expect Bash 5 and skip on macOS's Bash 3.2. Validation:
+  [alpha 21 record](docs/validation-alpha21.md).
 
 ## 2.0.0a20 - Windows and Antigravity, 2026-10-08 (not published to a package index)
 
