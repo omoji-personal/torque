@@ -18,6 +18,20 @@ from torque.connected_routes import classify
 
 BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None, reason="needs a Bash to compare with")
+
+
+def _bash_major():
+    if BASH is None:
+        return None
+    done = subprocess.run([BASH, "--noprofile", "--norc", "-c", "echo ${BASH_VERSINFO[0]}"],
+                          capture_output=True, text=True, timeout=60)
+    return int(done.stdout.strip()) if done.stdout.strip().isdigit() else None
+
+
+# The expectations are Bash 5's. macOS ships Bash 3.2 as /bin/bash, which runs fewer of these forms
+# and expands zero-padded, negative and stepped brace ranges and $'\c' escapes differently.
+BASH_MAJOR = _bash_major()
+needs_bash5 = pytest.mark.skipif((BASH_MAJOR or 0) < 5, reason="expectations are Bash 5's (macOS /bin/bash is 3.2)")
 PRELUDE = "sf() { { printf 'sf'; for a in \"$@\"; do printf ' %s' \"$a\"; done; printf '\\n'; } >> ..out; }\n"
 S = "sf sobject describe -s A -o org0"
 T = "sf sobject describe -s A -o org1"
@@ -149,6 +163,7 @@ def bash_runs(line: str, folder: Path) -> set | None:
     return set(re.findall(r"org\d", out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""))
 
 
+@needs_bash5
 def test_the_gate_reports_every_sf_command_bash_runs(tmp_path):
     # First prove that Bash runs here and that the recording works: a Bash that cannot
     # start would otherwise look like one that ran nothing, and every line would pass.
@@ -433,6 +448,7 @@ LINES += [
     ("org0\rVALUE", "org0VALUE" if os.name == "nt" else "org0\rVALUE"),
     ("'org0\rVALUE'", "org0VALUE" if os.name == "nt" else "org0\rVALUE"),
 ])
+@needs_bash5
 def test_r19_bash_records_the_complete_org_argument(tmp_path, word, org):
     if bash_runs(S, tmp_path) != {"org0"}:
         pytest.skip("Bash is present but did not run the baseline line here")

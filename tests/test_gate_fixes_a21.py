@@ -267,7 +267,11 @@ def test_leaving_connected_mode_needs_a_person_at_a_terminal(w, mode):
 
 def test_the_command_line_cannot_leave_connected_mode_without_a_terminal(w, capsys):
     assert cli.main(["workspace", "ai-access", "full", "--path", str(w)]) == 2
-    assert cli.main(["--", "workspace", "ai-access", "full", "--path", str(w)]) == 2
+    try:
+        code = cli.main(["--", "workspace", "ai-access", "full", "--path", str(w)])
+    except SystemExit as stop:      # some Python 3.10 releases refuse a leading "--" in argparse itself
+        code = stop.code
+    assert code == 2
     assert "real terminal" in capsys.readouterr().err
     assert ws.load_workspace(w)[1]["ai_access"] == "connected"
 

@@ -378,8 +378,20 @@ def test_an_unexpected_error_prints_its_class_only(w):
     assert err.getvalue() == "torque guarded: guarded read failed (RuntimeError)\n" and out.getvalue() == ""
 
 
+def fail_record_writes(monkeypatch):
+    """Only the call record is created with O_EXCL. On macOS and Linux the temporary folder's
+    cleanup also calls os.open, so failing every call would stop the read before its record."""
+    real_open = os.open
+
+    def fake_open(path, flags, *args, **kwargs):
+        if flags & os.O_EXCL:
+            raise OSError("disk")
+        return real_open(path, flags, *args, **kwargs)
+    monkeypatch.setattr(guarded.os, "open", fake_open)
+
+
 def test_nothing_prints_when_the_record_of_the_call_cannot_be_written(w, monkeypatch):
-    monkeypatch.setattr(guarded.os, "open", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    fail_record_writes(monkeypatch)
     with pytest.raises(E, match="record of this call could not be written"):
         guarded.counts(w, "Acme", "acme-prod", "Opportunity", **kw(Sf(lambda soql: [{"n": 40}])))
 
@@ -447,7 +459,7 @@ def test_org_and_candidates_are_recorded_and_print_nothing_when_they_cannot_be(w
     guarded.candidates(w, "Acme", "acme-prod", "Opportunity", **kw())
     assert [entry["lane"] for entry in activity(w)] == ["org", "candidates"]
     assert activity(w)[1]["object"] == "Opportunity"
-    monkeypatch.setattr(guarded.os, "open", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    fail_record_writes(monkeypatch)
     for call in (lambda: guarded.org_info(w, "Acme", "acme-prod", resolve=ORGS.get, env={}),
                  lambda: guarded.candidates(w, "Acme", "acme-prod", "Opportunity", **kw())):
         with pytest.raises(E, match="record of this call could not be written"):

@@ -209,7 +209,8 @@ def _update(workspace, client, presence, change, *, delegated: bool = False, mod
     ws.require_writable(workspace)
     _, path = _path(workspace, client)
     # Looked at before the code is asked for: with nothing to change, the consultant types nothing.
-    if load_consent(workspace, client) is None:
+    # A delegated call is first refused or allowed for who is calling (agent session, tier 2, delegate).
+    if not delegated and load_consent(workspace, client) is None:
         raise ws.WorkspaceError("no consent record; run torque client consent record first")
     actor = _actor(workspace, presence, None, delegated, model_id, env, ancestors, getuid, root_owner)
     item = load_consent(workspace, client)
