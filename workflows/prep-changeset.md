@@ -25,6 +25,13 @@ targeted tests, recovery references, deployment order and post-deploy checks. Pr
 the submitted manifest alongside its job ID; a job's success cannot authenticate a
 later modified manifest. Mark destructive changes explicitly when in scope.
 
+When a Torque recovery bundle is useful, execute the authorized metadata write as
+`torque deploy --metadata Type:Name --target-org ALIAS --workspace W --client C`.
+Repeat `--metadata` for each component. Manifest-only, source-directory and dry-run
+deploys do not capture complete before-state; retain the `/retrieve-current`
+baseline for manual recovery instead. Mixed or destructive selectors also need
+manual review. A bundle is usable only where its recorded recovery coverage is complete.
+
 Save the packet in the private task directory and summarize it in the session. If the
 request includes execution, carry the packet through the user's normal Salesforce
 deployment tools and actual authorization; generating a checklist is not the end

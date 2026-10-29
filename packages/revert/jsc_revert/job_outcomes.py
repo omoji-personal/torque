@@ -126,8 +126,12 @@ def deploy_outcome(data, exit_code=0, expected_job_id=None):
         success = _one(rows, ('success',))
         if any(value is not None and type(value) is not bool for value in (done, success)):
             return 'partial', job_id
-        if state in ('InProgress', 'Pending', 'Canceling'):
+        if state in ('InProgress', 'Pending', 'Canceling', 'Queued') and done is not True:
             return ('pending_finalize_required' if job_id else 'partial'), job_id
+        if state is None and done is not True and success is not True and job_id:
+            # Current CLI wait expiry carries only data.id; async clients may
+            # also return just an ID. Neither establishes terminal completion.
+            return 'pending_finalize_required', job_id
         if state == 'Canceled' and done is True and success is not True:
             return 'abandoned', job_id
         if state == 'Failed' and done is True and success is not True:

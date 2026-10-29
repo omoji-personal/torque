@@ -3,8 +3,10 @@
 import os
 import ast
 import argparse
+import importlib.util
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,9 +20,12 @@ LOCAL_TOOLS = ("git", "bash", "sh", "cmd", "ps", "rm", "chmod", "ln", "getfacl",
 def offline_environment(root: Path, scratch: Path) -> dict[str, str]:
     """Build a clean environment, with only the local tools the suite needs.
 
-    Windows CreateProcess searches for .exe, not .cmd. Use distlib's native
-    launchers, and resolve child commands explicitly in offline_support too:
-    Windows searches the application directory and CWD before PATH.
+    Windows stubs are .cmd shims that start the already-trusted interpreter: Smart
+    App Control blocks freshly written unsigned .exe launchers at random (WinError
+    4551). Python callers never run a shim; offline_support maps the stub name to
+    the interpreter and passes the arguments through unchanged. It also resolves
+    child commands explicitly: Windows searches the application directory and CWD
+    before PATH.
     """
     import json
 
@@ -44,13 +49,12 @@ def offline_environment(root: Path, scratch: Path) -> dict[str, str]:
     (support / "tools.json").write_text(json.dumps(local), encoding="utf-8")
     names = (*LIVE_TOOLS, *local, "python", "python3", "jsc", "torque")
     if os.name == "nt":
-        from distlib.scripts import ScriptMaker
-
-        maker = ScriptMaker(None, str(bins))
-        maker.executable = sys.executable
-        maker.variants = {""}
+        shim = f'@"{sys.executable}" "{support / "offline_support.py"}" '
         for name in names:
-            maker.make(f"{name} = offline_support:tool_main")
+            (bins / f"{name}.cmd").write_text(f"{shim}{name} %*\r\n", encoding="utf-8", newline="")
+            # Git Bash finds a tool by its bare name only without an extension.
+            script = shlex.join([Path(sys.executable).as_posix(), (support / "offline_support.py").as_posix(), name])
+            (bins / name).write_text(f'#!/bin/sh\nexec {script} "$@"\n', encoding="utf-8", newline="")
     else:
         for name in names:
             path = bins / name
@@ -58,7 +62,6 @@ def offline_environment(root: Path, scratch: Path) -> dict[str, str]:
                 path.symlink_to(local[name])
                 continue
             # A quoted interpreter path also supports a venv under a space.
-            import shlex
             path.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable)
                             + " " + shlex.quote(str(support / "offline_support.py"))
                             + " " + shlex.quote(name) + ' "$@"\n', encoding="utf-8")
@@ -69,7 +72,7 @@ def offline_environment(root: Path, scratch: Path) -> dict[str, str]:
             "LANG", "LC_ALL", "LC_CTYPE", "TZ"}
     env = {key: value for key, value in os.environ.items() if key.upper() in keep}
     if os.name == "nt":
-        env["PATHEXT"] = ".EXE"
+        env["PATHEXT"] = ".CMD;.EXE"
     home = scratch / "home"
     for name in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME",
                  "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "TMP", "TEMP", "TMPDIR"):
@@ -128,13 +131,49 @@ def standalone_summary(stdout: str) -> tuple[bool, str]:
     return False, "No nonempty successful fixture summary: " + summary
 
 
+def windows_path_limit_applies() -> bool:
+    """Windows refuses paths of 260 characters or more unless long paths are enabled."""
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            return winreg.QueryValueEx(key, "LongPathsEnabled")[0] != 1
+    except OSError:
+        return True
+
+
+def path_limit_note(scratch: Path, limited: bool) -> str:
+    """Advice when a deep temporary folder meets Windows' path limit: some tests build
+    evidence paths of about 190 characters inside it."""
+    if not limited or len(str(scratch)) <= 50:
+        return ""
+    return (f"Note: Windows long paths are off and the temporary folder {scratch} is {len(str(scratch))} "
+            "characters long, so tests that build deep evidence paths can fail with FileNotFoundError or a "
+            "path-limit refusal. Set TMP and TEMP to a short folder, such as C:\\tq, or enable long paths "
+            "(LongPathsEnabled).")
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--pytest-only", action="store_true")
+    # Pytest tests in N processes (pytest-xdist, a development dependency). The
+    # standalone fixture suites below still run one at a time.
+    parser.add_argument("--workers", type=int, default=1)
     options, pytest_args = parser.parse_known_args()
+    workers = []
+    if options.workers > 1:
+        if importlib.util.find_spec("xdist") is None:
+            print("--workers needs pytest-xdist: python -m pip install '.[dev]'", file=sys.stderr)
+            return 2
+        # Plugin autoloading is off in the offline environment, so load it by name.
+        workers = ["-p", "xdist", "-n", str(options.workers)]
     with tempfile.TemporaryDirectory(prefix="torque-offline-") as temporary:
         scratch = Path(temporary)
+        note = path_limit_note(scratch, windows_path_limit_applies())
+        if note:
+            print(note, file=sys.stderr)
         hitfile = scratch / "unexpected-live-cli.txt"
         env = offline_environment(root, scratch)
         # The carried packages contain pytest tests and standalone fixture harnesses.
@@ -150,7 +189,13 @@ def main():
             if not collected:
                 standalone.append(path)
         ignores = [f"--ignore={p.relative_to(root).as_posix()}" for p in standalone]
-        result = subprocess.run([sys.executable, "-m", "pytest", *ignores, *pytest_args], cwd=root, env=env)
+        # A short tmp_path base inside the scratch folder: some tests build evidence
+        # paths that come near Windows' 260-character limit, and each worker adds a
+        # popen-gwN folder to the default, already deep, base.
+        basetemp = [] if any(arg == "--basetemp" or arg.startswith("--basetemp=") for arg in pytest_args) \
+            else [f"--basetemp={scratch / 'p'}"]
+        result = subprocess.run([sys.executable, "-m", "pytest", *ignores, *workers, *basetemp, *pytest_args],
+                                cwd=root, env=env)
         code = result.returncode
         # Pytest options such as '--maxfail 1' have non-option operands too.
         # Only an explicit opt-out or collection/help mode skips executable suites.

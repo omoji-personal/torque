@@ -19,8 +19,11 @@ For an existing JWT/connected application, use its configured credential files a
 current Salesforce setup requirements; do not create a broadly privileged connected
 application or request full scopes as the automatic fallback.
 
-Verify the connection and query Organization identity/type. Save the alias and verified
-identity in the private client context. Never print access tokens, frontdoor URLs or keys.
+Verify the connection and identity with
+`sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" --target-org <org-alias> --json`,
+which prints no credential. Save the alias and verified identity in the private client context.
+Never print access tokens, frontdoor URLs or keys: not with `sf org display` (older Salesforce
+CLIs print the token), `sf org open --url-only` or `sf org auth show-*`.
 An authenticated org can be used for work already authorized by the user; Torque adds
 no production read-only toggle or separate sandbox permission grant.
 

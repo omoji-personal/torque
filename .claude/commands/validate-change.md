@@ -32,10 +32,24 @@ validation, for example in the selected DX project:
 sf project deploy start --manifest <package.xml> --target-org <org-alias> --dry-run --json
 ```
 
+Validation does not create a Torque recovery bundle. If the authorized write needs
+one, use `torque deploy --metadata Type:Name --target-org ALIAS --workspace W --client C`
+after validation, repeating `--metadata` for each component. `--test-level` and
+repeated `--tests` preserve the intended tests. Manifest-only, source-directory
+and dry-run deploys do not capture complete before-state; keep a verified
+`/retrieve-current` baseline for manual recovery, including before quick promotion.
+
 Record the exact validation job, selectors, component failures and test results.
 Test relevant Apex and user paths. `/qa` can route additional checks; skipped or
 unsupported surfaces remain visible and require no QA token. A failed validation
 needs diagnosis, not an invented success or automatic bypass of the failed checks.
+
+When a test creates persistent records, including records that automation creates,
+save each created record's Id when it is created, in the private task directory.
+Clean up by deleting only those Ids (an Id-file delete such as
+`sf data delete bulk --file ids.csv` with an Id column). Never build a delete from a
+query that matches by name, title, creator or date. If the Id list is lost or
+incomplete, stop and ask instead of matching.
 
 Check dependencies and summarize what passed, failed, was not applicable, or remains
 untested. When deployment is already authorized, continue once its material errors

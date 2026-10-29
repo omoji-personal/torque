@@ -108,37 +108,8 @@ def _parent_directory(path: Path):
 
 def _windows_private_file(path: Path) -> int:
     """CREATE_NEW with a protected owner/System DACL, including on Python 3.10."""
-    import ctypes
-    from ctypes import wintypes
-    import msvcrt
-    class SecurityAttributes(ctypes.Structure):
-        _fields_ = [("length", wintypes.DWORD), ("descriptor", wintypes.LPVOID),
-                    ("inherit", wintypes.BOOL)]
-    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    convert = advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW
-    convert.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.LPVOID), wintypes.LPVOID]
-    descriptor = wintypes.LPVOID()
-    if not convert("D:P(A;;FA;;;SY)(A;;FA;;;OW)", 1, ctypes.byref(descriptor), None):
-        raise ctypes.WinError(ctypes.get_last_error())
-    create = kernel.CreateFileW
-    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                       ctypes.POINTER(SecurityAttributes), wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
-    create.restype = wintypes.HANDLE
-    kernel.LocalFree.argtypes = [wintypes.LPVOID]
-    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    try:
-        attributes = SecurityAttributes(ctypes.sizeof(SecurityAttributes), descriptor, False)
-        handle = create(str(path), 0x40000000, 0, ctypes.byref(attributes), 1, 0x80, None)
-        if handle == wintypes.HANDLE(-1).value:
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            return msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
-        except Exception:
-            kernel.CloseHandle(handle)
-            raise
-    finally:
-        kernel.LocalFree(descriptor)
+    from jsc_common import winacl
+    return winacl.create_private(path, "D:P(A;;FA;;;SY)(A;;FA;;;OW)")
 
 
 def _windows_replace(source: Path, target: Path) -> None:

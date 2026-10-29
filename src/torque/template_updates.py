@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import Counter
 from contextlib import contextmanager
+import difflib
 import errno
 import hashlib
 from importlib import resources
@@ -50,6 +51,31 @@ def _hash(contents: bytes) -> str:
     return hashlib.sha256(contents).hexdigest()
 
 
+def _lf(contents: bytes | None) -> bytes | None:
+    """Local bytes with Windows line endings read as LF, as the packaged text is read
+    (`_bundled`). A Git checkout with core.autocrlf or a Windows editor changes only the
+    endings; that is not a local edit. Files are still written with LF."""
+    return None if contents is None else re.sub(rb"\r\n?", b"\n", contents)
+
+
+def _renames() -> dict[str, str]:
+    """Claude Code copies that versions up to 2.0.0a21 installed under the name of a
+    command Claude Code answers itself: old workspace path -> new one (torque-NAME)."""
+    from . import hosts
+    return {f".claude/commands/{name}.md": f".claude/commands/{hosts.recipe_name(hosts.CLAUDE, name)}.md"
+            for name in hosts.CLAUDE.builtin_commands}
+
+
+def _previous_copy(path: str) -> bytes | None:
+    """What versions up to 2.0.0a21 installed at an old path of `_renames`: the
+    packaged recipe as it is."""
+    try:
+        item = resources.files("torque").joinpath("data", "commands", path.rsplit("/", 1)[-1])
+        return item.read_text(encoding="utf-8").encode("utf-8") if item.is_file() else None
+    except (OSError, TypeError, ModuleNotFoundError):
+        return None
+
+
 def _valid_workflow(path: str) -> bool:
     return (isinstance(path, str) and path.endswith(".md") and "\\" not in path
             and all(part not in ("", ".", "..") for part in path.split("/"))
@@ -62,21 +88,26 @@ def _derived(path: str) -> bool:
 
 def _bundled(mode: str = "full") -> dict[str, tuple[bytes, str]]:
     """Every packaged file a workspace in `mode` gets: the same set in every mode,
-    plus the rule files that mode adds (workspace.mode_rules)."""
+    plus the rule files that mode adds (workspace.mode_rules). Claude Code's copies
+    are named and worded as workspace.claude_copy installs them."""
     data = resources.files("torque").joinpath("data")
     files = {}
-    def visit(item, relative: str, source: str) -> None:
+    def visit(item, relative: str, source: str, group: str) -> None:
         if item.is_dir():
             for child in sorted(item.iterdir(), key=lambda entry: entry.name):
                 if child.name in ("", ".", "..") or "/" in child.name or "\\" in child.name:
                     raise ws.WorkspaceError("invalid bundled workflow path")
-                visit(child, relative + "/" + child.name, source + "/" + child.name)
+                visit(child, relative + "/" + child.name, source + "/" + child.name, group)
         elif item.is_file() and item.name.endswith(".md"):
+            text = item.read_text(encoding="utf-8")
+            if relative.startswith(".claude/"):
+                name, text = ws.claude_copy(group, item.name, text)
+                relative = relative.rsplit("/", 1)[0] + "/" + name
             if not _valid_workflow(relative):
                 raise ws.WorkspaceError("bundled workflow is outside the managed locations")
-            files[relative] = (item.read_text(encoding="utf-8").encode("utf-8"), source)
+            files[relative] = (text.encode("utf-8"), source)
     for group, destination in _GROUPS:
-        visit(data.joinpath(group), destination, "torque/data/" + group)
+        visit(data.joinpath(group), destination, "torque/data/" + group, group)
     from . import antigravity
     for relative, (text, source) in antigravity.surface(data).items():
         if not _valid_workflow(relative):
@@ -315,6 +346,56 @@ def _publish(root_fd, path: str, contents: bytes, expected: bytes | None) -> boo
                 pass
 
 
+def _move(root_fd, old: str, new: str) -> bool:
+    """Give the file at `old` the name `new` in the same folder, never replacing a
+    file there. False when `new` appeared or `old` went away in the meantime."""
+    with _parent(root_fd, old) as fd:
+        if fd is None:
+            return False
+        old_name, new_name = old.split("/")[-1], new.split("/")[-1]
+        if _WINDOWS:
+            source = fd / old_name
+            if source.is_symlink() or not source.is_file():
+                return False
+            try:
+                ws.publish_new(source, fd / new_name)
+            except (FileExistsError, FileNotFoundError):
+                return False
+            source.unlink(missing_ok=True)  # Already gone when publish_new renamed it.
+            return True
+        try:
+            if not stat.S_ISREG(os.stat(old_name, dir_fd=fd, follow_symlinks=False).st_mode):
+                return False
+            ws.publish_new(old_name, new_name, dir_fd=fd)
+        except (FileExistsError, FileNotFoundError):
+            return False
+        try:
+            os.unlink(old_name, dir_fd=fd)
+        except FileNotFoundError:
+            pass
+        os.fsync(fd)
+        return True
+
+
+def _remove(root_fd, path: str, expected: bytes) -> bool:
+    """Remove the file at `path` while it still holds `expected`; False otherwise."""
+    with _parent(root_fd, path) as fd:
+        if fd is None:
+            return False
+        name = path.split("/")[-1]
+        if _read_at(fd, name) != expected:
+            return False
+        if _WINDOWS:
+            (fd / name).unlink(missing_ok=True)
+            return True
+        try:
+            os.unlink(name, dir_fd=fd)
+        except FileNotFoundError:
+            pass
+        os.fsync(fd)
+        return True
+
+
 def _open_root(root: Path):
     """Return an opaque container handle for `root`: a dir fd on POSIX, the
     Path itself on Windows (which has no dir_fd-relative open)."""
@@ -328,9 +409,131 @@ def _close_root(handle) -> None:
         os.close(handle)
 
 
-def _run(workspace: Path, *, check: bool, initial: bool = False, only=None) -> dict:
+_SUGGEST_MERGE = ("Edited here, and the packaged text changed since this file was recorded. Compare them with "
+                  "`torque workspace upgrade PATH --diff FILE`, merge what you want, then keep your version with "
+                  "`--accept FILE`, or delete the file to take the packaged copy. Local files are never replaced.")
+_SUGGEST_UNMANAGED = ("A local file at a path Torque installs, which Torque never recorded. Compare it with "
+                      "`torque workspace upgrade PATH --diff FILE`; keep it with `--accept FILE`, or delete it to "
+                      "take the packaged copy.")
+_CUSTOMIZED = "Kept as it is: the packaged text has not changed since this file was recorded."
+
+
+def _plan_renames(root_fd, baseline: dict, updated: dict, check: bool):
+    """Bring Claude Code copies kept under an old name (`_renames`) to the new one.
+    An untouched packaged copy is removed once the new copy is in place (`stale`); a
+    consultant's edited copy moves to the new name as it is, with its recorded base,
+    and is never overwritten; when both names hold a file, both stay and the old one
+    is reported. Returns (rows, {new path: bytes a check-mode move would leave}, stale)."""
+    rows, moved, stale = [], {}, []
+    for old, new in sorted(_renames().items()):
+        raw = _read(root_fd, old)
+        entry = baseline.get(old)
+        if raw is None:
+            updated.pop(old, None)
+            continue
+        row = {"path": old, "renamed_to": new, "applied": False}
+        rows.append(row)
+        if _lf(raw) == _previous_copy(old) or (entry and _hash(_lf(raw)) == entry["sha256"]):
+            row.update(action="renamed", reason="packaged_default")
+            updated.pop(old, None)
+            stale.append((row, old, new, raw))
+            continue
+        existing = _read(root_fd, new)
+        if existing is not None and existing != raw:
+            row.update(action="preserve", reason="renamed_both_present",
+                       suggestion=f"Claude Code answers this command itself, so the recipe is now {new}, which "
+                                  "also holds a file. Merge your edits into it, then delete this one.")
+            continue
+        if check:
+            if existing is None:
+                moved[new] = raw
+        elif _move(root_fd, old, new) if existing is None else _remove(root_fd, old, raw):
+            # (An interrupted move can leave the same file under both names.)
+            row["applied"] = True
+        else:
+            row.update(action="preserve", reason="changed_during_update",
+                       suggestion="The file changed during this run. Review it and rerun the update.")
+            continue
+        row.update(action="renamed", reason="local_edit")
+        if entry and new not in baseline:
+            baseline[new] = updated[new] = entry
+        updated.pop(old, None)
+    return rows, moved, stale
+
+
+_FENCE = re.compile(r"^\s*(```|~~~)")
+
+
+def _imports_agents(text: str) -> bool:
+    """The CLAUDE.md text imports AGENTS.md: an `@AGENTS.md` outside code spans and
+    fenced blocks, where Claude Code reads no import."""
+    fenced = False
+    for line in text.splitlines():
+        if _FENCE.match(line):
+            fenced = not fenced
+        elif not fenced and re.search(r"(?:^|\s)@(?:\./)?AGENTS\.md(?=\s|$)", re.sub(r"`[^`]*`", "", line)):
+            return True
+    return False
+
+
+def _claude_md(root_fd, check: bool) -> tuple[dict | None, str]:
+    """The CLAUDE.md init wrote in versions up to 2.0.0a21 asked the model to read
+    AGENTS.md, which it may not do; it is replaced while unchanged. An edited one is
+    kept, with a note when it does not import AGENTS.md. Returns (row, note)."""
+    raw = _read(root_fd, "CLAUDE.md")
+    if raw is None:
+        return None, ""
+    text = _lf(raw).decode("utf-8", "replace")
+    if text in ws.LEGACY_CLAUDE_NOTES:
+        new = ws.CLAUDE_NOTES.encode("utf-8")
+        row = {"path": "CLAUDE.md", "action": "update", "applied": False, "packaged_sha256": _hash(new),
+               "packaged_source": "torque workspace init (CLAUDE.md)"}
+        if not check:
+            if _publish(root_fd, "CLAUDE.md", new, raw):
+                row["applied"] = True
+            else:
+                row.update(action="preserve", reason="changed_during_update",
+                           suggestion="The file changed during this run. Review it and rerun the update.")
+        return row, ""
+    if _imports_agents(text):
+        return None, ""
+    return None, ("CLAUDE.md does not import AGENTS.md. Claude Code reads only CLAUDE.md when both exist, so the "
+                  "workspace instructions reach a session only if the model opens AGENTS.md. Add the line "
+                  "@AGENTS.md at the top of CLAUDE.md; your own text can stay below it.")
+
+
+def _workspace_relative(root: Path, spec) -> str:
+    """A managed path as the consultant typed it, relative to the workspace with forward slashes."""
+    text = str(spec).strip()
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        try:
+            text = path.resolve().relative_to(root).as_posix()
+        except ValueError:
+            raise ws.WorkspaceError(f"{spec} is outside the workspace") from None
+    text = text.replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.rstrip("/")
+
+
+def _accepted_paths(root: Path, specs, bundle: dict) -> set[str]:
+    chosen: set[str] = set()
+    for spec in specs:
+        relative = _workspace_relative(root, spec)
+        found = {path for path in bundle if relative and (path == relative or path.startswith(relative + "/"))}
+        if not found:
+            raise ws.WorkspaceError(f"{spec} names no managed packaged file; the upgrade report lists them")
+        chosen |= found
+    return chosen
+
+
+def _run(workspace: Path, *, check: bool, initial: bool = False, only=None, accept=None) -> dict:
     """`only`, a set of workspace paths, limits the run to those files; every other
-    manifest entry is carried over as it is."""
+    manifest entry is carried over as it is. `accept`, paths or folders, records the
+    packaged text as the base of each named file that differs locally and writes
+    nothing else. A whole run (neither) also renames Claude Code copies (`_renames`)
+    and replaces an unchanged CLAUDE.md from an earlier version."""
     # Reject a symlink at the user-supplied root before load_workspace resolves it.
     if Path(workspace).expanduser().is_symlink():
         raise ws.WorkspaceError("workspace root must not be a symlink")
@@ -339,6 +542,9 @@ def _run(workspace: Path, *, check: bool, initial: bool = False, only=None) -> d
     bundle = _bundled(ws.access_mode(config))
     # The rule files of a mode this workspace is not in.
     off_mode = ws.mode_rule_paths() - set(bundle)
+    if accept is not None:
+        only = _accepted_paths(root, accept, bundle)
+    whole = not initial and only is None
     root_fd = _open_root(root)
     try:
         with _locked(root_fd, check):
@@ -346,11 +552,12 @@ def _run(workspace: Path, *, check: bool, initial: bool = False, only=None) -> d
             manifest = _load_manifest(raw_manifest)
             baseline = manifest["files"]
             updated = dict(baseline)
-            actions = []
+            actions, moved, stale = _plan_renames(root_fd, baseline, updated, check) if whole else ([], {}, [])
             for path, (contents, source) in sorted(bundle.items()):
                 if only is not None and path not in only:
                     continue
-                current = _read(root_fd, path)
+                raw = moved[path] if path in moved else _read(root_fd, path)
+                current = _lf(raw)
                 digest = _hash(contents)
                 old = baseline.get(path)
                 action = {"path": path, "packaged_source": source, "packaged_sha256": digest,
@@ -361,24 +568,34 @@ def _run(workspace: Path, *, check: bool, initial: bool = False, only=None) -> d
                     action.update(action="preserve", reason="missing" if current is None else "unmanaged_local")
                 elif current is None:
                     action["action"] = "add"
+                elif accept is not None:
+                    action.update(action="accepted", reason="modified_local" if old else "unmanaged_local")
                 elif old and _hash(current) == old["sha256"]:
                     action["action"] = "update"
+                elif old and digest == old["sha256"]:
+                    # Only this side changed: nothing to merge, so not a conflict.
+                    action.update(action="customized", note=_CUSTOMIZED)
                 else:
                     action.update(action="preserve", reason="modified_local" if old else "unmanaged_local",
-                                  suggestion="Compare with packaged_source, merge desired changes locally, and rerun; differing local files are never automatically replaced.")
-                if action["action"] in ("add", "update") and not check:
-                    if _publish(root_fd, path, contents, current):
+                                  suggestion=_SUGGEST_MERGE if old else _SUGGEST_UNMANAGED)
+                if action["action"] in ("add", "update") and not check and accept is None:
+                    if _publish(root_fd, path, contents, raw):
                         action["applied"] = True
                     else:
                         action.update(action="preserve", reason="changed_during_update",
                                       suggestion="The file changed during this run. Review it and rerun the update.")
-                if action["action"] in ("add", "update", "adopt", "current"):
+                if action["action"] in ("adopt", "current", "accepted") or (
+                        action["action"] in ("add", "update") and accept is None):
                     # Check mode builds a proposal only; actual publication is never claimed.
                     updated[path] = {"sha256": digest, "version": __version__}
-                    if action["action"] == "adopt" and not check:
+                    if action["action"] in ("adopt", "accepted") and not check:
                         action["applied"] = True
                 actions.append(action)
-            for path in sorted((set(baseline) | off_mode) - set(bundle)):
+            for row, old, new, raw in stale:
+                if not check and _read(root_fd, new) is not None:
+                    row["applied"] = _remove(root_fd, old, raw)
+            renamed = set(_renames()) if whole else set()
+            for path in sorted((set(baseline) | off_mode) - set(bundle) - renamed):
                 if only is not None and path not in only:
                     continue
                 if path in off_mode:
@@ -393,6 +610,13 @@ def _run(workspace: Path, *, check: bool, initial: bool = False, only=None) -> d
                     continue
                 actions.append({"path": path, "action": "retired", "applied": False,
                                 "suggestion": "No longer bundled; left untouched. Review or remove it locally if appropriate."})
+            notes = {}
+            if whole:
+                row, note = _claude_md(root_fd, check)
+                if row:
+                    actions.append(row)
+                if note:
+                    notes["claude_md"] = note
             next_manifest = {"schema": _SCHEMA, "files": {k: v for k, v in updated.items() if not _derived(k)}}
             derived = {k: v for k, v in updated.items() if _derived(k)}
             if derived:
@@ -405,7 +629,8 @@ def _run(workspace: Path, *, check: bool, initial: bool = False, only=None) -> d
                     "package_version": __version__, "manifest": str(root / MANIFEST),
                     "manifest_updated": changed_manifest, "actions": actions,
                     "counts": dict(Counter(item["action"] for item in actions)),
-                    "conflicts": [item for item in actions if item["action"] == "preserve" and item.get("reason") != "missing"]}
+                    "conflicts": [item for item in actions if item["action"] == "preserve" and item.get("reason") != "missing"],
+                    **notes}
     finally:
         _close_root(root_fd)
 
@@ -428,3 +653,37 @@ def record_mode_rules(root: Path) -> dict | None:
 def update_templates(workspace: Path, check: bool = False) -> dict:
     """Refresh unchanged defaults/add missing resources, or inspect without writing."""
     return _run(workspace, check=check)
+
+
+def accept_templates(workspace: Path, paths) -> dict:
+    """Keep each named local file (or every managed file in a named folder) that
+    differs from its packaged text, recording that packaged text as its base: the
+    file stops being a conflict until the packaged text changes again. Writes only
+    the manifest; no workflow file is changed."""
+    return _run(workspace, check=False, accept=list(paths))
+
+
+def template_diff(workspace: Path, path) -> str:
+    """A unified diff from the packaged text of a managed file to the local file,
+    line endings aside. Writes nothing."""
+    if Path(workspace).expanduser().is_symlink():
+        raise ws.WorkspaceError("workspace root must not be a symlink")
+    root, config = ws.load_workspace(workspace)
+    bundle = _bundled(ws.access_mode(config))
+    relative = _workspace_relative(root, path)
+    if relative not in bundle:
+        raise ws.WorkspaceError(f"{path} is not a managed packaged file; the upgrade report lists them")
+    contents, source = bundle[relative]
+    root_fd = _open_root(root)
+    try:
+        raw = _read(root_fd, relative)
+    finally:
+        _close_root(root_fd)
+    if raw is None:
+        return f"{relative} does not exist here; `torque workspace upgrade` installs the packaged copy ({source}).\n"
+    packaged = contents.decode("utf-8").splitlines(keepends=True)
+    local = _lf(raw).decode("utf-8", "replace").splitlines(keepends=True)
+    if local == packaged:
+        endings = " apart from line endings" if raw != _lf(raw) else ""
+        return f"No difference{endings} between {relative} and the packaged copy ({source}).\n"
+    return "".join(difflib.unified_diff(packaged, local, fromfile=f"packaged {source}", tofile=f"local {relative}"))

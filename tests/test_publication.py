@@ -53,3 +53,16 @@ def test_create_only_still_refuses_an_existing_file(tmp_path):
     with pytest.raises(ws.WorkspaceError, match="already exists"):
         ws.atomic_write_new(target, "replace\n")
     assert target.read_text() == "keep\n"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows DACLs")
+def test_windows_replace_without_keep_mode_resets_to_a_private_file(tmp_path):
+    """The Windows counterpart: a replace gives a file only the user, SYSTEM and Administrators."""
+    from jsc_common import winacl
+    # A folder that hands Everyone read to its new files, as a drive root can.
+    winacl.protect(tmp_path, winacl.private_sddl() + "(A;OICI;FR;;;WD)")
+    target = tmp_path / "workspace.json"
+    target.write_text("{}\n")
+    assert winacl.problem(target) == "access"
+    ws._atomic_replace_text(target, '{"a": 1}\n', private=True)
+    assert target.read_text() == '{"a": 1}\n' and winacl.problem(target) == ""

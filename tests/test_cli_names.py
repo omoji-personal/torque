@@ -27,7 +27,11 @@ def test_delegate_help_names_torque(route):
 PUBLIC_USAGE = {
     ("deploy",): "usage: torque deploy [-h] --target-org TARGET_ORG [--metadata METADATA] "
                  "[--manifest MANIFEST] [--source-dir SOURCE_DIR] "
-                 "[--pre-destructive-changes PRE_DESTRUCTIVE_CHANGES] [--dry-run] "
+                 "[--pre-destructive-changes PRE_DESTRUCTIVE_CHANGES] "
+                 "[--post-destructive-changes POST_DESTRUCTIVE_CHANGES] "
+                 "[--test-level {NoTestRun,RunSpecifiedTests,RunLocalTests,RunAllTestsInOrg,RunRelevantTests}] "
+                 "[--tests TESTS] [--wait MINUTES | --async] [--api-version API_VERSION] "
+                 "[--ignore-conflicts] [--ignore-warnings] [--dry-run] "
                  "[--parent-snapshot-id PARENT_SNAPSHOT_ID] [--invoking-intent INVOKING_INTENT] "
                  "[--operation-type OPERATION_TYPE]",
     ("data",): "usage: torque data [-h] {update,create,delete,undelete,upsert,import,bulk} ...",

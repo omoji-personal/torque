@@ -38,7 +38,8 @@ separately in [validation](docs/validation.md).
   can restore it. It is not a universal undo or Salesforce backup.
 - **Two hosts, to different depths.** Claude Code and Antigravity are both
   supported; [hosts](docs/hosts.md) says what works under each and what was
-  verified live.
+  verified live. Codex reads a workspace's `AGENTS.md` and skills, but no rules,
+  and no gate checks its calls.
 
 ## A handoff you can resume
 
@@ -65,10 +66,11 @@ remaining work so the next consultant can see where to continue.
 
 ## Install and try the offline demo
 
-Install the exact checkout revision you reviewed. In a fresh clone, replace
-`REVIEWED_COMMIT_SHA` below with that commit's full SHA from its review or CI record;
-`git rev-parse HEAD` lets you compare the selected revision before installing.
-A matching wheel and hash can also be used as described in [installation](docs/installation.md).
+The commands below install the current release, tag `v2.0.0a21`; `git rev-parse HEAD`
+prints the commit it points to. If your firm reviewed a specific commit, check out its
+full SHA instead of the tag and compare it with that output before installing. A release
+wheel can also be used, checked against its SHA-256 checksums when the release lists
+them, as described in [installation](docs/installation.md).
 
 Use Python 3.10+ on macOS, Linux or Windows. CI runs all three on
 Python 3.10, 3.12 and 3.14. On Windows, use `.venv\Scripts\` in place of `.venv/bin/`
@@ -77,7 +79,7 @@ and see the [Windows installation steps](docs/installation.md#windows).
 ```sh
 git clone https://github.com/omoji-personal/torque.git
 cd torque
-git checkout --detach REVIEWED_COMMIT_SHA
+git checkout --detach v2.0.0a21
 git rev-parse HEAD
 python3 -m venv .venv
 .venv/bin/python -m pip install .
@@ -117,13 +119,20 @@ torque context --workspace ../torque-private --client sample
 These commands create local files. An alias refers to existing Salesforce CLI
 authentication; it does not log in or authorize an org. Replace the sample names.
 Open the private workspace in your assistant; its `AGENTS.md` explains how to use the
-client context and bundled workflows (`CLAUDE.md` points Claude Code to it). Torque works
-with any assistant that reads `AGENTS.md` and can run commands. The optional gate runs as
-a Claude Code hook and as an [Antigravity hook](docs/ai-access.md#wiring-the-antigravity-hook).
+client context and bundled workflows (`CLAUDE.md` imports it for Claude Code). Torque works
+with any assistant that reads `AGENTS.md` and can run commands. The gate runs as a Claude
+Code hook, which `init` wires (`--no-hook` skips it), and as an
+[Antigravity hook](docs/ai-access.md#wiring-the-antigravity-hook).
 Connected mode is proven under Claude Code; under Antigravity it is written and tested
 offline and has not been run in a live session ([hosts](docs/hosts.md)). Antigravity reads
 `.agents/` only, so the workspace also gets the rules, recipes (as skills and slash
 commands) and worker roles there in [its format](docs/workspace-upgrades.md#antigravity-copies).
+
+| Host | Reads from the workspace | Gate for build-only and connected mode |
+| --- | --- | --- |
+| Claude Code | `CLAUDE.md` (pointing to `AGENTS.md`), and rules, recipes, skills and worker roles in `.claude/` | Hook; connected mode run live |
+| Antigravity | `AGENTS.md`, and the same content in `.agents/` | Hook; connected mode tested offline only |
+| Codex | `AGENTS.md` and the skills in `.agents/skills/`, recipes included (OpenAI's documentation; not run with Torque) | None: do not use it in a build-only or connected workspace |
 
 Ask in ordinary language:
 
@@ -213,6 +222,19 @@ Run `torque --help`, `torque workflows list`, or a route's `--help`. Stateful
 operations accept `--workspace PATH --client NAME` and retain their explicit org
 arguments. The legacy `torque revert ...` grammar remains available for existing
 scripts. Recovery is scoped; it is not a universal undo or Salesforce backup.
+
+For a metadata recovery bundle, use `torque deploy --metadata Type:Name` with
+explicit `--target-org`, `--workspace` and `--client` values; repeat `--metadata`
+for each component. Manifest-only, source-directory and dry-run deploys do not
+capture a complete before-state. Bulk update/upsert bundles include a separate
+`replay.csv` with record IDs and null markers for reviewed manual recovery. Use
+`--line-ending LF` when replaying it with `sf data update bulk`; relationship
+columns and automation effects need the review described in
+[package migration](docs/package-migration.md). Deploys save an asynchronous job
+ID and queue the job before waiting (33 minutes by default), so interrupted waits
+can be resolved by exact-job polling. Temporary deployment projects stay at short
+private paths until the job is terminal. Completion without a captured after-state
+requires manual recovery review.
 
 Metadata recovery verifies captured post-deployment state while holding an org
 lease shared across aliases and workspaces for the same OS account. Unknown state

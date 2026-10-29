@@ -23,5 +23,11 @@ without closing unrelated tabs or changing accounts silently. Verify identity af
 login/switches. Browser journeys can write records: establish side effects and cleanup
 within task scope. Do not paste session cookies or frontdoor URLs into logs.
 
+Test records: save each created record's Id when it is created, in the private task
+directory. Clean up by deleting only those Ids (an Id-file delete such as
+`sf data delete bulk --file ids.csv` with an Id column). Never build a delete from a
+query that matches by name, title, creator or date. If the Id list is lost or
+incomplete, stop and ask instead of matching.
+
 Save manifest/screenshots privately, distinguish real UI events from backend diagnostic
 calls, read back meaningful side effects, and report missing coverage and cleanup survivors.

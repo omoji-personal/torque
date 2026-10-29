@@ -302,12 +302,12 @@ def test_a_refusal_says_what_the_session_can_do_instead(w):
     assert "`counts` or `fill-rate` (class counts)" in told and "torque guarded --help" in told
     # and not on an org that has none of them.
     assert "torque guarded" not in run(w, 'sf data query -q "SELECT Id FROM Contact" -o acme-dev').reason
-    # Which org an alias is: the Organization query is a record read, so with guarded reads on the refusal
-    # names the guarded command first, which the gate allows without record consent.
+    # Which org an alias is: the Organization query reads only the org's identity, so the refusal names it
+    # for every approved org, metadata consent alone included; `torque guarded org` still answers it too.
     told = run(w, "sf org display -o acme-prod").reason
-    assert "run torque guarded org --workspace . --client acme --target-org ALIAS (or, where" in told
-    assert gc.ORG_IDENTITY_QUERY in told and run(w, f"torque guarded org {T}").action == "allow"
-    assert run(w, gc.ORG_IDENTITY_QUERY.replace("ALIAS", "acme-prod")).action == "deny"
+    assert gc.ORG_IDENTITY_QUERY in told and "torque guarded org" not in told
+    assert run(w, f"torque guarded org {T}").action == "allow"
+    assert run(w, gc.ORG_IDENTITY_QUERY.replace("ALIAS", "acme-prod")).action == "allow"
     assert run(w, gc.ORG_IDENTITY_QUERY.replace("ALIAS", "acme-full")).action == "allow"
     assert "--client acme`" in run(w, "sf org list").reason
     # A cut command line is marked as cut, and a mode that shows no prompt is the consultant's to change.

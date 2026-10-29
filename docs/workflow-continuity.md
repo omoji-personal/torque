@@ -54,9 +54,10 @@ profile configures conventions; it does not itself grant org access or employer 
 Delegated routes include `advisory`, `qa`, `revert`, `logs`, `browser`, `meeting`,
 `lesson`, `probes` and `ai-regression`. Inspect each route's `--help` for its installed package
 contract and optional dependencies. The wrapper consumes `--workspace` and `--client`
-for scoping and otherwise passes downstream arguments through. Thus the recovery
-listing is intentionally `torque revert revert show --org <alias>`, while snapshot-aware
-deployment, when selected, is `torque revert deploy ...`.
+for scoping and otherwise passes downstream arguments through. Snapshot-aware writes and
+recovery have public routes: `torque deploy`, `torque data` and `torque org`, and
+`torque recover show|preview|run|discard` (for example `torque recover show --org <alias>`).
+The legacy spellings `torque revert deploy ...` and `torque revert revert show ...` still work.
 
 Normal Salesforce tools remain available. A missing optional package surface does
 not block unrelated work. Some recipes are broader than a native helper: arbitrary

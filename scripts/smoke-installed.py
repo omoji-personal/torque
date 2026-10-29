@@ -113,7 +113,10 @@ def main():
         recipe = private / ".claude/commands/diagnose.md"
         recipe.write_text(recipe.read_text(encoding="utf-8") + "\nLocal synthetic customization.\n", encoding="utf-8")
         preview = json.loads(call("workspace", "upgrade", str(private), "--check", "--json"))
-        assert preview["check"] and preview["conflicts"]
+        # The packaged recipe has not changed since it was recorded: kept, and not a conflict.
+        assert preview["check"] and not preview["conflicts"]
+        assert any(row["path"] == ".claude/commands/diagnose.md" and row["action"] == "customized"
+                   for row in preview["actions"])
         call("workspace", "upgrade", str(private), "--json")
         assert "Local synthetic customization." in recipe.read_text(encoding="utf-8")
         selected_recipe = call("workflows", "show", "diagnose", "--workspace", str(private))

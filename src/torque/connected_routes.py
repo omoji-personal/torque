@@ -28,7 +28,9 @@ REFUSED_KINDS = ("credential", "all_orgs")
 BROWSER_DATA_CLASSES = ("metadata", "records")
 
 # sf commands that print a credential or take one, whatever their flags: an access
-# token (`org display`, `org display user`), a password, a login. `org login` also
+# token (`org display`, `org display user`; since Salesforce CLI 2.136.8 `org display`
+# redacts it, and `org auth show-access-token`, `show-sfdx-auth-url` and
+# `show-user-password` print the secrets), a password, a login. `org login` also
 # points an alias at the org it logs in to. Matched on the command's words in any
 # order and in the colon spelling, as the CLI accepts them; `auth` and `user` are the
 # legacy topics (sfdx force:auth:web:login, force:user:display, force:user:password:generate).
@@ -53,6 +55,8 @@ SF_REFUSED_NAMES = (
     ("credential", ("auth", "jwt", "grant")), ("credential", ("auth", "sfdxurl", "store")),
     ("credential", ("auth", "accesstoken", "store")), ("credential", ("auth", "device", "login")),
     ("credential", ("user", "display")), ("credential", ("user", "password", "generate")),
+    ("credential", ("org", "auth", "show-access-token")), ("credential", ("org", "auth", "show-sfdx-auth-url")),
+    ("credential", ("org", "auth", "show-user-password")),
     ("all_orgs", ("org", "list", "auth")), ("all_orgs", ("auth", "list")), ("all_orgs", ("alias", "list")),
     ("all_orgs", ("env", "list")))
 # The words of `org open` and its subcommands, for the same reason.
@@ -95,6 +99,20 @@ SF_RECORD_READS = {("data", "query"), ("data", "get", "record"), ("data", "searc
                    ("data", "bulk", "results"), ("data", "resume"),
                    ("cmdt", "generate", "fromorg"), ("org", "list", "users")}
 SF_LOG_READS = {("apex", "get", "log"), ("apex", "list", "log")}
+# The org identity query, `sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType
+# FROM Organization" --target-org ALIAS`, says which org an alias points to without printing a
+# credential. It reads the org's own identity, which the client's consent records for each
+# approved org, not client records, so it has a class of its own that metadata consent covers
+# (gate_connected). Only this shape counts: a SELECT of these fields, each once, from
+# Organization with nothing after it, written out, and no option but the query, the org and
+# the output format. Any other query of Organization (its address, its primary contact) reads records.
+ORG_IDENTITY = "org_identity"
+ORG_IDENTITY_FIELDS = frozenset({"id", "name", "issandbox", "organizationtype", "instancename"})
+_ORG_IDENTITY_SOQL = re.compile(r"\s*SELECT\s+([A-Za-z]+(?:\s*,\s*[A-Za-z]+)*)\s+FROM\s+Organization\s*",
+                                re.IGNORECASE)
+# Its options, and whether each takes a value.
+_ORG_IDENTITY_OPTIONS = {"-q": True, "--query": True, "-o": True, "--target-org": True, "-u": True,
+                         "--targetusername": True, "-r": True, "--result-format": True, "--json": False}
 # The full names of the commands that read records or logs. The CLI takes a command's
 # words in any order (`sf query data`), so a command with exactly the words of one of
 # these is that read. It also offers to complete a shortened one (`sf query`), so a
@@ -112,13 +130,9 @@ SF_READ_NAMES = (
     ("debug_logs", ("apex", "tail", "log")))
 SF_CHECK_ONLY = {("project", "deploy", "validate"), ("apex", "run", "test"), ("flow", "run", "test"),
                  ("logic", "run", "test")}
-# Local file generation and tooling; they take no org.
-SF_LOCAL = {("project", "generate"), ("project", "convert"), ("project", "list", "ignored"),
-            ("template", "generate"), ("schema", "generate"), ("cmdt", "generate"), ("lightning", "generate"),
-            ("apex", "generate"), ("agent", "generate"),
-            ("version",), ("help",), ("commands",), ("whatsnew",), ("which",), ("search",), ("info",),
-            ("doctor",), ("autocomplete",), ("config", "list"), ("config", "get"),
-            ("plugins",), ("plugins", "inspect")}
+# Local file generation and tooling; they take no org. The one classifier both modes
+# use: this is gate.SF_LOCAL_COMMANDS, which build-only reads too (gate._sf_is_local).
+SF_LOCAL = g.SF_LOCAL_COMMANDS
 # Tooling and sessions the gate cannot tell apart by name. `org open` is not here:
 # it mints a session URL (an org write, D17), so it falls through to the default
 # rule below, "anything else with an org flag is a write", unless it prints that URL
@@ -165,9 +179,9 @@ TORQUE_CONSOLE_ROUTES = {
 # these, or attached to an option with `=`, is a double-quoted variable a value and
 # nothing else: after a flag that takes no value it could become another option.
 TORQUE_VALUE_OPTIONS = frozenset({
-    "--account", "--agreed-on", "--approval", "--approver-uid", "--audit-trail", "--before-state",
+    "--accept", "--account", "--agreed-on", "--approval", "--approver-uid", "--audit-trail", "--before-state",
     "--before-state-object", "--binding", "--capture-before-metadata", "--capture-before-record", "--change",
-    "--client", "--component", "--criterion", "--data", "--evidence", "--for", "--hook-python", "--host",
+    "--client", "--component", "--criterion", "--data", "--diff", "--evidence", "--for", "--hook-python", "--host",
     "--idempotency-key", "--initiative", "--input", "--job-id", "--kind", "--manifest", "--manual-recovery",
     "--mcp", "--metadata", "--minutes", "--model-id", "--name", "--new-component", "--org", "--outcome",
     "--output", "--owner", "--path", "--payload-digest", "--profile", "--purpose", "--reason", "--reason-class",
@@ -486,54 +500,9 @@ def _sealed(text: str) -> str:
     return "".join(_INERT.get(c) or _PLAIN.get(c, c) for c in _literal(text))
 
 
-_ANSI_C = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
-           "\\": "\\", "'": "'", '"': '"', "?": "?"}
-
-
-def _ansi_c(text: str) -> str:
-    """The text of a $'...' word as Bash decodes it: the letter escapes, one to three
-    octal digits, \\x with one or two hex digits, \\u with up to four and \\U with up
-    to eight, \\cX; an escape Bash does not know keeps its backslash; and a NUL ends
-    the text, as it does in Bash."""
-    out, i = [], 0
-    while i < len(text):
-        c = text[i]
-        follower = text[i + 1:i + 2]
-        if c != "\\" or not follower:
-            out.append(c.encode("utf-8", "surrogateescape"))
-            i += 1
-        elif follower in _ANSI_C:
-            out.append(_ANSI_C[follower].encode("utf-8"))
-            i += 2
-        elif follower in "01234567":
-            digits = re.match(r"[0-7]{1,3}", text[i + 1:]).group()
-            out.append(bytes([int(digits, 8) & 0xFF]))
-            i += 1 + len(digits)
-        elif follower in "xuU" and re.match(r"[0-9A-Fa-f]", text[i + 2:i + 3]):
-            digits = re.match(r"[0-9A-Fa-f]{1,%d}" % {"x": 2, "u": 4, "U": 8}[follower], text[i + 2:]).group()
-            value = int(digits, 16)
-            if follower == "x":
-                out.append(bytes([value]))
-            elif value < 0x110000:
-                out.append(chr(value).encode("utf-8", "surrogatepass"))
-            elif value < 0x80000000:
-                # Bash still writes the older five-byte and six-byte UTF-8 forms.
-                length = 4 if value < 0x200000 else 5 if value < 0x4000000 else 6
-                prefix = {4: 0xF0, 5: 0xF8, 6: 0xFC}[length]
-                out.append(bytes([prefix | value >> (6 * (length - 1))] +
-                                 [0x80 | (value >> shift) & 0x3F
-                                  for shift in range(6 * (length - 2), -1, -6)]))
-            i += 2 + len(digits)
-        elif follower == "c" and text[i + 2:i + 3]:
-            # Bash controls the first byte, then keeps the rest of a UTF-8 character.
-            value = text[i + 2].encode("utf-8", "surrogateescape")
-            control = 0x7F if value[0] == 0x3F else value[0] & 0x1F
-            out.append(bytes([control]) + value[1:])
-            i += 4 if text[i + 2:i + 4] == "\\\\" else 3
-        else:
-            out.append((c + follower).encode("utf-8", "surrogateescape"))
-            i += 2
-    return b"".join(out).split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
+# Bash-compatible ANSI-C ($'...') decoding lives in the gate module, so the two gates
+# share one decoder (no import cycle: gate does not import this module).
+_ansi_c = g._ansi_c
 
 
 _CASE_WORD = re.compile(r"(case|esac)(?![A-Za-z0-9_./-])")
@@ -1423,6 +1392,33 @@ def _rest_custom(path: str | None) -> bool:
                          r"|^/(services/data/v\d+\.\d+/)?(tooling/)?executeanonymous/?$", text, re.IGNORECASE))
 
 
+def _org_identity_query(options: list[str]) -> bool:
+    """The words after `sf data query` are the org identity query's (ORG_IDENTITY): one query
+    of that shape and no option but the org, the query and the output format, all written
+    out, with nothing the shell fills in or expands."""
+    if any(_filled(tok) or _LOOSE_CHARS & set(_raw(tok)) for tok in options):
+        return False
+    queries, i = [], 0
+    while i < len(options):
+        name, attached, value = options[i].partition("=") if options[i].startswith("--") else (options[i], "", "")
+        takes = _ORG_IDENTITY_OPTIONS.get(name)
+        if takes is None or (attached and not takes):
+            return False
+        if takes and not attached:
+            if i + 1 == len(options):
+                return False
+            i += 1
+            value = options[i]
+        if name in ("-q", "--query"):
+            queries.append(value)
+        elif name in ("-r", "--result-format") and value not in ("human", "csv", "json"):
+            return False
+        i += 1
+    found = _ORG_IDENTITY_SOQL.fullmatch(queries[0]) if len(queries) == 1 else None
+    fields = [field.casefold() for field in re.split(r"\s*,\s*", found.group(1))] if found else []
+    return bool(fields) and set(fields) <= ORG_IDENTITY_FIELDS and len(set(fields)) == len(fields)
+
+
 def _sf(rest: list[str], detail: str) -> Route:
     route = _sf_route(rest, detail)
     if route.kind in ("read", "check_only", "org_write", "no_org", "unverifiable") and _attached_short(rest):
@@ -1442,7 +1438,14 @@ def _sf_route(rest: list[str], detail: str) -> Route:
     late = () if topic else tuple(tok for tok in rest if not tok.startswith("-"))
     refused = _sf_refused(topic or late, rest, anywhere=bool(late))
     if refused:
+        # A credential or all-orgs command stays refused even with --help: it is kept
+        # out of the session as a whole, whatever its flags.
         return Route(refused[0], None, detail + refused[1])
+    if g._sf_is_help(rest):
+        # A `-h`/`--help` flag before any `--` describes the command; it runs nothing
+        # against an org, so it is local (the shared reading with build-only,
+        # gate._sf_is_help), unless the command was refused above.
+        return Route("local", None, detail)
     if any((_EXPANSION_CHARS | _GLOB_CHARS) & set(word) for word in (topic or late)[:3]):
         # sf org ${X:+display}, sf org d*: the shell picks the command at run time, so
         # the gate cannot tell which one runs and no approval covers it.
@@ -1464,6 +1467,8 @@ def _sf_route(rest: list[str], detail: str) -> Route:
                 queries = _flag_values(rest, {"-q", "--query"})
                 if queries and rest_data_class("/query?q=" + quote(queries[-1], safe="")) == "debug_logs":
                     data = "debug_logs"
+                elif _org_identity_query(rest[len(topic):]):
+                    data = ORG_IDENTITY
             elif name == ("data", "get", "record"):
                 objects = _flag_values(rest, {"-s", "--sobject", "--sobjecttype"})
                 if objects and objects[-1].casefold() == "apexlog":
@@ -1480,7 +1485,8 @@ def _sf_route(rest: list[str], detail: str) -> Route:
         return Route("admin", org, detail)
     if _match(topic, SF_ASK):
         return Route("unverifiable", org, detail)
-    if _match(topic, SF_LOCAL) and not orgs and topic[:3] != ("cmdt", "generate", "fromorg"):
+    if (_match(topic, SF_LOCAL) and not orgs and topic[:3] != ("cmdt", "generate", "fromorg")
+            and not g._sf_reaches_org_without_flag(rest)):
         if topic[0] == "plugins" and len(topic) > 1 and topic[1] != "inspect":
             return Route("unverifiable", None, detail)
         return Route("local", None, detail)
@@ -2142,6 +2148,17 @@ def _segment_core(words: list[str], depth: int) -> list[Route]:
             routes = [Route("unverifiable", None, detail + " (runs in another folder)"), *routes]
         return routes
     if g._is_sf_token(first):
+        inner = None if g._sf_is_help(rest) else g._sf_doctor_command(rest)
+        if inner is not None:
+            # sf doctor --command X runs X (with `sf` put in front when X lacks it, as
+            # the doctor does), so judge the line as that command: it needs the same org
+            # and consent. Outer help runs nothing and is read first. An empty or
+            # unreadable command is asked about.
+            routes = classify_bash(inner, depth + 1) if inner.strip() else []
+            found = [r for r in routes if r.kind != "local"]
+            if found or not routes:
+                return found or [Route("unverifiable", None, detail + " (sf doctor runs the command it is given)")]
+            return [Route("local", None, detail)]
         route = _sf(rest, detail)
         found = _with_run_time_words(words, route, detail, launcher=True)
         if route.kind == "read" and route.data == "records" and _rest_reads_logs(_rest_path(rest)):

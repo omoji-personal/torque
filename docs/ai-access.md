@@ -25,8 +25,11 @@ and a removing or moving command (`rm`, `mv`, `rsync`, `find` and similar) on a 
 holds them (the client's folder, `clients/`, the workspace) is refused too. After a
 directory change the gate cannot follow (`cd "$X"`, `cd -`), any command that removes or
 writes is refused in a workspace that holds such records. A record changed while the gate is otherwise off would be trusted when the
-owner turns connected mode on. The `full`-mode check never blocks by failing: if it cannot
-finish (an error inside it, or its time or glob budget spent), the call is allowed as
+owner turns connected mode on. In `full` mode the check never blocks by running long or by
+failing in a way a retry would repeat: if it cannot finish (an error inside it, or its time
+or glob budget spent), `full` mode falls back to a cheap text test that cannot itself fail
+and blocks the call only when its own text spells a protected record, a folder that holds
+them (`clients/`, `initiatives/`) or the approval key; every other command is allowed as
 before. Everything else `full` mode allows is unchanged. In build-only and connected mode
 the same check fails closed: an error inside it blocks the call, and the reason names the
 error. A spent budget blocks the call there too, as it does for every other check.
@@ -67,15 +70,23 @@ later release narrows the check.
 ## What build-only blocks
 
 - Any `sf`/`sfdx` call carrying an org flag (`-o`, `--target-org`, `--from-org`, `-u`,
-  `--targetusername`, `--target-dev-hub`, `-v`) anywhere, even behind a wrapper, env var, `npx`, or
-  subshell. `sf.cmd`, `sf.exe`, `sf.ps1`, `npx @salesforce/cli@VERSION` and the CLI's own script
-  run with node (`node .../@salesforce/cli/bin/run.js`) all count as `sf`. Without an org flag, only these pass: local generators (`project generate`, `lightning
-  generate`, `apex generate`), `project convert`, `code-analyzer run` and `code-analyzer rules`
-  (their roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
+  `--targetusername`, `--target-dev-hub`, and `-v` for package and org commands) anywhere, even
+  behind a wrapper, env var, `npx`, or subshell. `sf.cmd`, `sf.exe`, `sf.ps1`,
+  `npx @salesforce/cli@VERSION` and the CLI's own script run with node
+  (`node .../@salesforce/cli/bin/run.js`) all count as `sf`; a `sf` word that is only another
+  command's argument (`which sf`, `rg sfdx`, `npm ls @salesforce/cli`) is not a call. Without an
+  org flag, the CLI's local commands pass, the same list connected mode reads: generators
+  (`project generate`, `apex generate`, `lightning generate`, `template generate` and its aliases
+  such as `static-resource generate`, `schema generate`, `cmdt generate` except `fromorg`),
+  `project convert`, `project list ignored`, `code-analyzer run` and `code-analyzer rules` (their
+  roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
   `--root-dir`/`--source-dir` for convert, and the current directory when none is given or when
-  convert uses `--manifest`/`--metadata`), `--version`, `version`, `help`, `plugins`. A bare
-  `sf --help` is blocked; use `sf help`. `code-analyzer`'s `-o` and `-v`
-  short flags read as org flags; use `--output-file` and `--view`.
+  convert uses `--manifest`/`--metadata`; code-analyzer's `-o` and `-v` are its `--output-file`
+  and `--view`), `version`, `help`, `which` and `plugins` (not `plugins install`). A command's
+  `--help` or `-h`, and `sf --version`, pass too: the CLI shows help or its version and runs
+  nothing. Build-only still blocks `agent generate` and `doctor --command`, which can reach an
+  org with no org flag on the line, and a command's own `--version` value
+  (`sf package1 version create --version 1.0`).
 - Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
   other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`. The
   `torque` command rejects abbreviated options, and the gate also blocks abbreviations of
@@ -304,6 +315,21 @@ torque workspace ai-access full --path /path/to/workspace
 torque workspace ai-access connected --approval required --path /path/to/workspace
 ```
 
+`ai-access full` and `ai-access build-only` also wire the gate hook below for the
+interpreter that runs them, adding to `.claude/settings.json` and `.agents/hooks.json`
+without changing anything else in those files. A hook already
+there is kept, and a file that is not a JSON object is left alone: the command then exits
+3 and prints the entry to add by hand. It then runs doctor's standalone probe and says
+whether the hook blocked it. `--no-hook` adds no hook. `torque workspace init`
+wires both hooks too (`--no-hook` skips them). Changing the mode leaves an entry in
+place. In full mode the hook only keeps
+tools from changing a client's consent, approval and control records, at the cost of a
+gate process for every tool call (about half a second on a Windows laptop with Git
+Bash). Under Antigravity the full-mode hook has no opinion on most calls, so it answers
+`ask` for every command and file change that is not a read inside the session's folders,
+and Antigravity's own permission flow decides, as it does without Torque
+([hosts](hosts.md#known-differences)).
+
 Connected mode also needs a person at a real terminal outside the AI session, and has its
 own setup steps: [connected mode](connected-approval.md). Leaving connected mode needs that
 person too, so a session cannot switch the mode off. For an org whose client agreed to
@@ -312,11 +338,14 @@ default: `torque workspace guarded-reads on --path /path/to/workspace`.
 
 ## Wiring the Claude Code hook
 
-Put this in the workspace's own `.claude/settings.json`, never a user-level settings file: outside a
+`torque workspace init` and `torque workspace ai-access full|build-only` write this entry
+([setting the mode](#setting-the-mode)). To write it by hand,
+put it in the workspace's own `.claude/settings.json`, never a user-level settings file: outside a
 workspace there is no `workspace.json` to scope it, so it would run against every project on the
 machine. Replace `/path/to/venv/bin/python` with the absolute path of an interpreter that has Torque
-installed (forward slashes on Windows). `torque doctor --workspace .` prints this exact command for
-the interpreter it runs under, as `ai_access.hook.recommended_command` in `--json` output.
+installed (forward slashes on Windows). `torque doctor --workspace .` prints this exact entry for
+the interpreter it runs under, as `ai_access.hook.recommended_entry` in `--json` output
+(`recommended_command` is the same hook in the older shell form).
 
 Claude Code gives a command hook 600 seconds by default, and a timed-out hook lets the call
 proceed, as if it were allowed. Set `"timeout": 600` on the hook entry, as below, and do not
@@ -341,13 +370,33 @@ and pass the file (`git commit -F msg.txt`).
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
+  "hooks": [{"type": "command", "command": "/path/to/venv/bin/python", "args": ["-I", "-c", "import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked. In your own terminal, run torque doctor --workspace W, with W the workspace folder, to see why.)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())"], "timeout": 600, "onFailure": "block"}]}]}}
 ```
+
+This is Claude Code's exec form: with `args` present, `command` is spawned directly with `args`
+as its argument vector, with no shell, so nothing is quoted or parsed and Windows needs no
+Git Bash (`command` must be a real executable there, which `python.exe` is).
+`"onFailure": "block"` (Claude Code 2.1.295 and later) makes a hook that cannot start, exits
+with another code than 0 or 2, or times out block the call. Without it, a moved or deleted
+interpreter lets every call run ungated. Doctor warns when the installed Claude Code is older.
+
+The older shell form, one command line, still works:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": ".*",
+  "hooks": [{"type": "command", "command": "\"/path/to/venv/bin/python\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked. In your own terminal, run torque doctor --workspace W, with W the workspace folder, to see why.)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600, "onFailure": "block"}]}]}}
+```
+
+Claude Code runs it through Git Bash on Windows, or PowerShell when Git Bash is not installed
+(which cannot run it), and `sh -c` elsewhere. `torque workspace upgrade` and `ai-access`
+convert a shell-form entry Torque wrote to exec form for the same interpreter; an entry you
+wrote yourself is never changed.
 
 The hook reads the tool-call JSON on stdin and exits 0 to allow or 2 to block. Claude Code treats
 any other exit code as a non-blocking error and lets the tool run. The `sys.excepthook` wrapper
 turns a failed `import torque.gate` (Torque missing from that interpreter, a broken install) into
-exit 2, so that case blocks instead of silently passing. `-I` (isolated mode) keeps the
+exit 2, so that case blocks instead of silently passing, and its message tells the consultant to
+run `torque doctor --workspace W` in their own terminal. `-I` (isolated mode) keeps the
 working directory, `PYTHONPATH` and the user site directory off the import path: without it,
 Python imports a `torque` folder from the hook's working directory (the workspace) before the
 installed one, and a single file write would replace the gate. The `.*` matcher sends every
@@ -356,21 +405,34 @@ recognise. The older form, `python -m torque.gate`, still runs but has neither p
 exits 1 when Torque cannot be imported, which lets every call through, and it imports from the
 working directory.
 
-The wrapper cannot help when the interpreter itself is missing (the shell exits 127, which is also
-non-blocking) or when the session is started outside the workspace folder (the workspace's
-`.claude/settings.json` is not loaded at all). Check both with doctor:
+The wrapper cannot help when the interpreter itself is missing (the hook cannot start, or in shell
+form the shell exits 127, which is non-blocking unless the entry sets `"onFailure": "block"`) or
+when the session is started outside the workspace folder (the workspace's `.claude/settings.json`
+is not loaded at all). Check both with doctor:
 
 ```sh
 torque doctor --workspace /path/to/workspace
 ```
 
-In build-only mode doctor runs the configured hook once on a synthetic `clients/` Read (on
-Windows through Git Bash when installed, as Claude Code does) and reports
+In build-only mode doctor runs the configured hook on a synthetic `clients/` Read, which it
+must block, and on an ordinary Read, which it must allow (an exec-form entry with no shell, a
+shell-form one on Windows through Git Bash when installed, as Claude Code does), and reports
 `AI access: build-only (hook command blocked a standalone probe; ...)`, or `HOOK NOT IN FORCE`
-with the fix. It exits 3 when the hook is missing, did not block, could not load the gate, runs
-without `-I`, has matchers that (read as regular expressions over tool names) miss any tool, or is
-switched off by `disableAllHooks` in the workspace, user or managed settings (or by the managed
-`allowManagedHooksOnly`). The probe runs the hook command directly; it shows the command blocks,
+with the fix. It exits 3 when the hook is missing, did not block, could not load the gate or
+start, runs without `-I`, has matchers that (read as regular expressions over tool names) miss
+any tool, or is switched off by Claude Code's settings: a managed `allowManagedHooksOnly`, or
+`disableAllHooks` from the highest level that sets it (managed settings, then the workspace's
+`.claude/settings.local.json` and `.claude/settings.json`, then the user's settings, in
+`CLAUDE_CONFIG_DIR` when set). Managed settings are read where Claude Code reads them:
+`/Library/Application Support/ClaudeCode/` on macOS, `/etc/claude-code/` on Linux and WSL,
+`C:\Program Files\ClaudeCode\` on Windows, each `managed-settings.json` merged with the
+`managed-settings.d/*.json` files beside it in name order, and on Windows the registry
+policy, which outranks those files. The legacy `C:\ProgramData\ClaudeCode\managed-settings.json`
+is reported as not read. Server-managed settings and macOS configuration profiles are not
+visible to doctor. A hook without `"onFailure": "block"` gets advice. In full mode doctor
+reports `Record protection:` with the same probes, a write to a consent record standing for
+the client-path Read; a missing hook there is advice, and one that blocks every call makes
+doctor exit 3. The probe runs the hook command directly; it shows the command blocks,
 not that the running host calls it. Confirm that once in a real session. Run it after setup, after every Torque or Python update, and
 before each monthly review.
 
@@ -378,9 +440,10 @@ before each monthly review.
 
 Antigravity (`agy`) reads `.agents/hooks.json` in the working folder and never reads
 `.claude/settings.json`, so the Claude Code hook above does nothing in an Antigravity session.
-`torque.gate_antigravity` is the same gate behind Antigravity's hook format. Put this entry in
-the workspace's `.agents/hooks.json`, beside any other named hook there, with the absolute path
-of an interpreter that has Torque installed. `torque doctor --workspace .` names the command
+`torque.gate_antigravity` is the same gate behind Antigravity's hook format.
+`torque workspace init` and `torque workspace ai-access full|build-only` add this entry to the
+workspace's `.agents/hooks.json`, beside any other named hook there; to add it by hand, use the absolute path of an interpreter
+that has Torque installed. `torque doctor --workspace .` names the command
 for the interpreter it runs under, and gives the whole entry as
 `ai_access.antigravity_hook.recommended_entry` in `--json` output.
 
@@ -401,7 +464,12 @@ What it does with each call:
   `send_command_input`) as a PowerShell command on Windows and a Bash command elsewhere;
   `view_file`, `list_dir`, `grep_search` and `find_by_name` as `Read`, `LS`, `Grep` and `Glob`;
   `write_to_file`, `replace_file_content`, `multi_replace_file_content` and `sed_file` as
-  `Write`, `Edit` and `MultiEdit`; `call_mcp_tool` as that server's MCP tool; the browser tools
+  `Write`, `Edit` and `MultiEdit`; Antigravity 1.4.9's file tools `read_file`, `write_file` and
+  `edit_file` (each names its file in `Path`) as `Read`, `Write` and `Edit`; `call_mcp_tool` as
+  that server's MCP tool, as is a connector tool 1.4.9 sends as a tool of its own,
+  `mcp_SERVER_TOOL`, when its name has one underscore after `mcp_` (`mcp_notes_add` is
+  `mcp__notes__add`; `mcp_notes_add_note` could be either of two tools, so it is a tool the
+  module does not know); the browser tools
   (`open_browser_url`, `read_browser_page`, `browser_*`, `browser_subagent`,
   `click_browser_pixel`, `execute_browser_javascript`, `capture_browser_*`,
   `list_browser_pages`) as MCP tools named `mcp__antigravity_browser__<name>`, which build-only
@@ -410,9 +478,12 @@ What it does with each call:
   (`mcp__antigravity__<name>`), every string argument checked as a path and for a Salesforce
   host. `search_web` is a plain web search: the gate has no objection and Antigravity's own
   flow decides. A tool the module does not know (`notebook_execution`, and any tool
-  Antigravity adds later) is blocked in build-only mode. So is a known tool the module cannot
-  read: a file tool without the argument that names its file, typed input that is not text,
-  and an MCP call without a usable server or tool name.
+  Antigravity adds later) is blocked in build-only and connected mode. So is a known tool the
+  module cannot read: a file tool without the argument that names its file, typed input that
+  is not text, and an MCP call without a usable server or tool name. In every mode, such a call
+  is also refused when a string argument, or a word of one, names a client's consent, approval
+  or control record, an engagement's binding or the approval key: the records the gate keeps
+  from the tools it knows.
 - A blocked call is answered `deny` with the gate's reason. Antigravity has no answer that
   means "no opinion", so a call the gate lets through is answered `allow` only when it is a
   read inside the folders the session was started with (the working folder and those added
@@ -420,8 +491,14 @@ What it does with each call:
   hands the call to Antigravity's own permission flow, so the gate never allows what that flow
   would have asked about. Whether `ask` adds a prompt for a tool Antigravity would otherwise
   run silently has only been observed in headless runs; check it in an interactive session.
+- When the gate itself asks (connected mode, for a command it cannot check), the hook answers
+  `deny` in every session, because `--dangerously-skip-permissions` would turn an `ask` into a
+  run and the hook input carries no permission mode. The reason names the exact command and
+  tells the consultant to read it and, if it is safe, run it in their own terminal. A session
+  launched with a launch binding is told it is unattended.
 - Antigravity blocks a call when its hook crashes, runs past its timeout or prints no decision
-  (observed with Antigravity CLI 1.3.1 on Windows), so a missing interpreter, a failed import
+  (observed with Antigravity CLI 1.3.1 on Windows; 1.4.9 was seen to block on an empty or
+  missing decision and on a non-zero exit too), so a missing interpreter, a failed import
   and the gate's own 5-second budget all end in a block. No wrapper is needed for that.
 - The session is bound to the folder it was started in, the way `CLAUDE_PROJECT_DIR` binds a
   Claude Code session: a command run from another folder is still gated.
@@ -439,17 +516,32 @@ Limits:
 - `browser_subagent` starts a worker that drives a browser. It is blocked by name in
   build-only and connected mode, like the other browser tools.
 - Never start a client session with `--dangerously-skip-permissions`: it removes Antigravity's
-  own folder boundary and turns every `ask` into a run. A `deny` still holds.
-- Doctor runs the registered command once on a synthetic `clients/` read, through the shell
-  from `.agents/`, and reports `Antigravity hook: blocked a standalone probe`, `NOT IN FORCE`
-  or `not registered`. A hook that is registered but does not block, cannot load the gate,
-  runs without `-I`, is disabled or has a matcher narrower than `*` makes doctor exit 3. A
-  workspace with no Antigravity hook only gets a next action, because doctor cannot know
+  own folder boundary and turns every `ask` into a run, including the `ask` for a call the gate
+  has no objection to. A `deny` still holds, and so does the gate's own ask, which becomes one.
+- Doctor runs each enabled registered command, through the shell from `.agents/`, on a synthetic
+  `clients/` read (build-only mode) or a synthetic write to a client's consent record (full mode),
+  each under both 1.3.1's and 1.4.9's tool names (the interpreter's Torque must know both), and
+  on an ordinary read inside the workspace, which must not be refused. A non-zero exit counts as
+  a failure whatever the hook printed, because Antigravity blocks the call. A disabled entry is
+  never run, and it hides no enabled entry; "disabled" is reported only when no enabled entry
+  remains. Doctor reports `Antigravity hook: blocked a standalone probe`, `NOT IN FORCE` or
+  `not registered`; in full mode the line is `Record protection (Antigravity)`. Exit 3:
+  - build-only mode: a hook that is registered but does not block, cannot load the gate, runs
+    without `-I`, is disabled or has a matcher narrower than `*`;
+  - full mode: only an enabled hook that cannot run the gate, exits non-zero or refuses an
+    ordinary read, since it then stops all work, or that runs and allows the probe write to a
+    client's consent record, since it then protects nothing. A disabled hook, a narrow matcher or a missing
+    `-I` get a next action but not exit 3: the consultant may have chosen them, and the hook
+    still runs or is off on purpose.
+
+  A workspace with no Antigravity hook only gets a next action, because doctor cannot know
   whether Antigravity is used there. The probe does not show that Antigravity calls the hook;
   confirm that once in a real session.
-- The tool names and arguments are the ones Antigravity CLI 1.3.1 sends. A later version that
-  renames an argument turns that tool into one the gate does not know, which blocks it in
-  build-only mode and is otherwise passed to Antigravity's own flow.
+- The tool names and arguments are the ones Antigravity CLI 1.3.1 sends, and the ones 1.4.9 was
+  seen to send on 2026-10-28 (with another hook, then replayed; see above). A later version
+  that renames a tool or an argument turns that tool into one the gate does not know, which
+  build-only and connected mode block. Full mode passes it to Antigravity's own flow unless it
+  names one of the records above.
 
 ## What it cannot stop
 
@@ -458,8 +550,9 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 - A command built at run time: a variable whose value spells part of a name rather than a
   folder (`X=cli; cat ../${X}ents/...`; a variable is read as a folder from the current
   directory up to the workspace root, not as any text), a path from command output such as
-  `$(... | base64 -d)`, or from `eval`, the code of `python -c`, any script file the
-  assistant writes and runs, and a heredoc fed to an interpreter.
+  `$(... | base64 -d)`, or from `eval`, a path that `python -c` code builds (a literal
+  path in that code is read, as `node -e`, `perl -e`, `ruby -e` and `php -r` code is), any script
+  file the assistant writes and runs, and a heredoc fed to an interpreter.
 - A link that already leads out of the tree, followed by a recursive tool. `rg -L`, `find -L`,
   `grep -R` (GNU grep; BSD grep with `-S`), `tar -h`, `cp -r` on macOS (where `-r` follows
   links), `cp -rL`, `rsync -L`, `zip -r` without `-y`, zsh's `***/` glob, ripgrep with
@@ -505,7 +598,8 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   path in the call (for example `rg foo` run from the parent of another workspace).
 - Breaking the hook's environment by a route the checks do not parse, such as a script, or `cp`
   over its interpreter from a path given at run time. When the interpreter is missing the hook
-  exits 127, which Claude Code does not treat as a block.
+  cannot start (in shell form it exits 127), which Claude Code treats as a block only when the
+  entry sets `"onFailure": "block"` (2.1.295 and later), as the entries Torque writes do.
 - Replacing the gate by a route the write checks do not parse. A script or `python -c` code the
   assistant runs, `git checkout` of a tracked `torque/` folder, a patch applied or an archive
   extracted inside `project/`, or a download tool writing a file (`curl -o`) can still create a

@@ -101,8 +101,8 @@ def test_the_packaged_resume_recipe_names_the_renamed_context_command(tmp_path):
     root = ws.init_workspace(tmp_path / "firm", "Example firm")
     text = (root / ".agents/skills/session-resume/SKILL.md").read_text(encoding="utf-8")
     assert "Load `/torque-context`, then" in text and "`/context`" not in text
-    # Claude Code's copy keeps the name the recipe has there.
-    assert "Load `/context`, then" in (root / ".claude/commands/session-resume.md").read_text(encoding="utf-8")
+    # Claude Code's copy names the recipe as Claude Code installs it, which renames it too.
+    assert "Load `/torque-context`, then" in (root / ".claude/commands/session-resume.md").read_text(encoding="utf-8")
     # No generated file names one of Antigravity's own commands as a Torque recipe.
     from importlib import resources
     generated = antigravity.surface(resources.files("torque").joinpath("data"))
@@ -139,7 +139,8 @@ def test_init_writes_the_surface_and_records_it(environment):
     # A recipe without a description has no skill; the packaged skill keeps its place.
     assert not (root / ".agents/skills/plain").exists() and not (root / ".agents/skills/help").exists()
     assert (root / ".agents/skills/review/SKILL.md").is_file()
-    assert (root / ".claude/commands/help.md").is_file()
+    # Claude Code answers /help itself too, so its copy of the recipe is torque-help.
+    assert (root / ".claude/commands/torque-help.md").is_file()
     check = updates.update_templates(root, check=True)
     assert set(check["counts"]) == {"current"}
 
@@ -195,7 +196,9 @@ def test_packaged_bundle_gives_a_complete_surface(tmp_path):
     for name in rules:
         lines = header((root / ".agents/rules" / name).read_text(encoding="utf-8"))
         assert lines[0] == "trigger: always_on" and lines[1].startswith("description: ") and len(lines[1]) > 14
-    commands = sorted(path.stem for path in (root / ".claude/commands").glob("*.md"))
+    from importlib import resources
+    commands = sorted(item.name[:-3] for item in resources.files("torque").joinpath("data", "commands").iterdir()
+                      if item.name.endswith(".md"))
     assert {"help", "context", "undo"} <= set(commands)
     for name in commands:
         text = (root / ".agents/skills" / antigravity.skill_name(name) / "SKILL.md").read_text(encoding="utf-8")

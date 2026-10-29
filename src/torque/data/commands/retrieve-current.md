@@ -23,6 +23,13 @@ the command result and saved files for missing/partial retrieval. Record org ide
 time, selectors, API version and file references. A cached local copy remains usable
 for offline planning when clearly dated; it is not automatically current live state.
 
+This retrieval is a manual baseline, not a Torque recovery bundle. For a later
+authorized write with bundle support, use
+`torque deploy --metadata Type:Name --target-org ALIAS --workspace W --client C`,
+repeating `--metadata` per component. Manifest-only, source-directory and dry-run
+deploys do not capture complete before-state. Keep this baseline when those
+selectors or quick promotion are required.
+
 Copy the required baseline files to a proposed directory, make the requested changes
 there, and retain the original. Compare the exact diff and reconcile intervening org
 changes before applying it. For a new component record its verified absence and

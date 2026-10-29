@@ -15,11 +15,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jsc_loganalyzer.parsers import (  # noqa: E402
-    parse_fatal_swallowed,
     parse_governor_asymptotic,
     parse_missing_callout_response,
     parse_trigger_recursion,
     parse_unbounded_soql,
+    parse_unhandled_exception,
     run_all_parsers,
 )
 from jsc_loganalyzer.score import score_findings  # noqa: E402
@@ -29,16 +29,18 @@ def _lines(text: str) -> list[str]:
     return text.splitlines()
 
 
-class TestParseFatalSwallowed(unittest.TestCase):
-    def test_swallowed_fatal_detected(self):
-        log = """09:00:00.0 |FATAL_ERROR|caught\n09:00:00.1 |STATEMENT_EXECUTE|continuing\n09:00:00.2 |HEAP_ALLOCATE|"""
-        findings = parse_fatal_swallowed(log, _lines(log))
+class TestParseUnhandledException(unittest.TestCase):
+    # FATAL_ERROR is logged for an exception nothing caught, whatever follows it.
+    def test_fatal_error_is_unhandled(self):
+        log = "09:00:00.0 (1)|FATAL_ERROR|System.NullPointerException: synthetic\n09:00:00.1 (2)|EXECUTION_FINISHED"
+        findings = parse_unhandled_exception(log, _lines(log))
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, 1)
+        self.assertEqual(findings[0].category, "unhandled-exception")
 
-    def test_surfaced_fatal_not_flagged(self):
-        log = """09:00:00.0 |FATAL_ERROR|exception\n09:00:00.1 |EXECUTION_FINISHED|"""
-        findings = parse_fatal_swallowed(log, _lines(log))
+    def test_caught_exception_not_flagged(self):
+        log = "09:00:00.0 (1)|EXCEPTION_THROWN|[5]|System.DmlException: synthetic\n09:00:00.1 (2)|EXECUTION_FINISHED"
+        findings = parse_unhandled_exception(log, _lines(log))
         self.assertEqual(len(findings), 0)
 
 
@@ -75,16 +77,20 @@ class TestParseMissingCalloutResponse(unittest.TestCase):
 
 
 class TestParseTriggerRecursion(unittest.TestCase):
+    # The documented trigger unit; test_documented_log_format.py covers nesting.
+    UNIT = "AccountTrigger on Account trigger event AfterUpdate|__sfdc_trigger/AccountTrigger"
+
     def test_deep_recursion_detected(self):
         log = "\n".join([
-            "|CODE_UNIT_STARTED|[EXTERNAL]|Trigger:AccountTrigger" for _ in range(8)
+            "09:00:00.0 (1)|CODE_UNIT_STARTED|[EXTERNAL]|01q000000000001|" + self.UNIT for _ in range(8)
         ])
         findings = parse_trigger_recursion(log, _lines(log))
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, 1)
 
     def test_normal_invocation_clean(self):
-        log = "|CODE_UNIT_STARTED|[EXTERNAL]|Trigger:AccountTrigger\n|CODE_UNIT_FINISHED|"
+        log = ("09:00:00.0 (1)|CODE_UNIT_STARTED|[EXTERNAL]|01q000000000001|" + self.UNIT
+               + "\n09:00:00.0 (2)|CODE_UNIT_FINISHED|" + self.UNIT)
         findings = parse_trigger_recursion(log, _lines(log))
         self.assertEqual(len(findings), 0)
 
@@ -247,6 +253,8 @@ class TestScore(unittest.TestCase):
     def test_dirty_log_scores_low(self):
         log = "\n".join([
             "|FATAL_ERROR|caught\n|STATEMENT_EXECUTE|continuing\n|HEAP_ALLOCATE|",
+            # Limits are reported under their limit event, not after any event.
+            "|LIMIT_USAGE_FOR_NS|(default)|",
             "Maximum CPU time: 9500 out of 10000",
             "|CALLOUT_REQUEST|GET https://example.com/",
         ])

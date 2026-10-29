@@ -255,14 +255,25 @@ def _poll_one(entry: dict) -> str:
     import subprocess
     from . import tool_launch
     try:
-        snap_dir, _ = mf.load_by_id(entry["org_id_short"], entry["alias"], entry["snapshot_id"])
+        snap_dir, saved = mf.load_by_id(entry["org_id_short"], entry["alias"], entry["snapshot_id"])
     except (FileNotFoundError, ValueError, KeyError):
         return "pending"  # No private evidence destination: do not launch a report.
+
+    report_cwd = snap_dir
+    if entry.get('operation_type') in ('deploy_metadata', 'revert', 'deploy_quick_promote', 'deploy_resume'):
+        from . import org_sequence
+        lock_path = org_sequence.org_lock_path(entry['org_id_short'])
+        if not org_sequence._is_stale(lock_path, org_sequence._try_read_lock(lock_path)):
+            return 'pending'  # The wrapper still owns its report/capture and stage.
+        status = saved.get('snapshot_status')
+        if status in ('complete', 'failed', 'applied_partial'):
+            return status  # The wrapper already finished and may have removed its stage.
+        report_cwd = saved.get('payload', {}).get('report_cwd') or snap_dir
 
     def observe(command):
         try:
             proc = tool_launch.run(command, capture_output=True, text=True, encoding="utf-8", errors="strict",
-                                  timeout=60, cwd=snap_dir)
+                                  timeout=60, cwd=report_cwd)
         except (subprocess.TimeoutExpired, FileNotFoundError, UnicodeDecodeError) as exc:
             if isinstance(exc, UnicodeDecodeError):
                 bundle.atomic_write_bytes(snap_dir / ("poll-invalid-utf8-" + uuid.uuid4().hex + ".bin"), exc.object)
@@ -359,7 +370,17 @@ def _update_snapshot_manifest(entry: dict, final_status: str):
         # Only overwrite if the wrapper left it as pending_finalize_required
         if m.get("snapshot_status") == "pending_finalize_required":
             m["snapshot_status"] = new_snapshot_status
+            if m.get('operation_type') == 'deploy_metadata' and not m.get('payload', {}).get('after_state'):
+                # The wrapper's org lease ended before this observation. A fresh
+                # retrieve cannot establish that no intervening write occurred.
+                from .revert_capabilities import compute_revertibility
+                m.setdefault('payload', {})['recovery_readiness'] = 'unknown'
+                m['revert_capabilities'] = compute_revertibility('deploy_metadata', m['payload'])
+                m.setdefault('phases', {}).setdefault('post_finalize', {}).update(
+                    status='deferred', error='Deployment observed; post-deployment recovery baseline is unknown.')
     mf.save(snap_dir, m)
+    from . import deploy_stage
+    deploy_stage.cleanup(m)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

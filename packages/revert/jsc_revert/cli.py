@@ -38,8 +38,11 @@ from . import org_detect
 def cmd_revert_token_grant(args: argparse.Namespace) -> int:
     org = org_detect.resolve_org(args.org)
     if org is None:
-        print(f"error: cannot resolve org alias {args.org!r}. "
-              f"Run `sf org display --target-org {args.org}` to verify auth.",
+        # The Organization query prints no credential (`sf org display` printed the access
+        # token before Salesforce CLI 2.136.8).
+        print(f"error: cannot resolve org alias {args.org!r}. Run `sf data query --query "
+              f"\"SELECT Id, Name, IsSandbox, OrganizationType FROM Organization\" --target-org {args.org}` "
+              f"to verify auth.",
               file=sys.stderr)
         return 1
 
@@ -290,6 +293,16 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--manifest", action="append", default=[], help="package.xml path(s)")
     d.add_argument("--source-dir", action="append", default=[], help="source dir(s)")
     d.add_argument("--pre-destructive-changes", default=None)
+    d.add_argument("--post-destructive-changes", default=None)
+    d.add_argument("--test-level", choices=("NoTestRun", "RunSpecifiedTests", "RunLocalTests", "RunAllTestsInOrg", "RunRelevantTests"))
+    d.add_argument("--tests", action="append", default=[])
+    timing = d.add_mutually_exclusive_group()
+    timing.add_argument("--wait", type=_wait_minutes, metavar="MINUTES", default=33,
+                        help="report wait minutes after asynchronous submission (default: 33)")
+    timing.add_argument("--async", action="store_true", dest="async_deploy")
+    d.add_argument("--api-version")
+    d.add_argument("--ignore-conflicts", action="store_true")
+    d.add_argument("--ignore-warnings", action="store_true")
     d.add_argument("--dry-run", action="store_true")
     d.add_argument("--parent-snapshot-id", default=None, help="for revert chains (forensic)")
     d.add_argument("--invoking-intent", default=None, help="reason for this op")
@@ -395,19 +408,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     oap = org_assign_sub.add_parser("permset", help="sf org assign permset with PSA-id capture")
     oap.add_argument("--target-org", "-o", required=True, dest="target_org")
-    oap.add_argument("--name", required=True, dest="perm_set_name", help="permission set API name")
+    oap.add_argument("--name", required=True, action="append", dest="perm_set_name", help="permission set API name (repeatable)")
     # Codex-R1-P2-02: forward as --on-behalf-of to underlying sf CLI; accept legacy --on-user as alias
-    oap.add_argument("--on-behalf-of", "-b", default=None, dest="on_behalf_of",
+    oap.add_argument("--on-behalf-of", "-b", default=None, action="append", dest="on_behalf_of",
                      help="optional: target username/alias (sf CLI --on-behalf-of)")
-    oap.add_argument("--on-user", default=None, dest="on_user",
+    oap.add_argument("--on-user", default=None, action="append", dest="on_user",
                      help="DEPRECATED alias for --on-behalf-of")
     oap.set_defaults(func=cmd_org_assign_permset)
 
     oapl = org_assign_sub.add_parser("permsetlicense", help="sf org assign permsetlicense with PSL-id capture")
     oapl.add_argument("--target-org", "-o", required=True, dest="target_org")
-    oapl.add_argument("--name", required=True, dest="license_name", help="permission set license name")
-    oapl.add_argument("--on-behalf-of", "-b", default=None, dest="on_behalf_of")
-    oapl.add_argument("--on-user", default=None, dest="on_user", help="DEPRECATED alias")
+    oapl.add_argument("--name", required=True, action="append", dest="license_name", help="permission set license name (repeatable)")
+    oapl.add_argument("--on-behalf-of", "-b", default=None, action="append", dest="on_behalf_of")
+    oapl.add_argument("--on-user", default=None, action="append", dest="on_user", help="DEPRECATED alias")
     oapl.set_defaults(func=cmd_org_assign_permsetlicense)
 
     # ── package subcommands (v7.17.0) ────────────────────────────────────
@@ -499,6 +512,13 @@ def build_parser() -> argparse.ArgumentParser:
     rv_discard.set_defaults(func=cmd_revert_discard)
 
     return p
+
+
+def _wait_minutes(value: str) -> int:
+    minutes = int(value)
+    if minutes < 1:
+        raise argparse.ArgumentTypeError('wait must be at least one minute; use --async to return immediately')
+    return minutes
 
 
 def main(argv: list[str] | None = None) -> int:

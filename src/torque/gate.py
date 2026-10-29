@@ -8,7 +8,6 @@ host that does not wire up the hook can still get through. See docs/ai-access.md
 """
 from __future__ import annotations
 import base64
-import codecs
 import errno
 import glob
 import itertools
@@ -24,11 +23,26 @@ import urllib.parse
 from functools import lru_cache
 from pathlib import Path
 
-# sf/sfdx subcommands (or bare flags) that stay local and never touch an org, as
-# long as no org flag (ORG_FLAGS) also appears anywhere on the line.
-SF_LOCAL = {("project", "generate"), ("lightning", "generate"), ("apex", "generate"),
-            ("project", "convert"), ("code-analyzer", "run"), ("code-analyzer", "rules"),
-            ("--version",), ("version",), ("help",), ("plugins",)}
+# sf/sfdx leading command words that stay local and never touch an org, as long as
+# no org flag (_sf_org_flags) also appears on the line. This is the one classifier
+# both modes use: connected_routes.SF_LOCAL is this same set. `cmdt generate fromorg`
+# is the exception (it exports an org's records), so it is NOT local. A command with
+# a `-h`/`--help`/`--version` flag describes itself and is local too (_sf_is_local).
+SF_LOCAL_COMMANDS = {("project", "generate"), ("project", "convert"), ("project", "list", "ignored"),
+                     ("template", "generate"), ("schema", "generate"), ("cmdt", "generate"),
+                     ("lightning", "generate"), ("apex", "generate"), ("agent", "generate"),
+                     # the template generators' own aliases (sf static-resource generate is
+                     # template generate static-resource; generate metadata is schema generate)
+                     ("static-resource", "generate"), ("visualforce", "generate"), ("analytics", "generate"),
+                     ("generate", "metadata"),
+                     ("version",), ("help",), ("commands",), ("whatsnew",), ("which",), ("search",), ("info",),
+                     ("doctor",), ("autocomplete",), ("config", "list"), ("config", "get"),
+                     ("plugins",), ("plugins", "inspect")}
+SF_CMDT_FROMORG = ("cmdt", "generate", "fromorg")
+# code-analyzer runs local static analysis (no org); build-only allows it with its
+# roots scoped away from clients/ (SF_TREE_READERS). It is not in the shared local
+# set because connected mode asks the consultant about it (it can run rules plugins).
+SF_CODE_ANALYZER = {("code-analyzer", "run"), ("code-analyzer", "rules")}
 # Local sf commands that read a directory tree, with the flags naming their roots.
 # With no such flag the root is the current directory. The roots must not reach
 # clients/.
@@ -222,6 +236,11 @@ _deadline: float | None = None
 _glob_matches = 0
 # Each distinct glob pattern is expanded, and charged, once per call.
 _glob_cache: dict[str, tuple[list[Path], list[Path]]] = {}
+# clients_index_count runs two git subprocesses; its answer for a workspace does not
+# change within one call, so it is memoized per call (keyed by the resolved workspace).
+# This keeps a connected session with many client folders, whose guarded-folder passes
+# all ask about the same workspace, from spawning a git pair per folder.
+_index_cache: dict[str, int | None] = {}
 
 
 class BudgetExceeded(Exception):
@@ -245,11 +264,31 @@ def _remaining() -> float | None:
 
 
 def _budget_reason(exc: BudgetExceeded) -> str:
-    return (f"Build-only mode: {exc}, so the call could not be checked in time; blocking to fail closed. "
+    # Neutral prefix: a spent budget can be hit during workspace discovery, before
+    # the governing mode (build-only or connected) is known, as well as inside a
+    # build-only or connected check. The cause (time or globs) is named by `exc`.
+    return (f"Torque gate: {exc}, so the call could not be checked in time; blocking to fail closed. "
             "Name fewer paths or narrower globs, such as project/src/*.py.")
 
 
 NARROW_PATH_HINT = " Pass a narrower path, such as project/ or src/, instead of the workspace root."
+# Markers that a block already names an in-session next step (narrow the scope, name
+# paths under project/, preview with git clean -n, untrack with git rm --cached): a
+# scope block the consultant's rule lets the assistant retry, not a handoff.
+_SCOPE_BLOCK_MARKERS = ("project/", "git clean -n", "--cached")
+
+
+def _command_block_message(reason: str) -> str:
+    """The build-only message for a blocked Bash or PowerShell command. A scope block
+    (one that already tells how to narrow the call) is left as its own guidance, so it
+    does not also say to stop and hand off; a boundary block (org access, client
+    context, configuration or the gate) keeps the handoff. The period is never doubled."""
+    core = f"Build-only mode: {reason}"
+    if not core.rstrip().endswith((".", "!", "?")):
+        core += "."
+    if not any(marker in reason for marker in _SCOPE_BLOCK_MARKERS):
+        core += " Run it yourself outside the AI session."
+    return core
 
 
 def _home_value() -> str:
@@ -391,19 +430,165 @@ def _is_sf_token(tok: str) -> bool:
     return _basename(tok) in ("sf", "sfdx")
 
 
-def _has_org_flag(rest: list[str]) -> bool:
-    return any(tok.split("=", 1)[0] in ORG_FLAGS for tok in rest)
+# Commands whose arguments are data they look up, search or print, never a program
+# they run. A `sf`/`sfdx`/`@salesforce/cli` word that is one of these commands'
+# arguments (which sf, where.exe sf, Get-Command sf, rg sfdx, echo sf) is not an sf
+# call. Every other position keeps reading such a word as a call, as before, so an sf
+# call behind a runner (cmd /c, Start-Process, node .../run.js, env, time, sudo, xargs,
+# npx, then/do/else) is still caught: the gate fails closed on sf, and exempts only
+# these known readers.
+_SF_DATA_HEADS = {"which", "where", "whereis", "type", "get-command", "gcm", "rg", "grep", "egrep", "fgrep",
+                  "ack", "ag", "select-string", "sls", "findstr", "echo", "printf", "cat", "head", "tail",
+                  "less", "more", "test", "[", "[[", "write-output", "write-host"}
+# Options of a search command that run a program for each match (or as a
+# preprocessor), so a word after the command is not merely data: find -exec, fd -x,
+# rg --pre. With one of these the sf word is read as a call, as everywhere else.
+_EXEC_OPTIONS = {"find": ("-exec", "-execdir", "-ok", "-okdir"),
+                 "fd": ("-x", "--exec", "-X", "--exec-batch"),
+                 "rg": ("--pre",)}
+# npm/pnpm/yarn subcommands that only list or describe packages (npm ls @salesforce/cli).
+_PKG_LIST_VERBS = {"ls", "list", "la", "ll", "view", "info", "show", "outdated", "why", "explain", "search",
+                   "find", "s", "se", "v"}
 
 
-def _sf_local_ok(rest: list[str]) -> bool:
-    head2 = tuple(t for t in rest[:2] if not t.startswith("-") or t == "--version")
-    if head2[:2] in SF_LOCAL:
-        return True
-    if head2[:1] in SF_LOCAL:
-        # A bare single-word local command (plugins, version, help, --version)
-        # must not carry a further subcommand, e.g. "plugins install <name>".
-        return not [t for t in rest[1:] if not t.startswith("-")]
+def _sf_command_position(words: list[str], index: int) -> bool:
+    """True when the sf word at words[index] is read as an sf call. That is every
+    position except an argument of a command that only looks up, searches or prints its
+    arguments (_SF_DATA_HEADS, `command -v`/`-V`, `npm ls` and the like, a `find` with
+    no -exec). The head of the simple command is its first word that is not an
+    assignment or a shell keyword (then, do, else, ...), so `then sf ...` reads sf as
+    the head. Defaulting to a call keeps every runner that wraps sf caught."""
+    head = 0
+    while head < len(words) and (_ASSIGN_RE.match(words[head]) or words[head] in _SHELL_KEYWORDS):
+        head += 1
+    if head >= index:
+        return True  # sf is the head of its simple command
+    name = _basename(words[head])
+    between = words[head + 1:index]
+    runs = _EXEC_OPTIONS.get(name, ())
+    if runs and any(w.split("=", 1)[0] in runs for w in words):
+        return True  # find -exec sf, fd -x sf, rg --pre sf run the program
+    if name in _SF_DATA_HEADS or name in ("find", "fd"):
+        return False  # which sf, rg sfdx, echo sf, find . -name sf: data, not a call
+    if name in ("command", "builtin") and any(b in ("-v", "-V") for b in between):
+        return False  # command -v sf looks the program up, like which
+    if name in ("npm", "pnpm", "yarn") and words[head + 1:head + 2] and words[head + 1].casefold() in _PKG_LIST_VERBS:
+        return False  # npm ls @salesforce/cli lists packages
+    return True
+
+
+def _sf_topic(rest: list[str]) -> tuple[str, ...]:
+    """The leading command words of an sf line (the words before the first flag)."""
+    words: list[str] = []
+    for tok in rest:
+        if tok.startswith("-"):
+            break
+        words.append(tok)
+    return tuple(words)
+
+
+def _sf_org_flags(topic: tuple[str, ...]) -> set[str]:
+    """The flags that name an org for this sf command. code-analyzer has no org;
+    its `-o` is `--output-file` and its `-v` is `--view`, so neither counts (but a
+    long org flag such as `--target-org` still does). `-v` names the Dev Hub only
+    for package and org commands; elsewhere it carries a value (mirrors
+    connected_routes._sf_org_flags, the shared reading)."""
+    if topic[:1] == ("code-analyzer",):
+        return ORG_FLAGS - {"-o", "-v"}
+    if topic[:1] in (("package",), ("package1",), ("org",)):
+        return set(ORG_FLAGS)
+    return ORG_FLAGS - {"-v"}
+
+
+def _sf_has_org_flag(rest: list[str], topic: tuple[str, ...]) -> bool:
+    flags = _sf_org_flags(topic)
+    return any(tok.split("=", 1)[0] in flags for tok in rest)
+
+
+def _sf_is_help(rest: list[str]) -> bool:
+    """oclif shows help, and runs nothing, when -h or --help appears among the
+    arguments before a `--` (its help check reads every argument)."""
+    for tok in rest:
+        if tok == "--":
+            return False
+        if tok in ("-h", "--help"):
+            return True
     return False
+
+
+def _sf_is_version(rest: list[str]) -> bool:
+    """oclif prints its version, and runs nothing, only when the first argument is
+    --version or -v. A command's own --version (sf package1 version create --version
+    1.0) is that command's operand."""
+    return rest[:1] in (["--version"], ["-v"])
+
+
+def _sf_doctor_command(rest: list[str]) -> str | None:
+    """The command `sf doctor` is told to run, as the installed doctor reads it, or
+    None. oclif takes the value of a flag as the next word (`-c X`, `--command X`) or
+    attached (`-cX`, `-c=X`, `--command=X`), a short flag may share a word with doctor's
+    other short flags (`-lc X`), and `--` ends the options. The doctor puts `sf` in front
+    of a command that lacks it, so that is the command returned (several -c flags are
+    joined, so each is judged). `sf doctor --command X` runs X, so it reaches whatever
+    X reaches; both modes read it as X (build-only blocks it as non-local, connected
+    judges it as X). The caller reads help first (_sf_is_help): `--help` runs nothing."""
+    if _sf_topic(rest)[:1] != ("doctor",):
+        return None
+    found: list[str] = []
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        i += 1
+        if tok == "--":
+            break
+        value = None
+        if tok.startswith("--command"):
+            name, eq, attached = tok.partition("=")
+            if name == "--command":
+                value = attached if eq else (rest[i] if i < len(rest) else "")
+                i += 0 if eq else 1
+        elif tok.startswith("-") and not tok.startswith("--"):
+            for at, letter in enumerate(tok[1:], 2):
+                if letter == "c":
+                    value = tok[at:]
+                    if value.startswith("="):
+                        value = value[1:]
+                    elif not value:
+                        value = rest[i] if i < len(rest) else ""
+                        i += 1
+                    break
+                if letter in "pd":         # doctor's other value flags take the rest
+                    if at == len(tok):
+                        i += 1
+                    break
+        if value is not None:
+            words = value.split(None, 1)
+            found.append(value if words and _is_sf_token(words[0]) else ("sf " + value if words else ""))
+    return "; ".join(found) if found else None
+
+
+# sf commands that reach the configured default org with no org flag on the line, so
+# they are not local in either mode. `agent generate` (agent-spec defaults to the
+# configured org); `doctor --command` runs the command it is given (_sf_doctor_command).
+def _sf_reaches_org_without_flag(rest: list[str]) -> bool:
+    return _sf_topic(rest)[:2] == ("agent", "generate") or _sf_doctor_command(rest) is not None
+
+
+def _sf_is_local(rest: list[str]) -> bool:
+    """True when an sf/sfdx command stays local (no org), by the shared classifier: a
+    leading command in SF_LOCAL_COMMANDS or SF_CODE_ANALYZER, but never `cmdt generate
+    fromorg`, a `plugins` subcommand other than `inspect`, or a command that reaches an
+    org with no org flag (_sf_reaches_org_without_flag). Help and the global version
+    flag are read before this (_sf_is_help, _sf_is_version)."""
+    topic = _sf_topic(rest)
+    if topic[:3] == SF_CMDT_FROMORG:
+        return False
+    if topic[:1] == ("plugins",) and topic[1:2] not in ((), ("inspect",)):
+        # plugins install/link/update/uninstall/reset change what is installed.
+        return False
+    if _sf_reaches_org_without_flag(rest):
+        return False
+    return any(topic[:len(key)] == key for key in SF_LOCAL_COMMANDS | SF_CODE_ANALYZER)
 
 
 @lru_cache(maxsize=1)
@@ -605,10 +790,13 @@ def _token_paths(tok: str, cwd: Path, workspace: Path | None = None) -> tuple[li
     return paths, roots
 
 
-def _token_is_client_path(tok: str, clients: Path, cwd: Path) -> bool:
+def _token_is_client_path(tok: str, clients: Path, cwd: Path, workspace: Path) -> bool:
     if not tok:
         return False
-    paths, roots = _token_paths(tok, cwd, clients.parent)
+    # `workspace` is the real workspace root (not clients.parent, which is only the
+    # workspace when the guarded folder is clients/ itself; in connected mode clients
+    # is a sibling client or initiative folder, whose parent is clients/).
+    paths, roots = _token_paths(tok, cwd, workspace)
     return any(_is_within(p, clients) for p in paths) or any(_reaches(r, clients) for r in roots)
 
 
@@ -701,11 +889,49 @@ def _grep_directories_recurse(rest: list[str]) -> bool:
     return False
 
 
+# find's options that come before its paths: the traversal options -H, -L and -P
+# (GNU and BSD), BSD's -E, -X, -s and -x, GNU's -D DEBUGOPTS and -OLEVEL. BSD's -f PATH
+# names a path itself.
+_FIND_LEADING_SWITCHES = frozenset({"-H", "-L", "-P", "-E", "-X", "-s", "-x"})
+
+
+def _find_roots(rest: list[str]) -> list[str]:
+    """find's path operands. Its leading options (_FIND_LEADING_SWITCHES, -D VALUE,
+    -O LEVEL, BSD's -f PATH, and the `--` that ends them) are read first; then, by the POSIX grammar, the paths are
+    the words before the expression, which starts at the first operand that begins
+    with `-`, or is `(` or `!`. With no path, find searches the current directory, so
+    the caller's default (.) applies (an empty list here)."""
+    roots: list[str] = []
+    j = 0
+    while j < len(rest):
+        tok = rest[j]
+        if tok in _FIND_LEADING_SWITCHES or re.fullmatch(r"-O\d*", tok):
+            j += 1
+        elif tok in ("-D", "-f") and j + 1 < len(rest):
+            if tok == "-f":
+                roots.append(rest[j + 1])
+            j += 2
+        else:
+            if tok == "--":
+                j += 1               # the option terminator: the paths follow it
+            break
+    for tok in rest[j:]:
+        if tok.startswith("-") or tok in ("(", "!"):
+            break
+        roots.append(tok)
+    return roots
+
+
 def _recursive_search_targets(head: str, rest: list[str]) -> list[str]:
     """The path arguments a recursive search tool will actually read, as best we
     can tell from its usual grammar. grep/rg/ag/ack/fd take PATTERN [PATH...], so
-    their first non-flag argument is the search pattern, not a path; find/tree/ls
-    take PATH[...] directly, so every non-flag argument is a candidate path."""
+    their first non-flag argument is the search pattern, not a path; tree and ls
+    take PATH[...] directly (their value options, -L/-I/-w and the like, do not name
+    a path); find takes PATH[...] before its expression (_find_roots). With no path,
+    the caller defaults to the current directory, so these never read as rooted at a
+    stray option value."""
+    if head == "find":
+        return _find_roots(rest)
     value_flags = _SEARCH_VALUE_FLAGS.get(head, set())
     pattern_flags = _SEARCH_PATTERN_FLAGS.get(head, set())
     root_flags = _SEARCH_ROOT_FLAGS.get(head, set())
@@ -786,6 +1012,12 @@ _SEARCH_VALUE_FLAGS = {
            "--max-depth", "--min-depth", "--exact-depth", "--size", "--threads", "--exec", "--exec-batch",
            "--color", "--owner", "--changed-within", "--changed-before", "--ignore-file", "--max-results",
            "--path-separator", "--batch-size", "--format"},
+    # tree and ls take PATH[...] directly; these options take a value, so it is not
+    # read as a path (tree -L 2, tree -I node_modules, ls -I '*.tmp' -w 80).
+    "tree": {"-L", "-P", "-I", "-o", "-H", "-T", "--charset", "--filelimit", "--sort", "--timefmt",
+             "--fromfile", "--matchdirs"},
+    "ls": {"-w", "-T", "-I", "--block-size", "--format", "--time-style", "--tab-size", "--sort",
+           "--quoting-style", "--indicator-style"},
 }
 _SEARCH_PATTERN_FLAGS = {
     "grep": {"-e", "-f", "--regexp", "--file"}, "egrep": {"-e", "-f", "--regexp", "--file"},
@@ -865,17 +1097,18 @@ def _tar_operands(args: list[str], cwd: Path, dirs: list[Path] | None = None) ->
     return out or [(".", base)]
 
 
-def _recursive_search_reaches(head: str, rest: list[str], clients: Path, cwd: Path) -> bool:
+def _recursive_search_reaches(head: str, rest: list[str], clients: Path, cwd: Path, workspace: Path) -> bool:
     """A recursive search tool's target defaults to cwd when it names no path
-    argument at all (e.g. `rg foo`, bare `tree`)."""
+    argument at all (e.g. `rg foo`, bare `tree`, `find -name x`)."""
     roots = _recursive_search_targets(head, rest) or ["."]
-    return any(_root_reaches(raw, clients, cwd) for raw in roots)
+    return any(_root_reaches(raw, clients, cwd, workspace) for raw in roots)
 
 
-def _root_reaches(raw: str, clients: Path, cwd: Path) -> bool:
+def _root_reaches(raw: str, clients: Path, cwd: Path, workspace: Path) -> bool:
     """True when a recursive operation rooted at raw (a raw token, glob allowed)
-    could reach clients/. A root built from a variable counts as the workspace root."""
-    paths, roots = _token_paths(raw, cwd, clients.parent)
+    could reach clients/. A root built from a variable counts as reaching the
+    workspace root, so `workspace` must be the real root (see _token_is_client_path)."""
+    paths, roots = _token_paths(raw, cwd, workspace)
     return any(_reaches(p, clients) for p in paths + roots)
 
 
@@ -886,7 +1119,7 @@ LN_REASON = ("a link to client context, the workspace root or a folder above it 
 _LINK_ITEM_TYPES = {"symboliclink", "junction", "hardlink"}
 
 
-def _link_target_reaches(target: str, link: str, clients: Path, cwd: Path) -> bool:
+def _link_target_reaches(target: str, link: str, clients: Path, cwd: Path, workspace: Path) -> bool:
     """A link target, read both from the current directory and from the folder
     the link is made in (Windows reads a relative symbolic target from there),
     reaching clients/ or above it."""
@@ -896,18 +1129,18 @@ def _link_target_reaches(target: str, link: str, clients: Path, cwd: Path) -> bo
         link_dir = _resolve(cwd, os.path.dirname(link) or ".") if link else cwd
     except (OSError, ValueError):
         return True
-    return any(_root_reaches(target, clients, base) for base in dict.fromkeys([cwd, link_dir]))
+    return any(_root_reaches(target, clients, base, workspace) for base in dict.fromkeys([cwd, link_dir]))
 
 
-def _mklink_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+def _mklink_reaches(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> bool:
     """cmd's `mklink [/D|/H|/J] LINK TARGET`."""
     operands = [t for t in rest if not re.match(r"^/{1,2}[A-Za-z]$", t)]
     if len(operands) < 2:
         return False
-    return _link_target_reaches(operands[1], operands[0], clients, cwd)
+    return _link_target_reaches(operands[1], operands[0], clients, cwd, workspace)
 
 
-def _new_item_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+def _new_item_reaches(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> bool:
     """PowerShell's `New-Item -ItemType SymbolicLink|Junction|HardLink -Path P
     -Target T` (or -Value, -Name, -Type)."""
     values: dict[str, str] = {}
@@ -921,10 +1154,10 @@ def _new_item_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
     if values.get("itemtype", "").casefold() not in _LINK_ITEM_TYPES:
         return False
     target = values.get("target", values.get("value", ""))
-    return _link_target_reaches(target, values.get("path", values.get("name", "")), clients, cwd)
+    return _link_target_reaches(target, values.get("path", values.get("name", "")), clients, cwd, workspace)
 
 
-def _ln_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+def _ln_reaches(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> bool:
     """True when `ln` (symbolic or hard) would make a link whose target is
     clients/, inside it, the workspace root or any folder above it. A relative
     symbolic target is read from the folder the link is made in; a hard link's,
@@ -988,7 +1221,7 @@ def _ln_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
             return True
     else:
         base = cwd
-    return any(_root_reaches(raw, clients, base) for raw in targets)
+    return any(_root_reaches(raw, clients, base, workspace) for raw in targets)
 
 
 def _flag_values(args: list[str], flags: set[str]) -> list[str] | None:
@@ -1007,7 +1240,7 @@ def _flag_values(args: list[str], flags: set[str]) -> list[str] | None:
     return found if seen else None
 
 
-def _sf_tree_reader_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+def _sf_tree_reader_reaches(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> bool:
     """A local sf command that reads a directory tree (code-analyzer, project
     convert) must not be rooted at or above clients/. Its root defaults to the
     current directory."""
@@ -1018,7 +1251,7 @@ def _sf_tree_reader_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
     roots = _flag_values(rest, flags) or ["."]
     if _flag_values(rest, SF_PACKAGE_DIR_FLAGS.get(head2[:2], set())) is not None:
         roots.append(".")
-    return any(_root_reaches(raw, clients, cwd) for raw in roots)
+    return any(_root_reaches(raw, clients, cwd, workspace) for raw in roots)
 
 
 def _is_long_flag(tok: str, flag: str, shortest: int) -> bool:
@@ -1032,7 +1265,7 @@ def _reads_untracked(tok: str) -> bool:
     return _is_long_flag(tok, "--untracked", 3) or _is_long_flag(tok, "--no-index", 6)
 
 
-def _git_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
+def _git_reaches(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> bool:
     """`git grep --untracked`, `git grep --no-index` and `git diff --no-index`
     read files Git does not track, and clients/ is git-ignored, so none of them
     may be rooted at or above clients/. Git accepts any unambiguous prefix of a
@@ -1048,7 +1281,7 @@ def _git_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
         if not any(_is_long_flag(t, "--no-index", 6) for t in args):
             return False
         paths = args[args.index("--") + 1:] if "--" in args else [t for t in args if not t.startswith("-")]
-        return any(_root_reaches(raw, clients, base) for raw in paths)
+        return any(_root_reaches(raw, clients, base, workspace) for raw in paths)
     if not any(_reads_untracked(t) for t in args):
         return False
     # `--` ends the options. Without -e/-f, the pattern is the first word, before
@@ -1077,7 +1310,7 @@ def _git_reaches(rest: list[str], clients: Path, cwd: Path) -> bool:
         paths = non_flags[1:] + post
     else:
         paths = post[1:]
-    return any(_root_reaches(raw, clients, base) for raw in (paths or ["."]))
+    return any(_root_reaches(raw, clients, base, workspace) for raw in (paths or ["."]))
 
 
 _GIT_GREP_PATTERN_FLAGS = {"-e", "-f", "--regexp", "--file"}
@@ -1129,9 +1362,15 @@ def _git_parse(rest: list[str], cwd: Path) -> tuple[Path, list[Path], str | None
 
 
 _CLIENT_SPEC = ":(icase)clients"
-GIT_TRACKED_REASON = ("client files are in git's index in this workspace (or git could not check), so git "
-                      "commands other than git status and git rm --cached of clients/ are blocked. Client "
-                      "files must stay untracked: run git rm -r --cached clients")
+GIT_TRACKED_REASON = ("client files are in git's index in this workspace, so git commands other than git "
+                      "status and git rm --cached of clients/ are blocked. Client files must stay untracked: "
+                      "run git rm -r --cached clients")
+# When git itself could not answer (missing, timed out, or an error), the fix is not
+# to untrack but to make git work; naming that keeps the agent from running the wrong
+# remedy (claude-A2a#14).
+GIT_UNKNOWN_REASON = ("git could not confirm whether client files are tracked in this workspace (git is "
+                      "missing, timed out, or errored), so git commands are blocked to fail closed. Check that "
+                      "git is on PATH and the repository is readable, outside the AI session")
 
 
 def _git_add_roots(args: list[str]) -> list[str] | None:
@@ -1156,7 +1395,7 @@ def _clients_in_index(workspace: Path) -> bool:
     return count is None or count > 0
 
 
-def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Path) -> str:
+def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Path, workspace: Path) -> str:
     """Client files enter git through `git add`/`git stage`, `git update-index
     --add` and `git hash-object -w`. Each is blocked when its paths reach
     clients/, .claude/ or the hook's environment. And while client files are in
@@ -1191,11 +1430,14 @@ def _git_stage_reason(rest: list[str], clients: Path, claude_dir: Path, cwd: Pat
                           if t == "--cacheinfo" and i + 1 < len(args) and "," in args[i + 1]]
             if (paths or cacheinfo) and (bool(trees) or _pathspecs_reach(paths + cacheinfo, base, protected)):
                 return GIT_STAGE_REASON
-    if sub is not None and _clients_in_index(clients.parent):
-        verbose = any(_is_long_flag(t, "--verbose", 3) if t.startswith("--") else _short_flag_has(t, "v", "")
-                      for t in args)
-        if sub != "status" or verbose:
-            return GIT_TRACKED_REASON
+    if sub is not None:
+        count = clients_index_count(workspace)
+        if count is None or count > 0:
+            verbose = any(_is_long_flag(t, "--verbose", 3) if t.startswith("--") else _short_flag_has(t, "v", "")
+                          for t in args)
+            if sub != "status" or verbose:
+                # None means git could not answer: a different fix than untracking.
+                return GIT_UNKNOWN_REASON if count is None else GIT_TRACKED_REASON
     return ""
 
 
@@ -1232,7 +1474,19 @@ def clients_index_count(workspace: Path) -> int | None:
     workspace is not in a repository, None when git errors, times out or is missing.
     initiatives/ is internal (not client-confidential) and is deliberately not
     counted here: counting it would lock the agent out of ordinary git commands
-    (git log, git diff, git rm --cached) whenever an initiative file is tracked."""
+    (git log, git diff, git rm --cached) whenever an initiative file is tracked.
+    Memoized per call (_index_cache), so repeated guarded-folder passes that ask
+    about the same workspace spawn the git query once, not once per folder."""
+    key = _cf(str(workspace)) if _deadline is not None else None
+    if key is not None and key in _index_cache:
+        return _index_cache[key]
+    count = _clients_index_count(workspace)
+    if key is not None:
+        _index_cache[key] = count
+    return count
+
+
+def _clients_index_count(workspace: Path) -> int | None:
     if not workspace.is_dir():
         return 0
     probe = _git_run(workspace, ["rev-parse", "--is-inside-work-tree"])
@@ -1648,7 +1902,7 @@ def _short_option_values(rest: list[str], value_letters: str) -> tuple[list[tupl
 _UNZIP_VALUE_LETTERS = "dPIO"
 
 
-def _unzip_reason(rest: list[str], clients: Path, cwd: Path) -> str:
+def _unzip_reason(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> str:
     """unzip writes under -d EXDIR (in any cluster: -d DIR, -dDIR, -od.., -qod ..),
     else the current directory. Listing, testing and printing modes (-l, -t, -p,
     -c, -Z) write nothing; -: keeps `..` in member names."""
@@ -1660,17 +1914,17 @@ def _unzip_reason(rest: list[str], clients: Path, cwd: Path) -> str:
     targets = [value for letter, value in values if letter == "d"] or ["."]
     if any(not target for target in targets):
         return EXTRACT_REASON
-    return EXTRACT_REASON if any(_root_reaches(target, clients, cwd) for target in targets) else ""
+    return EXTRACT_REASON if any(_root_reaches(target, clients, cwd, workspace) for target in targets) else ""
 
 
-def _ditto_reason(rest: list[str], clients: Path, cwd: Path) -> str:
+def _ditto_reason(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> str:
     """ditto -x extracts an archive into its last operand."""
     if not any(_short_flag_has(t, "x") for t in rest):
         return ""
     operands = [t for t in rest if not t.startswith("-")]
     if len(operands) < 2:
         return EXTRACT_REASON
-    return EXTRACT_REASON if _root_reaches(operands[-1], clients, cwd) else ""
+    return EXTRACT_REASON if _root_reaches(operands[-1], clients, cwd, workspace) else ""
 
 
 def _installer_reason(name: str, args: list[str]) -> str:
@@ -1797,19 +2051,29 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             reason = _git_location_reason(rest, words[:i], workspace, cwd)
             if reason:
                 return reason
-        if _is_sf_token(tok) and not org_rules:
-            if _sf_tree_reader_reaches(rest, clients, cwd):
+        if _is_sf_token(tok) and not _sf_command_position(words, i):
+            # A bare `sf`/`sfdx`/`@salesforce/cli` word that is an argument to another
+            # command (which sf, rg sfdx, npm ls @salesforce/cli) is not an sf call.
+            pass
+        elif _is_sf_token(tok) and (_sf_is_help(rest) or _sf_is_version(rest)):
+            # oclif handles help and the global version flag before it runs a command,
+            # so these reach no org and read no tree, in either mode. (Connected mode's
+            # own classifier still refuses a credential command whatever its flags.)
+            pass
+        elif _is_sf_token(tok) and not org_rules:
+            if _sf_tree_reader_reaches(rest, clients, cwd, workspace):
                 return (f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} would read client context."
                         + NARROW_PATH_HINT)
         elif _is_sf_token(tok):
-            if _has_org_flag(rest):
+            topic = _sf_topic(rest)
+            if _sf_has_org_flag(rest, topic):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
-            if not _sf_local_ok(rest):
+            if not _sf_is_local(rest):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
-            if _sf_tree_reader_reaches(rest, clients, cwd):
+            if _sf_tree_reader_reaches(rest, clients, cwd, workspace):
                 return (f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} would read client context."
                         + NARROW_PATH_HINT)
-        elif _basename(tok) == "git" and _git_reaches(rest, clients, cwd):
+        elif _basename(tok) == "git" and _git_reaches(rest, clients, cwd, workspace):
             return "git grep or git diff over untracked files can read client context." + NARROW_PATH_HINT
         elif _basename(tok) == "git" and _git_wipe_reaches(rest, words, clients, claude_dir, cwd):
             return GIT_WIPE_REASON
@@ -1817,8 +2081,9 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             return GIT_LISTING_REASON
         elif _basename(tok) == "git" and _git_patch_reason(rest, workspace, cwd):
             return PATCH_REASON
-        elif _basename(tok) == "git" and _git_stage_reason(rest, clients, claude_dir, cwd):
-            return _git_stage_reason(rest, clients, claude_dir, cwd)
+        elif _basename(tok) == "git" and (git_reason := _git_stage_reason(rest, clients, claude_dir, cwd, workspace)):
+            # Bind the reason once (it is computed here on the deny path only).
+            return git_reason
         elif _INSTALLER_RE.match(_basename(tok)):
             reason = _installer_reason(_basename(tok), rest)
             if reason:
@@ -1847,24 +2112,24 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             if reason:
                 return reason
         elif _basename(tok) == "ln":
-            if _ln_reaches(rest, clients, cwd):
+            if _ln_reaches(rest, clients, cwd, workspace):
                 return LN_REASON
         elif _basename(tok) == "mklink":
-            if _mklink_reaches(rest, clients, cwd):
+            if _mklink_reaches(rest, clients, cwd, workspace):
                 return LN_REASON
         elif _basename(tok) == "new-item":
-            if _new_item_reaches(rest, clients, cwd):
+            if _new_item_reaches(rest, clients, cwd, workspace):
                 return LN_REASON
         elif _basename(tok) == "patch":
             reason = _patch_reason(toks, words, i, workspace, cwd)
             if reason:
                 return reason
         elif _basename(tok) == "unzip":
-            reason = _unzip_reason(rest, clients, cwd)
+            reason = _unzip_reason(rest, clients, cwd, workspace)
             if reason:
                 return reason
         elif _basename(tok) == "ditto":
-            reason = _ditto_reason(rest, clients, cwd)
+            reason = _ditto_reason(rest, clients, cwd, workspace)
             if reason:
                 return reason
         elif _basename(tok) in TAR_HEADS:
@@ -1872,11 +2137,11 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             if reason:
                 return reason
             operands = _tar_operands(rest, cwd)
-            if operands is None or any(_root_reaches(raw, clients, base) for raw, base in operands):
+            if operands is None or any(_root_reaches(raw, clients, base, workspace) for raw, base in operands):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
         elif _is_recursive_search(tok, rest):
             head = _basename(tok)
-            if _recursive_search_reaches(head, rest, clients, cwd):
+            if _recursive_search_reaches(head, rest, clients, cwd, workspace):
                 return "this command can search client context recursively." + NARROW_PATH_HINT
     chdir = _env_chdir(toks)
     if chdir is not None:
@@ -2045,7 +2310,7 @@ def _token_reason(tok: str, clients: Path, claude_dir: Path, workspace: Path, cw
         return "this command targets the .agents folder, which holds the Antigravity hook configuration"
     if _token_targets_package(tok, cwd):
         return "this command targets the installed Torque package that enforces this mode"
-    if _token_is_client_path(tok, clients, cwd):
+    if _token_is_client_path(tok, clients, cwd, workspace):
         return "this command reaches client context"
     paths, _ = _token_paths(tok, cwd)
     if any(_in_interpreter(p, write) for p in paths):
@@ -2176,62 +2441,93 @@ def _add_cwds(pool: list[Path], extra: list[Path]) -> list[Path]:
 
 def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path | list[Path],
                _depth: int = 0, org_rules: bool = True) -> str:
-    """Check every segment of command, then recurse into $(...) / backtick
-    substitutions (already exposed as their own segments by the paren/backtick
-    splitter, and re-checked explicitly below for robustness) and into the string
-    argument of bash -c / sh -c / zsh -c.
-
-    A cd, pushd or popd earlier in the command changes the directory later
-    relative paths resolve against. Every segment is checked against each
-    directory it could run in: right after `cd X &&` that is X alone; after any
-    other separator (;, ||, |, &, a newline) the cd may have failed or run in a
-    subshell, so the earlier directories stay possible too. When the command
-    has grouping ((), {}, backticks), every directory seen stays possible. After
-    a directory change whose target cannot be known here (cd -, cd ~-, popd,
-    cd "$VAR", cd "$(...)"), the rest of the command is checked from every
-    directory seen, the starting directories and all of their parents."""
-    if _depth > 8 or not command:
-        return ""
+    """Check every simple command that command can run, as the command reader
+    (_read_commands) finds them, against each directory it could run in."""
     if _depth == 0 and len(command) > MAX_INPUT_CHARS:
         # decide() blocks this first; kept here so no caller parses an over-long command.
         return _too_long(len(command))
+    for kind, item in _read_commands(command, workspace, cwd, _depth):
+        if kind == "error":
+            return item
+        if kind == "text":
+            text, start = item
+            if _STASH_UNTRACKED_REF_RE.search(text) and re.search(r"(?<![A-Za-z0-9_.-])git(?![A-Za-z0-9_-])", text):
+                # The segment splitter cuts stash@{0}^3 at its braces, so a stash's
+                # untracked parent is looked for in the whole command.
+                protected = _git_protected(clients, claude_dir)
+                if any(_toplevel_reaches(base, protected) for base in start):
+                    return GIT_WIPE_REASON
+        elif kind == "segment":
+            toks, _sep, cwds, _unknown = item
+            for here in cwds:
+                reason = _block_command(toks, clients, claude_dir, workspace, here, org_rules) if toks else ""
+                if reason:
+                    return reason
+    return ""
+
+
+def _read_commands(command: str, workspace: Path, cwd: Path | list[Path], _depth: int = 0, unknown: bool = False):
+    """The command reader that build-only's scan and the every-mode record check
+    share. It yields, in order: ("text", (text, start directories)) for each text
+    the shell can run, as normalized below; ("segment", (words, separator after
+    them, directories, unknown)) for each of its simple commands; ("end", None)
+    after each text; and ("error", reason) for a text it cannot read.
+
+    A text is read with $HOME, ~ and $PWD filled in, ANSI-C quoting decoded, any
+    other ${...} kept as one unknown word and brace expansion done. It is also
+    read with each zsh glob group as a wildcard, and with what its variables
+    could hold written in (_values_reading). The texts it hands to a shell are
+    read as well: the string of bash -c / sh -c / zsh -c and the words of eval
+    (_nested_commands), and $(...) / backtick substitutions (already exposed as
+    their own segments by the paren/backtick splitter, and read again here whole).
+
+    A cd, pushd or popd earlier in the command changes the directory later
+    relative paths resolve against. Each segment comes with every directory it
+    could run in: right after `cd X &&` that is X alone; after any other
+    separator (;, ||, |, &, a newline) the cd may have failed or run in a
+    subshell, so the earlier directories stay possible too. When the command has
+    grouping ((), {}, backticks), every directory seen stays possible. After a
+    directory change whose target cannot be known here (cd -, cd ~-, popd,
+    cd "$VAR", cd "$(...)"), the rest of the command comes with every directory
+    seen, the starting directories and all of their parents, and `unknown` set."""
+    if _depth > 8 or not command:
+        return
+    entry = unknown
     command = _expand_home_in_command(command)
     command = _decode_ansi_c(command)
     command = _PWD_BRACED_RE.sub("$PWD", command)
+    values = _values_reading(command)
+    values = values if values != command else ""
     # Any other ${...} (${R}, ${PWD%/project}) is unknown here. Keep it one word,
     # $0, so the splitter below does not cut it at its braces.
     command = _BRACED_PARAM_RE.sub("$0", command)
     try:
         command = _expand_braces(command)
     except ValueError as exc:
-        return str(exc)
+        yield "error", str(exc)
+        return
     start = list(cwd) if isinstance(cwd, list) else [cwd]
-    if _STASH_UNTRACKED_REF_RE.search(command) and re.search(r"(?<![A-Za-z0-9_.-])git(?![A-Za-z0-9_-])", command):
-        # The segment splitter below cuts stash@{0}^3 at its braces, so a stash's
-        # untracked parent is looked for in the whole command.
-        protected = _git_protected(clients, claude_dir)
-        if any(_toplevel_reaches(base, protected) for base in start):
-            return GIT_WIPE_REASON
+    yield "text", (command, start)
     globbed = _WORD_GROUP_RE.sub("*", command)
     if globbed != command:
         # zsh glob groups and qualifiers (c(l)ients, notes(.)) and comma-less
-        # brace groups (c{l..l}ients) may match protected paths: check the
+        # brace groups (c{l..l}ients) may match protected paths: read the
         # command again with each group read as a wildcard.
-        reason = _scan_bash(globbed, clients, claude_dir, workspace, cwd, _depth + 1, org_rules)
-        if reason:
-            return reason
+        yield from _read_commands(globbed, workspace, cwd, _depth + 1, entry)
     seen: list[Path] = list(start)
     current: list[Path] = list(start)
     grouped = any(c in command for c in _GROUPING_CHARS)
     for toks, sep in _segments_with_separators(command):
-        for here in current:
-            reason = _block_command(toks, clients, claude_dir, workspace, here, org_rules) if toks else ""
-            if reason:
-                return reason
-        for inner in _shell_c_strings(toks):
-            reason = _scan_bash(inner, clients, claude_dir, workspace, list(current), _depth + 1, org_rules)
-            if reason:
-                return reason
+        yield "segment", (toks, sep, current, unknown)
+        for inner in _nested_commands(toks):
+            yield from _read_commands(inner, workspace, list(current), _depth + 1, unknown)
+        try:
+            launched = _powershell_launched(toks)
+        except ValueError as exc:
+            yield "error", str(exc)
+            launched = []
+        for inner in launched:
+            yield from _read_commands(inner, workspace, list(current), _depth + 1, unknown)
         target = _cd_target(toks)
         if target is not None and sep in ("`", "("):
             # cd `...` or cd $(...): the splitter cut the target off.
@@ -2239,6 +2535,7 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
         if target == "":
             seen = _widened_cwds(seen, start, workspace)
             current = list(seen)
+            unknown = True
             continue
         moved = _next_cwds(current, target) if target is not None else []
         _add_cwds(seen, moved)
@@ -2250,35 +2547,154 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
             current = list(seen)
     # The segment splitter above cuts inside quotes, so a quoted `bash -c "..."`
     # string containing && or ; reaches the loop in pieces. Parse the whole
-    # command once more, quote-aware, and scan each -c string intact.
+    # command once more, quote-aware, and read each -c string intact.
     try:
         whole = shlex.split(command, posix=True)
     except ValueError:
         whole = []
-    for inner in _shell_c_strings(whole):
-        reason = _scan_bash(inner, clients, claude_dir, workspace, list(seen), _depth + 1, org_rules)
-        if reason:
-            return reason
+    for inner in _nested_commands(whole):
+        yield from _read_commands(inner, workspace, list(seen), _depth + 1, unknown)
+    try:
+        launched = _powershell_launched(whole)
+    except ValueError as exc:
+        yield "error", str(exc)
+        launched = []
+    for inner in launched:
+        yield from _read_commands(inner, workspace, list(seen), _depth + 1, unknown)
     for nested in _direct_substitutions(command):
-        reason = _scan_bash(nested, clients, claude_dir, workspace, list(seen), _depth + 1, org_rules)
-        if reason:
-            return reason
-    return ""
+        yield from _read_commands(nested, workspace, list(seen), _depth + 1, unknown)
+    if values:
+        yield from _read_commands(values, workspace, cwd, _depth + 1, entry)
+    yield "end", None
+
+
+# ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word} and
+# ${NAME+word}: the shell can put the word in their place.
+_PARAM_WORD_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+]([^{}]*)\}")
+# An assignment with a value that holds nothing to expand: NAME=value in Bash and
+# $NAME = value in PowerShell (as _powershell_as_bash writes it), the value plain or
+# in quotes; and a later $NAME or ${NAME}.
+_KNOWN_VALUE_RE = re.compile(
+    r"(?:^|(?<=[\s;&|(){}`'\"]))(?P<name>[A-Za-z_][A-Za-z0-9_]*)="
+    r"(?P<value>'[^']*'|\"[^\"$`]*\"|[^\s;&|(){}<>`'\"$\\]*)(?=[\s;&|(){}<>`'\"]|$)"
+    r"|\$(?P<psname>[A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*"
+    r"(?P<psvalue>'[^']*'|\"[^\"$`]*\"|[^\s;&|(){}<>`'\"$\\=][^\s;&|(){}<>`'\"$\\]*)"
+    r"|\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_]))")
+# A value written in as it is: no space, quote or character the reader splits at.
+_PLAIN_VALUE_RE = re.compile(r"[\w./~:@%+,=*?\[\]-]*")
+
+
+def _values_reading(command: str) -> str:
+    """command with what its variables could hold written in: the word of
+    ${NAME:-word} (and the -, =, :=, + and :+ forms), and for $NAME or ${NAME} the
+    value an earlier assignment in the same command gave it (C=clients/acme; rm
+    $C/x). The command as written is read too; this reading only adds what the
+    shell could make of those words. A value with a space, a quote or anything to
+    expand is left unknown."""
+    text = _PARAM_WORD_RE.sub(lambda m: m.group(1), command)
+    known: dict[str, str] = {}
+
+    def fill(m: re.Match) -> str:
+        name = m.group("name") or m.group("psname")
+        if name:
+            raw = m.group("value") if m.group("name") else m.group("psvalue")
+            value = raw[1:-1] if raw[:1] in ("'", '"') and len(raw) > 1 else raw
+            if os.name == "nt":
+                # Windows reads a backslash as a separator, and the splitter would eat it.
+                value = value.replace("\\", "/")
+            if _PLAIN_VALUE_RE.fullmatch(value):
+                known[name] = value
+            else:
+                known.pop(name, None)
+            return m.group(0)
+        return known.get(m.group("braced") or m.group("plain"), m.group(0))
+    return _KNOWN_VALUE_RE.sub(fill, text)
+
+
+def _powershell_launched(toks: list[str]) -> list[str]:
+    """The commands a powershell or pwsh started from a shell runs, read as the
+    build-only scan reads a PowerShell tool call (_powershell_commands): the text of
+    -Command or -c, and a decoded -EncodedCommand. A -File script's path is a word of
+    the line and is checked as one. ValueError when an encoded command cannot be read."""
+    found: list[str] = []
+    for i, tok in enumerate(toks):
+        if _basename(tok) in ("powershell", "pwsh") and i + 1 < len(toks):
+            for text in _powershell_commands(shlex.join(toks[i:]))[1:]:
+                if text not in found:
+                    found.append(text)
+    return found
+
+
+def _nested_commands(toks: list[str]) -> list[str]:
+    """The command strings a segment hands to a shell to run: the string of
+    bash -c / sh -c / zsh -c (_shell_c_strings), and the words after eval, which
+    eval joins with spaces and runs as a command."""
+    found = _shell_c_strings(toks)
+    found += [" ".join(toks[i + 1:]) for i, tok in enumerate(toks) if _basename(tok) == "eval" and i + 1 < len(toks)]
+    return found
 
 
 _SHELL_C_FLAG_RE = re.compile(r"^-[a-zA-Z]*c[a-zA-Z]*$")
 
 
+# The letter escapes of ANSI-C ($'...') quoting, as Bash decodes them.
+_ANSI_C = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+           "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def _ansi_c(text: str) -> str:
+    """The text of a $'...' word as Bash decodes it: the letter escapes, one to three
+    octal digits, \\x with one or two hex digits, \\u with up to four and \\U with up
+    to eight, \\cX; an escape Bash does not know keeps its backslash; and a NUL ends
+    the text, as it does in Bash. The one Bash-compatible decoder, which build-only's
+    _decode_ansi_c and connected_routes both use, so the two gates agree with bash
+    (a trailing invalid escape no longer makes the build-only gate fail open)."""
+    out, i = [], 0
+    while i < len(text):
+        c = text[i]
+        follower = text[i + 1:i + 2]
+        if c != "\\" or not follower:
+            out.append(c.encode("utf-8", "surrogateescape"))
+            i += 1
+        elif follower in _ANSI_C:
+            out.append(_ANSI_C[follower].encode("utf-8"))
+            i += 2
+        elif follower in "01234567":
+            digits = re.match(r"[0-7]{1,3}", text[i + 1:]).group()
+            out.append(bytes([int(digits, 8) & 0xFF]))
+            i += 1 + len(digits)
+        elif follower in "xuU" and re.match(r"[0-9A-Fa-f]", text[i + 2:i + 3]):
+            digits = re.match(r"[0-9A-Fa-f]{1,%d}" % {"x": 2, "u": 4, "U": 8}[follower], text[i + 2:]).group()
+            value = int(digits, 16)
+            if follower == "x":
+                out.append(bytes([value]))
+            elif value < 0x110000:
+                out.append(chr(value).encode("utf-8", "surrogatepass"))
+            elif value < 0x80000000:
+                # Bash still writes the older five-byte and six-byte UTF-8 forms.
+                length = 4 if value < 0x200000 else 5 if value < 0x4000000 else 6
+                prefix = {4: 0xF0, 5: 0xF8, 6: 0xFC}[length]
+                out.append(bytes([prefix | value >> (6 * (length - 1))] +
+                                 [0x80 | (value >> shift) & 0x3F
+                                  for shift in range(6 * (length - 2), -1, -6)]))
+            i += 2 + len(digits)
+        elif follower == "c" and text[i + 2:i + 3]:
+            # Bash controls the first byte, then keeps the rest of a UTF-8 character.
+            value = text[i + 2].encode("utf-8", "surrogateescape")
+            control = 0x7F if value[0] == 0x3F else value[0] & 0x1F
+            out.append(bytes([control]) + value[1:])
+            i += 4 if text[i + 2:i + 4] == "\\\\" else 3
+        else:
+            out.append((c + follower).encode("utf-8", "surrogateescape"))
+            i += 2
+    return b"".join(out).split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
+
+
 def _decode_ansi_c(command: str) -> str:
-    """Decode bash/zsh ANSI-C quoting ($'\\x63lients' is 'clients') into an
-    ordinary single-quoted word, and drop the $ of locale quoting ($"...")."""
-    def decode(m: re.Match) -> str:
-        try:
-            text = codecs.decode(m.group(1).encode("latin-1", "backslashreplace"), "unicode_escape")
-        except (UnicodeError, ValueError):
-            return m.group(0)
-        return shlex.quote(text)
-    return _ANSI_C_RE.sub(decode, command).replace('$"', '"')
+    """Decode bash/zsh ANSI-C quoting ($'\\x63lients' is 'clients') into an ordinary
+    single-quoted word, with _ansi_c (the Bash-compatible decoder), and drop the $ of
+    locale quoting ($"...")."""
+    return _ANSI_C_RE.sub(lambda m: shlex.quote(_ansi_c(m.group(1))), command).replace('$"', '"')
 
 
 def _shell_c_strings(toks: list[str]) -> list[str]:
@@ -2317,14 +2733,87 @@ _PS_ENCODED_FLAGS = frozenset({"-ec"} | {"-" + "encodedcommand"[:n] for n in ran
 _PS_MAX_STRINGS = 64
 
 
+# Get-ChildItem parameters, matched by case-insensitive prefix. -Recurse and -Depth
+# are read separately (they turn on recursion); -Path/-LiteralPath name a root; the
+# value params take a value that is not a root; the switches take none.
+_PS_RECURSE_PARAM_RE = re.compile(r"-(?:r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?|s)$", re.IGNORECASE)
+_PS_DEPTH_PARAM_RE = re.compile(r"-dep(?:t(?:h)?)?$", re.IGNORECASE)
+_GCI_PATH_PARAMS = ("path", "literalpath")
+_GCI_VALUE_PARAMS = ("filter", "include", "exclude", "attributes")
+_GCI_SWITCH_PARAMS = ("force", "name", "file", "directory", "hidden", "readonly", "system",
+                      "followsymlink", "usetransaction")
+
+
+def _ps_listing_rest(arg_text: str) -> str | None:
+    """The arguments of a Get-ChildItem/gci/dir/ls listing rewritten for the Bash
+    scan's `ls`: -Recurse and -Depth become `--recursive`, -Path/-LiteralPath values
+    and positional words become the roots, and -Filter/-Include/-Exclude/-Depth
+    values (and other value parameters) are dropped so they are not read as paths.
+    Returns the text after `ls` (with a leading space), or None for a cmd.exe form
+    (`/s`, `/b`), which the caller rewrites the old way."""
+    if _CMD_SWITCH_RE.search(arg_text):
+        return None
+    try:
+        toks = shlex.split(arg_text, posix=True)
+    except ValueError:
+        return None
+    roots: list[str] = []
+    recursive = False
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        if not tok.startswith("-") or tok == "-":
+            roots.append(tok)
+            i += 1
+            continue
+        head, _, attached = tok.partition(":")
+        if _PS_RECURSE_PARAM_RE.fullmatch(head):
+            recursive = True
+        elif _PS_DEPTH_PARAM_RE.fullmatch(head):
+            recursive = True
+            if not attached and i + 1 < len(toks) and re.fullmatch(r"\d+", toks[i + 1]):
+                i += 1
+        else:
+            name = head[1:].casefold()
+            paths = [p for p in _GCI_PATH_PARAMS if p.startswith(name)]
+            values = [p for p in _GCI_VALUE_PARAMS if p.startswith(name)]
+            switches = [p for p in _GCI_SWITCH_PARAMS if p.startswith(name)]
+            if paths and not values and not switches:
+                if attached:
+                    roots.append(attached)
+                elif i + 1 < len(toks):
+                    roots.append(toks[i + 1])
+                    i += 1
+            elif switches and not values and not paths:
+                pass  # a switch takes no value
+            elif not attached and i + 1 < len(toks) and not toks[i + 1].startswith("-"):
+                # a value parameter (filter, include, exclude, ...) or an unknown one:
+                # drop its value so it is not read as a path (the safe reading).
+                i += 1
+        i += 1
+    if recursive:
+        # A wildcard path under -Recurse/-Depth names files to match while the search
+        # walks from the pattern's parent directory, so root at that parent (cwd for a
+        # bare `*.md`): Get-ChildItem *.md -Recurse recurses the current directory.
+        roots = [(os.path.dirname(r) or ".") if _has_glob_char(r) else r for r in roots]
+    parts = (["--recursive"] if recursive else []) + roots
+    return (" " + " ".join(shlex.quote(part) for part in parts)) if parts else ""
+
+
 def _powershell_as_bash(command: str) -> str:
     """A PowerShell command line rewritten as far as the Bash scan needs: path
     separators as slashes, the backtick escape dropped (a backtick before a line
     end joins the lines), and the listing, copy, remove, move and directory
     cmdlets under the names the scan knows, with -Recurse (and cmd's /s and /e) as
-    --recursive and cmd's other switches dropped, so they are not read as paths."""
+    --recursive and cmd's other switches dropped, so they are not read as paths. A
+    listing cmdlet (Get-ChildItem and its aliases) is read by _ps_listing_rest, so
+    its -Filter/-Include/-Exclude/-Depth values are not mistaken for its root."""
     def simple(match: re.Match) -> str:
         name = match.group(1).casefold()
+        if _PS_HEADS[name] == "ls":
+            listing = _ps_listing_rest(match.group(2))
+            if listing is not None:
+                return "ls" + listing
         rest = _PS_RECURSE_RE.sub("--recursive", match.group(2))
         whole_tree = re.search(r"(?<=\s)/[se](?=\s|$)", rest, re.IGNORECASE)
         rest = _CMD_SWITCH_RE.sub(lambda m: "--recursive" if m.group(1).casefold() in ("s", "e") else "", rest)
@@ -2534,6 +3023,7 @@ class _call_budget:
             _deadline = time.monotonic() + GATE_TIME_BUDGET
             _glob_matches = 0
             _glob_cache.clear()
+            _index_cache.clear()
         return self
 
     def __exit__(self, *exc):
@@ -2542,6 +3032,7 @@ class _call_budget:
             _deadline = None
             _glob_matches = 0
             _glob_cache.clear()
+            _index_cache.clear()
         return False
 
 
@@ -2585,7 +3076,14 @@ def _decide(tool_name: str, tool_input: dict, workspace: Path, cwd: Path | None,
     allowed, reason = _decide_root(tool_name, tool_input, workspace, cwd, False, org_rules, guarded)
     if not allowed:
         return allowed, reason
-    for copy in _worktree_copies(workspace):
+    try:
+        copies_here = _worktree_copies(workspace)
+    except OSError as exc:
+        folder = workspace.joinpath(*WORKTREES_DIR)
+        return False, (f"Build-only mode: the worktrees folder {folder} could not be listed "
+                       f"({type(exc).__name__}), so a copy of clients/ it may hold cannot be guarded; blocking "
+                       "to fail closed. Fix its permissions or remove it, outside the AI session.")
+    for copy in copies_here:
         copies = None if guarded is None else [
             copy / Path(os.path.realpath(str(folder))).relative_to(workspace)
             if Path(os.path.realpath(str(folder))).is_relative_to(workspace)
@@ -2622,7 +3120,7 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
         for text in _command_strings(tool_input):
             reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules)
             if reason:
-                return False, f"Build-only mode: {reason}. Run it yourself outside the AI session."
+                return False, _command_block_message(reason)
     if org_rules and (tool_name.startswith("mcp__") or tool_name in MCP_LIKE_TOOLS):
         # Connected mode (org_rules False) classifies these calls itself.
         reason = _mcp_org_reason(tool_name, tool_input)
@@ -2657,11 +3155,11 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
             try:
                 texts = _powershell_commands(texts[0])
             except ValueError as exc:
-                return False, f"Build-only mode: {exc}. Run it yourself outside the AI session."
+                return False, _command_block_message(str(exc))
         for text in texts:
             reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules)
             if reason:
-                return False, f"Build-only mode: {reason}. Run it yourself outside the AI session."
+                return False, _command_block_message(reason)
         return True, ""
     if tool_name in ("Grep", "Glob"):
         raw_path = tool_input.get("path")
@@ -2672,9 +3170,15 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
                 "Pass a path, such as project/ or src/.")
             return False, "Build-only mode: client context stays out of the AI session." + hint
         pattern = str(tool_input.get("pattern") or "")
-        if tool_name == "Glob" and _reaches(_glob_pattern_root(root, pattern), clients):
-            return False, ("Build-only mode: client context stays out of the AI session. This Glob pattern "
-                           "climbs (..) or is rooted at or above clients/." + NARROW_PATH_HINT)
+        if tool_name == "Glob":
+            # A brace group ({clients,x}, {x,cl{i,j}ents}) is a set of alternatives:
+            # read each as a whole pathname (spaces kept), so an alternative rooted at
+            # or above clients/ is not hidden behind a literal-looking {..} prefix. A
+            # brace that does not resolve is read as a wildcard (_glob_alternatives).
+            alternatives = _glob_alternatives(pattern)
+            if any(_reaches(_glob_pattern_root(root, alt), clients) for alt in alternatives):
+                return False, ("Build-only mode: client context stays out of the AI session. This Glob pattern "
+                               "climbs (..) or is rooted at or above clients/." + NARROW_PATH_HINT)
         glob_field = str(tool_input.get("glob") or "")
         mentions_clients = "clients" in pattern.casefold() or "clients" in glob_field.casefold()
         if mentions_clients and _reaches(cwd, clients):
@@ -2723,6 +3227,57 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
     return False, (f"Build-only mode: {tool_name or 'this tool'} is not a tool this mode recognises, "
                    "so it is blocked. Use Bash, Read, Edit, Write, Grep or Glob, or ask the workspace "
                    "owner to run it.")
+
+
+# The most alternatives a Glob pattern's braces are expanded into; past it the pattern
+# is read conservatively, as when a brace does not close.
+_GLOB_ALTERNATIVE_LIMIT = 256
+
+
+def _brace_alternatives(word: str, budget: list[int]) -> list[str] | None:
+    """The words one pathname's brace groups make, nested groups included
+    ({a,{b,c}}d is ad bd cd), each kept whole. A group with no comma ({x}) is
+    literal. None when a brace does not close or the words pass the limit."""
+    start = word.find("{")
+    while start >= 0:
+        depth, commas, end = 0, [], -1
+        for at in range(start, len(word)):
+            ch = word[at]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if not depth:
+                    end = at
+                    break
+            elif ch == "," and depth == 1:
+                commas.append(at)
+        if end < 0:
+            return None
+        if commas:
+            out: list[str] = []
+            for a, b in zip([start, *commas], [*commas, end]):
+                made = _brace_alternatives(word[:start] + word[a + 1:b] + word[end + 1:], budget)
+                if made is None:
+                    return None
+                out += made
+                budget[0] -= len(made)
+                if budget[0] < 0:
+                    return None
+            return out
+        start = word.find("{", end + 1)
+    return [word]
+
+
+def _glob_alternatives(pattern: str) -> list[str]:
+    """The pathnames a Glob pattern stands for: its brace alternatives, each a whole
+    pathname (a space in a folder name is part of it). When the braces do not resolve
+    (one never closes, or there are too many alternatives), the pattern is read with
+    its first brace as a wildcard, so its root is the folder before that brace."""
+    made = _brace_alternatives(pattern, [_GLOB_ALTERNATIVE_LIMIT])
+    if made is not None:
+        return made
+    return [pattern.replace("{", "*", 1)]
 
 
 def _glob_pattern_root(root: Path, pattern: str) -> Path:
@@ -2978,6 +3533,39 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
     return next(entry for entry in chain if MODE_STRICTNESS[entry[1]] == strictest)
 
 
+def _mode_problem(folder: Path) -> str:
+    """One sentence when `folder` is build-only because its configuration could not be
+    read or was not understood, rather than because the owner set build-only; else "".
+    It names the file, what was found and the owner's fix, so a consultant hit by
+    blocks for a mode nobody chose has a pointer (claude-A2a#8). An absent ai_access
+    key means full by design, so it is not a problem; a deliberate "build-only" is
+    not either."""
+    config = folder / "workspace.json"
+    fix = f"run torque workspace ai-access full --path {folder} to set the mode"
+    if config.is_file():
+        try:
+            data = json.loads(config.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("workspace.json must be a JSON object")
+        except (OSError, ValueError) as exc:
+            return (f"workspace.json in {folder} could not be read ({type(exc).__name__}: {exc}), so this "
+                    f"workspace is build-only. Correct the JSON, or {fix}.")
+        if "ai_access" not in data:
+            return ""
+        value = data["ai_access"]
+        if value == "build-only" or _resolve_ai_access(value, data.get("approval")) != "build-only":
+            return ""
+        if value in ("connected", CONNECTED_GUARDED):
+            return (f"workspace.json in {folder} sets ai_access to {value!r} without \"approval\": "
+                    f"\"required\", so this workspace falls back to build-only. Add the approval setting, or {fix}.")
+        return (f"workspace.json in {folder} sets ai_access to {value!r}, which is not a known mode, so this "
+                f"workspace is build-only. Use \"full\", \"build-only\" or \"connected\", or {fix}.")
+    if _is_workspace_marker(folder):
+        return (f"{folder} has a workspace marker (clients/ and .torque/templates.json) but no readable "
+                f"workspace.json, so it is treated as build-only. {fix[0].upper() + fix[1:]}.")
+    return ""
+
+
 # The command a Claude Code hook should run. If `torque.gate` cannot be imported
 # by the hook's interpreter (Torque missing, a broken install, an edited gate),
 # the excepthook exits 2 (block) instead of Python's default exit 1, which
@@ -2987,9 +3575,13 @@ def _workspace_mode(start: Path) -> tuple[Path, str, bool]:
 # directory, PYTHONPATH and the user site directory stay off sys.path, so a
 # torque/ folder or sitecustomize.py planted in the workspace is never imported.
 # A host that reports a blocked call quotes this whole command before the gate's reason, so
-# the text inside it names no mode and reads as the fallback it is.
+# the text inside it names no mode and reads as the fallback it is. Its message says how to
+# recover outside the blocked session. It works as one argv element too (an exec-form hook
+# entry: command = the interpreter, args = ["-I", "-c", HOOK_SHIM_CODE]); doctor recognizes
+# the shim by its sys.excepthook, so a hook written with an earlier message still counts.
 HOOK_SHIM_CODE = ("import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate "
-                  "could not load: '+t.__name__+': '+str(e)+'; call blocked)',"
+                  "could not load: '+t.__name__+': '+str(e)+'; call blocked. In your own terminal, run "
+                  "torque doctor --workspace W, with W the workspace folder, to see why.)',"
                   "file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())")
 
 
@@ -2998,27 +3590,55 @@ def hook_command(python: str) -> str:
     return f'"{python}" -I -c "{HOOK_SHIM_CODE}"'
 
 
+# Argument names that hold a tool's file CONTENT, not a path it acts on: a file
+# tool's new text, a MultiEdit's edits, a Bash command's human description. They are
+# never a path, so workspace discovery skips them rather than resolve each word of a
+# large body as a path (the 0.3-1.4 s cost claude-A2a#4 measured).
+_CONTENT_KEYS = ("content", "old_string", "new_string", "new_source", "edits", "description")
+
+
+def _path_strings(value: object, depth: int = 0):
+    """Every string a tool_input holds that could name a path, nested: like
+    _string_values, but skipping the values under a content key (_CONTENT_KEYS),
+    which are text the tool writes, never a path it acts on."""
+    if depth > 8:
+        return
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str) and key.casefold() in _CONTENT_KEYS:
+                continue
+            yield from _path_strings(item, depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _path_strings(item, depth + 1)
+
+
 def _touched_paths(tool_input: dict, cwd: Path) -> list[Path]:
-    """Paths a tool call names, resolved from cwd: every string argument as a
-    path, and every word of a string that looks like a command."""
-    out: list[Path] = []
-    for raw in itertools.islice(_string_values(tool_input), 64):
+    """Paths a tool call names, resolved from cwd: every string argument that is not
+    a content field as a path, and every word of a string that looks like a command.
+    Words are collected and deduplicated before any is resolved, so a path that
+    repeats across arguments (or across a command's words) is resolved once."""
+    words: list[str] = []
+    for raw in itertools.islice(_path_strings(tool_input), 64):
         if not raw or "\x00" in raw or len(raw) > MAX_INPUT_CHARS:
             continue
-        words = [_uri_path(raw)]
+        words.append(_uri_path(raw))
         if any(c in raw for c in " \t\n;&|<>"):
             try:
                 expanded = _expand_braces(_decode_ansi_c(_expand_home_in_command(raw)))
             except ValueError:
                 expanded = raw
             words += [_token_operand(t) for toks, _ in _segments_with_separators(expanded) for t in toks]
-        for word in words[:512]:
-            if not word or "\n" in word or len(word) > 4096:
-                continue
-            try:
-                out.append(_resolve(cwd, word))
-            except (OSError, ValueError):
-                continue
+    out: list[Path] = []
+    for word in dict.fromkeys(words):
+        if not word or "\n" in word or len(word) > 4096:
+            continue
+        try:
+            out.append(_resolve(cwd, word))
+        except (OSError, ValueError):
+            continue
     return list(dict.fromkeys(out))
 
 
@@ -3048,20 +3668,23 @@ def _not_a_path(start: Path, exc: OSError) -> bool:
             or len(str(start).encode("utf-8", "surrogateescape")) >= _path_max(start))
 
 
-def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
-    """Every build-only workspace that applies to a call: those at or above the
-    event's cwd, those at or above the session's project directory
-    (CLAUDE_PROJECT_DIR, which Claude Code sets for hooks, so leaving the
-    workspace with `cd ..` does not end the session's gating), and those at or
-    above any path the call names."""
+def _discovery_starts(cwd: Path, touched: list[Path]) -> list[Path]:
+    """Where to look for a governing workspace: the event's cwd, the session's
+    project directory (CLAUDE_PROJECT_DIR, which Claude Code sets for hooks, so
+    leaving the workspace with `cd ..` does not end the session's gating), and every
+    path the call names (`touched`, computed once per call and shared)."""
     starts = [cwd]
     project = os.environ.get("CLAUDE_PROJECT_DIR")
     if project:
         starts.append(Path(os.path.realpath(project)))
-    starts += _touched_paths(tool_input, cwd)
+    return starts + touched
+
+
+def _gated_workspaces(cwd: Path, touched: list[Path]) -> list[Path]:
+    """Every build-only workspace at or above a discovery start (_discovery_starts)."""
     gated: list[Path] = []
     checked: set[str] = set()
-    for start in starts:
+    for start in _discovery_starts(cwd, touched):
         key = _cf(str(start))
         if key in checked:
             continue
@@ -3080,6 +3703,7 @@ def _gated_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
 
 _PROTECTED_NAMES = ("consent.json", "consent-evidence", "approvals", "binding.json", "control", "requests", "claims")
 _ENGAGEMENT_RECORDS = {"clients": _PROTECTED_NAMES, "initiatives": ("binding.json",)}
+_RECORD_NAMES = frozenset(_cf(name) for names in _ENGAGEMENT_RECORDS.values() for name in names)
 _REMOVERS = {"rm", "rmdir", "mv", "unlink", "shred", "truncate", "rsync", "find", "chmod", "chown", "ln", "cp",
              "ditto", "tar", "unzip", "git"}
 
@@ -3131,8 +3755,12 @@ def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path, strict: b
     changed by a tool a mode's own scan does not separately cover (or while a
     stricter mode is off) would be trusted once the owner relies on it.
 
-    In full mode the check is best effort: it never blocks by failing or running
-    long, so an error inside it lets the call through. With `strict` (build-only
+    In full mode the check is best effort: it never blocks by running long or by
+    failing in a way that would also fail a retry. When it cannot finish (an error
+    inside it, or its time or glob budget spent), full mode falls back to a cheap
+    text test that cannot itself fail (_text_names_record): the call is blocked
+    only when its own text spells a protected record, a folder that holds them or
+    the approval key, and allowed otherwise, as before. With `strict` (build-only
     and connected mode, through _decide) it fails closed: an error blocks the call
     with a reason, and a spent budget is raised for the caller to block on."""
     try:
@@ -3140,13 +3768,41 @@ def _approval_file_reason(tool_name: str, tool_input: dict, cwd: Path, strict: b
     except BudgetExceeded:
         if strict:
             raise
-        return ""
+        return _RECORD_REASON if _text_names_record(tool_input) else ""
     except Exception as exc:
         if strict:
             return ("Torque: the check that keeps tools away from consent, approval and control records could "
                     f"not read this call ({type(exc).__name__}: {exc}), so the call is blocked to fail closed. "
                     "Write the command more simply, or run it yourself outside the AI session.")
-        return ""
+        return _RECORD_REASON if _text_names_record(tool_input) else ""
+
+
+_RECORD_REASON = ("Torque: a client's consent, approval and control records, an engagement's binding and the "
+                  "approval key are changed only by the consultant's torque commands, in every mode.")
+# A folder that holds engagement records, named anywhere in the text as a whole
+# path component: clients or initiatives, as a bare word (`rm -rf clients`), after
+# a separator (`../clients/acme`) or before one (`clients/acme`). The surrounding
+# character classes exclude a word character or a dot, so `myclients`, `clientsx`
+# and `x.clients` do not match. On the error path a prose mention also matches,
+# which blocks there rather than fails open (the safe direction).
+_RECORD_FOLDER_RE = re.compile(r"(?<![\w.])(clients|initiatives)(?![\w.])", re.IGNORECASE)
+
+
+def _text_names_record(tool_input: dict) -> bool:
+    """A pure-text net for full mode's error path, with no disk access and no
+    pattern that can run long: True when a string the call carries spells a
+    protected record (APPROVAL_FILE_RE), the approval key (APPROVAL_KEY_RE),
+    workspace.json, or a clients/ or initiatives/ path. It cannot resolve a
+    relative path or follow a cd, so it is a floor under fail-open, never the
+    strict check. A read that merely mentions such a folder (no record) is left
+    to the resolving check; this net errs toward blocking only the error path."""
+    for raw in itertools.islice(_string_values(tool_input), 256):
+        if not isinstance(raw, str) or len(raw) > MAX_INPUT_CHARS:
+            continue
+        if (_targets_guarded_file(raw) or _RECORD_FOLDER_RE.search(raw)
+                or APPROVAL_KEY_RE.search(raw)):
+            return True
+    return False
 
 
 _CACHED_GIT_RM_OPTIONS = frozenset({"--cached", "-r", "-q", "--quiet", "-f", "--force",
@@ -3193,48 +3849,524 @@ def _approval_file_targets_reason(tool_name: str, tool_input: dict, cwd: Path, s
     for text in _command_strings(tool_input):
         if len(text) > MAX_INPUT_CHARS:
             continue
-        # Follow cd, pushd and popd the way the build-only scan does: after a directory
-        # change the rest of the command is checked from every folder it could be in.
-        # After a change to a folder the gate cannot know ("$X", cd -), a command that
-        # removes or writes is refused when the workspace holds records at all.
-        seen: list[Path] = [cwd]
-        current: list[Path] = [cwd]
-        unknown = False
-        # A grouping character (`{a,b}`, `${X}`, `$(...)`, a backtick) splits one
-        # command into several segments; the words after it are still arguments of
-        # the remover before it, so a removal carries across until a real separator.
-        carry = False
-        for toks, sep in _segments_with_separators(_expand_home_in_command(text)):
+        readings = [text]
+        if "powershell" in tool_name.casefold():
+            # Read as the build-only scan reads a PowerShell call (backslashes as
+            # separators, its cmdlets under the names the scan knows, the strings it
+            # runs). A call that cannot be read that way is refused by the build-only
+            # scan; here its plain reading is checked.
+            try:
+                readings = _powershell_commands(text)
+            except ValueError:
+                readings = [_powershell_as_bash(text)]
+        if any(_command_targets_records(reading, cwd, strict) for reading in readings):
+            return reason
+    return ""
+
+
+# Interpreters that run a string of code given on the command line: python/py -c,
+# node -e/-p/--eval/--print, perl -e/-E, ruby -e, php -r. Matched by basename, so a
+# full path (/usr/bin/python3) and a versioned name (python3.11, python3.11.exe) count.
+# The gate reads that code for the literal paths it names and refuses it when one is a
+# protected record (_inline_code_names_record); `python -m torque` and record-free code
+# pass. Paths the code builds at run time are not seen (the documented limit).
+# Per interpreter: letters that carry the code, letters that take a value (the rest of
+# the word or the next one), letters that take the rest of the word, letters that stop
+# option reading (python -m, php -f).
+_INLINE_OPTIONS = {"python": ("c", "WX", "", "m"), "perl": ("eE", "I", "iMmFCdDxV", ""),
+                   "ruby": ("e", "rIC", "EFTK0ix", ""), "php": ("r", "dcz", "", "f")}
+_NODE_VALUE_OPTIONS = ("-r", "--require", "--import", "--loader", "-C", "--conditions")
+# Runners: a command word that executes its next non-option word. Per runner, the
+# options that take a separate value and the number of operands before the command.
+# `then`, `do`, `else`, `!` and `{` just lead into a command.
+_RUNNERS = {
+    "env": ({"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, 0),
+    "sudo": ({"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "-r", "-t", "--user", "--group", "--host",
+              "--prompt", "--chdir", "--role", "--type"}, 0),
+    "doas": ({"-u", "-C"}, 0), "nice": ({"-n", "--adjustment"}, 0), "ionice": ({"-c", "-n", "-p", "-t"}, 0),
+    "nohup": (set(), 0), "time": ({"-f", "-o", "--format", "--output"}, 0), "command": (set(), 0),
+    "exec": ({"-a"}, 0), "builtin": (set(), 0), "setsid": (set(), 0), "unbuffer": (set(), 0),
+    "stdbuf": ({"-i", "-o", "-e"}, 0), "timeout": ({"-s", "-k", "--signal", "--kill-after"}, 1),
+    "flock": ({"-w", "-E", "--timeout", "--conflict-exit-code"}, 1), "xargs": (
+        {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--delimiter"}, 0),
+    "winpty": (set(), 0), "wsl": ({"-d", "-u", "--distribution", "--user"}, 0), "arch": (set(), 0),
+    "caffeinate": ({"-t", "-w"}, 0), "cmd": (set(), 0), "start": (set(), 0), "call": (set(), 0)}
+_PACKAGE_RUNNERS = {"uv": ("run", "tool", "x"), "poetry": ("run",), "pipenv": ("run",), "pipx": ("run",),
+                    "pnpm": ("exec", "dlx"), "yarn": ("exec", "run"), "conda": ("run",), "rye": ("run",),
+                    "hatch": ("run",), "npx": ()}
+_LEADERS = frozenset({"then", "do", "else", "elif", "if", "while", "until", "!", "{"})
+_FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_REDIRECT_WORD_RE = re.compile(r"^(\d*|&)(>>?|<<<?|>&|<&)(.*)$", re.DOTALL)
+_CODE_LITERAL_RE = re.compile(r"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"|`((?:[^`\\\n]|\\.)*)`")
+# An actual call that removes or moves a path, matched on code with its string literals
+# blanked, so a printed word such as 'rename' is not one.
+_CODE_REMOVER_RE = re.compile(
+    r"\b(shutil\.(rmtree|move)|os\.(remove|unlink|rmdir|removedirs|rename|renames|replace)|rmtree|rimraf"
+    r"|unlinkSync|rmSync|rmdirSync|renameSync|fs\.(rm|rmdir|unlink|rename)|File\.(delete|unlink|rename)"
+    r"|FileUtils\.(rm|rm_r|rm_rf|rmdir|remove_dir|remove_entry|mv))\s*\("
+    r"|\.(unlink|rmdir|rename)\s*\(|\b(unlink|rmdir|rename)\b\s*[\"(]")
+
+
+def _shell_words(text: str) -> list:
+    """The simple commands in text, in order, split at the separators outside quotes
+    (; newline). Each is a list of words, a word being (shell reading, reading that
+    keeps a backslash, so a Windows path stays one); the interpreter check accepts
+    either. A parenthesis or backtick, and the separators that make the next command
+    conditional or parallel (&& || | &), are marker strings between commands. A quote that never closes runs to the end."""
+    out: list = [[]]
+    sh = lit = ""
+    started = False
+    i, n = 0, len(text)
+
+    def flush() -> None:
+        nonlocal sh, lit, started
+        if started:
+            out[-1].append((sh, lit))
+        sh = lit = ""
+        started = False
+    while i < n:
+        ch = text[i]
+        if ch in " \t\r":
+            flush()
+        elif ch in ";\n":
+            flush()
+            out.append([])
+        elif ch in "&|" and not (ch == "&" and (text[i - 1:i] in ("<", ">") or text[i + 1:i + 2] == ">")):
+            flush()
+            op = ch * 2 if text[i + 1:i + 2] == ch else ch
+            i += len(op) - 1
+            out.extend([op, []])
+        elif ch in "()`":
+            flush()
+            out.extend([ch, []])
+        elif ch == "'":
+            end = text.find("'", i + 1)
+            end = n if end < 0 else end
+            sh += text[i + 1:end]
+            lit += text[i + 1:end]
+            started = True
+            i = end
+        elif ch == '"':
+            started = True
+            i += 1
+            while i < n and text[i] != '"':
+                if text[i] == "\\" and i + 1 < n and text[i + 1] in '"\\$`':
+                    sh += text[i + 1]
+                    lit += text[i:i + 2]
+                    i += 2
+                    continue
+                sh += text[i]
+                lit += text[i]
+                i += 1
+        elif ch == "\\" and i + 1 < n:
+            started = True
+            lit += ch
+            if text[i + 1] != "\n":
+                sh += text[i + 1]
+                lit += text[i + 1]
+            i += 1
+        else:
+            sh += ch
+            lit += ch
+            started = True
+        i += 1
+    flush()
+    return [entry for entry in out if entry]
+
+
+def _skip_options(words: list[tuple[str, str]], i: int, takes: set[str],
+                  chdir: frozenset[str] = frozenset()) -> tuple[int, bool]:
+    """Index after a runner's options (a flag, or a flag and its separate value), and
+    whether one of them changes the directory the command runs in (env -C, --chdir)."""
+    moves = False
+    while i < len(words) and words[i][0].startswith("-") and words[i][0] != "-":
+        flag = words[i][0]
+        i += 1
+        name = flag.split("=", 1)[0]
+        moves = moves or name in chdir or any(flag.startswith(c) and len(c) == 2 and len(flag) > 2 for c in chdir)
+        if flag == "--":
+            break
+        if flag in takes:
+            i += 1
+    return i, moves
+
+
+_RUNNER_CHDIR = {"env": frozenset({"-C", "--chdir"}), "sudo": frozenset({"-D", "--chdir"}),
+                 "wsl": frozenset({"--cd"})}
+
+
+def _expand_env_split(words: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """`env -S STRING` (also -SSTRING, --split-string STRING and =STRING) runs the
+    words of STRING as the command: put them where the option stood."""
+    for _ in range(4):
+        for k, word in enumerate(words):
+            if _basename(word[0]) != "env":
+                continue
+            j = k + 1
+            while j < len(words) and words[j][0].startswith("-") and words[j][0] != "-":
+                flag = words[j][0]
+                name = flag.split("=", 1)[0]
+                if name == "--split-string" or flag == "-S" or (flag.startswith("-S") and not flag.startswith("--")):
+                    if "=" in flag and flag.startswith("--"):
+                        text, used = flag.split("=", 1)[1], 1
+                    elif flag.startswith("-S") and len(flag) > 2:
+                        text, used = flag[2:], 1
+                    else:
+                        text, used = (words[j + 1][0] if j + 1 < len(words) else ""), 2
+                    inner = [w for cmd in _shell_words(text) if isinstance(cmd, list) for w in cmd]
+                    words = words[:j] + inner + words[j + used:]
+                    break
+                j += 2 if flag in ("-u", "-C", "--unset", "--chdir") else 1
+            else:
+                continue
+            break
+        else:
+            return words
+    return words
+
+
+def _exec_index(words: list[tuple[str, str]], at: int = 0) -> tuple[int | None, bool]:
+    """Where the command a simple command really runs starts, and whether a runner on
+    the way changes its directory (env -C, sudo -D, --chdir, find -execdir). The index
+    is after VAR=value assignments, redirections with their targets (`> out python ...`)
+    and the options of each runner that executes its next non-option word (env, sudo,
+    nice, nohup, time, command, exec, xargs, find -exec, ...). The arguments of any
+    other command are never an executable (`echo python -c x`, `env echo python -c x`)."""
+    moves = False
+    while at < len(words):
+        word = words[at][0]
+        name = _basename(word)
+        match = _REDIRECT_WORD_RE.match(word)
+        if match:
+            at += 1 if match.group(3) else 2          # `>file`, or `>` and its target
+        elif re.match(r"^[A-Za-z_]\w*=", word):
+            at += 1
+        elif name in _LEADERS:
+            at += 1
+        elif name in _RUNNERS:
+            takes, operands = _RUNNERS[name]
+            first = at + 1
+            at, here = _skip_options(words, at + 1, takes, _RUNNER_CHDIR.get(name, frozenset()))
+            moves = moves or here
+            if name == "command" and any(re.fullmatch(r"-[pvV]*[vV][pvV]*", w[0]) for w in words[first:at]):
+                return None, moves            # command -v/-V looks a name up and runs nothing
+            while at < len(words) and re.fullmatch(r"/\w", words[at][0]):
+                at += 1                                # cmd /c, start /b
+            if name == "env":
+                while at < len(words) and re.match(r"^[A-Za-z_]\w*=", words[at][0]):
+                    at += 1
+            at += operands
+        elif name in _PACKAGE_RUNNERS:
+            at, _ = _skip_options(words, at + 1, set())
+            subs = _PACKAGE_RUNNERS[name]
+            if subs:
+                if at >= len(words) or words[at][0] not in subs:
+                    return None, moves
+                at, _ = _skip_options(words, at + 1, set())
+        elif name == "find":
+            hits = [j for j in range(at + 1, len(words)) if words[j][0] in _FIND_EXEC]
+            moves = moves or any(words[j][0] in ("-execdir", "-okdir") for j in hits[:1])
+            at = hits[0] + 1 if hits else len(words)
+        else:
+            return at, moves
+    return None, moves
+
+
+def _drop_redirections(words: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The words with each redirection (and its separate target) taken out."""
+    kept, i = [], 0
+    while i < len(words):
+        match = _REDIRECT_WORD_RE.match(words[i][0])
+        if match:
+            i += 1 if match.group(3) else 2
+        else:
+            kept.append(words[i])
+            i += 1
+    return kept
+
+
+def _inline_flag_code(family: str, args: list[str]) -> list[str]:
+    """The code strings an interpreter is given, read from its arguments as it reads
+    its options: they end at the script or module name, short flags may share a word
+    (-Ic, -ne), and a code flag takes the rest of its word or the next word. Python
+    runs only the first -c: what follows is its sys.argv. Node, perl, ruby and php may
+    be given code more than once."""
+    out: list[str] = []
+    i = 0
+
+    def value(rest: str) -> str:
+        nonlocal i
+        if rest or i >= len(args):
+            return rest
+        i += 1
+        return args[i - 1]
+    while i < len(args):
+        word = args[i]
+        i += 1
+        if word == "--" or not word.startswith("-") or word == "-":
+            break
+        if family == "node":
+            name, eq, rest = word.partition("=")
+            if name in ("--eval", "--print"):
+                out.append(value(rest))
+            elif name in _NODE_VALUE_OPTIONS:
+                value(rest)
+            elif re.fullmatch(r"-[ep]+", word):
+                out.append(value(""))
+            continue
+        if family == "python" and re.fullmatch(r"-(\d(\.\d+)?(-\d+)?|V:.*)", word):
+            continue                  # the Windows launcher's version selector
+        if word.startswith("--"):
+            continue
+        code, takes, takes_rest, stops = _INLINE_OPTIONS[family]
+        for at, letter in enumerate(word[1:], 2):
+            rest = word[at:]
+            if letter in stops:
+                return out
+            if letter in code:
+                out.append(value(rest))
+                if family == "python":
+                    return out
+                break
+            if letter in takes:
+                value(rest)
+                break
+            if letter in takes_rest:
+                break
+    return out
+
+
+def _interpreter_family(name: str) -> str:
+    if PY_LAUNCHER_RE.match(name):
+        return "python"
+    if re.fullmatch(r"node(js)?", name):
+        return "node"
+    return name if name in _INLINE_OPTIONS else ""
+
+
+def _inline_codes(words: list[tuple[str, str]], at: int) -> list[str]:
+    """The inline-code strings the command that starts at `at` runs, when it is an
+    interpreter. A redirection among its words (`python > out -c code`) is not one."""
+    family = next((f for f in (_interpreter_family(_basename(shown)) for shown in words[at]) if f), "")
+    args = _drop_redirections(words[at + 1:])
+    return _inline_flag_code(family, [word[0] for word in args]) if family else []
+
+
+_LOOSE_CD_CHARS = frozenset("$`*?[{~")
+_CODE_CHDIR_RE = re.compile(r"\b(f?chdir)\b")
+_CONDITIONAL_SEPARATORS = frozenset({"&&", "||", "|", "&"})
+
+
+def _inline_code_calls(text: str, start: list[Path]) -> list[tuple[str, list[Path] | None]]:
+    """Every inline-code string the commands in text run, with the folders each runs
+    from, or None when the folder is not certain. One reading of the text gives the code
+    and its folder together. A `cd` (or pushd/popd) that is a command of its own, run
+    unconditionally, changes the folder for the commands after it, and a parenthesis or
+    backtick group gives it back. The folder is uncertain after a cd that is conditional
+    (after `&&`, `||`, or before `|`, `&`, `||`), in a loop or block, with a target the
+    text does not spell out, and for a command run through a wrapper that changes its
+    folder (env -C, find -execdir), for code that changes its own (os.chdir), and after a
+    cd whose target is not a folder now (the cd fails and the shell stays put). The caller
+    treats an uncertain folder strictly for code that names a record file."""
+    state: list[Path] | None = list(start)
+    scopes: list[list[Path] | None] = []
+    dirs: list[list[Path] | None] = []
+    found: list[tuple[str, list[Path] | None]] = []
+    ticks = False
+    entries = _shell_words(text)
+    before = None
+    for k, entry in enumerate(entries):
+        if isinstance(entry, str):
+            if entry in _CONDITIONAL_SEPARATORS:
+                before = entry
+            elif entry == "(" or (entry == "`" and not ticks):
+                scopes.append(state)
+                ticks = ticks or entry == "`"
+                before = None
+            else:
+                state = scopes.pop() if scopes else state
+                ticks = ticks and entry != "`"
+            continue
+        after = entries[k + 1] if k + 1 < len(entries) else None
+        was, before = before, None
+        entry = _expand_env_split(entry)
+        at, moves = _exec_index(entry)
+        if at is None:
+            continue
+        name = _basename(entry[at][0])
+        if name in ("cd", "chdir", "pushd", "popd"):
+            if name == "popd":
+                state = dirs.pop() if dirs else None
+                continue
+            args = [word[0] for word in entry[at + 1:] if not word[0].startswith("-") or word[0] == "-"]
+            if name == "pushd":
+                dirs.append(state)
+            target = args[0] if args else ""
+            if (state is None or not target or target == "-" or _LOOSE_CD_CHARS & set(target) or at
+                    or moves or was in _CONDITIONAL_SEPARATORS or after in ("|", "&", "||")):
+                state = None
+            else:
+                try:
+                    state = [_resolve(here, target) for here in state][:64]
+                    if not all(os.path.isdir(path) for path in state):
+                        state = None          # the cd may fail, and the shell stays where it was
+                except (OSError, ValueError):
+                    state = None
+            continue
+        for code in _inline_codes(entry, at):
+            # A wrapper that changes the folder, or code that changes its own (os.chdir,
+            # process.chdir, Dir.chdir, chdir), leaves the folder uncertain.
+            moved = moves or _CODE_CHDIR_RE.search(_blank_literals(code))
+            found.append((code, None if moved else state))
+    return found
+
+
+def _code_literals(code: str) -> list[tuple[str, int, int]]:
+    """The quoted strings in a piece of code (a doubled backslash read as one), each
+    with where it starts and ends."""
+    return [(next(group for group in match.groups() if group is not None).replace("\\\\", "\\"),
+             match.start(), match.end()) for match in _CODE_LITERAL_RE.finditer(code)]
+
+
+def _blank_literals(code: str) -> str:
+    """The code with the inside of each quoted string blanked (same length)."""
+    return _CODE_LITERAL_RE.sub(lambda m: m.group(0)[0] + "_" * (len(m.group(0)) - 2) + m.group(0)[-1], code)
+
+
+def _removal_arguments(code: str) -> list[tuple[int, int]]:
+    """Where the arguments of each call that removes or moves a path stand in the code:
+    from the call's parenthesis to its matching one (a perl call without parentheses
+    runs to the next `;`). Found on the code with its strings blanked, so a printed
+    word such as 'rename' is no call and a parenthesis in a string does not count."""
+    blank = _blank_literals(code)
+    spans = []
+    for call in _CODE_REMOVER_RE.finditer(blank):
+        begin = call.end() - 1
+        if blank[begin] == "(":
+            depth, end = 0, len(blank)
+            for at in range(begin, len(blank)):
+                depth += (blank[at] == "(") - (blank[at] == ")")
+                if depth == 0:
+                    end = at
+                    break
+        else:
+            end = blank.find(";", begin)
+            end = len(blank) if end < 0 else end
+        spans.append((begin, end))
+    return spans
+
+
+def _inline_code_names_record(code: str, cwds: list[Path]) -> bool:
+    """True when a literal path in inline code names a protected record or the approval
+    key, or (as an argument of a call that removes or renames a path) a folder that
+    holds records, resolved from each cwd the way a command's path operands are.
+    `print('clients')` names no path, `print('rename')` is no call, and a folder named
+    beside a removal of something else is not its argument."""
+    removals = _removal_arguments(code)
+    for literal, begin, end in _code_literals(code):
+        removed = any(first <= begin and end <= last for first, last in removals)
+        if APPROVAL_KEY_RE.search(literal):
+            return True
+        for here in cwds:
+            for path in _token_paths(literal, here)[0]:
+                if APPROVAL_KEY_RE.search(path.as_posix()) or _protected_record(path):
+                    return True
+                if removed and _holds_records(path):
+                    return True
+    return False
+
+
+def _command_targets_records(command: str, cwd: Path, strict: bool) -> bool:
+    """True when a shell command, read by the build-only scan's own reader
+    (_read_commands: nested bash -c and eval strings, substitutions, braces,
+    ANSI-C quoting, values set earlier in the command, cd, pushd and popd), names
+    a protected record or the approval key, or removes or moves a folder that
+    holds records. A path built from a variable the command does not set names a
+    record when one of the folders from cwd up to the workspace root, put in the
+    variable's place, makes it one (as build-only reads such a path). After a
+    change to a folder the gate cannot know ("$X", cd -), a command that removes
+    or writes is refused when the workspace holds records at all."""
+    roots: list[Path] | None = None
+
+    def workspaces() -> list[Path]:
+        nonlocal roots
+        if roots is None:
+            roots = _workspace_roots(cwd, strict)
+        return roots
+    # A grouping character (`$(...)`, a backtick, a brace the reader does not
+    # expand) splits one command into several segments; the words after it are
+    # still arguments of the remover before it, so a removal carries across until
+    # a real separator. One entry per text being read: nested texts carry their own.
+    carry: list[bool] = []
+    codes: list[list[str]] = []       # per text: inline code run from an unknown folder
+    seen: list[list[Path]] = []       # per text: the folders its segments run from
+    for kind, item in _read_commands(command, cwd, cwd):
+        if kind == "error":
+            # The reader could not read a text (brace expansion past the length limit,
+            # a PowerShell command it cannot decode), so it never yields that text's
+            # segments. Raise into _approval_file_reason's handling: strict modes block;
+            # full mode blocks when the call's text names a record (_text_names_record).
+            raise ValueError(item)
+        if kind == "text":
+            carry.append(False)
+            # Inline code (python -c, node -e, perl -e, ...) is read from the whole text,
+            # quote-aware (the segment splitter cuts a `python -c "open('clients/...')"`
+            # word apart at its ( and ;), by one reading that finds each interpreter in
+            # its command's executable position (_exec_index: not `echo python -c x`),
+            # takes its code and tracks the folder a cd leads to. A literal path in the
+            # code that names a protected record or the approval key refuses the call in
+            # every mode; code that names none passes in full mode, and `python -m torque`
+            # has no such flag. Code run from a folder the text does not spell out is
+            # checked from every folder the segments below report. Nested bash -c, eval
+            # and powershell inner texts arrive here as their own text events.
+            loose = []
+            for code, folders in _inline_code_calls(item[0], list(item[1])):
+                if folders is None:
+                    loose.append(code)
+                elif _inline_code_names_record(code, folders):
+                    return True
+            codes.append(loose)
+            seen.append(list(item[1]))
+        elif kind == "end":
+            carry.pop()
+            seen_cwds = seen.pop()
+            for code in codes.pop():
+                # Code run from a folder the text does not spell out (cd "$X"): checked
+                # from every folder seen, and a literal that spells a record's own name
+                # is refused when the workspace holds records, as a write is after such a cd.
+                if _inline_code_names_record(code, seen_cwds) or (
+                        any(_cf(re.split(r"[/\\]", lit)[-1].lstrip("<>+| ")) in _RECORD_NAMES for lit, _, _ in _code_literals(code))
+                        and any(_holds_records(root) for root in workspaces())):
+                    return True
+        elif kind == "segment":
+            toks, sep, cwds, unknown = item
+            seen[-1] += [here for here in cwds if here not in seen[-1]]
             if _is_cached_git_rm(toks):
                 # Untracking a record from git's index does not remove, write or even
                 # read it: the file (and its content) stay exactly as they were.
-                carry = False
+                carry[-1] = False
                 continue
-            removes = carry or any(_basename(tok) in _REMOVERS for tok in toks)
-            carry = removes and sep in _GROUPING_CHARS
+            removes = carry[-1] or any(_basename(tok) in _REMOVERS for tok in toks)
+            carry[-1] = removes and sep in _GROUPING_CHARS
             if removes:
-                # Brace expansion: `{x,clients}` arrives as the word `x,clients`.
+                # A brace group the reader does not expand ({x,{y,clients}}) can leave
+                # the word x,clients.
                 toks = toks + [part for tok in toks if "," in tok for part in tok.split(",") if part]
             writes = removes or any(re.match(r"^(\d+|&)?>", tok) for tok in toks) \
                 or any(_basename(tok) in _WRITE_VERBS for tok in toks)
-            if unknown and writes and any(_holds_records(root) for root in _workspace_roots(cwd, strict)):
-                return reason
-            for here in current:
+            if unknown and writes and any(_holds_records(root) for root in workspaces()):
+                return True
+            for here in cwds:
                 for tok in toks:
-                    for target in _token_paths(tok, here)[0]:
-                        if APPROVAL_KEY_RE.search(target.as_posix()) or _protected_record(target):
-                            return reason
-                        if removes and _holds_records(target):
-                            return reason
-            target = _cd_target(toks)
-            if target == "" or (target is not None and sep in ("`", "(")):
-                unknown = True
-                continue
-            if target is not None:
-                moved = _next_cwds(current, target)
-                _add_cwds(seen, moved)
-                current = list(dict.fromkeys(moved))[:_MAX_CWDS] if moved else current
-    return ""
+                    paths = _token_paths(tok, here)[0]
+                    named = paths
+                    if _PARAM_RE.search(_token_operand(tok)) and workspaces():
+                        named = paths + _token_paths(tok, here, workspaces()[-1])[0]
+                    if any(APPROVAL_KEY_RE.search(t.as_posix()) or _protected_record(t) for t in named):
+                        return True
+                    if removes and any(_holds_records(t) for t in paths):
+                        return True
+    return False
 
 
 def _workspace_roots(start: Path, strict: bool = False) -> list[Path]:
@@ -3248,18 +4380,12 @@ def _workspace_roots(start: Path, strict: bool = False) -> list[Path]:
         return []
 
 
-def _connected_workspaces(cwd: Path, tool_input: dict) -> list[Path]:
-    """Connected workspaces that apply to a call, found the same way as build-only
-    ones: at or above the event's cwd, the session's project directory, and any
-    path the call names."""
-    starts = [cwd]
-    project = os.environ.get("CLAUDE_PROJECT_DIR")
-    if project:
-        starts.append(Path(os.path.realpath(project)))
-    starts += _touched_paths(tool_input, cwd)
+def _connected_workspaces(cwd: Path, touched: list[Path]) -> list[Path]:
+    """Connected workspaces at or above a discovery start (_discovery_starts),
+    found the same way as build-only ones."""
     found: list[Path] = []
     checked: set[str] = set()
-    for start in starts:
+    for start in _discovery_starts(cwd, touched):
         key = _cf(str(start))
         if key in checked:
             continue
@@ -3328,14 +4454,22 @@ def evaluate(raw: str | bytes | None = None) -> int:
         if not isinstance(tool_input, dict):
             raise ValueError("tool_input must be an object")
         with _call_budget():
-            gated = _gated_workspaces(cwd, tool_input)
+            # Resolve the paths the call names once, and share them between the
+            # build-only and connected workspace discovery (claude-A2a#4).
+            touched = _touched_paths(tool_input, cwd)
+            gated = _gated_workspaces(cwd, touched)
             allowed, reason = True, ""
             # Every build-only workspace from cwd upward applies; the strictest wins.
             for root in gated:
                 allowed, reason = decide(str(event.get("tool_name", "")), tool_input, root, "build-only", cwd)
                 if not allowed:
+                    # When this workspace is build-only only because its config could not
+                    # be read or understood, say so and how to fix it (claude-A2a#8).
+                    problem = _mode_problem(root)
+                    if problem:
+                        reason = f"{reason} Note: {problem}"
                     break
-            connected = _connected_workspaces(cwd, tool_input) if allowed and not gated else []
+            connected = _connected_workspaces(cwd, touched) if allowed and not gated else []
             if allowed and not gated and not connected:
                 reason = _approval_file_reason(str(event.get("tool_name", "")), tool_input, cwd)
                 allowed = not reason

@@ -10,9 +10,12 @@ Resolve the intended org and relevant metadata before live work.
 
 Resolve the alias from the user's request or selected client; keep an explicit target
 on every org command. Through available MCP or Salesforce CLI, establish connection,
-org ID, instance and relevant user. Filter auth output to avoid exposing tokens.
-When needed, query `Organization` for `Id`, `Name` and `IsSandbox`; domain strings
-and old configuration do not establish environment type on their own.
+org ID, instance and relevant user. For identity and type run
+`sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" --target-org <org-alias> --json`;
+it prints no credential. Filtering auth output afterwards is too late, because a command's
+output reaches the model first: do not run `sf org display` (older Salesforce CLIs print the
+token) or `sf org list --json`. Domain strings and old configuration do not establish
+environment type on their own.
 
 Compare the observed identity to the selected client's saved intent. If they disagree,
 resolve the actual destination before directing a write there; continue independent

@@ -30,6 +30,13 @@ Use the advisory and QA delegates where useful. Keep machine observations, suppl
 human/browser assertions, inference, declared not-applicable, unknown and untested
 states distinct. Report unavailable permissions, missing sources and stale evidence.
 
+When a check creates persistent records, including records that automation creates,
+save each created record's Id when it is created, in the private task directory.
+Clean up by deleting only those Ids (an Id-file delete such as
+`sf data delete bulk --file ids.csv` with an Id column). Never build a delete from a
+query that matches by name, title, creator or date. If the Id list is lost or
+incomplete, stop and ask instead of matching.
+
 If the user asked for a working outcome, correct newly found defects within scope
 and recheck. Save a concise session entry and artifact links. State exactly what
 was verified and what another user or tester still needs to do.

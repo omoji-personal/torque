@@ -252,7 +252,7 @@
     "group": "Recovery",
     "description": "List available operation snapshots and their actual recovery state.",
     "kind": "native",
-    "implementation": "torque revert revert show",
+    "implementation": "torque recover show",
     "source_command": "revert-show"
   },
   {
@@ -260,7 +260,7 @@
     "group": "Recovery",
     "description": "Preview a specific restoration against current state without executing it.",
     "kind": "native",
-    "implementation": "torque revert revert preview",
+    "implementation": "torque recover preview",
     "source_command": "revert-preview"
   },
   {
@@ -268,7 +268,7 @@
     "group": "Recovery",
     "description": "Restore a supported captured operation and verify the resulting state.",
     "kind": "native",
-    "implementation": "torque revert revert exec",
+    "implementation": "torque recover run",
     "source_command": "revert"
   },
   {
@@ -276,7 +276,7 @@
     "group": "Recovery",
     "description": "Mark a selected snapshot abandoned while keeping its recovery artifacts.",
     "kind": "native",
-    "implementation": "torque revert revert discard",
+    "implementation": "torque recover discard",
     "source_command": "revert-discard"
   },
   {

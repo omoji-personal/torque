@@ -10,7 +10,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 from uuid import uuid4
@@ -78,7 +78,7 @@ def create_change(workspace: str | Path, client: str, title: str, outcome: str,
     try:
         (pending / "events").mkdir(mode=0o700)
         (pending / "evidence").mkdir(mode=0o700)
-        ws._write_json(pending / "change.json", record)
+        ws._write_json(pending / "change.json", record, private=True)
         # V2 I6: the delegated approver reads change records.
         ws.share_with_approver(workspace, *([] if existed else [directory]), pending, pending / "events",
                                pending / "evidence", pending / "change.json")
@@ -95,7 +95,12 @@ def load_change(workspace: str | Path, client: str, identifier: str, *,
         raise ws.WorkspaceError("change ID must be an ID returned by torque change create/list")
     directory, config = _directory(workspace, client, engagement_kind)
     root = ws._inside(directory, directory / identifier)
-    record = ws._read_json(ws._inside(directory, root / "change.json"))
+    missing = (f"no change {identifier} for this {engagement_kind} ({config['slug']}); list its changes with "
+               + ws.command_text(["torque", "change", "list", "--workspace", str(directory.parent.parent.parent),
+                                  "--" + engagement_kind, config["slug"]]))
+    record = ws._read_json(ws._inside(directory, root / "change.json"), missing)
+    if ws.foreign_owner(record, engagement_kind, config["slug"]):
+        raise ws.BoundaryError(f"change record belongs to a different client or initiative: {identifier}")
     if (record.get("schema") != "torque.change/1" or record.get("id") != identifier
             or record.get(engagement_kind) != config["slug"] or not isinstance(record.get("title"), str)
             or not isinstance(record.get("outcome"), str) or not isinstance(record.get("criteria"), list)
@@ -110,13 +115,28 @@ def load_change(workspace: str | Path, client: str, identifier: str, *,
     return root, record
 
 
-def list_changes(workspace: str | Path, client: str, *, engagement_kind: str = "client") -> list[dict]:
+def list_changes(workspace: str | Path, client: str, *, engagement_kind: str = "client",
+                 problems: list | None = None) -> list[dict]:
+    """The engagement's changes, newest first. A change record that fails its checks
+    stops the read, unless `problems` is a list: then it is skipped and named there
+    (as ws.list_sessions does). Approval and recovery code reads strictly."""
     directory, _ = _directory(workspace, client, engagement_kind)
     if not directory.exists():
         return []
-    return sorted((load_change(workspace, client, p.name, engagement_kind=engagement_kind)[1]
-                   for p in directory.iterdir() if _CHANGE_ID.fullmatch(p.name)),
-                  key=lambda c: (c["created_at"], c["id"]), reverse=True)
+    records = []
+    for p in directory.iterdir():
+        if not _CHANGE_ID.fullmatch(p.name):
+            continue
+        try:
+            records.append(load_change(workspace, client, p.name, engagement_kind=engagement_kind)[1])
+        except ws.BoundaryError:
+            raise
+        except ws.WorkspaceError as exc:
+            if problems is None:
+                raise
+            reason = str(exc) if (p / "change.json").exists() else "the change folder has no change.json"
+            problems.append(ws.record_problem(directory.parent, p / "change.json", reason))
+    return sorted(records, key=lambda c: (c["created_at"], c["id"]), reverse=True)
 
 
 def _capture_file(root: Path, source: str | Path) -> dict:
@@ -167,7 +187,7 @@ def _append(root: Path, record: dict, event: dict) -> dict:
     value = {"schema": "torque.change-event/1", "id": identifier,
              "change": record["id"], _owner_key(record): record[_owner_key(record)],
              "created_at": at.isoformat(), **event}
-    ws._write_json(ws._inside(root, directory / f"{identifier}.json"), value)
+    ws._write_json(ws._inside(root, directory / f"{identifier}.json"), value, private=True)
     ws.share_with_approver(_workspace_of(root), *([] if existed else [directory]), directory / f"{identifier}.json")
     return value
 
@@ -258,9 +278,10 @@ def verify_deploy(workspace: str | Path, client: str, identifier: str, org: str,
         existed = evidence_dir.exists()
         evidence_dir.mkdir(mode=0o700, exist_ok=True)
         path = ws._inside(root, evidence_dir / (uuid4().hex + ".json"))
-        ws.atomic_write_new(path, raw)
+        ws.atomic_write_new(path, raw, private=True)
         ws.share_with_approver(_workspace_of(root), *([] if existed else [evidence_dir]), path)
-        evidence = {"path": str(path.relative_to(root)), "name": "metadata-api-report.json",
+        # Forward slashes, as every other evidence path: a record read on another system stays valid.
+        evidence = {"path": path.relative_to(root).as_posix(), "name": "metadata-api-report.json",
                     "sha256": hashlib.sha256(raw.encode()).hexdigest(), "bytes": path.stat().st_size,
                     "meaning": "Metadata API report from this exact read; technical scope only."}
     return _append(root, record, {"kind": "metadata_observation", "summary": result.detail,
@@ -272,64 +293,126 @@ def verify_deploy(workspace: str | Path, client: str, identifier: str, org: str,
                                  "business_acceptance_proven": False})
 
 
-def _events(root: Path, record: dict) -> list[dict]:
+def _events(root: Path, record: dict, problems: list | None = None) -> list[dict]:
+    """The change's events in order. An event that fails its checks stops the read,
+    unless `problems` is a list: then it is skipped and named there. An event that
+    names another engagement, and a symlink, stop the read either way."""
     directory = ws._inside(root, root / "events")
     events = []
     if not directory.exists():
         return events
     for path in sorted(directory.glob("*.json")):
-        event = ws._read_json(ws._inside(root, path))
-        if (not _EVENT_ID.fullmatch(path.stem) or event.get("id") != path.stem
-                or event.get("schema") != "torque.change-event/1" or event.get("change") != record["id"]
-                or event.get(_owner_key(record)) != record[_owner_key(record)] or not isinstance(event.get("summary"), str)
-                or not event["summary"].strip() or not _timestamp(event.get("created_at"))
-                or event.get("kind") not in ("note", "decision", "next_step", "check", "metadata_observation",
-                                             *_TORQUE_BASIS)):
-            raise ws.WorkspaceError(f"invalid change event: {path.name}")
-        if event["kind"] == "check":
-            if (event.get("result") not in _RESULTS or event.get("basis") != "operator_reported"
-                    or event.get("criterion") not in {c["id"] for c in record["criteria"]}):
-                raise ws.WorkspaceError(f"invalid reported acceptance check: {path.name}")
-        if event["kind"] == "metadata_observation":
-            if (event.get("basis") != "salesforce_metadata_api" or event.get("business_acceptance_proven") is not False
-                    or not _org(event.get("target_org")) or not isinstance(event.get("job_id"), str)
-                    or not event["job_id"].strip()
-                    or event.get("result") not in ("pass", "fail", "error", "deferred", "manual_required", "skip_via_token")
-                    or not isinstance(event.get("observation"), dict)
-                    or not isinstance(event["observation"].get("metadata", {}), dict)):
-                raise ws.WorkspaceError(f"invalid metadata observation: {path.name}")
-            for components in (event.get("requested_components", []),
-                               event["observation"].get("metadata", {}).get("expected_components", [])):
-                if not isinstance(components, list) or any(not isinstance(c, str) for c in components):
-                    raise ws.WorkspaceError(f"invalid metadata component scope: {path.name}")
-        elif event["kind"] in _TORQUE_BASIS:
-            if event.get("basis") != _TORQUE_BASIS[event["kind"]]:
-                raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
-            if _missing_fields(event["kind"], event):
-                raise ws.WorkspaceError(f"invalid approval event (missing fields): {path.name}")
-            if event["kind"] == BEFORE_STATE_KIND and (
-                    not isinstance(event.get("files"), list) or not isinstance(event.get("sha256"), str)
-                    or not isinstance(event.get("path"), str)):
-                raise ws.WorkspaceError(f"invalid before-state event: {path.name}")
-        elif event.get("basis") != "operator_reported":
-            raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
-        events.append(event)
+        try:
+            events.append(_event(root, record, path))
+        except ws.BoundaryError:
+            raise
+        except ws.WorkspaceError as exc:
+            if problems is None:
+                raise
+            problems.append(ws.record_problem(root.parent.parent, path, str(exc)))
     return events
+
+
+def _event(root: Path, record: dict, path: Path) -> dict:
+    """One checked change event. Every field is checked for its type before it is
+    used, so a damaged event raises WorkspaceError; one that names another engagement
+    or a path out of the change's evidence folder raises BoundaryError."""
+    event = ws._read_json(ws._inside(root, path))
+    if ws.foreign_owner(event, _owner_key(record), record[_owner_key(record)]):
+        raise ws.BoundaryError(f"change event belongs to a different client or initiative: {path.name}")
+    # A path out of the evidence folder stops the read, however damaged the rest is.
+    for key in ("evidence", "manifest"):
+        if isinstance(event.get(key), dict):
+            _refuse_escape(event[key].get("path"))
+    if event.get("kind") == BEFORE_STATE_KIND:
+        _refuse_escape(event.get("path"))
+        for item in event.get("files") if isinstance(event.get("files"), list) else []:
+            if isinstance(item, dict):
+                _refuse_escape(item.get("path"))
+    if (not _EVENT_ID.fullmatch(path.stem) or event.get("id") != path.stem
+            or event.get("schema") != "torque.change-event/1" or event.get("change") != record["id"]
+            or event.get(_owner_key(record)) != record[_owner_key(record)] or not isinstance(event.get("summary"), str)
+            or not event["summary"].strip() or not _timestamp(event.get("created_at"))
+            or event.get("kind") not in ("note", "decision", "next_step", "check", "metadata_observation",
+                                         *_TORQUE_BASIS)):
+        raise ws.WorkspaceError(f"invalid change event: {path.name}")
+    if event["kind"] == "check":
+        if (event.get("result") not in _RESULTS or event.get("basis") != "operator_reported"
+                or not isinstance(event.get("criterion"), str)
+                or event["criterion"] not in {c["id"] for c in record["criteria"]}):
+            raise ws.WorkspaceError(f"invalid reported acceptance check: {path.name}")
+    if event["kind"] == "metadata_observation":
+        if (event.get("basis") != "salesforce_metadata_api" or event.get("business_acceptance_proven") is not False
+                or not _org(event.get("target_org")) or not isinstance(event.get("job_id"), str)
+                or not event["job_id"].strip()
+                or event.get("result") not in ("pass", "fail", "error", "deferred", "manual_required", "skip_via_token")
+                or not isinstance(event.get("observation"), dict)
+                or not isinstance(event["observation"].get("metadata", {}), dict)):
+            raise ws.WorkspaceError(f"invalid metadata observation: {path.name}")
+        for components in (event.get("requested_components", []),
+                           event["observation"].get("metadata", {}).get("expected_components", [])):
+            if not isinstance(components, list) or any(not isinstance(c, str) for c in components):
+                raise ws.WorkspaceError(f"invalid metadata component scope: {path.name}")
+    elif event["kind"] in _TORQUE_BASIS:
+        if event.get("basis") != _TORQUE_BASIS[event["kind"]]:
+            raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
+        if _missing_fields(event["kind"], event):
+            raise ws.WorkspaceError(f"invalid approval event (missing fields): {path.name}")
+        # The identifiers a handoff prints are text, or absent.
+        if any(event.get(key) is not None and not isinstance(event[key], str)
+               for key in ("approval_id", "request_id", "org_alias")):
+            raise ws.WorkspaceError(f"invalid approval event (a field has the wrong type): {path.name}")
+        if event["kind"] == BEFORE_STATE_KIND and (
+                not isinstance(event.get("files"), list) or not isinstance(event.get("sha256"), str)
+                or not isinstance(event.get("path"), str)
+                or any(not isinstance(item, dict) or not isinstance(item.get("path"), str)
+                       or not isinstance(item.get("sha256"), str) for item in event["files"])):
+            raise ws.WorkspaceError(f"invalid before-state event: {path.name}")
+    elif event.get("basis") != "operator_reported":
+        raise ws.WorkspaceError(f"invalid event provenance: {path.name}")
+    return event
+
+
+_LEAVES = "invalid evidence path: it leads out of the change's evidence folder"
+
+
+def _refuse_escape(value: object) -> None:
+    """BoundaryError when a recorded path inside a change folder is absolute, names a
+    drive or has a `..` part: it would lead out of the change's evidence folder, and
+    every reader refuses that. Any other value is left to the field checks."""
+    if isinstance(value, str) and (value.startswith(("/", "\\")) or PureWindowsPath(value).drive
+                                   or ".." in re.split(r"[\\/]", value)):
+        raise ws.BoundaryError(_LEAVES)
+
+
+def _evidence_path(value: object) -> PurePosixPath:
+    """A captured file's path inside its change folder (evidence/NAME). A path that
+    leads out of the evidence folder raises BoundaryError (_refuse_escape); any other
+    malformed value raises WorkspaceError, which an informational reader skips as a
+    damaged record. A record that versions up to 2.0.0a21 wrote on Windows can say
+    evidence\\NAME; it is read the same on every system."""
+    _refuse_escape(value)
+    if not isinstance(value, str) or not value or "\0" in value:
+        raise ws.WorkspaceError("invalid evidence path")
+    relative = PurePosixPath(value.replace("\\", "/"))
+    if relative.parts[:1] != ("evidence",):
+        raise ws.WorkspaceError("invalid evidence path")
+    return relative
 
 
 def _integrity(root: Path, evidence: dict | None) -> str:
     if evidence is None:
         return "not_supplied"
-    if (not isinstance(evidence, dict) or not isinstance(evidence.get("name"), str)
+    if not isinstance(evidence, dict):
+        raise ws.WorkspaceError("invalid evidence reference")
+    # A path that leads out of the folder stops the read before anything else is checked.
+    relative = _evidence_path(evidence.get("path"))
+    if (not isinstance(evidence.get("name"), str)
             or not isinstance(evidence.get("sha256"), str)
             or not re.fullmatch(r"[a-f0-9]{64}", evidence["sha256"])
             or type(evidence.get("bytes")) is not int or evidence["bytes"] < 0):
         raise ws.WorkspaceError("invalid evidence reference")
-    relative = evidence.get("path")
-    if (not isinstance(relative, str) or Path(relative).is_absolute()
-            or Path(relative).parts[:1] != ("evidence",) or ".." in Path(relative).parts):
-        raise ws.WorkspaceError("invalid evidence path")
-    path = ws._inside(root, root / relative)
+    path = ws._inside(root, root.joinpath(*relative.parts))
     try:
         digest = ws._file_hash(path)
         size = path.stat().st_size
@@ -340,14 +423,27 @@ def _integrity(root: Path, evidence: dict | None) -> str:
     return "matches_capture" if digest == evidence["sha256"] and size == evidence["bytes"] else "changed"
 
 
-def get_change(workspace: str | Path, client: str, identifier: str, *, engagement_kind: str = "client") -> dict:
+def get_change(workspace: str | Path, client: str, identifier: str, *, engagement_kind: str = "client",
+               problems: list | None = None) -> dict:
+    """The change with its checked events. With a `problems` list a damaged or stray
+    event is skipped and named there (context, handoff, doctor and `change show`);
+    without it, as approval and recovery code calls it, the read stops."""
     root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
-    events = _events(root, record)
-    for event in events:
-        if "evidence" in event:
-            event["evidence_integrity"] = _integrity(root, event["evidence"])
-        if "manifest" in event:
-            event["manifest_integrity"] = _integrity(root, event["manifest"])
+    events = []
+    for event in _events(root, record, problems):
+        try:
+            if "evidence" in event:
+                event["evidence_integrity"] = _integrity(root, event["evidence"])
+            if "manifest" in event:
+                event["manifest_integrity"] = _integrity(root, event["manifest"])
+        except ws.BoundaryError:
+            raise
+        except ws.WorkspaceError as exc:
+            if problems is None:
+                raise
+            problems.append(ws.record_problem(root.parent.parent, root / "events" / f"{event['id']}.json", str(exc)))
+            continue
+        events.append(event)
     criteria = []
     for criterion in record["criteria"]:
         checks = [e for e in events if e["kind"] == "check" and e["criterion"] == criterion["id"]]
@@ -366,8 +462,9 @@ def get_change(workspace: str | Path, client: str, identifier: str, *, engagemen
             "next_steps": [e["summary"] for e in events if e["kind"] == "next_step"]}
 
 
-def render_change(workspace: str | Path, client: str, identifier: str, *, engagement_kind: str = "client") -> str:
-    item = get_change(workspace, client, identifier, engagement_kind=engagement_kind)
+def render_change(workspace: str | Path, client: str, identifier: str, *, engagement_kind: str = "client",
+                  problems: list | None = None) -> str:
+    item = get_change(workspace, client, identifier, engagement_kind=engagement_kind, problems=problems)
     owner_label = "Client" if engagement_kind == "client" else "Initiative"
     lines = [f"# {item['title']}", "", f"Business outcome: {item['outcome']}", "",
              f"Change: {item['id']} · {owner_label}: {item[engagement_kind]}",
@@ -398,7 +495,7 @@ def render_change(workspace: str | Path, client: str, identifier: str, *, engage
                 lines += [f"  {event['criterion']}: {event['result']} (operator-reported)"]
             evidence = event.get("evidence")
             if evidence:
-                path = Path(item["change_root"]) / evidence["path"]
+                path = Path(item["change_root"]).joinpath(*_evidence_path(evidence["path"]).parts)
                 lines += [f"  Evidence: [{evidence['name']}](<{path}>) ({event['evidence_integrity']})",
                           f"  SHA-256: `{evidence['sha256']}`"]
     approvals = [e for e in item["events"] if e["kind"] in APPROVAL_KINDS or e["kind"] == BEFORE_STATE_KIND]

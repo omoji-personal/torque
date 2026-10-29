@@ -165,9 +165,10 @@ def test_upgrade_keeps_an_edited_rule_and_reports_it(root):
     (root / AGY_BUILD).write_text("---\ntrigger: always_on\ndescription: Mine\n---\n\nLocal.\n", encoding="utf-8")
     for check in (True, False):
         report = updates.update_templates(root, check=check)
-        conflict = next(row for row in report["conflicts"] if row["path"] == AGY_BUILD)
-        assert conflict["reason"] == "modified_local" and conflict["suggestion"]
-        assert conflict["packaged_source"] == "torque/data/build-only.md (Antigravity copy)"
+        # The packaged rule has not changed since it was recorded: kept, and not a conflict.
+        row = rows(report)[AGY_BUILD]
+        assert row["action"] == "customized" and row["note"] and not report["conflicts"]
+        assert row["packaged_source"] == "torque/data/build-only.md (Antigravity copy)"
         assert (root / AGY_BUILD).read_text(encoding="utf-8").endswith("Local.\n")
     assert manifest(root)[AGY_BUILD] == recorded
     assert rows(report)[CLAUDE_BUILD]["packaged_source"] == "torque/data/build-only.md"

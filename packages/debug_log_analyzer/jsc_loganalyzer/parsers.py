@@ -10,48 +10,97 @@ Adopted 2026-05-04 from claudeblazer (Apache-2.0). TAA Phase 5 P2-3.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import re
 
 from jsc_loganalyzer.score import Finding
 
 
-# A managed-package trigger name has the shape `<namespace>__<TriggerName>`,
-# where the namespace prefix is a single letter-led, ALPHANUMERIC-ONLY token of
-# 1-15 chars (Salesforce namespace rules) followed by `__`. This is NOT the same
-# as "any name containing `__`": a subscriber trigger like `My_Custom__Trigger`
-# (leading token has an underscore) or a name carrying a `__c`/`__r` segment can
-# contain `__` without being managed. The leading token MUST be a valid
-# namespace token for the trigger to count as managed. (Audit 2026-05-30 COR-2.)
-_MANAGED_TRIGGER_NS = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,14}__[A-Za-z0-9_]+$")
+# A log line is `HH:mm:ss.SSS (nanoseconds)|EVENT|fields`, as the Apex Developer
+# Guide documents it (Debug Log Details, Debug Log Levels). A line without that
+# start continues the event before it: a wrapped query, a stack trace, the limits
+# under LIMIT_USAGE_FOR_NS, a multi-line USER_DEBUG message. Parsers read only an
+# event's own name and fields, so a debug message that contains "|FATAL_ERROR|" or
+# a code unit's text is still a debug message. The timestamp is optional so that an
+# excerpt starting at the first pipe still reads.
+_EVENT_LINE = re.compile(
+    r"^(?:\d{1,2}:\d{2}:\d{2}[.:]\d+(?:\s+\(\d+\))?)?\s*\|(?P<name>[A-Z][A-Z0-9_]*)(?:\|(?P<fields>.*))?$"
+)
 
 
-def parse_fatal_swallowed(log: str, lines: list[str]) -> list[Finding]:
-    """FATAL_ERROR present in log AND the surrounding context shows a try/catch with no re-raise.
+@dataclass
+class _Event:
+    line: int    # index of the event's own line
+    name: str    # "" for a line before the first event: the header, or an excerpt
+    fields: str
+    more: list[tuple[int, str]] = field(default_factory=list)  # (index, text) of lines continuing it
 
-    Heuristic: every `|FATAL_ERROR|` event should result in either a top-level transaction abort
-    or an explicit `System.debug` of the exception. If the FATAL_ERROR appears inside an
-    `EXCEPTION_THROWN` immediately followed by `STATEMENT_EXECUTE` continuing normally, that's
-    a swallowed exception.
+
+def _events(lines: list[str]) -> list[_Event]:
+    events: list[_Event] = []
+    for i, line in enumerate(lines):
+        m = _EVENT_LINE.match(line.rstrip())
+        if m:
+            events.append(_Event(i, m.group("name"), m.group("fields") or ""))
+        elif events and events[-1].name:
+            events[-1].more.append((i, line))
+        else:
+            events.append(_Event(i, "", line))
+    return events
+
+
+# A trigger's code unit is named "<Trigger> on <Object> trigger event <Event>"
+# (older logs add " for [<record ids>]") and ends with a typeRef,
+# __sfdc_trigger/<Trigger> or __sfdc_trigger/<namespace>/<Trigger>:
+#   09:00:00.001 (1000000)|CODE_UNIT_STARTED|[EXTERNAL]|01q000000000001|SampleTrigger on Account trigger event BeforeInsert|__sfdc_trigger/SampleTrigger
+#   09:00:00.002 (2000000)|CODE_UNIT_FINISHED|SampleTrigger on Account trigger event BeforeInsert|__sfdc_trigger/SampleTrigger
+_TRIGGER_UNIT = re.compile(
+    r"^(?:[^|]*\|)*?(?P<trigger>[^|]+?) on [^|]+? trigger event (?P<event>\w+)(?: for \[[^\]]*\])?"
+    r"(?:\|__sfdc_trigger/(?P<ref>[^|]+?))?\s*$"
+)
+_UNIT_EDGES = {"CODE_UNIT_STARTED": "STARTED", "CODE_UNIT_FINISHED": "FINISHED"}
+
+
+def _trigger_unit(event: _Event) -> tuple[str, str, str] | None:
+    """(STARTED or FINISHED, trigger, event) for a trigger code-unit event, else None.
+
+    The trigger is named by its typeRef, namespace included, when the event has one.
+    """
+    if event.name not in _UNIT_EDGES or " trigger event " not in event.fields:
+        return None
+    m = _TRIGGER_UNIT.match(event.fields)
+    if not m:
+        return None
+    return _UNIT_EDGES[event.name], m.group("ref") or m.group("trigger").strip(), m.group("event")
+
+
+def parse_unhandled_exception(log: str, lines: list[str]) -> list[Finding]:
+    """FATAL_ERROR: an exception nothing caught, which ended the transaction.
+
+    Apex logs FATAL_ERROR (exception type, message and stack trace) when an
+    exception ends the transaction; a caught one logs EXCEPTION_THROWN alone.
+    What follows (CODE_UNIT_FINISHED, EXECUTION_FINISHED) is the normal unwinding
+    and says nothing about handling. The same error can be logged again as it
+    leaves enclosing units; it is reported once.
     """
     findings: list[Finding] = []
-    for i, line in enumerate(lines):
-        if "|FATAL_ERROR|" not in line:
+    seen: set[str] = set()
+    for event in _events(lines):
+        if event.name != "FATAL_ERROR":
             continue
-        # Look ahead 10 lines for evidence the exception was actually surfaced.
-        # COR-2(c): a 3-line window false-positived whenever the surfacing event
-        # (USER_DEBUG / EXCEPTION_THROWN / EXECUTION_FINISHED) was a few
-        # statements further down the log.
-        window = "\n".join(lines[i + 1 : i + 11])
-        if "EXECUTION_FINISHED" not in window and "USER_DEBUG" not in window and "EXCEPTION_THROWN" not in window:
-            findings.append(
-                Finding(
-                    category="fatal-swallowed",
-                    severity=1,
-                    message="FATAL_ERROR with no surfacing in next 10 lines (likely caught + suppressed)",
-                    line=i + 1,
-                    context=line[:200],
-                )
+        error = event.fields.strip()
+        if error in seen:
+            continue
+        seen.add(error)
+        findings.append(
+            Finding(
+                category="unhandled-exception",
+                severity=1,
+                message=f"Unhandled exception ended the transaction: {error[:150]}",
+                line=event.line + 1,
+                context=lines[event.line][:200],
             )
+        )
     return findings
 
 
@@ -64,10 +113,24 @@ _LIMIT_PATTERNS = [
 ]
 
 
+_LIMIT_EVENTS = {"LIMIT_USAGE_FOR_NS", "CUMULATIVE_LIMIT_USAGE", "TESTING_LIMITS"}
+
+
+def _limit_lines(lines: list[str]):
+    """(index, text) of the lines that report limits: those under a limit event, or
+    an excerpt of them before any event. The same words in a debug message are not
+    limits."""
+    for event in _events(lines):
+        if event.name in _LIMIT_EVENTS:
+            yield from event.more
+        elif not event.name:
+            yield event.line, event.fields
+
+
 def parse_governor_asymptotic(log: str, lines: list[str]) -> list[Finding]:
     """Detect any limit consumption ≥75%."""
     findings: list[Finding] = []
-    for i, line in enumerate(lines):
+    for i, line in _limit_lines(lines):
         for pat, kind in _LIMIT_PATTERNS:
             m = re.search(pat, line)
             if not m:
@@ -98,123 +161,98 @@ def parse_governor_asymptotic(log: str, lines: list[str]) -> list[Finding]:
 def parse_missing_callout_response(log: str, lines: list[str]) -> list[Finding]:
     """For every CALLOUT_REQUEST, expect a CALLOUT_RESPONSE within ~50 subsequent lines."""
     findings: list[Finding] = []
-    for i, line in enumerate(lines):
-        if "|CALLOUT_REQUEST|" not in line:
+    events = _events(lines)
+    for n, event in enumerate(events):
+        if event.name != "CALLOUT_REQUEST":
             continue
-        window = "\n".join(lines[i + 1 : i + 51])
-        if "|CALLOUT_RESPONSE|" not in window:
+        later = (other for other in events[n + 1:] if other.line <= event.line + 50)
+        if not any(other.name == "CALLOUT_RESPONSE" for other in later):
             findings.append(
                 Finding(
                     category="missing-callout-response",
                     severity=1,
                     message="CALLOUT_REQUEST with no CALLOUT_RESPONSE in next 50 lines",
-                    line=i + 1,
-                    context=line[:200],
+                    line=event.line + 1,
+                    context=lines[event.line][:200],
                 )
             )
     return findings
 
 
 def parse_trigger_recursion(log: str, lines: list[str]) -> list[Finding]:
-    """Trigger entries by name; flag any name with >5 entries (recursion)."""
+    """A trigger starting again for the same event while it is still running.
+
+    Re-entry is measured by nesting, not by total runs: Salesforce runs triggers
+    in chunks of 200 records, so one 2,000-row DML legitimately runs a trigger ten
+    times in a row. Only a start inside an open unit of the same trigger and event
+    is recursion. A finish without a matching start (a truncated log) is ignored.
+    """
     findings: list[Finding] = []
-    counts: dict[str, int] = {}
-    for line in lines:
-        m = re.search(r"\|CODE_UNIT_STARTED\|.*?Trigger:([A-Za-z0-9_]+)", line)
-        if m:
-            name = m.group(1)
-            counts[name] = counts.get(name, 0) + 1
-    for name, count in counts.items():
-        if count > 7:
-            findings.append(Finding(category="trigger-recursion-deep", severity=1,
-                                    message=f"Trigger {name} re-entered {count} times in transaction"))
-        elif count > 5:
-            findings.append(Finding(category="trigger-recursion-deep", severity=2,
-                                    message=f"Trigger {name} re-entered {count} times (boundary)"))
+    running: dict[tuple[str, str], int] = {}
+    deepest: dict[tuple[str, str], tuple[int, int]] = {}  # (depth, index of the line)
+    for record in _events(lines):
+        unit = _trigger_unit(record)
+        if unit is None:
+            continue
+        edge, trigger, event = unit
+        key = (trigger, event)
+        if edge == "STARTED":
+            running[key] = running.get(key, 0) + 1
+            if running[key] > deepest.get(key, (0, 0))[0]:
+                deepest[key] = (running[key], record.line)
+        elif running.get(key):
+            running[key] -= 1
+    for (trigger, event), (depth, i) in deepest.items():
+        if depth > 7:
+            severity, suffix = 1, ""
+        elif depth > 5:
+            severity, suffix = 2, " (boundary)"
+        else:
+            continue
+        findings.append(Finding(category="trigger-recursion-deep", severity=severity,
+                                message=f"Trigger {trigger} ({event}) re-entered itself while still running, "
+                                        f"{depth} levels deep{suffix}",
+                                line=i + 1, context=lines[i][:200]))
     return findings
 
 
 def parse_vr_inside_trigger(log: str, lines: list[str]) -> list[Finding]:
-    """Detect `VALIDATION_RULE` events nested inside `CODE_UNIT_STARTED|Trigger:...` blocks."""
+    """A validation rule that rejected DML a trigger performed.
+
+    The rules checked for a trigger's own DML are logged inside the trigger's code
+    unit: VALIDATION_RULE names the rule, then VALIDATION_PASS or VALIDATION_FAIL
+    gives the outcome. Rules that pass are normal; a failure means the trigger
+    wrote data the target object rejects.
+    """
     findings: list[Finding] = []
-    # COR-2(b): track trigger nesting DEPTH, not a single boolean. With a
-    # boolean, an inner trigger's CODE_UNIT_FINISHED reset `in_trigger` to False,
-    # so a VR firing in the OUTER trigger AFTER an inner trigger finished was
-    # missed. Depth increments on each trigger START and decrements (floored at
-    # 0 for truncated logs) on each trigger FINISH; we are "inside a trigger"
-    # whenever depth > 0.
-    trigger_depth = 0
-    trigger_name = ""
-    for i, line in enumerate(lines):
-        if "|CODE_UNIT_STARTED|" in line and "Trigger:" in line:
-            trigger_depth += 1
-            m = re.search(r"Trigger:([A-Za-z0-9_]+)", line)
-            trigger_name = m.group(1) if m else "?"
-        elif "|CODE_UNIT_FINISHED|" in line and "Trigger:" in line:
-            trigger_depth = max(0, trigger_depth - 1)
-        elif trigger_depth > 0 and "|VALIDATION_RULE|" in line:
+    # Open trigger units, innermost last. COR-2(b): a nested trigger finishing
+    # must not end the outer one.
+    running: list[str] = []
+    rule = ""
+    for record in _events(lines):
+        unit = _trigger_unit(record)
+        if unit is not None:
+            edge, trigger, event = unit
+            label = f"{trigger} ({event})"
+            if edge == "STARTED":
+                running.append(label)
+            elif label in running:
+                del running[len(running) - 1 - running[::-1].index(label)]
+        elif record.name == "VALIDATION_RULE":
+            rule = record.fields.rstrip().rsplit("|", 1)[-1]
+        elif record.name == "VALIDATION_FAIL" and running:
             findings.append(
                 Finding(
                     category="flow-trigger-vr-chain",
                     severity=2,
-                    message=f"Validation rule fired inside Trigger {trigger_name} (data quality issue upstream)",
-                    line=i + 1,
-                    context=line[:200],
+                    message=f"Validation rule {rule or '(unnamed)'} rejected DML from trigger {running[-1]} "
+                            "(data quality issue upstream)",
+                    line=record.line + 1,
+                    context=lines[record.line][:200],
                 )
             )
     return findings
 
-
-def parse_managed_dml_no_bypass(log: str, lines: list[str]) -> list[Finding]:
-    """Detect DML executing inside a managed-namespace trigger that doesn't query Bypass_Trigger_Settings__c.
-
-    Heuristic: a `CODE_UNIT_STARTED|Trigger:<NS__Name>` followed by `DML_BEGIN` without an
-    intervening `SOQL_EXECUTE_BEGIN.*Bypass_Trigger_Settings__c`.
-    """
-    findings: list[Finding] = []
-    in_managed_trigger = False
-    saw_bypass_query = False
-    trigger_name = ""
-    trigger_start_line = 0
-    for i, line in enumerate(lines):
-        if "|CODE_UNIT_STARTED|" in line and "Trigger:" in line:
-            m = re.search(r"Trigger:([A-Za-z0-9_]+)", line)
-            if m and _MANAGED_TRIGGER_NS.match(m.group(1)):
-                in_managed_trigger = True
-                saw_bypass_query = False
-                trigger_name = m.group(1)
-                trigger_start_line = i + 1
-                continue
-        if not in_managed_trigger:
-            continue
-        if "|SOQL_EXECUTE_BEGIN|" in line and "Bypass_Trigger_Settings__c" in line:
-            saw_bypass_query = True
-        if "|DML_BEGIN|" in line and not saw_bypass_query:
-            findings.append(
-                Finding(
-                    category="dml-managed-no-bypass",
-                    severity=2,
-                    message=f"Managed trigger {trigger_name} performed DML without checking bypass setting first",
-                    line=i + 1,
-                    context=line[:200],
-                )
-            )
-            in_managed_trigger = False  # one finding per trigger entry
-        if "|CODE_UNIT_FINISHED|" in line and trigger_name in line:
-            in_managed_trigger = False
-    return findings
-
-
-# An apex-debug-log EVENT line begins with a timestamp + nanosecond-counter
-# prefix, then `|<EVENT_NAME>`. Example:
-#   `09:00:00.5 (12345)|SOQL_EXECUTE_END|[42]|Rows:3`
-# We use this to find where one log event ends and the next begins, so the
-# multi-line SOQL reconstruction stops at the NEXT event marker (e.g.
-# SOQL_EXECUTE_END, HEAP_ALLOCATE) rather than swallowing it. The event name
-# is an ALL-CAPS-with-underscores token so a wrapped SQL continuation fragment
-# (lowercase, mixed case, or a bare clause like `FROM Account`) is NOT mistaken
-# for an event marker. (TAA B3 — robust multi-line SOQL detector.)
-_LOG_EVENT_MARKER = re.compile(r"^\d{2}:\d{2}:\d{2}\.\d+\s+\(\d+\)\|[A-Z][A-Z0-9_]*\|")
 
 # Clause-aware bounds checks: match WHERE / LIMIT as whole words anywhere in the
 # reconstructed statement (case-insensitive). `\b` word boundaries prevent a
@@ -227,53 +265,29 @@ _HAS_WHERE = re.compile(r"\bWHERE\b", re.IGNORECASE)
 _HAS_LIMIT = re.compile(r"\bLIMIT\b", re.IGNORECASE)
 
 
-def _reconstruct_soql(lines: list[str], begin_idx: int) -> str:
-    """Reconstruct the full SOQL statement for the SOQL_EXECUTE_BEGIN at
-    lines[begin_idx], joining proven continuation fragments and STOPPING at the
-    next log-event marker.
-
-    A continuation fragment is any subsequent line that is NOT itself a new log
-    event (timestamp + `|EVENT|` prefix). The first line's SELECT...FROM is the
-    seed; wrapped fragments are appended with single spaces.
-    """
-    begin_line = lines[begin_idx]
-    # Seed from the SELECT...FROM on the BEGIN line (everything from SELECT on).
-    m = re.search(r"SELECT\b.*", begin_line, re.IGNORECASE)
-    if not m:
-        return ""
-    parts = [m.group(0).strip()]
-    for j in range(begin_idx + 1, len(lines)):
-        nxt = lines[j]
-        if _LOG_EVENT_MARKER.match(nxt):
-            break  # next event begins — stop reconstruction
-        frag = nxt.strip()
-        if frag:
-            parts.append(frag)
-    return " ".join(parts)
-
-
 def parse_unbounded_soql(log: str, lines: list[str]) -> list[Finding]:
     """SOQL_EXECUTE_BEGIN with a (possibly multi-line) query that has no WHERE
     and no LIMIT.
 
-    Reconstructs the full statement across wrapped continuation lines before
-    doing the clause-aware bounds check, so a multi-line query whose WHERE/LIMIT
-    lands on a continuation line is correctly recognized as bounded.
+    The statement is the event's SELECT and the lines that continue it, up to the
+    next event (TAA B3), so a multi-line query whose WHERE/LIMIT lands on a
+    continuation line is correctly recognized as bounded.
     """
     findings: list[Finding] = []
-    for i, line in enumerate(lines):
-        if "|SOQL_EXECUTE_BEGIN|" not in line:
+    for event in _events(lines):
+        if event.name != "SOQL_EXECUTE_BEGIN":
             continue
-        full_query = _reconstruct_soql(lines, i)
-        if not full_query:
+        m = re.search(r"SELECT\b.*", event.fields, re.IGNORECASE)
+        if not m:
             continue
+        full_query = " ".join([m.group(0).strip(), *(text.strip() for _, text in event.more if text.strip())])
         if not _HAS_WHERE.search(full_query) and not _HAS_LIMIT.search(full_query):
             findings.append(
                 Finding(
                     category="unbounded-soql",
                     severity=2,
                     message="SOQL with no WHERE and no LIMIT — latent governor-limit blast at scale",
-                    line=i + 1,
+                    line=event.line + 1,
                     context=full_query[:200],
                 )
             )
@@ -281,12 +295,11 @@ def parse_unbounded_soql(log: str, lines: list[str]) -> list[Finding]:
 
 
 PARSERS = [
-    parse_fatal_swallowed,
+    parse_unhandled_exception,
     parse_governor_asymptotic,
     parse_missing_callout_response,
     parse_trigger_recursion,
     parse_vr_inside_trigger,
-    parse_managed_dml_no_bypass,
     parse_unbounded_soql,
 ]
 

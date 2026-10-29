@@ -832,7 +832,12 @@ def dispatch_side_eff(target_org: str, change_description: str) -> DispatchResul
     except (OSError, subprocess.TimeoutExpired) as exc:
         return DispatchResult("Side-Eff", "ERROR", f"Log analysis could not run: {type(exc).__name__}.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
     if proc.returncode != 0:
-        return DispatchResult("Side-Eff", "ERROR", f"Log analysis unavailable (exit {proc.returncode}); runtime health remains unknown.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
+        try:  # the analyzer's own reason, such as a failed ApexLog query
+            reason = json.loads(proc.stdout)["error"]
+        except (ValueError, KeyError, TypeError):
+            reason = ""
+        reason = f": {reason}" if isinstance(reason, str) and reason else ""
+        return DispatchResult("Side-Eff", "ERROR", f"Log analysis unavailable (exit {proc.returncode}){reason}; runtime health remains unknown.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
     try:
         data = json.loads(proc.stdout)
         findings, summary = data["findings"], data["summary"]
@@ -841,10 +846,20 @@ def dispatch_side_eff(target_org: str, change_description: str) -> DispatchResul
         if not all(isinstance(item, dict) and type(item.get("severity")) is int and item["severity"] in (1,2,3) for item in findings): raise ValueError("finding")
         if not all(type(summary.get(key)) is int and summary[key] == value for key, value in counts.items()): raise ValueError("counts")
         if type(summary.get("total")) is not int or summary["total"] != len(findings): raise ValueError("total")
-        if type(data.get("logs_analyzed")) is not int or data["logs_analyzed"] <= 0: raise ValueError("coverage")
+        if type(data.get("logs_analyzed")) is not int or data["logs_analyzed"] < 0: raise ValueError("coverage")
+        # Zero coverage counts only as the analyzer's explicit "the query ran and found no log".
+        no_logs = data["logs_analyzed"] == 0
+        if no_logs and (data.get("analysis_scope") != "no_logs_found" or findings): raise ValueError("coverage")
         if data.get("error"): raise ValueError("error")
     except (ValueError, KeyError, TypeError, AssertionError):
         return DispatchResult("Side-Eff", "ERROR", "Analyzer evidence is missing, malformed or inconsistent; runtime health remains unknown.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
+    if no_logs:
+        return DispatchResult(
+            "Side-Eff", "MANUAL_REQUIRED",
+            f"No debug log was found in {target_org}, so runtime side effects were not checked. Set a debug-log trace flag for the user who runs the change, reproduce it, then rerun QA, or analyze that log with `torque logs --target-org {target_org} --since <a time just before the reproduction>`.",
+            duration_seconds=time.monotonic()-started, invocation_command=invocation,
+            metadata={"logs_analyzed": 0, "analysis_scope": "no_logs_found", "change_execution_proven": False},
+        )
     status = "FAIL" if counts["p0_count"] or counts["p1_count"] else "PASS"
     return DispatchResult(
         "Side-Eff", status,

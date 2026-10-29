@@ -7,7 +7,7 @@ Mark a selected snapshot abandoned while keeping its recovery artifacts.
 Use the snapshot and org specified by the user:
 
 ```sh
-torque revert revert discard <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
+torque recover discard <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
 ```
 
 This updates snapshot lifecycle state; it does not revert the org or delete the

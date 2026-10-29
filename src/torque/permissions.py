@@ -305,9 +305,84 @@ def load_profile(root) -> str:
     return data["profile"]
 
 
+# The fail-closed shim's text in releases before the current one (gate.HOOK_SHIM_CODE),
+# so a gate hook entry Torque wrote then is still recognised as Torque's own.
+_EARLIER_SHIMS = (
+    "import os,sys;sys.excepthook=lambda t,e,b:(print('Build-only mode: the gate could not load ('+t.__name__+"
+    "': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import "
+    "main;sys.exit(main())",
+    "import os,sys;sys.excepthook=lambda t,e,b:(print('De-identified mode: the gate could not load ('+t.__name__+"
+    "': '+str(e)+'); blocking to fail closed.',file=sys.stderr,flush=True),os._exit(2));from torque.gate import "
+    "main;sys.exit(main())",
+    # 2.0.0a21's, before the message named the recovery step.
+    "import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; "
+    "call blocked)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())")
+# The shell-form command Torque wrote (gate.hook_command; its first form lacked -I).
+_TORQUE_SHELL_HOOK = re.compile(r'"(?P<python>[^"]+)" (?:-I )?-c "(?P<shim>[^"]+)"')
+HOOK_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
+
+
+def gate_hook_item(python: str, event: str = "PreToolUse") -> dict:
+    """The command hook that runs the gate, in Claude Code's exec form: `command` is
+    the interpreter and `args` its argument vector, spawned with no shell, so nothing
+    is quoted or parsed and no Git Bash is needed on Windows. Before a call it also
+    sets "onFailure": "block" (Claude Code 2.1.295 and later): a hook that cannot
+    start, for example because its interpreter moved, exits with a code other than 0
+    or 2, or times out then blocks the call instead of letting it run. After a call
+    there is nothing to block."""
+    from . import gate
+    from .cli import HOOK_TIMEOUT
+    item = {"type": "command", "command": python.replace("\\", "/"), "args": ["-I", "-c", gate.HOOK_SHIM_CODE],
+            "timeout": HOOK_TIMEOUT}
+    if event == "PreToolUse":
+        item["onFailure"] = "block"
+    return item
+
+
+def gate_hook_call(item) -> tuple[str, ...] | str | None:
+    """How a hook entry runs the gate: its argument vector in exec form (`args` set),
+    its command line in shell form, or None when it does not run torque.gate."""
+    if not isinstance(item, dict):
+        return None
+    command, args = item.get("command"), item.get("args")
+    if isinstance(args, list):
+        argv = (command, *args)
+        if all(isinstance(word, str) for word in argv) and command and any("torque.gate" in word for word in argv):
+            return argv
+        return None
+    return command if isinstance(command, str) and "torque.gate" in command else None
+
+
+def torque_hook_python(item) -> str | None:
+    """The interpreter of a gate hook entry Torque itself wrote, in either form and with
+    any of its shims, or None for another entry, such as one the owner wrote. Only
+    Torque's own entries are ever converted or pointed at another interpreter."""
+    from . import gate
+    shims = (gate.HOOK_SHIM_CODE, *_EARLIER_SHIMS)
+    call = gate_hook_call(item)
+    if isinstance(call, tuple):
+        return call[0] if len(call) == 4 and call[1:3] == ("-I", "-c") and call[3] in shims else None
+    match = _TORQUE_SHELL_HOOK.fullmatch(call.strip()) if isinstance(call, str) else None
+    return match["python"] if match and match["shim"] in shims else None
+
+
+def _gate_item(item) -> bool:
+    return gate_hook_call(item) is not None
+
+
+def _rewritten(item: dict, wanted: dict) -> dict:
+    """Torque's own gate entry as `wanted` writes it; fields Torque does not set stay."""
+    return {**{key: value for key, value in item.items() if key not in ("command", "args", "shell", "onFailure")},
+            **wanted}
+
+
 def _with_hooks(settings: dict, hook_python: str | None = None) -> dict:
-    """Add the fail-closed gate hook under PreToolUse, PostToolUse and
-    PostToolUseFailure (matcher .*), unless an entry already runs torque.gate.
+    """Wire the fail-closed gate hook under PreToolUse, PostToolUse and
+    PostToolUseFailure (matcher .*), in exec form (gate_hook_item). A gate entry
+    Torque wrote earlier (by `workspace init`, build-only mode, another setup or an
+    earlier version, in either form) is kept in its place and pointed at this
+    interpreter: it may name one the account that runs the session cannot start
+    (R43). A gate entry the owner wrote is left as it is, and none is added beside it.
     All three events are wired (F3): PostToolUse fires only for a Bash exit 0,
     and PostToolUseFailure fires instead of it for a nonzero exit
     (docs/connected-approval.md, "Host facts verified"), so recording execution
@@ -321,21 +396,145 @@ def _with_hooks(settings: dict, hook_python: str | None = None) -> dict:
     may not be one the different agent account that later runs the hook can
     execute at all, which would fail the hook open, not closed, exactly the
     failure this whole mechanism exists to prevent."""
-    from . import gate
-    from .cli import HOOK_TIMEOUT
-    command = gate.hook_command((hook_python or sys.executable).replace("\\", "/"))
+    python = hook_python or sys.executable
     out = dict(settings)
     hooks = dict(out.get("hooks") or {})
-    for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
-        entries = list(hooks.get(event) or [])
-        present = any("torque.gate" in str(h.get("command") or "")
-                      for e in entries if isinstance(e, dict) for h in (e.get("hooks") or []) if isinstance(h, dict))
+    for event in HOOK_EVENTS:
+        wanted = gate_hook_item(python, event)
+        entries, present = [], False
+        for entry in hooks.get(event) or []:
+            if isinstance(entry, dict) and isinstance(entry.get("hooks"), list) and any(map(_gate_item, entry["hooks"])):
+                entry = {**entry, "hooks": [_rewritten(item, wanted) if torque_hook_python(item) is not None else item
+                                            for item in entry["hooks"]]}
+                present = True
+            entries.append(entry)
         if not present:
-            entries.append({"matcher": ".*", "hooks": [{"type": "command", "command": command,
-                                                        "timeout": HOOK_TIMEOUT}]})
+            entries.append({"matcher": ".*", "hooks": [wanted]})
         hooks[event] = entries
     out["hooks"] = hooks
     return out
+
+
+def _claude_wired(data: dict) -> bool | None:
+    """Claude Code's settings run the gate before each call; None for a shape Torque does not rewrite."""
+    hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict) or not isinstance(hooks.get("PreToolUse", []), list):
+        return None
+    return any(_gate_item(item) for entry in hooks.get("PreToolUse", []) if isinstance(entry, dict)
+               and isinstance(entry.get("hooks"), list) for item in entry["hooks"])
+
+
+def _claude_merged(data: dict, entry: dict) -> dict:
+    hooks = dict(data.get("hooks") or {})
+    hooks["PreToolUse"] = [*(hooks.get("PreToolUse") or []), *entry["hooks"]["PreToolUse"]]
+    return {**data, "hooks": hooks}
+
+
+def _claude_converted(data: dict) -> tuple[dict, int]:
+    """The settings with each gate entry Torque wrote in shell form, or with an earlier
+    shim, rewritten as gate_hook_item writes it for the same interpreter, and how many
+    changed. An entry the owner wrote, and Torque's current exec-form entry, are kept as
+    they are."""
+    from . import gate
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return data, 0
+    count, out = 0, dict(hooks)
+    for event in HOOK_EVENTS:
+        if not isinstance(hooks.get(event), list):
+            continue
+        entries = []
+        for entry in hooks[event]:
+            if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
+                items = []
+                for item in entry["hooks"]:
+                    python, call = torque_hook_python(item), gate_hook_call(item)
+                    outdated = python is not None and (isinstance(call, str) or call[3] != gate.HOOK_SHIM_CODE)
+                    current = _rewritten(item, gate_hook_item(python, event)) if outdated else item
+                    count += current != item
+                    items.append(current)
+                entry = {**entry, "hooks": items}
+            entries.append(entry)
+        out[event] = entries
+    return ({**data, "hooks": out}, count) if count else (data, 0)
+
+
+def _antigravity_wired(data: dict) -> bool | None:
+    """Antigravity's hook file runs the gate; None when the gate's name there holds something else."""
+    from . import gate_antigravity as agy
+    wired = any(agy.HOOK_MODULE in str(hook.get("command") or "")
+                for spec in data.values() if isinstance(spec, dict)
+                for entry in (spec.get("PreToolUse") or []) if isinstance(entry, dict)
+                for hook in (entry.get("hooks") or []) if isinstance(hook, dict))
+    return None if not wired and agy.HOOK_NAME in data else wired
+
+
+def wire_gate_hooks(root, *, claude: bool = True, antigravity: bool = False, check: bool = False,
+                    add: bool = True, python: str | None = None) -> list[dict]:
+    """Add the gate's before-call hook where it is missing (unless not `add`): Claude
+    Code's in .claude/settings.json and, with `antigravity`, Antigravity's in
+    .agents/hooks.json, for the interpreter that runs this (`python`). A Claude Code
+    gate entry Torque wrote in shell form is converted to exec form for the same
+    interpreter; an entry the owner wrote and everything else in those files is kept,
+    and a file that is not a JSON object is never rewritten. One row per host: host, path,
+    status (present, added, converted; missing or to_convert under `check`; failed with a
+    reason) and the entry to add by hand."""
+    from . import gate_antigravity as agy
+    python = python or sys.executable
+    root = Path(root)
+    rows = []
+    if claude:
+        entry = {"hooks": {"PreToolUse": [{"matcher": ".*", "hooks": [gate_hook_item(python)]}]}}
+        rows.append(_wire(root, ".claude/settings.json", "Claude Code", entry, check, add,
+                          _claude_wired, _claude_merged, _claude_converted))
+    if antigravity:
+        entry = agy.hook_entry(python)
+        rows.append(_wire(root, ".agents/hooks.json", "Antigravity", entry, check, add,
+                          _antigravity_wired, lambda data, entry: {**data, **entry}))
+    return rows
+
+
+def _wire(root: Path, relative: str, host: str, entry: dict, check: bool, add: bool, wired, merged,
+          converted=None) -> dict:
+    """One host's part of wire_gate_hooks: `wired(data)` reads the file's state, `merged`
+    adds the entry, and `converted` rewrites Torque's own older entries."""
+    path = ws._inside(root, root.joinpath(*relative.split("/")))
+    row = {"host": host, "path": relative, "entry": entry}
+    try:
+        data = ws._read_json(path) if path.exists() else {}
+        state = wired(data)
+    except ws.WorkspaceError:
+        state = None
+    if state is None:
+        return {**row, "status": "failed",
+                "reason": f"{relative} is not a JSON object, or holds its hooks in another shape, so Torque left "
+                          "it as it is"}
+    if state:
+        data, count = converted(data) if converted else (data, 0)
+        if not count:
+            return {**row, "status": "present"}
+        if check:
+            return {**row, "status": "to_convert", "count": count}
+        status = "converted"
+    elif check or not add:
+        return {**row, "status": "missing"}
+    else:
+        data, status = merged(data, entry), "added"
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if path.exists():
+            # The file's mode and group stay: a settings file another account reads stays readable.
+            ws._atomic_replace_text(path, text, keep_mode=True)
+        else:
+            ws.atomic_write_new(path, text)
+            if os.name != "nt" and relative == ".claude/settings.json":
+                # Readable to a setup delegate that later rewrites it with --with-hooks
+                # (docs/delegated-approver.md); the workspace folder itself stays private.
+                path.chmod(0o644)
+    except OSError as exc:
+        return {**row, "status": "failed", "reason": f"{relative} could not be written ({exc})"}
+    return {**row, "status": status}
 
 
 def _owner_presence(presence, confirm) -> None:

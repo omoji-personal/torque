@@ -17,6 +17,10 @@ The native `--target-org` mode fetches a recent log, or a bounded recent set wit
 `--since <ISO-timestamp>` and `--limit <count>`; it is not exact job/user correlation.
 `--since-deploy` is a recent-time-window approximation. Retrieve the exact desired
 log separately and use `--log-file` when that stronger correlation is required.
+When no log exists in that window the analyzer exits 0 with `logs_analyzed: 0`:
+nothing was checked, so set a trace flag for the intended user and reproduce first.
+A failed query or log retrieval exits 2; logs that were read are still analyzed, and
+`logs_unread` counts the rest.
 
 Identify relevant errors, transaction boundaries, execution paths, repeated queries/
 DML, limits and automation interactions. Preserve the timestamp/user/request context
