@@ -5,6 +5,8 @@ permissions:
 jobs:
   offline:
     runs-on: ${{ matrix.os }}
+    # Windows jobs take about an hour; a hang stops here, not at the 6-hour default.
+    timeout-minutes: 120
     # Windows runners default the `run:` shell to pwsh, which does not glob
     # `dist/*.whl`-style arguments to external commands the way bash does.
     # Bash is present on windows-latest (Git for Windows) and keeps every

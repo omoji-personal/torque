@@ -41,7 +41,8 @@ class WorkspaceTests(unittest.TestCase):
         shutil.rmtree(clone / "clients", ignore_errors=True)
         self.assertFalse((clone / "clients").exists())
         created = ws.add_client(clone, "Gamma", "gamma-sandbox")
-        self.assertEqual(created, clone / "clients" / "gamma")
+        # add_client returns the resolved path (macOS /private/var, Windows long names for 8.3 ones).
+        self.assertEqual(created, (clone / "clients" / "gamma").resolve())
         self.assertEqual(ws.load_client(clone, "gamma")[2]["org"], "gamma-sandbox")
         if os.name != "nt":
             self.assertEqual((clone / "clients").stat().st_mode & 0o777, 0o700)

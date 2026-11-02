@@ -75,3 +75,6 @@ norecursedirs = [".git", ".venv", ".venv-continuation", "local", "work", "build"
 # plugin name under this layout), so this uses pytest's own pythonpath option
 # instead.
 pythonpath = ["tests"]
+# A test still running after 15 minutes prints every thread's stack, so a hang names its test
+# (the Windows 3.10 CI job once hung at 98% until the 6-hour limit with no clue).
+faulthandler_timeout = 900

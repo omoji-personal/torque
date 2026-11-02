@@ -211,8 +211,9 @@ def test_windows_doctor_reports_a_grant_whose_access_list_cannot_be_read(setup):
     req, item = granted(root, cid, before, project)
     req2, item2 = granted(root, cid, before, project)
     path = root / "clients" / "acme" / "approvals" / "granted" / f"{item['id']}.json"
-    # OWNER RIGHTS denial removes the owner's implicit READ_CONTROL; DELETE stays for the repair.
-    winacl.protect(path, winacl.private_sddl().replace("D:P", "D:P(D;;RC;;;OW)"))
+    # OWNER RIGHTS denial removes the owner's implicit READ_CONTROL, and the Administrators denial the
+    # READ_CONTROL an elevated administrator (a CI runner) keeps through BA; DELETE stays for the repair.
+    winacl.protect(path, winacl.private_sddl().replace("D:P", "D:P(D;;RC;;;OW)(D;;RC;;;BA)"))
     found = [p for p in doctor_connected.report(root, "Acme")["problems"] if path.name in p]
     assert found and "cannot be read" in found[0] and "Remove-Item -LiteralPath" in found[0]
     # The consume path never accepts the unreadable grant: it uses the other valid one.
@@ -232,7 +233,10 @@ def test_windows_connected_files_are_private(setup):
     assert len(files) >= 4
     for path in files:
         assert winacl.problem(path) == "", path
-        assert winacl.current_user_sid() in winacl._sddl(path), path
+        # Native SIDs: SDDL text writes some accounts as aliases (LA for the built-in Administrator).
+        owner, entries = winacl.read_security(path)
+        user = winacl.current_user_sid()
+        assert owner == user and any(kind == "allow" and sid == user for kind, _, sid in entries), path
         assert "A;ID;" not in winacl._sddl(path), path
 
 

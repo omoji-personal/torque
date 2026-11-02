@@ -495,7 +495,8 @@ def test_an_unattended_antigravity_session_is_refused_where_the_gate_would_ask(t
         return json.loads(capsys.readouterr().out)
     refused = call("python3 tools/fix.py")
     assert refused["decision"] == "deny" and "cannot check" in refused["reason"]
-    assert refused["reason"].endswith("there is no one to ask and the call is refused.")
+    assert "launched unattended, with a launch binding, so there is no one to ask" in refused["reason"]
+    assert "The call is refused and nothing ran" in refused["reason"] and "`python3 tools/fix.py`" in refused["reason"]
     # A call the gate has no objection to is left to Antigravity as before.
     assert call("sf data query -q 'SELECT Id FROM Account' -o acme-dev")["decision"] == "ask"
 
