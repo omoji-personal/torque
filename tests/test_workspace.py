@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +33,19 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(original, (self.root / "workspace.json").read_bytes())
         if os.name != "nt":  # POSIX only; Windows has no equivalent mode bits.
             self.assertEqual((self.root / "workspace.json").stat().st_mode & 0o777, 0o600)
+
+    def test_add_client_works_in_a_fresh_clone_without_clients_folder(self):
+        # clients/ is git-ignored: a clone of a private workspace on a new machine arrives without it.
+        clone = Path(self.temp.name) / "clone"
+        ws.init_workspace(clone, "Example firm", "solution-lead")
+        shutil.rmtree(clone / "clients", ignore_errors=True)
+        self.assertFalse((clone / "clients").exists())
+        created = ws.add_client(clone, "Gamma", "gamma-sandbox")
+        # add_client returns the resolved path (macOS /private/var, Windows long names for 8.3 ones).
+        self.assertEqual(created, (clone / "clients" / "gamma").resolve())
+        self.assertEqual(ws.load_client(clone, "gamma")[2]["org"], "gamma-sandbox")
+        if os.name != "nt":
+            self.assertEqual((clone / "clients").stat().st_mode & 0o777, 0o700)
 
     def test_rejects_source_checkout_without_creating_files(self):
         path = Path(self.temp.name) / "source" / "private"
@@ -107,7 +121,8 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_missing_or_other_client_evidence_creates_no_entry(self):
         for evidence in (self.alpha / "missing.txt", self.beta / "context.md"):
-            with self.subTest(evidence=evidence), self.assertRaises(ws.WorkspaceError):
+            # A str: a parallel worker sends subtest labels to the main process, which cannot carry a Path.
+            with self.subTest(evidence=str(evidence)), self.assertRaises(ws.WorkspaceError):
                 ws.add_session(self.root, "alpha-client", "bad evidence", evidence=evidence)
         self.assertEqual(ws.list_sessions(self.root, "alpha-client"), [])
 

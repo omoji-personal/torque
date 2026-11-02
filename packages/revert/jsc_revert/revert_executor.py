@@ -27,6 +27,16 @@ EXIT_ORG_RESOLUTION_FAILED = 1
 EXIT_SNAPSHOT_NOT_FOUND = 1
 
 
+def execution_timeout(command: list[str]) -> int:
+    """Allow a metadata child's upload, report wait and local capture overhead."""
+    configured = int(os.environ.get('JSC_REVERT_EXECUTE_TIMEOUT_S', '1800'))
+    prefix = len(revert_planner._jsc_command())
+    if command[prefix:prefix + 1] == ['deploy']:
+        wait = int(command[command.index('--wait') + 1]) if '--wait' in command else 33
+        return max(configured, 1800 + wait * 60 + 600 + 300)
+    return configured
+
+
 def _append_forensic_chain(revert_cmd: list[str], snapshot_id: str, reason: str | None) -> list[str]:
     """Append the forensic revert-chain flags every snapshot wrapper accepts.
 
@@ -179,7 +189,7 @@ def _execute_locked(snap_dir, snap, target_org, snapshot_id, force_ack, reason, 
     # Per audit codex-R3-P1-20 + gemini-R4: enforce subprocess discipline.
     # Close stdin (DEVNULL) so a malformed revert tool can't hang on read;
     # capture stdout/stderr; apply a generous timeout for revert operations.
-    REVERT_TIMEOUT_S = int(os.environ.get("JSC_REVERT_EXECUTE_TIMEOUT_S", "1800"))
+    REVERT_TIMEOUT_S = execution_timeout(revert_cmd)
     try:
         child_env = dict(os.environ)
         child_env.pop(APPROVED_PARENT_ENV, None)

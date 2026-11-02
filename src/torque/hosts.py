@@ -4,8 +4,8 @@ A host is the program that runs the AI session: Claude Code (`claude`) or
 Antigravity (`agy`). An entry holds what Torque has to know about one of them:
 the binary `torque launch` starts, the marks that show a process belongs to its
 session, the folder it reads its playbook from, the file its hook is registered
-in, the options a delegated launch may pass to it, and the tool names a gate
-message suggests.
+in, the options a delegated launch may pass to it, the tool names a gate
+message suggests, and the slash commands it answers itself.
 
 Launch, the launch record, the presence check, doctor's choice of host and the
 mode rules read these values from here. The modules that write a host's files
@@ -16,6 +16,7 @@ each host and what was verified."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 # Set by a hook in its own process to state the host it runs under (the
 # Antigravity adapter does); unset means Claude Code. launch.verify_launch reads it.
@@ -50,6 +51,9 @@ class Host:
     # The tools a gate message suggests in place of one it does not recognise.
     tool_hint: str
     aliases: tuple[str, ...] = ()
+    # Slash commands the host answers itself: a recipe of the same name is installed
+    # there as torque-NAME (recipe_name), so both keep working.
+    builtin_commands: tuple[str, ...] = ()
 
 
 CLAUDE = Host(
@@ -64,7 +68,12 @@ CLAUDE = Host(
                            "--append-system-prompt", "--max-budget-usd", "--json-schema", "--session-id", "--name"),
     pinned_options=(("--permission-mode", "default"),),
     refused_env=("CLAUDE_CODE_SIMPLE",),
-    tool_hint="Use Bash, Read, Edit, Write, Grep or Glob")
+    tool_hint="Use Bash, Read, Edit, Write, Grep or Glob",
+    # Claude Code's command reference (code.claude.com/docs/en/commands, 2026-10-28). A
+    # project skill replaces a built-in of its name in a terminal session, but not an
+    # alias: /undo stays /rewind's alias, so typing it most likely runs a checkpoint
+    # rewind, not the recipe (not tried in a live session).
+    builtin_commands=("help", "context", "status", "security-review", "undo"))
 
 ANTIGRAVITY = Host(
     key="antigravity", name="Antigravity", binary="agy",
@@ -83,8 +92,12 @@ ANTIGRAVITY = Host(
     pinned_options=(),
     # None known.
     refused_env=(),
-    tool_hint="Use run_command, view_file, replace_file_content, write_to_file, grep_search or find_by_name",
-    aliases=("agy", "gemini"))
+    # The file tools by Antigravity 1.4.9's names; 1.3.1 called them view_file,
+    # replace_file_content and write_to_file.
+    tool_hint="Use run_command, read_file, edit_file, write_file, grep_search or find_by_name",
+    aliases=("agy", "gemini"),
+    # Seen taking these names with Antigravity CLI 1.3.1.
+    builtin_commands=("help", "context", "undo"))
 
 HOSTS = (CLAUDE, ANTIGRAVITY)
 KEYS = tuple(host.key for host in HOSTS)
@@ -116,6 +129,27 @@ def for_workspace(config: dict) -> Host:
         return resolve(config["host"])
     except UnknownHost as exc:
         raise UnknownHost(f'workspace.json "host": {exc}') from None
+
+
+def recipe_name(host: Host, name: str) -> str:
+    """The name a packaged recipe has under `host`: torque-NAME when the host
+    answers a command of that name itself, otherwise its catalogue name."""
+    return "torque-" + name if name in host.builtin_commands else name
+
+
+def mention_pattern(names) -> re.Pattern:
+    """One of `names` written as a slash command (`/context`), not as part of a
+    path or an address (project/context, /context/notes.md, https://help.example.com)."""
+    words = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+    return re.compile(r"(?<![\w/.:~})-])/(" + words + r")(?![\w/-]|\.\w)")
+
+
+def rename_mentions(host: Host, text: str) -> str:
+    """`text` with each mention of a recipe `host` renames pointing at its name
+    there; the bare name stays the host's own command."""
+    if not host.builtin_commands:
+        return text
+    return mention_pattern(host.builtin_commands).sub(lambda match: "/" + recipe_name(host, match.group(1)), text)
 
 
 def env_markers() -> tuple[str, ...]:

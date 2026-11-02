@@ -62,10 +62,16 @@ def format_report(
             lines.append(f"  ⊘ {surface}: {reason}")
         lines.append("")
 
-    # A missing, deferred or skipped surface is not passing coverage.
+    # A missing, deferred or skipped surface is not passing coverage. A check
+    # that could not run (ERROR) is not a failure of the change.
     verdict = result_exit_code(surface_results, bool(skipped_via_token))
+    not_run = f"{counts['ERROR']} check{'s' if counts['ERROR'] != 1 else ''} could not run"
     if verdict == 1:
         lines.append("VERDICT: FAILURES detected. Review the failed observations above.")
+        if counts["ERROR"]:
+            lines.append(f"In addition, {not_run} (ERROR above).")
+    elif verdict == 2:
+        lines.append(f"VERDICT: INCOMPLETE. {not_run} and none failed. Fix the errors above and rerun.")
     elif verdict == 3:
         lines.append("VERDICT: INCOMPLETE. Some requested checks did not produce passing evidence.")
         if not surface_results:
@@ -78,9 +84,12 @@ def format_report(
 
 
 def result_exit_code(results: list[DispatchResult], skipped: bool = False) -> int:
-    """0 complete pass; 1 observed failure/error; 3 incomplete coverage."""
-    if any(result.status in ("FAIL", "ERROR") for result in results):
+    """0 complete pass; 1 observed failure; 2 a check could not run and none failed;
+    3 incomplete coverage."""
+    if any(result.status == "FAIL" for result in results):
         return 1
+    if any(result.status == "ERROR" for result in results):
+        return 2
     if not results or skipped or any(result.status != "PASS" for result in results):
         return 3
     return 0

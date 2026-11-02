@@ -59,7 +59,7 @@ def test_delegated_unattended_write_with_hooks(tmp_path, monkeypatch):
     assert not set(GATED) & set(settings["permissions"]["ask"])
     for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
         entry = settings["hooks"][event][0]
-        assert entry["matcher"] == ".*" and "torque.gate" in entry["hooks"][0]["command"]
+        assert entry["matcher"] == ".*" and permissions.gate_hook_call(entry["hooks"][0]) is not None
     sidecar = permissions.load_sidecar(root)
     assert sidecar["profile"] == "unattended" and sidecar["written_by"]["kind"] == "ai"
     assert permissions.load_profile(root) == "unattended"
@@ -263,8 +263,9 @@ def test_hook_python_is_explicit_and_recorded_in_the_sidecar(tmp_path, monkeypat
     permissions.write_settings(root, profile="unattended", with_hooks=True, delegated=True, model_id=MODEL,
                                root_owner=FAKE_OWNER, hook_python=given, **CLEAN)
     settings = json.loads((root / ".claude" / "settings.json").read_text())
-    command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    assert command.startswith(f'"{given}" -I -c')
+    entry = settings["hooks"]["PreToolUse"][0]["hooks"][0]
+    # Exec form: the interpreter is the command, spawned with these arguments and no shell.
+    assert entry["command"] == given and entry["args"][:2] == ["-I", "-c"]
     sidecar = permissions.load_sidecar(root)
     assert sidecar["hook_python"] == given
 

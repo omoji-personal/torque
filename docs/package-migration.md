@@ -59,7 +59,9 @@ Browser flows are executable configuration. Domain implementations, seed users a
 
 - Empty or all-skipped/all-not-applicable browser cells report `NOT_CHECKED`, score zero and nonzero exit. This is not successful coverage.
 - Cleanup query failure reports `UNKNOWN`; absent registry for mutating flows reports `NOT_CHECKED`. Either produces a nonzero cleanup outcome. Successful cleanup verification means no survivors among the configured registry carriers; it is not a claim about all objects in an org.
-- Side-Eff requests structured log evidence and validates finding/count consistency and positive analyzed-log coverage. P0/P1 findings produce FAIL even when the analyzer completed successfully. Missing or malformed analysis produces ERROR. Clean available logs do not prove the proposed change executed, or that unlogged effects are absent.
+- Side-Eff requests structured log evidence and validates finding/count consistency and positive analyzed-log coverage. P0/P1 findings produce FAIL even when the analyzer completed successfully. Missing or malformed analysis produces ERROR. An org whose log query succeeds with no log produces MANUAL_REQUIRED with the next step (a trace flag for the intended user, a reproduction, a rerun); the analyzer exits 0 with `logs_analyzed: 0` and `analysis_scope: no_logs_found` there, and 2 when the query or log retrieval fails; logs that were read are still analyzed, with `logs_unread` counting the rest. The QA report says FAILURES only for a FAIL; a run whose checks could not run, with none failed, exits 2 and says how many, as does a run that cannot start (no router, no matching change type). Clean available logs do not prove the proposed change executed, or that unlogged effects are absent.
+- The log parsers read each line's event and that event's own fields first, so text inside a debug message is never taken for an event, and read trigger code units in the format the Apex Developer Guide documents (`<Trigger> on <Object> trigger event <Event>|__sfdc_trigger/[namespace/]<Trigger>`). Recursion is a trigger starting again for the same event while still running, not its total runs (200-record chunks repeat a trigger legitimately). A validation rule is reported when it rejects DML a trigger performed. FATAL_ERROR is reported as `unhandled-exception`, once per error, whatever follows it. The rule tied to one org's `Bypass_Trigger_Settings__c` setting is removed, and text output labels each finding with the P0/P1/P2 its totals use. Changed: `jsc_loganalyzer` (`parsers.py`, `cli.py`) and `tests/test_parsers.py`, `jsc_qa` (`cli.py`, `dispatcher.py`, `report.py`) and `tests/test_report_completeness.py`. Destination hashes and adaptation flags reflect these edits.
+- `meeting_processor/tests/test_meeting_processor.py` runs its checks only as a script, as the offline runner runs it; imported by pytest collection it is reported as skipped instead of exiting the collection. Its destination hash reflects the edit.
 - `advisory evidence --user-id` scopes direct and group assignment queries to a validated Salesforce user ID. Without it, assignment observations explicitly refer to anybody in the org. Neither proves full effective user access. Operator not-applicable declarations do not replace an observed absence or unknown result. Report completeness distinguishes observations from accepted assertions and never means actual user access was technically proven.
 - The replay scanner reports matching rule/count with redacted details and does not echo the matched credential. Lesson scrubbing remains best effort, and raw operational state stays private.
 - Revert execution validates the snapshot org against the current explicit target before building a command, including when `--force` is requested. A stored alias does not override the selected target. Subprocess Python invocations use the running interpreter; fallback execution does not choose an unrelated PATH `jsc` binary.
@@ -81,6 +83,77 @@ Missing legacy baselines, failed retrievals, missing checksums and unknown state
 refuse recovery even with `--force`. Verified differences require that explicit
 override. Snapshots without complete before/after evidence, including deployments
 finalized asynchronously without a captured result, require manual review.
+
+`torque deploy` submits with `--async` and saves the job ID before waiting on an
+exact-job report under the same org lease. The default wait is 33 minutes;
+`--wait N` sets a positive number of minutes and the report subprocess timeout
+is N minutes plus ten minutes. `--async` returns immediately. Pending jobs retain
+their exact ID and enter `torque revert post-deploy poll` before the wait begins,
+including when that wait is interrupted. The recovery executor's metadata-child
+timeout covers submission, the requested report wait, and local capture overhead;
+`JSC_REVERT_EXECUTE_TIMEOUT_S` can raise this minimum. A successful wait
+captures the post-deployment baseline. Polling records completion separately
+from recovery readiness: an unknown post-deploy baseline requires manual review
+of the original selectors and captured `metadata-before/` files, then a scoped
+redeploy where those files are complete. A timeout without an ID warns that the
+server-side deploy may still be running; inspect it before retrying.
+Reports use the recorded deployment project directory. A wrapper-created project
+is retained at its short temporary path, recorded in `payload.staged_project`,
+so later polling can rebuild the CLI's cached component manifest without adding
+the snapshot directory's depth to Windows paths. Its files use the private atomic
+writer. The wrapper or poller removes this project after a confirmed terminal job.
+Keep it and an ordinary caller project available while deployment is pending.
+Unknown outcomes and exhausted polling retain the temporary project for investigation.
+
+Deploy also forwards `--test-level`, repeated `--tests`, `--api-version`,
+`--ignore-conflicts`, `--ignore-warnings` and `--post-destructive-changes`.
+Options are recorded with the snapshot and remain part of the approved command.
+Pre/post destructive manifests and mixed selectors need a manual recovery plan;
+forwarding them does not establish a complete recovery bundle. Neither a dry run
+nor a manifest-only deployment captures metadata before-state. Before quick
+promotion, explicitly retrieve the validated components into a private baseline
+directory with `sf project retrieve start --metadata Type:Name --target-org ALIAS
+--target-metadata-dir PRIVATE_BASELINE --unzip --json` and verify the saved files; this
+baseline supports manual recovery, including outside the current project.
+
+Bulk update/upsert reads UTF-8 CSV headers with or without a BOM and matches field
+names without regard to case. A missing key header or no usable keys fails capture.
+Update rejects malformed IDs with the CSV row number in every org kind. Upsert
+allows blank keys alongside usable keys and counts them as inserts. Each captured
+existing row includes `Id`; `before.json` preserves typed values, `before.csv`
+supports review, and `replay.csv` uses `#N/A` to restore prior nulls. Review that
+file before a manual bulk update in the same org, using `--line-ending LF` to
+match the replay file on every OS. All three artifacts use the private atomic
+writer. For each nested relationship column, the query also captures the parent's
+`Relationship.Id` in `before.json` and `before.csv`, without adding that evidence
+column to `replay.csv`. A null external ID does not prove there was no parent.
+Blank relationship cells leave the current link unchanged. To restore such a link,
+replace the relationship column with its actual lookup field in a reviewed replay
+file: use the captured parent Id, or `#N/A` only if that parent Id was null.
+Replay does not restore fields outside the input or remove automation-created
+children. Automation runs again and replay overwrites later edits.
+Older CSV-only bundles require
+a reviewed replay file because empty cells do not restore nulls. For upsert inserts,
+use successful results from the exact bulk job to identify IDs for removal.
+
+Permission-set and license assignment preserve repeated `--name` and
+`--on-behalf-of` values in execution and evidence. Before/after assignment queries
+under the org lease retain only newly observed IDs for manual removal. Failed or
+incomplete queries remain unknown. Default-user capture reuses the username from
+org resolution. Explicit usernames support capture; alias-valued assignees still
+execute but record ID capture as unavailable, without listing other org aliases.
+Noncooperating org writers can still race these
+observations, so review the saved evidence before removal. `apex run` prints
+its manual-recovery warning in every org kind without reading stdin and steers
+data changes to `torque data` or staged loads. CLI failure details are printed
+and Apex error logs are saved; connected approval still
+applies, and anonymous Apex remains outside automatic recovery.
+
+Before-state coverage maps narrow source folders relative to the deploy's working
+directory. Its shared metadata registry covers object children, rule containers
+and common standalone types in their source and metadata retrieve formats.
+Coverage still requires recovery companions where applicable, such as Apex source
+and its metadata file; a registry mapping alone does not establish completeness.
 
 Cooperating revert wrappers use `~/.torque/org-locks/<canonical-org-id>.json`.
 The validated org ID includes its case checksum so case-insensitive filesystems

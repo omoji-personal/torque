@@ -3,20 +3,21 @@
 This workspace is in build-only mode. The gate hook blocks most of what the mode
 does not allow. Follow these rules whether or not a call is blocked:
 
-- No org access. Do not run `sf` or `sfdx` against any org, by alias, username or
-  default org, and do not use a Salesforce MCP tool. Local generators such as
-  `sf apex generate`, and `sf help` and `sf --version`, still work.
+- No org access. Do not run `sf`/`sfdx` against any org, or use a Salesforce MCP
+  tool. The CLI's local commands still work: generators (`sf apex generate`,
+  `sf template generate`, `sf schema generate`, `sf cmdt generate` except `fromorg`),
+  `sf project convert`, `sf code-analyzer run`/`rules` scoped out of `clients/`, the
+  informational ones (`sf help`, `sf which`, any command's `--help`, `sf --version`),
+  and `which sf` to check the CLI is installed.
 - Client context is off limits. Do not read, list, search or write anything under
-  `clients/`, and do not run `torque` commands other than `demo`, `workflows` and
-  `doctor` without `--client`.
+  `clients/`, and do not run `torque` other than `demo`, `workflows` and `doctor`
+  without `--client`. You can still draft metadata, code, tests and a plan outside it.
 - Leave `workspace.json` and the hook configuration (`.claude/settings*.json`,
   `.agents/hooks.json`) alone. Only the workspace owner changes them.
-- A blocked call is not to be worked around. Do not try it again through another
-  tool, a script, a copy, a link or a different spelling. Stop, and tell the
-  consultant what was blocked and what you needed it for.
-- You can still draft metadata, code, tests, queries and a run plan in the
-  workspace, outside `clients/`.
-- The consultant can run the command themselves, in their own terminal outside
-  this session, or change the mode with `torque workspace ai-access`.
-
-In this workspace this rule takes precedence over "Carry the requested work through delivery".
+- A scope block says how to narrow the call (a path under `project/`, a git scope, a
+  patch location): you may retry once with the scope it names, out of `clients/` and
+  reaching no org. A boundary block (org access, client context, `workspace.json`,
+  the hook configuration, the Torque package) is not to be worked around through
+  another tool, script, copy, link or spelling: stop and tell the consultant what was
+  blocked and why. They run the command themselves, or change the mode with
+  `torque workspace ai-access`.

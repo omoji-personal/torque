@@ -119,6 +119,11 @@ def _key(create: bool) -> bytes | None:
             st = path.stat()
             if st.st_mode & 0o077 or st.st_uid != os.getuid():
                 raise ws.WorkspaceError(f"{path} must be owned by you and readable by you only (chmod 600)")
+        else:
+            from jsc_common import winacl
+            message = winacl.refusal(path, key=True)
+            if message:
+                raise ws.WorkspaceError(message)
         data = path.read_bytes()
         if len(data) < 32:
             raise ws.WorkspaceError(f"{path} is not a valid approval key")
@@ -126,8 +131,7 @@ def _key(create: bool) -> bytes | None:
     if not create:
         return None
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "wb") as handle:
+    with os.fdopen(ws.create_private(path), "wb") as handle:
         handle.write(secrets.token_bytes(32))
     return path.read_bytes()
 
@@ -521,7 +525,8 @@ def _org_identity(consent_item: dict, alias: str, resolve) -> tuple[str, str]:
         raise ws.WorkspaceError(f"org {alias!r} is not in this client's consent")
     info = _resolver(resolve)(alias)
     if info is None:
-        raise ws.WorkspaceError(f"could not resolve {alias!r} live; nothing was recorded")
+        raise ws.WorkspaceError(f"could not resolve {alias!r} live (not authenticated, or no answer in time); "
+                                "nothing was recorded")
     if info.org_id_18 != entry["org_id_18"]:
         raise ws.WorkspaceError(f"the org ID for {alias!r} is now {info.org_id_18}; the consent records "
                                 f"{entry['org_id_18']}. The alias points at another org.")
@@ -818,7 +823,7 @@ def create_request(workspace, client, change_id, org_alias, *, argv=None, mcp=No
               "manual_recovery": manual_recovery.strip() if manual_recovery else None,
               "validated_job": validated_job, "created_at": _iso(time.time())}
     dirs = _dirs(workspace, client)
-    ws._write_json(dirs["requests"] / f"{ident}.json", record)
+    ws._write_json(dirs["requests"] / f"{ident}.json", record, private=True)
     ws.share_with_approver(workspace, dirs["requests"] / f"{ident}.json")
     changes.append_approval_event(workspace, client, change_id, "approval_request",
                                   {"request_id": ident, "command": derived["command"], "request_kind": kind,
@@ -1204,6 +1209,12 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
     config = ws.load_workspace(workspace)[1]
     if _ai_approver(config):
         raise delegation.Refusal("human-grant-needs-human-approver", HUMAN_GRANT_REFUSAL)
+    verify = config.get("approval_verify", "hmac")
+    if verify == "owner-uid" and (not hasattr(os, "getuid") or os.getuid() != config.get("approver_uid")):
+        # Before the live org read, the screen and the typed code: a grant from the wrong
+        # account costs the consultant no review.
+        raise ws.WorkspaceError("this workspace takes approvals only from the approver account "
+                                f"(uid {config.get('approver_uid')}); grant from that account")
     item = _usable_consent(workspace, client)
     derived = _derive(req, _extra_namespaces(workspace))
     _check_review(current, derived, request_sha256, payload_digest)
@@ -1288,12 +1299,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
         manual_recovery=recovery, new_components=new_components,
         approver={"approver": _user(), "approver_uid": os.getuid() if hasattr(os, "getuid") else None,
                   "approver_kind": "human", "approver_model": None, "delegated": False})
-    verify = config.get("approval_verify", "hmac")
-    if verify == "owner-uid":
-        if not hasattr(os, "getuid") or os.getuid() != config.get("approver_uid"):
-            raise ws.WorkspaceError("this workspace takes approvals only from the approver account "
-                                    f"(uid {config.get('approver_uid')}); grant from that account")
-    else:
+    if verify != "owner-uid":
         record["signature"] = _sign(record, _key(create=True))
     dirs = _dirs(workspace, client)
     if delegation.delegated_tier2(config):
@@ -1305,7 +1311,7 @@ def grant(workspace, client, request_id, *, new_components=(), presence=None, co
         if decision["outcome"] != "granted":
             raise ws.WorkspaceError(f"{request_id} was denied; ask for a new request")
     path = dirs["granted"] / f"{record['id']}.json"
-    ws._write_json(path, record)
+    ws._write_json(path, record, private=True)
     if os.name != "nt":
         path.chmod(0o600 if verify == "hmac" else 0o644)
     try:
@@ -2046,8 +2052,14 @@ def _problem(record: dict, path: Path, config: dict, client: str, now: float) ->
         if controls:
             return controls
     elif verify == "hmac":
-        if os.name != "nt" and (st.st_mode & 0o077 or st.st_uid != os.getuid()):
-            return "approval file must be mode 0600 and owned by this user"
+        if os.name != "nt":
+            if st.st_mode & 0o077 or st.st_uid != os.getuid():
+                return "approval file must be mode 0600 and owned by this user"
+        else:
+            from jsc_common import winacl
+            message = winacl.refusal(path, "the approval file")
+            if message:
+                return message
         try:
             key = _key(create=False)
         except ws.WorkspaceError as exc:

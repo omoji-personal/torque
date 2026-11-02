@@ -145,6 +145,101 @@ def test_loose_file_mode_refused(setup):
     assert not ok and "0600" in why
 
 
+windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows DACLs")
+
+
+def _loosen(path):
+    from jsc_common import winacl
+    winacl.protect(path, winacl.private_sddl() + "(A;;FR;;;WD)")
+
+
+@windows_only
+def test_windows_loose_file_refused(setup):
+    root, cid, before, project = setup
+    req, item = granted(root, cid, before, project)
+    path = root / "clients" / "acme" / "approvals" / "granted" / f"{item['id']}.json"
+    _loosen(path)
+    ok, why = use(root, req)
+    assert not ok and "can be read or changed" in why and f"Remove-Item -LiteralPath '{path}'" in why
+    # The repair it names: delete the grant and make a new one.
+    path.unlink()
+    req, item = granted(root, cid, before, project)
+    assert use(root, req) == (True, item["id"])
+
+
+@windows_only
+def test_windows_loose_key_refused_with_the_fix_command(setup):
+    root, cid, before, project = setup
+    req, item = granted(root, cid, before, project)
+    _loosen(approval.key_path())
+    ok, why = use(root, req)
+    assert not ok and "can be read or changed" in why and f"Remove-Item -LiteralPath '{approval.key_path()}'" in why
+    # The repair it names: delete the key; the next grant creates a new, private one.
+    approval.key_path().unlink()
+    req, item = granted(root, cid, before, project)
+    assert use(root, req) == (True, item["id"])
+
+
+@windows_only
+def test_windows_doctor_reports_a_loose_key(setup):
+    from torque import doctor_connected
+    root, cid, before, project = setup
+    granted(root, cid, before, project)
+    key = approval.key_path()
+    assert not any(str(key) in p for p in doctor_connected.report(root, "Acme")["problems"])
+    _loosen(key)
+    assert any(str(key) in p and "Remove-Item" in p for p in doctor_connected.report(root, "Acme")["problems"])
+
+
+@windows_only
+def test_windows_doctor_reports_a_loose_grant(setup):
+    from torque import doctor_connected
+    root, cid, before, project = setup
+    req, item = granted(root, cid, before, project)
+    path = root / "clients" / "acme" / "approvals" / "granted" / f"{item['id']}.json"
+    assert not any(path.name in p for p in doctor_connected.report(root, "Acme")["problems"])
+    _loosen(path)
+    found = [p for p in doctor_connected.report(root, "Acme")["problems"] if path.name in p]
+    assert found and "Remove-Item -LiteralPath" in found[0] and "Request and grant the approval again" in found[0]
+
+
+@windows_only
+def test_windows_doctor_reports_a_grant_whose_access_list_cannot_be_read(setup):
+    from jsc_common import winacl
+    from torque import doctor_connected
+    root, cid, before, project = setup
+    req, item = granted(root, cid, before, project)
+    req2, item2 = granted(root, cid, before, project)
+    path = root / "clients" / "acme" / "approvals" / "granted" / f"{item['id']}.json"
+    # OWNER RIGHTS denial removes the owner's implicit READ_CONTROL, and the Administrators denial the
+    # READ_CONTROL an elevated administrator (a CI runner) keeps through BA; DELETE stays for the repair.
+    winacl.protect(path, winacl.private_sddl().replace("D:P", "D:P(D;;RC;;;OW)(D;;RC;;;BA)"))
+    found = [p for p in doctor_connected.report(root, "Acme")["problems"] if path.name in p]
+    assert found and "cannot be read" in found[0] and "Remove-Item -LiteralPath" in found[0]
+    # The consume path never accepts the unreadable grant: it uses the other valid one.
+    assert use(root, req) == (True, item2["id"])
+
+
+@windows_only
+def test_windows_connected_files_are_private(setup):
+    from jsc_common import winacl
+    root, cid, before, project = setup
+    req, item = granted(root, cid, before, project)
+    folder, record = consent._path(root, "Acme")
+    change_root = changes.load_change(root, "Acme", cid)[0]
+    files = [approval.key_path(), folder / "approvals" / "granted" / f"{item['id']}.json", record,
+             *(folder / consent.EVIDENCE_DIR).iterdir(),
+             *(change_root / f["path"] for f in before["files"])]
+    assert len(files) >= 4
+    for path in files:
+        assert winacl.problem(path) == "", path
+        # Native SIDs: SDDL text writes some accounts as aliases (LA for the built-in Administrator).
+        owner, entries = winacl.read_security(path)
+        user = winacl.current_user_sid()
+        assert owner == user and any(kind == "allow" and sid == user for kind, _, sid in entries), path
+        assert "A;ID;" not in winacl._sddl(path), path
+
+
 def test_forged_approval_without_key_refused(setup):
     root, cid, before, project = setup
     req, item = granted(root, cid, before, project)

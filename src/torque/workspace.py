@@ -7,10 +7,11 @@ import hashlib
 from importlib import resources
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shlex
 import stat
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -36,6 +37,12 @@ class WorkspaceError(ValueError):
     """An actionable local configuration or input error."""
 
 
+class BoundaryError(WorkspaceError):
+    """A path or record outside the selected engagement: a symlink, a path outside
+    the workspace, or a record that names another client or initiative. Readers that
+    skip a damaged record (`problems`) still stop on this."""
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
@@ -56,12 +63,12 @@ def _inside(root: Path, path: Path) -> Path:
     try:
         parts = path.relative_to(root).parts
     except ValueError as exc:
-        raise WorkspaceError("path is outside the selected workspace") from exc
+        raise BoundaryError("path is outside the selected workspace") from exc
     current = root
     for part in parts:
         current = current / part
         if current.is_symlink():
-            raise WorkspaceError(f"workspace path must not be a symlink: {current}")
+            raise BoundaryError(f"workspace path must not be a symlink: {current}")
     return path
 
 
@@ -98,9 +105,13 @@ def foreign_engagement(own: Path, path: Path) -> bool:
                for folder in ENGAGEMENT_FOLDERS)
 
 
-def _read_json(path: Path) -> dict:
+def _read_json(path: Path, missing: str | None = None) -> dict:
+    """The JSON object in `path`. With `missing`, a file that does not exist raises
+    that message, so a typo or a wrong folder does not read as damaged data."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise WorkspaceError(missing or f"cannot read valid local configuration: {path}") from exc
     except (OSError, ValueError) as exc:
         raise WorkspaceError(f"cannot read valid local configuration: {path}") from exc
     if not isinstance(value, dict):
@@ -166,21 +177,73 @@ def publish_new(temporary, path, *, dir_fd: int | None = None) -> None:
         raise
 
 
-def command_text(argv: list[str]) -> str:
-    """A command line the user can paste into their own shell: POSIX quoting, or on
-    Windows the quoting cmd.exe and PowerShell both read (shlex's single quotes are
-    literal characters in cmd.exe)."""
-    if os.name == "nt":
-        import subprocess
-        return subprocess.list2cmdline(argv)
+# A word PowerShell, cmd.exe and a POSIX shell (Git Bash on Windows too) all read as itself.
+_PLAIN_WORD = re.compile(r"[A-Za-z0-9_+=:./-]+")
+# What double quotes do not protect in one of them: PowerShell expands `$` and a backtick and
+# ends the string at any double quote (the curly ones too), cmd.exe expands `%`, and an
+# interactive Bash expands `!`.
+_NOT_IN_DOUBLE_QUOTES = frozenset('$`%"!“”„')
+_SINGLE_QUOTES = re.compile("['‘’‚‛]")
+
+
+def _windows_word(word: str) -> str:
+    """One word for PowerShell and cmd.exe: as it is when neither reads anything in it, else
+    in double quotes, which both read (with a backslash run before the closing quote doubled,
+    as programs expect; Windows PowerShell hands a word on in quotes only when it holds a
+    space, so a word ending in a backslash and holding none cannot be written that way). A
+    word double quotes cannot carry goes in PowerShell's single quotes, each single quote
+    doubled; only PowerShell reads that one."""
+    if _PLAIN_WORD.fullmatch(word):
+        return word
+    if not _NOT_IN_DOUBLE_QUOTES & set(word) and (not word.endswith("\\") or re.search(r"\s", word)):
+        return '"' + re.sub(r"(\\+)$", r"\1\1", word) + '"'
+    return "'" + _SINGLE_QUOTES.sub(lambda found: found.group() * 2, word) + "'"
+
+
+def command_text(argv: list[str], *, windows: bool | None = None) -> str:
+    """A command line the user can paste into their own shell: on Windows (or with `windows`)
+    one that PowerShell and cmd.exe read the same way (_windows_word), elsewhere POSIX
+    quoting. subprocess.list2cmdline left a word without a space unquoted, so PowerShell
+    read an apostrophe, a `;` or a `$` in a path as its own syntax."""
+    if os.name == "nt" if windows is None else windows:
+        return " ".join(_windows_word(word) for word in argv)
     return shlex.join(argv)
 
 
-def atomic_write_new(path: Path, text: str) -> None:
-    """Publish one complete private file atomically, without replacing an existing file."""
+def create_private(path) -> int:
+    """A new file for writing that no other account can reach, from its first byte: on
+    Windows it is created with an owner-only security descriptor (the owner is the current
+    user; nothing inherited), elsewhere with mode 0600. Returns a file descriptor."""
+    if os.name == "nt":
+        from jsc_common import winacl
+        return winacl.create_private(path)
+    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+
+
+def copy_private(source, target, *, follow_symlinks: bool = True) -> str:
+    """Copy a file's content to a new `target` created private (create_private), so the
+    content is never behind a handle that predates the protection."""
+    with open(source, "rb") as origin, os.fdopen(create_private(target), "wb") as copy:
+        shutil.copyfileobj(origin, copy)
+    return str(target)
+
+
+def _temporary_file(parent: Path, private: bool) -> tuple[int, str]:
+    """A fresh temporary file in `parent`; with `private`, one made by create_private on
+    Windows (elsewhere mkstemp's 0600 already is). Otherwise the folder's access applies."""
+    if private and os.name == "nt":
+        name = str(parent / (".torque-" + uuid4().hex))
+        return create_private(name), name
+    return tempfile.mkstemp(prefix=".torque-", dir=parent)
+
+
+def atomic_write_new(path: Path, text: str, *, private: bool = False) -> None:
+    """Publish one complete private file atomically, without replacing an existing file.
+    `private`: on Windows the file is created with an owner-only descriptor (create_private);
+    otherwise it inherits the folder's access."""
     if not path.parent.is_dir():
         raise WorkspaceError(f"output directory does not exist: {path.parent}")
-    fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)
+    fd, temporary = _temporary_file(path.parent, private)
     try:
         # newline="\n": text is always \n-separated Python-source content;
         # without this, Windows would translate it to \r\n on write, and a
@@ -246,7 +309,7 @@ def share_with_approver(workspace, *paths) -> None:
         open_acl_mask(path)
 
 
-def _atomic_replace_text(path: Path, text: str, *, keep_mode: bool = False) -> None:
+def _atomic_replace_text(path: Path, text: str, *, keep_mode: bool = False, private: bool = False) -> None:
     """Replace an explicitly managed file without exposing a partial write.
 
     By default the replacement is a fresh, private file (mkstemp's 0600), the
@@ -262,7 +325,7 @@ def _atomic_replace_text(path: Path, text: str, *, keep_mode: bool = False) -> N
             existing = os.stat(path)
         except FileNotFoundError:
             existing = None
-    fd, temporary = tempfile.mkstemp(prefix=".torque-", dir=path.parent)
+    fd, temporary = _temporary_file(path.parent, private and not keep_mode)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
@@ -280,8 +343,8 @@ def _atomic_replace_text(path: Path, text: str, *, keep_mode: bool = False) -> N
         Path(temporary).unlink(missing_ok=True)
 
 
-def _write_json(path: Path, value: dict) -> None:
-    atomic_write_new(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+def _write_json(path: Path, value: dict, *, private: bool = False) -> None:
+    atomic_write_new(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n", private=private)
 
 
 def _torque_project(path: Path) -> bool:
@@ -329,6 +392,19 @@ def _source_checkout() -> Path | None:
     return _checkout_containing(Path(__file__).resolve())
 
 
+def claude_copy(group: str, name: str, text: str) -> tuple[str, str]:
+    """The file name and text of Claude Code's copy of a packaged file in `group`
+    (commands, rules, skills or agents). A recipe named like a command Claude Code
+    answers itself (hosts.CLAUDE.builtin_commands) is installed as torque-NAME, and
+    recipes, rules and worker roles name it that way. Skills are copied as they are."""
+    from . import hosts
+    if group == "skills":
+        return name, text
+    if group == "commands" and name.endswith(".md"):
+        name = hosts.recipe_name(hosts.CLAUDE, name[:-len(".md")]) + ".md"
+    return name, hosts.rename_mentions(hosts.CLAUDE, text)
+
+
 def _materialize_workflows(root: Path) -> None:
     """Install packaged conversation files in this workspace, preserving existing local files."""
     try:
@@ -336,20 +412,24 @@ def _materialize_workflows(root: Path) -> None:
     except (ModuleNotFoundError, TypeError):
         return
 
-    def copy_tree(source, destination: Path) -> None:
+    def copy_tree(source, destination: Path, group: str, claude: bool) -> None:
         if not source.is_dir():
             return
         _inside(root, destination).mkdir(parents=True, exist_ok=True, mode=0o700)
         for item in source.iterdir():
-            target = _inside(root, destination / item.name)
             if item.is_dir():
-                copy_tree(item, target)
-            elif item.is_file() and item.name.endswith(".md") and not target.exists():
-                atomic_write_new(target, item.read_text(encoding="utf-8"))
+                copy_tree(item, _inside(root, destination / item.name), group, claude)
+            elif item.is_file() and item.name.endswith(".md"):
+                name, text = item.name, item.read_text(encoding="utf-8")
+                if claude:
+                    name, text = claude_copy(group, name, text)
+                target = _inside(root, destination / name)
+                if not target.exists():
+                    atomic_write_new(target, text)
 
     for group in ("commands", "rules", "skills", "agents"):
-        copy_tree(data.joinpath(group), root / ".claude" / group)
-    copy_tree(data.joinpath("skills"), root / ".agents" / "skills")
+        copy_tree(data.joinpath(group), root / ".claude" / group, group, True)
+    copy_tree(data.joinpath("skills"), root / ".agents" / "skills", "skills", False)
     # Antigravity reads .agents/ only: the same rules, recipes and worker roles in its format.
     from . import antigravity
     for relative, (text, _source) in antigravity.surface(data).items():
@@ -357,6 +437,15 @@ def _materialize_workflows(root: Path) -> None:
         _inside(root, target.parent).mkdir(parents=True, exist_ok=True, mode=0o700)
         if not target.exists():
             atomic_write_new(target, text)
+
+
+# The CLAUDE.md init writes. With both files present Claude Code reads CLAUDE.md only,
+# so it imports AGENTS.md (code.claude.com/docs/en/memory); an import loads every
+# session, a sentence asking the model to read the file does not.
+CLAUDE_NOTES = "@AGENTS.md\n"
+# What versions up to 2.0.0a21 wrote there; `workspace upgrade` replaces it while unchanged.
+LEGACY_CLAUDE_NOTES = ("# Torque workspace\n\nRead AGENTS.md in this directory for the shared workflow, "
+                       "then use `torque context --workspace . --client NAME` for the selected client.\n",)
 
 
 def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Path:
@@ -415,15 +504,20 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
         "Select the client the user named; never infer another client or org. From this directory, "
         "use `torque context --workspace . --client NAME` to resume that client's notes and journal.\n\n"
         "Discover the working recipes with `torque workflows`, then read one with "
-        "`torque workflows show NAME --workspace .`. An explicitly selected workspace uses its "
-        "local .claude/commands/NAME.md when present, then the packaged recipe as fallback. "
+        "`torque workflows show NAME --workspace .`. An explicitly selected workspace uses the local "
+        "copy its host runs when present (.claude/commands/NAME.md for Claude Code, "
+        ".agents/skills/NAME/SKILL.md for Antigravity, torque-NAME for the recipes renamed below), "
+        "then the packaged recipe written for that host. "
         "Without a selected workspace, show reads the packaged reference. These recipes support conversational work; "
         "use the user's actual authorization and existing Salesforce access for operations. "
-        "No Torque hooks, approval tokens or global sf replacement are required, unless the owner put "
-        "this workspace in build-only or connected mode: then a gate checks each tool call, and the rule "
-        "file in the rules folder (`build-only.md` or `production-approval.md`) says what to expect. "
+        "Where Torque's gate hook is wired (`torque doctor --workspace .` says where), it stops tools from "
+        "changing a client's consent, approval and control records in every mode; in build-only or connected "
+        "mode it checks each tool call, and the rule file in the rules folder (`build-only.md` or "
+        "`production-approval.md`) says what to expect. No approval tokens or global sf replacement are required. "
+        "Claude Code answers /help, /context, /status, /security-review and /undo itself, so there those "
+        "recipes are /torque-help, /torque-context, /torque-status, /torque-security-review and /torque-undo. "
         "Antigravity offers the same recipes as skills and slash commands from .agents/skills/; "
-        "its own /help, /context and /undo keep those names, so those three recipes are "
+        "its own /help, /context and /undo keep those names, so there those three recipes are "
         "/torque-help, /torque-context and /torque-undo.\n\n"
         "Keep client files in clients/SLUG/. Use --workspace . --client SLUG when calling "
         "stateful native workflows. Keep internal work (not for a client) in initiatives/SLUG/, "
@@ -436,8 +530,7 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
     )
     for filename, content in {
         "AGENTS.md": agent_notes,
-        "CLAUDE.md": "# Torque workspace\n\nRead AGENTS.md in this directory for the shared workflow, "
-                     "then use `torque context --workspace . --client NAME` for the selected client.\n",
+        "CLAUDE.md": CLAUDE_NOTES,
         "profile.md": f"# {name.strip()}\n\nProfile: {profile}\n\n"
                       + focus_notes + "Record the firm's actual delivery conventions, approved tools, artifact locations "
                       "and relevant policies here. This starter does not assume they are already agreed.\n",
@@ -466,7 +559,14 @@ def _validate_config(config: dict, path: Path) -> dict:
 
 def load_workspace(path: str | Path) -> tuple[Path, dict]:
     root = Path(path).expanduser().resolve()
-    config = _validate_config(_read_json(_inside(root, root / CONFIG)), root / CONFIG)
+    config_path = _inside(root, root / CONFIG)
+    if not config_path.exists() and not config_path.is_symlink():
+        hint = (" This is an engagement folder; select the workspace two folders up."
+                if (root / "client.json").is_file() or (root / "binding.json").is_file() else "")
+        raise WorkspaceError(f"not a Torque workspace: {root} has no workspace configuration ({CONFIG}).{hint} "
+                             "Select the workspace folder, or create a workspace with "
+                             "`torque workspace init PATH --name NAME`.")
+    config = _validate_config(_read_json(config_path), config_path)
     _inside(root, root / "clients")
     return root, config
 
@@ -819,7 +919,10 @@ def add_client(workspace: str | Path, name: str, org: str | None = None) -> Path
     if org is not None and (not org.strip() or any(c in org for c in "\r\n\0")):
         raise WorkspaceError("org alias must be nonempty and on one line")
     with _client_creation_lock(root):
-        client = _inside(root, root / "clients" / slug)
+        # clients/ is git-ignored, so a fresh clone of a private workspace has none; create it as init does.
+        parent = _inside(root, root / "clients")
+        parent.mkdir(mode=0o700, exist_ok=True)
+        client = _inside(root, parent / slug)
         if client.exists():
             raise WorkspaceError(f"client slug already exists: {slug}; no existing data was replaced")
         staging = _inside(root, root / ".torque" / "client-staging")
@@ -860,7 +963,11 @@ def load_client(workspace: str | Path, name: str) -> tuple[Path, dict, dict]:
     root, firm = load_workspace(workspace)
     slug = slug_for(name)
     client = _inside(root, root / "clients" / slug)
-    config = _read_json(_inside(root, client / "client.json"))
+    missing = (f'no client "{name.strip()}" in the workspace at {root} (no clients/{slug}/client.json). List the '
+               "clients with " + command_text(["torque", "client", "list", "--workspace", str(root)])
+               + ", or create this one with "
+               + command_text(["torque", "client", "add", name.strip(), "--workspace", str(root)]) + ".")
+    config = _read_json(_inside(root, client / "client.json"), missing)
     if config.get("schema") != "torque.client/1" or config.get("slug") != slug:
         raise WorkspaceError(f"invalid client configuration: {client / 'client.json'}")
     if not isinstance(config.get("name"), str) or not config["name"].strip():
@@ -910,8 +1017,16 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
             digest = _file_hash(path)
         except OSError as exc:
             raise WorkspaceError(f"cannot read evidence: {path}") from exc
-        evidence_ref = {"path": str(path), "sha256": digest,
-                        "basis": "file reference recorded; contents not evaluated"}
+        evidence_ref = {"path": str(path), "sha256": digest, "basis": EVIDENCE_BASIS}
+        try:
+            # Inside the workspace the reference is also kept relative to it, so it still
+            # resolves after the workspace moves or is copied to another machine. The
+            # absolute path stays for versions that read only that.
+            evidence_ref["workspace_path"] = path.relative_to(client.parent.parent).as_posix()
+        except ValueError:
+            # Outside the workspace the absolute path is the reference, and it is read
+            # only there: never matched with a copy inside the workspace.
+            evidence_ref["scope"] = "external"
     at = _now()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:12]
     entry = {"schema": "torque.session/1", "id": entry_id, "created_at": at,
@@ -920,7 +1035,7 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
              "evidence": evidence_ref}
     sessions = _inside(client, client / "sessions")
     sessions.mkdir(mode=0o700, exist_ok=True)
-    _write_json(_inside(client, sessions / f"{entry_id}.json"), entry)
+    _write_json(_inside(client, sessions / f"{entry_id}.json"), entry, private=True)
     return entry
 
 
@@ -947,28 +1062,106 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _session_evidence(client: Path, evidence: object) -> str:
-    if evidence is None:
-        return "not_supplied"
-    if (not isinstance(evidence, dict) or not isinstance(evidence.get("path"), str)
-            or not evidence["path"] or "\0" in evidence["path"]
-            or not Path(evidence["path"]).is_absolute()
-            or not isinstance(evidence.get("sha256"), str)
-            or not re.fullmatch(r"[a-f0-9]{64}", evidence["sha256"])
-            or evidence.get("basis") != "file reference recorded; contents not evaluated"):
-        raise WorkspaceError("invalid session evidence reference")
-    path = Path(evidence["path"])
+EVIDENCE_BASIS = "file reference recorded; contents not evaluated"
+
+
+def _absolute_reference(text: str) -> bool:
+    """An absolute path as macOS, Linux or Windows wrote it: a record copied from one
+    system to another keeps a valid reference, even though it cannot open there."""
+    return PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute()
+
+
+def _relative_reference(text: object) -> bool:
+    return (isinstance(text, str) and bool(text) and "\0" not in text and "\\" not in text
+            and not text.startswith("/") and not PureWindowsPath(text).drive
+            and all(part not in ("", ".", "..") for part in text.split("/")))
+
+
+def _moved_reference(engagement: Path, stored: str) -> Path | None:
+    """Where evidence an earlier version recorded only as an absolute path into this
+    engagement's folder (.../clients/SLUG/REST) is now, after the workspace moved or
+    was copied, Windows to macOS or back: REST under this engagement. None for a
+    path that does not run through this engagement's own folder."""
+    windows = bool(PureWindowsPath(stored).drive) or "\\" in stored
+    parts = (PureWindowsPath if windows else PurePosixPath)(stored).parts
+    fold = str.casefold if windows else str
+    folder, slug = fold(engagement.parent.name), fold(engagement.name)
+    for index in range(len(parts) - 3, -1, -1):
+        if fold(parts[index]) == folder and fold(parts[index + 1]) == slug:
+            rest = parts[index + 2:]
+            return engagement.joinpath(*rest) if all(part not in ("", ".", "..") for part in rest) else None
+    return None
+
+
+def _check_evidence(client: Path, path: Path, sha256: str) -> tuple[str, str]:
+    """(integrity, location) of the file at path; the location is workspace-relative
+    inside the workspace and absolute outside it."""
+    root = client.parent.parent
+    try:
+        location = path.relative_to(root).as_posix()
+    except ValueError:
+        location = str(path)
     try:
         resolved = path.resolve()
         if foreign_engagement(client, resolved):
-            raise WorkspaceError("session evidence belongs to a different client or initiative")
+            raise BoundaryError("session evidence belongs to a different client or initiative")
         if path != resolved:
-            return "unavailable"  # A saved canonical reference now traverses a symlink.
-        return "matches_reference" if _file_hash(path) == evidence["sha256"] else "changed"
+            return "unavailable", location  # A saved canonical reference now traverses a symlink.
+        return ("matches_reference" if _file_hash(path) == sha256 else "changed"), location
     except FileNotFoundError:
-        return "missing"
+        return "missing", location
     except (OSError, RuntimeError):
-        return "unavailable"
+        return "unavailable", location
+
+
+def _workspace_reference(text: object) -> tuple[str, ...]:
+    """The parts of a workspace-relative evidence reference (workspace_path). One that
+    would leave the workspace (absolute, a drive, a `..` part) raises BoundaryError,
+    which every reader refuses; any other malformed value raises WorkspaceError, which
+    an informational reader skips as a damaged record."""
+    if not isinstance(text, str) or not text or "\0" in text:
+        raise WorkspaceError("invalid session evidence reference")
+    if text.startswith(("/", "\\")) or PureWindowsPath(text).drive or ".." in re.split(r"[\\/]", text):
+        raise BoundaryError("session evidence reference leaves the workspace")
+    if not _relative_reference(text):
+        raise WorkspaceError("invalid session evidence reference")
+    return tuple(text.split("/"))
+
+
+def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
+    """(integrity, location) of a session's evidence reference. A reference inside the
+    workspace is read relative to it (workspace_path), so it resolves after a move or a
+    copy to another machine. One outside it ("scope": "external") is read at its
+    absolute path only. A reference an earlier version wrote, which could not say which
+    it was, is also looked for under this engagement when its path no longer opens."""
+    if evidence is None:
+        return "not_supplied", None
+    # A reference that leaves the workspace stops the read before anything else is checked.
+    relative = (_workspace_reference(evidence["workspace_path"])
+                if isinstance(evidence, dict) and "workspace_path" in evidence else None)
+    if (not isinstance(evidence, dict) or not isinstance(evidence.get("path"), str)
+            or not evidence["path"] or "\0" in evidence["path"]
+            or not _absolute_reference(evidence["path"])
+            or not isinstance(evidence.get("sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", evidence["sha256"])
+            or evidence.get("basis") != EVIDENCE_BASIS
+            or ("scope" in evidence and (evidence["scope"] != "external" or relative is not None))):
+        raise WorkspaceError("invalid session evidence reference")
+    if relative is not None:
+        return _check_evidence(client, client.parent.parent.joinpath(*relative), evidence["sha256"])
+    stored = Path(evidence["path"])
+    if stored.is_absolute():
+        found = _check_evidence(client, stored, evidence["sha256"])
+        if found[0] != "missing":
+            return found
+    if evidence.get("scope") == "external":
+        return "missing", evidence["path"]
+    moved = _moved_reference(client, evidence["path"])
+    if moved is not None:
+        found = _check_evidence(client, moved, evidence["sha256"])
+        if found[0] != "missing":
+            return found
+    return "missing", evidence["path"]
 
 
 def _session_timestamp(value: object) -> bool:
@@ -978,41 +1171,104 @@ def _session_timestamp(value: object) -> bool:
         return False
 
 
+def foreign_owner(value: dict, kind: str, slug: str) -> bool:
+    """A record names another client or initiative than the one it was read for."""
+    return any(isinstance(value.get(key), str) and value[key] and (key != kind or value[key] != slug)
+               for key in ("client", "initiative"))
+
+
+def record_problem(engagement: Path, path: Path, reason: str) -> dict:
+    """An entry for a reader's `problems` list: the file, relative to its engagement."""
+    return {"path": path.relative_to(engagement).as_posix(), "reason": reason}
+
+
+def _session_problem(path: Path, value: dict, kind: str, slug: str) -> str:
+    """Why this is not a session record of the engagement, or ""."""
+    if not _SESSION_ID.fullmatch(path.stem):
+        return "its file name is not a session ID (a copy or a stray file?)"
+    if value.get("id") != path.stem:
+        return "its id does not match its file name"
+    if (value.get("schema") != "torque.session/1" or value.get(kind) != slug
+            or value.get("status") not in STATUSES or value.get("status_basis") != "user_reported"
+            or value.get("independently_verified") is not False
+            or not isinstance(value.get("summary"), str)
+            or not value["summary"].strip() or not _session_timestamp(value.get("created_at"))):
+        return "not a valid session record"
+    return ""
+
+
 def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 20, *,
-                  kind: str = "client") -> list[dict]:
+                  kind: str = "client", problems: list | None = None) -> list[dict]:
+    """The engagement's session records, newest first, at most `limit` of them. A
+    record that fails its checks, its evidence reference included, stops the read,
+    unless `problems` is a list: then it is skipped and named there, so one stray or
+    damaged file does not hide the rest of the history; a skipped record is never read
+    as valid. A record or evidence that belongs to another client or initiative, an
+    evidence reference that leaves the workspace, and a symlink stop the read either
+    way (BoundaryError)."""
     client, _, config = load_engagement(workspace, client_name, kind)
     sessions = _inside(client, client / "sessions")
     if not sessions.exists():
         return []
-    paths = sorted(sessions.glob("*.json"), reverse=True)
-    if limit is not None:
-        paths = paths[:limit]
     entries = []
-    for path in paths:
-        value = _read_json(_inside(client, path))
-        if (not _SESSION_ID.fullmatch(path.stem)
-                or value.get("schema") != "torque.session/1" or value.get(kind) != config["slug"]
-                or value.get("id") != path.stem or value.get("status") not in STATUSES
-                or value.get("status_basis") != "user_reported"
-                or value.get("independently_verified") is not False
-                or not isinstance(value.get("summary"), str)
-                or not value["summary"].strip() or not _session_timestamp(value.get("created_at"))):
-            raise WorkspaceError(f"invalid session record: {path}")
+    for path in sorted(sessions.glob("*.json"), reverse=True):
+        if limit is not None and len(entries) >= limit:
+            break
         try:
-            value["evidence_integrity"] = _session_evidence(client, value.get("evidence"))
+            value = _read_json(_inside(client, path))
+        except BoundaryError:
+            raise
+        except WorkspaceError:
+            value, reason = None, "not a readable JSON object"
+        else:
+            if foreign_owner(value, kind, config["slug"]):
+                raise BoundaryError(f"session record belongs to a different client or initiative: {path}")
+            evidence = value.get("evidence")
+            if isinstance(evidence, dict) and "workspace_path" in evidence:
+                # A reference that leaves the workspace stops the read, however damaged the rest is.
+                try:
+                    _workspace_reference(evidence["workspace_path"])
+                except BoundaryError as exc:
+                    raise BoundaryError(f"{exc}: {path}") from exc
+                except WorkspaceError:
+                    pass  # Malformed: named below, with the record.
+            reason = _session_problem(path, value, kind, config["slug"])
+        if reason:
+            if problems is None:
+                raise WorkspaceError(f"invalid session record: {path}")
+            problems.append(record_problem(client, path, reason))
+            continue
+        try:
+            value["evidence_integrity"], value["evidence_location"] = _session_evidence(client, value.get("evidence"))
+        except BoundaryError as exc:
+            raise BoundaryError(f"{exc}: {path}") from exc
         except WorkspaceError as exc:
-            raise WorkspaceError(f"{exc}: {path}") from exc
+            if problems is None:
+                raise WorkspaceError(f"{exc}: {path}") from exc
+            problems.append(record_problem(client, path, str(exc)))
+            continue
         entries.append(value)
     return entries
 
 
-def _change_context(workspace: str | Path, client_name: str, client: Path, kind="client") -> list[dict]:
-    """Bound event summaries without converting reported checks into observed acceptance."""
+def record_problem_lines(problems: list) -> list[str]:
+    """Lines naming the records a reader skipped; none when it skipped nothing."""
+    if not problems:
+        return []
+    return [f"Skipped {len(problems)} record(s) that could not be read, so the history shown is incomplete. "
+            "Torque never rewrites a record: check each file, then move it out or delete it."] + [
+        f"- {problem['path']}: {problem['reason']}" for problem in problems]
+
+
+def _change_context(workspace: str | Path, client_name: str, client: Path, kind="client",
+                    problems: list | None = None) -> list[dict]:
+    """Bound event summaries without converting reported checks into observed acceptance.
+    The show command names the workspace as the caller did (`.` stays `.`)."""
     from .changes import get_change, list_changes
     summaries = []
     limit = 5
-    for record in list_changes(workspace, client_name, engagement_kind=kind):
-        detail = get_change(workspace, client_name, record["id"], engagement_kind=kind)
+    for record in list_changes(workspace, client_name, engagement_kind=kind, problems=problems):
+        detail = get_change(workspace, client_name, record["id"], engagement_kind=kind, problems=problems)
         groups = {"decisions": "decision", "metadata_observations": "metadata_observation",
                   "next_steps": "next_step"}
         histories, totals = {}, {}
@@ -1034,7 +1290,7 @@ def _change_context(workspace: str | Path, client_name: str, client: Path, kind=
                           "history_note": ("Only the latest five entries per history kind are shown; use show_command for full history."
                                            if any(truncated.values()) else "All decision, metadata and next-step history is shown."),
                           "show_command": command_text(["torque", "change", "show", record["id"],
-                                                        "--workspace", str(client.parent.parent), "--" + kind, client.name])})
+                                                        "--workspace", str(workspace), "--" + kind, client.name])})
     return summaries
 
 
@@ -1070,25 +1326,36 @@ def _context_notes(client: Path) -> dict[str, str]:
 
 
 def get_context(workspace: str | Path, client_name: str, *, kind: str = "client") -> dict:
+    """The engagement's notes, changes and recent sessions. A stray or damaged record is
+    skipped and named in record_problems instead of hiding the rest."""
     client, firm, config = load_engagement(workspace, client_name, kind)
     notes = _context_notes(client)
+    problems: list[dict] = []
+    changes = _change_context(workspace, client_name, client, kind, problems)
+    sessions = list_sessions(workspace, client_name, kind=kind, problems=problems)
     return {"workspace": firm, "client": config, "client_root": str(client),
-            "changes": _change_context(workspace, client_name, client, kind),
-            "notes": notes,
-            "sessions": list_sessions(workspace, client_name, kind=kind),
+            "changes": changes, "notes": notes, "sessions": sessions, "record_problems": problems,
             "evidence_note": "Journal statuses are user-reported, not independent verification."}
 
 
 def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "client") -> str:
+    """The engagement's handoff. A record that could not be read is named at the top,
+    so the document says it is incomplete instead of leaving the record out silently."""
     client_root, firm, client = load_engagement(workspace, client_name, kind)
     notes = _context_notes(client_root)
-    entries = list_sessions(workspace, client_name, limit=None, kind=kind)
+    problems: list[dict] = []
+    entries = list_sessions(workspace, client_name, limit=None, kind=kind, problems=problems)
+    from .changes import list_changes, render_change
+    rendered = [render_change(workspace, client_name, change["id"], engagement_kind=kind, problems=problems).rstrip()
+                for change in list_changes(workspace, client_name, engagement_kind=kind, problems=problems)]
     lines = [f"# Handoff: {client['name']}", "", f"Workspace: {firm['name']}",
              f"Profile: {firm['profile']}",
              f"Configured org: {client.get('org') or 'not specified'}" if kind == "client"
              else f"Initiative state: {client['state']}",
              "", "Statuses below were supplied by the user. This journal did not independently "
              "verify execution or outcomes.", ""]
+    if problems:
+        lines += ["## Records not shown", "", *record_problem_lines(problems), ""]
     if notes:
         lines += ["## Working context", ""]
         for title, contents in notes.items():
@@ -1100,13 +1367,16 @@ def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "clie
                   entry["summary"], "", f"Entry: {entry['id']}"]
         evidence = entry.get("evidence")
         if evidence:
-            lines += [f"Evidence reference: {evidence['path']}", f"Recorded SHA-256: {evidence['sha256']}",
+            # Where the file is now: relative to the workspace inside it, so the handoff
+            # does not carry the author's own folder names.
+            location = entry.get("evidence_location") or evidence["path"]
+            where = "outside this workspace" if _absolute_reference(location) else "in this workspace"
+            lines += [f"Evidence reference: {location} ({where})", f"Recorded SHA-256: {evidence['sha256']}",
                       f"Evidence integrity: {entry['evidence_integrity'].replace('_', ' ')}",
                       "The reference was hashed when recorded; its content was not assessed."]
         else:
             lines.append("Evidence reference: none supplied.")
         lines.append("")
-    from .changes import list_changes, render_change
-    for change in list_changes(workspace, client_name, engagement_kind=kind):
-        lines += ["", "---", "", render_change(workspace, client_name, change["id"], engagement_kind=kind).rstrip()]
+    for text in rendered:
+        lines += ["", "---", "", text]
     return "\n".join(lines).rstrip() + "\n"

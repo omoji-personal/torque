@@ -63,12 +63,21 @@ each tool call ([AI access](docs/ai-access.md),
   account can read. They guard against accidental actions, not against code run
   under that account. Tier 2 uses a separate approver account and is available on
   macOS and Linux only.
-- On Windows several checks are weaker. Permission and owner checks on the key,
-  grants, consent evidence and before-state files are skipped, so those files
-  inherit the folder's access list, and a launch record is not tied to a process.
-- Commands that print credentials, such as `sf org display`, are refused for the
-  assistant in connected mode. In `full` mode nothing stops the assistant from
-  running them, and their output then reaches its model.
+- On Windows several checks are weaker. A launch record is not tied to a process, and the
+  operator-presence check does not look at the parent processes. Torque gives the key, grants,
+  consent evidence and before-state files you as owner and an access list for you, SYSTEM and
+  Administrators only, set when the file is created, and refuses a key or grant that you do
+  not own or that anyone else can read or change. Change records, events and session
+  entries are created private too. Files written by an earlier release keep the folder's
+  inherited list; only an older key or grant is refused, until you delete it and Torque writes
+  it again.
+- Commands that print credentials, such as `sf org auth show-access-token`,
+  `sf org open --url-only` and, before Salesforce CLI 2.136.8, `sf org display`, are
+  refused for the assistant in connected mode. In `full` mode nothing stops the
+  assistant from running them, and their output then reaches its model. To check which
+  org an alias points to, use
+  `sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" --target-org ALIAS`,
+  which prints no credential.
 
 ## What Torque stores
 
@@ -85,10 +94,13 @@ the configured provider's command-line tool when you invoke them.
 ## Reporting a vulnerability
 
 Do not post tokens, private client evidence or an exploitable confidential payload
-in a public issue. If the repository exposes GitHub's **Report a vulnerability**
-option, use that private channel. Otherwise open a sanitized issue requesting a
-private maintainer contact before sharing the details. No dedicated response SLA
-or independent security certification is claimed for this development alpha.
+in a public issue. If the repository's **Security** tab offers **Report a
+vulnerability** (GitHub private vulnerability reporting,
+<https://github.com/omoji-personal/torque/security/advisories/new>), use that private
+channel; only you and the maintainers see the report. Otherwise open a sanitized
+issue requesting a private maintainer contact before sharing the details. No
+dedicated response SLA or independent security certification is claimed for this
+development alpha.
 
 Include the version, affected command, a synthetic reproduction, expected boundary
 and observed result. Revoke exposed credentials with the issuing service if an

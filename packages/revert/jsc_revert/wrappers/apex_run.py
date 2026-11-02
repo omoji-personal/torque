@@ -56,25 +56,12 @@ def run(args: argparse.Namespace) -> int:
         ctx.set_revert_capabilities()
 
         # ── Loud pre-run warning for non-revertible operation ─────────────
-        if ctx.org.is_production and os.environ.get("JSC_REVERT_NONREVERTIBLE_AUTO_ACK") != "1":
-            print(
-                f"\n⚠️  Apex run against PRODUCTION org {ctx.org.alias} ({ctx.org.org_id_18})\n"
-                f"   This operation is NOT automatically revertible. Snapshot will\n"
-                f"   capture best-effort evidence (apex source, debug log id) for\n"
-                f"   manual recovery only.\n"
-                f"\n"
-                f"Continue? (yes/no): ",
-                file=sys.stderr, end=""
-            )
-            try:
-                answer = input().strip().lower()
-            except EOFError:
-                answer = "no"
-            if answer != "yes":
-                print("Aborted.", file=sys.stderr)
-                ctx.manifest["snapshot_status"] = "abandoned"
-                ctx.save()
-                return c.EXIT_PRESNAP_FAILED_PROD
+        print(
+            f"Apex run against {'PRODUCTION ' if ctx.org.is_production else ''}org {ctx.org.alias}. "
+            "This operation is NOT automatically revertible. Snapshot captures "
+            "best-effort evidence for manual recovery only. For data changes, prefer "
+            "torque data or a staged bulk load with before-state and readback.", file=sys.stderr,
+        )
 
         # Persist apex source for forensics
         (ctx.snap_dir / "apex_input.apex").write_text(apex_code, encoding="utf-8")
@@ -103,9 +90,17 @@ def run(args: argparse.Namespace) -> int:
         sf_json = c.parse_sf_json_safely(stdout)
 
         if sf_json:
-            r = sf_json.get("result", {})
+            r = sf_json.get('result') or sf_json.get('data') or {}
+            if not isinstance(r, dict):
+                r = {}
             ctx.manifest["payload"]["anonymous_id"] = r.get("id")
-            ctx.manifest["payload"]["debug_log_id"] = r.get("logs", "")[:64]  # truncate
+            ctx.manifest["payload"]["debug_log_id"] = r.get('debugLogId')
+            ctx.manifest['payload']['exception_message'] = r.get('exceptionMessage') or r.get('compileProblem')
+            if isinstance(r.get('logs'), str):
+                c.bundle.atomic_write_bytes(ctx.snap_dir / 'apex.log', r['logs'].encode('utf-8'))
+                ctx.manifest['payload']['debug_log_path'] = str(ctx.snap_dir / 'apex.log')
+        if exit_code != 0:
+            c.print_sf_failure(sf_json, stderr)
 
         (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         snapshot_status = "complete" if exit_code == 0 else "failed"
@@ -151,6 +146,3 @@ def _query_object_state(target_org: str, sobject: str) -> tuple[int, str]:
     except (KeyError, ValueError, TypeError, _json.JSONDecodeError):
         pass
     return -1, ""
-
-
-import os

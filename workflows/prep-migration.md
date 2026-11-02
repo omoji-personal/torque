@@ -27,11 +27,23 @@ Use actual supported bypasses only if needed by the migration design; do not dis
 all validation or assume a managed-package settings object. Record original setting
 values and a restoration checklist before any temporary change.
 
-Execute the user-authorized migration with the chosen normal tool or the optional
-snapshot-aware `torque revert` delegate. Inspect its help for supported update/upsert/
-import operations. Run bounded batches where useful. Keep input manifests, job IDs,
+Execute the user-authorized migration with the chosen normal tool or optional
+snapshot-aware wrappers, for example
+`torque data bulk update --sobject Object__c --file updates.csv --target-org ALIAS --workspace W --client C`
+or `torque data bulk upsert --sobject Object__c --external-id External__c --file rows.csv --target-org ALIAS --workspace W --client C`.
+Inspect help for supported record and import operations. Stage a small load, read
+back the affected fields and relationships, preserve exact rollback IDs and get
+the owner's go for the planned wider load within the existing authorization.
+Existing-row recovery uses the reviewed `replay.csv` (Id plus null markers);
+insert removal uses IDs from the exact job's successful results. Keep input manifests, job IDs,
 successful/failed row results, mappings and recovery files in the private task directory.
 Inspect row failures even when the command exits successfully.
+
+Rehearsal and test records: save each created record's Id when it is created, in the
+private task directory. Clean up by deleting only those Ids (an Id-file delete such as
+`sf data delete bulk --file ids.csv` with an Id column, or the Torque route above).
+Never build a delete from a query that matches by name, title, creator or date. If the
+Id list is lost or incomplete, stop and ask instead of matching.
 
 Reconcile intended source records against destination records by stable keys; totals
 and “created today” counts alone are insufficient. Check relationships, duplicates,

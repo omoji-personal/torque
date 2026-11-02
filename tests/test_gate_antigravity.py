@@ -77,11 +77,29 @@ def blocked(root):
         ("browser_subagent", {"Task": "summarize it", "Start": (root / "clients" / "acme" / "notes.md").as_uri()}),
         ("schedule", {"Prompt": notes}),
         ("read_url_content", {"Url": (root / "clients" / "acme" / "notes.md").as_uri()}),
+        # The same kinds of call in the shapes Antigravity 1.4.9 was seen to send.
+        ("read_file", {"Path": notes}),
+        ("write_file", {"Path": notes, "Content": "x"}),
+        ("edit_file", {"Path": notes, "Target": "x", "Replacement": "y"}),
+        ("write_file", {"Path": str(root / "workspace.json"), "Content": "{}"}),
+        ("edit_file", {"Path": str(root / "workspace.json"), "Target": "{}", "Replacement": "{}"}),
+        ("write_file", {"Path": str(root / ".agents" / "hooks.json"), "Content": "{}"}),
+        ("edit_file", {"Path": str(root / ".agents" / "hooks.json"), "Target": "{}", "Replacement": "{}"}),
+        ("list_dir", {"Path": str(root / "clients")}),
+        ("run_command", {"CommandLine": "sf data query -o example -q 'SELECT Id FROM Account'",
+                         "WaitMsBeforeAsync": 500, "toolSummary": "Query the org"}),
+        ("mcp_salesforce_query", {"query": "SELECT Id FROM Account"}),
+        ("mcp_files_read", {"path": notes}),
         # A known tool without the argument that names its file, and tools this module does not know.
         ("view_file", {}),
         ("multi_replace_file_content", {"Chunks": []}),
+        ("read_file", {"AbsolutePath": str(root / "src" / "a.md")}),
+        ("edit_file", {"Target": "x", "Replacement": "y"}),
         ("notebook_execution", {"Code": "x"}),
         ("a_tool_added_later", {"X": "y"}),
+        ("a_tool_added_later", {"Path": notes}),
+        # A connector tool whose name splits into a server and a tool more than one way.
+        ("mcp_files_read_file", {"path": str(root / "src" / "a.md")}),
         # Text typed into a running command that this module cannot read.
         ("send_command_input", {}),
         ("send_command_input", {"Input": ["sf", "data", "query"]}),
@@ -129,6 +147,17 @@ def test_what_the_gate_lets_through_is_allowed_or_handed_to_antigravity(root, mo
         ("ask", "read_url_content", {"Url": "https://example.com/page"}),
         ("ask", "manage_task", {"Action": "kill", "TaskId": "1"}),
         ("ask", "manage_task", {"TaskId": "1"}),
+        # Antigravity 1.4.9's shapes.
+        ("allow", "read_file", {"Path": str(root / "src" / "a.md")}),
+        ("allow", "read_file", {"Path": "src/a.md"}),
+        ("allow", "list_dir", {"Path": str(root / "src")}),
+        ("ask", "read_file", {"Path": str(outside / "x.md")}),
+        ("ask", "write_file", {"Path": str(root / "src" / "b.md"), "Content": "x"}),
+        # edit_file's Target is the text it replaces, not a path.
+        ("ask", "edit_file", {"Path": str(root / "src" / "a.md"), "Target": str(root / "clients" / "acme" / "notes.md"),
+                              "Replacement": "y"}),
+        ("ask", "run_command", {"CommandLine": "git status", "WaitMsBeforeAsync": 500, "toolSummary": "Check the tree"}),
+        ("ask", "mcp_notes_add", {"text": "hello"}),
     ]
     for expected, name, args in cases:
         assert decision(monkeypatch, capsys, root, name, args) == expected, (name, args)
@@ -169,6 +198,68 @@ def test_the_protected_records_stay_protected_with_the_gate_off(root, monkeypatc
     assert decision(monkeypatch, capsys, root, "run_command", command) == "deny"
 
 
+def test_the_protected_records_stay_protected_from_antigravity_14s_file_tools(root, monkeypatch, capsys):
+    set_mode(root, None)
+    consent = str(root / "clients" / "acme" / "consent.json")
+    key = str(root.parent / "home" / ".config" / "torque" / "approval.key")
+    for name, args in (("write_file", {"Path": consent, "Content": "{}"}),
+                       ("edit_file", {"Path": consent, "Target": "{}", "Replacement": '{"x": 1}'}),
+                       ("edit_file", {"Path": "clients/acme/approvals/a1.json", "Target": "a", "Replacement": "b"}),
+                       ("write_file", {"Path": str(root / "clients" / "acme" / "control" / "x.json"), "Content": ""}),
+                       ("write_file", {"Path": key, "Content": "x"})):
+        reply = answer(monkeypatch, capsys, payload(root, name, args))
+        assert reply["decision"] == "deny" and "in every mode" in reply["reason"], (name, args, reply)
+    # Reading a record is not changing it.
+    assert decision(monkeypatch, capsys, root, "read_file", {"Path": consent}) == "allow"
+
+
+def test_a_tool_this_module_cannot_read_never_reaches_the_protected_records(root, monkeypatch, capsys, tmp_path):
+    """Host drift: a tool Antigravity adds or renames later reaches the gate under
+    its own name. Build-only and connected mode block it as a tool they do not
+    recognise; in every mode it is refused when it names a protected record."""
+    consent = str(root / "clients" / "acme" / "consent.json")
+    key = str(tmp_path / "home" / ".config" / "torque" / "approval.key")
+    calls = [("a_tool_added_later", {"Path": consent}),
+             ("a_tool_added_later", {"Nested": [{"Target": key}]}),
+             ("a_tool_added_later", {"Uri": Path(consent).as_uri()}),
+             # A word of a string that is not a command argument, such as text typed into a command.
+             ("a_tool_added_later", {"Text": "rm clients/acme/consent.json"}),
+             ("a_tool_added_later", {"Path": "clients/acme/approvals/a1.json"}),
+             ("a_tool_added_later", {"Path": "clients/acme/requests"}),
+             # A known tool whose path argument was renamed, and one called without its own.
+             ("write_to_file", {"Path": consent, "CodeContent": "{}"}),
+             ("edit_file", {"File": consent, "Target": "{}", "Replacement": "{}"}),
+             ("read_file", {"AbsolutePath": consent}),
+             ("manage_task", {"Action": "send_input", "Text": "rm clients/acme/consent.json"}),
+             ("mcp_files_write_file", {"path": consent, "content": "{}"})]
+    for mode in (None, "full", "build-only"):
+        set_mode(root, mode)
+        for name, args in calls:
+            reply = answer(monkeypatch, capsys, payload(root, name, args))
+            assert reply["decision"] == "deny", (mode, name, args, reply)
+            assert "consent, approval or control record" in reply["reason"] and name in reply["reason"], reply
+    # Without a protected record, full mode still has no objection.
+    set_mode(root, None)
+    for name, args in (("a_tool_added_later", {"Path": str(root / "src" / "a.md")}),
+                       ("a_tool_added_later", {"Text": "the consent records live under clients"}),
+                       ("a_tool_added_later", {"Path": str(root / "clients" / "acme" / "notes.md")}),
+                       ("mcp_files_write_file", {"path": str(root / "src" / "a.md"), "content": "x"})):
+        assert decision(monkeypatch, capsys, root, name, args) == "ask", (name, args)
+
+
+def test_only_the_tool_call_is_read_from_antigravity_14s_hook_input(root, monkeypatch, capsys):
+    # 1.4.9 also sends the prompt, the model's name and where the transcript is.
+    consent = str(root / "clients" / "acme" / "consent.json")
+    extra = {"lastUserInput": f"change {consent}", "modelName": "a-model", "transcriptPath": str(root / "t.jsonl"),
+             "artifactDirectoryPath": str(root / "artifacts")}
+    set_mode(root, None)
+    reply = answer(monkeypatch, capsys, payload(root, "a_tool_added_later", {"X": "y"}, **extra))
+    assert reply["decision"] == "ask", reply
+    set_mode(root, "build-only")
+    reply = answer(monkeypatch, capsys, payload(root, "read_file", {"Path": str(root / "src" / "a.md")}, **extra))
+    assert reply["decision"] == "allow", reply
+
+
 def test_leaving_the_working_folder_keeps_the_session_gated(root, monkeypatch, capsys):
     call = {"CommandLine": "sf data query -o example", "Cwd": str(root.parent)}
     assert decision(monkeypatch, capsys, root, "run_command", call) == "deny"
@@ -190,6 +281,8 @@ def test_the_blocked_reason_names_antigravity_tools(root, monkeypatch, capsys):
     reply = answer(monkeypatch, capsys, payload(root, "a_tool_added_later", {}))
     assert "run_command" in reply["reason"] and "Bash" not in reply["reason"]
     assert hosts.ANTIGRAVITY.tool_hint in reply["reason"]
+    # By the names Antigravity 1.4.9 calls its file tools.
+    assert all(f" {name}," in reply["reason"] for name in ("read_file", "edit_file", "write_file"))
     # The registry holds the gate's own wording, or the swap above would do nothing.
     assert hosts.CLAUDE.tool_hint in gate.decide("a_tool_added_later", {}, root, "build-only", root)[1]
 
@@ -257,6 +350,17 @@ def test_calls_are_rewritten_into_the_gates_tools(root):
     assert event("search_web", {"Query": "x"}) == ("Task", {})
     assert event("manage_task", {"Action": "list"}) == ("Task", {})
     assert event("a_tool_added_later", {"X": "y"}) == ("a_tool_added_later", {"X": "y"})
+    # Antigravity 1.4.9's file tools: only the path is read, never the text written or replaced.
+    assert event("read_file", {"Path": "a.md"}) == ("Read", {"file_path": "a.md"})
+    assert event("write_file", {"Path": "a.md", "Content": "x"}) == ("Write", {"file_path": "a.md"})
+    assert event("edit_file", {"Path": "a.md", "Target": "x", "Replacement": "y"}) == ("Edit", {"file_path": "a.md"})
+    assert event("list_dir", {"Path": "src"}) == ("LS", {"path": "src"})
+    assert event("list_dir", {"DirectoryPath": "src", "Path": "other"}) == ("LS", {"path": "src"})
+    assert event("run_command", {"CommandLine": "git status", "WaitMsBeforeAsync": 500, "toolSummary": "x"}) == (
+        agy.SHELL_TOOL, {"command": "git status"})
+    # A connector tool of its own, mcp_SERVER_TOOL, whose name splits one way only.
+    assert event("mcp_notes_add", {"text": "x"}) == ("mcp__notes__add", {"text": "x"})
+    assert event("mcp_web-browser_open", {"url": "x"}) == ("mcp__web-browser__open", {"url": "x"})
 
 
 def test_a_known_tool_this_module_cannot_read_keeps_its_own_name(root):
@@ -267,14 +371,50 @@ def test_a_known_tool_this_module_cannot_read_keeps_its_own_name(root):
                        ("call_mcp_tool", {"Arguments": {"a": 1}}), ("call_mcp_tool", {"ServerName": "s"}),
                        ("call_mcp_tool", {"ToolName": "t"}), ("call_mcp_tool", {"ServerName": " s", "ToolName": "t"}),
                        ("call_mcp_tool", {"ServerName": "s__x", "ToolName": "t"}),
-                       ("call_mcp_tool", {"ServerName": "s", "ToolName": "t_"})):
+                       ("call_mcp_tool", {"ServerName": "s", "ToolName": "t_"}),
+                       ("read_file", {}), ("read_file", {"AbsolutePath": "a.md"}), ("read_file", {"Path": ""}),
+                       ("write_file", {"Content": "x"}), ("write_file", {"Path": ["a.md"], "Content": "x"}),
+                       ("edit_file", {"Target": "x", "Replacement": "y"}), ("edit_file", {"Path": 5}),
+                       # mcp_SERVER_TOOL names that do not split one way only.
+                       ("mcp_notes_add_note", {"text": "x"}), ("mcp_notes", {}), ("mcp_notes_", {}),
+                       ("mcp_ notes_add", {}), ("mcp_notes_add ", {})):
         made = agy.gate_event(payload(root, name, args))
         assert (made["tool_name"], made["tool_input"]) == (name, args), (name, args)
         assert gate.decide(made["tool_name"], made["tool_input"], root, "build-only", root)[0] is False
 
 
+def test_a_connector_tool_of_its_own_is_decided_as_call_mcp_tool_is(root, monkeypatch, capsys):
+    """Antigravity 1.4.9 can send a connector's tool as mcp_SERVER_TOOL. A name that
+    splits one way only gets the decision call_mcp_tool gets for the same call."""
+    notes = str(root / "clients" / "acme" / "notes.md")
+    calls = (("salesforce", "query", {"query": "SELECT Id FROM Account"}), ("files", "read", {"path": notes}),
+             ("web-browser", "open", {"url": "https://example.com"}),
+             ("files", "write", {"path": str(root / "workspace.json")}),
+             ("notes", "add", {"text": "hello", "url": "https://acme.my.salesforce.com"}),
+             ("notes", "add", {"text": "hello"}))
+    seen = set()
+    for mode in ("build-only", None):
+        set_mode(root, mode)
+        for server, tool, args in calls:
+            direct = answer(monkeypatch, capsys, payload(root, f"mcp_{server}_{tool}", args))
+            wrapped = answer(monkeypatch, capsys, payload(root, "call_mcp_tool", {
+                "ServerName": server, "ToolName": tool, "Arguments": args}))
+            assert direct == wrapped, (mode, server, tool, direct, wrapped)
+            seen.add((mode, direct["decision"]))
+    assert seen == {("build-only", "deny"), ("build-only", "ask"), (None, "ask")}
+    # A name that splits more than one way is not read: build-only blocks it, though the
+    # same call through call_mcp_tool is handed on.
+    set_mode(root, "build-only")
+    reply = answer(monkeypatch, capsys, payload(root, "mcp_notes_add_note", {"text": "hello"}))
+    assert reply["decision"] == "deny" and "is not a tool this mode recognises" in reply["reason"]
+    wrapped = {"ServerName": "notes", "ToolName": "add_note", "Arguments": {"text": "hello"}}
+    assert decision(monkeypatch, capsys, root, "call_mcp_tool", wrapped) == "ask"
+
+
 def test_every_tool_this_module_names_is_one_antigravity_lists():
-    # The tools Antigravity CLI 1.3.1 lists at the start of a session.
+    # The tools Antigravity CLI 1.3.1 lists at the start of a session. 1.4.9 lists the same
+    # names, but its calls name three file tools differently.
+    called = {"read_file", "write_file", "edit_file"}
     listed = set("""ask_custom_permission ask_permission ask_question browser_click_element
         browser_drag_pixel_to_pixel browser_get_dom browser_get_network_request browser_input
         browser_list_network_requests browser_mouse_down browser_mouse_up browser_move_mouse browser_press_key
@@ -288,7 +428,8 @@ def test_every_tool_this_module_names_is_one_antigravity_lists():
         send_command_input send_message view_file wait wait_5_seconds write_to_file""".split())
     named = (set(agy.FILE_TOOLS) | set(agy.SEARCH_TOOLS) | set(agy.INPUT_TOOLS) | agy.PLAIN_TOOLS
              | agy.NETWORK_TOOLS | agy.SCANNED_TOOLS | {"run_command", "call_mcp_tool"})
-    assert named <= listed, sorted(named - listed)
+    assert named <= listed | called, sorted(named - listed - called)
+    assert called <= named and set(agy.READ_ONLY) <= named
     # Running code in a notebook is left unknown on purpose: build-only blocks it.
     assert listed - named == {"notebook_execution"}
 
@@ -365,8 +506,21 @@ def test_doctor_reports_the_antigravity_hook(root, monkeypatch):
     assert report["configured"] and report["isolated"] and report["verified"] is False
     assert report["probe_decision"] is None
 
-    # Outside build-only mode nothing is run.
-    assert cli._antigravity_hook_report(root, "full")["verified"] is None
+    # Full mode runs the record probe (a write to a client's consent record), connected mode nothing.
+    write_hooks(root, working)
+    full = cli._antigravity_hook_report(root, "full")
+    assert full["verified"] is True and full["probe_decision"] == "deny", full
+    assert cli._antigravity_hook_report(root, "connected")["verified"] is None
+
+
+def test_doctor_wants_the_antigravity_hook_to_see_the_14_tool_names():
+    # A matcher that names 1.3.1's tools one by one misses the names 1.4.9 calls.
+    by_hand = ("run_command|manage_task|send_command_input|view_file|list_dir|grep_search|find_by_name|"
+               "write_to_file|replace_file_content|multi_replace_file_content|call_mcp_tool|open_browser_url|"
+               "invoke_subagent|future_tool")
+    missed = {name for name in cli._AGY_COVERAGE_PROBES if not cli._matcher_covers([by_hand], (name,))}
+    assert missed == {"read_file", "write_file", "edit_file", "mcp_server_tool"}
+    assert cli._matcher_covers([by_hand + "|read_file|write_file|edit_file|mcp_.+"], cli._AGY_COVERAGE_PROBES)
 
 
 def test_doctor_tells_the_owner_when_antigravity_is_not_gated(tmp_path, capsys, monkeypatch):

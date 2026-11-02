@@ -11,11 +11,10 @@ List available operation snapshots and their actual recovery state.
 Use the selected client and explicit org:
 
 ```sh
-torque revert revert show --org <org-alias> --limit 20 --workspace <private-path> --client <client-name>
+torque recover show --org <org-alias> --limit 20 --workspace <private-path> --client <client-name>
 ```
 
-The doubled `revert` is intentional: the first selects Torque's snapshot-aware
-delegate, the second selects its recovery subcommand. Report snapshot ID, operation,
+The legacy spelling `torque revert revert show` still works. Report snapshot ID, operation,
 capture time, status, parent chain and documented automatic recoverability.
 An existing manifest does not guarantee the operation completed or can be reversed;
 partial capture/finalization and unsupported operations remain visible.

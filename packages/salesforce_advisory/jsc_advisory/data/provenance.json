@@ -10,6 +10,14 @@
     {
       "entry": "flow-activation-on-deploy",
       "reason": "Corrected the source remedy's retrieved-XML contradiction to use definition-scoped activation sources; the Torque handoff records the upstream fix."
+    },
+    {
+      "entry": "developer-edition-is-not-sandbox",
+      "reason": "The detect step reads the Organization record instead of sf org display, which printed the access token before Salesforce CLI 2.136.8."
+    },
+    {
+      "entry": "sandbox-refresh-changes-orgid",
+      "reason": "The detect step reads the Organization record instead of sf org display, which printed the access token before Salesforce CLI 2.136.8."
     }
   ],
   "note": "Confidence labels describe the Torque source catalogue. The advisory layer re-verifies a fact when a dedicated read-only verifier is available and never uses a catalogue entry to deny an operation."

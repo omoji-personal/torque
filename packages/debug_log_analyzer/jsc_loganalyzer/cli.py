@@ -39,6 +39,24 @@ _DATETIME_LITERAL = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$"
 )
 
+# A query that ran and found no log analyzed nothing: that is missing evidence,
+# not a clean result, and it is reported with what to do next.
+NO_LOGS_SCOPE = "no_logs_found"
+NO_LOGS_NEXT_STEP = ("Set a debug-log trace flag for the user who runs the change, reproduce it, "
+                     "then rerun with --since set to a time just before the reproduction.")
+
+
+class LogFetchError(RuntimeError):
+    """The ApexLog query or the log bodies could not be read. An org with no logs is not this."""
+
+
+class UnreadLogs(LogFetchError):
+    """Some listed logs could not be fetched; `bodies` holds the ones that were."""
+
+    def __init__(self, bodies: list[str], unread: int, listed: int, why: str):
+        super().__init__(f"{unread} of {listed} log(s) could not be fetched ({why})")
+        self.bodies, self.unread = bodies, unread
+
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -85,7 +103,7 @@ def _default_since_iso() -> str:
 
 
 def fetch_latest_log(target_org: str) -> str:
-    """Fetch the body of the single most recent ApexLog from the target org."""
+    """Fetch the body of the single most recent ApexLog ("" when the org has none)."""
     bodies = fetch_recent_logs(target_org, since_iso=None, limit=1)
     return bodies[0] if bodies else ""
 
@@ -94,8 +112,10 @@ def fetch_recent_logs(target_org: str, since_iso: str | None, limit: int) -> lis
     """Fetch the bodies of up to `limit` recent ApexLogs (newest first).
 
     If `since_iso` is provided, restrict to logs with StartTime >= since_iso.
-    `limit` is hard-capped at MAX_LOOKBACK_LOGS. Returns [] on any failure
-    (subprocess/timeout/parse) — the analyzer fails soft, never raising.
+    `limit` is hard-capped at MAX_LOOKBACK_LOGS. Returns [] only when the query
+    ran and found no log. A query that fails or cannot be read raises
+    LogFetchError; listed logs whose bodies cannot be fetched raise UnreadLogs,
+    which carries the bodies that were.
     """
     capped = max(1, min(limit, MAX_LOOKBACK_LOGS))
     # StartTime is a SOQL datetime literal (no surrounding quotes). The caller
@@ -104,33 +124,49 @@ def fetch_recent_logs(target_org: str, since_iso: str | None, limit: int) -> lis
     query = "SELECT Id, StartTime FROM ApexLog"
     if since_iso:
         if not _DATETIME_LITERAL.match(since_iso):
-            return []
+            raise LogFetchError("--since must be an ISO-8601 instant, such as 2026-06-13T10:00:00Z")
         query += " WHERE StartTime >= " + since_iso
     query += " ORDER BY StartTime DESC LIMIT %d" % capped
 
-    bodies: list[str] = []
     try:
         list_proc = run_tool(
             ["sf", "data", "query", "--target-org", target_org, "--use-tooling-api",
              "--query", query, "--json"],
             capture_output=True, text=True, timeout=60,
         )
-        if list_proc.returncode != 0:
-            return []
-        list_data = json.loads(list_proc.stdout)
-        records = list_data.get("result", {}).get("records", [])
-        for rec in records:
-            log_id = rec.get("Id")
-            if not log_id:
-                continue
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise LogFetchError(f"the ApexLog query could not run ({type(exc).__name__})") from exc
+    if list_proc.returncode != 0:
+        raise LogFetchError(f"the ApexLog query failed (sf exit {list_proc.returncode})")
+    try:
+        records = json.loads(list_proc.stdout)["result"]["records"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise LogFetchError("the ApexLog query result could not be read") from exc
+    if not isinstance(records, list):
+        raise LogFetchError("the ApexLog query result could not be read")
+    log_ids = [rec["Id"] for rec in records if isinstance(rec, dict) and rec.get("Id")]
+    bodies: list[str] = []
+    problems: list[str] = []
+    for position, log_id in enumerate(log_ids):
+        try:
             body_proc = run_tool(
                 ["sf", "apex", "log", "get", "--target-org", target_org, "--log-id", log_id],
                 capture_output=True, text=True, timeout=60,
             )
-            if body_proc.returncode == 0 and body_proc.stdout.strip():
-                bodies.append(body_proc.stdout)
-    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
-        return bodies
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            # Stop: every further fetch could take its full timeout as well.
+            problems.append(type(exc).__name__)
+            if position + 1 < len(log_ids):
+                problems.append(f"{len(log_ids) - position - 1} not attempted")
+            break
+        if body_proc.returncode != 0:
+            problems.append(f"sf exit {body_proc.returncode}")
+        elif not body_proc.stdout.strip():
+            problems.append("empty body")
+        else:
+            bodies.append(body_proc.stdout)
+    if len(bodies) < len(log_ids):
+        raise UnreadLogs(bodies, len(log_ids) - len(bodies), len(log_ids), ", ".join(dict.fromkeys(problems)))
     return bodies
 
 
@@ -143,20 +179,35 @@ def main(argv: list[str] | None = None) -> int:
     if since_iso is None and args.since_deploy:
         since_iso = _default_since_iso()
 
+    unread, problem = 0, ""
     if args.log_file:
         log_texts = [Path(args.log_file).read_text(errors="replace", encoding="utf-8")]
     elif args.target_org:
-        if since_iso is not None:
-            log_texts = fetch_recent_logs(args.target_org, since_iso, args.limit)
-        else:
-            single = fetch_latest_log(args.target_org)
-            log_texts = [single] if single else []
-        if not log_texts:
-            if args.json:
-                print(json.dumps({"error": "could not fetch log", "score": 0, "findings": []}))
+        try:
+            if since_iso is not None:
+                log_texts = fetch_recent_logs(args.target_org, since_iso, args.limit)
             else:
-                print("ERROR: could not fetch log(s) from target org", file=sys.stderr)
+                single = fetch_latest_log(args.target_org)
+                log_texts = [single] if single else []
+        except UnreadLogs as exc:
+            # Analyze what was read, then report the run as incomplete.
+            log_texts, unread, problem = exc.bodies, exc.unread, str(exc)
+        except LogFetchError as exc:
+            if args.json:
+                print(json.dumps({"error": f"could not fetch log: {exc}", "score": 0, "findings": []}))
+            else:
+                print(f"ERROR: could not fetch log(s) from target org: {exc}", file=sys.stderr)
             return 2
+        if not log_texts and not unread:
+            window = f" since {since_iso}" if since_iso else ""
+            if args.json:
+                # No score: nothing was analyzed.
+                print(json.dumps({**Result(score=0).to_dict(), "score": None, "logs_analyzed": 0,
+                                  "analysis_scope": NO_LOGS_SCOPE, "next_step": NO_LOGS_NEXT_STEP}, indent=2))
+            else:
+                print(f"jsc-loganalyzer: no debug log found in {args.target_org}{window}; nothing was analyzed.")
+                print(f"  {NO_LOGS_NEXT_STEP}")
+            return 0
     else:
         print("ERROR: provide either --log-file or --target-org", file=sys.stderr)
         return 2
@@ -169,22 +220,32 @@ def main(argv: list[str] | None = None) -> int:
     result = Result(score=score, findings=findings)
 
     if args.json:
-        print(json.dumps({**result.to_dict(), "logs_analyzed": len(log_texts), "analysis_scope": "provided_file" if args.log_file else ("recent_available_logs" if since_iso else "latest_available_log")}, indent=2))
+        payload = {**result.to_dict(), "logs_analyzed": len(log_texts), "analysis_scope": "provided_file" if args.log_file else ("recent_available_logs" if since_iso else "latest_available_log")}
+        if unread:
+            payload.update(logs_unread=unread, error=f"could not fetch log: {problem}")
+            if not log_texts:
+                payload["score"] = None  # nothing was analyzed
+        print(json.dumps(payload, indent=2))
     else:
-        print(f"jsc-loganalyzer health score: {score}/100")
-        print(f"  P0: {sum(1 for f in findings if f.severity == 1)}")
-        print(f"  P1: {sum(1 for f in findings if f.severity == 2)}")
-        print(f"  P2: {sum(1 for f in findings if f.severity == 3)}")
-        print()
+        if log_texts:
+            print(f"jsc-loganalyzer health score: {score}/100")
+            print(f"  P0: {sum(1 for f in findings if f.severity == 1)}")
+            print(f"  P1: {sum(1 for f in findings if f.severity == 2)}")
+            print(f"  P2: {sum(1 for f in findings if f.severity == 3)}")
+            print()
         if findings and not args.quiet:
             for f in findings[:20]:
-                print(f"  [P{f.severity}] {f.category}: {f.message}")
+                # Finding.severity 1/2/3 displays as P0/P1/P2, as in the counts above.
+                print(f"  [P{f.severity - 1}] {f.category}: {f.message}")
                 if f.context:
                     print(f"    context: {f.context[:120]}")
             if len(findings) > 20:
                 print(f"  ... and {len(findings) - 20} more")
+        if unread:
+            print(f"ERROR: could not fetch log(s) from target org: {problem}", file=sys.stderr)
 
-    return 0
+    # Logs that were selected but not read leave the analysis incomplete.
+    return 2 if unread else 0
 
 
 if __name__ == "__main__":

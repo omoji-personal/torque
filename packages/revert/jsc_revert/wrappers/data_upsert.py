@@ -13,6 +13,7 @@ import sys
 import time
 
 from . import _common as c
+from jsc_common.soql import soql_literal
 from .data_update import _query_record
 from ..update_fields import parse_assignments
 
@@ -155,7 +156,7 @@ def _upsert_result(stdout: str) -> dict | None:
 def _query_by_external_id_tagged(target_org, sobject, field, value):
     if not isinstance(field, str) or not _FIELD.fullmatch(field) or not _FIELD.fullmatch(sobject) or value is None:
         return PRE_ERROR, None, None
-    safe_value = value.replace("\\", "\\\\").replace("'", "\\'")
+    safe_value = soql_literal(value)
     command = ["sf", "data", "query", "--target-org", target_org, "--query",
                f"SELECT FIELDS(ALL) FROM {sobject} WHERE {field}='{safe_value}' LIMIT 2", "--json"]
     code, stdout, _ = c.run_sf_subprocess(command, timeout_seconds=30)

@@ -10,7 +10,11 @@ Check the selected workspace, installed tools, and requested org connections.
 
 Read `torque context --workspace <path> --client <name> --json` when a client is selected.
 Inspect Torque and Salesforce CLI versions and the selected host's configured integrations.
-Do not dump credential-bearing config or raw `sf org display --json` into chat.
+Check each org with `sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" --target-org <org-alias> --json`;
+it prints no credential. Do not run `sf org display` (Salesforce CLI releases before
+2.136.8 print the access token), `sf org open --url-only`, `sf org auth show-*` or
+`sf org list` (every org on the machine, other clients' included): a command's output
+reaches the model whether or not it is repeated in chat, so filtering it afterwards is too late.
 
 For each org in the requested scope, resolve auth and summarize only org ID, alias,
 username or role where appropriate, instance, and connection status. Use live

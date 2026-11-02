@@ -1,9 +1,38 @@
 # Agent hosts
 
 Torque runs under two agent hosts: Claude Code (`claude`) and Antigravity (`agy`, with Gemini
-models). This page says what works under each one today, what was checked in a live session
-and what only in tests, and where the two differ. `src/torque/hosts.py` is the registry: each
-host's binary, session markers, playbook folder, hook file and launch options.
+models). Codex (`codex`) also reads part of a workspace, without the gate. This page says what
+works under each one today, what was checked in a live session and what only in tests, and
+where the two differ. `src/torque/hosts.py` is the registry: each host's binary, session
+markers, playbook folder, hook file and launch options.
+
+## What each host loads
+
+| From the workspace | Claude Code | Antigravity | Codex |
+|---|---|---|---|
+| Instructions | `CLAUDE.md`, which points it to `AGENTS.md` | `AGENTS.md` | `AGENTS.md` (1) |
+| Standing and mode rules | `.claude/rules/` | `.agents/rules/` | Not loaded (2) |
+| Recipes | `.claude/commands/`, as slash commands | `.agents/skills/`, as skills and slash commands | `.agents/skills/`, as skills (1) |
+| Knowledge skills | `.claude/skills/` | `.agents/skills/` | `.agents/skills/` (1) |
+| Worker roles | `.claude/agents/` | `.agents/agents/` | Not checked |
+| Gate (build-only, connected) | Hook in `.claude/settings.json` | Hook in `.agents/hooks.json` | None: Torque writes no `.codex/hooks.json` |
+| `torque launch`, `torque doctor` | Yes | Yes | No |
+
+(1) From OpenAI's Codex documentation, checked 2026-10-28, not run with Torque: Codex reads
+`AGENTS.md` from the project root down to the working folder
+([AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)) and the skills in
+`.agents/skills` from the working folder up to the repository root
+([skills](https://learn.chatgpt.com/docs/build-skills)). Start it in the workspace folder.
+
+(2) Codex's own rules are command-approval files in `.codex/rules/`, also from its
+documentation ([rules](https://learn.chatgpt.com/codex/agent-configuration/rules)). It names
+no folder of Markdown rules, so the standing rules, `build-only.md` and
+`production-approval.md` reach Codex only if something tells it to read them.
+
+Codex can run repository hooks from `.codex/hooks.json` once the owner trusts them, and a
+hook there can deny a call ([hooks](https://learn.chatgpt.com/docs/hooks)). Torque ships no
+Codex adapter, so nothing enforces build-only or connected mode in a Codex session and
+`torque doctor` does not report on Codex. Do not use Codex in such a workspace.
 
 ## Choosing the host
 
@@ -19,14 +48,15 @@ host's binary, session markers, playbook folder, hook file and launch options.
 
 | Area | Claude Code | Antigravity |
 |---|---|---|
-| Workspace files | `init` and `upgrade` write rules, recipes, worker roles and skills under `.claude/`. | The same content under `.agents/` in Antigravity's format. A recipe is a skill. `/help`, `/context` and `/undo` are `/torque-help`, `/torque-context` and `/torque-undo`, and text that mentions them names the new ones. |
+| Workspace files | `init` and `upgrade` write rules, recipes, worker roles and skills under `.claude/`. `/help`, `/context`, `/status`, `/security-review` and `/undo` are `/torque-help`, `/torque-context`, `/torque-status`, `/torque-security-review` and `/torque-undo`, because Claude Code answers those names itself; text that mentions them names the new ones. | The same content under `.agents/` in Antigravity's format. A recipe is a skill. `/help`, `/context` and `/undo` are `/torque-help`, `/torque-context` and `/torque-undo`, and text that mentions them names the new ones. |
 | Mode rule | `build-only.md` in a build-only workspace and `production-approval.md` in a connected one, in `.claude/rules/`. | The same two in `.agents/rules/`, with the `trigger: always_on` header. |
-| Build-only gate | Hook in `.claude/settings.json`. | Hook in `.agents/hooks.json` (`torque.gate_antigravity`). The same gate decides. The answer format differs, see below. |
+| Gate hook | In `.claude/settings.json`, wired by `init`, `ai-access full` and `ai-access build-only`. In full mode it only keeps tools from changing consent, approval and control records. | In `.agents/hooks.json` (`torque.gate_antigravity`), wired by `init`, `ai-access full` and `ai-access build-only`. The same gate decides. The answer format differs, see below. |
 | Connected mode and launch | `torque launch` starts `claude`, bound to one client. | `torque launch --host antigravity` starts `agy`, bound to one client. Written and tested offline. Not run in a live session. |
 | Approvals | Request, grant, single use. A record of how the approved call ended, when the after-call hooks are wired. | Request, grant and single use run through the same code. No record of how the call ended. |
 | Delegated launch | Passes only the listed `claude` options. | Passes only `-p`, `--print`, `--model`, `--add-dir`, `--output-format` and `--print-timeout`. Not run in a live session. |
 | Permission rules | `torque approval permissions` writes them to `.claude/settings.json`. | None. Torque writes no permission rules for Antigravity. |
-| Doctor, build-only | Checks the hook and runs it once on a made-up client path. | The same for the Antigravity hook. |
+| Doctor, build-only | Checks the hook and runs it on a made-up client path and on an ordinary read. | The same for the Antigravity hook. |
+| Doctor, full | Says whether record protection is in force: the hook is wired and blocks a made-up consent-record write. | The same for the Antigravity hook, which must also allow an ordinary read. A hook that cannot run, exits non-zero, refuses the read or allows the write makes doctor report not ready (exit 3). No hook, or a disabled one, is advice only. |
 | Doctor, connected | Checks the hook, the rules, consent and the probes. | Not checked. Doctor says so and reports not ready. |
 
 ## Mode rules
@@ -80,6 +110,9 @@ Checked only in tests, with no Antigravity session:
 - That Antigravity loads the two mode rules. They use the format of the other rules.
 - The three hook fixes in this version (typed input without text, an MCP call without a
   server or tool name, and the scan of `browser_subagent`, `schedule` and `read_url_content`).
+- Antigravity 1.4.9's tool shapes: `read_file`, `write_file` and `edit_file` with `Path`,
+  `run_command` without `Cwd`, and a connector tool sent as `mcp_SERVER_TOOL`. They were seen
+  with another hook on 2026-10-28 and replayed into Torque's hook.
 - Doctor's readiness by host.
 - That an `agy` or `antigravity` process counts as an AI session on macOS and Linux. It is not
   known that a running session shows under either name.
@@ -94,18 +127,24 @@ only there.
   session was started with. Every other such call is answered `ask`, so Antigravity's own
   permission flow decides.
 - **The permission mode cannot be seen.** Under Claude Code the gate refuses a call it cannot
-  check when prompts are skipped. Antigravity sends no permission mode, so the gate answers
-  `ask` there too. A session started with `--dangerously-skip-permissions` then runs it. A
-  delegated launch never passes that option. An owner launch can.
+  check when prompts are skipped. Antigravity sends no permission mode, and a session started
+  with `--dangerously-skip-permissions` would run an `ask`. So when the gate itself asks, the
+  Antigravity hook answers `deny` in every session. The reason names the exact command and
+  says the consultant runs it in their own terminal. Only the `ask` for a call the gate has no
+  objection to is left to Antigravity's own flow, as above. A delegated launch never passes
+  that option. An owner launch can.
 - **Unattended sessions.** Under `claude -p` an `ask` has no one to answer it, so the call is
   refused. It is not known what `agy -p` does with `ask`. A session launched with a launch
-  binding is therefore answered `deny` where the gate would ask. A headless Antigravity
-  session that Torque did not launch still gets `ask`.
+  binding gets the same `deny`, and its reason says the session is unattended.
 - **No rules file for permissions.** Under Claude Code the generated permission rules are a
   second layer. Under Antigravity the hook is the only layer.
 - **The process check is skipped on Windows, for both hosts.** On macOS and Linux a launch
   record binds only when the launched process is the hook's own process or one of its nearest
   ancestors, with the same start time. On Windows that check does not run.
+- **File protection on Windows is an access list, not a mode.** The key, grants, consent
+  evidence and before-state files are private to you, SYSTEM and Administrators, and a key or
+  grant that others can read is refused (see `connected-approval.md`). The launch-binding limit
+  above is unchanged.
 - **Nothing marks an Antigravity session on Windows.** No environment variable is known that
   Antigravity sets for its commands, so none is listed. On macOS and Linux the process name is
   checked. On Windows the presence check rests on the terminal test and the typed code.

@@ -11,8 +11,8 @@ Keep raw responses, snapshots, IDs, and client configuration outside this reposi
    project containing a new custom object with a text Name, one text field, and a
    permission set granting only that object's CRUD and the field's read/edit access.
    Verify those exact component names are absent before deploying.
-2. Validate with `torque revert ... deploy --target-org ALIAS --source-dir PATH
-   --dry-run`. Capture the exact deployment ID from its snapshot. Run the MetaAPI
+2. Validate with `torque deploy --workspace PRIVATE --client TEST --target-org ALIAS
+   --source-dir PATH --dry-run`. Capture the exact deployment ID from its snapshot. Run the MetaAPI
    QA surface with that ID and an explicit manifest. Confirm `checkOnly=true`,
    terminal success, and that validation created no object.
 3. Deploy the same artifacts. Verify the separate job ID, `checkOnly=false`,
@@ -40,11 +40,12 @@ Keep raw responses, snapshots, IDs, and client configuration outside this reposi
    object. Verify all are absent from active metadata/normal queries. Do not
    equate a soft delete with permanent erasure or purge unrelated recycle-bin data.
 
-Recovery command spelling retains the native legacy delegate:
+Recovery uses the public route; the legacy `torque revert ... revert preview|exec` spelling
+still works:
 
 ```sh
-torque revert --workspace PRIVATE --client TEST revert preview SNAPSHOT --org ALIAS
-torque revert --workspace PRIVATE --client TEST revert exec SNAPSHOT --org ALIAS \
+torque recover preview SNAPSHOT --org ALIAS --workspace PRIVATE --client TEST
+torque recover run SNAPSHOT --org ALIAS --workspace PRIVATE --client TEST \
   --reason "Restore the acceptance test's prior value"
 ```
 

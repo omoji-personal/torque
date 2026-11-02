@@ -94,7 +94,12 @@ def load_initiative(workspace: str | Path, name: str) -> tuple[Path, dict, dict]
     root, firm = ws.load_workspace(workspace)
     slug = ws.slug_for(name)
     folder = ws._inside(root, root / "initiatives" / slug)
-    binding = ws._read_json(ws._inside(root, folder / "binding.json"))
+    missing = (f'no initiative "{name.strip()}" in the workspace at {root} (no initiatives/{slug}/binding.json). '
+               "List the initiatives with "
+               + ws.command_text(["torque", "initiative", "list", "--workspace", str(root)])
+               + ", or create this one with "
+               + ws.command_text(["torque", "initiative", "add", name.strip(), "--workspace", str(root)]) + ".")
+    binding = ws._read_json(ws._inside(root, folder / "binding.json"), missing)
     state = ws._read_json(ws._inside(root, folder / "state" / "engagement.json"))
     if (binding.get("schema") != "torque.binding/1" or binding.get("kind") != "initiative"
             or binding.get("slug") != slug or not isinstance(binding.get("repositories"), list)):

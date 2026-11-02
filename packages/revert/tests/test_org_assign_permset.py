@@ -47,6 +47,8 @@ def test_assignment_response_saved_without_shape_crash(tmp_path, monkeypatch, ca
     commands = []
     def execute(command, **kwargs):
         commands.append(command)
+        if command[:3] == ['sf', 'alias', 'list']:
+            return 1, '{}', ''  # Query identity unavailable; exercise response fallback.
         return exit_code, raw, ""
     monkeypatch.setattr(common, "run_sf_subprocess", execute)
     args = build_parser().parse_args(["org", "assign", "permset", "--target-org", "synthetic-dev",
@@ -62,7 +64,8 @@ def test_assignment_response_saved_without_shape_crash(tmp_path, monkeypatch, ca
     assert saved["phases"]["post_finalize"]["status"] == ("complete" if capture == "captured" else "partial")
     assert saved["revert_capabilities"]["automatic_revertible"] is False
     assert (paths[0].parent / "underlying-result.json").read_text(encoding="utf-8") == raw
-    assert len(commands) == 1 and commands[0][-2:] == ["--on-behalf-of", "synthetic-user"]
+    writes = [cmd for cmd in commands if 'assign' in cmd]
+    assert len(writes) == 1 and writes[0][-2:] == ["--on-behalf-of", "synthetic-user"]
     assert released == [True]
     assert ("capture is incomplete" in capsys.readouterr().err) == (capture != "captured")
 

@@ -117,14 +117,18 @@ def _forensic_recovery_path(operation_type: str) -> str:
             "Manual revert: `sf data delete record --record-id <id>` for each, in reverse-FK order."
         ),
         "data_bulk_update": (
-            "Snapshot captured payload.before_csv. Manual revert: "
-            "`sf data update bulk --file <before_csv> --sobject <obj>`."
+            "Snapshot captured payload.before_json and before_csv for review. Manual revert: "
+            "`sf data update bulk --file <replay_csv> --sobject <obj> --target-org <alias> --line-ending LF`. "
+            "payload.replay_csv includes Id and #N/A for prior nulls. Older bundles without "
+            "replay_csv need a reviewed replay file: empty CSV cells do not restore nulls."
         ),
         "data_bulk_upsert": (
             "Snapshot captured payload.before_csv (existing rows BEFORE the upsert). "
-            "Manual revert is split: (a) for rows that existed before, reapply before_csv via "
-            "`sf data update bulk`; (b) for rows newly INSERTED by the upsert, query post-state "
-            "by external-id then `sf data delete bulk` those IDs."
+            "Manual revert is split: (a) for rows that existed before, reapply payload.replay_csv "
+            "via `sf data update bulk --file <replay_csv> --sobject <obj> --target-org <alias> --line-ending LF` (Id plus #N/A for prior nulls); "
+            "older bundles need a reviewed replay file because empty cells do not restore nulls. "
+            "(b) identify newly inserted IDs from this exact job's successful results, then "
+            "`sf data delete bulk` only those verified IDs."
         ),
         "data_bulk_delete": (
             "Snapshot captured payload.before_csv (the full row content of all deleted records). "
@@ -166,9 +170,10 @@ def _forensic_recovery_path(operation_type: str) -> str:
             "list (payload.expected_components) — not metadata-before bytes. Manual revert: "
             "(a) review expected_components for the impacted metadata types; (b) retrieve "
             "the prior production state from an earlier snapshot or git tag; (c) `jsc deploy` "
-            "that earlier state. Recommended pre-promotion practice: run `jsc deploy --dry-run` "
-            "against the validation job's component manifest BEFORE promotion to create a "
-            "metadata-before snapshot that v7.17.0's normal revert planner can use."
+            "that earlier state. Before promotion, run `sf project retrieve start "
+            "--metadata <Type:Name> --target-org <alias> --target-metadata-dir <baseline> --unzip --json` "
+            "for every validated component and verify the saved files. This is a manual "
+            "retrieval baseline, not an automatic Torque recovery bundle."
         ),
     }
     return paths.get(operation_type, (
@@ -224,11 +229,12 @@ def compute_revertibility(operation_type: str, payload: dict) -> dict[str, Any]:
                 "side_effects_warning": ["Deletion recovery requires the exact created record ID; missing evidence does not mean no record was created."],
             }
 
-    if operation_type == "org_assign_permset" and not payload.get("created_psa_ids"):
+    if operation_type in ('org_assign_permset', 'org_assign_permsetlicense') and not payload.get(
+            'created_psa_ids' if operation_type == 'org_assign_permset' else 'created_psl_ids'):
         return {
             "automatic_revertible": REVERTIBLE_FALSE,
             "manual_recovery_path": (
-                "The command response did not capture PermissionSetAssignment IDs. "
+                "The command evidence did not capture newly created PermissionSetAssignment or PermissionSetLicenseAssign IDs. "
                 "Review the saved result and identify the exact assignments created by this "
                 "operation before manually removing any assignment. Assignment creation may "
                 "have succeeded; absent IDs are not evidence that nothing changed."
@@ -304,7 +310,9 @@ def compute_revertibility(operation_type: str, payload: dict) -> dict[str, Any]:
         absent = [f for f in files if f.get("before_state") == "absent"]
         net_new = bool(files) and len(absent) == len(files)
 
-        if net_new:
+        if sel.get('dry_run'):
+            why = 'This was a dry run; the pre-snapshot retrieve was intentionally skipped.'
+        elif net_new:
             names = ", ".join(f.get("fullName", "?") for f in absent[:4])
             why = (
                 "Every component in this deploy was ABSENT from the org "
@@ -358,6 +366,22 @@ def compute_revertibility(operation_type: str, payload: dict) -> dict[str, Any]:
                     "Retrieved parent containers are context, not implicitly selected for recovery.",
                     "Review the original selectors and captured files; an incomplete capture cannot undo all components.",
                 ],
+            }
+        readiness = payload.get('recovery_readiness')
+        if readiness in ('in_flight', 'unknown'):
+            guidance = (
+                'Captured before-state is restorable if the deploy completes and post-deploy capture succeeds. '
+                'Automatic recovery is not ready while deployment is in flight.'
+                if readiness == 'in_flight' else
+                'Deployment completion and recovery readiness are separate. The post-deployment '
+                'baseline was not established under the original org lease. Review the '
+                'exact job result and intervening changes; manually redeploy the captured '
+                'metadata-before/ files only within the original selectors, if complete.'
+            )
+            return {
+                'automatic_revertible': REVERTIBLE_FALSE,
+                'manual_recovery_path': guidance,
+                'side_effects_warning': ['A later retrieve cannot prove the original post-deployment state.'],
             }
 
     # ── Special case: hard-delete (overrides the True default) ────────────
@@ -500,6 +524,20 @@ def compute_revertibility(operation_type: str, payload: dict) -> dict[str, Any]:
                 "delete-by-id will fail with REFERENCE_FOUND",
                 "Cascade-delete behavior depends on each FK relationship's cascade setting",
                 "External system references to created IDs break on delete",
+            ],
+        }
+
+    if operation_type in ('data_bulk_update', 'data_bulk_upsert'):
+        return {
+            'automatic_revertible': REVERTIBLE_FALSE,
+            'manual_recovery_path': _forensic_recovery_path(operation_type),
+            'side_effects_warning': [
+                'Replay does not remove trigger- or flow-created children. Automation runs again and can rewrite fields.',
+                'Fields outside the input are not restored. Replay overwrites later edits; review them first.',
+                'Relationship columns restore links by external ID only; a blank relationship cell leaves the current link unchanged. '
+                'Check the captured Relationship.Id in before.json: only a null parent Id establishes a previously empty parent. '
+                'In a reviewed replay file, replace the relationship column with the actual lookup field and restore the captured parent Id, '
+                'or #N/A only when that parent Id is null. A null external ID alone does not mean there was no parent.',
             ],
         }
 

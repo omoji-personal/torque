@@ -49,9 +49,15 @@ python3 -m venv .venv
 .venv/bin/python -m pip install '.[dev]'
 .venv/bin/python workflows/sync_adapters.py --check
 .venv/bin/python scripts/sync-workflows.py --check
-.venv/bin/python scripts/test-offline.py -q
+.venv/bin/python scripts/test-offline.py -q --workers 4
 ```
 
+`--workers N` runs the pytest tests in N processes (pytest-xdist, a development
+dependency), as CI does; the standalone fixture suites still run one at a time.
+Without it the runner uses one process, which suits `--pdb` and focused runs. On
+Windows without long paths enabled, keep `TMP` short (such as `C:\tq`): some tests
+build evidence paths of about 190 characters inside it, and the runner prints a note
+when the temporary folder is deep.
 Use a regular install after source changes when validating installed behavior.
 The offline runner selects the current checkout for pytest and child-process
 imports, even if an older Torque package is installed. It runs the standalone
@@ -61,14 +67,24 @@ this explicitly omits the standalone suites and is not full qualification.
 
 The runner uses a temporary home and configuration directories, drops ambient
 authentication variables, and exposes only stubbed live tools and the local tools
-needed by fixtures. Windows stubs use distlib's native executable launchers from
-the development dependencies. A Python startup guard follows child interpreters,
+needed by fixtures. Windows stubs are `.cmd` shims for the trusted interpreter, not
+new unsigned `.exe` files (Smart App Control blocks those at random with WinError
+4551), plus extensionless shell stubs for Git Bash. Python callers, including
+`jsc_common.tools.run`, get the stub's command with arguments unchanged; a shim
+started by cmd.exe or Bash itself is subject to that shell's own quoting. Inside a
+shell, call stubs by bare name (`sf`, not `sf.exe`). A Python startup guard follows child interpreters,
 blocks external DNS/TCP/UDP and unapproved direct executables, and resolves tool
 stubs before Windows can search the working directory. Numeric loopback remains
 available for local fixture servers. Git network protocols and user hooks are
 disabled. This is accidental-call isolation for trusted tests, not an OS sandbox
 for hostile Python, native extensions or arbitrary commands inside a shell.
-Use an OS network sandbox when running untrusted code.
+Use an OS network sandbox when running untrusted code. Plain `pytest` (such as
+`pytest tests/test_cli.py`) gives its session the same environment first: the
+checkout ahead of any installed Torque, the stubs, the environment allowlist with a
+temporary home and client folder, and the guard. It does not run the standalone
+fixture suites, so full qualification stays with the runner, and it stops with the
+runner commands when that environment cannot be set up, for example when an
+installed Torque was already imported.
 
 Keep conversational recipes under `workflows/`, then run `workflows/sync_adapters.py`
 and `scripts/sync-workflows.py` to refresh adapters and wheel resources. See
@@ -80,6 +96,11 @@ preserved local edits, failed/partial results, meaningful business assertions,
 error paths and recovery scope. Avoid tests that merely mirror implementation or
 report a green run when no tests executed. Live examples need explicit disposable
 org scope and cleanup of only their own artifacts.
+
+For a release, CI's Linux Python 3.14 job uploads the wheel, the source archive and
+their `SHA256SUMS` as the candidate artifact, and prints the checksums in its log.
+Attach the three files to the GitHub release of the tag and paste the `SHA256SUMS`
+lines into its notes ([verify a release wheel](docs/installation.md#verify-a-release-wheel)).
 
 Pull requests should state the concrete problem, resulting behavior, validation
 and remaining limits. Retain relevant provenance when adapting inherited code.

@@ -23,14 +23,20 @@ from __future__ import annotations
 import json
 import re
 
+from . import hosts
+
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 # Commands Antigravity answers itself; the recipe becomes /torque-NAME.
-BUILTIN_COMMANDS = ("help", "context", "undo")
+BUILTIN_COMMANDS = hosts.ANTIGRAVITY.builtin_commands
 # One of those names written as a slash command (`/context`), not as part of a
 # path or an address (project/context, /context/notes.md, https://help.example.com).
-_BUILTIN_MENTION = re.compile(r"(?<![\w/.:~})-])/(" + "|".join(BUILTIN_COMMANDS) + r")(?![\w/-]|\.\w)")
+_BUILTIN_MENTION = hosts.mention_pattern(BUILTIN_COMMANDS)
 INPUT_NOTE = "the text sent with this command, or the current request when none was sent."
 # Claude Code tool name -> Antigravity tool name. Only names seen working are listed.
+# Antigravity 1.4.9 still lists these names when a session starts (2026-10-28), though
+# its calls and its hook input name the file tools read_file, write_file and edit_file
+# (gate_antigravity reads both). A worker that lists the new names has not been tried,
+# and an unknown name can hang one, so these stay.
 TOOLS = {"Read": "view_file", "LS": "list_dir", "Grep": "grep_search", "Glob": "find_by_name",
          "Bash": "run_command", "Write": "write_to_file", "Edit": "replace_file_content"}
 READ_TOOLS = ("view_file", "list_dir", "grep_search", "find_by_name")
@@ -69,14 +75,14 @@ def _page(header: list[str], body: str) -> str:
 
 
 def skill_name(name: str) -> str:
-    return "torque-" + name if name in BUILTIN_COMMANDS else name
+    return hosts.recipe_name(hosts.ANTIGRAVITY, name)
 
 
 def _commands(body: str) -> str:
     """The text with each mention of a recipe Antigravity renames (`/context`)
     pointing at its name there (`/torque-context`); the bare name is
     Antigravity's own command."""
-    return _BUILTIN_MENTION.sub(lambda match: "/" + skill_name(match.group(1)), body)
+    return hosts.rename_mentions(hosts.ANTIGRAVITY, body)
 
 
 def rule(name: str, text: str) -> str | None:

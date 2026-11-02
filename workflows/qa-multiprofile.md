@@ -22,5 +22,11 @@ parallel only when their state and mutations do not interfere. Exercise positive
 negative and permission paths; compare screens, record results and error behavior.
 Preserve the operator's original session and account for created test data.
 
+Test records: save each created record's Id when it is created, in the private task
+directory. Clean up by deleting only those Ids (an Id-file delete such as
+`sf data delete bulk --file ids.csv` with an Id column). Never build a delete from a
+query that matches by name, title, creator or date. If the Id list is lost or
+incomplete, stop and ask instead of matching.
+
 Report per-user evidence and unsupported/unrun combinations. Admin-only coverage
 does not satisfy end-user UAT; a backend query does not prove a rendered experience.

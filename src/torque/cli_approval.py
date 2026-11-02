@@ -304,6 +304,7 @@ def _launch_binding(p) -> int:
 
 
 def _request(p, tail) -> int:
+    from functools import lru_cache
     from . import approval, before_state, consent
     item = approval._usable_consent(p.workspace, p.client)
     metadata = list(p.capture_before_metadata or []) + (list(p.metadata) if p.capture_before else [])
@@ -316,8 +317,10 @@ def _request(p, tail) -> int:
         raise ws.WorkspaceError("capture metadata or records for one request, not both")
     if records and "records" not in consent.data_allowed(item, p.org):
         raise ws.WorkspaceError("this client's consent does not cover record data; use --manual-recovery")
-    # The org is checked live against the consent before anything is read from it.
-    org_id, _ = approval._org_identity(item, p.org, None)
+    # The org is checked live against the consent before anything is read from it, once: the
+    # request below reuses this answer instead of starting the Salesforce CLI again.
+    resolve = lru_cache(maxsize=None)(approval._resolver(None))
+    org_id, _ = approval._org_identity(item, p.org, resolve)
     before = None
     if p.before_state:
         before = before_state.import_before_state(p.workspace, p.client, p.change, Path(p.before_state),
@@ -335,7 +338,8 @@ def _request(p, tail) -> int:
     record = approval.create_request(p.workspace, p.client, p.change, p.org, argv=tail or None, mcp=mcp,
                                      browser_minutes=p.minutes if p.browser else None, purpose=p.purpose,
                                      before_state_event=before["event_id"] if before else None,
-                                     manual_recovery=p.manual_recovery, validated_job=p.validated_job)
+                                     manual_recovery=p.manual_recovery, validated_job=p.validated_job,
+                                     resolve=resolve)
     if p.json:
         _print(record)
         return 0
@@ -344,7 +348,10 @@ def _request(p, tail) -> int:
     if before:
         print(f"Before-state: {before['path']} ({len(before['files'])} files).")
     print("Stop here. Ask the consultant to run, in their own terminal:")
-    print(f"  torque approval grant {record['id']} --workspace {p.workspace} --client {p.client}")
+    # The workspace's full path: the consultant's terminal is in another folder.
+    root = ws.load_workspace(p.workspace)[0]
+    print("  " + ws.command_text(["torque", "approval", "grant", record["id"], "--workspace", str(root),
+                                  "--client", p.client]))
     if record["kind"] == "command":
         print("After they say it is granted, run exactly this, from this folder:")
         print(f"  {approval.printable(record['command'])}")

@@ -56,15 +56,23 @@ def test_session_evidence_is_rechecked_without_rewriting_history(engagement, sta
 @pytest.mark.parametrize("evidence", [[], "bad", {}, {"path": "/tmp/synthetic"},
     {"path": "relative", "sha256": "0" * 64, "basis": "file reference recorded; contents not evaluated"},
     {"path": "/tmp/synthetic", "sha256": "not-a-hash", "basis": "file reference recorded; contents not evaluated"}])
-def test_malformed_session_evidence_is_actionable_and_never_creates_a_handoff(engagement, evidence):
+def test_malformed_session_evidence_is_named_and_never_read_as_evidence(engagement, evidence):
     root, alpha, _, _, entry = engagement
     entry["evidence"] = evidence
     path = alpha / "sessions" / f"{entry['id']}.json"
     path.write_text(json.dumps(entry), encoding="utf-8")
     destination = alpha / "artifacts/handoff.md"
     code, output, error = invoke(root, "handoff", "--output", str(destination))
-    assert code == 2 and output == "" and "invalid session evidence" in error
-    assert entry["id"] in error and not destination.exists()
+    assert code == 0 and error == ""
+    text = destination.read_text(encoding="utf-8")
+    # The handoff says it is incomplete and names the record; the record is not presented.
+    assert "## Records not shown" in text
+    assert f"sessions/{entry['id']}.json: invalid session evidence reference" in text
+    assert "Reported completion" not in text
+    # A reader that asks for strict records still refuses it, naming the entry.
+    with pytest.raises(ws.WorkspaceError, match="invalid session evidence") as refused:
+        ws.list_sessions(root, "Alpha")
+    assert entry["id"] in str(refused.value)
     assert json.loads(path.read_text(encoding="utf-8")) == entry
 
 
@@ -73,9 +81,17 @@ def test_malformed_session_evidence_is_actionable_and_never_creates_a_handoff(en
 def test_malformed_session_fields_do_not_break_the_cli(engagement, field, value):
     root, alpha, _, _, entry = engagement
     entry[field] = value
-    (alpha / "sessions" / f"{entry['id']}.json").write_text(json.dumps(entry), encoding="utf-8")
+    path = alpha / "sessions" / f"{entry['id']}.json"
+    path.write_text(json.dumps(entry), encoding="utf-8")
+    recorded = path.read_bytes()
+    # Context shows the rest and names the record it skipped; it never reads it as valid.
     code, output, error = invoke(root, "context")
-    assert code == 2 and output == "" and "invalid session record" in error
+    assert code == 0 and error == "" and f"sessions/{entry['id']}.json: not a valid session record" in output
+    assert "Reported completion" not in output
+    # A reader that asks for strict records still refuses it, and nothing rewrote the file.
+    with pytest.raises(ws.WorkspaceError, match="invalid session record"):
+        ws.list_sessions(root, "Alpha")
+    assert path.read_bytes() == recorded
 
 
 def test_retargeted_evidence_never_reads_sibling_client(engagement, monkeypatch):
@@ -157,8 +173,13 @@ def test_malformed_metadata_details_are_diagnosed_before_handoff(engagement, mon
     event["observation"]["metadata"] = metadata
     change_root, _ = changes.load_change(root, "Alpha", change["id"])
     (change_root / "events" / f"{event['id']}.json").write_text(json.dumps(event), encoding="utf-8")
+    # The handoff names the observation it could not read instead of presenting it.
     code, output, error = invoke(root, "handoff")
-    assert code == 2 and output == "" and "invalid metadata" in error
+    assert code == 0 and error == "" and "## Records not shown" in output and "invalid metadata" in output
+    assert "Synthetic report" not in output
+    # Approval and recovery code reads change history strictly, as before.
+    with pytest.raises(ws.WorkspaceError, match="invalid metadata"):
+        changes.get_change(root, "Alpha", change["id"])
 
 
 def test_capture_length_is_part_of_evidence_integrity(engagement):

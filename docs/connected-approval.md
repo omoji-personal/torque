@@ -33,7 +33,7 @@ sandbox. The limits are listed below.
 | Org writes | any other `sf`/`sfdx` command with an org flag, `sf api request` other than a plain GET, `torque deploy/data/org/recover`, `jsc` write verbs, Salesforce MCP tools that are not clearly reads | allowed once, by consuming a matching approval |
 | Torque browser | `torque browser ... --target-org ORG` (and `torque qa` with an org) | needs metadata and record-data consent and a granted browser window for that org; Torque starts an isolated browser and checks its org (see below) |
 | External browser and desktop tools | screenshots, page reads, navigation, clicks, typing, scripts and form input through browser MCP, devtools or desktop servers, and Antigravity's own browser tools (`open_browser_url`, `read_browser_page`, `browser_*` and the rest) | refused: tool arguments, URLs and tab IDs do not establish the current context. The tools are recognized by name, the same names build-only mode blocks ([build-only](ai-access.md#what-build-only-blocks)) |
-| Credentials and org listings | `sf org display` and `sf org display user` (they print an access token), `sf org open` with `--url-only`, `-r` or `--json` (a login URL), `sf org generate password`, `sf org login ...`, `sf org auth ...`; `sf org list`, `sf org list auth`, `sf alias list`, `sf auth list`, `sf env list` (every org this machine is logged in to, other clients' included); Salesforce MCP tools named for a token, password or credential, or for listing all orgs | refused, with or without an approval, in every permission mode and whether or not a client is bound. No approval can be requested for them. The reason names the query to use instead: `sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"` (a record read, so the consent must cover `records`). See "Credential and org-listing commands" below |
+| Credentials and org listings | `sf org auth ...`, among them `show-access-token`, `show-sfdx-auth-url` and `show-user-password` (they print the secrets), `sf org display` and `sf org display user` (an access token; `org display` shows it only before Salesforce CLI 2.136.8), `sf org open` with `--url-only`, `-r` or `--json` (a login URL), `sf org generate password`, `sf org login ...`; `sf org list`, `sf org list auth`, `sf alias list`, `sf auth list`, `sf env list` (every org this machine is logged in to, other clients' included); Salesforce MCP tools named for a token, password or credential, or for listing all orgs | refused, with or without an approval, in every permission mode and whether or not a client is bound. No approval can be requested for them. Where the bound client's consent lets the session run it, the reason names the org identity query to use instead, `sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" --target-org ALIAS`, which metadata consent covers; otherwise it says to ask the consultant. See "Credential and org-listing commands" below |
 | Programs the gate cannot check | `git`, `hg`, `gh`, linters/formatters, `sf code-analyzer`, `python x.py`, `node`, `bash script.sh`, `npm run`, `pytest`, `curl` to a Salesforce host, an MCP tool under a neutral name whose arguments name a Salesforce host, any program it does not recognize | classified as unverifiable; the gate requests review in prompting modes. Run untrusted project tooling without Salesforce credentials in an isolated account or container; a prompt does not constrain its environment |
 | Approval administration | `torque approval grant/deny`, `torque client consent record/sign-off/suspend`, `torque launch`, `torque workspace ai-access` and `guarded-reads`, `torque approval permissions --write`, `torque guarded policy` and `test-records` changes, `sf alias set`, `sf config set`, an `sf` command whose command words the shell builds at run time (`sf org $X`, `sf org d*`), a command that sets `SF_CONTAINER_MODE` or `SFDX_CONTAINER_MODE`, desktop control (computer use) | refused (`torque client consent show`, which only displays the bound client's own record, stays allowed) |
 | A command the gate cannot read the way it runs | one of Torque's own commands with a word the shell builds (`torque workspace ${x:-ai-access} full`, an unquoted `$VAR`, a glob, `--summary=$x`), with `--` where the command takes none (`torque -- workspace ai-access full`), or with PowerShell's `--%`, `@args` or a computed `(...)` argument; any Torque command whose client, initiative or org option gets a value the shell fills in (`--client "$NAME"`: the gate would decide by the text, and the command would run for whatever the variable holds); any Torque command with an option's name cut short (`--target other` for `--target-org other`: the parser of a delegated command such as `torque logs` would take it as that option, and the last one given wins; Torque's own commands refuse a shortened name themselves); an `sf` command whose words are only part of a record or log read (`sf query`, `sf log`), which the CLI offers to complete; an `sf` or delegated Torque command with a value attached to a short option or short options written together (`-XDELETE`, `-oALIAS`, `-to ALIAS`) | refused. Quote text (`--summary 'costs $5'`), write the command's words and option names out in full, and write each option and its value as separate words. A double-quoted variable is accepted as an option's value (`--summary "$TEXT"`) in Bash; in a PowerShell call it is not (see "What Windows PowerShell hands a program") |
@@ -353,7 +353,7 @@ connected mode. An already-open tab may contain another client's data; neither a
 nor a URL supplied in tool arguments verifies its current context. Use Torque's isolated
 Playwright session for browser work.
 
-`torque approval request --browser --minutes 20 --purpose "Add Tier to the Case layout" --org acme-sbx ...`
+`torque approval request --workspace . --client Acme --change chg-0123456789ab --org acme-sbx --browser --minutes 20 --purpose "Add Tier to the Case layout"`
 asks for a window of up to 30 minutes for one org. Clicks cannot be listed in advance, so
 the window is per org and time, not per action. In a production org the request needs
 `--manual-recovery TEXT`.
@@ -407,21 +407,31 @@ context, and the run stops.
 
 ## Credential and org-listing commands
 
-Some `sf` commands hand the session a credential. `sf org display` prints the org's access
-token (and with `--verbose` its auth URL). `sf org open --url-only` prints a URL that signs in
-without a password. `sf org generate password` prints a password. The `sf org login` commands
+Some `sf` commands hand the session a credential. `sf org auth show-access-token`,
+`show-sfdx-auth-url` and `show-user-password` print the org's access token, its auth URL and a
+user's password. `sf org display` printed the access token (and with `--verbose` the auth URL)
+until Salesforce CLI 2.136.8, which shows `[REDACTED]` there instead (Salesforce CLI release
+notes and the plugin-org source, checked 2026-10-28). `sf org open --url-only` prints a URL that
+signs in without a password; the CLI warns that sharing it is the same as logging someone in.
+`sf org generate password` prints a password. The `sf org login` commands
 take a credential, can print tokens with `--json`, and can point an alias at another org.
 `sf org list` and `sf alias list` show every org this machine is logged in to, other clients'
-orgs included, and `sf org list --json` can also print their access tokens. None of these is
+orgs included, and on older Salesforce CLI releases `sf org list --json` also printed their
+access tokens. None of these is
 a read, and none is a write an approval can cover. The gate refuses them for the session, and
 `torque approval request` refuses to create a request for them. The consultant runs them in
 their own terminal.
 
 To check which org an alias points to, the session runs
-`sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"`. It is a
-record read, so the client's consent must cover `records`. Where it does not and guarded reads are
-on, the session runs `torque guarded org --workspace . --client NAME --target-org ALIAS` instead; the
-gate's refusal names whichever of the two the session may run.
+`sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" --target-org ALIAS`.
+It reads only the org's own identity, which the client's consent records for each approved org,
+so metadata consent covers it (record-data consent does too). Only this shape counts: a SELECT
+of `Id`, `Name`, `IsSandbox`, `OrganizationType` or `InstanceName`, each once, from
+`Organization` with nothing after it, written out, with `--query` (`-q`), `--target-org` (`-o`),
+`--json` and `--result-format` (`-r`) and no other option. Any other query of Organization, such
+as its address or primary contact, is a record read. The refusal of a credential command names
+this query where the bound client's consent lets the session run it, and otherwise says to ask
+the consultant. `torque guarded org` answers the same question where guarded reads are on.
 
 What is refused:
 
@@ -434,7 +444,9 @@ What is refused:
   URL instead of opening a browser. A command that sets one of those variables is refused
   too. `sf org open` with none of these opens the consultant's browser and stays a write
   that needs an approval.
-- `org generate password`, every `org login` variant, and every `org auth` subcommand.
+- `org generate password`, every `org login` variant, and every `org auth` subcommand, with
+  `org auth show-access-token`, `org auth show-sfdx-auth-url` and `org auth show-user-password`
+  also refused when shortened (`sf show-access-token`).
 - `org list` (alone or with `auth`), `auth list`, `alias list` and `env list`.
   `org list limits`, `metadata`, `metadata-types`, `users` and `sobject record-counts` read one
   named org and stay reads; without an org flag they are refused like any other read of the
@@ -494,6 +506,16 @@ and the org, and it is not a sandbox. Known forms that are not refused:
   (AppleScript, `tmux send-keys`) to answer the grant prompt. Tier 1 records intent and
   catches mistakes; it is not a boundary against a session that writes code to get around it.
   The same account can remove consume markers and replay grants within their validity.
+  On Windows Torque creates the key, grants, consent evidence and before-state files with a
+  security descriptor that makes you the owner and gives access to you, SYSTEM and
+  Administrators only (nothing inherited), set when the file is created so no handle can
+  predate it. The gate and `torque doctor` refuse a key or grant that you do not own (an
+  Administrators-owned file does not count) or whose access list is null or gives any other account a read, write, attribute, delete or permission right.
+  The message names the one repair, for example
+  `Remove-Item -LiteralPath 'C:\Users\USER\AppData\Roaming\torque\approval.key'`: a key or grant that others could
+  read may already be known, so it is deleted, never re-protected. The next grant creates a
+  new key (grants signed with the old one stop working); a refused grant is requested and
+  granted again. Files from an earlier release keep their inherited access until then.
 - **Tier 2, `owner-uid` (recommended for stage 2).** The consultant grants from a separate
   OS account (the approver). The gate accepts an approval only when its file is owned by that
   account's uid and not writable by others, which the session's account cannot create. No

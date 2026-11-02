@@ -24,6 +24,7 @@ class OrgInfo(NamedTuple):
     detected_org_type: str
     organization_type: str = ""
     identity_source: str = ""
+    username: str = ""
 
     @property
     def is_nonproduction(self) -> bool:
@@ -101,6 +102,7 @@ def resolve_org(target_org: str, timeout_seconds: int = 10) -> OrgInfo | None:
         detected_org_type=classify_org_type(target_org, org_type=edition,
                                              is_sandbox=sandbox),
         organization_type=edition, identity_source="Organization query",
+        username=display.get('username') if isinstance(display.get('username'), str) else '',
     )
 
 

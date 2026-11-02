@@ -39,3 +39,9 @@ Tests may change records depending on the selected surface. Keep them within the
 task's authorization and intended environment, label artifacts by actual user/profile
 and fidelity, reconcile test records and verify cleanup. Save concise results and
 continue fixing implementation defects when that is part of the request.
+
+Test records: save each created record's Id when it is created, in the private task
+directory. Clean up by deleting only those Ids (an Id-file delete such as
+`sf data delete bulk --file ids.csv` with an Id column). Never build a delete from a
+query that matches by name, title, creator or date. If the Id list is lost or
+incomplete, stop and ask instead of matching.

@@ -2,8 +2,9 @@
 
 Torque is currently a source-distributed development alpha. The Python package
 name is `torque-salesforce`; the command is `torque`. Do not assume an index
-package with that name is this unpublished build. Install your reviewed checkout
-or a matching wheel supplied with its hash.
+package with that name is this unpublished build. Install a checkout of a release
+tag (or of the commit you reviewed), or a release wheel, checked against its
+checksums when the release publishes them ([verify a release wheel](#verify-a-release-wheel)).
 
 ## Isolated checkout installation
 
@@ -19,8 +20,9 @@ python3 -m venv .venv
 
 Python 3.10+ is required. The core dependency is PyYAML. macOS, Linux, and Windows
 are all exercised by the CI matrix (`.github/workflows/validate.yml`); see the
-[alpha 10 validation record](validation-alpha10.md) for the combinations actually
-run and what Windows does not yet cover. The demo path must be new and outside the checkout.
+[alpha 21 validation record](validation-alpha21.md) for the combinations actually
+run, and the [alpha 20 record](validation-alpha20.md) for what Windows does not yet cover.
+The demo path must be new and outside the checkout.
 
 Use the absolute `.venv/bin/torque` path from any working directory, or put that
 installation's `.venv/bin` on the PATH of the process running your assistant.
@@ -46,6 +48,26 @@ Open a new terminal or restart the assistant if needed, then verify
 replacing it. A wheel can be used instead of `.`. No administrator pip install is
 necessary.
 
+### Verify a release wheel
+
+CI writes a `SHA256SUMS` file for every candidate build. When a GitHub release lists
+those checksums for its wheel and source archive, in its notes or as an attached
+`SHA256SUMS`, download the files into one folder and compare before installing:
+
+```sh
+sha256sum -c SHA256SUMS            # Linux
+shasum -a 256 -c SHA256SUMS        # macOS
+```
+
+```powershell
+Get-FileHash .\torque_salesforce-*.whl -Algorithm SHA256
+```
+
+On Windows, compare the printed hash with the wheel's line in `SHA256SUMS`. A matching
+checksum shows the file is the one published; it does not by itself show which commit
+or build produced it, and releases are not yet attested. When a release lists no
+checksums, install from its tagged checkout instead.
+
 ## Windows
 
 From PowerShell:
@@ -61,7 +83,7 @@ Torque source directory:
 
 ```powershell
 py -3 -m venv .venv
-.venv\Scripts\pip install -e .
+.venv\Scripts\python.exe -m pip install .
 .venv\Scripts\torque doctor
 .venv\Scripts\torque demo C:\Work\torque-demo
 ```
@@ -69,6 +91,12 @@ py -3 -m venv .venv
 The demo path must be new and outside the checkout, same as on macOS/Linux. Put
 `.venv\Scripts` on PATH, or use the absolute path, the same way `.venv/bin` is used
 above.
+
+Smart App Control can block the unsigned `torque.exe` launcher that pip writes
+([alpha 21 record](validation-alpha21.md)). Then run the same commands through that
+environment's interpreter, `.venv\Scripts\python.exe -m torque doctor`; it runs the same
+code. Name that interpreter by its path: a bare `py -m torque` can start a Python that does
+not have Torque installed. The gate hook already runs through Python.
 
 What Torque does for Windows itself:
 
@@ -87,8 +115,11 @@ What Torque does for Windows itself:
   returning its exit code. Windows has no `exec`: the call used elsewhere would end
   Torque and hand the console back to the shell while the agent was still reading it,
   and could not start `claude` installed as a batch file. Ctrl+C goes to the agent.
-- A command Torque prints for you to paste (`show_command` in `torque context`) is
-  quoted for cmd.exe and PowerShell, not for a POSIX shell.
+- A command Torque prints for you to paste (`show_command` in `torque context`, the grant
+  command `torque approval request` prints) is quoted so that PowerShell and cmd.exe read the
+  same words: a word with a space or a character either shell reads as its own (an
+  apostrophe, `&`, `;`, `(`) is in double quotes. A word with `$`, a backtick, `%` or `!` is in
+  PowerShell's single quotes, which only PowerShell reads.
 - The build-only gate reads PowerShell commands as PowerShell, and runs as an
   Antigravity hook as well as a Claude Code hook: [build-only mode](ai-access.md).
 
@@ -108,12 +139,22 @@ bare `python` in the hook command: it often resolves to the Microsoft Store alia
 to an interpreter without Torque installed. The hook then fails with an exit code
 other than 2, and Claude Code treats that as a non-blocking error, so the tool runs
 and build-only mode is silently off. Always point the hook at the venv interpreter by
-absolute path, written with forward slashes so it survives Git Bash (which Claude Code
-uses for hooks when installed) as well as cmd:
+absolute path. `torque workspace ai-access build-only` writes the entry in exec form:
+`command` is the interpreter and `args` its arguments, which Claude Code spawns with no
+shell, so no quoting is involved and Git Bash is not needed:
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": ".*",
-  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
+  "hooks": [{"type": "command", "command": "C:/Work/torque/.venv/Scripts/python.exe", "args": ["-I", "-c", "import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())"], "timeout": 600, "onFailure": "block"}]}]}}
+```
+
+An entry written by hand in the older shell form still works; on Windows it needs Git
+Bash, which Claude Code uses for shell-form hooks when installed, and its interpreter
+path is written with forward slashes so it survives Git Bash as well as cmd:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": ".*",
+  "hooks": [{"type": "command", "command": "\"C:/Work/torque/.venv/Scripts/python.exe\" -I -c \"import os,sys;sys.excepthook=lambda t,e,b:(print('(Torque gate could not load: '+t.__name__+': '+str(e)+'; call blocked. In your own terminal, run torque doctor --workspace W, with W the workspace folder, to see why.)',file=sys.stderr,flush=True),os._exit(2));from torque.gate import main;sys.exit(main())\"", "timeout": 600}]}]}}
 ```
 
 The `sys.excepthook` wrapper makes the hook exit 2 (block) if that interpreter cannot
@@ -137,8 +178,9 @@ It must report `AI access: build-only (hook command blocked a standalone probe; 
 probe; doctor prints the command to use and exits 3. It also exits 3 when the hook runs
 without `-I`, its matcher is narrower than `.*`, or `disableAllHooks` switches hooks off.
 The probe runs the hook command directly, so also confirm once, in a real session, that
-a `Read` of a `clients/` file is blocked. On Windows, doctor runs the probe through Git Bash, as
-Claude Code does, when Git Bash is installed (or named by `CLAUDE_CODE_GIT_BASH_PATH`).
+a `Read` of a `clients/` file is blocked. Doctor runs an exec-form entry's argument vector
+with no shell; on Windows it runs a shell-form entry through Git Bash, as Claude Code does,
+when Git Bash is installed (or named by `CLAUDE_CODE_GIT_BASH_PATH`).
 
 ## Optional capabilities
 

@@ -98,7 +98,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
       "source_sha256": "d37863fc4bb6f32935244976631e9a0fe509c3660d67df4968f5b13e87e8c20d",
       "source_tracked": true,
-      "destination_sha256": "bf4928659ff914e9940ac38e0228e0cd226c4c24cb11a2cfe95150e419f1c65a",
+      "destination_sha256": "9a41bf09d5c9860ab5eb0f4f95e0f7bf60f4383f7be4e3b9cc50ea8ac5998f6c",
       "adapted": true
     },
     {
@@ -134,7 +134,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/cli.py",
       "source_sha256": "96bb6753ada72ab93a4cd4dc94a466dc86735269f6edc09d22ca396e42917438",
       "source_tracked": true,
-      "destination_sha256": "e2104aa5af09a8c96724ee09da62b06511d4119e63654b31a7feebf09aeb8240",
+      "destination_sha256": "fcada85023aafad424899c6982a4240140516a79446b3eada6989f6ec6dc55a9",
       "adapted": true
     },
     {
@@ -152,7 +152,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/report.py",
       "source_sha256": "352695a00986bab15b6f989ee1494665494eea53965055b7f2b9ebfc7ad9c154",
       "source_tracked": true,
-      "destination_sha256": "dabe3f2e3c07817a6f03a96d426fa6f677d9ed216c231bb47872419acf5ae28f",
+      "destination_sha256": "7fb9c99ce7b99511f18faaa5c5f2564e212528405b847a5dbfb4c6dae679fb42",
       "adapted": true
     },
     {
@@ -269,7 +269,7 @@
       "source_path": "packages/revert/jsc_revert/bundle.py",
       "source_sha256": "cf7852c890f13fc4f0519f034c76924cb984ab7f2ee520e69648acc59755fbcb",
       "source_tracked": true,
-      "destination_sha256": "5bc4ac3bbcbb5852421ea4d25c41ebc614e7f2c56d82428eff0976097cc5ac0d",
+      "destination_sha256": "1a968a3b04aa757ad12ddb05e8e8a34aa0c95dfed932eb98077eddc868149b47",
       "adapted": true
     },
     {
@@ -278,7 +278,7 @@
       "source_path": "packages/revert/jsc_revert/org_detect.py",
       "source_sha256": "4e8c78a2c456e040941393430dd1950e65c1a772d890a12d632d13c3865f3eba",
       "source_tracked": true,
-      "destination_sha256": "ee7892c054856aeca16a352f34720e6513fe31eca1211613df2ce3b2c19462c1",
+      "destination_sha256": "7a438af3331ae850e5cd3a4f817f7ba3db69af8456f53211064029bf5318fdee",
       "adapted": true
     },
     {
@@ -296,7 +296,7 @@
       "source_path": "packages/revert/jsc_revert/revert_executor.py",
       "source_sha256": "8d2a28bef1758779a50eeef4af4c88f86e8676a2f474a2104d2c98b79ba6de0f",
       "source_tracked": true,
-      "destination_sha256": "8bc277235a705cdf374a123324cc50272a0a8075b2d854d6b2b9c0e5dd29dd65",
+      "destination_sha256": "b91e30df6ba755383357dd82a45101f0f8b9299de0e66779e4e0ce4637dc3339",
       "adapted": true
     },
     {
@@ -314,7 +314,7 @@
       "source_path": "packages/revert/jsc_revert/post_deploy_polling.py",
       "source_sha256": "565c95f63d6f1e4078c172a25370c46be1d990b1e896d9c3514c0ddf5aafaec2",
       "source_tracked": true,
-      "destination_sha256": "89ca5c95de343b6c9c647b645fabb0b75fbc5df63b01462c14a912c1ed9de529",
+      "destination_sha256": "7643b69c8ee5c681a655be036854e80513e8ce1c01f01b3b594246ef34d5cdaa",
       "adapted": true
     },
     {
@@ -368,7 +368,7 @@
       "source_path": "packages/revert/jsc_revert/cli.py",
       "source_sha256": "c2cd6105a45d7ce342063ec2be0b556eec6b0057e458d95644818adcec421e26",
       "source_tracked": true,
-      "destination_sha256": "606dc2f6fc44160c55b673386f02ae0df65c766bf563aaabb95dedab51b63f32",
+      "destination_sha256": "ae1e9b3c1fed6c655a663af19d13b3eee5b54c77c0bfa1f37c3cd15aafa5546c",
       "adapted": true
     },
     {
@@ -377,7 +377,7 @@
       "source_path": "packages/revert/jsc_revert/revert_capabilities.py",
       "source_sha256": "54a0081d9b2c3b49322abf6516195394a6578c043608969417a971b03b19721a",
       "source_tracked": true,
-      "destination_sha256": "e337b63c05eddf62d711215d3c9571f440e06326495c030dc019f1c15b1252c3",
+      "destination_sha256": "961ee9fec6bc9be03d67d32f3ea543e884d12c00ab273fc2e7acb72c1805b175",
       "adapted": true
     },
     {
@@ -404,7 +404,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/data_upsert.py",
       "source_sha256": "75386581e0b3426dbc8f0da6c2a191933c2eac2efaff6b4f280fe8a4e85d6f01",
       "source_tracked": true,
-      "destination_sha256": "a6c0896870ccf6c127f0bff21c371ed43ddb7ff82a73486733b16718c4795b50",
+      "destination_sha256": "bd17a49f9736c79dba3e4a6864a058c40cd9bbd3774a96f99658a33a618610b4",
       "adapted": true
     },
     {
@@ -413,7 +413,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/apex_run.py",
       "source_sha256": "0d9092505d222052b957709b4094b89c14ebdf2077b1776bfd4a7bff2405af31",
       "source_tracked": true,
-      "destination_sha256": "49dfe29b6420ef5ba4e156cafa6922d51f07682e424286a9e49e536b187a25cb",
+      "destination_sha256": "f62a6da955db8286948073e34c18958dddcc61ed54e5753d0c9c1c60d9614cc6",
       "adapted": true
     },
     {
@@ -422,7 +422,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/deploy.py",
       "source_sha256": "47bade899a92565ce12a2af9eaaefac4de44b3123d7e2bbb4b140ac31460ced9",
       "source_tracked": true,
-      "destination_sha256": "fd74b37425faa4b159e00ec871093eb2c613b4f0d94b4437236bac4e047da1cf",
+      "destination_sha256": "c4660868e2bb88bed192a2a28b468ac0022d67e4ab76507b33ae76e254f4a60d",
       "adapted": true
     },
     {
@@ -449,7 +449,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/_common.py",
       "source_sha256": "3cce54873ffdd043fe0fd87f4d892e75375e1cfd6872ee63660cbbb1b67b751b",
       "source_tracked": true,
-      "destination_sha256": "b7eb03e71bf6bba1a688484f3660d4dc284ccc4eff0b8867a7fd17097a52c174",
+      "destination_sha256": "a2901eaf9b628342ab52339a11ac1a38ad30cbb19bcfd7bd0c0e963fe69f5a36",
       "adapted": true
     },
     {
@@ -458,7 +458,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_upsert.py",
       "source_sha256": "fdcc02f8ed1e04d456a6999b882d3379fd037de0f71cb42f9e809e13be514926",
       "source_tracked": true,
-      "destination_sha256": "2d6ca2c8fc87dd1592f90c9768ea09510f0b2a687e4c8a9d1dafcdae325fc6ec",
+      "destination_sha256": "7ea5df36fb17cadf05abef95186faafd51d8bfc96f8da2ff33a2b11f61255abf",
       "adapted": true
     },
     {
@@ -485,7 +485,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permset.py",
       "source_sha256": "6af95d8dfc50358bad566ab981ca8d6b9bf8e25be3df2be51d8137307950ab98",
       "source_tracked": true,
-      "destination_sha256": "1e7744522718de2777ae4ecd7fa54e899bc87ee123283c705ff54c7e38be383e",
+      "destination_sha256": "31a76da7b411c09914e21c9dec81e69cff7e3dd693459a4e5201e73f247840c7",
       "adapted": true
     },
     {
@@ -503,7 +503,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_update.py",
       "source_sha256": "554ca9553aed70d3fed647f8f7833bb6b5c81d883bbf5ac42a5483977d68a3a3",
       "source_tracked": true,
-      "destination_sha256": "4b5891230d4c0f0cf0e5a0927d44f7ceeae963133318348568578a47a93c2aea",
+      "destination_sha256": "2f0172308694c4ea413b0bc125d4263e0438fc6b7f8f04f68f978239ba0b53f9",
       "adapted": true
     },
     {
@@ -530,7 +530,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/deploy_quick.py",
       "source_sha256": "2aa16f52373df2b2c0f308bc573ed6d1b79ba03580519509dd1926aa4ac57e83",
       "source_tracked": true,
-      "destination_sha256": "3573013da5de85a2ba0b9c15d2a1f352c2f127522f49f7b84908fbdeb5fc1673",
+      "destination_sha256": "14a81fe46c61448b856a9e6f800c07508fc208bf3db3f666abb9b4c8078f5162",
       "adapted": true
     },
     {
@@ -557,7 +557,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permsetlicense.py",
       "source_sha256": "e753ebf09e20917ddf7bd9f3cf80c799274a45e1ad2e26c33d9e9cb8e1818c76",
       "source_tracked": true,
-      "destination_sha256": "e8fad76c13f6fd1ae1b57d25153470e07f97490eb30e37182d99f124be208137",
+      "destination_sha256": "33ace7352b8399c2db47035db151dc89717cdcd7284705029354634fe2e9c6f0",
       "adapted": true
     },
     {
@@ -584,8 +584,8 @@
       "source_path": "packages/debug_log_analyzer/tests/test_parsers.py",
       "source_sha256": "299bb3254a61d7af165e8cbcd1f5753a2b9cbdffe26b47b23fdb4791564e0323",
       "source_tracked": true,
-      "destination_sha256": "299bb3254a61d7af165e8cbcd1f5753a2b9cbdffe26b47b23fdb4791564e0323",
-      "adapted": false
+      "destination_sha256": "267923e03c94a68c65d7233cae00bd68b08e326207062aaec22e305984e71073",
+      "adapted": true
     },
     {
       "path": "packages/debug_log_analyzer/tests/test_code_analyzer.py",
@@ -611,8 +611,8 @@
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/parsers.py",
       "source_sha256": "1bebad6428a31266b521af0cdb5cc0ed51f8773e70bb360a320088163821bcc3",
       "source_tracked": true,
-      "destination_sha256": "1bebad6428a31266b521af0cdb5cc0ed51f8773e70bb360a320088163821bcc3",
-      "adapted": false
+      "destination_sha256": "94ce007be36e723fcdca0d00ea47028311b0fdc903cc82e54ae18b6f2f203efd",
+      "adapted": true
     },
     {
       "path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
@@ -620,7 +620,7 @@
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
       "source_sha256": "9e4f018f0645b45951bb8339c7069fd49c308f1242b3958b8313b6adf5a6856e",
       "source_tracked": true,
-      "destination_sha256": "1d4c47a829e3a6192af7da68f7356b72585c6e23eecd35c432a5930ccc4023f3",
+      "destination_sha256": "9b0bce28e0aee67afd028552470dbfcd2abc5d857da37f2e7da1861eccfd791e",
       "adapted": true
     },
     {
@@ -1169,7 +1169,7 @@
       "source_path": "packages/meeting_processor/tests/test_meeting_processor.py",
       "source_sha256": "53107a85e270eb9f74af35f92626f352e2db8b36311dede73cda8399b8f7f256",
       "source_tracked": true,
-      "destination_sha256": "938f391ebef9f90d8dc7e9ef17f441a05282a4ef10d1399759636c35811ab6d7",
+      "destination_sha256": "d7acf530640a71cf5cf6c64c73fe250aa5e5d5265c33e80e0e9fb601d124fd0c",
       "adapted": true
     },
     {
@@ -1340,7 +1340,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/sf.py",
       "source_sha256": "f75b960146b7640af07f4d3ddb3080ff7213070a4d2c523119fe9d618c830f1c",
       "source_tracked": true,
-      "destination_sha256": "932f1393442150a010eded1e33b3189c2f83fabaad9cc909fc4ed5d79ae5d9aa",
+      "destination_sha256": "38580cd4322dd8ee0d874493d3b992713d01cdfbb6ce7104012d22c707d1125b",
       "adapted": true
     },
     {
@@ -1421,7 +1421,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/provenance.json",
       "source_sha256": "3d2f4d9da6fe038d03b08f0b6df2063451d03c7b95fef4a89f8c79fc2edcfbf0",
       "source_tracked": true,
-      "destination_sha256": "0e29a384674d89e726996a86adcc8966f61124bcae1758434d2c358171370d09",
+      "destination_sha256": "905aefb230bf0b7a750910e02c5c492babb4462c105e36e8b4adab074f6ccabf",
       "adapted": true
     },
     {
@@ -1430,8 +1430,8 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
       "source_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
       "source_tracked": true,
-      "destination_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
-      "adapted": false
+      "destination_sha256": "1e780596d7ea9d5c8bc46484936e02d133330be99954b1e94e8e9a2359c14fae",
+      "adapted": true
     },
     {
       "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/input.txt",
@@ -1501,7 +1501,7 @@
     {
       "path": "packages/qa_orchestrator/tests/test_report_completeness.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "a23430e686a0190c0a7ae156b073437663438eef6dd88e12cdbc5a3ba52d7f52"
+      "destination_sha256": "aa623bb2eb164445e30bc13047c069941b40491c7f3d4fa8e26645bb87791ce7"
     },
     {
       "path": "packages/revert/jsc_revert/update_fields.py",
@@ -1526,7 +1526,7 @@
     {
       "path": "packages/revert/tests/test_org_assign_permset.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "ef8defb74f7ab6df0797b8fe046e26b32cd4613050be8a77ccd631d6d3a1dca6"
+      "destination_sha256": "6ceec0b34efd9d5e3615b5855222f31ad392b5e5ce0c99d94543979e99c333ff"
     },
     {
       "path": "packages/qa_orchestrator/tests/test_meta_api_transport.py",

@@ -1,23 +1,21 @@
 """jsc data update bulk wrapper — sf data update bulk with before-row CSV capture.
 
 Phase I.4-extended-2 (v7.17.0). Bulk update: query the before-state of every
-record-id in the input CSV BEFORE the bulk run; store as before_csv. Revert is
-"reapply before_csv as a new bulk update."
+record-id in the input CSV BEFORE the bulk run. Preserve typed before-state and
+a review CSV; manual recovery uses the separate null-restoring replay CSV.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
-import io
 import json
 import sys
 import time
 from pathlib import Path
 
 from . import _common as c
-
-PAGE_SIZE_FOR_REFS = 200  # not used here; placeholder for symmetry with bulk_delete
+from . import _bulk_csv
+from jsc_common.soql import soql_literal
 
 
 def run(args: argparse.Namespace) -> int:
@@ -51,7 +49,14 @@ def run(args: argparse.Namespace) -> int:
             ctx.save()
             return c.EXIT_PRESNAP_FAILED_PROD if ctx.org.is_production else c.EXIT_PRESNAP_FAILED_SANDBOX
 
-        record_ids, fields = _parse_bulk_csv(input_path)
+        try:
+            record_ids, fields = _parse_bulk_csv(input_path)
+        except (ValueError, OSError, UnicodeError) as exc:
+            ctx.manifest['snapshot_status'] = 'failed'
+            ctx.update_phase('pre_snapshot', status='failed', error=str(exc))
+            ctx.save()
+            print(f'error: before-state capture failed: {exc}', file=sys.stderr)
+            return c.EXIT_PRESNAP_FAILED_PROD if ctx.org.is_production else c.EXIT_PRESNAP_FAILED_SANDBOX
         before_csv_path = ctx.snap_dir / "before.csv"
         before_count = _bulk_query_before(
             args.target_org, args.sobject, record_ids, fields, before_csv_path
@@ -61,6 +66,8 @@ def run(args: argparse.Namespace) -> int:
             "input_file": str(input_path),
             "input_record_count": len(record_ids),
             "before_csv": str(before_csv_path) if before_count else None,
+            "before_json": str(before_csv_path.with_suffix('.json')) if before_count else None,
+            "replay_csv": str(before_csv_path.with_name('replay.csv')) if before_count else None,
             "before_record_count": before_count,
             "fields_captured": fields,
             "bulk_job_id": None,
@@ -81,6 +88,10 @@ def run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return c.EXIT_PRESNAP_FAILED_PROD
+
+        if before_count < len(record_ids):
+            print(f'warning: before-state capture short ({before_count}/{len(record_ids)} rows); '
+                  'proceeding in nonproduction without complete recovery evidence.', file=sys.stderr)
 
         # ── Underlying ────────────────────────────────────────────────────
         t0 = time.monotonic()
@@ -133,15 +144,7 @@ def run(args: argparse.Namespace) -> int:
 
 def _parse_bulk_csv(path: Path) -> tuple[list[str], list[str]]:
     """Parse a bulk-update CSV; return (record_ids, all_field_names)."""
-    text = path.read_text(encoding="utf-8")
-    reader = csv.DictReader(io.StringIO(text))
-    fields = list(reader.fieldnames or [])
-    ids: list[str] = []
-    for row in reader:
-        rid = row.get("Id") or row.get("ID") or row.get("id")
-        if rid:
-            ids.append(rid)
-    return ids, fields
+    return _bulk_csv.parse_identifiers(path, 'Id')
 
 
 PAGE_SIZE = 200  # SOQL IN clause safe size; well under 1000-element platform limit
@@ -159,11 +162,11 @@ def _bulk_query_before(
     """
     if not record_ids or not fields:
         return 0
-    field_list = ",".join(fields)
+    field_list = ",".join(_bulk_csv.capture_fields(fields))
     all_records: list[dict] = []
     for chunk_start in range(0, len(record_ids), PAGE_SIZE):
         chunk = record_ids[chunk_start:chunk_start + PAGE_SIZE]
-        id_list = ",".join(f"'{i}'" for i in chunk)
+        id_list = ",".join(f"'{soql_literal(i)}'" for i in chunk)
         query = f"SELECT {field_list} FROM {sobject} WHERE Id IN ({id_list})"
         cmd = ["sf", "data", "query",
                "--target-org", target_org,
@@ -179,10 +182,4 @@ def _bulk_query_before(
         all_records.extend(chunk_records)
     if not all_records:
         return 0
-    with out_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        for r in all_records:
-            row = {k: r.get(k, "") for k in fields}
-            w.writerow(row)
-    return len(all_records)
+    return len(all_records) if _bulk_csv.write_capture(out_path, fields, all_records) else 0

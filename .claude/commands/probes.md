@@ -39,6 +39,13 @@ with compiled/executed false, even when all draft files were generated. When exe
 is requested, use normal Salesforce validation/test tools in the selected authorized
 org; that is a guided continuation, not a built-in probe-runner capability.
 
+If a probe creates or changes records outside the test transaction, save each created
+record's Id when it is created, in the private task directory, and capture the exact
+pre-values of any record it alters. Clean up by deleting only those Ids (an Id-file
+delete such as `sf data delete bulk --file ids.csv` with an Id column). Never build a
+delete from a query that matches by name, title, creator or date. If the Id list is
+lost or incomplete, stop and ask instead of matching.
+
 Capture actual test results and cleanup when execution occurs. “Files generated”
 is different from “compiled,” “tests passed,” and “business behavior verified.”
 For AI-output fixtures, the separate `torque ai-regression --help` route describes

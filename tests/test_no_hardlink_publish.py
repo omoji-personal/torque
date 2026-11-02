@@ -65,7 +65,7 @@ def test_workspace_client_and_session_are_written_without_hard_links(tmp_path, n
     assert json.loads((client / "client.json").read_text(encoding="utf-8"))["slug"] == "alpha-client"
     assert (client / "context.md").read_text(encoding="utf-8").startswith("# Alpha Client")
     assert [row["id"] for row in ws.list_sessions(root, "alpha-client")] == [entry["id"]]
-    assert (root / updates.MANIFEST).is_file() and (root / ".claude/commands/help.md").is_file()
+    assert (root / updates.MANIFEST).is_file() and (root / ".claude/commands/torque-help.md").is_file()
     assert not leftovers(root)
 
 

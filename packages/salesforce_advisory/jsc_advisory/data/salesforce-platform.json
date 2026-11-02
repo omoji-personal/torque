@@ -315,7 +315,7 @@
       "symptom": "Tooling that classifies orgs as \"sandbox or production\" marks a Developer Edition org as production, and everything is blocked — or, worse, marks it writable by inverting the test.\n",
       "cause": "IsSandbox distinguishes sandboxes from everything else. Developer Edition, scratch orgs and trials are all \"not a sandbox\" without being production.\n",
       "remedy": "Classify with at least three values, reading OrganizationType and TrialExpirationDate as well as IsSandbox. Two-valued classification is wrong for a large fraction of real orgs.\n",
-      "detect": "sf org display --target-org <alias> --json   # inspect isSandbox + organizationType",
+      "detect": "sf data query --query \"SELECT Id, Name, IsSandbox, OrganizationType FROM Organization\" --target-org <alias> --json   # inspect IsSandbox + OrganizationType",
       "triggers": [
         "org\\s+display",
         "org:display",
@@ -591,7 +591,7 @@
       "symptom": "After a sandbox refresh, an allowlist entry, a saved credential, or a per-org note stops matching, with no error — the thing simply does not apply any more\n",
       "cause": "A refreshed sandbox is a new org that reuses the name. The 18-character Id changes, so every record keyed to the previous Id refers to an org that no longer exists. Nothing announces this, because from the platform's point of view nothing broke.\n",
       "remedy": "Treat the org Id as the identity and the alias as a nickname. Re-authorise and re-verify after any refresh. Where a tool keys authorisation to an org Id — Torque does — a refreshed sandbox correctly falls OUT of scope and must be re-approved, which is the safe direction but will look like a bug the first time.\n",
-      "detect": "sf org display --target-org <alias> --json   # compare the id against what you recorded",
+      "detect": "sf data query --query \"SELECT Id, Name, IsSandbox, OrganizationType FROM Organization\" --target-org <alias> --json   # compare the Id against what you recorded",
       "triggers": [
         "refresh",
         "org\\s+create\\s+sandbox",

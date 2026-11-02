@@ -66,7 +66,8 @@ def test_allows_matching(connected, monkeypatch):
 
 def test_dry_run_is_exempt(connected, monkeypatch):
     monkeypatch.setattr(c, "_consumed_approval", lambda *a: None)
-    assert ctx("jsc deploy -o acme-prod -m Flow:X --dry-run").resolve_org() == 0
+    dry = c.WrapperContext('deploy_metadata', 'acme-prod', 'jsc deploy -o acme-prod -m Flow:X --dry-run', dry_run=True)
+    assert dry.resolve_org() == 0
 
 
 def test_firm_root_without_client_is_refused(connected, monkeypatch):
