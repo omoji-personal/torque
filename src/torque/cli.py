@@ -625,6 +625,60 @@ def _workflow_text(workspace: Path | None, slug: str) -> str | None:
     return ws.claude_copy("commands", f"{slug}.md", packaged)[1]
 
 
+_SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
+_REFERENCE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
+
+
+def _packaged_skills() -> dict[str, str]:
+    """{name: one-line description} of the practice skills shipped in the package."""
+    found = {}
+    try:
+        folder = resources.files("torque").joinpath("data", "skills")
+        items = sorted(folder.iterdir(), key=lambda item: item.name) if folder.is_dir() else []
+    except (OSError, TypeError, ModuleNotFoundError):
+        items = []
+    for item in items:
+        page = item.joinpath("SKILL.md")
+        if not (_SKILL_NAME.match(item.name) and page.is_file()):
+            continue
+        meta = re.match(r"\A---\n(.*?)\n---\n", page.read_text(encoding="utf-8"), re.S)
+        line = next((row.partition(":")[2].strip().strip("\"'") for row in (meta.group(1).splitlines() if meta else [])
+                     if row.startswith("description:")), "")
+        first = re.split(r"(?<=[.;:])\s", line, maxsplit=1)[0]
+        found[item.name] = first if len(first) <= 110 else first[:107].rsplit(" ", 1)[0].rstrip(",;") + " ..."
+    return found
+
+
+def _skill_text(workspace: Path | None, spec: str) -> tuple[str, str] | None:
+    """The text of a practice skill (`NAME`) or one of its references (`NAME/REF`,
+    `NAME/references/REF`, with or without `.md`), and where it was read: the selected
+    workspace's `.agents/skills/` copy when there is one, else the packaged skill.
+    None when `spec` names no skill."""
+    parts = spec.strip().replace("\\", "/").strip("/").split("/")
+    if parts[1:2] == ["references"]:
+        parts = [parts[0], *parts[2:]]
+    if len(parts) > 2 or not _SKILL_NAME.match(parts[0]):
+        return None
+    if len(parts) == 2:
+        reference = parts[1] if parts[1].endswith(".md") else parts[1] + ".md"
+        if not _REFERENCE_NAME.match(reference):
+            return None
+        relative = ["references", reference]
+    else:
+        relative = ["SKILL.md"]
+    if workspace is not None:
+        local = ws._inside(workspace, workspace.joinpath(".agents", "skills", parts[0], *relative))
+        if local.is_file():
+            return local.read_text(encoding="utf-8"), "/".join([".agents/skills", parts[0], *relative])
+    try:
+        item = resources.files("torque").joinpath("data", "skills", parts[0], *relative)
+        if item.is_file():
+            return item.read_text(encoding="utf-8"), "/".join(["torque/data/skills", parts[0], *relative])
+    except (OSError, TypeError, ModuleNotFoundError):
+        pass
+    return None
+
+
 def _workflows(args: argparse.Namespace) -> int:
     raw = _data_text("catalogue.json")
     if raw is None:
@@ -641,8 +695,6 @@ def _workflows(args: argparse.Namespace) -> int:
         if not args.name:
             raise ws.WorkspaceError("workflows show needs a workflow name")
         entry = next((e for e in entries if e["name"] == args.name), None)
-        if entry is None:
-            raise ws.WorkspaceError(f"unknown workflow: {args.name}; run torque workflows")
         selected = getattr(args, "workspace", None) or os.environ.get("TORQUE_WORKSPACE")
         workspace = None
         if selected:
@@ -652,6 +704,16 @@ def _workflows(args: argparse.Namespace) -> int:
                 workspace = client.parent.parent
             else:
                 workspace, _ = ws.load_workspace(candidate)
+        if entry is None:
+            # A practice skill, or one of its references, read the same way on every host.
+            skill = _skill_text(workspace, args.name)
+            if skill is None:
+                raise ws.WorkspaceError(f"unknown workflow or skill: {args.name}; run torque workflows")
+            if args.json:
+                _print_json({"name": args.name, "kind": "skill", "source": skill[1], "text": skill[0]})
+            else:
+                print(skill[0], end="" if skill[0].endswith("\n") else "\n")
+            return 0
         if args.json:
             # Catalogue JSON remains stable; workspace precedence selects text.
             _print_json(entry)
@@ -664,6 +726,15 @@ def _workflows(args: argparse.Namespace) -> int:
         for entry in entries:
             print(f"{entry['name']:22} [{entry.get('kind', 'guided')}] {entry.get('description', '')}")
         print("\nRead a workflow: torque workflows show NAME")
+        skills = _packaged_skills()
+        if skills:
+            # Skills are not recipes: the catalogue and its --json stay as they are.
+            print("\nPractice skills (read one before that kind of work; every workspace also has them in "
+                  ".agents/skills/NAME/SKILL.md):")
+            for name, description in skills.items():
+                print(f"  {name:32} {description}")
+            print("Read a skill: torque workflows show NAME; one of its references: "
+                  "torque workflows show NAME/REFERENCE")
     return 0
 
 

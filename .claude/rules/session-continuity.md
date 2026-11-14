@@ -14,7 +14,9 @@
 - Before you build, change, deploy or load something, ask for the lessons that fit:
   `torque lesson for --task TASK --type TYPE` (or `--command`, `--path`), with the selected
   workspace and client. After a failed Salesforce command, run
-  `torque lesson for --error "FIRST LINE OF THE ERROR"` before trying again.
+  `torque lesson for --error "FIRST LINE OF THE ERROR"` before trying again. It may also show
+  this client's own candidates, marked `candidate, not reviewed: a hint, check it`; if one
+  worked, run the `torque lesson verify ID --evidence reproduced` line printed under it.
 - Save what a session taught with its record:
   `torque session add --workspace . --client NAME --summary TEXT --learned "When: ... Do: ... Because: ..."`.
   Add `--learned-from consultant` for the consultant's correction (active at once) and
@@ -23,7 +25,9 @@
   the consultant's word.
 - Handoffs should let another consultant locate source, understand the current
   state, reproduce checks and take the next action without reading the whole chat.
-- Prepared, executed, verified, published and sent are different states. A generated
+- Record what a check rested on with `--check`, `--as-user`, `--in-org` and `--not-covered`;
+  a correction is a new record with `--corrects ID`, never an edit of the old one.
+- Prepared, executed, verified, accepted, published and sent are different states. A generated
   client document is not a delivered message; a saved plan is not a completed change.
 
 Use `/session-save`, `/session-resume`, `/export-session` and `/handoff` as appropriate;

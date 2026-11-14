@@ -44,6 +44,9 @@ Before writing a file the agent reads `.agents/skills/salesforce-build/SKILL.md`
 practice skills there, and Claude Code also lists them as skills. For this ticket that means: check that Account has no field with this purpose
 already; a restricted picklist with a description and help text; and a permission set
 `Membership_Staff` with read and edit access to the field, in the same change, no profile.
+A permission set deploy replaces the whole set in the org: if `Membership_Staff` already
+exists, add the entry to the full file retrieved from the org (or make a new permission set);
+any entry the file leaves out is removed.
 It retrieves the current metadata first and keeps that copy as the baseline.
 
 ## 4. Validate, then check
@@ -67,7 +70,10 @@ sf project deploy start --source-dir force-app --target-org sample-sandbox --jso
 torque check deployed --target-org sample-sandbox --changed-from deploy.json --as-permission-set Membership_Staff
 ```
 
-`check deployed` reads the org: whether each component matches the source, and which
+`check deployed` reads the org and compares each component with the source you submitted:
+`same` means everything the file specifies is in the org (containment, not byte equality);
+`different`, `unexplained-additions` and `partly-compared` are not `same`, so read the listed
+properties before calling the deploy verified ([checks](checks.md)). It also says which
 permission sets grant the new field. It does not show what a user sees. For a deploy that
 keeps a recovery snapshot, deploy through Torque instead, one component per `--metadata`:
 
@@ -81,19 +87,29 @@ torque deploy --workspace . --client sample --target-org sample-sandbox --metada
 torque browser login --target-org sample-sandbox --workspace . --client sample
 ```
 
-It prints a local address; the agent opens it in its browser tab, which lands signed in. No
-password is typed and the sign-in address is never shown. To test as a membership user rather
-than as yourself, authorize that user's alias in the CLI once and add `--as-alias`
-([browser sign-in](browser-sign-in.md)). Look at the page as that user, on a record someone
-else owns.
+It prints a local address; the agent opens it in its browser tab, and the command reports that
+the tab was sent to the org (event `sent`); it cannot see the tab, so the agent waits for the
+org's page and checks which user it shows. No password is typed and the sign-in address is
+never shown. A login page means the sign-in failed; a "Change Your Password" or device check
+page needs you. To test as a membership user rather than as yourself, authorize that user's
+alias in the CLI once and add `--as-alias` ([browser sign-in](browser-sign-in.md)):
+
+```sh
+torque browser login --target-org sample-sandbox --as-alias sample-member --workspace . --client sample
+```
+
+Look at the page as that user, on a record someone else owns.
 
 ## 7. Record the work and what it taught
 
 ```sh
-torque session add --workspace . --client sample --summary "Tier picklist and Membership_Staff deployed to sample-sandbox; checked as a membership user" --status executed --learned "When: a new field on Account. Do: ship the permission set in the same deploy. Because: the field is invisible without it."
+torque session add --workspace . --client sample --summary "Tier picklist and Membership_Staff deployed to sample-sandbox" --status verified --check rendered --check read-back --as-user "membership staff user" --in-org sample-sandbox --not-covered "mobile layout" --evidence deploy.json --learned "When: a new field on Account. Do: ship the permission set in the same deploy. Because: the field is invisible without it."
 ```
 
-`--learned` saves a lesson with the record. When the consultant corrected the agent, add
+`--check`, `--as-user`, `--in-org` and `--not-covered` say what "verified" rests on; without them
+the command saves the record and prints a hint naming what was not stated. Use
+`--status accepted --accepted-by NAME` only when someone else said yes, and correct an earlier
+record with a new one that has `--corrects ID`. `--learned` saves a lesson with the record. When the consultant corrected the agent, add
 `--learned-from consultant`; that lesson is active at once.
 
 ## 8. When a command fails
@@ -113,5 +129,6 @@ torque handoff --workspace . --client sample
 
 The next consultant, or the next session, starts from the context command of step 2 and this
 hand-off.
-For every command: `torque --help` and `torque COMMAND --help`. For the recipes:
-`torque workflows list --workspace .`.
+For every command: `torque --help` and `torque COMMAND --help`. For the recipes and the eight
+practice skills: `torque workflows list --workspace .`; read a skill with
+`torque workflows show salesforce-build --workspace .`.

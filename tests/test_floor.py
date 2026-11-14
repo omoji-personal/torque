@@ -20,9 +20,9 @@ from torque import template_updates as updates
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "floor" / "AGENTS-floor.md"
 MAX_LINES = 60
-# Characters, markers included. Measured 7,226 for version 1 (about 1,800 tokens at four characters
-# each). 7,500 keeps the init AGENTS.md under 8 KB, a quarter of the 32 KiB Codex adds, and leaves
-# room for the record-basis options still to come; past it, a line has to go before one is added.
+# Characters, markers included. Measured 7,472 for version 1 with the record-basis options (about
+# 1,870 tokens at four characters each). 7,500 keeps the init AGENTS.md under 8 KB, a quarter of the
+# 32 KiB Codex adds; past it, a line has to be cut before one is added.
 MAX_CHARS = 7_500
 MAX_LINE = 200
 # Files whose `torque ...` lines must parse as written (the floor and the newcomer's page).
@@ -130,6 +130,8 @@ def parse_error(words):
                 cli.build_parser().parse_args(head)
     except SystemExit as exc:
         return None if exc.code == 0 else (err.getvalue().strip().splitlines() or ["exit"])[-1]
+    except (__import__("argparse").ArgumentError, cli.UsageError) as exc:  # Torque's parser reports, not exits
+        return str(exc) or "usage error"
     return None
 
 
@@ -167,6 +169,49 @@ def test_every_command_line_parses(relative):
     assert len(commands) >= 10, commands
     failures = {command: parse_error(words_of(command)) for command in commands}
     assert not {k: v for k, v in failures.items() if v}, {k: v for k, v in failures.items() if v}
+
+
+# --- the practice skills through `torque workflows` ---------------------------------------------
+# A host without a skill mechanism (Codex as observed) found the skills only by listing a folder.
+
+def test_workflows_lists_the_practice_skills_after_the_recipes_and_keeps_its_json():
+    code, out, _ = invoke("workflows")
+    assert code == 0
+    recipes, skills = out.split("\nPractice skills", 1)
+    for name in ("salesforce-build", "salesforce-flow", "salesforce-delivery", "salesforce-architecture-review",
+                 "salesforce-soql-review", "salesforce-code-analyzer-review", "salesforce-npsp",
+                 "salesforce-nonprofit-cloud"):
+        assert f"  {name} " in skills and name not in recipes, name
+    assert "torque workflows show NAME/REFERENCE" in skills
+    assert all(len(line) <= 160 for line in skills.splitlines()), "one short line per skill"
+    code, out, _ = invoke("workflows", "list", "--json")
+    catalogue = json.loads((REPO / "workflows" / "catalogue.json").read_text(encoding="utf-8"))
+    assert len(json.loads(out)) == len(catalogue), "skills are not recipes"
+
+
+def test_workflows_show_prints_a_skill_and_a_reference_with_or_without_a_workspace(firm):
+    packaged = (REPO / ".agents" / "skills" / "salesforce-build" / "SKILL.md").read_text(encoding="utf-8")
+    code, out, _ = invoke("workflows", "show", "salesforce-build")
+    assert code == 0 and out == packaged
+    reference = (REPO / ".agents" / "skills" / "salesforce-flow" / "references" / "gotchas.md").read_text(encoding="utf-8")
+    for spec in ("salesforce-flow/gotchas", "salesforce-flow/gotchas.md", "salesforce-flow/references/gotchas.md"):
+        code, out, _ = invoke("workflows", "show", spec)
+        assert code == 0 and out == reference, spec
+    # The selected workspace's copy is read first, as for recipes.
+    local = firm / ".agents" / "skills" / "salesforce-build" / "SKILL.md"
+    local.write_text(packaged + "\nFirm addition.\n", encoding="utf-8")
+    code, out, _ = invoke("workflows", "show", "salesforce-build", "--workspace", str(firm))
+    assert code == 0 and out.endswith("Firm addition.\n")
+    code, out, _ = invoke("workflows", "show", "salesforce-build", "--workspace", str(firm), "--json")
+    shown = json.loads(out)
+    assert shown["kind"] == "skill" and shown["source"] == ".agents/skills/salesforce-build/SKILL.md"
+
+
+@pytest.mark.parametrize("spec", ["salesforce-nothing", "salesforce-flow/no-such-reference",
+                                  "salesforce-flow/../salesforce-build", "../salesforce-build", "salesforce-flow/a/b"])
+def test_workflows_show_refuses_a_name_that_is_not_a_skill(spec):
+    code, out, err = invoke("workflows", "show", spec)
+    assert code != 0 and "unknown workflow or skill" in out + err
 
 
 # --- init, upgrade, doctor -----------------------------------------------------------------------

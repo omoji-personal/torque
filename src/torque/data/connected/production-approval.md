@@ -30,8 +30,12 @@ work through delivery".
   (metadata consent covers it).
 - Before running a script or any program the gate cannot check, tell the
   consultant whether it reaches an org and what it does; the host will ask them.
+- `torque check deployed --target-org ALIAS` only reads (a retrieve and setup queries) and
+  needs no approval, but the consent must cover record data for that org.
+  `torque check metadata` and `check result` are local. `sf code-analyzer run -o ALIAS`
+  reaches ALIAS (the consultant is asked).
 - Browser: use only Torque's own browser, `torque browser ... --target-org ALIAS`
-  (or `torque qa` with an org). Ask for a browser window first
+  (or `torque qa` with an org); `torque browser login` is refused in this mode. Ask for a browser window first
   (`torque approval request --workspace W --client NAME --change ID --org ALIAS --browser --minutes 20 --purpose TEXT`)
   and stop until the consultant grants it. The gate refuses browser, devtools and
   desktop tools (Claude in Chrome, Playwright, computer use) in this mode, for
