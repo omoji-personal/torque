@@ -247,13 +247,31 @@ def copy_private(source, target, *, follow_symlinks: bool = True) -> str:
     return str(target)
 
 
+def exclusive_temporary(parent: Path, prefix: str, suffix: str = "") -> tuple[int, str]:
+    """What tempfile.mkstemp does (a new 0600 file, opened exclusively, not inherited by child
+    processes, no symlink followed) without its Windows retry loop: older Python versions on
+    Windows (seen with 3.10) take a permission error for a name clash and retry it up to TMP_MAX
+    times, about two billion, so a folder that refuses new files hangs the command. Here only a
+    real name clash is retried, and a permission error is raised at once."""
+    flags = (os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOINHERIT", 0) | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NOFOLLOW", 0))
+    for _ in range(100):
+        name = str(parent / f"{prefix}{uuid4().hex}{suffix}")
+        try:
+            return os.open(name, flags, 0o600), name
+        except FileExistsError:
+            continue
+    raise FileExistsError(errno.EEXIST, "no free temporary file name", str(parent))
+
+
 def _temporary_file(parent: Path, private: bool) -> tuple[int, str]:
     """A fresh temporary file in `parent`; with `private`, one made by create_private on
-    Windows (elsewhere mkstemp's 0600 already is). Otherwise the folder's access applies."""
+    Windows (elsewhere the 0600 of exclusive_temporary already is). Otherwise the folder's
+    access applies."""
     if private and os.name == "nt":
         name = str(parent / (".torque-" + uuid4().hex))
         return create_private(name), name
-    return tempfile.mkstemp(prefix=".torque-", dir=parent)
+    return exclusive_temporary(parent, ".torque-")
 
 
 def atomic_write_new(path: Path, text: str, *, private: bool = False) -> None:

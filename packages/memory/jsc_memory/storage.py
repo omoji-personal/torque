@@ -28,7 +28,6 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
-import tempfile
 import threading
 import time
 
@@ -261,10 +260,25 @@ def readable_ids(scopes: Scopes) -> set[str]:
     return taken
 
 
+def _exclusive_temporary(parent: Path, prefix: str, suffix: str) -> tuple[int, str]:
+    """tempfile.mkstemp without its Windows retry loop: older Python versions on Windows take
+    a permission error for a name clash and retry it about two billion times, so a folder that
+    refuses new files would hang the command. Only a real name clash is retried here."""
+    flags = (os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOINHERIT", 0) | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NOFOLLOW", 0))
+    for _ in range(100):
+        name = str(parent / f"{prefix}{os.urandom(8).hex()}{suffix}")
+        try:
+            return os.open(name, flags, 0o600), name
+        except FileExistsError:
+            continue
+    raise FileExistsError(17, "no free temporary file name", str(parent))
+
+
 def _atomic_write(path: Path, content: str) -> None:
     """Write to a temporary file in the same folder, then replace: readers see the old
     file or the new one, never part of one. The temporary file is removed on failure."""
-    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    fd, temporary = _exclusive_temporary(path.parent, f".{path.name}.", ".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(content)
