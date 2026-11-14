@@ -91,7 +91,9 @@ def _advisory() -> tuple:
             triggers = " ".join(note.get("triggers") or [])
             tasks = list(dict.fromkeys([*_DOMAIN_TASKS.get(note.get("domain"), ()), *vocab.infer(note["title"])[0]]))
             types, errors = vocab.infer(triggers)[1], []
-        kind = _CONFIDENCE.get(note.get("confidence"), "session")
+        # The note's confidence is its evidence; its `updated` date is when the catalogue entry
+        # was edited, not a verification, so the lesson carries no created or verified date.
+        confidence = note.get("confidence") if note.get("confidence") in _CONFIDENCE else "practitioner"
         source = note.get("source") if isinstance(note.get("source"), str) else ""
         body = "\n".join(f"{label}: {record.one_line(note[key])}" for label, key in
                          (("Symptom", "symptom"), ("Exception", "exception"), ("Gotcha", "gotcha"),
@@ -100,9 +102,9 @@ def _advisory() -> tuple:
             id="A-" + note["id"], title=record.one_line(note["title"]), scope="platform", kind="pitfall",
             state="active", do=record.one_line(note["remedy"]), because=record.one_line(note["cause"]),
             applies={"tasks": tasks, "types": types, "commands": [], "keywords": [], "errors": errors},
-            evidence=[{"type": kind, "ref": source or f"advisory catalogue ({note.get('confidence')})",
-                       "date": str(note["updated"])}],
-            source="doc", created=str(note["updated"]), last_verified=str(note["updated"]), body=body,
+            evidence=[{"type": _CONFIDENCE[confidence], "ref": source or f"advisory catalogue ({confidence})"}],
+            source="doc" if confidence == "documented" else "harvested", body=body,
+            extra={"updated": str(note["updated"]), "confidence": confidence},
             origin="advisory", command_patterns=tuple(patterns),
             # Given error matchers replace the comparison with the note's own wording.
             error_text="" if errors else record.one_line(f"{note['title']} {note['symptom']}")))
@@ -327,10 +329,24 @@ def eligible(item: Lesson, tally: Tally | None) -> bool:
 
 
 def _recency(item: Lesson) -> int:
+    """The day a lesson was verified or saved; for a catalogue note, the day it was updated."""
     try:
-        return date.fromisoformat(item.last_verified or item.created).toordinal()
+        return date.fromisoformat(item.last_verified or item.created or updated(item)).toordinal()
     except ValueError:
         return 0
+
+
+def updated(item: Lesson) -> str:
+    """The update date of a catalogue note, or "" for a lesson file."""
+    return str(item.extra.get("updated") or "") if item.origin == "advisory" else ""
+
+
+def basis(item: Lesson) -> list[str]:
+    """What a lesson stands on, as printed: its evidence and age, or for a catalogue note
+    its confidence and the day the note was updated (never a verification it did not have)."""
+    if item.origin == "advisory":
+        return ["catalogue note", str(item.extra.get("confidence")), f"updated {updated(item) or 'not dated'}"]
+    return [item.evidence_type, record.age_text(item)]
 
 
 # Ties of scope, strength and marks are decided by how well a lesson is founded, then by
@@ -397,7 +413,9 @@ def summary(item: Lesson, tally: Tally | None = None) -> dict:
             "evidence_type": item.evidence_type, "source": item.source, "created": item.created,
             "last_verified": item.last_verified, "review_by": item.review_by, "age_days": record.age_days(item),
             "counters": tally.counters(), "stale": tally.stale_mark, "promoted_to": item.promoted_to,
-            "origin": item.origin, "path": str(item.path) if item.path else None}
+            "origin": item.origin, "path": str(item.path) if item.path else None,
+            **({"updated": updated(item), "confidence": item.extra.get("confidence")} if item.origin == "advisory"
+               else {})}
 
 
 def _sentence(label: str, text: str, limit: int) -> str:
@@ -417,7 +435,7 @@ def lines(item: Lesson, tally: Tally | None = None) -> list[str]:
     else:
         first, second = f"[{item.id}] {_clip(item.title, 170)}", _clip(item.body, 300)
     standing = [item.scope, *([CANDIDATE_MARK] if item.state == "candidate" else []),
-                *(["retired"] if item.state == "retired" else []), item.evidence_type, record.age_text(item),
+                *(["retired"] if item.state == "retired" else []), *basis(item),
                 *(["marked stale"] if tally.stale_mark else [])]
     counted = ", ".join(f"{name} {count}" for name, count in tally.counters().items() if count)
     return [first, *(["  " + second] if second else []),

@@ -242,7 +242,7 @@ def test_the_advisory_catalogue_is_read_as_platform_lessons_without_a_copy(scope
     note = found["A-flow-activation-on-deploy"]
     assert "command" in note.reasons and "type Flow" in note.reasons
     assert note.lesson.do.startswith("Verify activation after every flow deploy")
-    assert note.lesson.because and note.lesson.evidence[0]["date"]
+    assert note.lesson.because and note.lesson.extra["updated"] and not note.lesson.last_verified
     assert "A-fls-not-automatic" not in found                         # a field note, not for a flow deploy
     field = recall.find(storage.Scopes(), command="sf project deploy start --metadata CustomField:Account.X__c",
                         limit=None)
@@ -290,6 +290,37 @@ def test_a_catalogue_note_that_says_what_it_applies_to_is_taken_at_its_word(cata
     catalogue(_note("odd", applies={"tasks": "browser-test"}))
     assert [item.applies["tasks"] for item in recall.platform_lessons() if item.origin == "advisory"] == [
         ["sign-in", "field-build"]]
+
+
+def test_a_catalogue_notes_update_date_is_not_a_verification_and_its_confidence_is_its_evidence(catalogue):
+    from jsc_memory import cli
+    flow = {"tasks": ["flow-build"], "types": ["Flow"]}
+    catalogue(_note("z-live", confidence="verified-live", updated=days_ago(300), applies=flow),
+              _note("y-doc", confidence="documented", updated=days_ago(300), applies=flow,
+                    source="Developer Guide, a made-up page"),
+              _note("x-practice-new", confidence="practitioner", updated=days_ago(1), applies=flow),
+              _note("w-practice-old", confidence="practitioner", updated=days_ago(200), applies=flow))
+    notes = {item.id: item for item in recall.platform_lessons() if item.origin == "advisory"}
+    expected = {"A-z-live": ("reproduced", "harvested"), "A-y-doc": ("official-doc", "doc"),
+                "A-x-practice-new": ("session", "harvested"), "A-w-practice-old": ("session", "harvested")}
+    assert {name: (item.evidence_type, item.source) for name, item in notes.items()} == expected
+    assert all(item.last_verified == "" and item.created == "" for item in notes.values())
+    assert all("date" not in item.evidence[0] for item in notes.values())
+    old = notes["A-w-practice-old"]
+    assert recall.lines(old)[-1] == f"  (platform, catalogue note, practitioner, updated {days_ago(200)})"
+    assert recall.lines(notes["A-z-live"])[-1] == f"  (platform, catalogue note, verified-live, updated {days_ago(300)})"
+    assert not any("days ago" in line or "verified today" in line for item in notes.values()
+                   for line in recall.lines(item))
+    summary = recall.summary(old)
+    assert (summary["updated"], summary["confidence"], summary["last_verified"]) == (days_ago(200), "practitioner", "")
+    shown = cli._full(old, storage.Tally())
+    assert f"catalogue note, practitioner; updated {days_ago(200)}; never verified as a lesson" in shown
+    assert "last verified" not in shown
+    # Evidence from the confidence first: a practitioner note updated yesterday does not outrank a
+    # reproduced or documented one; among equals the update date counts in coarse steps.
+    found = [hit.lesson.id for hit in recall.find(storage.Scopes(), types=["Flow"], tasks=["flow-build"],
+                                                   limit=None).hits if hit.lesson.origin == "advisory"]
+    assert found == ["A-y-doc", "A-z-live", "A-x-practice-new", "A-w-practice-old"]
 
 
 def test_paths_tell_types_from_names_folders_and_manifests(tmp_path):

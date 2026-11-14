@@ -63,7 +63,13 @@ The platform scope also holds the advisory catalogue's notes (`torque advisory`)
 through an adapter: one recall, two sources, no copy. Their ids start with `A-`. A note's
 `applies` object (`tasks`, `types`, optional `errors`, as in a lesson) says what it applies
 to; a note without one has its types guessed from its triggers and its tasks from its
-domain and title, and answers an error through its symptom's wording.
+domain and title, and answers an error through its symptom's wording. A note's
+`confidence` is its evidence (`verified-live` reads as `reproduced`, `documented` as
+`official-doc`, `practitioner` as `session`) and sets its source (`doc` for documented,
+`harvested` otherwise). Its `updated` date is the day the catalogue entry was edited, not
+a verification: it prints as `catalogue note, practitioner, updated 2026-08-01`, is
+`updated` in JSON (`created` and `last_verified` stay empty), and counts only for the
+recency step of the ranking.
 
 Events (shown, helpful, stale, verified, promoted, retired, restored) are appended to
 `.torque/lessons/events.jsonl` under the scope's folder: a client's events stay in the

@@ -53,7 +53,7 @@ def _row(item: Lesson, tally: Tally | None = None) -> str:
     tally = tally or Tally()
     state = "stale" if tally.stale_mark else "promoted" if item.promoted_to and item.state == "active" else item.state
     counted = ", ".join(f"{name} {count}" for name, count in tally.counters().items() if count)
-    return (f"{item.id}  {item.scope:<10} {state:<9} {item.title}  ({item.evidence_type}, {record.age_text(item)}"
+    return (f"{item.id}  {item.scope:<10} {state:<9} {item.title}  ({', '.join(recall.basis(item))}"
             + (f"; {counted}" if counted else "") + ")")
 
 
@@ -181,9 +181,11 @@ def _full(item: Lesson, tally: Tally) -> str:
              f"scope {item.scope}; kind {item.kind}; state {item.state}; source {item.source}"]
     lines += [f"{label:<5} {value}" for label, value in (("WHEN", item.when), ("DO", item.do), ("WHY", item.because))
               if value]
-    lines += [f"applies: {applies or 'nothing set'}", f"evidence: {evidence or 'none'}",
-              f"created {item.created or '?'}; last verified {item.last_verified or 'never'}; "
-              f"review by {item.review_by or 'not set'}",
+    dates = (f"catalogue note, {item.extra.get('confidence')}; updated {recall.updated(item) or '?'}; "
+             "never verified as a lesson" if item.origin == "advisory" else
+             f"created {item.created or '?'}; last verified {item.last_verified or 'never'}; "
+             f"review by {item.review_by or 'not set'}")
+    lines += [f"applies: {applies or 'nothing set'}", f"evidence: {evidence or 'none'}", dates,
               "counters: " + ", ".join(f"{name} {count}" for name, count in tally.counters().items())]
     if tally.stale_mark:
         lines.append(f"marked stale {tally.stale_mark['at'][:10]}: {tally.stale_mark['reason'] or 'no reason given'}"
