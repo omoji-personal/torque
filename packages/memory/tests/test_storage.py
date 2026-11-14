@@ -109,6 +109,72 @@ def test_an_id_resolves_exactly_or_by_a_unique_start(scopes):
         storage.resolve(lessons, "L-20991231-ffff")
 
 
+def test_a_lesson_shown_again_in_one_session_on_one_surface_counts_once(scopes):
+    from jsc_memory import review
+    alpha = scopes("alpha")
+    root = alpha.engagement
+    for _ in range(3):
+        storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s1"}])
+    storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s1"},
+                       {"event": "shown", "id": "L-20261114-c0de1234", "via": "context", "session": "s1"},
+                       {"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s2"},
+                       {"event": "helpful", "id": "L-20261114-c0de1234", "session": "s1"},
+                       {"event": "helpful", "id": "L-20261114-c0de1234", "session": "s1"}])
+    for _ in range(2):                                  # no session id: every print counts
+        storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "deploy"}])
+    rows = storage.read_events(root)
+    assert sum(row["event"] == "shown" for row in rows) == 5 and sum(row["event"] == "helpful" for row in rows) == 2
+    assert storage.tally(rows)["L-20261114-c0de1234"].shown == 5
+    assert "shown counts prints of a lesson" in review.render_stats(review.stats(alpha))
+
+
+def test_the_part_of_an_id_after_its_date_is_enough(scopes):
+    folder = scopes("alpha").folder("client")
+    for identifier in ("L-20261114-c0de1234", "L-20261114-c0ffee99", "L-20261115-beef5678", "L-20250303-a3f2"):
+        storage.save(Lesson(id=identifier, title=identifier, created="2026-11-14"), folder)
+    lessons = storage.load(scopes("alpha"))
+    assert storage.resolve(lessons, "beef5678").id == "L-20261115-beef5678"
+    assert storage.resolve(lessons, "beef").id == "L-20261115-beef5678"          # a unique start of it
+    assert storage.resolve(lessons, "c0de").id == "L-20261114-c0de1234"
+    assert storage.resolve(lessons, "a3f2").id == "L-20250303-a3f2"              # an earlier, four-character id
+    with pytest.raises(storage.Ambiguous) as caught:
+        storage.resolve(lessons, "2026")                                          # the year alone names many
+    assert "the part of an id after its date is enough" in str(caught.value)
+    with pytest.raises(storage.Ambiguous):
+        storage.resolve(lessons, "c0")                                            # too short
+    assert record.short_id("L-20261114-c0de1234") == "c0de1234" and record.short_id("A-deploy-order") == "deploy-order"
+
+
+@pytest.mark.parametrize("damage", [
+    {"via": ["malformed"]}, {"via": {"a": 1}}, {"reason": 7}, {"session": ["x"]}, {"superseded_by": 3},
+    {"note": {"x": 1}}, {"id": ""}, {"id": 5}, {"at": 20261114}, {"at": "yesterday"}, {"event": "deleted"},
+])
+def test_a_damaged_event_row_is_skipped_and_counted_and_no_command_breaks(scopes, damage):
+    from jsc_memory import recall, review
+    alpha = scopes("alpha")
+    item = intake_lesson(alpha)
+    good = {"event": "shown", "id": item.id, "at": "2026-11-14T10:00:00-05:00", "via": "for"}
+    path = storage.events_path(alpha.engagement)
+    with open(path, "a", encoding="utf-8") as stream:
+        stream.write(json.dumps({**good, **damage}) + "\n" + "not json\n" + json.dumps(good) + "\n")
+    damaged: list = []
+    rows = storage.read_events(alpha.engagement, damaged)
+    assert len(damaged) == 2 and all(row in rows for row in [good])
+    report = review.stats(alpha)
+    assert report["damaged_events"] == 2 and report["shown_by_surface"] == {"for": 1}
+    assert "Damaged event rows skipped: 2" in review.render_stats(report)
+    lines = review.health_lines(review.health(alpha))
+    assert "damaged event rows skipped 2" in lines[1]
+    assert storage.tally(storage.events_for(alpha))[item.id].shown == 1
+    recall.find(alpha, types=["Flow"])                 # recall reads the same log and does not break
+    review.build(alpha)
+
+
+def intake_lesson(alpha):
+    from jsc_memory import intake
+    return intake.add(alpha, text="When: you deploy a flow. Do: read it back.", source="consultant").lesson
+
+
 def test_events_go_to_the_scope_root_and_counters_come_from_them(workspace, scopes):
     alpha = scopes("alpha")
     assert alpha.event_root("client") == workspace / "clients" / "alpha"

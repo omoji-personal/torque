@@ -94,7 +94,7 @@ def test_a_lesson_is_admitted_on_the_consultants_word_or_on_evidence_that_it_hol
 
 def test_ids_carry_the_date_and_avoid_taken_ones():
     first = record.new_id("2026-11-14")
-    assert record.ID.match(first) and first.startswith("L-20261114-") and len(first) == 15
+    assert record.ID.match(first) and first.startswith("L-20261114-") and len(first) == 19
     assert record.new_id("2026-11-14", taken={first}) != first
 
 

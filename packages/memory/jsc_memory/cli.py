@@ -106,6 +106,7 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
         if result.masked:
             lines.append("  masked: " + ", ".join(f"{name} ({count})" for name, count in result.masked.items()))
         lines.append(f"  file: {result.path}")
+        lines.append(f"  short id: {record.short_id(item.id)} (every lesson command takes it)")
     lines += [f"  {note}" for note in result.notes]
     _out(args, result.as_dict(), "\n".join(lines))
     return EXIT_OK
@@ -148,6 +149,9 @@ def _listing(args: argparse.Namespace, scopes: Scopes, rows, problems: list, hea
     platform = len(recall.platform_lessons())
     text = [heading] if rows else [f"No lessons to list ({scopes.label()})."]
     text += [_row(item, tally) for item, tally in rows]
+    if rows:
+        text.append(f"An id's last part is enough for every command (torque lesson show "
+                    f"{record.short_id(rows[0][0].id)}).")
     if getattr(args, "scope", None) != "platform" and not getattr(args, "everything", False):
         text.append(f"Plus {platform} platform lessons shipped with Torque: torque lesson list --scope platform")
     text += recall.problem_lines(problems, limit=20)
@@ -290,7 +294,11 @@ def cmd_promote(args: argparse.Namespace, scopes: Scopes) -> int:
     _out(args, made, "\n".join([
         f"Proposal written, nothing applied: {made['proposal']}",
         f"It proposes {made['lesson']} ({made['from']}) for: {made['to']}"
-        + (f" `{made['name']}`" if made["name"] else "") + f". The scrub replaced: {replaced}.",
+        + (f" `{made['name']}`" if made["name"] else "") + f". The scrub replaced: {replaced}."
+        + (f" Left out: {len(made['left_out'])} front-matter key(s) Torque does not know "
+           f"({', '.join(made['left_out'])}); their values are not copied." if made["left_out"] else "")
+        + (f" Custom names in the text: {', '.join(made['custom_names'])}; confirm none identifies the client."
+           if made["custom_names"] else ""),
         "Read it with the consultant. " + (
             f"On their word: torque lesson promote --apply {Path(made['proposal']).name}" if made["applies_itself"]
             else "A person applies it in the destination it names; Torque does not change shared guidance."),
@@ -310,12 +318,19 @@ def cmd_harvest(args: argparse.Namespace, scopes: Scopes) -> int:
     if not report["found"]:
         text = [report["note"]]
     else:
-        text = [f"{len(files)} file(s) changed in {report['dir']}"
+        where = report['dir'] or ', '.join(report.get('looked_at') or [])
+        text = [f"{len(files)} file(s) changed in {where}"
                 + (f" since {report['since']}" if report["since"] else "") + ". Nothing was copied."]
         text += [f"- {item['name']} [{item['type'] or 'note'}, {item['modified']}] {item['description']}\n"
                  f"  {item['path']}" for item in files[:args.limit]]
         if len(files) > args.limit:
             text.append(f"... and {len(files) - args.limit} more (--limit N, or --json for all)")
+        skipped = report.get("skipped") or {}
+        if skipped.get("other engagements") or skipped.get("links"):
+            text.append(f"Not read: {skipped['other engagements']} folder(s) or file(s) of another client or "
+                        f"initiative, and {skipped['links']} link(s), which a harvest does not follow.")
+        if skipped.get("written by Torque"):
+            text.append(f"Left out: {skipped['written by Torque']} file(s) Torque wrote there, unchanged.")
         if files:
             text.append("A host's memory mixes clients. To keep one as a lesson, choose its scope: "
                         "torque lesson add --from-file PATH --when ... --do ... --because ... [--scope firm]")

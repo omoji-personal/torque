@@ -120,8 +120,11 @@ class _Captured(BaseException):
 
 def parser_and_words(words: list[str]) -> tuple[argparse.ArgumentParser, list[str]]:
     """The parser Torque would hand these words to, and the words it would hand it, found by
-    running Torque's own entry point up to its first parse and no further."""
-    original_parse, original_dispatch = argparse.ArgumentParser.parse_args, cli._dispatch
+    running Torque's own entry point up to its first parse and no further. The entry point may
+    call parse_args or parse_known_args (the top level calls the second and refuses leftovers
+    itself); the first call of either is the outermost one, so it is the one captured."""
+    original_parse, original_known = argparse.ArgumentParser.parse_args, argparse.ArgumentParser.parse_known_args
+    original_dispatch = cli._dispatch
 
     def capture(self, args=None, namespace=None):
         raise _Captured(self, list(sys.argv[1:] if args is None else args))
@@ -140,6 +143,7 @@ def parser_and_words(words: list[str]) -> tuple[argparse.ArgumentParser, list[st
             sys.argv = previous
 
     argparse.ArgumentParser.parse_args = capture
+    argparse.ArgumentParser.parse_known_args = capture
     cli._dispatch = dispatch
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -148,6 +152,7 @@ def parser_and_words(words: list[str]) -> tuple[argparse.ArgumentParser, list[st
         return caught.parser, caught.argv
     finally:
         argparse.ArgumentParser.parse_args = original_parse
+        argparse.ArgumentParser.parse_known_args = original_known
         cli._dispatch = original_dispatch
     raise AssertionError(f"torque {' '.join(words)} reached no argument parser")
 
@@ -187,14 +192,18 @@ def names_problem(parser: argparse.ArgumentParser, words: list[str], elided: boo
 
 
 def parse_problem(parser: argparse.ArgumentParser, words: list[str]) -> str | None:
-    """None when the parser takes the words; otherwise what it said."""
+    """None when the parser takes the words; otherwise what it said. Torque's own parser raises
+    its usage error instead of exiting; a package's parser exits with code 2."""
     said = io.StringIO()
+    usage_error = getattr(cli, "UsageError", ())
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(said):
             parser.parse_args(words)
     except SystemExit as exc:
         if exc.code not in (0, None):
             return said.getvalue().strip().splitlines()[-1] if said.getvalue().strip() else f"exit {exc.code}"
+    except usage_error as exc:
+        return f"{exc.parser.prog}: error: {exc.message}"
     return None
 
 
@@ -268,15 +277,22 @@ def test_every_skill_recipe_and_file_a_recipe_or_rule_cites_exists():
     assert not missing, "\n".join(missing)
 
 
-@pytest.mark.parametrize("command,complete", [
-    ("torque lesson stale <id> --workspace <private-path> --client <client-name>", True),
-    ("torque lesson capture <lesson-text> --workspace <private-path> --no-such-option x", True),
-    ("torque check metadatas force-app", False),
-    ("torque session add ... --learnd x", True),
-    ("torque recover run <snapshot-id> --target <org-alias>", True),
+@pytest.mark.parametrize("command,complete,reason", [
+    ("torque lesson stale <id> --workspace <private-path> --client <client-name>", True, "--reason"),
+    ("torque lesson capture <lesson-text> --workspace <private-path> --no-such-option x", True, "--no-such-option"),
+    ("torque check metadatas force-app", False, "metadatas"),
+    ("torque session add ... --learnd x", True, "--learnd"),
+    ("torque recover run <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name> "
+     "--no-such-option", True, "--no-such-option"),
+    ("torque recover run <snapshot-id> --workspace <private-path> --client <client-name>", True, "--org"),
+    # Torque's own top level: its parser raises a usage error instead of exiting.
+    ("torque context --workspace <private-path> --client <client-name> --no-such-option", True, "--no-such-option"),
+    ("torque session add --workspace <private-path> --client <client-name> --summary x --status done", True,
+     "invalid choice"),
 ])
-def test_the_checker_finds_a_wrong_command(command, complete):
-    assert problem_of(command, complete), command
+def test_the_checker_finds_a_wrong_command(command, complete, reason):
+    problem = problem_of(command, complete)
+    assert problem and reason in problem, (command, problem)
 
 
 @pytest.mark.parametrize("command,complete", [

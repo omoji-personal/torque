@@ -81,8 +81,9 @@ later release narrows the check.
   `project convert`, `project list ignored`, `code-analyzer run` and `code-analyzer rules` (their
   roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
   `--root-dir`/`--source-dir` for convert, and the current directory when none is given or when
-  convert uses `--manifest`/`--metadata`; code-analyzer's `-o` and `-v` are its `--output-file`
-  and `--view`), `version`, `help`, `which` and `plugins` (not `plugins install`). A command's
+  convert uses `--manifest`/`--metadata`; code-analyzer's `-f` and `-v` are its `--output-file`
+  and `--view`, and its `-o` is `--target-org`, the org its remote analysis engines reach, so
+  `sf code-analyzer run -o ALIAS` is blocked as org access), `version`, `help`, `which` and `plugins` (not `plugins install`). A command's
   `--help` or `-h`, and `sf --version`, pass too: the CLI shows help or its version and runs
   nothing. Build-only still blocks `agent generate` and `doctor --command`, which can reach an
   org with no org flag on the line, and a command's own `--version` value
@@ -92,13 +93,33 @@ later release narrows the check.
   `torque` command rejects abbreviated options, and the gate also blocks abbreviations of
   `--client` (`--clie`), which an older install would accept. One more form passes:
   `torque lesson for [WORDS] --workspace .` (or `recall`), with only `--task`, `--type`,
-  `--command`, `--error`, `--limit`, `--json` and `--include-candidates`. It reads the firm's
+  `--command`, `--error`, `--limit` and `--json` (not `--include-candidates`: the firm's
+  lessons nobody has reviewed yet stay out), and `torque lesson --help` or `torque lesson
+  for --help`, which print help only. It reads the firm's
   [lessons](lessons.md) (the workspace's own `lessons/` folder) and those shipped with Torque,
   never a client's: the workspace must be named, so that no client selected in the
   environment applies, and be the workspace itself (Torque reads a folder that holds a
   `client.json` as that client, so no other folder passes, inside the workspace or outside
   it); no word may hold `--client` or `--initiative`. Every other lesson command stays
-  blocked.
+  blocked. Two [checks](checks.md) pass as well, because they read local files only:
+  `torque check metadata [PATH ...]` (with `--changed-from`, `--baseline`, `--only`,
+  `--analyzer`, `--ignore`, `--fail-on`, `--json`) and `torque check result RESULT.json`
+  (with `--json`), also through `python -m torque`. The check must be the whole command:
+  nothing before or after it, no pipe, redirection, wrapper or `bash -c` (a redirection can
+  create the `sfdx-project.json` it looks for). Every path is written out (no variable,
+  glob or `~`) and must not reach `clients/` (or a worktree copy's), read both as the shell
+  resolves it and as the command does (`abspath` first, so `link/..` is the current
+  folder), and no path may be or hold a whole initiative folder; `check metadata` needs at
+  least one PATH named (without one it reads the whole current folder). `check metadata` also reads the project
+  folder around its paths (the nearest folder with `sfdx-project.json` at or above the
+  first PATH) when it is given files, and runs Code Analyzer there unless `--analyzer off`:
+  that folder must not reach `clients/` either, must hold every PATH (elsewhere the analyzer
+  runs in a folder the gate cannot know), and its `code-analyzer.yml` or `.yaml`, if any,
+  must be readable YAML naming no absolute path, `..`, `~` or variable and no path that
+  reaches `clients/`. The working folder must be outside `clients/`. It shows the lessons of the engagement `TORQUE_WORKSPACE` selects, so
+  it is blocked while that variable, as the hook sees it, names anything but this
+  workspace. `--help` after `torque check` or one of its actions passes. `torque check
+  deployed` reaches an org and stays blocked, with a message that names the two forms.
 - Torque's other installed scripts (`jsc`, `jsc-qa`, `jsc-advisory`, `jsc-memory`,
   `jsc-loganalyzer`, `jsc-probes`, `jsc-browser-tests`, `meeting-processor`,
   `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):

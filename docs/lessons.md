@@ -59,8 +59,9 @@ Scopes are folders. One lesson is one Markdown file.
 
 A command reads the selected client or initiative, the firm and the platform. It never
 reads another client's lessons, events or files, under any option. The one thing read
-of every client is its registration (`client.json`: name, slug, org alias), so that a
-firm lesson that names a client can be refused. Without `--client` or `--initiative` a
+of every client and initiative is its registration (`client.json`: name, slug, org alias;
+`binding.json`: the initiative's slug), so that a
+firm lesson that names a client or an initiative can be refused. Without `--client` or `--initiative` a
 command reads the firm and the platform; without `--workspace`, the platform only. New lessons
 go to the selected client or initiative; `--scope firm` is explicit; nothing writes into
 the package.
@@ -89,7 +90,7 @@ are derived from the events and are never stored in a lesson file.
 
 ```markdown
 ---
-id: L-20261114-a3f2
+id: L-20261114-a3f29c0e
 title: Ship field access with every new field
 scope: client                  # client | initiative | firm | platform (must match the folder)
 kind: pitfall                  # pitfall | works | convention | fact
@@ -115,7 +116,10 @@ promoted_to: []
 Optional body, about 15 lines at most: the error text, a minimal reproduction, one example.
 ```
 
-- A person or an agent may edit the file. Keys Torque does not know are kept.
+- A person or an agent may edit the file. Keys Torque does not know are kept in the
+  lesson's own scope, and their names and values are scrubbed like the rest whenever
+  Torque writes the file. A copy to a wider scope (`promote`) leaves them out and the
+  proposal names them.
 - A file that cannot be read is skipped, named in the output and in `torque doctor`, and
   never stops a command. `README.md` in a lessons folder is not read as a lesson.
 - `applies.commands` are patterns with `*`. A Torque wrapper and the command it runs count
@@ -143,8 +147,16 @@ A candidate becomes active on a basis: `torque lesson verify ID --evidence
 reproduced[:REF] | official-doc:URL | second-occurrence[:REF] | consultant-said`. The same
 lesson captured again on another occasion is recorded as a second occurrence, which
 admits it; captured again on the same occasion, nothing is added. Another occasion is
-another session record than the ones the lesson already names, or another day; on one
-day, a capture without a session record is not a new occasion.
+another day than every one the lesson's evidence names and, where both carry one,
+another session record. Two session records on one day are one occasion, so an agent
+cannot admit its own note by recording two sessions.
+
+A file may be edited by hand, also to `state: active`. A client, initiative or firm
+lesson counts as active only when its record carries a basis: source `consultant`, or
+evidence of type `reproduced`, `official-doc`, `second-occurrence` or `consultant-said`.
+Without one it is treated as a candidate: `torque lesson review` lists it under "Marked
+active without a basis", `torque doctor` counts it, `promote` refuses it, and `verify`
+asks for a basis. The rule is one function, `lesson.unbacked_active`.
 
 ## Capture
 
@@ -169,20 +181,73 @@ day, a capture without a session record is not a new occasion.
   the files the host's own memory changed since the last harvest: name, type, one-line
   description, path. It copies nothing, because a host's memory mixes clients. A note
   enters a scope only through `torque lesson add --from-file PATH ...` once someone has
-  chosen the scope. Claude Code's folder is found from the workspace path
-  (`~/.claude/projects/<path with separators as dashes>/memory/`), Codex's under
-  `~/.codex/`; other places need `--dir`.
+  chosen the scope. Started anywhere, also above the clients (`--dir` naming the
+  workspace or a folder that holds several workspaces), it never enters the folder of
+  another client or initiative, of this workspace or any other (a folder with a
+  `client.json` or `binding.json`, or under a workspace's `clients/` or `initiatives/`),
+  follows no linked folder or file, and checks each file by where it resolves before it
+  opens it. The output counts what was left out. Claude Code's folder is found from the
+  workspace path (`~/.claude/projects/<path with separators as dashes>/memory/`),
+  Codex's as `~/.codex/memories_v2/` or `memories/`; other places need `--dir`. Where
+  Codex keeps its memory in a database file (`~/.codex/memories_*.sqlite`) and no such
+  folder exists, the output says so in one line: the database is not opened or read;
+  export it to a folder of notes, or name one with `--dir`. For Antigravity, which keeps
+  what `/learn` writes as rules and skills, the places its documentation names are read:
+  `.agents/rules/*.md` and `.agents/skills/*/SKILL.md` in the workspace,
+  `~/.gemini/GEMINI.md` and `~/.gemini/config/skills/*/SKILL.md`; a file Torque wrote
+  there and nobody changed is left out, and the output names the places looked at.
+  Antigravity's knowledge items are not documented as files and are not looked for.
+  `MEMORY.md` is skipped on purpose in every host folder: it is an index of the other
+  notes, not a note.
 
 ### What is refused or masked
 
 | Scope | Refused | Masked |
 | --- | --- | --- |
-| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, authorization headers, private keys, provider tokens, `password=...` style assignments | email addresses, phone numbers, social security numbers, Salesforce record and org Ids; invisible characters are removed |
-| firm | also the names, slugs and org aliases of this workspace's clients, org Ids and org host names | |
+| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, the value of an `Authorization:` header (Basic, Bearer, Token or any scheme) and a long `Bearer` token, private keys, provider tokens, and a value after an explicit secret label (below) | email addresses, phone numbers, social security numbers, Salesforce org, user and record Ids; invisible characters are removed |
+| firm | also the names, slugs and org aliases of this workspace's clients, the slugs (and so the names) of its initiatives, org Ids and org host names: My Domain, site, Visualforce and Lightning hosts, instance hosts (`na139.salesforce.com`), names under `force.com` and `documentforce.com` (Salesforce's own public hosts such as `login`, `test` and `developer` pass) | |
 
-A refusal names the class of what was found, never the value, and exits 4. The scrub
-knows shapes and this workspace's client list, not every name a person could write: it
-is an aid, and a firm lesson is still read by a person before it is shared.
+The same scrub runs wherever text enters a lesson or its log: `lesson add`, `session
+add --learned`, `edit`, a stale reason, a helpful note, evidence references, `migrate`,
+`promote` (proposal and apply). `harvest` prints a host note's line only after the same
+check, and withholds it when the check would refuse it. A refusal names the class of
+what was found, never the value, and exits 4.
+
+Explicit secret labels are password, passphrase, passcode, secret, client or consumer
+secret, API key, token (also access, refresh, security, session token), session id and
+`sfdx auth url`. After one of them:
+
+- an assignment (`password=...`, `password:value`, `"api_key": "..."`, `--password
+  VALUE`) is refused whatever the value is made of, from four characters;
+- a quoted value in prose (`The password is "..."`) is refused whatever it is made of,
+  unless the quotes hold a sentence of more than four words;
+- an unquoted value in prose (`the token is ...`, `password: ...`) is refused when it
+  does not read as a word: six characters or more with a digit or a symbol, or twenty or
+  more of anything. `The token is short-lived` and `the password is stored in the vault`
+  pass.
+
+Placeholders pass: `<value>`, `$NAME`, `%NAME%`, `{{name}}`, `****`, `...`, an
+environment variable's name (`SF_PASSWORD`) and words such as `required` or `redacted`.
+
+Identifiers. An org Id (`00D`) or a user Id (`005`) is known by its key prefix and its
+length, 15 or 18 characters, whatever the rest is made of; `00DXXXXXXXXXXXX` is a
+placeholder. Other record Ids have no fixed prefix, so a broader heuristic marks a 15 or
+18 character token as one when it mixes three or more digits with letters and has the
+padding zeros of a record number, or when its 18-character checksum holds; an ordinary
+15-letter word, a short hash or a version number is left alone. In firm scope a client
+name, slug or org alias of two characters is matched as registered and in capitals, on
+word boundaries (`XY`, not `XYZ`); a one-character name is not matched, since it would
+refuse every lesson with the word "a". A short or everyday name makes firm captures with
+that word fail; the message names the class.
+
+The scrub is a heuristic: it catches known shapes, not every secret or every name. Known
+ways through, by design: an unquoted ordinary word as a password in prose (`the password
+is swordfish`), a word between the verb and the value (`the password is now ...`), a
+value under four characters, a secret with no label and no known token shape, a quoted
+value that starts like a placeholder (`"$..."`), and anything said in an unusual way.
+Firm scope knows this workspace's registered client names, slugs and aliases, not
+people's names or a client's nickname. Read a lesson before it leaves its client: a
+firm lesson, and every promotion proposal, is read by a person before it is applied.
 
 ## Recall
 
@@ -232,7 +297,8 @@ is an aid, and a firm lesson is still read by a person before it is shared.
   from `lessons`; other matching candidates are counted in `candidates_not_shown`.
   `--include-candidates` lists every matching candidate among the lessons instead.
 - Each lesson prints in three lines: id and WHEN, DO and WHY, then scope, evidence type,
-  age and counters. Every print appends `shown` events.
+  age and counters. Every print appends a `shown` event; when the session id is known, a
+  lesson counts once per session and surface. `shown` counts prints, not use or value.
 
 `torque context` (and `--json`, key `lessons`) shows at most five active lessons (about
 fifteen lines, read at the start of every session): the selected client's or initiative's
@@ -263,7 +329,13 @@ never raises.
 | `edit ID --set key=value ...` | changes fields; lists as comma-separated words. The body is edited in the file. State and source are not set here: they change through `verify`, `retire` and `restore`, which record why |
 | `show ID`, `list`, `search TERMS` | read; `show pending|active|archive` still lists by state |
 
-An id is the whole id or a unique start of at least four characters after the `L-`. An
+A new id is the date and eight random characters, chosen so that no lesson this command
+can read (the selected client or initiative, the firm, the platform) has it; another
+client's folder is never looked into for that. Ids of four random characters from earlier
+versions keep working. Every command takes the whole id, a unique start of at least four
+characters after the `L-`, or the part after the date alone (`c0de1234`) or a unique
+start of it: an id starts with its date, so four characters from the front are only the
+year. `add` prints that short part, and `list` says it is enough. An
 empty or ambiguous id changes nothing, lists the candidates and exits 3. A platform
 lesson can be marked helpful or stale in a workspace (a stale mark holds for that
 workspace) and is never rewritten there. No command deletes a lesson: `retire` keeps the
@@ -276,13 +348,21 @@ file out of sight, and a person who wants it gone deletes the file.
 past their review date, shown five times with no helpful mark or not shown in 180 days,
 stale marks, lessons worth promoting (helpful three times, or seen a second time) and
 client lessons that could serve every client. It changes nothing; each line names the
-command that acts on it.
+command that acts on it. A lesson file may have been edited by hand, so the report prints
+each text through the same scrub as a capture: a credential-looking value withholds the
+line, Ids and personal data are masked, and in a firm lesson a client's name is replaced
+with a neutral word.
 
 `torque lesson promote ID --to firm|platform|rule|skill|recipe|check [--name N]` writes a
-proposal: the exact text, the destination, what the scrub replaced and what a person must
-confirm. It applies nothing. `torque lesson promote --apply PROPOSAL` performs the one
-promotion that stays inside the workspace, client (or initiative) to firm: it writes the
-firm copy without client words and marks the source `promoted_to`. For a rule, a skill,
+proposal: the exact text, the destination, what the scrub replaced, the front-matter keys
+Torque does not know that were left out (a wider-scope copy carries only the known keys),
+the custom names (`Something__c`) in the text for a person to confirm (not refused: a
+firm lesson may name fields),
+and what a person must confirm. It applies nothing. `torque lesson promote --apply
+PROPOSAL` performs the one promotion that stays inside the workspace, client (or
+initiative) to firm: it scrubs the text between the fences again, every key in it
+included, and writes that text and nothing else as the firm copy, then marks the source
+`promoted_to`. For a rule, a skill,
 a recipe, a check or a platform lesson the proposal is the deliverable: shared and
 shipped guidance is changed by a person or a pull request, and the lesson is then
 recorded with `torque lesson edit ID --set promoted_to=rule:NAME`. Apply only on the
@@ -291,7 +371,9 @@ consultant's word.
 ## Proving the wiring
 
 - `torque lesson stats [--since DATE]`: captured by source and scope, events by kind,
-  shown by surface, candidates waiting and the oldest one, active lessons never shown.
+  shown by surface, candidates waiting and the oldest one, active lessons never shown,
+  and how many damaged event rows (not JSON, or a field of the wrong type) were skipped;
+  `torque doctor` names that count too. A damaged row never stops a command.
 - `torque doctor`: lessons by state for the firm and the selected client, unreadable
   files, the last capture and the last time a lesson was shown, and one line that says
   whether the loop is live (a lesson was saved or shown in the last 30 days) or idle.
@@ -306,8 +388,9 @@ consultant's word.
   the output of `torque deploy` and `torque data`.
 - Build-only mode allows `torque lesson for [WORDS] --workspace .` with `--task`,
   `--type`, `--command`, `--error`, `--limit` and `--json`: the firm's lessons and the
-  shipped ones, never a client's. The folder named must be the workspace itself. Every
-  other lesson command stays blocked there. The firm's lesson files are ordinary workspace
+  shipped ones, never a client's, and never candidates (`--include-candidates` is
+  blocked there). The folder named must be the workspace itself. `torque lesson --help`
+  and `torque lesson for --help` pass. Every other lesson command stays blocked there. The firm's lesson files are ordinary workspace
   files outside `clients/`.
 - In maintenance (`.torque/maintenance`) lesson commands pause like the other packages;
   `torque context` still shows lessons and records nothing.
@@ -332,7 +415,7 @@ Every command takes `--json` and never prompts.
 Platform lessons live in `lessons/*.md` in the Torque repository and are bundled by
 `python scripts/sync-workflows.py` into `src/torque/data/lessons/`.
 
-- `scope: platform`, `state: active`, a stable `id` (`L-YYYYMMDD-xxxx`), one file per
+- `scope: platform`, `state: active`, a stable `id` (`L-YYYYMMDD-xxxxxxxx`), one file per
   lesson with a descriptive file name.
 - Fully generic: no client, person, org or firm practice. `when`, `do` and `because` on
   one line each; the body holds the check.

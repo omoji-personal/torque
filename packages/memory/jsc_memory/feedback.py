@@ -118,11 +118,11 @@ def verify(scopes: Scopes, wanted: str, evidence=()) -> tuple[Lesson, str]:
         item = _fresh(scopes, item)
         if item.state == "retired":
             raise LessonError(f"{item.id} is retired. Bring it back first: torque lesson restore {item.id}")
-        was = item.state
+        was = "candidate" if record.unbacked_active(item) else item.state
         for entry in entries:
             if entry.get("ref"):
                 entry["ref"] = _clean(scopes, item.scope, entry["ref"])
-        if item.state == "candidate":
+        if was == "candidate":
             types = {entry["type"] for entry in [*item.evidence, *entries]}
             if not (item.source == "consultant" or types & record.REVIEW_ADMITTING):
                 raise LessonError(

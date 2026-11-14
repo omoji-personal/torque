@@ -43,7 +43,7 @@ class Added:
     notes: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
-        return {"id": self.lesson.id, "status": self.status, "state": self.lesson.state, "scope": self.lesson.scope,
+        return {"id": self.lesson.id, "short_id": record.short_id(self.lesson.id), "status": self.status, "state": self.lesson.state, "scope": self.lesson.scope,
                 "title": self.lesson.title, "path": str(self.path) if self.path else None,
                 "applies": self.lesson.applies, "inferred": self.inferred, "masked": self.masked,
                 "notes": self.notes}
@@ -185,7 +185,7 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
             notes.append("Similar to " + ", ".join(f"{other.id} ({other.title})" for other in close[:3])
                          + ". If it is the same lesson, retire this one and mark the other: "
                          "torque lesson verify ID --evidence second-occurrence")
-        item.id = record.new_id(day, storage.taken_ids(folder) | shipped_ids())
+        item.id = record.new_id(day, storage.readable_ids(scopes) | shipped_ids())
         path = storage.save(item, folder)
     return Added(item, path, "saved", inferred, found.masked, [note.replace(" ID ", f" {item.id} ") for note in notes])
 
@@ -193,15 +193,16 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
 def _again(same: Lesson, new: Lesson, folder: Path, reference: str, day: str, masked: dict) -> Added:
     """The same lesson captured again. On a new occasion that is a second occurrence:
     evidence that admits a candidate. Otherwise nothing changes. A new occasion is another
-    session record than every one the lesson names, or another day; on one day, a capture
-    without a session record may be the same work as any other, so it is not one."""
+    day than every one the lesson's evidence names and, where both carry one, another
+    session record: two session records on one day can be one piece of work, and an agent
+    could record two to admit its own note."""
     if same.state == "retired":
         return Added(same, same.path, "duplicate", masked=masked, notes=[
             f"This lesson exists and is retired. If it holds after all: torque lesson restore {same.id}"])
 
     def same_occasion(entry: dict) -> bool:
         linked = entry.get("ref", "") if str(entry.get("ref", "")).startswith("session ") else ""
-        return reference == linked if reference and linked else entry.get("date") == day
+        return entry.get("date") == day or bool(reference and linked and reference == linked)
 
     if any(same_occasion(entry) for entry in same.evidence):
         return Added(same, same.path, "duplicate", masked=masked,
@@ -251,12 +252,108 @@ def host_memory_dir(host: str, workspace: Path, given: str | None = None) -> tup
         base = Path(os.environ.get("CODEX_HOME") or home / ".codex")
         folders = [base / "memories_v2", base / "memories"]
         return next((folder for folder in folders if folder.is_dir()), folders[0]), ""
-    return None, ("Antigravity keeps what it learned as rules: in this workspace under .agents/rules/, and for the "
-                  "user under ~/.gemini/. Name the folder: --dir PATH")
+    return None, ""
+
+
+def antigravity_places(workspace: Path) -> list[Path]:
+    """Where Antigravity's `/learn` writes, as its documentation names them: rules and
+    skills in the workspace (`.agents/rules/*.md`, `.agents/skills/*/SKILL.md`) and for
+    the user (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/*/SKILL.md`). Knowledge
+    items are not documented as files and are not looked for."""
+    gemini = Path.home() / ".gemini"
+    return [workspace / ".agents" / "rules", workspace / ".agents" / "skills", gemini / "GEMINI.md",
+            gemini / "config" / "skills"]
+
+
+def _torque_wrote(workspace: Path) -> dict[str, str]:
+    """{path: text} of the files Torque itself derives into `.agents/` for this workspace.
+    A file there that still reads exactly so is Torque's and not something learned."""
+    try:
+        from importlib.resources import files
+        from torque import antigravity
+        surface = antigravity.surface(files("torque").joinpath("data"))
+    except Exception:  # Torque's own package is not importable: nothing is left out as Torque's.
+        return {}
+    return {os.path.normcase(str(workspace / name)): text for name, (text, _) in surface.items()}
+
+
+def _antigravity_files(scopes: Scopes) -> tuple[list[Path], dict, list[str]]:
+    """The learned rule and skill files of Antigravity's documented places, without the
+    ones Torque wrote and nobody changed; and the places looked at."""
+    places = antigravity_places(scopes.workspace)
+    ours = _torque_wrote(scopes.workspace)
+    found: list[Path] = []
+    skipped = {"other engagements": 0, "links": 0, "written by Torque": 0}
+    for place in places:
+        if place.is_file():
+            paths, more = [place], {}
+        elif place.is_dir():
+            paths, more = _walk(scopes, place)
+            if place.name == "skills":
+                paths = [path for path in paths if path.name == "SKILL.md"]
+        else:
+            continue
+        for name, number in more.items():
+            skipped[name] += number
+        for path in paths:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if ours.get(os.path.normcase(str(path))) == text:
+                skipped["written by Torque"] += 1
+            else:
+                found.append(path)
+    return sorted(found), skipped, [str(place) for place in places]
 
 
 def _harvest_state(workspace: Path) -> Path:
     return storage.state_dir(workspace) / "harvest.json"
+
+
+WITHHELD = scrubber.WITHHELD
+
+
+def _shown(text: str) -> str:
+    """A host note's name or first line as a harvest may print it: scrubbed whole before it
+    is cut short, and withheld when the scrub would refuse it as a lesson."""
+    cleaned, found = scrubber.scrub(text[:4000])
+    return WITHHELD if found.refused else cleaned
+
+
+def _walk(scopes: Scopes, folder: Path) -> tuple[list[Path], dict]:
+    """The Markdown files under a host's memory folder that a harvest may open, and what
+    was left out: the folders of other clients and initiatives (pruned, never entered),
+    and links (a linked folder is not followed, a linked file is not opened). Every file
+    is checked again by where it resolves to before it is opened."""
+    skipped = {"other engagements": 0, "links": 0}
+    found: list[Path] = []
+    for top, folders, names in os.walk(folder):
+        real = os.path.realpath(top)
+        # A symbolic link or a junction resolves somewhere other than where it is listed.
+        linked = lambda name: os.path.normcase(os.path.realpath(Path(top, name))) != os.path.normcase(
+            os.path.join(real, name))
+        kept = []
+        for name in folders:
+            path = Path(top, name)
+            if linked(name):
+                skipped["links"] += 1
+            elif scopes.foreign(path):
+                skipped["other engagements"] += 1
+            else:
+                kept.append(name)
+        folders[:] = kept
+        for name in names:
+            if not name.lower().endswith(".md"):
+                continue
+            path = Path(top, name)
+            if linked(name):
+                skipped["links"] += 1
+            elif scopes.foreign(path):
+                skipped["other engagements"] += 1
+            else:
+                found.append(path)
+    return sorted(found), skipped
 
 
 def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | None = None) -> dict:
@@ -282,10 +379,22 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
     last, seen = earlier.get("at"), earlier.get("seen")
     report = {"host": host, "dir": str(folder) if folder else None, "since": since or (last or None),
               "files": [], "copied": 0, "found": False, "note": hint}
+    looked_at: list[str] = []
     if folder is None:
-        return report
-    if not folder.is_dir():
-        report["note"] = f"No memory folder at {folder}. If {host} keeps it elsewhere, name it: --dir PATH"
+        paths, skipped, looked_at = _antigravity_files(scopes)
+        report["looked_at"] = looked_at
+        if not any(Path(place).exists() for place in looked_at):
+            report["note"] = ("Antigravity keeps what /learn writes as rules and skills; none of its documented places "
+                              f"exists here ({', '.join(looked_at)}). Name another folder: --dir PATH")
+            return report
+    elif not folder.is_dir():
+        # Names only: the database is never opened (its format is not documented).
+        databases = sorted(path.name for path in folder.parent.glob("memories_*.sqlite")) \
+            if host == "codex" and not given else []
+        report["note"] = (
+            f"Codex keeps its memory here in a database file ({databases[0]} in {folder.parent}), which this command "
+            "does not read; export it to a folder of notes, or name a folder with --dir PATH." if databases else
+            f"No memory folder at {folder}. If {host} keeps it elsewhere, name it: --dir PATH")
         return report
     if since:
         cutoff = datetime.fromisoformat(record._day(since, "--since")).replace(tzinfo=timezone.utc).timestamp()
@@ -293,9 +402,11 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
         cutoff = float(seen) if isinstance(seen, (int, float)) else 0.0
     started = time.time()
     files = []
-    for path in sorted(folder.rglob("*.md")):
+    if folder is not None:
+        paths, skipped = _walk(scopes, folder)
+    for path in paths:
         try:
-            if path.name == "MEMORY.md" or path.is_symlink() or not path.is_file():
+            if path.name == "MEMORY.md" or not path.is_file():
                 continue
             modified = path.stat().st_mtime
             if modified < cutoff:
@@ -305,14 +416,14 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
         except OSError:
             continue
         first = next((line.strip(" #*-") for line in body.splitlines() if line.strip(" #*-")), "")
-        files.append({"name": meta.get("name") or path.stem,
+        files.append({"name": _shown(meta.get("name") or (path.parent.name if path.name == "SKILL.md" else path.stem)),
                       "type": meta.get("type") or (path.stem.split("_", 1)[0] if "_" in path.stem else ""),
-                      "description": (meta.get("description") or first)[:160],
+                      "description": _shown(meta.get("description") or first)[:160],
                       "modified": datetime.fromtimestamp(modified, timezone.utc).date().isoformat(),
                       "path": str(path)})
-    report.update(files=files, found=True)
+    report.update(files=files, found=True, skipped=skipped)
     # `seen` is the moment this listing began: a file changed after it shows up next time.
-    state[host] = {"at": storage.now(), "seen": started, "dir": str(folder), "files": len(files)}
+    state[host] = {"at": storage.now(), "seen": started, "dir": str(folder) if folder else None, "files": len(files)}
     storage._private_dir(state_path.parent)
     storage._atomic_write(state_path, json.dumps(state, indent=2) + "\n")
     return report
