@@ -66,6 +66,37 @@ class TorqueParser(argparse.ArgumentParser):
     def error(self, message: str):
         raise UsageError(self, message)
 
+    def format_help(self) -> str:
+        if self.prog != "torque":
+            return super().format_help()
+        # The top level: commands under headings, in the order a consultant meets them.
+        action = next(a for a in self._actions if isinstance(a, argparse._SubParsersAction))
+        helps = {choice.dest: choice.help or "" for choice in action._choices_actions}
+        lines = [self.format_usage().rstrip(), "", self.description or ""]
+        listed = set()
+        for heading, names in HELP_GROUPS:
+            lines += ["", heading + ":"]
+            for name in names:
+                if name in action.choices:
+                    listed.add(name)
+                    lines.append(f"  {name:<14} {helps.get(name, '')}")
+        rest = [name for name in action.choices if name not in listed]
+        if rest:
+            lines += ["", "Other:", *(f"  {name:<14} {helps.get(name, '')}" for name in rest)]
+        lines += ["", "Options:", "  -h, --help     show this help and exit", "  --version      show the version",
+                  "", self.epilog or "", "Each command has its own help: torque COMMAND --help."]
+        return "\n".join(lines) + "\n"
+
+
+HELP_GROUPS = (
+    ("Start here", ("workspace", "demo", "doctor", "workflows")),
+    ("Daily records", ("context", "session", "handoff", "change", "client", "initiative", "engagement")),
+    ("Salesforce work", ("check", "deploy", "data", "org", "recover", "browser", "qa", "logs", "advisory",
+                         "guarded")),
+    ("Lessons and other tools", ("lesson", "meeting", "probes", "ai-regression")),
+    ("Controls the owner runs", ("approval", "launch", "revert")),
+)
+
 
 def _subparser_for(parser: argparse.ArgumentParser, args: list[str]) -> argparse.ArgumentParser:
     """The parser of the deepest subcommand the words name (`torque client add`)."""
@@ -153,7 +184,7 @@ def _disable_abbreviations(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = TorqueParser(prog="torque", description="Salesforce consulting workflows and private client context.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     work = sub.add_parser("workspace", help="initialize or update a private consulting workspace")
     work_sub = work.add_subparsers(dest="action", required=True)
     init = work_sub.add_parser("init", help="create local files; does not connect an org")
@@ -162,6 +193,9 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--profile", choices=ws.PROFILES, default="generic")
     init.add_argument("--no-hook", action="store_true",
                       help="do not wire the gate hook in .claude/settings.json (docs/ai-access.md)")
+    init.add_argument("--force", action="store_true",
+                      help="set up the workspace in a folder that already holds other files (they are kept; an "
+                           "existing AGENTS.md or CLAUDE.md is not replaced)")
     init.add_argument("--json", action="store_true")
     upgrade = work_sub.add_parser("upgrade", help="update packaged recipes while preserving local edits")
     upgrade.add_argument("path")
@@ -703,6 +737,34 @@ def _session_fields(parsed: argparse.Namespace) -> dict:
         raise ws.WorkspaceError("session summary must be nonempty: give --summary TEXT, or a summary field in "
                                 "--input FILE")
     return fields
+
+
+def _init_target_check(target: Path, force: bool) -> None:
+    """`workspace init` into a folder that already holds other files would add Torque's
+    files beside them and, without a .gitignore there, one that ignores everything; it
+    does so only with --force. A new folder, an empty one, and one holding only .git and
+    .gitignore are fine."""
+    target = target.expanduser()
+    if force or not target.is_dir() or (target / ws.CONFIG).exists():
+        return
+    others = sorted(child.name for child in target.iterdir() if child.name not in (".git", ".gitignore"))
+    if others:
+        shown = ", ".join(others[:5]) + (f" and {len(others) - 5} more" if len(others) > 5 else "")
+        raise ws.WorkspaceError(
+            f"{target} already holds other files ({shown}). A workspace there adds Torque's folders and files beside "
+            "them and, where there is no .gitignore, one that keeps everything in the folder out of git. Choose a new "
+            "or empty folder, or run this again with --force to set up the workspace here anyway (your files are "
+            "kept; an existing AGENTS.md or CLAUDE.md is not replaced, so add Torque's instructions to it yourself)",
+            code="folder_not_empty", next_command=ws.command_text(["torque", "workspace", "init", str(target),
+                                                                   "--name", "NAME", "--force"]))
+
+
+def _init_next_steps(path: Path) -> list[str]:
+    where = str(path)
+    return [ws.command_text(["torque", "client", "add", "CLIENT", "--workspace", where])
+            + " (add --org ALIAS when the client has a Salesforce org)",
+            ws.command_text(["torque", "doctor", "--workspace", where]) + " (what is ready and what is not)",
+            f"start your agent in {where} and ask it to resume a client: torque context --workspace . --client CLIENT"]
 
 
 def _change(args: argparse.Namespace) -> int:
@@ -1793,6 +1855,8 @@ def _doctor(args: argparse.Namespace) -> int:
                 report["next_actions"].append("Some private paths are already tracked by Git. Ignore rules do not untrack existing files; review their repository visibility.")
         except (FileNotFoundError, subprocess.TimeoutExpired):
             report["git_tracking"] = {"checked": False, "tracked_private_paths": []}
+    from . import host_checks
+    report["host"] = host_checks.report()      # report only; never decides readiness or changes a setting
     if args.json:
         _print_json(report)
     else:
@@ -1869,6 +1933,8 @@ def _doctor(args: argparse.Namespace) -> int:
                                   else "missing " + ", ".join(mode["missing"])))
         for line in report["lessons"].get("lines", []):
             print(line)
+        for line in host_checks.lines(report["host"]):
+            print("Host: " + line)
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")
         for action in report["next_actions"]:
             print(f"Next: {action}")
@@ -1971,16 +2037,21 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if parsed.command == "workspace":
             if parsed.action == "init":
+                _init_target_check(Path(parsed.path), parsed.force)
                 path = ws.init_workspace(parsed.path, parsed.name, parsed.profile)
                 from . import permissions
                 # Full mode: the hook keeps tools from changing consent, approval and control records.
                 hooks = [] if parsed.no_hook else permissions.wire_gate_hooks(path, antigravity=True)
+                steps = _init_next_steps(path)
                 if parsed.json:
-                    _print_json({"workspace": str(path), "org_calls": False, "hooks": hooks})
+                    _print_json({"workspace": str(path), "org_calls": False, "hooks": hooks, "next_steps": steps})
                 else:
                     print(path)
                     for line in _hook_lines(hooks, "full"):
                         print(line)
+                    print("Next:")
+                    for number, step in enumerate(steps, 1):
+                        print(f"  {number}. {step}")
                 return 3 if any(row["status"] == "failed" for row in hooks) else 0
             elif parsed.action == "ai-access":
                 root = ws.set_ai_access(parsed.path, parsed.mode, parsed.approval, parsed.verify,

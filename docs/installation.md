@@ -182,6 +182,22 @@ a `Read` of a `clients/` file is blocked. Doctor runs an exec-form entry's argum
 with no shell; on Windows it runs a shell-form entry through Git Bash, as Claude Code does,
 when Git Bash is installed (or named by `CLAUDE_CODE_GIT_BASH_PATH`).
 
+## First steps
+
+`torque workspace init PATH --name NAME` prints three next steps (add a client, run
+`torque doctor`, start the agent in the workspace). It refuses a folder that already holds
+other files (anything but `.git` and `.gitignore`), because it would add its folders
+beside them and, with no `.gitignore` there, one that keeps the whole folder out of git;
+`--force` sets the workspace up there anyway, keeping every file and any existing
+`AGENTS.md` or `CLAUDE.md`. `torque` alone or `torque --help` lists the commands under five
+headings, in the order a consultant meets them.
+
+`torque doctor` also reports, without changing anything, the host facts that make agent
+work fail in confusing ways: Python's UTF-8 mode and output encoding, whether the
+Salesforce CLI resolves (`sf --version --json`, no org call, update check off) and,
+separately, whether its JSON output is clean (an update notice mixed into it breaks every
+`--json` read), the Windows long-paths setting, and which PowerShell is on PATH.
+
 ## Optional capabilities
 
 | Capability | Additional requirement | Local inspection |

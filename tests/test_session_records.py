@@ -359,6 +359,66 @@ def test_a_client_can_be_added_without_an_org(firm):
     assert add(firm, "--summary", "Discovery call notes", client="gamma")[0] == 0
 
 
+# ---- step 9: first hour
+
+def test_init_refuses_a_folder_with_other_files_explains_force_and_prints_next_steps(tmp_path, monkeypatch):
+    monkeypatch.delenv("TORQUE_WORKSPACE", raising=False)
+    busy = tmp_path / "busy"
+    busy.mkdir()
+    (busy / "notes.txt").write_text("mine", encoding="utf-8")
+    code, out, err = invoke("workspace", "init", busy, "--name", "Firm", "--no-hook")
+    assert code == 2 and "already holds other files (notes.txt)" in err and "--force" in err
+    assert sorted(p.name for p in busy.iterdir()) == ["notes.txt"]
+    code, out, err = invoke("workspace", "init", busy, "--name", "Firm", "--no-hook", "--force")
+    assert code == 0, err
+    assert (busy / "notes.txt").read_text(encoding="utf-8") == "mine" and (busy / "workspace.json").is_file()
+    steps = out.split("Next:", 1)[1]
+    assert "1. torque client add CLIENT --workspace" in steps and "2. torque doctor" in steps
+    assert "3. start your agent" in steps and "torque context --workspace . --client CLIENT" in steps
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    data = json.loads(invoke("workspace", "init", repo, "--name", "Firm", "--no-hook", "--json")[1])
+    assert len(data["next_steps"]) == 3
+    assert error_object(invoke("workspace", "init", busy / "..", "--name", "X", "--json")[1])["code"] == \
+        "folder_not_empty"
+
+
+def test_top_level_help_groups_the_commands_in_the_order_they_are_met():
+    code, out, _ = invoke()          # `torque` alone prints the same help as --help
+    assert code == 0
+    headings = ["Start here:", "Daily records:", "Salesforce work:", "Lessons and other tools:",
+                "Controls the owner runs:"]
+    assert [out.index(h) for h in headings] == sorted(out.index(h) for h in headings)
+    listed = [line.split()[0] for line in out.splitlines() if line.startswith("  ") and not line.startswith("  -")]
+    names = set(cli.build_parser()._subparsers._group_actions[0].choices)
+    assert sorted(listed) == sorted(names) and len(listed) == len(names)
+    assert out.index("  workspace") < out.index("  session") < out.index("  deploy")
+    assert "Each command has its own help: torque COMMAND --help." in out
+
+
+def test_doctor_host_checks_are_read_only_and_say_resolves_and_clean_json_as_two_facts(monkeypatch):
+    from torque import host_checks
+    import subprocess
+    calls = []
+
+    def fake(answer_out, answer_err="", code=0):
+        def run(argv, **options):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, code, answer_out, answer_err)
+        return run
+    monkeypatch.setattr(host_checks.shutil, "which", lambda name: "/stub/sf" if name == "sf" else None)
+    clean = host_checks.report(fake('{"cliVersion": "2.140.0"}'))["salesforce_cli"]
+    assert (clean["resolves"], clean["json_clean"]) == (True, True)
+    noisy = host_checks.report(fake('Warning: @salesforce/cli update available from 2.1 to 2.2.\n{"v": 1}'))
+    assert (noisy["salesforce_cli"]["resolves"], noisy["salesforce_cli"]["json_clean"]) == (True, False)
+    text = host_checks.lines(noisy)
+    assert "Salesforce CLI: resolves and answers --version" in text
+    assert any(line.startswith("Salesforce CLI JSON output: NOT clean") for line in text)
+    assert all(argv == ["/stub/sf", "--version", "--json"] for argv in calls)   # version only: no org, no update
+    monkeypatch.setattr(host_checks.shutil, "which", lambda name: None)
+    assert host_checks.report(fake(""))["salesforce_cli"]["resolves"] is False
+
+
 # ---- step 6: errors an agent can act on
 
 def error_object(out):
