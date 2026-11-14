@@ -81,7 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     notes = sub.add_parser("notes", help="rank operational notes for a command")
     notes.add_argument("--command", required=True)
-    notes.add_argument("--limit", type=int, default=2)
+    notes.add_argument("--limit", type=int, default=3,
+                       help="notes to show (default 3, as many as Torque prints before a deploy)")
     notes.add_argument("--json", action="store_true")
 
     needs = sub.add_parser("needs", help="show known direct requirements for a command")

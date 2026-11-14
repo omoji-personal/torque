@@ -14,6 +14,7 @@ applies:
   keywords: [shared sandbox, overwrite, ignore-conflicts]
   errors: []
 evidence:
+  - {type: official-doc, ref: "https://github.com/salesforcecli/plugin-deploy-retrieve/blob/main/README.md", date: 2026-11-14}
   - {type: session, ref: "field-reported, one org", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
