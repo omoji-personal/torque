@@ -83,7 +83,7 @@ def test_two_or_more_finds_never_drop_the_text():
 
 
 def test_invisible_characters_are_removed():
-    cleaned, found = scrubber.scrub("skip​ the‮ guard﻿")
+    cleaned, found = scrubber.scrub("skip\u200b the\u202e guard\ufeff")
     assert cleaned == "skip the guard" and found.masked == {"invisible characters": 3}
 
 

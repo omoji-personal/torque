@@ -64,7 +64,8 @@ _SSN = re.compile(r"(?<![\d\-])\d{3}-\d{2}-\d{4}(?![\d\-])")
 # 15 or 18 letters and digits. A real Id has zeros where its record number is padded
 # (001A000001AbCdE), which a camel-case word, a hash or a version number does not.
 _SF_ID = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?(?![A-Za-z0-9_])")
-_INVISIBLE = re.compile("[­​-‏‪-‮⁠-⁤﻿]")
+# Soft hyphen, zero-width and direction marks, word joiners, the byte order mark.
+_INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 _ORG_HOST = re.compile(
     r"(?<![A-Za-z0-9.\-])([A-Za-z0-9][A-Za-z0-9\-]*)((?:\.[a-z]+)?\.(?:my\.salesforce(?:-setup|-sites)?\.com"
     r"|lightning\.force\.com|my\.site\.com|vf\.force\.com|visualforce\.com|cloudforce\.com))(?![A-Za-z0-9\-])", re.I)

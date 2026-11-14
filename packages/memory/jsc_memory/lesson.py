@@ -137,7 +137,7 @@ def overlap(one: Lesson, other: Lesson) -> float:
 
 def split_front_matter(text: str) -> tuple[str, str]:
     """(YAML front matter, body) of a Markdown file that starts with a `---` line."""
-    lines = text.lstrip("﻿").splitlines()
+    lines = text.lstrip("\ufeff").splitlines()
     if not lines or lines[0].strip() != "---":
         raise LessonError("no front matter: the file must start with a --- line")
     for index in range(1, len(lines)):
