@@ -49,8 +49,8 @@ def main():
         call("workspace", "init", str(private), "--name", "Synthetic consulting firm", "--profile", "solution-lead")
         assert (private / "AGENTS.md").is_file()
         assert len(list((private / ".claude/commands").glob("*.md"))) == len(rows)
-        # Five packaged skills, and every recipe again as an Antigravity skill.
-        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 5 + len(rows)
+        # Eight packaged skills, and every recipe again as an Antigravity skill.
+        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 8 + len(rows)
         for group in ("rules", "agents"):
             assert (len(list((private / ".agents" / group).glob("*.md")))
                     == len(list((private / ".claude" / group).glob("*.md"))) > 0), group

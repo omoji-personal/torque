@@ -116,6 +116,36 @@
     `SELECT COUNT() FROM pmdm__ServiceParticipant__c WHERE pmdm__Contact__c = null`.
 38. **PMM attendance rollups do not move** while feature gates are off. Check: the gate
     records in Setup > Custom Metadata Types; never fix by deploying copies.
-39. **A handled flow fault leaves a partial save.** Check: force one failing row in a
-    collection Create and count saved rows.
-40. **Flow `DATEVALUE()` on a date/time is GMT.** Check: evaluate on an 11 PM local value.
+39. **General flow traps apply here too** (a handled fault that saves part of a collection,
+    date conversion in GMT, debug runs that commit). They moved to
+    `salesforce-flow/references/gotchas.md`, items 1, 4 and 6.
+
+## Field-reported
+
+Seen in real client work, usually one org; not re-tested for this release. Run the check.
+
+40. **`CampaignMember.AccountId` is blank for contact members** and is set only on create,
+    so a rollup to the household through it misses new members; rows filled by old data
+    loads hide the problem, and a two-step rollup double counts. Use the member's Contact to
+    reach the household, or a custom Account lookup kept in sync plus a distinct count.
+    Check: add a contact to a campaign in a sandbox and read the field.
+41. **Opening NPSP Settings can write.** In a sandbox it inserted default trigger handlers
+    and scheduled jobs. In a read-only study do not open it. Check: handler and scheduled
+    job counts before and after the study.
+42. **Several test saves in one transaction run out of queries.** Five to nine saves on
+    Contact-like objects in one anonymous script or test method reached "Too many SOQL
+    queries: 101", some raised inside a package trigger. Check: one to three cases per
+    transaction; read limit usage in the debug log.
+43. **"Real time" does not mean "never scheduled".** A rollup tool's calculation mode and a
+    scheduled full calculation are separate things; a rollup described as real time also had
+    a weekly scheduled run. Check: the rollup's mode, the `CronTrigger` rows and any
+    scheduled flow that calls the calculate action, before you say how totals refresh.
+44. **A Gift Entry batch page that never finishes loading** came from a template field
+    whose Advanced Mapping had been removed and from a template with no batch table columns.
+    Check: remove the field, add columns, then enter one minimal dummy gift end to end.
+
+## Sources
+
+- Items 1 to 39: the sources listed in SKILL.md (NPSP source and Salesforce Help); "verify"
+  marks practitioner knowledge.
+- Items 40 to 44: field-reported.

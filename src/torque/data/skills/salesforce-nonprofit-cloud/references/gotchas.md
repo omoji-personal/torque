@@ -116,6 +116,26 @@
 50. **No Data Import Wizard, no application-to-award automation, and IndividualApplication
     appears frozen (**verify**).** Check: plan loaders and award automation explicitly.
 
+## Field-reported
+
+Seen in real client work, usually one org; not re-tested for this release. Run the check.
+
+51. **Do not hand-edit the Accounting Subledger's generated definition.** Each accounting
+    set owns a generated Data Processing Engine definition: an active definition rejected
+    every deploy, deactivating the accounting set deleted the definition, and activating it
+    rebuilt the definition from settings without the hand edits. Change behaviour after the
+    subledger instead, for example with a scheduled flow on the journal object. Check:
+    retrieve the definition after a deactivate and activate cycle in a sandbox.
+52. **A gift date corrected after the subledger job ran** produced a reversal and a new
+    entry, both on the new date. Check: correct one dummy gift in a sandbox and read the
+    journal entries.
+53. **Running the subledger in a sandbox** needed the analytics integration user unfrozen,
+    and the managed "run job" action showed no actions to an admin tester until a
+    sandbox-only launcher flow was added. Check: run the job once as the tester before UAT.
+54. **A question about whether accounting configuration can be changed gets a written
+    proposal,** not a change, not even in a sandbox: the exact node, the current and
+    proposed expression, the effect, what does not change, risks, test plan, rollback.
+
 ## Carry-over
 
 - Green job status is not row success: read GiftEntry status, GiftBatch failed counts and
@@ -123,3 +143,11 @@
 - Reconcile migrations by legacy external ID, not by created-today counts; restore every
   bypassed rule afterwards.
 - Receipts belong to cleared payments; fair market value goes in `NonTaxDeductibleAmount`.
+- General build and flow practice: skills `salesforce-build` and `salesforce-flow`.
+
+## Sources
+
+- Items 1 to 50 and the carry-over: the sources listed in SKILL.md (Nonprofit Cloud
+  Developer Guide, Salesforce Help, community best-practice hub); **verify** marks claims not
+  confirmed in a primary source.
+- Items 51 to 54: field-reported.

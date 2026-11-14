@@ -1,6 +1,6 @@
 ---
 name: salesforce-nonprofit-cloud
-description: Work in Salesforce Nonprofit Cloud (Agentforce Nonprofit), the native successor to NPSP. Covers Fundraising, Program and Case Management, Grantmaking, Volunteer Management and Outcome Management, Person Accounts and households, Data Processing Engine rollups, gift entry, licenses and permission sets, metadata versus UI-only setup, gotchas with checks, and NPSP to Nonprofit Cloud migration.
+description: Work in Salesforce Nonprofit Cloud (Agentforce Nonprofit), the native successor to NPSP. Use it before any design, build, data load or diagnosis in an org with Nonprofit Cloud objects such as GiftTransaction, and when planning a move from NPSP. Covers Fundraising, Program and Case Management, Grantmaking, Volunteer Management and Outcome Management, Person Accounts and households, Data Processing Engine rollups, gift entry, licenses and permission sets, metadata versus UI-only setup, gotchas with checks, and NPSP to Nonprofit Cloud migration.
 ---
 
 # Salesforce Nonprofit Cloud
@@ -32,6 +32,11 @@ Reference files in this folder:
 | Rollups running? | Setup > Data Processing Engine has an active copy of each template in use; Setup > Monitor Workflow Services shows recent Completed runs |
 | Commitment processing healthy? | `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null` |
 | Fundraising settings | `FundraisingConfig` (retrieve it): donor matching, lapsed and failing counts, next-transaction creation, household soft credits |
+
+A query that errors can also mean the running user lacks the licence or access: treat an
+error as "not checked" and confirm with the permission set licences. General build practice
+is in skills `salesforce-build` and `salesforce-flow`; this skill holds what is specific to
+Nonprofit Cloud.
 
 A plain Developer Edition cannot be switched to NPC. For testing, use the 30-day trial, a
 scratch org with the `Fundraising`, `ProgramManagement`, `Grantmaking`,

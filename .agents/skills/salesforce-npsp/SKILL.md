@@ -1,6 +1,6 @@
 ---
 name: salesforce-npsp
-description: Work in a Nonprofit Success Pack (NPSP) org, including the Program Management Module and Outbound Funds. Covers the data model, households, TDTM trigger handlers, customizable rollups, enhanced recurring donations, payments, GAU allocations, soft credits, gift entry, PMM attendance, flows on NPSP objects, and the common gotchas with a check for each.
+description: Work in a Nonprofit Success Pack (NPSP) org, including the Program Management Module and Outbound Funds. Use it before any design, build, data load or diagnosis in an org that has the npsp, npe01, npo02, npe03, pmdm or outfunds packages. Covers the data model, households, TDTM trigger handlers, customizable rollups, enhanced recurring donations, payments, GAU allocations, soft credits, gift entry, PMM attendance, flows on NPSP objects, and the common gotchas with a check for each.
 ---
 
 # Salesforce NPSP
@@ -8,7 +8,12 @@ description: Work in a Nonprofit Success Pack (NPSP) org, including the Program 
 NPSP is a suite of managed packages on standard Account, Contact and Opportunity. It is
 still supported, but new nonprofit features ship in Nonprofit Cloud, which is a different
 product (see the `salesforce-nonprofit-cloud` skill). Moving between them is a migration,
-not an upgrade.
+not an upgrade. Since December 2025 NPSP is no longer offered as a preconfigured package in
+new production orgs (Trailhead, see Sources), so existing NPSP orgs and new Nonprofit Cloud
+orgs will both be met for years.
+
+General build practice is in skills `salesforce-build` and `salesforce-flow`; this skill
+holds what is specific to the packages.
 
 Reference files in this folder, read when the task needs them:
 
@@ -33,8 +38,14 @@ Confirm these before designing anything; the answers change most other advice.
 | Handlers switched off | `SELECT npsp__Class__c, npsp__Object__c, npsp__Active__c, npsp__User_Managed__c, npsp__Usernames_to_Exclude__c FROM npsp__Trigger_Handler__c WHERE npsp__Active__c = false OR npsp__Usernames_to_Exclude__c != null` |
 | PMM or Outbound Funds present | `pmdm` or `outfunds` in the installed package list |
 
-Then run NPSP Settings > System Tools > Health Check. Read field and namespace names
-from the org with describe; installed versions differ.
+A query that errors can also mean the running user lacks access: treat an error as "not
+checked" and confirm with the installed package list. Read field and namespace names from
+the org with describe; installed versions differ.
+
+When writes are in scope, run NPSP Settings > System Tools > Health Check. In a read-only
+study do not open NPSP Settings at all: field-reported, opening it in a sandbox inserted
+default trigger handlers and scheduled jobs. Check: count `npsp__Trigger_Handler__c` rows
+and `NPSP%` rows in `CronTrigger` before and after the study.
 
 ## Packages
 
@@ -97,34 +108,23 @@ from the org with describe; installed versions differ.
 - Validation rules on Account and Contact can fail NPSP's rollup updates silently (the
   error lands in `npsp__Error__c`). Give such rules a bypass for automated contexts.
 
-Platform lessons that bite in NPSP and PMM builds, each observed in a developer org:
+- Several test saves in one anonymous Apex script or one test method can run out of
+  queries, because each save on Contact-like objects fires many package queries
+  (field-reported: "Too many SOQL queries: 101" in five agent contexts). Keep to one to
+  three cases per transaction; a rollback does not refund limits.
 
-1. **A handled fault on a collection Create can partially save.** With a fault
-   connector, the rows that succeeded stay saved and the fault path runs; IDs are not
-   written back to the collection. Only an unhandled fault rolls back the whole
-   transaction. For all-or-nothing, use a Roll Back Records element on the fault path
-   (before logging, or the log is rolled back too). Check: create three records where one
-   fails a validation rule, then count what was saved.
-2. **Flow formula `DATEVALUE()` on a date/time uses GMT.** An evening session in a
-   US time zone dates to the next day, and a late December 31 value lands in the next
-   year. Use a date formula field on the object, which evaluates in the user's time zone,
-   or adjust explicitly. Check: evaluate the formula on a record timestamped 11 PM local.
-3. **Subflow elements have no fault connector.** Handle faults inside the subflow and
-   return an error output the parent checks. Check: the Subflow element in Flow Builder
-   offers no Add Fault Path.
-4. **Newly deployed custom fields have no field-level security until granted.** A
-   metadata deploy without a permission set grant leaves the field invisible, and SOQL
-   reports "No such column". Deploy a permission set with the field permissions in the
-   same change. Check: `SELECT Field, PermissionsRead FROM FieldPermissions WHERE
-   Field = 'Object__c.Field__c'`.
-5. **Never deploy subscriber copies of managed custom metadata records** (for example
-   PMM feature gates or NPSP rollup definitions). A copy without the namespace on the
-   record name creates a duplicate DeveloperName that can make the package's own trigger
-   fail on every insert. Edit managed records in Setup; remove a stray copy with a
-   destructive deploy. Check: query the type for duplicate DeveloperName values.
-6. **Flow Builder debug runs commit unless rollback mode is on.** A debug run of an
-   autolaunched or screen flow writes real records when the rollback option is cleared.
-   Check: after any debug run, query for records it could have created and delete them by Id.
+One package lesson, observed in a developer org:
+
+- **Never deploy subscriber copies of managed custom metadata records** (for example
+  PMM feature gates or NPSP rollup definitions). A copy without the namespace on the
+  record name creates a duplicate DeveloperName that can make the package's own trigger
+  fail on every insert. Edit managed records in Setup; remove a stray copy with a
+  destructive deploy. Check: query the type for duplicate DeveloperName values.
+
+The platform lessons that used to be listed here apply to every org and moved: a handled
+fault that saves part of a collection, subflow faults, date conversion in GMT and debug runs
+that commit are in `salesforce-flow/references/gotchas.md` (items 1, 3, 4 and 6); a new
+field with no field access is in `salesforce-build/references/access-and-sharing.md`.
 
 ## Surfaces
 
@@ -137,9 +137,16 @@ Platform lessons that bite in NPSP and PMM builds, each observed in a developer 
 | Add a field to Gift Entry | Data Import field, Advanced Mapping entry, template field |
 | Turn on RD2 | Enablement wizard with a dry run first; treat as one-way (verify) |
 
+A path that starts with another skill's name, such as
+`salesforce-flow/references/gotchas.md`, is relative to the skills folder that holds this
+skill.
+
 ## Sources
 
 - NPSP source (behavior and defaults): https://github.com/SalesforceFoundation/NPSP
+- NPSP no longer preconfigured in new production orgs (December 2025): https://trailhead.salesforce.com/content/learn/projects/import-your-data-using-npsp-data-importer/discover-the-npsp-data-importer
+- field-reported: lessons from real client work with Torque (one consultant, mostly
+  sandboxes), not re-tested for this release.
 - NPSP data model: https://developer.salesforce.com/docs/platform/data-models/guide/nonprofit-success-pack.html
 - Customizable rollup job modes: https://help.salesforce.com/apex/HTViewHelpDoc?id=sfdo.NPSP_Custom_Rllps_jobs.htm&language=en_us
 - Configure recurring donations: https://help.salesforce.com/s/articleView?id=sfdo.npsp_configure_recurring_donations.htm&type=5

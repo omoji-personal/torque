@@ -144,3 +144,8 @@ Revenue reports use GiftTransaction (Status Paid, TransactionDate), not Opportun
 Remove the standard Campaign statistics section, which counts Opportunities. For fiscal
 years, report on GiftTransaction with fiscal date filters or build a custom rollup.
 In-kind transactions count in donor summaries unless excluded.
+
+## Sources
+
+- Nonprofit Cloud Developer Guide, version 68.0: https://developer.salesforce.com/docs/atlas.en-us.nonprofit_cloud.meta/nonprofit_cloud/
+- The other sources listed in SKILL.md. **verify** marks unconfirmed claims.
