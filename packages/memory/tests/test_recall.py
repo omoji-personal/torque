@@ -193,6 +193,18 @@ def test_a_loose_word_is_not_a_match(scopes):
     assert found("running", "reporting", types=["ApexClass"]) == []
 
 
+def test_a_task_torque_knows_is_asked_as_itself_and_brings_only_the_types_it_implies(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "rfsh", tasks=["sandbox-refresh", "sandbox"], when="a sandbox was just refreshed")
+    save(alpha, "client", "sbox", tasks=["sandbox"], when="you work in any sandbox")
+    assert recall.build_query(tasks=["sandbox-refresh"]).tasks == ["sandbox-refresh"]
+    assert (recall.build_query(tasks=["flow-build"]).tasks, recall.build_query(tasks=["flow-build"]).types) == (
+        ["flow-build"], ["Flow"])
+    assert own(recall.find(alpha, tasks=["sandbox-refresh"], limit=None)) == ["rfsh"]
+    assert own(recall.find(alpha, topic=["sandbox-refresh"], limit=None)) == ["rfsh"]
+    assert own(recall.find(alpha, tasks=["sandbox"], limit=None)) == ["rfsh", "sbox"]
+
+
 def test_the_heading_names_each_thing_asked_for_once_whatever_its_spelling():
     assert recall.build_query(topic=["report", "dashboard"]).label() == "report, Dashboard"
     assert recall.build_query(tasks=["Flow"], types=["flow"]).label() == "flow, flow-build"

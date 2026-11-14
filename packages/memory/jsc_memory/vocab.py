@@ -289,19 +289,24 @@ def topic_terms(topic) -> tuple[list[str], list[str], list[str]]:
     `dashboard`, `field access`), a task's own name (`deploy`, `report`, `data-load`) and
     a type's name (`CustomField`) are asked as that task or type; only the words left over
     are matched as words, so `report dashboard` is the report task and the Dashboard type."""
-    text = " ".join(str(word) for word in topic or ())
-    tasks, types = infer(text)
+    token = re.compile(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*")
+    task_of = lambda word: next((task for task in TASKS if task in word_forms(tag(word))), None)  # noqa: E731
+    # A task written as Torque writes it (sandbox-refresh, data-load) first, then the phrases.
+    words = token.findall(" ".join(str(word) for word in topic or ()))
+    tasks = [task_of(word) for word in words if "-" in word and task_of(word)]
+    text = " ".join(word for word in words if not ("-" in word and task_of(word)))
+    more, types = infer(text)
+    tasks += more
     for pattern, _, _ in _COMPILED:
         text = pattern.sub(" ", text)
     left = []
-    for token in re.findall(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*", text):
-        named = next((task for task in TASKS if task in word_forms(tag(token))), None)
-        if named:
-            tasks.append(named)
-        elif token.lower() in TYPES:
-            types.append(TYPES[token.lower()])
+    for word in token.findall(text):
+        if task_of(word):
+            tasks.append(task_of(word))
+        elif word.lower() in TYPES:
+            types.append(TYPES[word.lower()])
         else:
-            left.append(token)
+            left.append(word)
     asked = {name.lower() for name in [*tasks, *types]}
     words: list[str] = []
     for word in topic_words(left):

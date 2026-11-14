@@ -139,6 +139,7 @@ def test_a_word_matches_itself_with_a_plural_or_singular_ending_and_nothing_more
     (["CustomField", "help"], [], ["CustomField"], ["help"]),
     (["snapshot", "snapshots", "owner"], [], [], ["snapshot", "owner"]),
     (["field", "access"], ["field-build", "access"], ["CustomField", "PermissionSet"], []),
+    (["sandbox-refresh"], ["sandbox-refresh"], [], []),
 ])
 def test_a_topic_word_the_vocabulary_knows_is_asked_as_its_task_or_type(topic, tasks, types, words):
     assert vocab.topic_terms(topic) == (tasks, types, words)

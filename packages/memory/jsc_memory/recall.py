@@ -208,7 +208,9 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
     all_types = [vocab.canonical_type(kind) for kind in types or ()]
     for task in tasks or ():
         more_tasks, more_types = vocab.infer(str(task).replace("-", " "))
-        all_tasks += more_tasks
+        # A task Torque knows is asked as itself (sandbox-refresh is not every sandbox lesson);
+        # only the types it implies are added (flow-build asks for Flow).
+        all_tasks += [] if vocab.tag(task) in vocab.TASKS else more_tasks
         all_types += more_types
     command = " ".join(str(command or "").split())
     if command:
