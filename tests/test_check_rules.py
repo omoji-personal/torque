@@ -485,3 +485,35 @@ def test_hard_coded_id_shapes():
     for not_an_id in ("202600114T12000", "202600114T12000000", "a4f3b0c9e8d1a2b3c4", "000000000000000AAA",
                       USER_ID_15 + "1AB", "Route_Request_2026"):
         assert find_ids(f"x {not_an_id} y") == [], not_an_id
+
+
+def test_a_fault_handler_is_not_asked_for_its_own_fault_path(tmp_path):
+    """Gemini F-16: Create_Task's fault path goes to Log_Error; Log_Error runs only on that path. An empty fault
+    connector is no fault path."""
+    t = Tree(tmp_path)
+    log = element("recordCreates", "Log_Error", "        <object>Task</object>\n")
+    t.flow("Handled", start(target="Create_Task") + create_task("Create_Task", fault="Log_Error") + log)
+    empty = create_task("Create_Task").replace("    </recordCreates>", "        <faultConnector/>\n    </recordCreates>")
+    t.flow("Empty_Fault", start(target="Create_Task") + empty)
+    shared = create_task("Create_Task", fault="Log_Error", connector=None).replace(
+        "    </recordCreates>", "        <connector><targetReference>Log_Error</targetReference></connector>\n"
+                               "    </recordCreates>")
+    t.flow("Also_On_The_Main_Path", start(target="Create_Task") + shared + log)
+    r = t.check()
+    got = sorted((f["component"]["name"], f["message"].split(" ")[0]) for f in hits(r, "flow.no-fault-path"))
+    assert got == [("Also_On_The_Main_Path", "Log_Error"), ("Empty_Fault", "Create_Task")]
+
+
+def test_a_screen_component_that_names_the_action_runs_it(tmp_path):
+    """Gemini F-18: an action button names the screen action in its input; it needs no trigger."""
+    action = ("        <actions>\n            <name>Fetch_Price</name>\n            <actionName>Search</actionName>\n"
+              "            <actionType>flow</actionType>\n            <label>Fetch</label>\n        </actions>\n")
+    button = ("        <fields>\n            <name>Fetch_Button</name>\n"
+              "            <extensionName>flowruntime:actionButton</extensionName>\n"
+              "            <inputParameters><name>actionName</name><value><stringValue>Fetch_Price</stringValue>"
+              "</value></inputParameters>\n            <fieldType>ComponentInstance</fieldType>\n        </fields>\n")
+    t = Tree(tmp_path)
+    t.flow("Button", element("screens", "S", action + button), process="Flow")
+    t.flow("Nothing", element("screens", "S", action), process="Flow")
+    r = t.check()
+    assert [f["component"]["name"] for f in hits(r, "flow.screen-action-without-trigger")] == ["Nothing"]

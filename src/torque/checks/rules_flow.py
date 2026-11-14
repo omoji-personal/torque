@@ -97,15 +97,39 @@ def _trigger(flow) -> tuple[str, str]:
     return start.value("triggerType"), start.value("recordTriggerType")
 
 
+def _fault_handlers(flow) -> set[str]:
+    """Elements that run only on a fault path: reached from a fault connector, not from the start without one."""
+    elements = {e.value("name"): e for e in flow.children if e.tag in FLOW_ELEMENTS and e.value("name")}
+
+    def reach(names, follow_faults):
+        seen, todo = set(), list(names)
+        while todo:
+            n = todo.pop()
+            if n in seen or n not in elements:
+                continue
+            seen.add(n)
+            todo += [t for tag, t in targets(elements[n]) if follow_faults or tag != "faultConnector"]
+        return seen
+    start = flow.child("start")
+    first = [t for tag, t in targets(start) if tag != "faultConnector"] if start is not None else []
+    normal = reach(first + [flow.value("startElementReference")], False)
+    faults = reach([t for e in elements.values() for tag, t in targets(e) if tag == "faultConnector"], True)
+    return faults - normal
+
+
 def no_fault_path(comp, flow, ctx):
     trigger, _ = _trigger(flow)
     if trigger == "RecordBeforeSave":
         return []   # a before-save flow has no fault paths to add
     out = []
+    handlers = _fault_handlers(flow)
     for e in flow_elements(flow):
-        if e.child("faultConnector") is not None:
+        fault = e.child("faultConnector")
+        if fault is not None and fault.value("targetReference"):
             continue
         name = e.value("name")
+        if name in handlers:
+            continue      # it handles another element's fault; a fault path on the handler itself is not asked for
         if e.tag in RECORD_CHANGES:
             out.append(Finding("flow.no-fault-path", "warning", comp,
                                f"{name} ({RECORD_CHANGES[e.tag]}) has no fault path.",
@@ -276,6 +300,9 @@ def screen_actions(comp, flow, ctx):
     out = []
     for screen in flow.all("screens"):
         handled = {h.value("screenActionName").lower() for t in screen.all("triggers") for h in t.all("handlers")}
+        # a screen component that names the action (an action button's input) runs it without a trigger
+        handled |= {v.text.strip().lower() for f in screen.iter() if f.tag == "fields"
+                    for p in f.all("inputParameters") for v in p.iter() if v.tag == "stringValue"}
         for a in screen.all("actions"):
             name = a.value("name")
             if name and name.lower() not in handled:
