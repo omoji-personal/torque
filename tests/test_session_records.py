@@ -159,7 +159,7 @@ def test_a_verified_record_without_a_basis_saves_and_hints_and_with_one_keeps_ev
                            "--as-user", "staff user", "--in-org", "alpha-sandbox", "--not-covered", "mobile",
                            "--json")[1])
     assert entry["hints"] == []
-    assert entry["check"] == {"kind": "rendered", "as_user": "staff user", "org": "alpha-sandbox",
+    assert entry["check"] == {"kinds": ["rendered"], "as_user": "staff user", "org": "alpha-sandbox",
                               "not_covered": "mobile"}
     context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
     assert next(s for s in context["sessions"] if s["id"] == entry["id"])["check"]["as_user"] == "staff user"
@@ -185,7 +185,7 @@ def test_accepted_needs_someone_who_accepted_it(firm):
     entry = json.loads(add(firm, "--summary", "Lead said yes", "--status", "accepted", "--accepted-by",
                            "project lead", "--json")[1])
     assert entry["status"] == "accepted" and entry["accepted_by"] == "project lead"
-    assert "accepted by project lead" in invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    assert "accepted by project lead (reported)" in invoke("context", "--workspace", firm, "--client", "alpha")[1]
 
 
 def test_corrects_links_without_rewriting_and_an_unknown_id_names_nothing_private(firm):
@@ -217,6 +217,63 @@ def test_a_record_with_a_damaged_basis_is_skipped_and_named(firm):
     path.write_text(json.dumps(value), encoding="utf-8")
     context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
     assert context["sessions"] == [] and context["record_problems"][0]["reason"] == "its check basis is not valid"
+
+
+def test_several_check_kinds_are_kept_and_the_hint_names_each_unstated_part(firm):
+    entry = json.loads(add(firm, "--summary", "x", "--status", "verified", "--check", "read-back", "--check",
+                           "rendered", "--json")[1])
+    assert entry["check"]["kinds"] == ["read-back", "rendered"]
+    assert "Basis: check read-back + rendered" in invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    only_user = json.loads(add(firm, "--summary", "x", "--status", "verified", "--as-user", "admin", "--json")[1])
+    [hint] = only_user["hints"]
+    assert "how it was checked" in hint and "in which org" in hint and "what was not covered" in hint
+    assert "as whom" not in hint
+    document = firm / "record.json"
+    document.write_text(json.dumps({"summary": "x", "check": ["scripted", "live"]}), encoding="utf-8")
+    assert json.loads(add(firm, "--input", document, "--json")[1])["check"]["kinds"] == ["scripted", "live"]
+
+
+def test_a_correction_link_to_itself_or_a_later_record_is_named_and_not_followed(firm):
+    first = json.loads(add(firm, "--summary", "first", "--json")[1])
+    second = json.loads(add(firm, "--summary", "second", "--json")[1])
+    path = firm / "clients/alpha/sessions" / f"{first['id']}.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["corrects"] = second["id"]            # an earlier record naming a later one: a cycle by hand
+    path.write_text(json.dumps(value), encoding="utf-8")
+    context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
+    assert [p["reason"] for p in context["record_problems"]] == ["its corrects link names itself or a later record"]
+    assert "corrected_by" not in context["sessions"][0]
+
+
+def test_a_correction_of_a_record_outside_the_window_is_shown_and_older_ones_are_counted(firm):
+    ids = write_records(firm, 25)
+    # an old correction (record 3 corrects record 1), outside the window like the record it corrects
+    path = firm / "clients/alpha/sessions" / f"{ids[3]}.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**value, "corrects": ids[1]}), encoding="utf-8")
+    fix = json.loads(add(firm, "--summary", "record 0 was wrong", "--corrects", ids[0], "--json")[1])
+    text = invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    assert f"Correction: {fix['id']} corrects {ids[0]} (made 2026-10-01" in text and "not shown here" in text
+    assert "Corrections, not shown: 1 older correction record(s)" in text
+
+
+def test_after_exit_4_the_documented_retry_does_not_record_the_session_twice(firm):
+    secret = "Wint3r" + "!Pass99"
+    code, out, err = add(firm, "--summary", "Rotated the integration user", "--learned",
+                         f"The integration user's password: {secret}")
+    assert code == 4 and secret not in out + err
+    entry_id = out.split()[1]
+    assert f"session {entry_id} is recorded; do not add it again" in err and "IS saved" in err
+    retry = err.split("with: ", 1)[1].strip()
+    assert f"--session {entry_id}" in retry and retry.startswith("torque lesson add ")
+    assert len(sessions(firm)) == 1
+    code, _, err = invoke("lesson", "add", "--workspace", firm, "--client", "alpha", "--session", entry_id,
+                          "When: an integration user's password is rotated Do: update the named credential "
+                          "Because: the integration fails at night otherwise")
+    assert code == 0, err
+    assert len(sessions(firm)) == 1
+    data = json.loads(add(firm, "--summary", "again", "--learned", f"The password: {secret}", "--json")[1])
+    assert data["recorded"] is True and data["do_not_add_again"] is True and data["id"] in data["lesson_retry_command"]
 
 
 # ---- step 3: context that says what it left out
@@ -268,7 +325,8 @@ def test_an_open_record_that_was_corrected_is_not_counted_as_open(firm):
     fix = json.loads(add(firm, "--summary", "record 1 is done after all", "--corrects", ids[1], "--json")[1])
     context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
     assert context["where_things_stand"]["open_not_shown"]["count"] == 1
-    assert context["where_things_stand"]["corrections"] == [{"id": fix["id"], "corrects": ids[1]}]
+    assert [(c["id"], c["corrects"], c["corrected_shown"]) for c in context["where_things_stand"]["corrections"]] \
+        == [(fix["id"], ids[1], False)]
     assert f"Correction: {fix['id']} corrects {ids[1]}" in invoke("context", "--workspace", firm, "--client",
                                                                      "alpha")[1]
 

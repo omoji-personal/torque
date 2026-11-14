@@ -52,20 +52,21 @@ torque session add --workspace . --client sample --status verified \
 
 | Option | Field | Meaning |
 |---|---|---|
-| `--check KIND` | `check.kind` | `read-back` (what was sent, read back), `scripted` (a script or test), `rendered` (a page rendered and looked at), `live` (the real entry point used), `reviewed` |
+| `--check KIND` (repeatable) | `check.kinds` | `read-back` (what was sent, read back), `scripted` (a script or test), `rendered` (a page rendered and looked at), `live` (the real entry point used), `reviewed` |
 | `--as-user TEXT` | `check.as_user` | as whom: admin, a named persona, a guest, an integration user; a role is enough |
 | `--in-org ALIAS` | `check.org`, `check.org_type` | the org; the type (sandbox, developer, scratch, production) is added when the client's consent record names that alias. No org call |
 | `--not-covered TEXT` | `check.not_covered` | what the check did not cover |
-| `--accepted-by TEXT` | `accepted_by` | who accepted the work; required with `--status accepted` |
+| `--accepted-by TEXT` | `accepted_by` | who, as you report, accepted the work; required with `--status accepted`; shown as "(reported)", never as Torque's confirmation |
 | `--corrects SESSION_ID` | `corrects` | an earlier record of the same client or initiative that this one corrects |
 | `--evidence FILE` (repeatable) | `evidence` | each file referenced and hashed, in order |
 | `--input FILE` or `-` | | the same fields as a JSON or YAML mapping (keys are the option names, `learned` included); an option on the command line wins over the file |
 
-`--status verified` without any of `--check`, `--as-user`, `--in-org` or `--not-covered`
-still saves and prints one hint naming those options (`hints` in `--json` output). The
+`--status verified` without all of `--check`, `--as-user`, `--in-org` and `--not-covered`
+still saves and prints one hint naming each part still unstated (`hints` in `--json` output). The
 status `accepted` means a named other party said yes; Torque never sets it on its own.
 `--corrects` refuses an ID that is not a readable record of the same engagement and names
-no other record. The earlier record is never rewritten: `context`, `handoff` and
+no other record. Only an earlier record can be corrected: a link (written by hand) to the record itself or a later
+one is named as a problem and not followed, so there is no cycle. The earlier record is never rewritten: `context`, `handoff` and
 `session list` show it as corrected (`corrected_by` in JSON), derived when records are read.
 
 Schema note. Records keep `"schema": "torque.session/1"`, `status_basis: user_reported` and

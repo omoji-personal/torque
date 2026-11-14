@@ -21,7 +21,7 @@ STATUSES = ("prepared", "executed", "verified", "incomplete", "accepted")
 # What a check rested on (`session add --check`): what was sent read back, a script or
 # test, a page rendered and looked at, the real entry point used live, or a review.
 CHECK_KINDS = ("read-back", "scripted", "rendered", "live", "reviewed")
-CHECK_FIELDS = ("kind", "as_user", "org", "org_type", "not_covered")
+CHECK_FIELDS = ("kinds", "as_user", "org", "org_type", "not_covered")
 FIELD_LIMIT = 1000
 AI_ACCESS_MODES = ("full", "build-only", "connected")
 APPROVAL_VALUES = ("required",)
@@ -1006,7 +1006,7 @@ def require_engagement_writable(folder: Path) -> None:
 def add_session(workspace: str | Path, client_name: str, summary: str,
                 status: str = "prepared", evidence: str | Path | None = None, *,
                 kind: str = "client", learned=(), learned_scope: str = "client",
-                learned_from: str = "agent", check: str | None = None, as_user: str | None = None,
+                learned_from: str = "agent", check=None, as_user: str | None = None,
                 org: str | None = None, not_covered: str | None = None, accepted_by: str | None = None,
                 corrects: str | None = None) -> dict:
     """Append a session record. Each text in `learned` is also saved as a lesson linked
@@ -1027,10 +1027,12 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
     if learned_scope not in ("client", "firm") or learned_from not in ("consultant", "agent"):
         raise WorkspaceError("a learned lesson's scope is client or firm, and it comes from the consultant or the agent")
     basis = {}
-    if check is not None:
-        if check not in CHECK_KINDS:
-            raise WorkspaceError(f"unknown check kind: {check}; choose from {', '.join(CHECK_KINDS)}")
-        basis["kind"] = check
+    kinds = [check] if isinstance(check, str) else list(check or [])
+    for item in kinds:
+        if item not in CHECK_KINDS:
+            raise WorkspaceError(f"unknown check kind: {item}; choose from {', '.join(CHECK_KINDS)}")
+    if kinds:
+        basis["kinds"] = list(dict.fromkeys(kinds))
     for key, value, option in (("as_user", as_user, "--as-user"), ("org", org, "--in-org"),
                                ("not_covered", not_covered, "--not-covered")):
         if value is not None:
@@ -1130,19 +1132,25 @@ def _require_session(client: Path, config: dict, kind: str, identifier: object) 
 def session_hints(entry: dict) -> list[str]:
     """What a new record leaves unsaid that the reader will want: a hint, never a refusal."""
     hints = []
-    if entry.get("status") == "verified" and not entry.get("check"):
-        hints.append("verified, but not on what: say how it was checked with --check "
-                     + "|".join(CHECK_KINDS) + ", as whom with --as-user, in which org with --in-org, "
-                     "and what was not covered with --not-covered")
+    check = entry.get("check") or {}
+    if entry.get("status") == "verified":
+        unstated = [text for key, text in (("kinds", "how it was checked (--check " + "|".join(CHECK_KINDS) + ")"),
+                                           ("as_user", "as whom (--as-user)"),
+                                           ("org", "in which org (--in-org)"),
+                                           ("not_covered", "what was not covered (--not-covered)"))
+                    if not check.get(key)]
+        if unstated:
+            hints.append("verified, but not stated: " + "; ".join(unstated))
     return hints
 
 
 def basis_text(entry: dict) -> str:
-    """The check basis of a record on one line, or ''."""
+    """The check basis of a record on one line, or ''. Acceptance is what the record's
+    author reported, never Torque's confirmation."""
     check = entry.get("check") or {}
     parts = []
-    if check.get("kind"):
-        parts.append(f"check {check['kind']}")
+    if check.get("kinds"):
+        parts.append("check " + " + ".join(check["kinds"]))
     if check.get("as_user"):
         parts.append(f"as {check['as_user']}")
     if check.get("org"):
@@ -1150,7 +1158,7 @@ def basis_text(entry: dict) -> str:
     if check.get("not_covered"):
         parts.append(f"not covered: {check['not_covered']}")
     if entry.get("accepted_by"):
-        parts.append(f"accepted by {entry['accepted_by']}")
+        parts.append(f"accepted by {entry['accepted_by']} (reported)")
     return "; ".join(parts)
 
 
@@ -1465,8 +1473,10 @@ def _session_problem(path: Path, value: dict, kind: str, slug: str) -> str:
         return "not a valid session record"
     check = value.get("check")
     if "check" in value and (not isinstance(check, dict) or not check or any(
-            key not in CHECK_FIELDS or not isinstance(item, str) or not item.strip() for key, item in check.items())
-            or check.get("kind", CHECK_KINDS[0]) not in CHECK_KINDS):
+            key not in CHECK_FIELDS or (key != "kinds" and (not isinstance(item, str) or not item.strip()))
+            for key, item in check.items())
+            or ("kinds" in check and (not isinstance(check["kinds"], list) or not check["kinds"]
+                                      or any(kind not in CHECK_KINDS for kind in check["kinds"])))):
         return "its check basis is not valid"
     if "accepted_by" in value and (not isinstance(value["accepted_by"], str) or not value["accepted_by"].strip()):
         return "its accepted_by is not valid"
@@ -1550,6 +1560,9 @@ def read_sessions(workspace: str | Path, client_name: str, *, kind: str = "clien
                     except WorkspaceError:
                         pass  # Malformed: named below, with the record.
             reason = _session_problem(path, value, kind, config["slug"])
+            if not reason and value.get("corrects") and value["corrects"] >= value["id"]:
+                # Only an earlier record can be corrected; this also rules out a cycle.
+                reason = "its corrects link names itself or a later record"
             if not reason:
                 try:
                     for reference in _evidence_items(value.get("evidence")):
@@ -1715,12 +1728,17 @@ def _standing(records: list[dict], shown: list[dict], more: str) -> dict:
     def open_record(entry):
         return entry["status"] == "incomplete" and not entry.get("corrected_by")
     older = [entry for entry in records if entry["id"] not in ids and open_record(entry)]
+    dates = {entry["id"]: entry["created_at"] for entry in records}
+    hidden = [entry for entry in records if entry.get("corrects") and entry["id"] not in ids]
     return {"latest": shown[0]["id"] if shown else None,
             "open": [entry["id"] for entry in shown if open_record(entry)],
             "open_not_shown": {"count": len(older), "oldest": older[-1]["created_at"] if older else None,
                                "command": more if older else None},
-            "corrections": [{"id": entry["id"], "corrects": entry["corrects"]}
-                            for entry in shown if entry.get("corrects")]}
+            "corrections": [{"id": entry["id"], "corrects": entry["corrects"],
+                             "corrected_created_at": dates.get(entry["corrects"]),
+                             "corrected_shown": entry["corrects"] in ids}
+                            for entry in shown if entry.get("corrects")],
+            "corrections_not_shown": {"count": len(hidden), "command": more if hidden else None}}
 
 
 def standing_lines(context: dict) -> list[str]:
@@ -1750,7 +1768,14 @@ def standing_lines(context: dict) -> list[str]:
             lines.append(f"- Open in change {change['id']} ({change['title']}): not yet reported pass: "
                          + ", ".join(pending))
     for item in state["corrections"]:
-        lines.append(f"- Correction: {item['id']} corrects {item['corrects']}")
+        where = ("" if item["corrected_shown"] else
+                 f" (made {item['corrected_created_at']}, not shown here)" if item["corrected_created_at"]
+                 else " (not found among this engagement's records)")
+        lines.append(f"- Correction: {item['id']} corrects {item['corrects']}{where}")
+    hidden = state["corrections_not_shown"]
+    if hidden["count"]:
+        lines.append(f"- Corrections, not shown: {hidden['count']} older correction record(s); read them with "
+                     f"{hidden['command']}")
     return lines
 
 

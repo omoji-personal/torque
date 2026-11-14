@@ -204,9 +204,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="consultant: their correction or instruction, saved as an active lesson; agent "
                             "(default): saved as a candidate until it is reviewed")
     basis = entry.add_argument_group("what a check rested on (each optional; see docs/engagement-records.md)")
-    basis.add_argument("--check", choices=ws.CHECK_KINDS,
-                       help="the kind of check: read-back (what was sent, read back), scripted (a script or test), "
-                            "rendered (a page rendered and looked at), live (the real entry point used), reviewed")
+    basis.add_argument("--check", choices=ws.CHECK_KINDS, action="append",
+                       help="the kind of check (repeatable): read-back (what was sent, read back), scripted (a script "
+                            "or test), rendered (a page rendered and looked at), live (the real entry point used), "
+                            "reviewed")
     basis.add_argument("--as-user", metavar="TEXT",
                        help="as whom it was checked: admin, a named persona, a guest, an integration user (a role "
                             "is enough; no personal data needed)")
@@ -215,7 +216,8 @@ def build_parser() -> argparse.ArgumentParser:
                             "record names the org (no org call)")
     basis.add_argument("--not-covered", metavar="TEXT", help="what the check did not cover")
     basis.add_argument("--accepted-by", metavar="TEXT",
-                       help="who accepted the work (a lead, a tester, the client); required with --status accepted")
+                       help="who you report accepted the work (a lead, a tester, the client); required with "
+                            "--status accepted; shown as reported, never as Torque's confirmation")
     basis.add_argument("--corrects", metavar="SESSION_ID",
                        help="an earlier record of this client or initiative that this one corrects; the earlier "
                             "file is not changed, and context and handoff show it as corrected")
@@ -545,7 +547,7 @@ def _workflows(args: argparse.Namespace) -> int:
 # The keys of the document are the option names, with - or _ (`learned-from`, `learned_from`).
 SESSION_FIELDS = {"summary": ("text", None), "status": ("text", "prepared"), "evidence": ("list", []),
                   "learned": ("list", []), "learned_scope": ("text", "client"), "learned_from": ("text", "agent"),
-                  "check": ("text", None), "as_user": ("text", None), "in_org": ("text", None),
+                  "check": ("list", None), "as_user": ("text", None), "in_org": ("text", None),
                   "not_covered": ("text", None), "accepted_by": ("text", None), "corrects": ("text", None)}
 INPUT_LIMIT = 1_000_000
 
@@ -2020,8 +2022,18 @@ def main(argv: list[str] | None = None) -> int:
                                        not_covered=fields["not_covered"], accepted_by=fields["accepted_by"],
                                        corrects=fields["corrects"])
                 hints = ws.session_hints(entry)
+                retry = None
+                if entry.get("lesson_problems"):
+                    retry = ws.command_text(["torque", "lesson", "add", "--workspace", str(parsed.workspace),
+                                             "--" + kind, name, "--session", entry["id"],
+                                             *(["--source", "consultant"] if fields["learned_from"] == "consultant"
+                                               else []),
+                                             *(["--scope", "firm"] if fields["learned_scope"] == "firm" else []),
+                                             "When: ... Do: ... Because: ..."])
                 if parsed.json:
-                    _print_json({**entry, "hints": hints})
+                    _print_json({**entry, "hints": hints,
+                                 **({"recorded": True, "do_not_add_again": True, "lesson_retry_command": retry}
+                                    if retry else {})})
                 else:
                     print(f"Recorded {entry['id']} [{entry['status']}, user-reported]")
                     if ws.basis_text(entry):
@@ -2034,9 +2046,10 @@ def main(argv: list[str] | None = None) -> int:
                         print(line)
                 if entry.get("lesson_problems"):
                     # The session record stands; only the lesson was not saved.
-                    print(f"torque: session {entry['id']} is recorded; do not add it again. "
-                          f"{len(entry['lesson_problems'])} lesson(s) were not saved: fix the text and save each "
-                          f"with `torque lesson add ... --session {entry['id']}`.", file=sys.stderr)
+                    print(f"torque: session {entry['id']} is recorded; do not add it again (the record IS saved; "
+                          "running this session add again would record the same session twice). "
+                          f"{len(entry['lesson_problems'])} lesson(s) were not saved; fix the text and save each "
+                          f"with: {retry}", file=sys.stderr)
                     return 4
             else:
                 problems: list[dict] = []
