@@ -29,7 +29,8 @@ and what is wrong with `torque lesson stale <id> --reason <why>`.
    (or `--only Type:Name` for each component) and resolve `access.field-without-grant` and
    `access.grant-only-in-profile`: every new field ships with the permission set that grants it, in
    the same deploy. Keep the `--json` report beside the manifest. The dry-run comes from
-   `/validate-change`.
+   `/validate-change`. To remove a grant with a deploy, keep the entry in the file with every flag
+   false: deleting the entry leaves the org's grant in place.
 6. Write the packet: the exact manifest or selectors, manual steps, validation, targeted tests,
    recovery references, deployment order and post-deploy checks. Keep the submitted manifest with
    its job ID; a manifest edited later is not the one that succeeded. Mark destructive changes.

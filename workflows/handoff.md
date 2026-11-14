@@ -9,10 +9,12 @@ current task rather than dumping every file. Ensure current work has a factual s
 entry. Generate the native Markdown starting point:
 
 ```sh
-torque handoff --workspace <private-path> --client <client-name> --output <handoff-path>
+torque handoff --workspace <private-path> --client <client-name> [--since <date>] [--change <change-id>] --output <handoff-path>
 ```
 
-Without `--output` the command prints Markdown. Review the result and expand it with
+Run it again to refresh the same file. If it says the file was edited and the new render is in
+`FILE.new`, compare them with the consultant and replace only on their word (`--force`). Without
+`--output` the command prints Markdown. Review the result and expand it with
 actual artifact evidence when the engagement needs more detail. Include objective,
 scope, current environment identity, implemented changes, exact source/diff references,
 job/test evidence, unfinished work, recovery references, known issues, decisions,

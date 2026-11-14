@@ -21,14 +21,19 @@ and what is wrong with `torque lesson stale <id> --reason <why>`.
    torque check metadata <project-folder> --changed-from dry-run.json
    ```
 
-   `torque check result` says whether the validation passed, with each component failure and line
-   and each test failure. `torque check metadata` checks only what the dry-run reports as Created or
+   `torque check result` reads the UTF-16 file that Windows PowerShell's `>` writes (and a
+   byte-order mark or CLI warning lines before the JSON), so the redirect form is safe there too.
+   It says whether the validation passed, with each component failure and line and each test
+   failure. `torque check metadata` checks only what the dry-run reports as Created or
    Changed: field access for new fields, descriptions and help text, fault paths, data elements in
    loops, entry conditions, hard-coded Ids, API versions, profiles and managed components, with
    Salesforce Code Analyzer's flow rules merged in when it is installed. Fix each error and warning
    in the files, or record why one does not apply (an entry with a reason in `torque-check.yml`),
    then validate again. Say in the summary what its last line lists as not checked, and do not
-   claim Code Analyzer coverage when the report says it did not run.
+   claim Code Analyzer coverage when the report says it did not run. In a build-only workspace the
+   consultant runs the dry-run; run `torque check metadata` there on its own line from `project/`
+   (or name `project/force-app`), without `cd ... &&`, a pipe or a redirection, and read the report
+   from the command's output.
 3. For Apex, Lightning components and flows, read skill `salesforce-code-analyzer-review`. For
    Apex, validate with `--test-level RunSpecifiedTests` and one `--tests` per test class the change
    needs.

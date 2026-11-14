@@ -1,33 +1,46 @@
 # /session-save
 
-Save what this session did and what it taught, so the next session starts from facts. Use it after meaningful client work, before a hand-off, and when the consultant corrects you.
+Save what this session did, what each check rested on and what it taught, so the next session starts from facts. Use it after meaningful client work, before a hand-off, and when the consultant corrects you.
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
 1. Write the summary: requested outcome, actual work, target org, artifact paths, what was
    checked, pending work and the next action. Use exact references (files, job IDs) for
    recovery values instead of putting them in the text. Choose the status from the actual
-   result: `prepared`, `executed`, `verified` or `incomplete`.
-2. Before you save, ask two questions and add each answer as a lesson: what would have saved time
+   result: `prepared`, `executed`, `verified`, `incomplete`, or `accepted` (below).
+2. Add what the session leaves behind in the org under "Left in the org" in the summary: each
+   test record by Id (or the private Id file that lists them) and each temporary setting with its
+   original value, so the next session can clean up. Write "Left in the org: nothing" when that is
+   true.
+3. Say what each check rested on. With `--status verified`, give how it was checked (`--check`,
+   repeatable: `read-back`, `scripted`, `rendered`, `live`, `reviewed`), as whom (`--as-user`: a
+   role, never a person's data), in which org (`--in-org`) and what it did not cover
+   (`--not-covered`); Torque prints a hint naming the parts left unstated. A read-back of what you
+   wrote is not a check of behaviour: record it as `--check read-back`. Acceptance is the other
+   person's word, not yours: use `--status accepted` only when someone else said yes, with
+   `--accepted-by <who>`.
+4. Before you save, ask two questions and add each answer as a lesson: what would have saved time
    in this session, and what worked that was not obvious? Write each as
    `When: ... Do: ... Because: ...`. Add `--learned-from consultant` when it is the consultant's
    correction or instruction (it is active at once); your own finding is saved as a candidate for
    review. Use `--learned-scope firm` only for a lesson that names no client. If the session
    taught nothing, add nothing.
-3. Save:
+5. Save:
 
    ```sh
-   torque session add --workspace <private-path> --client <client-name> --summary <summary-text> --status <status> [--evidence <artifact-path>] [--learned "When: ... Do: ... Because: ..."]
+   torque session add --workspace <private-path> --client <client-name> --status <status> --summary <summary-text> [--check read-back|scripted|rendered|live|reviewed] [--as-user <role>] [--in-org <org-alias>] [--not-covered <what>] [--evidence <file>] [--change <change-id>] [--corrects <session-id>] [--learned "When: ... Do: ... Because: ..."]
    ```
 
-   Omit `--evidence` when no file exists; never invent a path. Check `torque session add --help`
-   for how many `--evidence` values this version keeps. The record references the file and its
-   hash; it does not copy it, so leave the file where it is. If the command exits 4, the session
-   is recorded and a lesson was not: do not add the session again; fix the lesson's text (it held
-   a credential-looking value, or a firm lesson named a client) and save it with
-   `torque lesson add --session <session-id> --when ... --do ... --because ...`.
-4. Mark the lessons Torque showed you in this session: `torque lesson helpful <id>` for one that
-   helped, `torque lesson stale <id> --reason <why>` for one that was wrong.
+   Repeat `--check` and `--evidence` as needed; each evidence file is referenced and hashed, not
+   copied, so leave it where it is, and never invent a path. When an earlier record was wrong, add
+   a new one with `--corrects <its id>`; never edit the old file. For a long summary, write the
+   fields to a JSON or YAML file and pass `--input <file>`. If the command exits 4, the record IS
+   saved: do not run it again; save the lesson with the `torque lesson add ... --session <id>` it
+   printed (it held a credential-looking value, or a firm lesson named a client).
+6. Mark the lessons Torque showed you in this session: `torque lesson helpful <id>` for one that
+   helped, `torque lesson stale <id> --reason <why>` for one that was wrong. If a candidate hint
+   fixed something, verify it: `torque lesson verify <id> --evidence reproduced` (it becomes
+   active for this client, with its basis).
 
 Append; never rewrite earlier records or paste a transcript. Record unattended jobs by exact job
 ID and status. For work that spans sessions, an optional `torque change` record keeps the outcome
