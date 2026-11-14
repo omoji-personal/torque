@@ -28,8 +28,8 @@ except ImportError:  # pragma: no cover
 
 LABEL = ("proven against a stubbed CLI and a mutation corpus; re-run live on 2026-11-14 on a Developer Edition org "
          "for the positive case and three negative cases (a changed formula, a revoked grant, a permission set entry "
-         "removed by a deploy); the permission-set rule changed after that run and has not been re-run; not yet run "
-         "against a sandbox or a production org")
+         "removed by a deploy); the permission-set comparison changed after the last live run and has not been "
+         "re-run; not yet run against a sandbox or a production org")
 STATUSES = ("same", "unexplained-additions", "partly-compared", "different", "could-not-compare", "not-in-org")
 RETRIEVABLE = {"CustomField", "CustomObject", "ValidationRule", "RecordType", "Flow", "PermissionSet",
                "PermissionSetGroup", "CustomPermission", "Profile", "FlexiPage", "Layout", "CustomMetadata",
@@ -89,12 +89,12 @@ def _namespace(ns: str) -> str:
 
 
 def referenced(comps) -> set[str]:
-    """The components a permission set's or profile's access entries name, as retrieve members. The org returns
-    an access entry only for a component in the same retrieve, so these are retrieved with it. A Task or Event
-    field is retrieved as the Activity field that defines it."""
+    """The components a profile's access entries name, as retrieve members. A profile retrieve returns an access
+    entry only for a component in the same request, so these are retrieved with it (a permission set retrieve
+    returns all its entries). A Task or Event field is retrieved as the Activity field that defines it."""
     out = set()
     for c in comps:
-        if c.type not in compare.ACCESS_TYPES or c.node is None:
+        if c.type not in compare.MERGE_TYPES or c.node is None:
             continue
         for e in c.node.children:
             key_tag, typ = compare.ACCESS_SECTIONS.get(e.tag, ("", None))
@@ -237,6 +237,19 @@ def rule_states(client, alias: str, comps: list, namespace: str = "") -> list[di
     return out
 
 
+def _api_note(project, comps) -> str | None:
+    """Below API 40.0 a permission set retrieve returned only entries about components in the same request."""
+    try:
+        version = float(project.source_api_version or "")
+    except ValueError:
+        return None
+    if version >= 40 or not any(c.type == "PermissionSet" for c in comps):
+        return None
+    return (f"the project's sourceApiVersion {project.source_api_version} is below 40.0: a permission set retrieve "
+            "may then return only entries about components in the same request, so entries only the org has may "
+            "not be seen")
+
+
 def check(target_org: str, *, changed_from: str | None = None, source_dir: str | None = None,
           only: list[str] | None = None, as_permission_sets: list[str] | None = None) -> dict:
     if not target_org or target_org.startswith("-"):
@@ -315,6 +328,7 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
                    "fields_without_grants": sum(1 for a in access if a.get("rows") == 0),
                    "inactive_validation_rules": sum(1 for r in vrules if r["active"] is False)},
         "org_reached": reached,
+        "api_version_note": _api_note(project, comps),
         "meaning": MEANING,
         "not_checked": ["permission set assignments and what a user really sees (a grant entry is not a user's "
                         "access; test as that user)",
@@ -326,12 +340,12 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
 MEANING = {
     "same": "everything the file specifies is in the org unchanged, and the org copy has nothing else but default "
             "values, the properties Salesforce is known to add on save, or, for a profile, access entries the file "
-            "does not name (containment under these rules, not byte equality; a permission set's entries about "
+            "does not name (containment under these rules, not byte equality; a profile's entries about "
             "components outside the retrieve cannot be seen)",
     "unexplained-additions": "everything the file specifies is in the org unchanged, and the org copy also has "
                              "properties Torque cannot explain: look at them",
-    "partly-compared": "what could be compared is as submitted, but some access entries could not be: their "
-                       "components were not in the retrieve",
+    "partly-compared": "what could be compared is as submitted, but some of a profile's access entries could "
+                       "not be: their components were not in the retrieve",
     "different": "something submitted is missing or changed in the org, the org has content where the deploy "
                  "replaces the definition, or the file revokes access the org still grants",
 }
@@ -349,6 +363,8 @@ def text(rep: dict) -> str:
              f"{t['not-in-org']} not in the org."]
     for e in rep["retrieve"]["errors"]:
         lines.append(f"Retrieve error: {e}")
+    if rep.get("api_version_note"):
+        lines.append(f"Note: {rep['api_version_note']}.")
     for c in rep["scope"]["failed_in_result"]:
         lines.append(f"Not deployed (failed in the result): {c}")
     for r in rep["components"]:
