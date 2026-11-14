@@ -64,8 +64,7 @@
       ],
       "applies": {
         "tasks": [
-          "deploy",
-          "field-build"
+          "deploy"
         ],
         "types": [
           "CustomField"
