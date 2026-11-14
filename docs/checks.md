@@ -225,8 +225,22 @@ CLI login). Not checked: permission set assignments and what a user really sees,
 
 ## Build-only mode
 
-In a build-only workspace the gate refuses every `torque` subcommand outside a short allowlist (`demo`,
-`workflows`, `doctor`), so it refuses `torque check metadata` and `torque check result` too, although they
-read only local files and the same mode allows `sf code-analyzer run` on paths outside `clients/`. Run the
-check from your own terminal there, or in full or connected mode. `torque check deployed` reaches an org, so
-build-only mode refusing it is intended.
+In a build-only workspace the gate allows `torque check metadata` and `torque check result`, which read
+local files only, when:
+
+- the check is the whole command (nothing chained, piped, redirected or wrapped);
+- it uses only its own options (no `--client`, `--initiative`, `--workspace` or org option, no option cut
+  short, no `--`);
+- every path is written out (no variable, glob or `~`) and stays out of `clients/`: each PATH (default: the
+  current folder, so from the workspace root name `project/force-app`), `--changed-from`, `--baseline`;
+- for `check metadata`, the project folder around the paths (the nearest `sfdx-project.json` at or above the
+  first PATH), which it reads when given files and where it runs Code Analyzer, does not hold `clients/`,
+  and nor does the folder the paths share (Code Analyzer's workspace without a project folder); with
+  `--analyzer off` and folders as paths neither is read;
+- for `check metadata`, `TORQUE_WORKSPACE` is unset or names the workspace itself (the lessons it shows come
+  from the engagement that variable selects).
+
+Code Analyzer is started as `sf code-analyzer run --output-file TMP/code-analyzer.json --view detail
+--workspace ROOT --rule-selector Recommended --rule-selector flow --target FILE ...` in ROOT, with no org
+option. `torque check deployed` reaches an org and stays blocked; run it in full or connected mode, or
+yourself. `--help` passes for every form.

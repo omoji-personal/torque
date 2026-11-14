@@ -2023,12 +2023,149 @@ def _lesson_reason(args: list[str], workspace: Path | None, cwd: Path | None, co
     return ""
 
 
+# `torque check metadata` and `torque check result` read local files only (docs/checks.md):
+# the metadata under each PATH (default: the current folder), a saved deploy result, a
+# baseline folder, and `torque-check.yml` above the first PATH. `check metadata` also reads
+# the whole project folder (the nearest folder with sfdx-project.json at or above the first
+# PATH) when it is given only files, and starts Salesforce Code Analyzer with no org on the
+# in-scope files with that folder as its workspace (or, without one, the folder the files
+# share). Its lessons come from the engagement TORQUE_WORKSPACE selects. Build-only mode
+# allows the two forms on their own, with their own parser's options, when none of those
+# folders reaches clients/. `torque check deployed` reads an org and stays blocked.
+CHECK_OPTIONS = {
+    # option: False (a flag), None (any value) or the values the parser accepts
+    "metadata": {"--changed-from": None, "--baseline": None, "--only": None, "--ignore": None,
+                 "--analyzer": ("auto", "off", "required"), "--fail-on": ("never", "error", "warning"),
+                 "--json": False},
+    "result": {"--json": False},
+}
+CHECK_PATH_OPTIONS = ("--changed-from", "--baseline")
+CHECK_LOOSE_CHARS = frozenset("$`*?[]{}~%!()@")
+CHECK_FORMS = ("`torque check metadata PATH ...` (with --changed-from, --baseline, --only, --analyzer, --ignore, "
+               "--fail-on, --json) and `torque check result RESULT.json` (with --json)")
+CHECK_REASON = ("torque check runs here only as " + CHECK_FORMS + ", with no other option, no client and no org")
+CHECK_DEPLOYED_REASON = ("torque check deployed reads an org, which build-only mode keeps out of the session. "
+                         "Two forms run here: " + CHECK_FORMS)
+CHECK_ALONE_REASON = ("torque check runs here only as the whole command: nothing before or after it, no pipe, "
+                      "redirection or wrapper, because another command on the line could change what it reads "
+                      "(a redirection can create the sfdx-project.json it looks for). Run it on its own, with "
+                      "paths such as project/force-app")
+CHECK_LITERAL_REASON = ("torque check's paths must be written out here: no variable, glob, `~` or other "
+                        "character the shell expands, so that the gate reads the paths the command reads")
+CHECK_PATH_REASON = "torque check would read client context." + NARROW_PATH_HINT
+CHECK_PROJECT_REASON = ("torque check metadata would read the whole Salesforce project folder around its paths "
+                        "(the nearest folder with sfdx-project.json at or above the first PATH, or the folder its "
+                        "paths share), where it runs Code Analyzer, and that folder reaches clients/. Keep the "
+                        "Salesforce project under project/, or pass --analyzer off with folders as paths")
+CHECK_SELECTED_REASON = ("this session's TORQUE_WORKSPACE selects a folder other than this workspace, so torque "
+                         "check metadata would read and mark the lessons of the engagement it selects. Start the "
+                         "session without TORQUE_WORKSPACE (or with it set to this workspace)")
+
+
+def _check_lexical(cwd: Path, raw: str) -> Path:
+    """A path the way torque check reads it: made absolute and normalized as text first
+    (os.path.abspath, so `link/..` is the current folder), then resolved by the system."""
+    _spend()
+    return Path(os.path.realpath(os.path.abspath(os.path.join(str(cwd), _native_path(raw)))))
+
+
+def _check_project_root(first: str, cwd: Path) -> Path | None:
+    """checks.components.find_project from the gate: the nearest folder holding
+    sfdx-project.json at or above the first PATH (its folder when it is a file)."""
+    here = Path(os.path.abspath(os.path.join(str(cwd), _native_path(first))))
+    _spend()
+    if here.is_file():
+        here = here.parent
+    for folder in (here, *here.parents):
+        _spend()
+        if (folder / "sfdx-project.json").is_file():
+            return Path(os.path.realpath(str(folder)))
+    return None
+
+
+def _check_reason(args: list[str], clients: Path | None, workspace: Path | None, cwd: Path | None,
+                  copy: bool, alone: bool) -> str:
+    """"" when `torque ARGS` (ARGS starting with `check`) reads only files outside clients/:
+    `check metadata` or `check result`, the whole command on its own (alone), with options
+    from its parser, every path written out and every folder it reads (each PATH, the
+    baseline, the result, the project folder and Code Analyzer's workspace) clear of
+    clients/. `--help` alone, after `check` or one of its actions, shows help only."""
+    action = args[1] if len(args) > 1 else ""
+    if args[-1:] in (["-h"], ["--help"]) and (len(args) == 2 or (len(args) == 3 and action in
+                                                                    ("metadata", "result", "deployed"))):
+        return ""
+    if action == "deployed":
+        return CHECK_DEPLOYED_REASON
+    options = CHECK_OPTIONS.get(action)
+    if options is None or clients is None or workspace is None or cwd is None:
+        return CHECK_REASON
+    if not alone:
+        return CHECK_ALONE_REASON
+    words, positionals, values, i = args[2:], [], {}, 0
+    while i < len(words):
+        word = words[i]
+        i += 1
+        if not word.startswith("-"):
+            positionals.append(word)
+            continue
+        name, attached, value = word.partition("=")
+        if name not in options:
+            return CHECK_REASON            # `--`, an option cut short, --client, an org option, -h among others
+        spec = options[name]
+        if spec is False:
+            if attached:
+                return CHECK_REASON
+            continue
+        if not attached:
+            if i >= len(words):
+                return CHECK_REASON
+            value, i = words[i], i + 1
+        if not value or value.startswith("-") or (isinstance(spec, tuple) and value not in spec):
+            return CHECK_REASON
+        values.setdefault(name, []).append(value)
+    if action == "result" and len(positionals) != 1:
+        return CHECK_REASON
+    roots = positionals or ["."]
+    paths = roots + [value for name in CHECK_PATH_OPTIONS for value in values.get(name, [])]
+    for raw in paths:
+        if CHECK_LOOSE_CHARS & set(raw):
+            return CHECK_LITERAL_REASON
+        if _root_reaches(raw, clients, cwd, workspace) or _reaches(_check_lexical(cwd, raw), clients):
+            return CHECK_PATH_REASON
+    if action == "result":
+        return ""
+    analyzer = values.get("--analyzer", ["auto"])[-1] != "off"
+    lexical = [Path(os.path.abspath(os.path.join(str(cwd), _native_path(raw)))) for raw in roots]
+    if analyzer or not all(path.is_dir() for path in lexical):
+        project = _check_project_root(roots[0], cwd)
+        if project is not None and _reaches(project, clients):
+            return CHECK_PROJECT_REASON
+    if analyzer:
+        # Without a project folder that holds every file, Code Analyzer's workspace is the
+        # folder the in-scope files share, which lies at or below the one the paths share.
+        try:
+            shared = os.path.commonpath([str(path if path.is_dir() else path.parent) for path in lexical])
+        except ValueError:
+            return CHECK_PROJECT_REASON
+        if _reaches(_check_lexical(cwd, shared), clients):
+            return CHECK_PROJECT_REASON
+    if not copy:
+        # A worktree copy's pass has nothing to add: the variable names the real workspace.
+        selected = os.environ.get("TORQUE_WORKSPACE")
+        if selected and _cf(os.path.realpath(selected)) != _cf(str(workspace)):
+            return CHECK_SELECTED_REASON
+    return ""
+
+
 def _torque_reason(args: list[str], workspace: Path | None = None, cwd: Path | None = None,
-                   copy: bool = False) -> str:
-    """The torque allowlist, shared by the console script and `python -m torque`."""
+                   copy: bool = False, clients: Path | None = None, alone: bool = False) -> str:
+    """The torque allowlist, shared by the console script and `python -m torque`. `alone`:
+    the torque command is the whole call (see _check_reason)."""
     sub = args[0] if args else None
     if sub == "lesson":
         return _lesson_reason(args, workspace, cwd, copy)
+    if sub == "check":
+        return _check_reason(args, clients, workspace, cwd, copy, alone)
     if sub is not None and sub not in TORQUE_ALLOWED:
         return f"torque {sub} reads client context or an org"
     if sub == "doctor" and any(_is_long_flag(t, "--client", 3) for t in args[1:]):
@@ -2078,10 +2215,11 @@ def _without_redirections(toks: list[str]) -> list[str]:
 
 
 def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: Path, cwd: Path,
-                   org_rules: bool = True, copy: bool = False) -> str:
+                   org_rules: bool = True, copy: bool = False, alone: bool = False) -> str:
     """Scan every token (not just the head) so a wrapper, an env-var prefix, or a
     grouping construct cannot hide an org call, a client-context command, or a
-    self-disable attempt behind it."""
+    self-disable attempt behind it. `alone`: these tokens are the whole call (one
+    simple command, nothing chained, piped, redirected or nested)."""
     destructive = (any(_basename(t) in DESTRUCTIVE_VERBS for t in toks)
                    or any(re.match(r"^(\d+|&)?>", t) for t in toks))
     if destructive:
@@ -2143,8 +2281,11 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             continue
         elif _basename(tok) in CONSOLE_SCRIPTS:
             name = _basename(tok)
-            reason = (_torque_reason(rest, workspace, cwd, copy) if CONSOLE_SCRIPTS[name] == "torque"
-                      else _delegate_reason(name, rest))
+            # The head of the command, or the module word of `python -m torque` at its head.
+            head = i == 0 or (PY_LAUNCHER_RE.match(_basename(words[0])) is not None
+                              and _python_module(words[1:]) == (tok, i))
+            reason = (_torque_reason(rest, workspace, cwd, copy, clients, alone and head)
+                      if CONSOLE_SCRIPTS[name] == "torque" else _delegate_reason(name, rest))
             if reason:
                 return reason
         elif PY_LAUNCHER_RE.match(_basename(tok)) and _python_module(rest)[0]:
@@ -2154,7 +2295,7 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             args = rest[after:]
             reason = ""
             if module in TORQUE_MAIN_MODULES:
-                reason = _torque_reason(args, workspace, cwd, copy)
+                reason = _torque_reason(args, workspace, cwd, copy, clients, alone and i == 0)
             elif module == "pip":
                 reason = _installer_reason("python -m pip", args)
             elif DELEGATE_MODULE_RE.match(module):
@@ -2491,14 +2632,34 @@ def _add_cwds(pool: list[Path], extra: list[Path]) -> list[Path]:
     return pool
 
 
+def _one_command(command: str, tool_name: str) -> bool:
+    """True when the call is one simple command, as connected mode reads it
+    (connected_routes.is_simple: no chaining, pipe, redirection, substitution or line
+    end; for PowerShell, in every reading). Only a call that holds `check` is read: no
+    other allowance asks. Any error reads as not one command."""
+    if "check" not in command.casefold():
+        return False
+    try:
+        from .connected_routes import is_simple
+        return bool(is_simple(command, tool_name))
+    except Exception:  # noqa: BLE001 - fail closed: the narrow allowance then does not apply
+        return False
+
+
 def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path | list[Path],
-               _depth: int = 0, org_rules: bool = True, copy: bool = False) -> str:
+               _depth: int = 0, org_rules: bool = True, copy: bool = False, alone: bool = False) -> str:
     """Check every simple command that command can run, as the command reader
-    (_read_commands) finds them, against each directory it could run in."""
+    (_read_commands) finds them, against each directory it could run in. `alone`: the
+    caller found the call to be one simple command (_one_command); it holds only when
+    the reader finds exactly one simple command in it too (a `bash -c` string is more)."""
     if _depth == 0 and len(command) > MAX_INPUT_CHARS:
         # decide() blocks this first; kept here so no caller parses an over-long command.
         return _too_long(len(command))
-    for kind, item in _read_commands(command, workspace, cwd, _depth):
+    items = _read_commands(command, workspace, cwd, _depth)
+    if alone:
+        items = list(items)
+        alone = sum(1 for kind, item in items if kind == "segment" and item[0]) == 1
+    for kind, item in items:
         if kind == "error":
             return item
         if kind == "text":
@@ -2512,7 +2673,8 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
         elif kind == "segment":
             toks, _sep, cwds, _unknown = item
             for here in cwds:
-                reason = _block_command(toks, clients, claude_dir, workspace, here, org_rules, copy) if toks else ""
+                reason = (_block_command(toks, clients, claude_dir, workspace, here, org_rules, copy, alone)
+                          if toks else "")
                 if reason:
                     return reason
     return ""
@@ -3170,7 +3332,8 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
         # An MCP tool that runs a command (a shell or process server) gets the
         # Bash scan on its command strings before its path arguments are checked.
         for text in _command_strings(tool_input):
-            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules, copy=copy)
+            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules, copy=copy,
+                                alone=_one_command(text, "Bash"))
             if reason:
                 return False, _command_block_message(reason)
     if org_rules and (tool_name.startswith("mcp__") or tool_name in MCP_LIKE_TOOLS):
@@ -3203,13 +3366,15 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
         # the Bash tool's shell; PowerShell gets the same best-effort scan on its
         # command as the Bash scan can read it, and on the strings it can run.
         texts = [str(command or "")]
+        alone = _one_command(texts[0], tool_name)
         if "powershell" in tool_name.casefold():
             try:
                 texts = _powershell_commands(texts[0])
             except ValueError as exc:
                 return False, _command_block_message(str(exc))
         for text in texts:
-            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules, copy=copy)
+            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules, copy=copy,
+                                alone=alone)
             if reason:
                 return False, _command_block_message(reason)
         return True, ""

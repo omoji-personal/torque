@@ -98,7 +98,22 @@ later release narrows the check.
   environment applies, and be the workspace itself (Torque reads a folder that holds a
   `client.json` as that client, so no other folder passes, inside the workspace or outside
   it); no word may hold `--client` or `--initiative`. Every other lesson command stays
-  blocked.
+  blocked. Two [checks](checks.md) pass as well, because they read local files only:
+  `torque check metadata [PATH ...]` (with `--changed-from`, `--baseline`, `--only`,
+  `--analyzer`, `--ignore`, `--fail-on`, `--json`) and `torque check result RESULT.json`
+  (with `--json`), also through `python -m torque`. The check must be the whole command:
+  nothing before or after it, no pipe, redirection, wrapper or `bash -c` (a redirection can
+  create the `sfdx-project.json` it looks for). Every path is written out (no variable,
+  glob or `~`) and must not reach `clients/` (or a worktree copy's), read both as the shell
+  resolves it and as the command does (`abspath` first, so `link/..` is the current
+  folder); the default PATH is the current folder. `check metadata` also reads the project
+  folder around its paths (the nearest folder with `sfdx-project.json` at or above the
+  first PATH) when it is given files, and runs Code Analyzer with that folder (or the one
+  its paths share) as its workspace unless `--analyzer off`: that folder must not reach
+  `clients/` either. It shows the lessons of the engagement `TORQUE_WORKSPACE` selects, so
+  it is blocked while that variable, as the hook sees it, names anything but this
+  workspace. `--help` after `torque check` or one of its actions passes. `torque check
+  deployed` reaches an org and stays blocked, with a message that names the two forms.
 - Torque's other installed scripts (`jsc`, `jsc-qa`, `jsc-advisory`, `jsc-memory`,
   `jsc-loganalyzer`, `jsc-probes`, `jsc-browser-tests`, `meeting-processor`,
   `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):
