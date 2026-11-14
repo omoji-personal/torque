@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 import re
 
-from .lesson import APPLIES, Lesson
+from .lesson import APPLIES, Lesson, LessonError
 
 # A value that reads like a real secret, not a placeholder such as <token>, $TOKEN or PASSWORD.
 _PLACEHOLDERS = {"password", "passwd", "secret", "token", "none", "null", "true", "false", "redacted", "changeme",
@@ -189,13 +189,34 @@ def scrub(text: str, *, firm_terms: list | None = None, generalize: bool = False
     return text, found
 
 
+_EXTRA_DEPTH = 8
+
+
 def scrub_lesson(item: Lesson, *, firm_terms: list | None = None, generalize: bool = False) -> Found:
-    """Scrub every text of a lesson in place and report what was found."""
+    """Scrub every text of a lesson in place and report what was found: its fields, its
+    evidence and the front-matter keys Torque does not know (names and values). A copy
+    for a wider scope leaves those keys out before this runs (promote.propose)."""
     total = Found()
 
     def clean(value: str) -> str:
         value, found = scrub(value, firm_terms=firm_terms, generalize=generalize)
         total.add(found)
+        return value
+
+    def walk(value, depth: int = 0):
+        """A front-matter value Torque does not know: every text in it, keys included."""
+        if depth > _EXTRA_DEPTH:
+            raise LessonError("a front-matter key Torque does not know holds values nested too deeply to check; "
+                              "flatten it, or remove it from the file.")
+        if isinstance(value, str):
+            return clean(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            text = str(value)
+            return value if clean(text) == text else clean(text)
+        if isinstance(value, list):
+            return [walk(part, depth + 1) for part in value]
+        if isinstance(value, dict):
+            return {walk(key, depth + 1): walk(part, depth + 1) for key, part in value.items()}
         return value
 
     for name in ("title", "when", "do", "because", "body"):
@@ -205,4 +226,5 @@ def scrub_lesson(item: Lesson, *, firm_terms: list | None = None, generalize: bo
     for entry in item.evidence:
         if entry.get("ref"):
             entry["ref"] = clean(entry["ref"])
+    item.extra = walk(item.extra)
     return total

@@ -100,7 +100,10 @@ promoted_to: []
 Optional body, about 15 lines at most: the error text, a minimal reproduction, one example.
 ```
 
-- A person or an agent may edit the file. Keys Torque does not know are kept.
+- A person or an agent may edit the file. Keys Torque does not know are kept in the
+  lesson's own scope, and their names and values are scrubbed like the rest whenever
+  Torque writes the file. A copy to a wider scope (`promote`) leaves them out and the
+  proposal names them.
 - A file that cannot be read is skipped, named in the output and in `torque doctor`, and
   never stops a command. `README.md` in a lessons folder is not read as a lesson.
 - `applies.commands` are patterns with `*`. `torque deploy` and `sf project deploy start`
@@ -230,10 +233,13 @@ client lessons that could serve every client. It changes nothing; each line name
 command that acts on it.
 
 `torque lesson promote ID --to firm|platform|rule|skill|recipe|check [--name N]` writes a
-proposal: the exact text, the destination, what the scrub replaced and what a person must
-confirm. It applies nothing. `torque lesson promote --apply PROPOSAL` performs the one
-promotion that stays inside the workspace, client (or initiative) to firm: it writes the
-firm copy without client words and marks the source `promoted_to`. For a rule, a skill,
+proposal: the exact text, the destination, what the scrub replaced, the front-matter keys
+Torque does not know that were left out (a wider-scope copy carries only the known keys),
+and what a person must confirm. It applies nothing. `torque lesson promote --apply
+PROPOSAL` performs the one promotion that stays inside the workspace, client (or
+initiative) to firm: it scrubs the text between the fences again, every key in it
+included, and writes that text and nothing else as the firm copy, then marks the source
+`promoted_to`. For a rule, a skill,
 a recipe, a check or a platform lesson the proposal is the deliverable: shared and
 shipped guidance is changed by a person or a pull request, and the lesson is then
 recorded with `torque lesson edit ID --set promoted_to=rule:NAME`. Apply only on the

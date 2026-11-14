@@ -85,12 +85,16 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
     if folder is None:
         raise LessonError("a proposal is written in a workspace: add --workspace PATH.")
     day = record.today()
+    # A wider-scope copy carries only the keys Torque knows: a key a person added to the
+    # file is theirs to judge, so it is named in the proposal and left out of the text.
     copy = replace(item, applies={key: list(values) for key, values in item.applies.items()},
                    evidence=[dict(entry) for entry in item.evidence], supersedes=[], promoted_to=[],
-                   extra=dict(item.extra), path=None)
-    found = scrubber.scrub_lesson(copy, firm_terms=scrubber.workspace_terms(scopes.workspace), generalize=True)
+                   extra={}, path=None)
+    terms = scrubber.workspace_terms(scopes.workspace)
+    found = scrubber.scrub_lesson(copy, firm_terms=terms, generalize=True)
     if found.refused:
         raise Refused(found.refusal(target).replace("Not saved", "No proposal written"), found)
+    left_out = [_key_name(key, terms) for key in item.extra]
     if target in ("firm", "platform"):
         taken = storage.taken_ids(scopes.folder("firm")) | shipped_ids() | {item.id}
         copy.id, copy.scope, copy.created, copy.review_by = record.new_id(day, taken), target, day, record.later(day)
@@ -107,21 +111,35 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
                   f"longer shown twice: `torque lesson edit {item.id} --set promoted_to={target}:"
                   f"{name or 'NAME'}`")
     front = {"proposal": "promote", "lesson": item.id, "from": item.scope, "to": target, "name": name,
-             "created": day, "replaced": dict(found.masked)}
+             "created": day, "replaced": dict(found.masked), "left_out": left_out}
     body = "\n".join([
         "---", *(f"{key}: {record._yaml(value)}" for key, value in front.items()), "---",
         f"# Proposal: promote {item.id} to {target}{label}", "",
         f"Source: {item.id} ({item.scope}): {copy.title}",
         f"Destination: {_DESTINATION[target].format(name=label)}.",
-        f"The scrub replaced: {replaced}. It knows shapes and this workspace's client list, not every name: read "
-        "the text.", "",
+        f"The scrub replaced: {replaced}. It is a heuristic that knows the shapes of secrets and Ids and this "
+        "workspace's client list, not every name or every way to write a secret: read the text.",
+        *([_left_out_line(left_out)] if left_out else []), "",
         "## Text", "", "Edit it here if it needs rewording; the text between the fences is what is applied.", "",
         f"{_FENCE}lesson", text, _FENCE, "",
         "## To confirm", "", *(f"- [ ] {line}" for line in _CONFIRM[target]), "",
         "## Apply", "", apply_line, ""])
     storage._atomic_write(path, body)
     return {"proposal": str(path), "lesson": item.id, "from": item.scope, "to": target, "name": name,
-            "replaced": dict(found.masked), "text": text, "applies_itself": target == "firm"}
+            "replaced": dict(found.masked), "left_out": left_out, "text": text, "applies_itself": target == "firm"}
+
+
+def _key_name(key: object, terms: list) -> str:
+    """A key Torque does not know, as a proposal may name it: generalized like the text,
+    and withheld when it looks like a secret itself."""
+    text, found = scrubber.scrub(str(key), firm_terms=terms, generalize=True)
+    return "<a key withheld>" if found.refused else text
+
+
+def _left_out_line(keys: list) -> str:
+    return (f"Left out: {len(keys)} front-matter key(s) Torque does not know ({', '.join(keys)}). A wider-scope copy "
+            "carries only the keys Torque knows; their values are not copied. Add one to the text below only if "
+            "it names no client and holds no secret: the text between the fences is exactly what is written.")
 
 
 def _read(scopes: Scopes, proposal: str) -> tuple[Path, dict, str]:

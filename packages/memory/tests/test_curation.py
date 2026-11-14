@@ -130,6 +130,100 @@ def test_apply_refuses_text_that_still_identifies_a_client_and_needs_the_sources
     assert run("promote", "--apply", path)[0] == 0
 
 
+FAKE_SECRET = "Fake" + "-Only-" + "1234"                 # made up; assembled so no tracked file holds the pair
+EXTRA_KEYS = ("client_context: Alpha Nonprofit\n"
+              f"secret_context: pass{'word'}={FAKE_SECRET}\n"
+              "notes: {owner: alpha-dev, seen: [Alpha Nonprofit, 2026-11-14]}\n")
+
+
+def _with_extra_keys(item, extra=EXTRA_KEYS):
+    """The lesson's file with front-matter keys Torque does not know, added by a person."""
+    text = item.path.read_text(encoding="utf-8").replace("\nsource:", "\n" + extra.rstrip("\n") + "\nsource:", 1)
+    item.path.write_text(text, encoding="utf-8")
+
+
+def _fenced(proposal_path):
+    return promote._BLOCK.search(open(proposal_path, encoding="utf-8").read()).group(1)
+
+
+def test_a_wider_scope_copy_leaves_out_the_keys_torque_does_not_know_and_names_them(run, workspace, scopes):
+    alpha = scopes("alpha")
+    item = client_lesson(alpha)
+    _with_extra_keys(item)
+    assert set(storage.load(alpha, only="client")[0].extra) == {"client_context", "secret_context", "notes"}
+    text = run("promote", item.id, "--to", "firm")[1]
+    assert "Left out: 3 front-matter key(s)" in text and FAKE_SECRET not in text and "Alpha" not in text
+    code, out, err = run("promote", item.id, "--to", "firm", "--json")
+    made = json.loads(out)
+    assert code == 0 and made["left_out"] == ["client_context", "secret_context", "notes"]
+    proposal = open(made["proposal"], encoding="utf-8").read()
+    for word in ("Alpha", "alpha-dev", FAKE_SECRET):
+        assert word not in proposal and word not in out + err
+    assert "Left out: 3 front-matter key(s) Torque does not know (client_context, secret_context, notes)" in proposal
+    assert "client_context" not in made["text"] and _fenced(made["proposal"]) == made["text"]
+    # Apply writes the text the proposal shows, and nothing else.
+    code, out, err = run("promote", "--apply", made["proposal"], "--json")
+    assert code == 0, err
+    firm = storage.load(scopes(None))[0]
+    written = firm.path.read_text(encoding="utf-8")
+    assert written == made["text"] + "\n" and firm.extra == {}
+    for word in ("Alpha", "alpha-dev", FAKE_SECRET, "client_context", "secret_context"):
+        assert word not in written
+    # The other destinations leave the keys out the same way.
+    for target in ("platform", "rule", "check"):
+        made = json.loads(run("promote", item.id, "--to", target, "--json")[1]) if target != "platform" else \
+            promote.propose(alpha, item.id, "platform")
+        assert made["left_out"] == ["client_context", "secret_context", "notes"]
+        assert "client_context" not in made["text"] and "Alpha" not in made["text"]
+
+
+@pytest.mark.parametrize("added,refused", [
+    ("client_context: Alpha Nonprofit", "client name"),
+    (f"secret_context: pass{'word'}={FAKE_SECRET}", "password or secret"),
+    ("notes: {owner: alpha-dev}", "org alias"),
+    ("alpha_nonprofit_note: seen there", "client slug"),
+    (None, None),
+])
+def test_apply_scrubs_a_key_a_person_put_back_into_the_proposal_like_the_rest(run, workspace, scopes, added, refused):
+    alpha = scopes("alpha")
+    item = client_lesson(alpha)
+    _with_extra_keys(item)
+    made = promote.propose(alpha, item.id, "firm")
+    path = made["proposal"]
+    kept = "reviewed_by: the consultant"           # a key a person adds on purpose, naming no client
+    line = added or kept
+    body = open(path, encoding="utf-8").read().replace("\nsource:", f"\n{line}\nsource:", 1)
+    open(path, "w", encoding="utf-8", newline="\n").write(body)
+    code, out, err = run("promote", "--apply", path)
+    if refused:
+        assert code == 4 and refused in err and storage.load(scopes(None)) == []
+        assert "Alpha" not in out + err and FAKE_SECRET not in out + err
+    else:
+        assert code == 0
+        firm = storage.load(scopes(None))[0]
+        assert firm.extra == {"reviewed_by": "the consultant"}
+        shown = record.parse(_fenced(path))
+        assert (firm.front_matter(), firm.body) == (shown.front_matter(), shown.body)
+
+
+def test_keys_torque_does_not_know_are_scrubbed_when_a_lesson_is_saved_in_its_own_scope(workspace):
+    from jsc_memory import scrubber
+    from jsc_memory.lesson import Lesson
+    terms = scrubber.workspace_terms(workspace)
+    item = Lesson(id="L-20261114-0001", title="t", extra={"contact": "jane@example.org",
+                                                         "nested": {"alpha-dev": ["Beta Land Trust", 5551234567]}})
+    found = scrubber.scrub_lesson(item)
+    assert item.extra["contact"] == "<email>" and found.refused == {}
+    found = scrubber.scrub_lesson(item, firm_terms=terms)
+    assert {"org alias", "client name"} <= set(found.refused)
+    deep = value = {}
+    for _ in range(12):
+        value["next"] = {}
+        value = value["next"]
+    with pytest.raises(LessonError, match="nested too deeply"):
+        scrubber.scrub_lesson(Lesson(id="L-20261114-0002", title="t", extra={"deep": deep}))
+
+
 @pytest.mark.parametrize("target,expected", [
     ("rule", "- When you deploy a flow for the client to the org (<org-id>): read the active version back after "
              "the deploy. (a deploy can leave the flow inactive.)"),
