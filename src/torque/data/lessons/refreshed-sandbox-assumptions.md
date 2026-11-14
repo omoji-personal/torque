@@ -14,6 +14,7 @@ applies:
   keywords: [CronTrigger, custom settings, endpoint, run-as user]
   errors: []
 evidence:
+  - {type: official-doc, ref: "https://trailhead.salesforce.com/content/learn/modules/nonprofit-success-pack-maintenance/set-up-a-sandbox-in-your-salesforce-org", date: 2026-11-14}
   - {type: session, ref: "field-reported, one org", date: 2026-11-14}
 source: harvested
 created: 2026-11-14

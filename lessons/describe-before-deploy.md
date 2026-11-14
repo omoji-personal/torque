@@ -14,7 +14,7 @@ applies:
   keywords: [description, help text, inlineHelpText]
   errors: []
 evidence:
-  - {type: official-doc, ref: "https://help.salesforce.com/s/articleView?id=sf.flow_prep_bestpractices.htm&type=5", date: 2026-11-14}
+  - {type: official-doc, ref: "https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered", date: 2026-11-14}
   - {type: session, ref: "field-reported, one org", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
