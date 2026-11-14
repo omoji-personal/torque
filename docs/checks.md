@@ -189,9 +189,44 @@ or without the CLI's `{"status": ..., "result": ...}` envelope. Exit 0 when the 
 deploy outcome; exit 2 with the likely cause when it was not (no such file, empty, human-readable output, a
 CLI error instead of a result, JSON that is not a deploy result). No org call.
 
+## `torque check deployed`
+
+Status: proven against a stubbed CLI; needs one live run on a sandbox.
+
+```
+torque check deployed --target-org ALIAS (--changed-from RESULT.json | --source-dir DIR | --only Type:Name ...)
+                      [--source-dir DIR] [--as-permission-set NAME ...] [--json]
+```
+
+After a deploy, read-only:
+
+- **Same as submitted?** Retrieves the Created and Changed components of the result (or those named, or
+  everything under `--source-dir`) with `sf project retrieve start --target-metadata-dir TMP --unzip` into a
+  fresh private temporary folder, removed afterwards, and compares each with the submitted source: `same`,
+  `different` (with the element that differs), `could-not-compare` (with why) or `not-in-org`. Only known
+  serialisation differences are normalised: the order of a component's top-level elements (order inside an
+  element, such as picklist values or decision outcomes, is compared), a leaf the org writes with a default
+  value (false, 0, empty) that the source leaves out, permission entries that grant nothing, the parts of an
+  object that source format keeps in their own files, and, for permission sets and profiles, entries about
+  components that were not in the same retrieve (counted and reported as not compared). Types compared:
+  custom objects, fields, validation rules, record types, flows, permission sets and groups, custom
+  permissions, profiles, Lightning pages, layouts, custom metadata records, Apex classes and triggers.
+- **Flows:** the active and the latest version through the flow definition (the route of
+  `torque advisory flow`: Tooling `FlowDefinition` and `FlowDefinitionView`, plus the version numbers), and
+  whether the latest version, the one a deploy creates, is the active one.
+- **New fields:** which permission sets and profiles grant read or edit in the org (`FieldPermissions`
+  rows), and whether each `--as-permission-set` does. A field with no rows is reported.
+- **Validation rules:** active or not (Tooling `ValidationRule`).
+
+Every call goes through Torque's launcher with an argument list (`sf.cmd` on Windows), names `--target-org`,
+and only retrieves or queries. It never calls `sf org display` and prints no token. Exit 0 when the report
+completes, whatever it found; 2 unusable input; 3 the org could not be read (for example an alias with no
+CLI login). Not checked: permission set assignments and what a user really sees, and business acceptance.
+
 ## Build-only mode
 
 In a build-only workspace the gate refuses every `torque` subcommand outside a short allowlist (`demo`,
 `workflows`, `doctor`), so it refuses `torque check metadata` and `torque check result` too, although they
 read only local files and the same mode allows `sf code-analyzer run` on paths outside `clients/`. Run the
-check from your own terminal there, or in full or connected mode.
+check from your own terminal there, or in full or connected mode. `torque check deployed` reaches an org, so
+build-only mode refusing it is intended.

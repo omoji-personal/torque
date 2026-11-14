@@ -66,6 +66,8 @@ def register(subparsers) -> None:
                     "whatever the deploy outcome; 2 when it could not be read.")
     res.add_argument("result", metavar="RESULT.json")
     res.add_argument("--json", action="store_true")
+    from . import deployed
+    deployed.register(actions)
 
 
 def _metadata(parsed, out, err) -> int:
@@ -112,4 +114,7 @@ def run(parsed, out=None, err=None) -> int:
     out, err = out or sys.stdout, err or sys.stderr
     if parsed.action == "metadata":
         return _metadata(parsed, out, err)
-    return _result(parsed, out, err)
+    if parsed.action == "result":
+        return _result(parsed, out, err)
+    from . import deployed
+    return deployed.run(parsed, out, err)
