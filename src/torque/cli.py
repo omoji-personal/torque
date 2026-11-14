@@ -178,9 +178,10 @@ def build_parser() -> argparse.ArgumentParser:
     context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
     _client_args(context)
     _window_args(context)
-    context.add_argument("--max-chars", type=int, default=ws.NOTES_BUDGET, metavar="N",
-                         help=f"total characters of notes shown (default {ws.NOTES_BUDGET:,}); every notes file is "
-                              "listed with its size, and the ones cut are marked")
+    context.add_argument("--max-chars", type=int, metavar="N",
+                         help=f"the most characters the text prints (default {ws.CONTEXT_BUDGET:,}): where things "
+                              "stand, lessons, changes, history and notes together; whatever is cut is named with "
+                              "the command that shows it. With --json it bounds the notes, which are otherwise complete")
     context.add_argument("--json", action="store_true")
     session = sub.add_parser("session", help="append or read user-reported session records")
     sessions = session.add_subparsers(dest="action", required=True)
@@ -644,9 +645,9 @@ def _change(args: argparse.Namespace) -> int:
             written = ws.replace_output(ws.client_output_path(*common, args.output, kind=kind),
                                         json.dumps(result, indent=2) + "\n", ws.load_engagement(*common, kind)[0],
                                         force=args.force)
-            result = {**result, "export": ws.output_report(written)}
             if written["kept"]:
-                result["export"]["message"] = ws.output_lines(written)[1]
+                # stdout equals the file written, except when an edited file was kept: then it says so.
+                result = {**result, "export": {**ws.output_report(written), "message": ws.output_lines(written)[1]}}
     elif action == "note":
         result = changes.add_note(*common, args.change_id, args.text, args.kind, engagement_kind=kind)
     elif action == "check":
@@ -1963,54 +1964,14 @@ def main(argv: list[str] | None = None) -> int:
             return _change(parsed)
         elif parsed.command == "context":
             name, kind = _scope(parsed)
+            # JSON is complete unless --max-chars is given; the text fits its budget and says what it cut.
             context = ws.get_context(parsed.workspace, name, kind=kind, shown_via="context",
-                                     max_chars=parsed.max_chars, **_window(parsed))
+                                     max_chars=parsed.max_chars if parsed.json else None, **_window(parsed))
             if parsed.json:
                 _print_json(context)
             else:
-                print(f"{context['workspace']['name']} / {context['client']['name']}")
-                print(f"{'Initiative' if kind == 'initiative' else 'Client'} directory: {context['client_root']}")
-                if kind == "client":
-                    print(f"Configured org: {context['client'].get('org') or 'not specified'}")
-                print(context["evidence_note"])
-                for line in ws.record_problem_lines(context["record_problems"]):
-                    print(line)
-                print("\n" + "\n".join(ws.standing_lines(context)))
-                print("\n" + "\n".join(ws.lesson_lines(context["lessons"], kind)))
-                if context["notes_files"]:
-                    print("\n" + "\n".join(ws.note_file_lines(context["notes_files"], context["notes_budget"])))
-                for title, value in context.get("notes", {}).items():
-                    print(f"\n{title}:\n{value}")
-                for change in context.get("changes", []):
-                    print(f"\nChange {change['id']}: {change['title']} — {change['outcome']}")
-                    unresolved = [f"{criterion['id']} ({criterion['reported_result'].replace('_', ' ')})"
-                                  for criterion in change["criteria"] if criterion["reported_result"] != "pass"]
-                    print("Acceptance results are operator-reported; independent business acceptance is not established.")
-                    if unresolved:
-                        print("Not yet reported pass: " + ", ".join(unresolved))
-                    elif not change["criteria"]:
-                        print("No acceptance criteria recorded.")
-                    if change["assessment"]["evidence_problems"]:
-                        print(f"Evidence problems: {change['assessment']['evidence_problems']} missing, changed or unavailable captures.")
-                    for decision in change["decisions"]:
-                        print(f"Decision (reported): {decision['summary']}")
-                    for observation in change["metadata_observations"]:
-                        print(f"Metadata {observation['result']} · Org {observation['target_org']} · Job {observation['job_id']}: {observation['summary']}")
-                    for step in change["next_steps"]:
-                        print(f"Next step (reported): {step['summary']}")
-                    if any(change["history_truncated"].values()):
-                        counts = ", ".join(f"{name}: {count}" for name, count in change["history_counts"].items())
-                        print(f"{change['history_note']} Total entries — {counts}.")
-                    print("Full change: " + change["show_command"])
-                print(f"\nHistory: {context['sessions_returned']} of {context['sessions_total']} session record(s), "
-                      "newest first, the latest one above"
-                      + (f"; the rest: {context['more_command']}" if context["sessions_truncated"] else "") + ".")
-                for entry in context["sessions"][1:]:
-                    print(f"\n{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}")
-                    for line in ws.session_link_lines(entry):
-                        print(line)
-                    if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
-                        print(f"Evidence: {entry['evidence_integrity']} since recording.")
+                print(ws.context_text(context, kind, parsed.max_chars or ws.CONTEXT_BUDGET,
+                                      workspace=parsed.workspace), end="")
         elif parsed.command == "session":
             name, kind = _scope(parsed)
             if parsed.action == "add":

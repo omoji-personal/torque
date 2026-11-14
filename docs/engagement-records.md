@@ -122,9 +122,14 @@ one line with the command that shows them, so open work does not drop out of sig
 come the lessons, the notes and the changes, and the history last. It shows the 20 newest
 session records (`--limit N`, `--since DATE`, `--all` for every one) and says how many
 there are (`sessions_total`, `sessions_returned`, `sessions_truncated` and `more_command`
-in JSON). Notes are shown within a total of 24,000 characters (`--max-chars N`): every
-notes file is listed with its size, and a file that does not fit is marked cut or not
-shown, with its path. A corrected record is shown with the records that correct it.
+in JSON). The text prints at most 40,000 characters (`--max-chars N`, at least 2,000):
+where things stand and the lessons always; then changes, history (at most half of what is
+left) and notes share the rest. Every notes file is listed with its size, a file that does
+not fit is marked cut or not shown with its path, and a last line names every source that
+was cut and the command that shows all of it. `--json` is complete (each notes file up to
+65,536 characters) unless `--max-chars` is given, which then bounds the notes. A
+corrected record is shown with the records that correct it; a correction of a record
+outside the window is listed with that record's date, and older corrections are counted.
 
 Context includes a compact continuation summary; `change show --json` exposes the
 full selected record. The focused handoff includes outcome, criteria, decisions,

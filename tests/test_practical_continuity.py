@@ -149,7 +149,7 @@ def test_handoff_includes_same_bounded_notes_as_context_without_sibling_data(fir
     target = alpha / 'artifacts/handoff.md'
     assert invoke('handoff', '--workspace', str(root), '--client', 'Alpha', '--output', str(target))[0] == 0
     body = target.read_text(encoding="utf-8")
-    for text in ws.get_context(root, 'Alpha')['notes'].values(): assert text.rstrip() in body
+    for text in ws.get_context(root, 'Alpha', max_chars=ws.NOTES_BUDGET)['notes'].values(): assert text.rstrip() in body
     assert 'read the rest in clients/alpha/context/long.md]' in body and 'SYNTHETIC_TRUNCATED_TAIL' not in body
     full = ws.render_handoff(root, 'Alpha', everything=True)
     assert '[truncated at 65,536 characters]' in full and 'SYNTHETIC_TRUNCATED_TAIL' not in full

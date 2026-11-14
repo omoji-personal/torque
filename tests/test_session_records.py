@@ -337,21 +337,55 @@ def test_notes_over_the_budget_are_all_listed_the_cut_ones_marked_and_the_total_
     (alpha / "context/big1.md").write_text("x" * 70000, encoding="utf-8")
     (alpha / "context/big2.md").write_text("y" * 70000, encoding="utf-8")
     (alpha / "context/small.md").write_text("z" * 50, encoding="utf-8")
+    paths = ["profile.md", "clients/alpha/context.md", "clients/alpha/context/big1.md",
+             "clients/alpha/context/big2.md", "clients/alpha/context/small.md"]
+    text = invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    assert len(text) <= ws.CONTEXT_BUDGET
+    for path in paths:
+        assert f"- {path}: " in text
+    assert "clients/alpha/context/big1.md: 70,000 bytes, CUT at" in text
+    assert "clients/alpha/context/big2.md: 70,000 bytes, NOT SHOWN (over the budget)" in text
+    assert "Cut to fit 40,000 characters: notes (clients/alpha/context/big1.md, clients/alpha/context/big2.md" in text
+    assert "--json" in text.splitlines()[-1]
+    # JSON is complete (each file up to its own 65,536-character limit) unless a budget is given.
     context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
-    budget = context["notes_budget"]
-    assert budget == ws.NOTES_BUDGET and sum(len(text) for text in context["notes"].values()) <= budget
-    states = {item["path"]: item["state"] for item in context["notes_files"]}
+    assert context["notes_budget"] is None and len(context["notes"]["Client context: big2.md"]) > 65536
+    bounded = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--max-chars", "24000",
+                                "--json")[1])
+    assert sum(len(text) for text in bounded["notes"].values()) <= 24000
+    states = {item["path"]: item["state"] for item in bounded["notes_files"]}
     assert states == {"profile.md": "full", "clients/alpha/context.md": "full",
                       "clients/alpha/context/big1.md": "cut", "clients/alpha/context/big2.md": "not shown",
                       "clients/alpha/context/small.md": "not shown"}
-    assert "read the rest in clients/alpha/context/big1.md" in context["notes"]["Client context: big1.md"]
-    text = invoke("context", "--workspace", firm, "--client", "alpha")[1]
-    for path in states:
-        assert f"- {path}: " in text
-    assert "clients/alpha/context/big1.md: 70,000 bytes, CUT at" in text and "NOT SHOWN (over the budget)" in text
-    small = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--max-chars", "1000",
-                              "--json")[1])
-    assert sum(len(text) for text in small["notes"].values()) <= 1000
+    assert "read the rest in clients/alpha/context/big1.md" in bounded["notes"]["Client context: big1.md"]
+
+
+def test_the_whole_context_text_stays_within_its_budget_and_names_every_cut_source(firm):
+    alpha = firm / "clients/alpha"
+    (alpha / "context.md").write_text("Scope and decisions. " * 2000, encoding="utf-8")
+    (alpha / "context/decisions.md").write_text("A decision. " * 3000, encoding="utf-8")
+    for number in range(4):
+        add(firm, "--summary", f"lesson session {number}", "--learned-from", "consultant", "--learned",
+            f"When: deploying flow number {number} Do: activate it after the deploy Because: a deploy leaves "
+            f"version {number} inactive")
+    folder = alpha / "sessions"
+    for number in range(30):
+        entry_id = f"202610{number % 28 + 1:02d}T{number:02d}0000000000Z-{number:012x}"
+        (folder / f"{entry_id}.json").write_text(json.dumps({
+            "schema": "torque.session/1", "id": entry_id, "created_at": f"2026-10-{number % 28 + 1:02d}T09:00:00+00:00",
+            "client": "alpha", "summary": f"session {number}: " + "what was done and checked. " * 40,
+            "status": "incomplete" if number % 7 == 0 else "executed", "status_basis": "user_reported",
+            "independently_verified": False, "evidence": None}), encoding="utf-8")
+    for budget in (None, "12000", "4000"):
+        args = ["context", "--workspace", firm, "--client", "alpha", "--limit", "30"]
+        code, text, err = invoke(*args, *(["--max-chars", budget] if budget else []))
+        assert code == 0, err
+        limit = int(budget) if budget else ws.CONTEXT_BUDGET
+        assert len(text) <= limit, (budget, len(text))
+        assert "Where things stand:" in text and "Lessons from earlier work" in text
+        last = text.rstrip().splitlines()[-1]
+        assert last.startswith(f"Cut to fit {limit:,} characters:") and "history (" in last and "notes (" in last
+    assert invoke("context", "--workspace", firm, "--client", "alpha", "--max-chars", "500")[0] == 2
 
 
 # ---- step 4: hand-off for the task in hand

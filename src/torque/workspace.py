@@ -1716,6 +1716,7 @@ def note_file_lines(files: list[dict], budget: int | None) -> list[str]:
     head = (f"Notes files ({len(files)}; {shown:,} characters shown"
             + (f", budget {budget:,}; change it with --max-chars N" if budget is not None else "") + "):")
     marks = {"full": "shown in full", "cut": "CUT", "not shown": "NOT SHOWN (over the budget)"}
+    # A file cut at its own size limit (65,536 characters) is marked by that notice in its text.
     return [head] + [f"- {item['path']}: {item['bytes']:,} bytes, {marks[item['state']]}"
                      + (f" at {item['shown_chars']:,} characters" if item["state"] == "cut" else "")
                      for item in files]
@@ -1779,9 +1780,123 @@ def standing_lines(context: dict) -> list[str]:
     return lines
 
 
+# The most characters `torque context` prints as text (about 10,000 tokens): where things
+# stand, lessons, changes, history and notes together. --max-chars changes it.
+CONTEXT_BUDGET = 40_000
+
+
+def _change_lines(change: dict) -> list[str]:
+    lines = [f"Change {change['id']}: {change['title']} — {change['outcome']}"]
+    unresolved = [f"{c['id']} ({c['reported_result'].replace('_', ' ')})"
+                  for c in change["criteria"] if c["reported_result"] != "pass"]
+    lines.append("Acceptance results are operator-reported; independent business acceptance is not established.")
+    if unresolved:
+        lines.append("Not yet reported pass: " + ", ".join(unresolved))
+    elif not change["criteria"]:
+        lines.append("No acceptance criteria recorded.")
+    if change["assessment"]["evidence_problems"]:
+        lines.append(f"Evidence problems: {change['assessment']['evidence_problems']} missing, changed or "
+                     "unavailable captures.")
+    lines += [f"Decision (reported): {d['summary']}" for d in change["decisions"]]
+    lines += [f"Metadata {o['result']} · Org {o['target_org']} · Job {o['job_id']}: {o['summary']}"
+              for o in change["metadata_observations"]]
+    lines += [f"Next step (reported): {s['summary']}" for s in change["next_steps"]]
+    if any(change["history_truncated"].values()):
+        counts = ", ".join(f"{name}: {count}" for name, count in change["history_counts"].items())
+        lines.append(f"{change['history_note']} Total entries — {counts}.")
+    lines.append("Full change: " + change["show_command"])
+    return lines
+
+
+def _session_lines(entry: dict) -> list[str]:
+    lines = [f"{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}",
+             *session_link_lines(entry)]
+    if entry.get("evidence_integrity") in ("missing", "changed", "unavailable"):
+        lines.append(f"Evidence: {entry['evidence_integrity']} since recording.")
+    return lines
+
+
+def context_text(context: dict, kind: str, budget: int = CONTEXT_BUDGET, *, workspace: str | Path = ".") -> str:
+    """`torque context` as text, at most `budget` characters. Where things stand and the
+    lessons come first and always; then changes, history and notes share what is left
+    (history at most half). Whatever does not fit is named in a last line, with the
+    command that shows it. `context` holds the complete notes (get_context max_chars=None)."""
+    if budget < 2_000:
+        raise WorkspaceError("--max-chars must be at least 2,000 for the text (where things stand and the lessons "
+                             "always print); with --json it may be smaller")
+    label = "Initiative" if kind == "initiative" else "Client"
+    top = [f"{context['workspace']['name']} / {context['client']['name']}",
+           f"{label} directory: {context['client_root']}"]
+    if kind == "client":
+        top.append(f"Configured org: {context['client'].get('org') or 'not specified'}")
+    top += [context["evidence_note"], *record_problem_lines(context["record_problems"]),
+            "", *standing_lines(context), "", *lesson_lines(context["lessons"], kind)]
+    text = "\n".join(top) + "\n"
+    reserve = 700  # the line that names what was cut
+    remaining = budget - len(text) - reserve
+    cut: list[str] = []
+    changes_text = ""
+    for change in context.get("changes", []):
+        block = "\n" + "\n".join(_change_lines(change)) + "\n"
+        if len(changes_text) + len(block) > max(remaining // 4, 0):
+            cut.append(f"changes ({len(context['changes'])} in all; each with its `Full change` command: "
+                       f"torque change list)")
+            break
+        changes_text += block
+    remaining -= len(changes_text)
+    entries = context["sessions"][1:]
+    history_cap = max(remaining // 2, 0)
+    shown_history, history_text = 0, ""
+    for entry in entries:
+        block = "\n" + "\n".join(_session_lines(entry)) + "\n"
+        if len(history_text) + len(block) > history_cap:
+            break
+        history_text += block
+        shown_history += 1
+    full = f"torque context --workspace {workspace} --{kind} {context['client']['slug']} --json"
+    if shown_history < len(entries):
+        cut.append(f"history ({shown_history + 1} of {context['sessions_returned']} records printed)")
+    shown_records = shown_history + (1 if context["sessions"] else 0)
+    history_head = (f"\nHistory: {shown_records} of {context['sessions_total']} session record(s) printed, newest "
+                    "first, the latest one above"
+                    + (f"; the rest: {context['more_command']}" if context["sessions_truncated"] else "") + ".\n")
+    remaining -= len(history_text) + len(history_head)
+    files = [dict(item) for item in context.get("notes_files", [])]
+    titles = {item["title"]: item for item in files}
+    listing_room = sum(len(line) + 1 for line in note_file_lines(files, budget)) + 200
+    room = max(remaining - listing_room, 0)
+    notes_text = ""
+    for title, value in context.get("notes", {}).items():
+        item = titles.get(title)
+        block = f"\n{title}:\n{value}\n"
+        if len(block) <= room:
+            notes_text += block
+            room -= len(block)
+            if item:
+                item["shown_chars"] = len(value)
+            continue
+        marker = f"\n[cut: the rest is in {item['path'] if item else title}]"
+        keep = room - len(title) - len(marker) - 4
+        if item:
+            item["state"], item["shown_chars"] = ("cut", keep) if keep >= 200 else ("not shown", 0)
+        if keep >= 200:
+            notes_text += f"\n{title}:\n{value[:keep]}{marker}\n"
+            room = 0
+    notes_cut = [item["path"] for item in files if item["state"] != "full"]
+    if notes_cut:
+        cut.append("notes (" + ", ".join(notes_cut) + ")")
+    listing = "\n".join(note_file_lines(files, budget))
+    text += ("\n" + listing + "\n" if listing else "") + notes_text + changes_text + history_head + history_text
+    if cut:
+        line = (f"\nCut to fit {budget:,} characters: " + "; ".join(cut)
+                + f". All of it: {full}, or a larger --max-chars.\n")
+        text += line if len(line) <= reserve else line[:reserve - 5] + "...]\n"
+    return text
+
+
 def get_context(workspace: str | Path, client_name: str, *, kind: str = "client",
                 shown_via: str | None = None, limit: int | None = SESSION_WINDOW,
-                since: datetime | None = None, max_chars: int | None = NOTES_BUDGET) -> dict:
+                since: datetime | None = None, max_chars: int | None = None) -> dict:
     """The engagement's notes, lessons, changes and recent sessions, with where things
     stand first and what was left out counted. A stray or damaged record is skipped and
     named in record_problems instead of hiding the rest. With `shown_via` (the command
