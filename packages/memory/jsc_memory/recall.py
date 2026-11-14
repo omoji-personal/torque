@@ -143,7 +143,10 @@ class Query:
         return bool(self.words or self.tasks or self.types or self.command or self.error)
 
     def label(self) -> str:
-        named = ", ".join(dict.fromkeys([*self.tasks, *self.types, *self.words]))
+        spelled = {}                    # one spelling of each name: `report, Dashboard`, not `..., dashboard`
+        for name in [*self.tasks, *self.types, *self.words]:
+            spelled.setdefault(name.lower(), name)
+        named = ", ".join(spelled.values())
         if self.error:
             return "this error" + (f", {named}" if named and not self.only_error else "")
         return named or ("the command" if self.command else "")

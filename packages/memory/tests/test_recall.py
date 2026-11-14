@@ -154,6 +154,12 @@ def test_a_loose_word_is_not_a_match(scopes):
     assert found("running", "reporting", types=["ApexClass"]) == []
 
 
+def test_the_heading_names_each_thing_asked_for_once_whatever_its_spelling():
+    assert recall.build_query(topic=["report", "dashboard"]).label() == "report, Dashboard"
+    assert recall.build_query(tasks=["Flow"], types=["flow"]).label() == "flow, flow-build"
+    assert recall.build_query(topic=["Gift", "gift"], error="x").label() == "this error, gift"
+
+
 def test_shipped_lessons_answer_report_dashboard_only_with_lessons_about_reports_or_dashboards():
     result = recall.find(storage.Scopes(), topic=["report", "dashboard"], limit=None)
     assert (result.query.tasks, result.query.types, result.query.words) == (["report"], ["Dashboard"], [])
