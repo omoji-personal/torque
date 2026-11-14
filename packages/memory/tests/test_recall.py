@@ -68,19 +68,38 @@ def days_ago(days):
     return (date.today() - timedelta(days=days)).isoformat()
 
 
-def test_ranking_is_scope_then_match_strength_then_feedback_then_recency(scopes):
+def test_ranking_is_match_strength_with_a_bonus_for_nearness_then_feedback_then_recency(scopes):
     alpha = scopes("alpha")
-    save(alpha, "firm", "f001", types=["Flow"], tasks=["deploy"])
-    save(alpha, "client", "c001", tasks=["deploy"])                                  # weaker match, nearer scope
-    save(alpha, "client", "c002", types=["Flow"], tasks=["deploy"])                  # strongest client match
+    save(alpha, "firm", "f001", types=["Flow"], tasks=["deploy"])                    # strong firm match: 7 + 1
+    save(alpha, "client", "c001", tasks=["deploy"])                                  # weak client match: 3 + 2
+    save(alpha, "client", "c002", types=["Flow"], tasks=["deploy"])                  # strongest client match: 7 + 2
     save(alpha, "client", "c003", types=["Flow"], last_verified=days_ago(400))       # same strength as c004, older
     save(alpha, "client", "c004", types=["Flow"], last_verified=days_ago(100))
     save(alpha, "client", "c005", types=["Flow"], last_verified=days_ago(700))       # oldest, but marked helpful
     storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c005"}])
     result = recall.find(alpha, types=["Flow"], tasks=["deploy"], limit=None)
-    assert own(result) == ["c002", "c005", "c004", "c003", "c001", "f001"]
-    assert result.hits[0].score == 7 and result.hits[0].reasons == ["type Flow", "task deploy"]
-    assert all(hit.lesson.scope == "platform" for hit in result.hits[6:])
+    assert own(result) == ["c002", "f001", "c005", "c004", "c003", "c001"]
+    first = {hit.lesson.id[-4:]: hit for hit in result.hits}
+    assert first["c002"].score == 7 and first["c002"].reasons == ["type Flow", "task deploy"]
+    # A weak client match does not jump ahead of stronger platform matches.
+    order = [hit.lesson.id[-4:] for hit in result.hits]
+    assert any(hit.lesson.scope == "platform" for hit in result.hits[:order.index("c001")])
+
+
+def test_an_exact_platform_error_match_outranks_a_weak_client_match_and_is_never_cut(scopes):
+    alpha = scopes("alpha")
+    for suffix in ("w001", "w002", "w003"):
+        save(alpha, "client", suffix, tasks=["query"], when=f"you write a query ({suffix})")
+    result = recall.find(alpha, error="No such column 'Gift_Total__c' on entity 'Contact'", tasks=["query"], limit=3)
+    assert result.hits[0].lesson.scope == "platform" and "error" in result.hits[0].reasons
+    # Even when nearer lessons are stronger on other selectors, an exact error match keeps a place.
+    for suffix in ("s001", "s002", "s003"):
+        save(alpha, "client", suffix, tasks=["query", "data-load"], types=["Contact", "Account"],
+             when=f"strong ({suffix})")
+    crowded = recall.find(alpha, error="No such column 'X__c' on entity 'Contact'", tasks=["query", "data-load"],
+                          types=["Contact", "Account"], limit=3)
+    assert [hit.lesson.id[-4:] for hit in crowded.hits[:2]] == ["s001", "s002"]
+    assert recall._exact_error(crowded.hits[2]) and crowded.hits[2].lesson.scope == "platform"
 
 
 def test_equal_matches_are_ordered_by_evidence_then_by_recency_in_coarse_steps_never_by_a_few_days(scopes):
@@ -234,10 +253,10 @@ def test_a_command_pattern_that_names_an_option_or_value_outweighs_a_broad_one(s
          evidence=[{"type": "reproduced"}])
     save(alpha, "client", "dest", tasks=["deploy"], commands=["*destructive*"])
     command = "sf project deploy start --manifest package.xml --post-destructive-changes destructiveChanges.xml"
-    result = recall.find(alpha, command=command, limit=None)
-    assert own(result)[:2] == ["dest", "broa"] and [hit.score for hit in result.hits[:2]] == [9, 7]
+    scores = lambda result: [(hit.lesson.id[-4:], hit.score) for hit in result.hits if hit.lesson.scope == "client"]
+    assert scores(recall.find(alpha, command=command, limit=None)) == [("dest", 9), ("broa", 7)]
     plain = recall.find(alpha, command="sf project deploy start --source-dir force-app", limit=None)
-    assert own(plain) == ["broa", "dest"] and [hit.score for hit in plain.hits[:2]] == [7, 3]   # on its task only
+    assert scores(plain) == [("broa", 7), ("dest", 3)]                                    # on its task only
 
 
 def test_the_heading_names_each_thing_asked_for_once_whatever_its_spelling():
@@ -425,11 +444,11 @@ def test_a_lesson_prints_in_three_short_lines_and_the_block_ends_with_the_standi
 
 def test_the_function_other_packages_call_returns_text_or_nothing_and_never_raises(scopes, monkeypatch):
     alpha = scopes("alpha")
-    save(alpha, "client", "0001", types=["Flow"], tasks=["deploy"], when="you deploy a flow",
-         do="read the active version back")
+    save(alpha, "client", "0001", types=["Flow"], tasks=["deploy", "flow-build"], commands=["torque deploy *"],
+         when="you deploy a flow", do="read the active version back")
     monkeypatch.setenv("TORQUE_WORKSPACE", str(alpha.engagement))
     text = recall.for_command("torque deploy --metadata Flow:Gift_Entry --target-org example-dev", via="deploy")
-    assert text.splitlines()[1] == "[L-20250303-0001] WHEN you deploy a flow" and text.endswith(recall.FOOTER)
+    assert "[L-20250303-0001] WHEN you deploy a flow" in text.splitlines() and text.endswith(recall.FOOTER)
     assert len([line for line in text.splitlines() if line.startswith("[")]) <= 3
     events = storage.read_events(alpha.engagement)
     assert [(row["event"], row["id"], row["via"]) for row in events] == [("shown", "L-20250303-0001", "deploy")]

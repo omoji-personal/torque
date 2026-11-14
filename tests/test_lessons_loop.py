@@ -265,7 +265,8 @@ def test_advisory_notes_add_scoped_lessons_under_their_own_key(torque, root):
     assert code == 0 and set(answer) == {"platform_notes", "scoped_lessons"}
     assert answer["platform_notes"] and all("remedy" in note for note in answer["platform_notes"])
     scoped = answer["scoped_lessons"]
-    assert scoped[0]["scope"] == "client" and scoped[0]["when"] == "you deploy a flow for this client"
+    # Strength first, the client's own favoured: its lesson is among the four, stronger shipped ones may lead.
+    assert [item["when"] for item in scoped if item["scope"] == "client"] == ["you deploy a flow for this client"]
     assert {item["scope"] for item in scoped} <= {"client", "firm", "platform"}
     assert not any(item["id"].startswith("A-") for item in scoped)          # the catalogue is the other key
     text = torque("advisory", "notes", "--command", command)[1]

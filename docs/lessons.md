@@ -180,11 +180,14 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 `torque lesson for [TOPIC ...] [--task T] [--type T] [--command TEXT] [--error TEXT]
 [--path P] [--limit 5] [--include-candidates] [--json]` (also `recall`).
 
-- Matching runs over every lesson the call may read, then ranks: scope (client or
-  initiative, then firm, then platform), match strength, helpful minus stale marks, then
-  evidence (`reproduced` or `official-doc`; then `consultant-said` or `second-occurrence`;
-  then `session`), then recency in coarse steps (verified or saved within 90 days, within
-  a year, older), then id. A few days' difference never decides the order. With selectors a lesson must match at least one;
+- Matching runs over every lesson the call may read, then ranks: match strength with a
+  modest bonus for nearness (the selected client's or initiative's own +2, the firm's +1),
+  helpful minus stale marks, then evidence (`reproduced` or `official-doc`; then
+  `consultant-said` or `second-occurrence`; then `session`), then recency in coarse steps
+  (verified or saved within 90 days, within a year, older), then scope, then id. A weak
+  client match never pushes a strong platform match below the cut, a few days' difference
+  never decides the order, and when a lesson's own error matcher meets the error, the best
+  such lesson always keeps a place. With selectors a lesson must match at least one;
   when nothing matches, one line says so (with how to save a lesson) and the command
   exits 0. Precision comes first: when in doubt, nothing is shown.
 - Topic words: a word the vocabulary knows is asked as its task or type (`flow` is the

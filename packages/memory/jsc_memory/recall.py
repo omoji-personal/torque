@@ -377,9 +377,13 @@ def basis(item: Lesson) -> list[str]:
     return [item.evidence_type, record.age_text(item)]
 
 
-# Ties of scope, strength and marks are decided by how well a lesson is founded, then by
-# how recent it is in coarse steps (verified or saved within 90 days, within a year,
-# older), then by id: a few days' difference never decides the order.
+# Order: match strength with a modest bonus for nearness (the selected client's or
+# initiative's own lessons +2, the firm's +1), so a weak client match never pushes an exact
+# error or type match below the cut; then helpful minus stale marks; then how well a lesson
+# is founded; then recency in coarse steps (verified or saved within 90 days, within a year,
+# older); then id: a few days' difference never decides the order. When a lesson's own
+# error matcher meets the error, the best such lesson is always within the cut (`find`).
+_SCOPE_BONUS = {"client": 2, "initiative": 2, "firm": 1, "platform": 0}
 _EVIDENCE_RANK = {"reproduced": 0, "official-doc": 0, "consultant-said": 1, "second-occurrence": 1, "session": 2}
 
 
@@ -392,8 +396,27 @@ def _recency_step(item: Lesson) -> int:
 
 
 def _rank(hit: "Hit") -> tuple:
-    return (_SCOPE_ORDER[hit.lesson.scope], -hit.score, -hit.tally.score,
-            _EVIDENCE_RANK.get(hit.lesson.evidence_type, 3), _recency_step(hit.lesson), hit.lesson.id)
+    return (-(hit.score + _SCOPE_BONUS[hit.lesson.scope]), -hit.tally.score,
+            _EVIDENCE_RANK.get(hit.lesson.evidence_type, 3), _recency_step(hit.lesson), _SCOPE_ORDER[hit.lesson.scope],
+            hit.lesson.id)
+
+
+def _exact_error(hit: "Hit") -> bool:
+    """The lesson's own error matcher met the error (not a catalogue note's wording)."""
+    return "error" in hit.reasons and bool(hit.lesson.applies.get("errors"))
+
+
+def _cut(hits: list, limit: int | None) -> list:
+    """The first `limit` hits; if an exact error match exists and none is among them, the
+    best one takes the last place."""
+    if not limit or len(hits) <= limit:
+        return hits
+    shown = hits[:limit]
+    if not any(_exact_error(hit) for hit in shown):
+        exact = next((hit for hit in hits[limit:] if _exact_error(hit)), None)
+        if exact:
+            shown[-1] = exact
+    return shown
 
 
 def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "",
@@ -425,7 +448,7 @@ def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", pat
     hits.sort(key=_rank)
     own = sorted((hit for hit in waiting if hit.lesson.scope in record.ENGAGEMENT_SCOPES
                   and not hit.lesson.promoted_to), key=_rank)[:hints if query else 0]
-    return Result(hits[:limit] if limit else hits, len(hits), query, scopes, problems, len(waiting) - len(own), own)
+    return Result(_cut(hits, limit), len(hits), query, scopes, problems, len(waiting) - len(own), own)
 
 
 def _clip(text: str, limit: int) -> str:
