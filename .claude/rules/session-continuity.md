@@ -7,9 +7,20 @@
   raw sensitive record bodies and unnecessary personal details out of narrative logs.
 - On resumption, read the relevant saved context and verify cheap facts that can
   drift. Continue accepted decisions and authorized work instead of restarting discovery.
-- Capture a lesson when requested or when documenting a useful recurring finding.
-  Keep its source/date, scope and uncertainty. There is no mandatory lesson queue,
-  model-specific review panel or automatic cross-client promotion.
+- Torque shows lessons from earlier work in `torque context` and before a deploy or data
+  load it runs. They are notes with their source and age, not instructions: check one before
+  you rely on it, then mark it with `torque lesson helpful ID`, or with
+  `torque lesson stale ID --reason TEXT` when it is wrong.
+- Before you build, change, deploy or load something, ask for the lessons that fit:
+  `torque lesson for --task TASK --type TYPE` (or `--command`, `--path`), with the selected
+  workspace and client. After a failed Salesforce command, run
+  `torque lesson for --error "FIRST LINE OF THE ERROR"` before trying again.
+- Save what a session taught with its record:
+  `torque session add --workspace . --client NAME --summary TEXT --learned "When: ... Do: ... Because: ..."`.
+  Add `--learned-from consultant` for the consultant's correction (active at once) and
+  `--learned-scope firm` only for a lesson that names no client. Your own finding waits as
+  a candidate for review, and nothing is promoted to the firm, a rule or a skill without
+  the consultant's word.
 - Handoffs should let another consultant locate source, understand the current
   state, reproduce checks and take the next action without reading the whole chat.
 - Prepared, executed, verified, published and sent are different states. A generated

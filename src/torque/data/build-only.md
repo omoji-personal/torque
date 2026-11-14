@@ -11,7 +11,8 @@ does not allow. Follow these rules whether or not a call is blocked:
   and `which sf` to check the CLI is installed.
 - Client context is off limits. Do not read, list, search or write anything under
   `clients/`, and do not run `torque` other than `demo`, `workflows` and `doctor`
-  without `--client`. You can still draft metadata, code, tests and a plan outside it.
+  without `--client`, and `torque lesson for WORDS --workspace .` (firm and shipped lessons;
+  never `--client`). You can still draft metadata, code, tests and a plan outside it.
 - Leave `workspace.json` and the hook configuration (`.claude/settings*.json`,
   `.agents/hooks.json`) alone. Only the workspace owner changes them.
 - A scope block says how to narrow the call (a path under `project/`, a git scope, a
