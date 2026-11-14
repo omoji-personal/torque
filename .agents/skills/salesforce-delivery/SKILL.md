@@ -64,8 +64,13 @@ and never print or store a sign-in address. Then confirm whose session it is bef
 
 ## Record as you go
 
+- At the start: `torque context --workspace . --client NAME` for the client's context and
+  recent sessions, and the saved lessons (`torque lesson --help`). Then verify the cheap
+  facts that drift: which org, which flow version is active.
 - After meaningful work: `torque session add --workspace . --client NAME --summary TEXT
   --status prepared|executed|verified|incomplete`. Keep job ids and evidence files.
+- When the consultant corrects you, or a fix took more than one attempt, save it as a lesson
+  with its check (`torque lesson --help`), so the next session does not repeat it.
 - For the next consultant: `torque handoff --workspace . --client NAME`.
 - Find a recipe for a phase with `torque workflows list --workspace .`.
 

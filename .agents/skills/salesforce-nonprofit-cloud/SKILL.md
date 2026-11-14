@@ -1,6 +1,6 @@
 ---
 name: salesforce-nonprofit-cloud
-description: Work in Salesforce Nonprofit Cloud (Agentforce Nonprofit), the native successor to NPSP. Covers Fundraising, Program and Case Management, Grantmaking, Volunteer Management and Outcome Management, Person Accounts and households, Data Processing Engine rollups, gift entry, licenses and permission sets, metadata versus UI-only setup, gotchas with checks, and NPSP to Nonprofit Cloud migration.
+description: Work in Salesforce Nonprofit Cloud (Agentforce Nonprofit), the native successor to NPSP. Use it before any design, build, data load or diagnosis in an org with Nonprofit Cloud objects such as GiftTransaction, and when planning a move from NPSP. Covers Fundraising, Program and Case Management, Grantmaking, Volunteer Management and Outcome Management, Person Accounts and households, Data Processing Engine rollups, gift entry, licenses and permission sets, metadata versus UI-only setup, gotchas with checks, and NPSP to Nonprofit Cloud migration.
 ---
 
 # Salesforce Nonprofit Cloud

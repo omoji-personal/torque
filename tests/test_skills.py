@@ -46,6 +46,8 @@ def test_every_skill_has_well_formed_frontmatter():
         assert set(fields) == {"name", "description"}, name
         assert fields["name"] == name and re.fullmatch(r"[a-z0-9-]{1,64}", name)
         assert 20 <= len(fields["description"]) <= 1024, name
+        # A host lists only the description: it has to say when to load the skill.
+        assert "Use it " in fields["description"], name
         assert body.lstrip().startswith("# "), name
 
 

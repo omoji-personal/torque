@@ -1,6 +1,6 @@
 ---
 name: salesforce-npsp
-description: Work in a Nonprofit Success Pack (NPSP) org, including the Program Management Module and Outbound Funds. Covers the data model, households, TDTM trigger handlers, customizable rollups, enhanced recurring donations, payments, GAU allocations, soft credits, gift entry, PMM attendance, flows on NPSP objects, and the common gotchas with a check for each.
+description: Work in a Nonprofit Success Pack (NPSP) org, including the Program Management Module and Outbound Funds. Use it before any design, build, data load or diagnosis in an org that has the npsp, npe01, npo02, npe03, pmdm or outfunds packages. Covers the data model, households, TDTM trigger handlers, customizable rollups, enhanced recurring donations, payments, GAU allocations, soft credits, gift entry, PMM attendance, flows on NPSP objects, and the common gotchas with a check for each.
 ---
 
 # Salesforce NPSP
