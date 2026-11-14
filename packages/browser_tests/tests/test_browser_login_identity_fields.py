@@ -41,7 +41,7 @@ def signed_in(as_json: bool, **org):
 @pytest.mark.parametrize("username", [ADDRESS, TOKEN_SHAPED, f"user@acme.example/{MARKER}", f"{MARKER} @x.y"])
 def test_a_username_that_is_not_one_is_printed_as_unreadable(username):
     event = signed_in(True, username=username).events()[-1]
-    assert event["event"] == "redirected" and event["username"] == login.UNREADABLE
+    assert event["event"] == "sent" and event["username"] == login.UNREADABLE
     assert event["user_id"] is None, "a username that is not one is not looked up"
     assert not any(call[0] == "user" for call in FakeCli.calls)
     text = signed_in(False, username=username).out.getvalue().splitlines()[1]

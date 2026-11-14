@@ -44,13 +44,19 @@ EXIT_PLAYWRIGHT = 8       # Playwright or its browser is not installed (--storag
 EXIT_SIGN_IN = 9          # the sign-in itself failed
 
 EXIT_CODES_HELP = (
-    "exit codes: 0 signed in (the redirect was sent, or the session file was written); 1 the address "
+    "exit codes: 0 the tab was sent to the org's sign-in address (not yet confirmed: check the page), or the "
+    "session file was written after the page's user was checked; 1 the address "
     "expired before a browser opened it (nothing was signed in); 2 options; 3 the alias is not authorized in the Salesforce CLI or its "
     "authorization expired; 4 the Salesforce CLI is not installed; 5 another org or user than recorded; 6 refused by this "
     "workspace's mode; 7 no local port; 8 Playwright or its browser is missing; 9 the sign-in failed.")
 API_ONLY_NOTE = ("A user with the API Only User permission cannot be signed in to a browser; "
                  "use a separate user for browser tests.")
 NOT_CHECKED = "org not checked against the client record"
+CHECK_IN_PAGE = ("Next: wait until the tab shows the org's page (an action sent while it still redirects can fail), "
+                 "then check which user the page shows before testing. A login page means the sign-in failed: retry "
+                 "once, then stop and report; never type or ask for a password. A \"Change Your Password\" page means "
+                 "that user's password has expired: only the consultant can change it (the CLI and API keep working). "
+                 "A device verification page needs the consultant too.")
 # One word that the CLI cannot read as an option. It is passed as one argument, never through a shell.
 _ALIAS = re.compile(r"[^\s-]\S*")
 _ORG_ID = re.compile(r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?")
@@ -378,7 +384,7 @@ def login_as_steps(plan: Plan) -> list[str]:
                 f"Confirm the \"Logged in as {user}\" banner at the top of the page. Without it the tab is still "
                 f"the admin: go to {setup} in the org and click Login there.",
                 done, needs]
-    return [f"The tab opens the page of {user} in Setup, signed in as the admin. If it shows another page, "
+    return [f"The tab was sent, as the admin, to the page of {user} in Setup. If it shows another page, "
             f"navigate to {setup} in the org.",
             "Click Login on that page.",
             f"Confirm the \"Logged in as {user}\" banner at the top of the page before testing. Without it the tab "
@@ -413,15 +419,19 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
     org_id = shown(plan.identity["org_id"], _ORG_ID)
     kind = org_kind(plan.identity)
     edition = org_edition(plan.identity)
-    event = {"event": "redirected", "org_id": org_id, "org_kind": kind,
+    # All the command knows: the tab was sent to the org's sign-in address as this user. It
+    # cannot see the tab, so nothing here says "signed in".
+    event = {"event": "sent", "session_verified": False, "org_id": org_id, "org_kind": kind,
              "org_edition": edition or None,
-             "username": username or None, "user_id": user_id, "org_check": plan.org_check}
-    text = (f"Redirect sent: org {org_id} ({kind}{', ' + edition if edition else ''}), "
+             "username": username or None, "user_id": user_id, "org_check": plan.org_check,
+             "check_in_page": CHECK_IN_PAGE}
+    text = (f"Tab sent to the org's sign-in address: org {org_id} ({kind}{', ' + edition if edition else ''}), "
             f"user {username or 'unknown'}"
-            f"{', User Id ' + user_id if user_id else ''}; {plan.org_check}.")
+            f"{', User Id ' + user_id if user_id else ''}; {plan.org_check}. Not confirmed: the command cannot see "
+            "the tab.")
     if plan.alias != plan.target_alias:
         event["as_alias"] = plan.alias
-        text += f" Signed in through alias {plan.alias}."
+        text += f" Sent through alias {plan.alias}."
     if plan.role:
         event["role"] = plan.role
         text += f" Role {plan.role} of the test-user seed."
@@ -430,11 +440,7 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
         event.update(login_as=plan.login_as, next_steps=steps)
         text += "\nNext steps:\n" + "\n".join(f"{number}. {step}" for number, step in enumerate(steps, 1))
     output.result(text, **event)
-    output.hint("Wait until the tab shows the org (an action sent while it still redirects can fail), then confirm "
-                "the signed-in user in the page before testing. A login page means the sign-in failed: retry once, "
-                "then stop and report; never type or ask for a password. A \"Change Your Password\" page means the "
-                "sign-in worked and that user's password has expired: only the consultant can change it, and the "
-                "CLI and API keep working meanwhile.")
+    output.hint(CHECK_IN_PAGE)
     return EXIT_OK
 
 
@@ -547,7 +553,8 @@ def run_storage_state(args, output: Output) -> int:
     write_private(path, json.dumps(state))
     kind = org_kind(plan.identity)
     username, user_id = shown(username, _USERNAME), shown(user_id, _USER_ID)
-    event = {"event": "saved", "storage_state": str(path), "org_id": plan.identity["org_id"], "org_kind": kind,
+    event = {"event": "saved", "session_verified": True, "storage_state": str(path),
+             "org_id": plan.identity["org_id"], "org_kind": kind,
              "username": username, "user_id": user_id, "org_check": plan.org_check}
     if plan.alias != plan.target_alias:
         event["as_alias"] = plan.alias
@@ -606,12 +613,14 @@ def cmd_logout(args, out=None, err=None) -> int:
 def add_parsers(sub) -> None:
     """Add `login` and `logout` to the browser command's subparsers."""
     login = sub.add_parser(
-        "login", help="sign a browser in through the Salesforce front door; prints only a local address",
-        description="Sign a browser in to an org the Salesforce CLI is already authorized for. No password is "
-                    "used and the Salesforce sign-in address is never printed. By default the command prints a "
-                    "local address and waits: navigate the browser tab to it and the tab is redirected into the "
-                    "org. With --storage-state it signs Torque's own headless browser in and writes a session "
-                    "file for a scripted browser instead. " + API_ONLY_NOTE,
+        "login", help="send a browser to the org through the Salesforce front door; prints only a local address",
+        description="Send a browser to an org the Salesforce CLI is already authorized for, through its "
+                    "single-use sign-in address. No password is used and that address is never printed. By "
+                    "default the command prints a local address and waits: navigate the browser tab to it and the "
+                    "tab is redirected to the org's sign-in address. The command cannot see the tab: check the "
+                    "page and its user afterwards. With --storage-state it signs Torque's own headless browser "
+                    "in, checks the page's user, and writes a session file for a scripted browser instead. "
+                    + API_ONLY_NOTE,
         epilog=EXIT_CODES_HELP)
     login.add_argument("--target-org", required=True, help="org alias the Salesforce CLI is authorized for")
     login.add_argument("--path", help="page to land on, for example /lightning/page/home (default: the org's own "

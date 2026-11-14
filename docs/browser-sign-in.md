@@ -51,11 +51,14 @@ torque browser login --target-org ALIAS --workspace W --client NAME
 2. Navigate the browser tab to that address with the host's browser tool. Do not fetch it
    with curl or a web fetch tool: only a browser navigation is answered.
 3. At that moment the command asks the CLI for the single-use address and answers the tab
-   with a redirect to it. The tab lands in the org. The command prints the org ID, whether the
-   org is a sandbox or production, the username and the User Id, and exits.
-4. Wait until the tab shows the org, then confirm the signed-in user in the page before
-   testing. In Lightning, `$A.get('$SObjectType.CurrentUser.Id')` in the tab's JavaScript tool
-   returns the User Id to compare.
+   with a redirect to it. The command prints that the tab was sent (event `sent`,
+   `session_verified: false`), the org ID, whether the org is a sandbox or production, its
+   edition, the username and the User Id, and exits 0. It cannot see the tab.
+4. Wait until the tab shows the org's page, then check which user it shows before testing. In
+   Lightning, `$A.get('$SObjectType.CurrentUser.Id')` in the tab's JavaScript tool returns the
+   User Id to compare. A login page means the sign-in failed (retry once, then stop and
+   report); "Change Your Password" means the user's password expired, and device verification
+   means the same: the consultant acts.
 
 Options: `--path /lightning/...` lands on a page (the default is the org's own landing page;
 going to a record after the sign-in is the reliable order), `--timeout SECONDS` (default 180),
@@ -65,8 +68,9 @@ metadata.
 
 With `--json` the first line is
 `{"event": "waiting", "address": "...", "timeout_seconds": 180, "expires_at": "..."}` and the
-second `{"event": "redirected", "org_id": "...", "org_kind": "sandbox", "username": "...",
-"user_id": "...", "org_check": "..."}`, or `{"event": "failed", "exit_code": N, "reason": "..."}`.
+second `{"event": "sent", "session_verified": false, "org_id": "...", "org_kind": "sandbox",
+"org_edition": "...", "username": "...", "user_id": "...", "org_check": "...", "check_in_page": "..."}`
+(`check_in_page` is the next step above), or `{"event": "failed", "exit_code": N, "reason": "..."}`.
 The org ID, username, User Id and edition are the CLI's; one that does not look like what it
 should be (an Id of 15 or 18 characters, a username, an edition name) is printed as
 `(unreadable)`, in the JSON and in the text. Everything printed also passes the package's
@@ -169,7 +173,7 @@ in Playwright's storage-state format. A script then starts with
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| 0 | The redirect was sent, or the session file was written | Confirm the user in the page |
+| 0 | Host tab: the tab was sent to the org's sign-in address, not yet confirmed. Session file: written after the page's user was checked | Check the page and its user |
 | 1 | No browser navigation reached the local address before its expiry, or the CLI answered after it | Run it again and navigate the tab sooner |
 | 2 | Options that cannot be used | Read the message |
 | 3 | The alias has no CLI authorization, or it expired | The consultant runs `sf org login web --alias ALIAS` in their own terminal |

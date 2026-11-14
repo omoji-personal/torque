@@ -44,10 +44,11 @@ def test_prints_only_the_local_address_then_redirects_the_tab():
     assert run.done() == login.EXIT_OK
     assert FakeCli.mints() == 1
     lines = run.out.getvalue().splitlines()
-    assert len(lines) == 2 and lines[1].startswith(f"Redirect sent: org {ORG} (sandbox, Enterprise Edition), "
+    assert len(lines) == 2 and lines[1].startswith(f"Tab sent to the org's sign-in address: org {ORG} "
+                                                   "(sandbox, Enterprise Edition), "
                                                    "user admin@acme.example, User Id 005000000000001AAA")
     assert login.NOT_CHECKED in lines[1]
-    assert "confirm the signed-in user" in run.err.getvalue()
+    assert "check which user the page shows" in run.err.getvalue()
     # Seen in a live run: an expired password lands the tab on a password page although the sign-in worked.
     assert "Change Your Password" in run.err.getvalue() and "password has expired" in run.err.getvalue()
     assert MARKER not in run.everything() and "frontdoor" not in run.everything()
@@ -60,10 +61,10 @@ def test_json_output_is_two_objects_and_nothing_else():
     waiting, redirected = run.events()
     assert set(waiting) == {"event", "address", "timeout_seconds", "expires_at"}
     assert waiting["event"] == "waiting" and waiting["timeout_seconds"] == 60 and waiting["expires_at"].endswith("Z")
-    assert redirected == {"event": "redirected", "org_id": ORG, "org_kind": "sandbox",
+    assert redirected == {"event": "sent", "session_verified": False, "org_id": ORG, "org_kind": "sandbox",
                           "org_edition": "Enterprise Edition",
                           "username": "admin@acme.example", "user_id": "005000000000001AAA",
-                          "org_check": login.NOT_CHECKED}
+                          "org_check": login.NOT_CHECKED, "check_in_page": login.CHECK_IN_PAGE}
     assert run.err.getvalue() == "" and len(run.out.getvalue().splitlines()) == 2
     assert MARKER not in run.everything()
 
