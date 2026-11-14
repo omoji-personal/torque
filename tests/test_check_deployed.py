@@ -229,7 +229,8 @@ def test_help_states_the_proof_level(capsys):
     text = " ".join(capsys.readouterr().out.split())
     assert "stubbed CLI" in text
     assert "re-run live on 2026-11-14" in text
-    assert "the permission-set comparison changed after the last live run" in text
+    assert "four negative cases" in text and "a grant in the org that the file does not name" in text
+    assert "not yet run against a sandbox or a production org" in text
 
 
 def comp(tmp_path, name, text, suffix=".field-meta.xml"):
