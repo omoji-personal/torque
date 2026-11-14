@@ -189,7 +189,7 @@ def test_org_that_cannot_be_read_exits_3(world):
     code, out, err = run("check", "deployed", "--target-org", "sandbox", "--changed-from", str(result),
                          "--source-dir", str(t.root))
     assert code == 3 and "No authorization information found" in err
-    assert "could-not-compare" in out and ": 0 same," in out
+    assert "could-not-compare" in out and ": 0 as submitted (0 of them with more in the org)," in out
 
 
 def test_input_errors(tmp_path):
@@ -225,6 +225,47 @@ def test_compare_keeps_order_inside_elements(tmp_path):
                                   "<label>Worked</label></value></valueSetDefinition></valueSet>"))
     assert compare.compare(a, b, set())[0] == "different"      # display order of picklist values is meaningful
     assert compare.compare(a, c, set())[0] == "same"           # the order of top-level elements is not
+
+
+def test_what_only_the_org_has_is_not_a_difference(tmp_path):
+    """From the first live run: a new object and its permission set read as "different" only because
+    Salesforce adds its own properties on save. The question is whether what was submitted is in the org."""
+    source = comp(tmp_path, "a", mdapi("CustomObject", "<label>Shift</label><pluralLabel>Shifts</pluralLabel>"
+                                       "<sharingModel>ReadWrite</sharingModel>"), ".object-meta.xml")
+    org = comp(tmp_path, "b", mdapi("CustomObject", "<enableBulkApi>true</enableBulkApi><label>Shift</label>"
+                                    "<pluralLabel>Shifts</pluralLabel><sharingModel>ReadWrite</sharingModel>"
+                                    "<externalSharingModel>Private</externalSharingModel>"
+                                    "<enableHistory>false</enableHistory>"), ".object-meta.xml")
+    status, diffs, _skipped, org_only = compare.compare(source, org, set())
+    assert (status, diffs) == ("same-org-has-more", [])
+    assert org_only == ["enableBulkApi", "externalSharingModel"]          # a default-valued extra is not listed
+    changed = comp(tmp_path, "c", mdapi("CustomObject", "<enableBulkApi>true</enableBulkApi><label>Shifts!</label>"
+                                        "<pluralLabel>Shifts</pluralLabel><sharingModel>ReadWrite</sharingModel>"),
+                   ".object-meta.xml")
+    status, diffs, _skipped, _only = compare.compare(source, changed, set())
+    assert status == "different" and diffs == ["label: source 'Shift', org 'Shifts!'"]
+    missing = comp(tmp_path, "d", mdapi("CustomObject", "<label>Shift</label><pluralLabel>Shifts</pluralLabel>"),
+                   ".object-meta.xml")
+    status, diffs, _skipped, _only = compare.compare(source, missing, set())
+    assert status == "different" and diffs == ["sharingModel: only in source"]
+
+
+def test_an_extra_leaf_inside_a_keyed_entry_is_not_a_difference(tmp_path):
+    grant = ("<objectPermissions><allowCreate>true</allowCreate><allowRead>true</allowRead>"
+             "<object>Shift__c</object>{extra}</objectPermissions>")
+    source = comp(tmp_path, "a", mdapi("PermissionSet", "<label>Access</label>" + grant.format(extra="")),
+                  ".permissionset-meta.xml")
+    org = comp(tmp_path, "b", mdapi("PermissionSet", "<label>Access</label>"
+                                    + grant.format(extra="<viewAllFields>true</viewAllFields>")),
+               ".permissionset-meta.xml")
+    retrieved = {("CustomObject", "shift__c")}
+    status, diffs, _skipped, org_only = compare.compare(source, org, retrieved)
+    assert (status, diffs, org_only) == ("same-org-has-more", [], ["objectPermissions.viewAllFields"])
+    lowered = comp(tmp_path, "c", mdapi("PermissionSet", "<label>Access</label>"
+                                        + grant.replace("<allowCreate>true", "<allowCreate>false").format(extra="")),
+                   ".permissionset-meta.xml")
+    status, diffs, _skipped, _only = compare.compare(source, lowered, retrieved)
+    assert status == "different" and diffs == ["objectPermissions.allowCreate: source 'true', org 'false'"]
 
 
 def test_compare_never_calls_unreadable_same(tmp_path):

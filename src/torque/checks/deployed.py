@@ -26,7 +26,8 @@ try:  # the shared launcher finds sf where Windows installs it as a batch file
 except ImportError:  # pragma: no cover
     run_tool = subprocess.run
 
-LABEL = "proven against a stubbed CLI; needs one live run on a sandbox"
+LABEL = ("proven against a stubbed CLI and one live run on a Developer Edition org, 2026-11; not yet run against a "
+         "sandbox or a production org")
 RETRIEVABLE = {"CustomField", "CustomObject", "ValidationRule", "RecordType", "Flow", "PermissionSet",
                "PermissionSetGroup", "CustomPermission", "Profile", "FlexiPage", "Layout", "CustomMetadata",
                "ApexClass", "ApexTrigger"}
@@ -215,12 +216,13 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
     requested = {(c.type, c.name.lower()) for c in comps}
     rows = []
     for c in comps:
-        row = {"type": c.type, "name": c.name, "status": c.status, "differences": [], "not_compared_entries": 0}
+        row = {"type": c.type, "name": c.name, "status": c.status, "differences": [], "not_compared_entries": 0,
+               "org_only": []}
         if c.type not in RETRIEVABLE:
             row.update(comparison="could-not-compare", reason=f"{c.type} is not compared by this command")
         elif c.key in org_side:
-            result, diffs, skipped = compare.compare(c, org_side[c.key], requested)
-            row.update(comparison=result, differences=diffs, not_compared_entries=skipped)
+            result, diffs, skipped, org_only = compare.compare(c, org_side[c.key], requested)
+            row.update(comparison=result, differences=diffs, not_compared_entries=skipped, org_only=org_only)
         elif c.key in missing:
             row.update(comparison="not-in-org", reason="the org reports it cannot be found")
         elif errors and not ok:
@@ -239,7 +241,7 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
     reached = not attempted or ok > 0 or any(f.get("status") not in (None, "UNKNOWN") for f in flows) or any(
         a.get("rows") is not None for a in access) or any("could not read" not in r["message"] for r in vrules)
     counts = {k: sum(1 for r in rows if r["comparison"] == k)
-              for k in ("same", "different", "could-not-compare", "not-in-org")}
+              for k in ("same", "same-org-has-more", "different", "could-not-compare", "not-in-org")}
     return {
         "schema_version": 1, "command": "torque check deployed", "label": LABEL, "target_org": target_org,
         "scope": {"mode": sc.mode, "source": sc.source, "components": len(comps),
@@ -262,8 +264,10 @@ def text(rep: dict) -> str:
     lines = [f"torque check deployed: org {rep['target_org']} ({rep['label']}).",
              f"Scope: {rep['scope']['components']} component(s) ({rep['scope']['mode']}"
              + (f" {rep['scope']['source']}" if rep["scope"]["source"] else "") + ").",
-             f"Retrieved {rep['retrieve']['members']} into a fresh private folder (removed afterwards): {t['same']} same, "
-             f"{t['different']} different, {t['could-not-compare']} could not compare, {t['not-in-org']} not in the org."]
+             f"Retrieved {rep['retrieve']['members']} into a fresh private folder (removed afterwards): "
+             f"{t['same'] + t.get('same-org-has-more', 0)} as submitted ({t.get('same-org-has-more', 0)} of them with "
+             f"more in the org), {t['different']} different, {t['could-not-compare']} could not compare, "
+             f"{t['not-in-org']} not in the org."]
     for e in rep["retrieve"]["errors"]:
         lines.append(f"Retrieve error: {e}")
     for c in rep["scope"]["failed_in_result"]:
@@ -273,7 +277,13 @@ def text(rep: dict) -> str:
         more = f" (+{len(r['differences']) - 6} more)" if len(r["differences"]) > 6 else ""
         skipped = (f" ({r['not_compared_entries']} entries about components not in this retrieve not compared)"
                    if r["not_compared_entries"] else "")
-        lines.append(f"  {r['type']} {r['name']}: {r['comparison']}" + (f": {tail}{more}" if tail else "") + skipped)
+        shown = {"same-org-has-more": "same as submitted"}.get(r["comparison"], r["comparison"])
+        only = r.get("org_only") or []
+        also = ""
+        if only and r["comparison"] != "different":
+            also = ("; the org also has " + ", ".join(only[:5]) + (f" (+{len(only) - 5} more)" if len(only) > 5 else "")
+                    + " (defaults Salesforce adds on save, or someone else's change)")
+        lines.append(f"  {r['type']} {r['name']}: {shown}" + (f": {tail}{more}" if tail else "") + also + skipped)
     if rep["flows"]:
         lines.append("Flow activation:")
         lines += [f"  {f['name']}: {f['message']}" for f in rep["flows"]]
