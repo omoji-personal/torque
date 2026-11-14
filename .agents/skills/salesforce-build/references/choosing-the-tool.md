@@ -41,7 +41,7 @@ later (field-reported).
 | 3. Before-save record-triggered flow | Fields on the record being saved must be set | Yes, in Flow Builder |
 | 4. After-save, scheduled or screen flow | Other records, actions, email, timed work or guided input | Yes, in Flow Builder |
 | 5. Flow that calls invocable Apex | One step needs computation or volume a flow handles badly | Partly: the flow, not the class |
-| 6. Apex trigger or class, Lightning web component | Section 7 applies | No: a developer changes it |
+| 6. Apex trigger or class, Lightning web component | Section 8 applies | No: a developer changes it |
 
 Each step up costs the client maintenance: "Maintenance typically consumes 60-80% of
 development capacity for mature solutions" [WA-RC]. Declarative automation is transparent to

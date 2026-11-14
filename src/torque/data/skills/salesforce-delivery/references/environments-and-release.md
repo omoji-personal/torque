@@ -142,7 +142,7 @@ production [PLUGIN-DR]. Treat these flags as approvals, not conveniences: `--ign
 ### C3. The way back
 
 - A deployment that succeeded has no undo. The way back is a redeploy of the version you
-  kept in step 4, a flag you can switch off, or exact prior data.
+  kept in C1, step 4, a flag you can switch off, or exact prior data.
 - A redeploy does not restore deleted fields and their data, changed or merged records, sent
   email, callouts already made or replaced picklist values.
 - Ship a risky change switched off behind a custom metadata flag or a custom permission, and

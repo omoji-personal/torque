@@ -57,9 +57,8 @@ Finish the due diligence before you present something for a go.
 ## 4. Other people's work
 
 - **A shared org**: add, do not overwrite (`environments-and-release.md`, A3). Before you
-  design on an
-  object, list recent changes by others on those components and ask the owner of existing
-  automation where a new rule should live. Agree a freeze before a QA run.
+  design on an object, list recent changes by others on those components and ask the owner
+  of existing automation where a new rule should live. Agree a freeze before a QA run.
 - **A shared document or sheet**: back it up; rehearse a structural edit on a private copy;
   change only what you wrote; put suggestions in a new column or as comments; look at the
   result.
@@ -142,10 +141,10 @@ Shapes that worked:
 ## 7. Independent review
 
 Answer the checklists yourself first (section 6, and the test questions in
-`testing-and-uat.md`), then give the work to a reviewer that
-has the sources and did not see your reasoning. Have it write its report to a named file
-(two reports were returned in conversation and nearly lost). A reviewer that cannot run
-anything states expectations, not facts: reproduce each claim before you act on it.
+`testing-and-uat.md`, section 1), then give the work to a reviewer that has the sources and
+did not see your reasoning. Have it write its report to a named file (two reports were
+returned in conversation and nearly lost). A reviewer that cannot run anything states
+expectations, not facts: reproduce each claim before you act on it.
 
 ## 8. Working with an agent on client work
 

@@ -89,8 +89,8 @@ deploys local files "even if they overwrite changes in the org" [DR-README].
   on [WA-RC].
 - After activation, read back again and rerun one real path.
 
-Way back: reactivate the version you noted in step 4. That restores the logic. It does not
-undo records the new version already changed, email it sent or callouts it made.
+Way back: reactivate the version you noted in section 3, step 4. That restores the logic. It
+does not undo records the new version already changed, email it sent or callouts it made.
 
 ## 5. Change an existing flow without disturbing it
 
