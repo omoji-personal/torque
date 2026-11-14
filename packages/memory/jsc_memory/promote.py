@@ -76,8 +76,9 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
     if target not in TARGETS:
         raise LessonError(f"unknown destination `{target}`: use one of {', '.join(TARGETS)}.")
     item = storage.resolve(recall.everything(scopes), wanted)
-    if item.state != "active":
-        raise LessonError(f"{item.id} is {item.state}; promote an active lesson (review it first: torque lesson "
+    if item.state != "active" or record.unbacked_active(item):
+        state = "marked active without a basis" if item.state == "active" else item.state
+        raise LessonError(f"{item.id} is {state}; promote an active lesson (review it first: torque lesson "
                           f"verify {item.id} --evidence ...).")
     if target in ("firm", "platform") and item.scope in (target, "platform"):
         raise LessonError(f"{item.id} is already a {item.scope} lesson.")
@@ -182,8 +183,9 @@ def apply(scopes: Scopes, proposal: str) -> dict:
     source = storage.resolve(storage.load(scopes, only=scopes.kind), source_id)
     if f"firm:{copy.id}" in source.promoted_to:
         return {"firm": copy.id, "source": source.id, "status": "already applied", "path": None}
-    if source.state != "active":
-        raise LessonError(f"{source.id} is {source.state} now, and only an active lesson is promoted. Look at it "
+    if source.state != "active" or record.unbacked_active(source):
+        state = "marked active without a basis" if source.state == "active" else source.state
+        raise LessonError(f"{source.id} is {state} now, and only an active lesson is promoted. Look at it "
                           f"first (torque lesson show {source.id}), or leave the proposal unapplied.")
     found = scrubber.scrub_lesson(copy, firm_terms=scrubber.workspace_terms(scopes.workspace))
     if found.refused:

@@ -62,13 +62,17 @@ def build(scopes: Scopes) -> dict:
     report: dict = {"scopes": scopes.label(), "date": today, "lessons": len(own)}
     report["candidates"] = [_entry(item, tally(item)) for item in sorted(
         (item for item in own if item.state == "candidate"), key=lambda item: (item.created, item.id))]
+    # Marked active in its file with no basis in its record: counted as a candidate, never shown as trusted.
+    unbacked = [item for item in own if record.unbacked_active(item)]
+    report["unbacked"] = [_entry(item, tally(item)) for item in unbacked]
+    own_backed = [item for item in own if not record.unbacked_active(item)]
     report["duplicates"] = [
         {"keep": one.id, "other": other.id, "overlap": round(record.overlap(one, other), 2),
          "titles": [one.title, other.title]}
         for index, one in enumerate(live) for other in live[index + 1:]
         if _related(one, other) and record.overlap(one, other) >= DUPLICATE]
     recheck = []
-    for item in own:
+    for item in own_backed:
         # A promoted lesson is not shown any more: it lives on in its promoted form.
         if item.state != "active" or item.promoted_to or tally(item).stale_mark:
             continue
@@ -94,11 +98,11 @@ def build(scopes: Scopes) -> dict:
         _entry(item, tally(item), reasons=[reason for reason, holds in (
             (f"marked helpful {tally(item).helpful} times", tally(item).helpful >= PROMOTE_HELPFUL),
             ("seen a second time", any(entry["type"] == "second-occurrence" for entry in item.evidence))) if holds])
-        for item in own if item.state == "active" and not item.promoted_to and not tally(item).stale_mark
+        for item in own_backed if item.state == "active" and not item.promoted_to and not tally(item).stale_mark
         and (tally(item).helpful >= PROMOTE_HELPFUL
              or any(entry["type"] == "second-occurrence" for entry in item.evidence))]
     terms = scrubber.workspace_terms(scopes.workspace)
-    report["firm_worthy"] = [_entry(item, tally(item)) for item in own
+    report["firm_worthy"] = [_entry(item, tally(item)) for item in own_backed
                              if firm_worthy(item, terms) and not tally(item).stale_mark]
     report["unreadable"] = problems
     _displayed(report, {item.id: item.scope for item in [*own, *recall.platform_lessons()]}, terms)
@@ -115,7 +119,7 @@ def _displayed(report: dict, scope_of: dict, terms: list) -> None:
         cleaned, found = scrubber.scrub(text or "", firm_terms=terms if wider else None, generalize=wider)
         return scrubber.WITHHELD if found.refused else cleaned
 
-    for name in ("candidates", "recheck", "stale", "promote", "firm_worthy"):
+    for name in ("candidates", "unbacked", "recheck", "stale", "promote", "firm_worthy"):
         for entry in report[name]:
             for key in ("title", "when", "do", "reason"):
                 if entry.get(key):
@@ -143,6 +147,13 @@ def render(report: dict) -> str:
         f"reproduced|official-doc|second-occurrence|consultant-said`. Drop: `torque lesson retire {item['id']} "
         f"--reason \"...\"`. Read: `torque lesson show {item['id']}`"
         for item in report["candidates"]], "None.")
+    section("Marked active without a basis", [
+        f"- {item['id']} ({item['scope']}): {item['title']}: its file says active, but its record carries neither "
+        "the consultant's word nor evidence that it holds, so it is treated as a candidate and not shown as "
+        f"trusted.\n  Give it a basis: `torque lesson verify {item['id']} --evidence "
+        f"reproduced|official-doc|second-occurrence|consultant-said`. Drop: `torque lesson retire {item['id']} "
+        "--reason \"...\"`"
+        for item in report["unbacked"]], "None.")
     section("Likely duplicates", [
         f"- {pair['keep']} and {pair['other']} share {int(pair['overlap'] * 100)}% of their words: "
         f"\"{pair['titles'][0]}\" / \"{pair['titles'][1]}\"\n"
@@ -258,7 +269,8 @@ def health(scopes: Scopes) -> dict:
         shown = [row["at"][:10] for row in storage.read_events(root, damaged) if row["event"] == "shown"]
         return {"states": {state: sum(item.state == state for item in lessons) for state in record.STATES},
                 "unreadable": problems, "last_capture": max((item.created for item in lessons), default="") or None,
-                "last_shown": max(shown, default=None), "damaged_events": len(damaged)}
+                "last_shown": max(shown, default=None), "damaged_events": len(damaged),
+                "unbacked": [item.id for item in lessons if record.unbacked_active(item)]}
     platform_problems: list = []
     platform = recall.platform_lessons(platform_problems)
     report: dict = {
@@ -285,7 +297,9 @@ def health_lines(report: dict) -> list[str]:
             lines.append(f"Lessons ({label}): {states}; unreadable files {len(part['unreadable'])}; last saved "
                          f"{part['last_capture'] or 'never'}; last shown {part['last_shown'] or 'never'}"
                          + (f"; damaged event rows skipped {part['damaged_events']}" if part.get("damaged_events")
-                            else ""))
+                            else "")
+                         + (f"; marked active without a basis {len(part['unbacked'])} (treated as candidates: "
+                            "torque lesson review)" if part.get("unbacked") else ""))
     platform = report["platform"]
     lines.append(f"Lessons (platform): {platform['shipped']} shipped, {platform['advisory']} catalogue notes")
     lines.append("Lessons loop: live (a lesson was saved or shown in the last 30 days)" if report["loop"] == "live"

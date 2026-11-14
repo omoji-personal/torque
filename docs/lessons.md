@@ -124,8 +124,16 @@ A candidate becomes active on a basis: `torque lesson verify ID --evidence
 reproduced[:REF] | official-doc:URL | second-occurrence[:REF] | consultant-said`. The same
 lesson captured again on another occasion is recorded as a second occurrence, which
 admits it; captured again on the same occasion, nothing is added. Another occasion is
-another session record than the ones the lesson already names, or another day; on one
-day, a capture without a session record is not a new occasion.
+another day than every one the lesson's evidence names and, where both carry one,
+another session record. Two session records on one day are one occasion, so an agent
+cannot admit its own note by recording two sessions.
+
+A file may be edited by hand, also to `state: active`. A client, initiative or firm
+lesson counts as active only when its record carries a basis: source `consultant`, or
+evidence of type `reproduced`, `official-doc`, `second-occurrence` or `consultant-said`.
+Without one it is treated as a candidate: `torque lesson review` lists it under "Marked
+active without a basis", `torque doctor` counts it, `promote` refuses it, and `verify`
+asks for a basis. (Recall applies the same rule through `lesson.unbacked_active`.)
 
 ## Capture
 

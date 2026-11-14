@@ -162,6 +162,53 @@ def test_a_firm_lesson_that_names_a_client_or_an_org_is_refused_without_printing
     assert added.masked["org Id"] >= 1
 
 
+def _backdate(scopes, day="2026-01-05"):
+    """The client's one lesson as if it had been saved on an earlier day."""
+    stored = storage.load(scopes, only="client")[0]
+    stored.created = day
+    for entry in stored.evidence:
+        entry["date"] = day
+    storage.save(stored, scopes.folder("client"))
+
+
+def test_another_session_record_on_the_same_day_is_not_a_second_occurrence(scopes):
+    alpha = scopes("alpha")
+    intake.add(alpha, text=FLOW, session="s1")
+    for session in ("s2", "s3", None):
+        assert intake.add(alpha, text=FLOW, session=session).status == "duplicate"
+    assert storage.load(alpha)[0].state == "candidate"
+    _backdate(alpha)
+    assert intake.add(alpha, text=FLOW, session="s1").status == "duplicate"     # another day, the same record
+    assert intake.add(alpha, text=FLOW, session="s4").status == "second-occurrence"
+    assert storage.load(alpha)[0].state == "active"
+
+
+def test_a_file_marked_active_by_hand_without_a_basis_counts_as_a_candidate_until_verified(scopes):
+    from jsc_memory import feedback, promote, review
+    alpha = scopes("alpha")
+    item = intake.add(alpha, text=FLOW).lesson                 # an agent's note: a candidate
+    path = item.path
+    path.write_text(path.read_text(encoding="utf-8").replace("state: candidate", "state: active"), encoding="utf-8")
+    stored = storage.load(alpha)[0]
+    assert stored.state == "active" and record.unbacked_active(stored) and not record.backed(stored)
+    report = review.build(alpha)
+    assert [entry["id"] for entry in report["unbacked"]] == [item.id]
+    assert "## Marked active without a basis (1)" in review.render(report)
+    assert "marked active without a basis 1" in review.health_lines(review.health(alpha))[1]
+    with pytest.raises(LessonError, match="marked active without a basis"):
+        promote.propose(alpha, item.id, "firm")
+    with pytest.raises(LessonError, match="a candidate becomes active on a basis"):
+        feedback.verify(alpha, item.id)
+    assert feedback.verify(alpha, item.id, ["consultant-said"])[1] == "now active"
+    stored = storage.load(alpha)[0]
+    assert not record.unbacked_active(stored) and review.build(alpha)["unbacked"] == []
+    # The consultant's own lesson, or one with evidence that it holds, has its basis.
+    for fields in ({"source": "consultant"}, {"evidence": [{"type": "reproduced"}]},
+                   {"evidence": [{"type": "consultant-said"}]}):
+        assert record.backed(record.Lesson(id="L-x-0001", title="t", state="active", **fields))
+    assert not record.unbacked_active(record.Lesson(id="L-x-0002", title="t", state="active", scope="platform"))
+
+
 def test_the_same_lesson_again_is_not_a_second_file(scopes):
     alpha = scopes("alpha")
     first = intake.add(alpha, text=FLOW, session="s1")
@@ -170,7 +217,11 @@ def test_the_same_lesson_again_is_not_a_second_file(scopes):
     assert (same.status, same.lesson.id) == ("duplicate", first.lesson.id)
     assert intake.add(alpha, text=FLOW).status == "duplicate"        # the same day, outside any session: no new occasion
     assert len(storage.load(alpha)) == 1 and storage.load(alpha)[0].state == "candidate"
-    # On another occasion it is a second occurrence: evidence that admits the candidate.
+    # Another session record on the same day is not another occasion: an agent cannot admit its own note so.
+    assert intake.add(alpha, text=FLOW, session="s2").status == "duplicate"
+    assert storage.load(alpha)[0].state == "candidate"
+    _backdate(alpha)
+    # On another occasion (another day, another session record) it is a second occurrence, which admits it.
     again = intake.add(alpha, text=FLOW, session="s2")
     assert (again.status, again.lesson.id) == ("second-occurrence", first.lesson.id)
     stored = storage.load(alpha)
@@ -199,6 +250,7 @@ def test_the_session_a_lesson_comes_from_is_scrubbed_and_kept_beside_other_evide
     alpha = scopes("alpha")
     mail = "pat@" + "example.org"
     first = intake.add(alpha, text=FLOW, session="s1")
+    _backdate(alpha)
     again = intake.add(alpha, text=FLOW, session=f"call with {mail}")
     assert (again.status, again.lesson.id) == ("second-occurrence", first.lesson.id)
     stored = storage.load(alpha)[0]

@@ -107,6 +107,20 @@ def admitted(source: str, evidence: list) -> bool:
     return source == "consultant" or any(entry.get("type") in ADMITTING for entry in evidence)
 
 
+def backed(lesson: "Lesson") -> bool:
+    """The record carries a basis for being shown: the consultant's word (source
+    consultant, or consultant-said evidence) or evidence that it holds."""
+    return lesson.source == "consultant" or any(entry.get("type") in REVIEW_ADMITTING for entry in lesson.evidence)
+
+
+def unbacked_active(lesson: "Lesson") -> bool:
+    """A workspace lesson whose file says `state: active` with no basis in its record
+    (edited by hand, or imported active from an earlier store). It counts as a candidate
+    until it is verified with a basis: never shown as trusted at the point of use. Shipped
+    platform lessons are reviewed in the repository and are not judged here."""
+    return lesson.state == "active" and lesson.scope != "platform" and lesson.origin == "file" and not backed(lesson)
+
+
 def one_line(text: object) -> str:
     return " ".join(str(text or "").split())
 

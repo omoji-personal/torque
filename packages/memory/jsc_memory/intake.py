@@ -193,15 +193,16 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
 def _again(same: Lesson, new: Lesson, folder: Path, reference: str, day: str, masked: dict) -> Added:
     """The same lesson captured again. On a new occasion that is a second occurrence:
     evidence that admits a candidate. Otherwise nothing changes. A new occasion is another
-    session record than every one the lesson names, or another day; on one day, a capture
-    without a session record may be the same work as any other, so it is not one."""
+    day than every one the lesson's evidence names and, where both carry one, another
+    session record: two session records on one day can be one piece of work, and an agent
+    could record two to admit its own note."""
     if same.state == "retired":
         return Added(same, same.path, "duplicate", masked=masked, notes=[
             f"This lesson exists and is retired. If it holds after all: torque lesson restore {same.id}"])
 
     def same_occasion(entry: dict) -> bool:
         linked = entry.get("ref", "") if str(entry.get("ref", "")).startswith("session ") else ""
-        return reference == linked if reference and linked else entry.get("date") == day
+        return entry.get("date") == day or bool(reference and linked and reference == linked)
 
     if any(same_occasion(entry) for entry in same.evidence):
         return Added(same, same.path, "duplicate", masked=masked,
