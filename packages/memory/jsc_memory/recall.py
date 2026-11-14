@@ -147,6 +147,7 @@ class Query:
     command: str = ""
     error: str = ""                 # an error text, as given
     only_error: bool = False        # the error was the only thing asked about
+    topic: list = field(default_factory=list)    # the topic's words in order, lower case, for phrases
 
     def __bool__(self) -> bool:
         return bool(self.words or self.tasks or self.types or self.command or self.error)
@@ -214,14 +215,15 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
         # only the types it implies are added (flow-build asks for Flow).
         all_tasks += [] if vocab.tag(task) in vocab.TASKS else more_tasks
         all_types += more_types
-    command = " ".join(str(command or "").split())
+    command = vocab.without_org_names(" ".join(str(command or "").split()))
     if command:
         more_tasks, more_types = vocab.for_command(command)
         all_tasks += more_tasks
         all_types += more_types
     return Query(words=words, tasks=list(dict.fromkeys(all_tasks + found_tasks)),
                  types=list(dict.fromkeys(all_types + found_types + path_types(paths, scopes))), command=command,
-                 error=error, only_error=only_error)
+                 error=error, only_error=only_error,
+                 topic=re.findall(r"[a-z0-9_]+", " ".join(topic).lower()))
 
 
 def _command_forms(command: str) -> list[str]:
@@ -233,14 +235,33 @@ def _command_forms(command: str) -> list[str]:
     return forms
 
 
-def _command_hits(item: Lesson, command: str) -> int:
+def _command_hits(item: Lesson, command: str) -> tuple[int, bool]:
+    """(how many of a lesson's command patterns fit, whether one that fits names more than
+    the command's name: an option or a value, as `*destructive*` or `* --manifest*` do)."""
     forms = _command_forms(command)
     hits = sum(1 for pattern in item.command_patterns if any(pattern.search(form) for form in forms))
+    specific = False
     for glob in item.applies.get("commands", []):
         glob = " ".join(glob.lower().split())
         shapes = (glob, glob + " *", "* " + glob, "* " + glob + " *")
-        hits += any(fnmatchcase(form, shape) for form in forms for shape in shapes)
-    return hits
+        fits = [form for form in forms if any(fnmatchcase(form, shape) for shape in shapes)]
+        hits += bool(fits)
+        for form in fits:
+            name = set(re.split(r"\s+-", " " + form, maxsplit=1)[0].split())     # the words before the first option
+            specific |= bool(set(re.findall(r"[^\s*]+", glob)) - name)
+    return hits, specific
+
+
+def _phrases(item: Lesson, topic: list[str]) -> list[str]:
+    """The lesson's keywords of two or more words that the topic spells out, word for word
+    (a plural or singular ending may differ): `custom settings`, `screen action`."""
+    found = []
+    for keyword in item.applies.get("keywords", []):
+        words = re.findall(r"[a-z0-9_]+", keyword.lower())
+        if len(words) > 1 and any(all(vocab.word_forms(word) & {topic[start + index]} for index, word in
+                                      enumerate(words)) for start in range(len(topic) - len(words) + 1)):
+            found.append(keyword)
+    return found
 
 
 def _about_words(item: Lesson) -> tuple[set[str], set[str]]:
@@ -263,12 +284,15 @@ def _error_hits(item: Lesson, error: str) -> int:
 #   error    an error matcher of the lesson is in the error text     5, +1 a matcher, at most 8
 #   type     the lesson names a metadata type the query names        4 each, at most 8
 #   task     the lesson names a task the query names                 3 each, at most 6
-#   command  a command pattern of the lesson fits the command        2, +1 a pattern, at most 5
+#   phrase   a keyword of two or more words is spelled out in the topic   4 each, at most 8
+#   command  a command pattern of the lesson fits the command        2, +1 a pattern, at most 5;
+#            +3 when a pattern that fits names an option or value beyond the command's name
 #   word     a topic word is a whole word of the lesson's title, `when`, keywords, tasks or
 #            types (a plural or singular ending may differ)          1 each, at most 3
 # A topic word the vocabulary knows (flow, dashboard, deploy) is asked as its task or type,
-# not as a word (vocab.topic_terms). A lesson about other component types than the ones
-# asked for (both name types, none shared) does not match on its task, command or words.
+# not as a word (vocab.topic_terms); an org alias in a command (`--target-org dev-sandbox`)
+# is a name, not a topic. A lesson about other component types than the ones asked for (both
+# name types, none shared, no phrase spelled out) does not match on its task, command or words.
 # A lesson found by words alone needs a hit in its title or keywords, or two different words.
 def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
     """(strength, reasons) of a lesson for a query; strength 0 means it does not match."""
@@ -283,16 +307,20 @@ def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
     if hits:
         score += min(8, 4 * len(hits))
         reasons += [f"type {kind}" for kind in hits]
-    other_components = bool(types and query.types and not hits)
+    phrases = _phrases(item, query.topic) if query.topic else []
+    if phrases:
+        score += min(8, 4 * len(phrases))
+        reasons += [f"keyword {phrase}" for phrase in phrases]
+    other_components = bool(types and query.types and not hits and not phrases)
     tasks = {vocab.tag(task) for task in item.applies.get("tasks", [])}
     hits = [] if other_components else [task for task in query.tasks if task in tasks]
     if hits:
         score += min(6, 3 * len(hits))
         reasons += [f"task {task}" for task in hits]
     if query.command and not other_components:
-        number = _command_hits(item, query.command)
+        number, specific = _command_hits(item, query.command)
         if number:
-            score += min(5, 2 + number)
+            score += min(5, 2 + number) + 3 * specific
             reasons.append("command")
     if query.words and not other_components:
         named, described = _about_words(item)

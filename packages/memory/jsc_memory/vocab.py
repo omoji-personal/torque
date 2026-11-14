@@ -239,6 +239,15 @@ def types_for_path(path: str) -> list[str]:
     return []
 
 
+_ORG_VALUE = re.compile(r"(?<!\S)(--target-org|--target-dev-hub|-o)(?:=|\s+)(?:\"[^\"]*\"|'[^']*'|\S+)")
+
+
+def without_org_names(command: str) -> str:
+    """A command with the org alias it names left out: `--target-org dev-sandbox` is a name,
+    not a sandbox task. Used for matching only."""
+    return _ORG_VALUE.sub(r"\1", command or "")
+
+
 def for_command(command: str) -> tuple[list[str], list[str]]:
     """(tasks, metadata types) a command line points to: its verbs, the `Type:Name`
     members it names, and the source files and folders it mentions."""

@@ -102,6 +102,11 @@ def test_each_shipped_lesson_is_found_by_a_selector_from_its_own_applies(name):
     tries += [{"types": [kind]} for kind in item.applies["types"]]
     tries += [{"tasks": [task]} for task in item.applies["tasks"]]
     tries += [{"tasks": item.applies["tasks"], "types": [kind]} for kind in item.applies["types"]]
+    # A keyword as a topic, alone and with the lesson's tasks and types: with many lessons on one type, a bare type
+    # ties them all and the better-evidenced ones come first (by design); what sets a lesson apart is its keywords.
+    tries += [{"topic": keyword.split()} for keyword in item.applies["keywords"]]
+    tries += [{"topic": keyword.split(), "tasks": item.applies["tasks"], "types": item.applies["types"]}
+              for keyword in item.applies["keywords"]]
     found = [selectors for selectors in tries if item.id in _top(**selectors)]
     assert found, f"{name}: not among the first five for any of {tries}"
     # An error a lesson answers brings it into the three lessons printed before a step.

@@ -3,9 +3,8 @@ from the lesson's own `applies`, and against two situations where it must not be
 
 Every query runs over all platform lessons together: the shipped ones and the advisory catalogue's notes.
 Expected results, plainly: a lesson is among the first five for each of its own situations, and not among the
-first five for either of its two others. Cases the matching code of this tree does not meet yet are listed in
-KNOWN_MISSES with the reason; they are expected to pass once the catalogue adapter reads each note's `applies`
-and loose word matches stop qualifying (both being changed by other groups), and are rerun on the merged tree.
+first five for either of its two others. A case the matching does not meet yet goes in KNOWN_MISSES with the
+reason (run as a non-strict expected failure, so it shows XPASS once it passes).
 """
 from pathlib import Path
 
@@ -135,17 +134,10 @@ CASES = {
     "data-load-one-record-first": (["contact import", "data loader"], ["browser test", "flow deploy"]),
 }
 
-# (lesson, situation): why this tree does not meet the expectation yet. Rerun on the merged tree.
-_NARROW = ("an untyped deploy command matches the broad deploy lessons and notes on task and command together, "
-           "and this lesson's narrow command pattern alone scores lower; its error line finds it first")
-KNOWN_MISSES: dict = {
-    ("delete-field-flow-versions", "destructive"): _NARROW,
-    # Passes on this tree; with the catalogue notes' applies read by the adapter, deploy notes outrank it.
-    ("deploy-validate-test-level", "validate notestrun"): _NARROW,
-    # Catalogue notes whose title says "field" are guessed as field-build and take the places; passes when the
-    # adapter reads each note's applies (previewed: rank 5).
-    ("spec-names-against-org", "spec fields"): "catalogue notes guessed as field-build from their titles",
-}
+# (lesson, situation): why the matching does not meet the expectation yet. Empty since the recall group's
+# reconciliation: a command pattern naming an option or value (`*destructive*`, `...validate*NoTestRun*`)
+# outweighs the broad deploy patterns, and the catalogue notes carry their own `applies`.
+KNOWN_MISSES: dict = {}
 
 
 def top(situation: str, limit: int = 5) -> list[str]:

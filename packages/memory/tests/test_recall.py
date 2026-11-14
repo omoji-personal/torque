@@ -205,6 +205,41 @@ def test_a_task_torque_knows_is_asked_as_itself_and_brings_only_the_types_it_imp
     assert own(recall.find(alpha, tasks=["sandbox"], limit=None)) == ["rfsh", "sbox"]
 
 
+def test_an_org_alias_is_a_name_and_not_a_topic(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "sbox", tasks=["sandbox"], when="you work in a sandbox")
+    query = recall.build_query(command="sf data query --query \"SELECT Id FROM Account\" --target-org dev-sandbox")
+    assert query.tasks == ["query"] and "dev-sandbox" not in query.command
+    assert recall.build_query(command="sf org display -o my-sandbox").tasks == []
+    assert own(recall.find(alpha, command="sf data query -o=dev-sandbox --query x", limit=None)) == []
+
+
+def test_a_keyword_phrase_spelled_out_in_the_topic_counts_like_a_type(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "sett", tasks=["retrieve"], types=["CustomMetadata"], keywords=["custom settings", "secret"],
+         title="Scan what you retrieve for secrets")
+    save(alpha, "client", "objt", types=["CustomObject"], title="Name a new object well")
+    # "custom settings" is the CustomObject type to the vocabulary; the lesson names other types, but its
+    # keyword phrase is spelled out, so it is about what was asked.
+    found = recall.find(alpha, topic=["read", "the", "custom", "settings", "retrieved"], limit=None)
+    assert own(found)[0] == "sett" and found.hits[0].reasons[0] == "keyword custom settings"
+    assert own(recall.find(alpha, topic=["custom", "objects"], limit=None)) == ["objt"]       # no phrase: excluded
+    one = recall.find(alpha, topic=["settings"], limit=None)                              # one word is not a phrase
+    assert one.hits[0].reasons == ["word settings"] and one.hits[0].score == 1
+
+
+def test_a_command_pattern_that_names_an_option_or_value_outweighs_a_broad_one(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "broa", tasks=["deploy"], commands=["sf project deploy *", "torque deploy *"],
+         evidence=[{"type": "reproduced"}])
+    save(alpha, "client", "dest", tasks=["deploy"], commands=["*destructive*"])
+    command = "sf project deploy start --manifest package.xml --post-destructive-changes destructiveChanges.xml"
+    result = recall.find(alpha, command=command, limit=None)
+    assert own(result)[:2] == ["dest", "broa"] and [hit.score for hit in result.hits[:2]] == [9, 7]
+    plain = recall.find(alpha, command="sf project deploy start --source-dir force-app", limit=None)
+    assert own(plain) == ["broa", "dest"] and [hit.score for hit in plain.hits[:2]] == [7, 3]   # on its task only
+
+
 def test_the_heading_names_each_thing_asked_for_once_whatever_its_spelling():
     assert recall.build_query(topic=["report", "dashboard"]).label() == "report, Dashboard"
     assert recall.build_query(tasks=["Flow"], types=["flow"]).label() == "flow, flow-build"

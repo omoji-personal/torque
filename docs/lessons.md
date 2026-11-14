@@ -193,7 +193,12 @@ is an aid, and a firm lesson is still read by a person before it is shared.
   types, never its `do`, `because` or body. A word matches a whole word; a plural or
   singular ending may differ (`snapshot`, `snapshots`), nothing else (`report` is not
   `reporting`). A lesson found by words alone needs a word in its title or keywords, or two
-  different words.
+  different words. A keyword of two or more words that the topic spells out (`custom
+  settings`, `screen action`) counts as much as a type.
+- Commands: an org alias (`--target-org dev-sandbox`, `-o`) is a name and is not matched. A
+  lesson's command pattern that names an option or a value beyond the command's name
+  (`*destructive*`, `sf project retrieve start*--manifest*`) weighs more than a broad one
+  (`sf project deploy *`).
 - `--path` infers the metadata type from a file name, a folder or a `package.xml`
   (`*.flow-meta.xml` is Flow, `*.field-meta.xml` is CustomField, and so on). Only names
   are read, links to folders are not followed, and a path inside the folder of another
