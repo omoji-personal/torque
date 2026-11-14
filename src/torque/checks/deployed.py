@@ -26,8 +26,10 @@ try:  # the shared launcher finds sf where Windows installs it as a batch file
 except ImportError:  # pragma: no cover
     run_tool = subprocess.run
 
-LABEL = ("proven against a stubbed CLI and one live run on a Developer Edition org, 2026-11; not yet run against a "
-         "sandbox or a production org")
+LABEL = ("proven against a stubbed CLI; one live run on a Developer Edition org, 2026-11, then the comparison rules "
+         "changed after the live run and have not yet been re-run against a real org; not yet run against a sandbox "
+         "or a production org")
+STATUSES = ("same", "unexplained-additions", "partly-compared", "different", "could-not-compare", "not-in-org")
 RETRIEVABLE = {"CustomField", "CustomObject", "ValidationRule", "RecordType", "Flow", "PermissionSet",
                "PermissionSetGroup", "CustomPermission", "Profile", "FlexiPage", "Layout", "CustomMetadata",
                "ApexClass", "ApexTrigger"}
@@ -80,7 +82,47 @@ def _client():
     return SfClient()
 
 
-def flow_state(client, alias: str, comp) -> dict:
+def _namespace(ns: str) -> str:
+    from jsc_advisory.sf import soql_literal
+    return f"NamespacePrefix = '{soql_literal(ns)}'" if ns else "NamespacePrefix = null"
+
+
+def referenced(comps) -> set[str]:
+    """The components a permission set's or profile's access entries name, as retrieve members. The org returns
+    an access entry only for a component in the same retrieve, so these are retrieved with it. A Task or Event
+    field is retrieved as the Activity field that defines it."""
+    out = set()
+    for c in comps:
+        if c.type not in compare.MERGE_TYPES or c.node is None:
+            continue
+        for e in c.node.children:
+            key_tag, typ = compare.ACCESS_SECTIONS.get(e.tag, ("", None))
+            key = e.value(key_tag) if typ else ""
+            if not key:
+                continue
+            obj, dot, rest = key.partition(".")
+            if typ == "CustomField" and dot and obj.lower() in ("task", "event"):
+                key = "Activity." + rest
+            out.add(f"{typ}:{key}")
+    return out
+
+
+def compared_version(f: dict | None) -> tuple[str, str | None]:
+    """(which flow version the retrieve's copy is, why the comparison does not prove the deploy or None)."""
+    if not f or f.get("latest_is_active") is None:
+        return "the version the retrieve returned (the org's versions could not be read)", None
+    latest, active = f.get("latest_version", "?"), f.get("active_version")
+    if f["latest_is_active"]:
+        return f"version {latest}, the latest and the active one", None
+    if active is None:
+        return f"the latest version {latest} (no version is active)", None
+    return (f"one of version {active} (active) and version {latest} (latest)",
+            f"the org's latest version {latest} is not the active one ({active}), and a retrieve returns one "
+            "version without saying which, so this comparison may describe the active version rather than the "
+            "one the deploy created")
+
+
+def flow_state(client, alias: str, comp, namespace: str = "") -> dict:
     from jsc_advisory.flow import verify_flow
     from jsc_advisory.sf import Unknown, records, soql_literal
     out = {"name": comp.name, "source_status": comp.node.value("status") if comp.node is not None else ""}
@@ -94,7 +136,7 @@ def flow_state(client, alias: str, comp) -> dict:
     try:
         rows = records(client.query(alias, "SELECT DeveloperName, ActiveVersion.VersionNumber, "
                                     "LatestVersion.VersionNumber FROM FlowDefinition WHERE DeveloperName = "
-                                    f"'{soql_literal(comp.name)}'", tooling=True))
+                                    f"'{soql_literal(comp.name)}' AND {_namespace(namespace)}", tooling=True))
         if rows:
             versions = {"active": (rows[0].get("ActiveVersion") or {}).get("VersionNumber"),
                         "latest": (rows[0].get("LatestVersion") or {}).get("VersionNumber")}
@@ -120,12 +162,18 @@ def flow_state(client, alias: str, comp) -> dict:
     return out
 
 
+def _field_names(name: str) -> list[str]:
+    obj, _, fld = name.partition(".")
+    return [name, f"Task.{fld}", f"Event.{fld}"] if obj.lower() == "activity" else [name]
+
+
 def field_access(client, alias: str, fields: list, as_sets: list[str]) -> list[dict]:
     from jsc_advisory.sf import Unknown, records, soql_literal
     out = []
     for i in range(0, len(fields), 50):
         chunk = fields[i:i + 50]
-        names = ", ".join(f"'{soql_literal(c.name)}'" for c in chunk)
+        # an Activity field is granted on Task and Event (FieldPermissions rows name those)
+        names = ", ".join(sorted({f"'{soql_literal(k)}'" for c in chunk for k in _field_names(c.name)}))
         try:
             rows = records(client.query(alias, "SELECT Field, Parent.Name, Parent.IsOwnedByProfile, "
                                         "Parent.Profile.Name, PermissionsRead, PermissionsEdit FROM FieldPermissions "
@@ -134,7 +182,8 @@ def field_access(client, alias: str, fields: list, as_sets: list[str]) -> list[d
             out += [{"name": c.name, "rows": None, "message": f"could not read FieldPermissions: {exc}"} for c in chunk]
             continue
         for c in chunk:
-            mine = [r for r in rows if str(r.get("Field") or "").lower() == c.name.lower()
+            keys = {k.lower() for k in _field_names(c.name)}
+            mine = [r for r in rows if str(r.get("Field") or "").lower() in keys
                     and (r.get("PermissionsRead") or r.get("PermissionsEdit"))]
             sets, profiles = [], []
             for r in mine:
@@ -162,14 +211,15 @@ def field_access(client, alias: str, fields: list, as_sets: list[str]) -> list[d
     return out
 
 
-def rule_states(client, alias: str, comps: list) -> list[dict]:
+def rule_states(client, alias: str, comps: list, namespace: str = "") -> list[dict]:
     from jsc_advisory.sf import Unknown, records, soql_literal
     if not comps:
         return []
     names = ", ".join(sorted({f"'{soql_literal(c.name.split('.', 1)[1])}'" for c in comps}))
     try:
         rows = records(client.query(alias, "SELECT ValidationName, Active, EntityDefinition.QualifiedApiName "
-                                    f"FROM ValidationRule WHERE ValidationName IN ({names})", tooling=True))
+                                    f"FROM ValidationRule WHERE ValidationName IN ({names}) AND "
+                                    f"{_namespace(namespace)}", tooling=True))
     except Unknown as exc:
         return [{"name": c.name, "active": None, "message": f"could not read: {exc}"} for c in comps]
     out = []
@@ -207,22 +257,26 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
     failed = [c for c in sc.in_scope if c.status == "failed"]
     comps = [c for c in sc.in_scope if c.status != "failed"]
     members = sorted({f"{c.type}:{c.name}" for c in comps if c.type in RETRIEVABLE})
+    extra = sorted(referenced(comps) - set(members)) if members else []
     folder = tempfile.mkdtemp(prefix="torque-deployed-")
     try:
-        missing, errors, ok = retrieve(target_org, members, folder) if members else (set(), [], 0)
-        org_side = {c.key: c for c in read_tree([folder])}
+        missing, errors, ok = retrieve(target_org, members + extra, folder) if members else (set(), [], 0)
+        org_side = {c.key: c for c in read_tree([folder], keep_objects=True)}
     finally:
         shutil.rmtree(folder, ignore_errors=True)
-    requested = {(c.type, c.name.lower()) for c in comps}
+    # what the org's copy holds access entries for: what was asked for and not reported missing
+    requested = {(t, n.lower()) for t, _, n in (m.partition(":") for m in members + extra) if ok} - missing
     rows = []
     for c in comps:
         row = {"type": c.type, "name": c.name, "status": c.status, "differences": [], "not_compared_entries": 0,
-               "org_only": []}
+               "unexplained_additions": [], "known_server_additions": 0, "other_org_entries": 0}
         if c.type not in RETRIEVABLE:
             row.update(comparison="could-not-compare", reason=f"{c.type} is not compared by this command")
         elif c.key in org_side:
-            result, diffs, skipped, org_only = compare.compare(c, org_side[c.key], requested)
-            row.update(comparison=result, differences=diffs, not_compared_entries=skipped, org_only=org_only)
+            o = compare.compare(c, org_side[c.key], requested)
+            row.update(comparison=o.status, differences=o.differences, not_compared_entries=o.not_compared,
+                       unexplained_additions=o.unexplained, known_server_additions=len(o.known_additions),
+                       other_org_entries=o.other_entries)
         elif c.key in missing:
             row.update(comparison="not-in-org", reason="the org reports it cannot be found")
         elif errors and not ok:
@@ -233,30 +287,52 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
     client = _client()
     project = find_project(paths)
     ctx = rules.build_context(project, sc.everything, comps, sc.grant_scope, None)
-    flows = [flow_state(client, target_org, c) for c in comps if c.type == "Flow"]
-    fields = [c for c in comps if c.type == "CustomField" and c.status in ("new", "unknown") and needs_grant(c, ctx)]
+    flows = [flow_state(client, target_org, c, project.namespace) for c in comps if c.type == "Flow"]
+    by_flow = {f["name"].lower(): f for f in flows}
+    for row in rows:
+        if row["type"] == "Flow" and row["comparison"] not in ("not-in-org", "could-not-compare"):
+            row["compared_version"], caveat = compared_version(by_flow.get(row["name"].lower()))
+            if caveat:
+                row["reason"] = f"{caveat} (against that copy: {row['comparison']})"
+                row["comparison"] = "could-not-compare"
+    fields = [c for c in comps if c.type == "CustomField" and c.status in ("new", "changed", "unknown") and needs_grant(c, ctx)]
     access = field_access(client, target_org, fields, list(as_permission_sets or []))
-    vrules = rule_states(client, target_org, [c for c in comps if c.type == "ValidationRule"])
+    vrules = rule_states(client, target_org, [c for c in comps if c.type == "ValidationRule"], project.namespace)
     attempted = bool(members or flows or access or vrules)
     reached = not attempted or ok > 0 or any(f.get("status") not in (None, "UNKNOWN") for f in flows) or any(
         a.get("rows") is not None for a in access) or any("could not read" not in r["message"] for r in vrules)
-    counts = {k: sum(1 for r in rows if r["comparison"] == k)
-              for k in ("same", "same-org-has-more", "different", "could-not-compare", "not-in-org")}
+    counts = {k: sum(1 for r in rows if r["comparison"] == k) for k in STATUSES}
     return {
         "schema_version": 1, "command": "torque check deployed", "label": LABEL, "target_org": target_org,
         "scope": {"mode": sc.mode, "source": sc.source, "components": len(comps),
                   "failed_in_result": [f"{c.type}:{c.name}" for c in failed], "not_found_locally": sc.not_found},
-        "retrieve": {"members": len(members), "calls_succeeded": ok, "errors": errors,
+        "retrieve": {"members": len(members), "referenced_members": len(extra), "calls_succeeded": ok,
+                     "errors": errors,
                      "folder": "a fresh private temporary folder, removed afterwards"},
         "components": rows, "flows": flows, "fields": access, "validation_rules": vrules,
         "totals": {**counts, "flows_latest_not_active": sum(1 for f in flows if f.get("latest_is_active") is False),
                    "fields_without_grants": sum(1 for a in access if a.get("rows") == 0),
                    "inactive_validation_rules": sum(1 for r in vrules if r["active"] is False)},
         "org_reached": reached,
-        "not_checked": ["permission set assignments and what a user really sees (test as that user)",
+        "meaning": MEANING,
+        "not_checked": ["permission set assignments and what a user really sees (a grant entry is not a user's "
+                        "access; test as that user)",
                         "whether the change does what the requirement asks (business acceptance)",
                         "components of types this command does not compare"],
     }
+
+
+MEANING = {
+    "same": "everything the file specifies is in the org unchanged, and the org copy has nothing else but default "
+            "values, the properties Salesforce is known to add on save, or permission entries the file does not "
+            "name (containment under these rules, not byte equality)",
+    "unexplained-additions": "everything the file specifies is in the org unchanged, and the org copy also has "
+                             "properties Torque cannot explain: look at them",
+    "partly-compared": "what could be compared is as submitted, but some access entries could not be: their "
+                       "components were not in the retrieve",
+    "different": "something submitted is missing or changed in the org, the org has content where the deploy "
+                 "replaces the definition, or the file revokes access the org still grants",
+}
 
 
 def text(rep: dict) -> str:
@@ -265,8 +341,9 @@ def text(rep: dict) -> str:
              f"Scope: {rep['scope']['components']} component(s) ({rep['scope']['mode']}"
              + (f" {rep['scope']['source']}" if rep["scope"]["source"] else "") + ").",
              f"Retrieved {rep['retrieve']['members']} into a fresh private folder (removed afterwards): "
-             f"{t['same'] + t.get('same-org-has-more', 0)} as submitted ({t.get('same-org-has-more', 0)} of them with "
-             f"more in the org), {t['different']} different, {t['could-not-compare']} could not compare, "
+             f"{t['same']} same, {t['unexplained-additions']} as submitted plus content only the org has (look at "
+             f"it), {t['partly-compared']} partly compared, {t['different']} different, {t['could-not-compare']} "
+             "could not compare, "
              f"{t['not-in-org']} not in the org."]
     for e in rep["retrieve"]["errors"]:
         lines.append(f"Retrieve error: {e}")
@@ -275,14 +352,25 @@ def text(rep: dict) -> str:
     for r in rep["components"]:
         tail = "; ".join(r["differences"][:6]) or r.get("reason", "")
         more = f" (+{len(r['differences']) - 6} more)" if len(r["differences"]) > 6 else ""
-        skipped = (f" ({r['not_compared_entries']} entries about components not in this retrieve not compared)"
-                   if r["not_compared_entries"] else "")
-        shown = {"same-org-has-more": "same as submitted"}.get(r["comparison"], r["comparison"])
-        only = r.get("org_only") or []
-        also = ""
-        if only and r["comparison"] != "different":
-            also = ("; the org also has " + ", ".join(only[:5]) + (f" (+{len(only) - 5} more)" if len(only) > 5 else "")
-                    + " (defaults Salesforce adds on save, or someone else's change)")
+        skipped = (f" ({r['not_compared_entries']} entries not compared: their components were not in this "
+                   "retrieve)" if r["not_compared_entries"] else "")
+        if r.get("compared_version"):
+            skipped += f" [compared with {r['compared_version']}]"
+        only = r.get("unexplained_additions") or []
+        shown = r["comparison"]
+        if shown == "unexplained-additions":
+            shown = "as submitted, plus content only the org has (look at it)"
+            tail = ", ".join(only[:6]) + (f" (+{len(only) - 6} more)" if len(only) > 6 else "")
+            more = ""
+        notes = []
+        n = r.get("known_server_additions") or 0
+        if n:
+            notes.append(f"{n} propert{'y' if n == 1 else 'ies'} Salesforce is known to add on save")
+        n = r.get("other_org_entries") or 0
+        if n:
+            notes.append(f"{n} access entr{'y' if n == 1 else 'ies'} the file does not name, which a deploy leaves "
+                         "as they are")
+        also = f" (the org copy also has {' and '.join(notes)})" if notes else ""
         lines.append(f"  {r['type']} {r['name']}: {shown}" + (f": {tail}{more}" if tail else "") + also + skipped)
     if rep["flows"]:
         lines.append("Flow activation:")
@@ -293,10 +381,12 @@ def text(rep: dict) -> str:
     if rep["validation_rules"]:
         lines.append("Validation rules:")
         lines += [f"  {r['name']}: {r['message']}" for r in rep["validation_rules"]]
-    lines.append(f"Totals: {t['different']} different, {t['not-in-org']} not in the org, {t['could-not-compare']} not "
+    lines.append(f"Totals: {t['different']} different, {t['unexplained-additions']} with content only the org has, "
+                 f"{t['not-in-org']} not in the org, {t['could-not-compare']} not "
                  f"compared, {t['flows_latest_not_active']} flow(s) whose latest version is not active, "
                  f"{t['fields_without_grants']} new field(s) with no grant, {t['inactive_validation_rules']} inactive "
                  f"validation rule(s). Not checked: {'; '.join(rep['not_checked'])}.")
+    lines.append(f"\"same\" means {rep['meaning']['same']}.")
     return "\n".join(lines)
 
 
@@ -306,8 +396,10 @@ def register(actions) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "After a deploy: retrieve the same components into a fresh private temporary folder and compare them\n"
-            "with the submitted source (same, different with the element that differs, could not compare, not in\n"
-            "the org); report whether each flow's latest version is the active one; which permission sets grant\n"
+            "with the submitted source (same, different with the element that differs, unexplained-additions when\n"
+            "the org copy also has properties Torque cannot explain, could not compare, not in the org; \"same\" is\n"
+            "containment under the rules in docs/checks.md, not byte equality); report whether each flow's latest\n"
+            "version is the active one; which permission sets grant\n"
             "each new field in the org (and whether each --as-permission-set does); whether each validation rule\n"
             "is active. Read-only: it retrieves and queries through the Salesforce CLI with --target-org on every\n"
             f"call and changes nothing in the org. Status: {LABEL}.\n\n"

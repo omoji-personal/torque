@@ -31,9 +31,10 @@ not appear in `torque workflows list`.
 
 ## How to read them
 
-- A rule tagged `[check]` can be tested mechanically in the source files, and names the
-  existing tool rule where one exists (Salesforce Code Analyzer, Lightning Flow Scanner,
-  sfdx-hardis).
+- A rule tagged with a rule id, such as `[check: access.field-without-grant]`, is tested by
+  that rule of `torque check metadata` (`docs/checks.md`); a test keeps every tag pointing at
+  a rule that exists. "Code Analyzer: RULE" names an analyzer rule instead, and "by hand"
+  says what to read where no tool checks it.
 - Every file ends with its sources. A statement marked "verify" was not confirmed in a
   fetched primary source: check it in the org or the current documentation before relying
   on it. "field-reported" marks a lesson from real client work, usually seen in one org,

@@ -97,15 +97,39 @@ def _trigger(flow) -> tuple[str, str]:
     return start.value("triggerType"), start.value("recordTriggerType")
 
 
+def _fault_handlers(flow) -> set[str]:
+    """Elements that run only on a fault path: reached from a fault connector, not from the start without one."""
+    elements = {e.value("name"): e for e in flow.children if e.tag in FLOW_ELEMENTS and e.value("name")}
+
+    def reach(names, follow_faults):
+        seen, todo = set(), list(names)
+        while todo:
+            n = todo.pop()
+            if n in seen or n not in elements:
+                continue
+            seen.add(n)
+            todo += [t for tag, t in targets(elements[n]) if follow_faults or tag != "faultConnector"]
+        return seen
+    start = flow.child("start")
+    first = [t for tag, t in targets(start) if tag != "faultConnector"] if start is not None else []
+    normal = reach(first + [flow.value("startElementReference")], False)
+    faults = reach([t for e in elements.values() for tag, t in targets(e) if tag == "faultConnector"], True)
+    return faults - normal
+
+
 def no_fault_path(comp, flow, ctx):
     trigger, _ = _trigger(flow)
     if trigger == "RecordBeforeSave":
         return []   # a before-save flow has no fault paths to add
     out = []
+    handlers = _fault_handlers(flow)
     for e in flow_elements(flow):
-        if e.child("faultConnector") is not None:
+        fault = e.child("faultConnector")
+        if fault is not None and fault.value("targetReference"):
             continue
         name = e.value("name")
+        if name in handlers:
+            continue      # it handles another element's fault; a fault path on the handler itself is not asked for
         if e.tag in RECORD_CHANGES:
             out.append(Finding("flow.no-fault-path", "warning", comp,
                                f"{name} ({RECORD_CHANGES[e.tag]}) has no fault path.",
@@ -158,7 +182,7 @@ def entry_conditions(comp, flow, ctx):
                         line=start.line, subject="entry", match_lines={start.line, flow.line})]
     if when not in ("Update", "CreateAndUpdate") or start.flag("doesRequireRecordChangedToMeetCriteria"):
         return []
-    if CHANGE_AWARE.search(start.value("filterFormula")) or "$Record__Prior" in _all_text(flow):
+    if _change_guard(flow, start):
         return []
     effects = [e for e in flow_elements(flow) if e.tag in ("recordCreates", "actionCalls", "subflows",
                                                            "apexPluginCalls")]
@@ -177,8 +201,27 @@ def _a(word: str) -> str:
     return ("an " if word[:1].lower() in "aeiou" else "a ") + word
 
 
-def _all_text(flow) -> str:
-    return " ".join(n.text for n in flow.iter() if n.text.strip())
+def _reads_prior(ref: str, formulas: dict) -> bool:
+    return ref.startswith("$Record__Prior") or bool(CHANGE_AWARE.search(formulas.get(ref, "")))
+
+
+def _change_guard(flow, start) -> bool:
+    """Whether an element that decides if the side effect runs looks at the change: the Start element's filter
+    formula or an Is Changed filter, or a decision condition that reads $Record__Prior, directly or through a
+    formula. Descriptions, labels and resources no decision uses are not evidence."""
+    if CHANGE_AWARE.search(start.value("filterFormula")):
+        return True
+    if any(f.value("operator") == "IsChanged" for f in start.all("filters")):
+        return True
+    formulas = {f.value("name"): f.value("expression") for f in flow.all("formulas")}
+    for decision in flow.all("decisions"):
+        for rule in decision.all("rules"):
+            for cond in rule.all("conditions"):
+                right = cond.child("rightValue")
+                refs = [cond.value("leftValueReference"), right.value("elementReference") if right is not None else ""]
+                if cond.value("operator") == "IsChanged" or any(_reads_prior(r, formulas) for r in refs if r):
+                    return True
+    return False
 
 
 def _updates_trigger_record(e, obj: str) -> bool:
@@ -242,12 +285,12 @@ def api_version(comp, flow, ctx):
                            "can change.", f"Keep apiVersion at {before:.1f} or higher.",
                            line=line, subject="apiVersion-lowered", match_lines={line}))
         return out
-    project = version(ctx.project.source_api_version)
-    reference, why = max(((ctx.newest_flow_version or 0.0), f"the newest flow in scope ({ctx.newest_flow_name})"),
-                         ((project or 0.0), "the project's sourceApiVersion"))
+    # Only the project's sourceApiVersion: a newer flow elsewhere says nothing about this one, whose version
+    # may be held back on purpose (it decides runtime behaviour).
+    reference = version(ctx.project.source_api_version)
     if reference and mine < reference:
         out.append(Finding("flow.api-version-behind", "note", comp,
-                           f"apiVersion {mine:.1f} is below {reference:.1f}, {why}.",
+                           f"apiVersion {mine:.1f} is below {reference:.1f}, the project's sourceApiVersion.",
                            "Raise it when you next change this flow and test it again; the version decides runtime "
                            "behaviour.", line=line, subject="apiVersion", match_lines={line}))
     return out
@@ -257,6 +300,9 @@ def screen_actions(comp, flow, ctx):
     out = []
     for screen in flow.all("screens"):
         handled = {h.value("screenActionName").lower() for t in screen.all("triggers") for h in t.all("handlers")}
+        # a screen component that names the action (an action button's input) runs it without a trigger
+        handled |= {v.text.strip().lower() for f in screen.iter() if f.tag == "fields"
+                    for p in f.all("inputParameters") for v in p.iter() if v.tag == "stringValue"}
         for a in screen.all("actions"):
             name = a.value("name")
             if name and name.lower() not in handled:
@@ -302,18 +348,16 @@ def status(comp, flow, ctx):
     node = flow.child("status")
     if not value or node is None:
         return []
-    if value == "Active":
-        return [Finding("flow.active-in-source", "note", comp,
-                        "The file asks for status Active. A sandbox makes the deployed version the running one; "
-                        "production does so only when 'Deploy processes and flows as active' is on, otherwise the new "
-                        "version lands inactive.",
-                        "Make sure that is intended; after the deploy, `torque check deployed` reports which version "
-                        "is active.", line=node.line, subject="status")]
-    return [Finding("flow.status-not-active", "note", comp,
-                    f"The file asks for status {value}: the deploy saves an inactive version and the org keeps running "
-                    "its current active version, if there is one.",
-                    "Activate it after the deploy if it should run; `torque check deployed` reports which version is "
-                    "active.", line=node.line, subject="status")]
+    # Said once per report, on the first flow that asks for Active: it is about the org, not about this file.
+    if value != "Active" or "flow.active-in-source" in ctx.said:
+        return []
+    ctx.said.add("flow.active-in-source")
+    return [Finding("flow.active-in-source", "note", comp,
+                    "This and any other flow file here that asks for status Active: whether the deployed version "
+                    "becomes the running one depends on the org. A sandbox activates it; production does so only "
+                    "when 'Deploy processes and flows as active' is on, otherwise the new version lands inactive.",
+                    "Make sure that is intended; after the deploy, `torque check deployed` reports which version "
+                    "is active.", line=node.line, subject="status")]
 
 
 def system_mode(comp, flow, ctx):

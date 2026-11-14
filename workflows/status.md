@@ -1,6 +1,6 @@
 # /status
 
-Check the selected workspace, installed tools, and requested org connections.
+Check the selected workspace, the installed tools and the requested org connections without printing a credential. Use it at the start of a session, after an install or upgrade, or when a command fails for an unclear reason.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
@@ -16,6 +16,10 @@ For each org in the requested scope, resolve auth and summarize only org ID, ali
 username or role where appropriate, instance, and connection status. Use live
 Organization.IsSandbox when classification matters; URL shape alone is not authoritative.
 Check a configured JWT certificate's expiry without reading its private key.
+
+For browser testing, `torque doctor --for browser-login` says whether a host browser tab can be
+signed in (needs the Salesforce CLI), and `torque doctor --for browser` whether Torque's own
+browser can run (also needs Playwright and its browser).
 
 Show: installed / unavailable / untested integrations, current client, connected or
 expired orgs, recent session, pending work, and any context mismatch. Broader multi-client

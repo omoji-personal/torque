@@ -68,7 +68,8 @@ def test_text_report_first_and_last_lines(tmp_path, no_analyzer):
     code, out, _ = run("check", "metadata", str(t.root))
     lines = out.strip().splitlines()
     assert code == 0 and lines[0].startswith("Scope: everything under")
-    assert lines[-1].startswith("Totals: 1 error(s)") and "Not checked:" in lines[-1]
+    # no change scope: a field without a grant may not be new, so it is a warning, not an error (Gemini F-12)
+    assert lines[-1].startswith("Totals: 0 error(s)") and "Not checked:" in lines[-1]
     assert "Code Analyzer: not installed, so its rules did not run" in out
     assert "sf plugins install code-analyzer" in out
     assert out.index("access.field-without-grant") < out.index("flow.no-fault-path")   # most severe first
@@ -76,9 +77,14 @@ def test_text_report_first_and_last_lines(tmp_path, no_analyzer):
 
 def test_exit_codes(tmp_path, no_analyzer):
     t = e10_project(tmp_path)
-    assert run("check", "metadata", str(t.root), "--fail-on", "error")[0] == 1
-    assert run("check", "metadata", str(t.root), "--fail-on", "error", "--ignore", "access.field-without-grant")[0] == 0
+    assert run("check", "metadata", str(t.root), "--fail-on", "error")[0] == 0
+    assert run("check", "metadata", str(t.root), "--fail-on", "warning")[0] == 1
     assert run("check", "metadata", str(t.root), "--fail-on", "warning", "--ignore", "access.field-without-grant")[0] == 1
+    result = t.root / "dry-run.json"
+    result.write_text(json.dumps({"status": 0, "result": {"checkOnly": True, "done": True, "status": "Succeeded",
+                                                         "files": [{"type": "CustomField", "fullName": "Shift__c.Hours__c",
+                                                                    "state": "Created"}]}}), encoding="utf-8")
+    assert run("check", "metadata", str(t.root), "--changed-from", str(result), "--fail-on", "error")[0] == 1
     code, _, err = run("check", "metadata", str(t.root), "--analyzer", "required")
     assert code == 3 and "--analyzer required" in err
     code, _, err = run("check", "metadata", str(t.root), "--ignore", "no.such-rule")

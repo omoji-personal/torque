@@ -16,8 +16,8 @@ Before any design, write three lines:
 3. Its effort next to what the client was told.
 
 Then list the options in order (standard feature, feature of an installed package,
-declarative, code) with hours beside each, before any design or review round, and take the
-first that meets the criteria. Read what the platform and existing automation already write
+declarative, code) with rough hours, before any design or review round, and take the first
+that meets the criteria. For a small ticket, one line is enough. Read what the platform and existing automation already write
 on the rows: two automation designs and an accounting fix were replaced by one rule that
 used a value the platform already wrote (field-reported).
 
@@ -53,17 +53,20 @@ could not do.
 
 ## 3. Automation for a record change
 
-Source: [DG-RT]. Count the automations on the object first (flows, triggers, processes).
+Source: [DG-RT]. Count the automations on the object first (flows, triggers, processes). The
+rows are the guide's defaults: the design that already owns the object and the order of
+execution it needs can outweigh them, with the reason recorded.
 
 | Situation | Use |
 | --- | --- |
-| Set fields on the record being saved, any volume | Before-save record-triggered flow (or an Apex before trigger where one already owns the object) |
+| Set fields on the record being saved | Before-save record-triggered flow (or an Apex before trigger where one already owns the object) |
 | Low density: under 15 automations, 1 to 200 records, 0 to 1 downstream writes | Record-triggered flow |
 | Medium density: 15 to 30 automations, 2 to 4 downstream writes, recursion risk | Flow for entry conditions and orchestration, plus invocable Apex |
 | High density: over 30 automations, 2,000 to 10,000 or more records, 5 or more downstream writes | Apex trigger framework driven by custom metadata |
 | Savepoints, rollback, partial success, field-specific errors | Apex |
 | Action at a time relative to a date on the record | Flow scheduled path |
 | Email alerts and simple notifications | Flow |
+| A person approves a record before it moves on | An approval process (a standard feature) before custom status logic; Flow Orchestration for a long sequence across several people [P-AUTO] |
 | After undelete | Apex trigger |
 | Heavy follow-on work after save | Change Data Capture subscriber, or a pending flag swept by a scheduled job |
 | A fixed path proposed as an AI agent | Flow or Apex: an agent for a path with no reasoning is an anti-pattern [DG-AGENT] |
@@ -102,15 +105,16 @@ Sources: [F-BASICS] [DG-RT] [P-DATA]. The row choices are judgement.
 | Endpoints and secrets | Named credential with an external credential | Rotated without a code change; access by permission set |
 | Text a user reads | Custom label | Deployable and translatable |
 | Reference data the business owns and reports on | Records of a custom object | Data with sharing, history and reports |
-| Never | Ids or values in formulas, flows or code; secrets in settings or custom metadata | Named anti-patterns [P-AUTO] |
+| Never | Record Ids, org URLs and user or profile names as literals in formulas, flows or code; values an admin must change, buried in them; secrets in settings or custom metadata | Named anti-patterns [P-AUTO] |
 
 - A custom setting's values do not travel with a deployment, and after a sandbox refresh they
   come back as production's values (field-reported). List them in the post-refresh steps.
 - A bypass for loads or integrations is a custom permission, not a profile name: "The modern,
   scalable standard for implementing bypass logic is custom permissions" [DG-RT].
 
-Check: `[check]` no Id literal, host name, user name or profile name in the change; each new
-custom metadata record has its description filled.
+Check: `[check: flow.hard-coded-id, rule.hard-coded-id, rule.profile-or-user-literal,
+secret.looks-like-secret]`; by hand, host names in the change, and the description on each
+new custom metadata record.
 
 ## 6. Relationship type
 
@@ -167,7 +171,8 @@ The recorded reason says:
 5. The tests that prove it: bulk, negative and as the intended user.
 
 Put it in the class header comment and in the decision record. Choosing code where
-configuration could do the job is a stop-and-ask point. Then follow `apex-and-lwc.md`.
+configuration could do the job is a stop-and-ask point unless the approved design already
+chose it. Then follow `apex-and-lwc.md`.
 
 ## Sources
 

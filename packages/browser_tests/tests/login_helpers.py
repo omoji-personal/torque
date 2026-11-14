@@ -22,7 +22,8 @@ NAVIGATION = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-F
 
 class FakeCli:
     """Stands in for SfClient. `orgs` maps an alias to what the CLI would answer:
-    org_id, is_sandbox, username, url, and optional identity_error / mint_error."""
+    org_id, is_sandbox, username, url, and optional identity_error / mint_error /
+    mint_seconds (how long the sign-in request takes) / organization_type / user_lookup_id."""
     orgs: dict = {}
     calls: list = []
 
@@ -46,22 +47,30 @@ class FakeCli:
         org = self._org()
         if org.get("identity_error"):
             raise org["identity_error"]
-        return {"org_id": org["org_id"], "is_sandbox": org["is_sandbox"], "organization_type": "Enterprise Edition"}
+        return {"org_id": org["org_id"], "is_sandbox": org["is_sandbox"],
+                "organization_type": org.get("organization_type", "Enterprise Edition")}
 
     def org_frontdoor(self, target_org=None, *, path=None, api_version=None) -> dict:
         self.calls.append(("mint", self.alias, path, api_version))
         org = self._org()
         if org.get("mint_error"):
             raise org["mint_error"]
+        time.sleep(org.get("mint_seconds", 0))
         return {"url": org["url"], "org_id": org.get("mint_org_id", org["org_id"]), "username": org["username"]}
 
     def user_by_username(self, username):
         self.calls.append(("user", self.alias, username))
-        return {"user_id": "005000000000001AAA", "is_active": True}
+        return {"user_id": self.orgs.get(self.alias, {}).get("user_lookup_id", "005000000000001AAA"), "is_active": True}
 
     def find_user(self, value):
         self.calls.append(("find_user", self.alias, value))
         return self._org().get("users", {}).get(value)
+
+    def login_as_facts(self, user_id):
+        """A user entry may say frozen / api_only (True, False, or None for not answered)."""
+        self.calls.append(("login_as_facts", self.alias, user_id))
+        entry = next((user for user in self._org().get("users", {}).values() if user.get("user_id") == user_id), {})
+        return {"frozen": entry.get("frozen", False), "api_only": entry.get("api_only", False)}
 
     @classmethod
     def mints(cls) -> int:

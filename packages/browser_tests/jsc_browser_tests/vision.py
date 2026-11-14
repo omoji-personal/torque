@@ -359,8 +359,8 @@ def analyze_screenshot(
             screenshot_path=str(src),
             status="GEMINI_UNAVAILABLE",
             detail=(
-                "Gemini CLI not installed. Vision analysis is OPTIONAL per "
-                "model-orchestration.md. Operator may review screenshot manually "
+                "Gemini CLI not installed. Vision analysis is OPTIONAL. "
+                "Operator may review screenshot manually "
                 f"at {src}."
             ),
         )

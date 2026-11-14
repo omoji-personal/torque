@@ -57,8 +57,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Prepared a field change", destination.read_text(encoding="utf-8"))
         self.assertIn("user-reported", destination.read_text(encoding="utf-8"))
+        # Run again, the export Torque wrote is replaced; the previous one is kept as .bak.
         code, _, _ = self.run_cli("handoff", *self.context_args(), "--output", str(destination))
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 0)
+        self.assertTrue((destination.parent / "handoff.md.bak").is_file())
 
     def test_session_show_does_not_read_another_client_entry(self):
         entry = ws.add_session(self.root, "Beta", "Secret beta work")

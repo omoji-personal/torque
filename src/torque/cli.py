@@ -48,11 +48,120 @@ def _print_json(value: object) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False))
 
 
+ERROR_SCHEMA = "torque.error/1"
+
+
+class UsageError(Exception):
+    """An argument error, with the parser of the command it belongs to."""
+
+    def __init__(self, parser: argparse.ArgumentParser, message: str):
+        super().__init__(message)
+        self.parser, self.message = parser, message
+
+
+class TorqueParser(argparse.ArgumentParser):
+    """argparse that reports an argument error to main() instead of exiting, so the
+    error can name the subcommand and, with --json, come back as JSON."""
+
+    def error(self, message: str):
+        raise UsageError(self, message)
+
+    def format_help(self) -> str:
+        if self.prog != "torque":
+            return super().format_help()
+        # The top level: commands under headings, in the order a consultant meets them.
+        action = next(a for a in self._actions if isinstance(a, argparse._SubParsersAction))
+        helps = {choice.dest: choice.help or "" for choice in action._choices_actions}
+        lines = [self.format_usage().rstrip(), "", self.description or ""]
+        listed = set()
+        for heading, names in HELP_GROUPS:
+            lines += ["", heading + ":"]
+            for name in names:
+                if name in action.choices:
+                    listed.add(name)
+                    lines.append(f"  {name:<14} {helps.get(name, '')}")
+        rest = [name for name in action.choices if name not in listed]
+        if rest:
+            lines += ["", "Other:", *(f"  {name:<14} {helps.get(name, '')}" for name in rest)]
+        lines += ["", "Options:", "  -h, --help     show this help and exit", "  --version      show the version",
+                  "", self.epilog or "", "Each command has its own help: torque COMMAND --help."]
+        return "\n".join(lines) + "\n"
+
+
+HELP_GROUPS = (
+    ("Start here", ("workspace", "demo", "doctor", "workflows")),
+    ("Daily records", ("context", "session", "handoff", "change", "client", "initiative", "engagement")),
+    ("Salesforce work", ("check", "deploy", "data", "org", "recover", "browser", "qa", "logs", "advisory",
+                         "guarded")),
+    ("Lessons and other tools", ("lesson", "meeting", "probes", "ai-regression")),
+    ("Controls the owner runs", ("approval", "launch", "revert")),
+)
+
+
+def _subparser_for(parser: argparse.ArgumentParser, args: list[str]) -> argparse.ArgumentParser:
+    """The parser of the deepest subcommand the words name (`torque client add`)."""
+    current = parser
+    for word in args:
+        action = next((a for a in current._actions if isinstance(a, argparse._SubParsersAction)), None)
+        if action is None:
+            break
+        if word in action.choices:
+            current = action.choices[word]
+    return current
+
+
+def _os_error_text(exc: OSError) -> str:
+    """An operating-system error in words, with the path it concerns."""
+    paths = [str(p) for p in (exc.filename, getattr(exc, "filename2", None)) if p]
+    path = max(paths, key=len, default="")
+    winerror = getattr(exc, "winerror", None)
+    if os.name == "nt" and len(path) >= 248 and (winerror in (3, 206) or exc.errno in (2, 36)):
+        return (f"a path is too long for Windows ({len(path)} characters; without long paths enabled the limit "
+                f"is 260): {path}. Choose a shorter workspace folder, or enable long paths (torque doctor shows "
+                "the setting)")
+    if winerror == 3 or exc.errno == 2:
+        what = "a file or folder on this path does not exist"
+    elif winerror == 5 or exc.errno == 13:
+        what = "access is denied (another program may hold the file, or the folder is read-only)"
+    else:
+        what = exc.strerror or type(exc).__name__
+    return f"{what}: {path}" if path else what
+
+
+def _failure(as_json: bool, code: str, message: str, *, next_command: str | None = None,
+             usage: str | None = None, exit_code: int = 2, **extra) -> int:
+    """Report a failure: the plain message on stderr, and with --json also one JSON
+    object (torque.error/1) on stdout."""
+    if as_json:
+        _print_json({"schema": ERROR_SCHEMA, "ok": False, "code": code, "message": message,
+                     **({"usage": usage} if usage else {}), "next_command": next_command,
+                     "exit_code": exit_code, **extra})
+    if usage:
+        print(usage, file=sys.stderr)
+    print(message if message.startswith("torque") else f"torque: {message}", file=sys.stderr)
+    if next_command and not as_json and next_command not in message:
+        print(f"Next: {next_command}", file=sys.stderr)
+    return exit_code
+
+
 def _client_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", required=True, help="private workspace directory")
     scope = parser.add_mutually_exclusive_group(required=True)
     scope.add_argument("--client", help="explicit client name or slug")
     scope.add_argument("--initiative", help="explicit internal initiative name or slug")
+
+
+def _window_args(parser: argparse.ArgumentParser) -> None:
+    """Which session records `context` and `handoff` show."""
+    parser.add_argument("--limit", type=int, default=ws.SESSION_WINDOW, metavar="N",
+                        help=f"at most N session records, newest first (default {ws.SESSION_WINDOW})")
+    parser.add_argument("--since", metavar="DATE", help="only records from this date (YYYY-MM-DD, local) or time on")
+    parser.add_argument("--all", action="store_true", dest="everything", help="every session record")
+
+
+def _window(parsed: argparse.Namespace) -> dict:
+    return {"limit": None if parsed.everything else parsed.limit,
+            "since": ws.parse_since(parsed.since) if parsed.since else None}
 
 
 def _scope(parsed: argparse.Namespace) -> tuple[str, str]:
@@ -73,9 +182,9 @@ def _disable_abbreviations(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="torque", description="Salesforce consulting workflows and private client context.")
+    parser = TorqueParser(prog="torque", description="Salesforce consulting workflows and private client context.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     work = sub.add_parser("workspace", help="initialize or update a private consulting workspace")
     work_sub = work.add_subparsers(dest="action", required=True)
     init = work_sub.add_parser("init", help="create local files; does not connect an org")
@@ -84,6 +193,9 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--profile", choices=ws.PROFILES, default="generic")
     init.add_argument("--no-hook", action="store_true",
                       help="do not wire the gate hook in .claude/settings.json (docs/ai-access.md)")
+    init.add_argument("--force", action="store_true",
+                      help="set up the workspace in a folder that already holds other files (they are kept; an "
+                           "existing AGENTS.md or CLAUDE.md is not replaced)")
     init.add_argument("--json", action="store_true")
     upgrade = work_sub.add_parser("upgrade", help="update packaged recipes while preserving local edits")
     upgrade.add_argument("path")
@@ -137,6 +249,11 @@ def build_parser() -> argparse.ArgumentParser:
     clients = client_sub.add_parser("list")
     clients.add_argument("--workspace", required=True)
     clients.add_argument("--json", action="store_true")
+    set_org = client_sub.add_parser("set-org", help="change the org alias a client names; no login or org call")
+    set_org.add_argument("--workspace", required=True)
+    set_org.add_argument("--client", required=True)
+    set_org.add_argument("--target-org", required=True, metavar="ALIAS")
+    set_org.add_argument("--json", action="store_true")
     cli_approval.register_consent(client_sub)
     initiative = sub.add_parser("initiative", help="manage an internal initiative's private context")
     initiative_sub = initiative.add_subparsers(dest="action", required=True)
@@ -164,23 +281,53 @@ def build_parser() -> argparse.ArgumentParser:
     e_list.add_argument("--json", action="store_true")
     context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
     _client_args(context)
+    _window_args(context)
+    context.add_argument("--max-chars", type=int, metavar="N",
+                         help=f"the most characters the text prints (default {ws.CONTEXT_BUDGET:,}): where things "
+                              "stand, lessons, changes, history and notes together; whatever is cut is named with "
+                              "the command that shows it. With --json it bounds the notes, which are otherwise complete")
     context.add_argument("--json", action="store_true")
     session = sub.add_parser("session", help="append or read user-reported session records")
     sessions = session.add_subparsers(dest="action", required=True)
     entry = sessions.add_parser("add")
     _client_args(entry)
-    entry.add_argument("--summary", required=True)
-    entry.add_argument("--status", choices=ws.STATUSES, default="prepared")
-    entry.add_argument("--evidence", help="reference and hash a file; does not assess its contents")
-    entry.add_argument("--learned", action="append", default=[], metavar="TEXT",
+    entry.add_argument("--summary", help="what was done and what it rests on (required here or in --input)")
+    entry.add_argument("--status", choices=ws.STATUSES, help="default: prepared")
+    entry.add_argument("--evidence", action="append", metavar="FILE",
+                       help="reference and hash a file; does not assess its contents (repeatable; all are kept, in order)")
+    entry.add_argument("--input", metavar="FILE",
+                       help="read the record's fields from a JSON or YAML file, or - for standard input "
+                            "(keys: the option names, such as summary, status, evidence); an option given "
+                            "on the command line wins over the file")
+    entry.add_argument("--learned", action="append", metavar="TEXT",
                        help="a lesson this session taught, saved with the record and linked to it (repeatable). "
                             "Write it as `When: ... Do: ... Because: ...`")
-    entry.add_argument("--learned-scope", choices=("client", "firm"), default="client",
+    entry.add_argument("--learned-scope", choices=("client", "firm"),
                        help="client: the selected client or initiative (default); firm: every client, so the "
                             "text must not identify one")
-    entry.add_argument("--learned-from", choices=("consultant", "agent"), default="agent",
+    entry.add_argument("--learned-from", choices=("consultant", "agent"),
                        help="consultant: their correction or instruction, saved as an active lesson; agent "
                             "(default): saved as a candidate until it is reviewed")
+    basis = entry.add_argument_group("what a check rested on (each optional; see docs/engagement-records.md)")
+    basis.add_argument("--check", choices=ws.CHECK_KINDS, action="append",
+                       help="the kind of check (repeatable): read-back (what was sent, read back), scripted (a script "
+                            "or test), rendered (a page rendered and looked at), live (the real entry point used), "
+                            "reviewed")
+    basis.add_argument("--as-user", metavar="TEXT",
+                       help="as whom it was checked: admin, a named persona, a guest, an integration user (a role "
+                            "is enough; no personal data needed)")
+    basis.add_argument("--in-org", metavar="ALIAS",
+                       help="the org it was checked in; Torque adds sandbox or production when the client's consent "
+                            "record names the org (no org call)")
+    basis.add_argument("--not-covered", metavar="TEXT", help="what the check did not cover")
+    basis.add_argument("--accepted-by", metavar="TEXT",
+                       help="who you report accepted the work (a lead, a tester, the client); required with "
+                            "--status accepted; shown as reported, never as Torque's confirmation")
+    basis.add_argument("--corrects", metavar="SESSION_ID",
+                       help="an earlier record of this client or initiative that this one corrects; the earlier "
+                            "file is not changed, and context and handoff show it as corrected")
+    entry.add_argument("--change", metavar="ID",
+                       help="link the record to a change record (torque change list); change handoff lists it")
     entry.add_argument("--json", action="store_true")
     for action in ("list", "show"):
         p = sessions.add_parser(action)
@@ -190,7 +337,17 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("entry_id")
     handoff = sub.add_parser("handoff", help="render a handoff from the actual selected-client journal")
     _client_args(handoff)
-    handoff.add_argument("--output", help="write a new file; otherwise print Markdown")
+    _window_args(handoff)
+    handoff.add_argument("--change", metavar="ID", help="only this change and the session records linked to it")
+    handoff.add_argument("--format", choices=("markdown", "json"), default="markdown",
+                         help="the document's format (default markdown)")
+    handoff.add_argument("--output", metavar="FILE",
+                         help="write the document to FILE; run again, it replaces the file and keeps the previous "
+                              "one as FILE.bak. Otherwise print it")
+    handoff.add_argument("--force", action="store_true",
+                         help="with --output: replace the file even when it was edited since Torque wrote it")
+    handoff.add_argument("--json", action="store_true",
+                         help="report as JSON: with --output, where it was written; without, the document as JSON")
     doctor = sub.add_parser("doctor", help="inspect local dependencies and config; makes no org calls")
     doctor.add_argument("--workspace")
     doctor.add_argument("--client")
@@ -228,7 +385,23 @@ def build_parser() -> argparse.ArgumentParser:
             cp.add_argument("--component", action="append", default=[])
             cp.add_argument("--manifest")
         elif action == "handoff":
-            cp.add_argument("--output", help="write a new report file")
+            cp.add_argument("--output", help="write the report to a file; run again, it replaces the file it wrote "
+                                             "(keeping FILE.bak), and leaves an edited one as it is (writing FILE.new)")
+            cp.add_argument("--force", action="store_true",
+                            help="with --output: replace the file even when it was edited since Torque wrote it")
+    criterion = actions.add_parser("criterion", help="add or retire an acceptance criterion of an existing change")
+    criterion_actions = criterion.add_subparsers(dest="criterion_action", required=True)
+    c_add = criterion_actions.add_parser("add", help="add a criterion; it gets the next ID (AC3, ...)")
+    _client_args(c_add)
+    c_add.add_argument("change_id")
+    c_add.add_argument("--text", required=True, help="the criterion, as the client would check it")
+    c_add.add_argument("--json", action="store_true")
+    c_retire = criterion_actions.add_parser("retire", help="retire a criterion; its ID and earlier checks are kept")
+    _client_args(c_retire)
+    c_retire.add_argument("change_id")
+    c_retire.add_argument("criterion_id", metavar="CRITERION", help="AC1, AC2, ...")
+    c_retire.add_argument("--reason", required=True, help="why it no longer applies")
+    c_retire.add_argument("--json", action="store_true")
     workflows = sub.add_parser("workflows", help="discover bundled conversational and native workflows")
     workflows.add_argument("action", nargs="?", choices=("list", "show"), default="list")
     workflows.add_argument("name", nargs="?")
@@ -383,8 +556,12 @@ def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
     # Neither reads a client's state or an org: one scans a script, one deletes a session file.
     local_browser = route == "browser" and args[:1] in (["sanitize-replay"], ["logout"])
     if not help_only and stateful and not local_browser and scope is None:
-        raise ws.WorkspaceError(f"{route} needs a selected client for its private state; "
-                                "provide --workspace PATH --client NAME")
+        # Name the command the user typed (deploy, data, org, recover), not the internal route.
+        public = (args[0] if route == "revert" and args[:1] in (["deploy"], ["data"], ["org"])
+                  else display.split()[1] if display and len(display.split()) > 1 else route)
+        raise ws.WorkspaceError(f"{public} needs a selected client for its private state; "
+                                "provide --workspace PATH --client NAME", code="no_client_selected",
+                                next_command=f"torque {public} --workspace PATH --client NAME ...")
     if not help_only and lessons and scope is None and args[0] in LESSON_NEEDS_WORKSPACE:
         raise ws.WorkspaceError(f"lesson {args[0]} needs a workspace: provide --workspace PATH with --client NAME "
                                 "or --initiative NAME (a firm lesson needs only --workspace PATH --scope firm)")
@@ -490,6 +667,106 @@ def _workflows(args: argparse.Namespace) -> int:
     return 0
 
 
+# `session add` fields that `--input FILE|-` can also give: field -> (kind, default).
+# The keys of the document are the option names, with - or _ (`learned-from`, `learned_from`).
+SESSION_FIELDS = {"summary": ("text", None), "status": ("text", "prepared"), "evidence": ("list", []),
+                  "learned": ("list", []), "learned_scope": ("text", "client"), "learned_from": ("text", "agent"),
+                  "check": ("list", None), "as_user": ("text", None), "in_org": ("text", None),
+                  "not_covered": ("text", None), "accepted_by": ("text", None), "corrects": ("text", None),
+                  "change": ("text", None)}
+INPUT_LIMIT = 1_000_000
+
+
+def _read_input(source: str) -> dict:
+    """The fields of a `--input` document: a JSON or YAML mapping, from a file or `-`."""
+    where = "standard input" if source == "-" else source
+    try:
+        if source == "-":
+            stream = getattr(sys.stdin, "buffer", None)
+            raw = stream.read(INPUT_LIMIT + 1) if stream is not None else sys.stdin.read(INPUT_LIMIT + 1)
+            text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw
+        else:
+            with open(source, encoding="utf-8-sig") as handle:
+                text = handle.read(INPUT_LIMIT + 1)
+    except FileNotFoundError as exc:
+        raise ws.WorkspaceError(f"--input file does not exist: {source}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise ws.WorkspaceError(f"cannot read --input {where} as UTF-8 text ({type(exc).__name__})") from exc
+    if len(text) > INPUT_LIMIT:
+        raise ws.WorkspaceError(f"--input {where} is longer than {INPUT_LIMIT:,} characters")
+    try:
+        value = json.loads(text)
+    except ValueError:
+        import yaml
+        try:
+            value = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ws.WorkspaceError(f"--input {where} is neither JSON nor YAML: "
+                                    f"{str(exc).splitlines()[0] if str(exc) else type(exc).__name__}") from exc
+    if not isinstance(value, dict):
+        raise ws.WorkspaceError(f"--input {where} must hold one mapping of fields, such as "
+                                '{"summary": "...", "status": "executed"}')
+    fields = {}
+    for key, item in value.items():
+        name = str(key).strip().replace("-", "_")
+        if name not in SESSION_FIELDS:
+            raise ws.WorkspaceError(f"unknown field in --input {where}: {key}; the fields are "
+                                    + ", ".join(sorted(SESSION_FIELDS)))
+        kind = SESSION_FIELDS[name][0]
+        if item is None:
+            continue
+        if kind == "list":
+            item = [item] if isinstance(item, str) else item
+            if not isinstance(item, list) or any(not isinstance(part, str) for part in item):
+                raise ws.WorkspaceError(f"--input field {key} must be text or a list of texts")
+        elif not isinstance(item, str):
+            raise ws.WorkspaceError(f"--input field {key} must be text (put it in quotes)")
+        fields[name] = item
+    return fields
+
+
+def _session_fields(parsed: argparse.Namespace) -> dict:
+    """The `session add` fields: each option given on the command line, else the
+    `--input` document's value, else the default."""
+    document = _read_input(parsed.input) if parsed.input else {}
+    fields = {}
+    for name, (_, default) in SESSION_FIELDS.items():
+        given = getattr(parsed, name, None)
+        fields[name] = given if given is not None else document.get(name, default)
+    if not isinstance(fields["summary"], str) or not fields["summary"].strip():
+        raise ws.WorkspaceError("session summary must be nonempty: give --summary TEXT, or a summary field in "
+                                "--input FILE")
+    return fields
+
+
+def _init_target_check(target: Path, force: bool) -> None:
+    """`workspace init` into a folder that already holds other files would add Torque's
+    files beside them and, without a .gitignore there, one that ignores everything; it
+    does so only with --force. A new folder, an empty one, and one holding only .git and
+    .gitignore are fine."""
+    target = target.expanduser()
+    if force or not target.is_dir() or (target / ws.CONFIG).exists():
+        return
+    others = sorted(child.name for child in target.iterdir() if child.name not in (".git", ".gitignore"))
+    if others:
+        shown = ", ".join(others[:5]) + (f" and {len(others) - 5} more" if len(others) > 5 else "")
+        raise ws.WorkspaceError(
+            f"{target} already holds other files ({shown}). A workspace there adds Torque's folders and files beside "
+            "them and, where there is no .gitignore, one that keeps everything in the folder out of git. Choose a new "
+            "or empty folder, or run this again with --force to set up the workspace here anyway (your files are "
+            "kept; an existing AGENTS.md or CLAUDE.md is not replaced, so add Torque's instructions to it yourself)",
+            code="folder_not_empty", next_command=ws.command_text(["torque", "workspace", "init", str(target),
+                                                                   "--name", "NAME", "--force"]))
+
+
+def _init_next_steps(path: Path) -> list[str]:
+    where = str(path)
+    return [ws.command_text(["torque", "client", "add", "CLIENT", "--workspace", where])
+            + " (add --org ALIAS when the client has a Salesforce org)",
+            ws.command_text(["torque", "doctor", "--workspace", where]) + " (what is ready and what is not)",
+            f"start your agent in {where} and ask it to resume a client: torque context --workspace . --client CLIENT"]
+
+
 def _change(args: argparse.Namespace) -> int:
     from . import changes
     name, kind = _scope(args)
@@ -502,22 +779,48 @@ def _change(args: argparse.Namespace) -> int:
                                        engagement_kind=kind)
     elif action == "list":
         result = changes.list_changes(*common, engagement_kind=kind, problems=problems)
+    elif action == "criterion":
+        if args.criterion_action == "add":
+            result = changes.add_criterion(*common, args.change_id, args.text, engagement_kind=kind)
+        else:
+            result = changes.retire_criterion(*common, args.change_id, args.criterion_id, args.reason,
+                                              engagement_kind=kind)
+        if args.json:
+            _print_json(result)
+        else:
+            verb = "Added" if args.criterion_action == "add" else "Retired"
+            print(f"{verb} {result['criterion']} in {args.change_id}: {result['summary']}")
+        return 0
     elif action in ("show", "handoff"):
         result = changes.get_change(*common, args.change_id, engagement_kind=kind, problems=problems)
+        _, records = ws.read_sessions(*common, kind=kind, problems=problems)
+        linked = [{key: entry[key] for key in ("id", "created_at", "status", "summary")}
+                  | ({"basis": ws.basis_text(entry)} if ws.basis_text(entry) else {})
+                  for entry in records if entry.get("change") == args.change_id]
+        result["linked_sessions"] = linked
         result["record_problems"] = problems
         if not args.json:
             text = changes.render_change(*common, args.change_id, engagement_kind=kind, problems=[])
+            text += "\n## Linked session records\n\n" + ("\n".join(
+                f"- {item['created_at']} [{item['status']}, user-reported] {item['id']}: {item['summary']}"
+                + (f" ({item['basis']})" if item.get("basis") else "") for item in linked)
+                or f"None yet. Link one with torque session add ... --change {args.change_id}") + "\n"
             if problems:
                 text += "\n" + "\n".join(["## Records not shown", "", *ws.record_problem_lines(problems)]) + "\n"
             if action == "handoff" and args.output:
-                ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind), text)
-                print(args.output)
+                written = ws.replace_output(ws.client_output_path(*common, args.output, kind=kind), text,
+                                            ws.load_engagement(*common, kind)[0], force=args.force)
+                print("\n".join(ws.output_lines(written)))
             else:
                 print(text, end="")
             return 0
         if action == "handoff" and args.output:
-            ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind),
-                                json.dumps(result, indent=2) + "\n")
+            written = ws.replace_output(ws.client_output_path(*common, args.output, kind=kind),
+                                        json.dumps(result, indent=2) + "\n", ws.load_engagement(*common, kind)[0],
+                                        force=args.force)
+            if written["kept"]:
+                # stdout equals the file written, except when an edited file was kept: then it says so.
+                result = {**result, "export": {**ws.output_report(written), "message": ws.output_lines(written)[1]}}
     elif action == "note":
         result = changes.add_note(*common, args.change_id, args.text, args.kind, engagement_kind=kind)
     elif action == "check":
@@ -1592,6 +1895,8 @@ def _doctor(args: argparse.Namespace) -> int:
                 report["next_actions"].append("Some private paths are already tracked by Git. Ignore rules do not untrack existing files; review their repository visibility.")
         except (FileNotFoundError, subprocess.TimeoutExpired):
             report["git_tracking"] = {"checked": False, "tracked_private_paths": []}
+    from . import host_checks
+    report["host"] = host_checks.report()      # report only; never decides readiness or changes a setting
     if args.json:
         _print_json(report)
     else:
@@ -1681,6 +1986,8 @@ def _doctor(args: argparse.Namespace) -> int:
                                   else "missing " + ", ".join(mode["missing"])))
         for line in report["lessons"].get("lines", []):
             print(line)
+        for line in host_checks.lines(report["host"]):
+            print("Host: " + line)
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")
         for action in report["next_actions"]:
             print(f"Next: {action}")
@@ -1754,6 +2061,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     INVOCATION = ("torque", list(args))
     parsed = None
+    # --json anywhere before a `--` asks for JSON, failures included (torque.error/1).
+    as_json = "--json" in (args[:args.index("--")] if "--" in args else args)
     try:
         if args and args[0] in PUBLIC_ROUTES:
             delegate, prefix = PUBLIC_ROUTES[args[0]]
@@ -1772,22 +2081,30 @@ def main(argv: list[str] | None = None) -> int:
             return _dispatch(args[0], args[1:])
         args, tail = cli_approval.split_tail(args)
         parser = build_parser()
-        parsed = parser.parse_args(args)
+        parsed, extras = parser.parse_known_args(args)
+        if extras:
+            # Name the subcommand the words belong to, with its own usage (not the top level's).
+            raise UsageError(_subparser_for(parser, args), "unrecognized arguments: " + " ".join(extras))
         if parsed.command is None:
             parser.print_help()
             return 0
         if parsed.command == "workspace":
             if parsed.action == "init":
+                _init_target_check(Path(parsed.path), parsed.force)
                 path = ws.init_workspace(parsed.path, parsed.name, parsed.profile)
                 from . import permissions
                 # Full mode: the hook keeps tools from changing consent, approval and control records.
                 hooks = [] if parsed.no_hook else permissions.wire_gate_hooks(path, antigravity=True)
+                steps = _init_next_steps(path)
                 if parsed.json:
-                    _print_json({"workspace": str(path), "org_calls": False, "hooks": hooks})
+                    _print_json({"workspace": str(path), "org_calls": False, "hooks": hooks, "next_steps": steps})
                 else:
                     print(path)
                     for line in _hook_lines(hooks, "full"):
                         print(line)
+                    print("Next:")
+                    for number, step in enumerate(steps, 1):
+                        print(f"  {number}. {step}")
                 return 3 if any(row["status"] == "failed" for row in hooks) else 0
             elif parsed.action == "ai-access":
                 root = ws.set_ai_access(parsed.path, parsed.mode, parsed.approval, parsed.verify,
@@ -1841,7 +2158,16 @@ def main(argv: list[str] | None = None) -> int:
         elif parsed.command == "client":
             if parsed.action == "consent":
                 return cli_approval.run_consent(parsed)
-            if parsed.action == "add":
+            if parsed.action == "set-org":
+                result = ws.set_client_org(parsed.workspace, parsed.client, parsed.target_org)
+                if parsed.json:
+                    _print_json(result)
+                else:
+                    print(f"{result['client']}: org alias {result['from'] or 'none'} -> {result['to']} "
+                          f"(recorded as session {result['session']}; no org call)")
+                    for note in result["notes"]:
+                        print("Note: " + note)
+            elif parsed.action == "add":
                 path = ws.add_client(parsed.workspace, parsed.name, parsed.org)
                 _print_json({"client_root": str(path), "org_calls": False}) if parsed.json else print(path)
             else:
@@ -1887,62 +2213,53 @@ def main(argv: list[str] | None = None) -> int:
             return _change(parsed)
         elif parsed.command == "context":
             name, kind = _scope(parsed)
-            context = ws.get_context(parsed.workspace, name, kind=kind, shown_via="context")
+            # JSON is complete unless --max-chars is given; the text fits its budget and says what it cut.
+            context = ws.get_context(parsed.workspace, name, kind=kind, shown_via="context",
+                                     max_chars=parsed.max_chars if parsed.json else None, **_window(parsed))
             if parsed.json:
                 _print_json(context)
             else:
-                print(f"{context['workspace']['name']} / {context['client']['name']}")
-                print(f"{'Initiative' if kind == 'initiative' else 'Client'} directory: {context['client_root']}")
-                if kind == "client":
-                    print(f"Configured org: {context['client'].get('org') or 'not specified'}")
-                print(context["evidence_note"])
-                for line in ws.record_problem_lines(context["record_problems"]):
-                    print(line)
-                print("\n" + "\n".join(ws.lesson_lines(context["lessons"], kind)))
-                for title, value in context.get("notes", {}).items():
-                    print(f"\n{title}:\n{value}")
-                for change in context.get("changes", []):
-                    print(f"\nChange {change['id']}: {change['title']} — {change['outcome']}")
-                    unresolved = [f"{criterion['id']} ({criterion['reported_result'].replace('_', ' ')})"
-                                  for criterion in change["criteria"] if criterion["reported_result"] != "pass"]
-                    print("Acceptance results are operator-reported; independent business acceptance is not established.")
-                    if unresolved:
-                        print("Not yet reported pass: " + ", ".join(unresolved))
-                    elif not change["criteria"]:
-                        print("No acceptance criteria recorded.")
-                    if change["assessment"]["evidence_problems"]:
-                        print(f"Evidence problems: {change['assessment']['evidence_problems']} missing, changed or unavailable captures.")
-                    for decision in change["decisions"]:
-                        print(f"Decision (reported): {decision['summary']}")
-                    for observation in change["metadata_observations"]:
-                        print(f"Metadata {observation['result']} · Org {observation['target_org']} · Job {observation['job_id']}: {observation['summary']}")
-                    for step in change["next_steps"]:
-                        print(f"Next step (reported): {step['summary']}")
-                    if any(change["history_truncated"].values()):
-                        counts = ", ".join(f"{name}: {count}" for name, count in change["history_counts"].items())
-                        print(f"{change['history_note']} Total entries — {counts}.")
-                    print("Full change: " + change["show_command"])
-                for entry in context["sessions"]:
-                    print(f"\n{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}")
-                    if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
-                        print(f"Evidence: {entry['evidence_integrity']} since recording.")
+                print(ws.context_text(context, kind, parsed.max_chars or ws.CONTEXT_BUDGET,
+                                      workspace=parsed.workspace), end="")
         elif parsed.command == "session":
             name, kind = _scope(parsed)
             if parsed.action == "add":
-                entry = ws.add_session(parsed.workspace, name, parsed.summary, parsed.status, parsed.evidence,
-                                       kind=kind, learned=parsed.learned, learned_scope=parsed.learned_scope,
-                                       learned_from=parsed.learned_from)
+                fields = _session_fields(parsed)
+                entry = ws.add_session(parsed.workspace, name, fields["summary"], fields["status"],
+                                       fields["evidence"], kind=kind, learned=fields["learned"],
+                                       learned_scope=fields["learned_scope"], learned_from=fields["learned_from"],
+                                       check=fields["check"], as_user=fields["as_user"], org=fields["in_org"],
+                                       not_covered=fields["not_covered"], accepted_by=fields["accepted_by"],
+                                       corrects=fields["corrects"], change=fields["change"])
+                hints = ws.session_hints(entry)
+                retry = None
+                if entry.get("lesson_problems"):
+                    retry = ws.command_text(["torque", "lesson", "add", "--workspace", str(parsed.workspace),
+                                             "--" + kind, name, "--session", entry["id"],
+                                             *(["--source", "consultant"] if fields["learned_from"] == "consultant"
+                                               else []),
+                                             *(["--scope", "firm"] if fields["learned_scope"] == "firm" else []),
+                                             "When: ... Do: ... Because: ..."])
                 if parsed.json:
-                    _print_json(entry)
+                    _print_json({**entry, "hints": hints,
+                                 **({"recorded": True, "do_not_add_again": True, "lesson_retry_command": retry}
+                                    if retry else {})})
                 else:
                     print(f"Recorded {entry['id']} [{entry['status']}, user-reported]")
+                    if ws.basis_text(entry):
+                        print("Basis: " + ws.basis_text(entry))
+                    if entry.get("corrects"):
+                        print(f"Corrects {entry['corrects']} (that record is kept as it is and shown as corrected)")
+                    for hint in hints:
+                        print("Hint: " + hint)
                     for line in ws.learned_lines(entry):
                         print(line)
                 if entry.get("lesson_problems"):
                     # The session record stands; only the lesson was not saved.
-                    print(f"torque: session {entry['id']} is recorded; do not add it again. "
-                          f"{len(entry['lesson_problems'])} lesson(s) were not saved: fix the text and save each "
-                          f"with `torque lesson add ... --session {entry['id']}`.", file=sys.stderr)
+                    print(f"torque: session {entry['id']} is recorded; do not add it again (the record IS saved; "
+                          "running this session add again would record the same session twice). "
+                          f"{len(entry['lesson_problems'])} lesson(s) were not saved; fix the text and save each "
+                          f"with: {retry}", file=sys.stderr)
                     return 4
             else:
                 problems: list[dict] = []
@@ -1961,6 +2278,8 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     for entry in entries:
                         print(f"{entry['id']} [{entry['status']}, user-reported] {entry['summary']}")
+                        for line in ws.session_link_lines(entry):
+                            print("  " + line)
                         if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
                             print(f"Evidence: {entry['evidence_integrity']} since recording.")
                     if not entries:
@@ -1970,11 +2289,19 @@ def main(argv: list[str] | None = None) -> int:
                             print(line)
         elif parsed.command == "handoff":
             name, kind = _scope(parsed)
-            body = ws.render_handoff(parsed.workspace, name, kind=kind)
+            data = ws.handoff_data(parsed.workspace, name, kind=kind, change=parsed.change,
+                                   everything=parsed.everything, **_window(parsed))
+            as_json = parsed.format == "json" or (parsed.json and not parsed.output)
+            body = (json.dumps(data, indent=2, ensure_ascii=False) + "\n" if as_json
+                    else ws.render_handoff_markdown(data, parsed.workspace, name, kind=kind))
             if parsed.output:
                 output = ws.client_output_path(parsed.workspace, name, parsed.output, kind=kind)
-                ws.atomic_write_new(output, body)
-                print(output)
+                engagement = ws.load_engagement(parsed.workspace, name, kind)[0]
+                result = ws.replace_output(output, body, engagement, force=parsed.force)
+                if parsed.json:
+                    _print_json({**ws.output_report(result), "format": "json" if as_json else "markdown"})
+                else:
+                    print("\n".join(ws.output_lines(result)))
             else:
                 print(body, end="")
         elif parsed.command == "doctor":
@@ -1987,14 +2314,23 @@ def main(argv: list[str] | None = None) -> int:
         # or sign-off) refuses the same way cli_approval's delegated grant/deny
         # will: exit 3, with --json a machine-readable reason_class and message,
         # instead of falling into the generic WorkspaceError exit 2 below.
-        if getattr(parsed, "json", False):
-            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc)})
+        if getattr(parsed, "json", False) or as_json:
+            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc),
+                         "schema": ERROR_SCHEMA, "ok": False, "code": "refused", "next_command": None,
+                         "exit_code": 3})
         else:
             print(f"torque: refused ({exc.reason_class}): {exc}", file=sys.stderr)
         return 3
-    except (ws.WorkspaceError, OSError, ValueError) as exc:
-        print(f"torque: {exc}", file=sys.stderr)
-        return 2
+    except UsageError as exc:
+        prog = exc.parser.prog
+        return _failure(as_json, "usage", f"{prog}: error: {exc.message}", usage=exc.parser.format_usage().strip(),
+                        next_command=f"{prog} --help")
+    except ws.WorkspaceError as exc:
+        return _failure(as_json, exc.code, str(exc), next_command=exc.next_command)
+    except OSError as exc:
+        return _failure(as_json, "os_error", _os_error_text(exc))
+    except ValueError as exc:
+        return _failure(as_json, "invalid_input", str(exc))
 
 
 if __name__ == "__main__":

@@ -337,7 +337,8 @@ def test_ordinary_urls_are_left_alone():
 
 
 # Playwright debug output prints the navigated frontdoor URL (DEBUG=pw:api, pw:protocol,
-# DEBUG_FILE), and PWDEBUG forces a visible browser: a connected run refuses to start.
+# DEBUG_FILE), and PWDEBUG shows it in a visible inspector: a run that navigates to a
+# sign-in address refuses to start, in every mode.
 
 # Node's debug module turns pw:* on for DEBUG=*, pw* or p* too, so any DEBUG is refused.
 DEBUG_ENVS = [{"PWDEBUG": "1"}, {"DEBUG": "pw:api"}, {"DEBUG": "other,pw:protocol"}, {"DEBUG_FILE": "/tmp/pw.log"},
@@ -367,9 +368,32 @@ def test_connected_run_refuses_playwright_debug_before_playwright_starts(monkeyp
 
 
 @pytest.mark.parametrize("env", DEBUG_ENVS)
-def test_unconnected_run_keeps_a15_debugging(monkeypatch, tmp_path, env):
+def test_unconnected_run_refuses_playwright_debug_before_the_sign_in_too(monkeypatch, tmp_path, env):
+    # The sign-in address is navigated to in every mode, so the settings are refused in every mode.
     stub(monkeypatch)
     clear_debug_env(monkeypatch)
+    monkeypatch.delenv("TORQUE_BROWSER_CDP", raising=False)
+    monkeypatch.delenv("JSC_BROWSER_CDP", raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(auth, "in_connected_mode", lambda: False)
+    started = []
+    api = types.ModuleType("playwright.async_api")
+    api.async_playwright = lambda: started.append(1)
+    monkeypatch.setitem(sys.modules, "playwright.async_api", api)
+    ran = fake_cell(monkeypatch)
+    result = run(tmp_path)
+    assert started == [] and ran == [] and result.overall_status == "INCOMPLETE"
+    assert next(iter(env)) in result.error and "Unset it" in result.error
+    assert not result.error.startswith("connected mode")
+
+
+@pytest.mark.parametrize("env", DEBUG_ENVS)
+def test_unconnected_run_attached_to_a_browser_keeps_debugging(monkeypatch, tmp_path, env):
+    # An attached browser is sent to the org's own address, never to a sign-in address.
+    stub(monkeypatch)
+    clear_debug_env(monkeypatch)
+    monkeypatch.setenv("TORQUE_BROWSER_CDP", "http://127.0.0.1:9222")
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setattr(auth, "in_connected_mode", lambda: False)
@@ -396,6 +420,90 @@ def test_preflight_refuses_playwright_debug_in_connected_mode(monkeypatch):
               "sf": object(), "target_org": "acme-dev"}
     with pytest.raises(auth.AuthError, match="PWDEBUG"):
         asyncio.run(suite._live_preflight(config))
+
+
+def test_preflight_refuses_playwright_debug_outside_connected_mode_too(monkeypatch):
+    from jsc_browser_tests import suite
+    clear_debug_env(monkeypatch)
+    monkeypatch.delenv("TORQUE_BROWSER_CDP", raising=False)
+    monkeypatch.delenv("JSC_BROWSER_CDP", raising=False)
+    monkeypatch.setenv("DEBUG", "pw:api")
+    monkeypatch.setattr(auth, "in_connected_mode", lambda: False)
+    monkeypatch.setattr(auth, "get_admin_auth", lambda *_: pytest.fail("no auth before the check"))
+    api = types.ModuleType("playwright.async_api")
+    api.async_playwright = lambda: pytest.fail("playwright must not start")
+    monkeypatch.setitem(sys.modules, "playwright.async_api", api)
+    config = {"profiles": ["admin", "standard"], "seed": {"users": {"standard": {"user_id": USER}}},
+              "sf": object(), "target_org": "acme-dev"}
+    with pytest.raises(auth.AuthError, match="DEBUG is set"):
+        asyncio.run(suite._live_preflight(config))
+
+
+CANARY = "https://acme-dev.my.salesforce.example/secur/frontdoor.jsp?otp=CANARYneverPRINTED&startURL=%2F"
+
+
+def unguarded_session(monkeypatch, cdp_endpoint=None):
+    """open_session outside connected mode, with a browser double that records every
+    navigation; returns (navigations, launches, error text or None)."""
+    from torque import browser_guard
+    monkeypatch.setattr(browser_guard, "connected_guard", lambda alias: None)
+    navigations = []
+
+    class FakePage:
+        async def goto(self, url, **kwargs):
+            navigations.append(url)
+
+        async def title(self):
+            return "Home"
+
+    class FakeBrowser:
+        contexts = [types.SimpleNamespace(pages=[FakePage()])]
+
+        async def new_context(self, **options):
+            return types.SimpleNamespace(new_page=AsyncMock(return_value=FakePage()), close=AsyncMock())
+
+        async def close(self):
+            pass
+
+    launches = []
+
+    async def launch(**kwargs):
+        launches.append(kwargs)
+        return FakeBrowser()
+
+    async def connect_over_cdp(endpoint):
+        return FakeBrowser()
+
+    pw = types.SimpleNamespace(chromium=types.SimpleNamespace(launch=launch, connect_over_cdp=connect_over_cdp))
+    admin = auth.AdminAuth("acme-dev", ORG, "https://acme-dev.my.salesforce.example", CANARY)
+    try:
+        asyncio.run(auth.open_session(pw, admin, cdp_endpoint=cdp_endpoint))
+    except auth.AuthError as error:
+        return navigations, launches, str(error)
+    return navigations, launches, None
+
+
+@pytest.mark.parametrize("env", DEBUG_ENVS)
+def test_unguarded_session_never_navigates_to_the_sign_in_address_with_debug_on(monkeypatch, env):
+    clear_debug_env(monkeypatch)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    navigations, launches, message = unguarded_session(monkeypatch)
+    assert navigations == [] and launches == [] and message and next(iter(env)) in message
+    assert "CANARY" not in message
+
+
+def test_unguarded_session_without_debug_still_signs_in(monkeypatch):
+    clear_debug_env(monkeypatch)
+    navigations, _, message = unguarded_session(monkeypatch)
+    assert message is None and navigations == [CANARY]
+
+
+def test_an_attached_browser_with_debug_on_is_sent_to_the_org_not_the_sign_in_address(monkeypatch):
+    clear_debug_env(monkeypatch)
+    monkeypatch.setenv("DEBUG", "pw:api")
+    navigations, _, message = unguarded_session(monkeypatch, cdp_endpoint="http://127.0.0.1:9222")
+    assert message is None and navigations == ["https://acme-dev.my.salesforce.example"]
 
 
 @pytest.mark.parametrize("env", DEBUG_ENVS)

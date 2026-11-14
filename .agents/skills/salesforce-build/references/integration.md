@@ -2,7 +2,8 @@
 
 Use this before you build on a connector, call another system, accept data from one, or test
 anything that can reach outside the org. State described: Winter '27 (API 68.0), checked
-2026-11-14. `[check]` = testable in the source files. **verify** = not confirmed in a
+2026-11-14. A tag such as `[check: secret.looks-like-secret]` names the `torque check
+metadata` rule that tests the statement. **verify** = not confirmed in a
 fetched primary source: verify in the org or the current documentation. field-reported =
 seen in client work, usually one org.
 
@@ -59,8 +60,9 @@ as the base of an integration; PushTopic and generic streaming; Salesforce to Sa
   username-password flow, which retires on 2027-02-20 with the user-agent flows [REL-W27].
 - Never put a token in a callout address. A failed anonymous Apex callout echoed the whole
   endpoint, token included, into the session (field-reported). Send it in a header or the
-  body, and confirm the host is allowed first. `[check]` no `token=` or `access_token=`
-  inside an endpoint string in Apex or scripts.
+  body, and confirm the host is allowed first. By hand: search Apex and scripts for `token=`
+  or `access_token=` inside an endpoint string. `[check: secret.looks-like-secret]` covers
+  custom metadata, settings and credential files only.
 - A callout to a new host needs a remote site setting or a named credential, and an external
   credential needs principal access for the user who runs it (field-reported: an
   "Unauthorized endpoint" error and three "not accessible" results).
@@ -68,8 +70,20 @@ as the base of an integration; PushTopic and generic streaming; Salesforce to Sa
   an org, reduce them to key names and hosts: masking by field name alone leaked a
   credential fragment from a "sample request" field (field-reported).
 
+The three files that deploy together [MD-TYPES]: an `*.externalCredential-meta.xml` with
+`authenticationProtocol` and `externalCredentialParameters` (principals are parameters of
+type `NamedPrincipal` or `PerUserPrincipal`); a `*.namedCredential-meta.xml` of
+`namedCredentialType` `SecuredEndpoint` whose `namedCredentialParameters` give the `Url`
+and the `externalCredential`, with `allowMergeFieldsInHeader` and `allowMergeFieldsInBody`
+false unless a header or body needs them; and a permission set with
+`externalCredentialPrincipalAccesses` (`externalCredentialPrincipal`, `enabled`). Secret
+values are entered in Setup, not in the files. A `Legacy` named credential with a
+`username` and `password` is not for new work. To learn the exact shape, set one up in a
+sandbox and retrieve it.
+
 Check: `namedCredentials/` and `externalCredentials/` hold the endpoint and the
-authentication; a search of the change finds no `Authorization` literal or secret.
+authentication; a search of the change finds no `Authorization` literal or secret;
+`[check: secret.looks-like-secret]`.
 
 ## 4. Writes that can be repeated
 
@@ -168,6 +182,9 @@ connector.
 ## Sources
 
 - [F-INT] https://architect.salesforce.com/docs/architect/fundamentals/guide/integration-patterns
+- [MD-TYPES] Salesforce's Metadata API type definitions as shipped with the Salesforce CLI
+  (`@salesforce/types` 1.8.0, `ExternalCredential`, `NamedCredential`,
+  `PermissionSetExternalCredentialPrincipalAccess`), read 2026-11-14.
 - [F-AGINT] https://architect.salesforce.com/docs/architect/fundamentals/guide/agentic-integration-patterns
 - [DG-INT] https://architect.salesforce.com/docs/architect/decision-guides/guide/data-integration
 - [DG-EDA] https://architect.salesforce.com/docs/architect/decision-guides/guide/event-driven

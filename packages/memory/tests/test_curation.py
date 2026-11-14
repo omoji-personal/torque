@@ -256,12 +256,13 @@ def test_stats_count_what_was_captured_shown_and_judged(run, scopes):
                                   "by_scope": {"client": 2, "firm": 1}}
     assert report["states"] == {"active": 2, "candidate": 1}
     assert report["events"]["helpful"] == 1 and report["events"]["shown"] >= 2
-    assert report["shown_by_surface"]["context"] == 1 and report["shown_by_surface"]["deploy"] >= 1
+    # The context block lists the client's lesson and the firm's (a firm lesson has a place there).
+    assert report["shown_by_surface"]["context"] == 2 and report["shown_by_surface"]["deploy"] >= 1
     assert report["candidates_waiting"] == 1 and report["oldest_candidate"]["days"] == 0
-    assert len(report["never_shown"]) == 1                       # the firm lesson was never shown
+    assert report["never_shown"] == []
     code, out, _ = run("stats")
     assert code == 0 and "Captured: 3 (by source: agent 1, consultant 2; by scope: client 2, firm 1)" in out
-    assert "Candidates waiting: 1; the oldest is" in out and "Active and never shown: 1" in out
+    assert "Candidates waiting: 1; the oldest is" in out and "Active and never shown: 0" in out
     later = json.loads(run("stats", "--since", "2099-01-01", "--json")[1])
     assert later["captured"]["total"] == 0 and later["events"]["shown"] == 0 and later["candidates_waiting"] == 1
     assert run("stats", "--since", "last week")[0] == 2
@@ -303,7 +304,7 @@ def test_the_doctor_report_counts_states_names_bad_files_and_says_live_or_idle(s
     assert report["engagement"]["states"] == {"candidate": 1, "active": 1, "retired": 0}
     assert report["engagement"]["last_capture"] == record.today() == report["engagement"]["last_shown"]
     assert [problem["path"] for problem in report["engagement"]["unreadable"]] == ["clients/alpha/lessons/broken.md"]
-    assert report["firm"]["states"]["active"] == 1 and report["firm"]["last_shown"] is None
+    assert report["firm"]["states"]["active"] == 1 and report["firm"]["last_shown"] == record.today()
     assert report["platform"]["advisory"] >= 40
     lines = review.health_lines(report)
     assert lines[0].startswith("Lessons (firm): 0 candidate, 1 active, 0 retired; unreadable files 0; last saved ")

@@ -128,7 +128,8 @@ def test_writes_an_owner_only_session_file_and_prints_the_path_not_the_content(w
     assert world["closed"] == ["context", "browser"], "Torque's own browser is closed afterwards"
     assert json.loads(path.read_text(encoding="utf-8"))["cookies"][0]["value"] == COOKIE
     event, = command.events()
-    assert event == {"event": "saved", "storage_state": str(path.resolve()), "org_id": ORG, "org_kind": "sandbox",
+    assert event == {"event": "saved", "session_verified": True, "storage_state": str(path.resolve()),
+                     "org_id": ORG, "org_kind": "sandbox", "org_edition": "Enterprise Edition",
                      "username": "admin@acme.example", "user_id": USER_ID, "org_check": login.NOT_CHECKED}
     assert COOKIE not in command.everything() and MARKER not in command.everything()
     if os.name == "nt":
@@ -136,7 +137,8 @@ def test_writes_an_owner_only_session_file_and_prints_the_path_not_the_content(w
         assert winacl.problem(path) == "", "only the current user, SYSTEM and Administrators can read it"
     else:
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert [entry.name for entry in path.parent.iterdir()] == [path.name], "no temporary file is left"
+    assert sorted(entry.name for entry in path.parent.iterdir()) == \
+        [path.name, login.marker_path(path).name], "no temporary file is left"
 
 
 def test_plain_text_names_the_file_and_how_to_delete_it(world, tmp_path):
@@ -260,5 +262,38 @@ def test_logout_deletes_nothing_else(tmp_path, content):
     path.write_text(content, encoding="utf-8")
     code, _, err = logout("--storage-state", str(path))
     assert code == login.EXIT_USAGE and path.read_text(encoding="utf-8") == content
-    assert "not a browser session file" in err
+    assert "not written by torque browser login" in err
     assert logout("--storage-state", str(tmp_path))[0] == login.EXIT_USAGE and tmp_path.is_dir()
+
+
+def test_login_writes_a_private_marker_beside_the_session_file(world, tmp_path):
+    path = tmp_path / "acme-sbx.json"
+    assert run("--storage-state", str(path))[0] == login.EXIT_OK
+    marker = login.marker_path(path)
+    assert json.loads(marker.read_text(encoding="utf-8")) == {"written_by": login.MARKER_TEXT, "file": path.name}
+    assert COOKIE not in marker.read_text(encoding="utf-8")
+    assert set(json.loads(path.read_text(encoding="utf-8"))) == {"cookies", "origins"}, "Playwright's format only"
+    if os.name != "nt":
+        assert stat.S_IMODE(marker.stat().st_mode) == 0o600
+    assert logout("--storage-state", str(path))[0] == 0 and not path.exists() and not marker.exists()
+
+
+def test_logout_keeps_a_session_shaped_file_torque_did_not_write(tmp_path):
+    path = tmp_path / "application-config.json"
+    content = json.dumps({"cookies": [], "origins": [], "purpose": "unrelated application data"})
+    path.write_text(content, encoding="utf-8")
+    code, _, err = logout("--storage-state", str(path))
+    assert code == login.EXIT_USAGE and path.read_text(encoding="utf-8") == content
+    assert "delete it yourself" in err
+
+
+def test_logout_keeps_a_file_whose_marker_names_another_file_or_that_was_replaced(world, tmp_path):
+    path = tmp_path / "acme-sbx.json"
+    assert run("--storage-state", str(path))[0] == login.EXIT_OK
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"cookies": [], "origins": []}), encoding="utf-8")
+    login.marker_path(other).write_text(login.marker_path(path).read_text(encoding="utf-8"), encoding="utf-8")
+    assert logout("--storage-state", str(other))[0] == login.EXIT_USAGE and other.exists()
+    path.write_text("notes", encoding="utf-8")
+    code, _, err = logout("--storage-state", str(path))
+    assert code == login.EXIT_USAGE and path.read_text(encoding="utf-8") == "notes" and "replaced" in err

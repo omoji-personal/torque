@@ -52,7 +52,7 @@ remaining work so the next consultant can see where to continue.
 | Guide discovery, architecture, Flow review, migration planning, training and release notes | Workflows guide the assistant; live outcomes require separate checks |
 | Investigate orgs, deploy metadata, perform data operations and prepare scoped recovery | Requires existing tools and explicit org selection; recovery coverage varies by operation |
 | Run QA, log analysis, browser flows and probes | Coverage depends on the configured adapter; synthesized probes are not executed tests |
-| Keep what was learned and find it again at the point of use: by task, metadata type, command or error text | [Lessons](docs/lessons.md) are notes with their evidence and age, not instructions; what an agent saves waits as a candidate until it is reviewed |
+| Keep what was learned and find it again at the point of use: by task, metadata type, command or error text | [Lessons](docs/lessons.md) are notes with their evidence and age, not instructions; what an agent saves waits as a candidate until it is reviewed, and meanwhile `torque lesson for` shows it to that client as a marked hint |
 | Prepare meetings and check prompt contracts | Optional dependencies apply; live model-provider behavior remains experimental |
 
 ## What to know before you use it
@@ -185,13 +185,13 @@ removing the flag resumes admission. The workflow updater remains available. See
 | Work | Interface |
 | --- | --- |
 | Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original command mappings |
-| Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs |
+| Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs. `torque session add` records what a check rested on (`--check`, `--as-user`, `--in-org`, `--not-covered`), several `--evidence` files, a `--corrects` link and a `--change` link, or all of it from `--input FILE`; `torque context` leads with where things stand and says what it left out; `torque handoff --since/--change` is written for the task in hand; see [engagement records](docs/engagement-records.md) |
 | Org and metadata investigation | `torque advisory`; use current official Salesforce CLI, skills and MCP tools alongside it |
 | Check a change before and after a deploy | `torque check metadata` (field access, descriptions, fragile flows, hard-coded Ids, profiles, managed components, with Salesforce Code Analyzer merged in when installed), `torque check result` (a saved deploy result on one screen) and `torque check deployed` (what landed in the org); see [checks](docs/checks.md) |
 | Salesforce practice | Eight [skills](docs/skills.md): the build standard (descriptions, simplest option first, access with every field), flows, the delivery lifecycle, architecture, SOQL and Code Analyzer review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
 | Deploy, data operations and scoped recovery | `torque deploy`, `torque data`, `torque org`, `torque recover` |
 | QA, debug logs, browser flows and probes | `torque qa`, `logs`, `browser`, `probes`; coverage and limits depend on the configured adapter |
-| Sign a browser in without a password | `torque browser login` signs a browser tab (or a scripted browser) in through the Salesforce front door with the CLI's existing authorization; the sign-in address never reaches the session. Offline tests only so far: see [browser sign-in](docs/browser-sign-in.md) |
+| Sign a browser in without a password | `torque browser login` sends a browser tab (or a scripted browser) through the Salesforce front door with the CLI's existing authorization; the sign-in address never reaches the session, and the agent then checks the page's user. One live host-tab run so far: see [browser sign-in](docs/browser-sign-in.md) |
 | Lessons from earlier work | `torque session add --learned`, `torque lesson for`, a lessons block in `torque context` and before `torque deploy` and `torque data`; `torque lesson review` and `promote`; see [lessons](docs/lessons.md) |
 | Meeting preparation and prompt contracts | Optional `torque meeting` and `ai-regression`; live model-provider behavior remains experimental |
 

@@ -1,33 +1,32 @@
 # /retrieve-current
 
-Retrieve current metadata, preserve the baseline and stage an editable proposal.
+Retrieve the current version of the components a change touches, keep it as the baseline, and stage an editable copy. Use it before changing anything that already exists in an org.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-Resolve target and exact metadata names from the request and live schema. Identify
-the Salesforce DX project and a task-specific private artifact directory. Preserve
-unrelated dirty files; do not retrieve over the working proposal.
+First, ask for the lessons that fit this work and read them before you act:
+`torque lesson for --task retrieve --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
+and what is wrong with `torque lesson stale <id> --reason <why>`.
 
-Use the available Salesforce retrieval tool or installed CLI. In a valid DX project:
+1. Resolve the target org and the exact metadata names from the request and the org's schema.
+2. Retrieve into a task folder of the private workspace. Outside a Salesforce DX project use the
+   metadata format, which needs no project:
 
-```sh
-sf project retrieve start --metadata <Type:ApiName> --target-org <org-alias> --output-dir <current-directory> --json
-```
+   ```sh
+   sf project retrieve start --metadata <Type:ApiName> --target-org <org-alias> --target-metadata-dir <folder> --unzip --json > retrieve.json
+   ```
 
-Repeat supported selectors or use an explicit manifest for several components. Check
-the command result and saved files for missing/partial retrieval. Record org identity,
-time, selectors, API version and file references. A cached local copy remains usable
-for offline planning when clearly dated; it is not automatically current live state.
+   Inside a DX project whose package directory exists, `--output-dir <folder-inside-the-project>`
+   writes source format instead. `--output-dir` outside a project fails (the output must be inside
+   the project, or the package directory named in `sfdx-project.json` does not exist). Repeat
+   `--metadata`, or use `--manifest <package.xml>`, for several components.
+3. Read the result file: every component you asked for came back, and none is reported as not
+   found. Record org identity, time, selectors, API version and file paths. A cached copy is
+   usable for offline planning when dated; it is not the org's current state.
+4. Copy the baseline to a proposal folder and change only the copy. Compare the diff before
+   applying it, and reconcile anything changed in the org since the retrieve. For a new component,
+   record that it is absent and retrieve only what it depends on.
 
-This retrieval is a manual baseline, not a Torque recovery bundle. For a later
-authorized write with bundle support, use
-`torque deploy --metadata Type:Name --target-org ALIAS --workspace W --client C`,
-repeating `--metadata` per component. Manifest-only, source-directory and dry-run
-deploys do not capture complete before-state. Keep this baseline when those
-selectors or quick promotion are required.
-
-Copy the required baseline files to a proposed directory, make the requested changes
-there, and retain the original. Compare the exact diff and reconcile intervening org
-changes before applying it. For a new component record its verified absence and
-retrieve only dependencies needed to implement it. Continue with `/validate-change`
-and normal deployment when implementation is part of the request.
+This baseline is for manual recovery, not a Torque recovery bundle; `/prep-changeset` says when
+to deploy through `torque deploy --metadata ...` for one. Continue with `/validate-change`.

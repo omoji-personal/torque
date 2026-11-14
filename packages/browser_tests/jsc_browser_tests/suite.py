@@ -96,12 +96,13 @@ async def _live_preflight(config):
     if missing:
         return {**{p: "FAIL" for p in missing}, "preflight_error": "Missing test user for requested profile(s)"}
     from . import auth
-    auth.refuse_debug_env_when_connected()
+    auth.refuse_debug_env_before_sign_in(auth.cdp_endpoint_from_env())
     from playwright.async_api import async_playwright
     from .matrix import login_as_preflight
     sf = config["sf"]
-    admin_auth = auth.get_admin_auth(sf, config["target_org"])
     async with async_playwright() as pw:
+        # Asked for once Playwright runs, just before the browser is sent to it.
+        admin_auth = auth.get_admin_auth(sf, config["target_org"])
         sess = await auth.open_session(pw, admin_auth,
                                        cdp_endpoint=auth.cdp_endpoint_from_env(),
                                        headed=config.get("headed", False))

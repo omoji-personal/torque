@@ -79,8 +79,8 @@ deploys local files "even if they overwrite changes in the org" [DR-README].
 | --- | --- | --- |
 | Activate in Flow Builder or the flow's version list | Default. Anyone can see and repeat it | Setup |
 | Deploy the flow file with its `status` element set to `Active` [SAMPLE-FLOW] | Sandboxes, and production orgs that deploy flows as active | section 2 |
-| Deploy a `FlowDefinition` with `activeVersionNumber` | Orgs that deploy flows inactive | field-reported. Salesforce's reference recommends no longer using `FlowDefinition` to activate (**verify**) |
-| Update the Tooling `FlowDefinition` record | Scripted activation; version number 0 deactivates | field-reported |
+| Deploy a `FlowDefinition` with `activeVersionNumber` 0 | Deactivating a flow through the Metadata API: deploying a Draft status does not do it (section 2) | field-reported, several orgs. Salesforce's reference recommends no longer using `FlowDefinition` to activate (**verify**): use it for this deactivation, say so in the change record, and keep the file out of ordinary deploys |
+| Deploy a `FlowDefinition` with a version number above 0, or update the Tooling `FlowDefinition` record | A fallback where the routes above are not available | field-reported. The number must be the org's version number, read just before |
 
 - In production, activation is a change in its own right. Name the flow and version, get the
   go for that step, and say what starts happening when it is on.

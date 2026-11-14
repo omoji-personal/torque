@@ -40,6 +40,8 @@ failure the agent guessed again 37 times out of 51 and looked the name up 8 time
 | Entity | API | Evidence |
 | --- | --- | --- |
 | `FlowDefinitionView`, `SetupAuditTrail`, `FieldPermissions`, `ObjectPermissions`, `PermissionSet`, `PermissionSetAssignment` | Standard: the Tooling flag fails | [ADV `flowdefinitionview-is-standard-api`, `tooling-api-refuses-permission-objects`]; field-reported |
+| `PermissionSetGroup`, `PermissionSetGroupComponent`, `CronTrigger`, `AsyncApexJob`, `DuplicateRule` | Standard (**verify** in the Object Reference) | The skills' own checks query them this way |
+| `ApexCodeCoverageAggregate` | Tooling (**verify**) | |
 | `FlowDefinition`, `ValidationRule` and `WorkflowRule` metadata, `ApexTrigger`, `CustomField`, layouts, installed package versions | Tooling: add `--use-tooling-api` | [ADV]; field-reported |
 | `FieldDefinition`, `EntityDefinition` | Answered on both in the field record (the catalogue says Tooling only): try the standard API first | field-reported, 48 queries |
 | Any custom object | Standard. Never the Tooling flag | field-reported, 8 failures |
@@ -56,7 +58,7 @@ which one answered.
 | COUNT(Id) with GROUP BY on some setup and custom metadata entities | "does not support aggregate operator COUNT" | COUNT() without grouping, or count client-side | field-reported, 6 |
 | Filter on a long text area or some setup fields | "field X can not be filtered" | Check `filterable`; filter on another field, then in code | field-reported, 7; [ADV `history-fields-unfilterable`] |
 | Filter permission rows with LIKE on `Field` | "invalid operator on id field" | `=` or `IN` with the full `Object.Field`, plus `SobjectType` | field-reported, 4 |
-| Use a sub-select on the same object, or with a left side that is not an Id | MALFORMED_QUERY | Fetch the Ids first and bind them, or walk level by level | [ADV `self-join-forbidden`]; field-reported, 3 |
+| Write a semi-join or anti-join (`WHERE Field IN (SELECT ...)`) on the outer query's own object, or with a left side that is not an Id or reference field | MALFORMED_QUERY | Fetch the Ids first and bind them, or walk level by level. A parent-to-child relationship sub-query (`SELECT Id, (SELECT Id FROM Contacts) FROM Account`) is a different thing | [ADV `self-join-forbidden`]; field-reported, 3 |
 | Query some setup entities without their key filter | "Implementation restriction" | Add the `Id = '...'` or key filter the message asks for | field-reported, 3 |
 | Alias an aggregate `first` or `last`, or use a string function in SELECT | MALFORMED_QUERY | Another alias; SOQL has no string functions | field-reported, 3 |
 | Put `ALL ROWS` in the text of `sf data query` | "unexpected token: 'ALL'" | Drop it and pass `--all-rows` | [ADV `all-rows-is-a-cli-flag`] |
@@ -72,8 +74,10 @@ An error means the query did not run. Never read it as "no rows".
 - Write `--json` results to a file and read the file. With `--output-file`, also pass
   `--result-format`.
 - `--result-format csv` printed blanks for aliased aggregates (field-reported): use JSON.
-- If you wrap queries in a redacting layer, pass the SOQL error text through: it holds no
-  record data.
+- If you wrap queries in a redacting layer, keep the error code, the row and column and the
+  schema part of the message (object, field, operator), and redact the literals in the
+  echoed query line: a filter value can be private. Keep the raw response in private
+  evidence when the task needs it.
 
 ## Before a result goes anywhere
 

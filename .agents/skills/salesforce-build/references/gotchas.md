@@ -79,8 +79,9 @@ confirmed in a fetched primary source). None was re-tested for this release: run
     and leaves the rest alone [ADV `full-profile-deploy`, verified live]. Check: read a
     profile file for `false` entries before it goes anywhere.
 22. **`--purge-on-delete` belongs to a destructive deploy,** not to
-    `sf project delete source` [ADV `purge-flag-belongs-to-deploy`]. Leave it out unless
-    asked.
+    `sf project delete source` [ADV `purge-flag-belongs-to-deploy`], and works only in
+    sandboxes and Developer Edition orgs, not production (**verify**, Metadata API
+    `purgeOnDelete`). Leave it out unless asked.
 23. **Small deploy dependencies** (field-reported): a test custom metadata record had to be
     deleted before the real mapping record deployed; a rollup tool's rollup on a new object
     needed its child trigger and test deployed too; a platform-event subscriber change needed
@@ -93,8 +94,8 @@ confirmed in a fetched primary source). None was re-tested for this release: run
 ## Managed packages
 
 25. **Managed components are locked.** "Cannot modify managed object" came from changing a
-    field set's description [ADV `managed-fields-immutable`]. Check: `[check]` no namespaced
-    component in the change.
+    field set's description [ADV `managed-fields-immutable`]. Check:
+    `[check: managed.component-in-change]`.
 26. **Never deploy your own copies of a package's custom metadata records.** A copy without
     the namespace created a duplicate developer name that made the package's trigger fail on
     every insert (observed in a developer org; skill `salesforce-npsp`). Check: query the
@@ -155,8 +156,12 @@ text was observed; each fix is the one that worked.
 39. **Deploy and retrieve need a project folder, or the metadata-format flags.** Outside a
     project: `--target-metadata-dir DIR --unzip` to retrieve, `--metadata-dir DIR` to
     deploy. Check: `sfdx-project.json` and its package directory exist before the command.
-40. **`sf project deploy validate` rejects `--test-level NoTestRun`,** and production rejects
-    NoTestRun on any deploy. Check: in a sandbox use `deploy start --dry-run`.
+40. **`sf project deploy validate` offers no `NoTestRun`:** it requires Apex tests, and the
+    CLI says `NoTestRun` applies only to development environments [CLI-DR]. In the field
+    record three validate attempts failed on it, and one production deploy with "testLevel of
+    NoTestRun cannot be used in production organizations". Without
+    `--test-level` the default depends on the payload and the org [CLI-DR]. Check: in a
+    sandbox use `deploy start --dry-run`; for production, name the test level you mean.
 41. **A connected app would not deploy** ("You can't create a connected app"). Check whether
     the org still allows new connected apps; an external client app is the replacement.
 42. **A broad retrieve cannot always be redeployed.** It held members the platform created
@@ -179,6 +184,11 @@ text was observed; each fix is the one that worked.
 - [ADV] Torque advisory catalogue (`torque advisory notes --command TEXT`). Each entry carries
   its own label: verified live, documented or practitioner.
 - [SK-PS] https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-permission-set-generate/SKILL.md
+- [CLI-DR] Salesforce CLI deploy plugin 4.1.2 help (`sf project deploy start --help`,
+  `sf project deploy validate --help`), read 2026-11-14; the same text is in
+  https://github.com/salesforcecli/plugin-deploy-retrieve/blob/main/README.md
+- **verify** items: purgeOnDelete (https://developer.salesforce.com/docs/platform/api-metadata/references/file-based-calls/meta-deploy-deleting-files.html),
+  read as a search extract.
 - [TH-NPSP] https://trailhead.salesforce.com/content/learn/modules/nonprofit-success-pack-maintenance/prepare-for-npsp-and-salesforce-releases
 - Observed in a developer org: item 26, carried from the earlier nonprofit skill text.
 - field-reported: lessons from real client work with Torque and its predecessor (one

@@ -125,6 +125,37 @@ def test_unfinished_deploy_points_at_report(tmp_path):
     assert code == 0 and "sf project deploy report --job-id 0Af000000000005AAA" in out
 
 
+COUNTS_ONLY = {"status": 0, "result": {"id": "0Af000000000009AAA", "status": "Failed", "done": True, "success": False,
+                                       "checkOnly": True, "numberComponentsTotal": 3, "numberComponentsDeployed": 2,
+                                       "numberComponentErrors": 1}}
+
+
+def test_a_result_with_totals_and_no_component_list_prints_the_totals(tmp_path):
+    """Review R2-C07: no per-component list; the totals it states are printed, nothing unknown reads zero."""
+    path = tmp_path / "counts.json"
+    path.write_text(json.dumps(COUNTS_ONLY), encoding="utf-8")
+    code, out, _ = run("check", "result", str(path))
+    assert code == 0
+    assert ("Components: the file has no per-component list; it states 3 in total, 2 deployed, 1 failed. For the "
+            "list, save `sf project deploy report --job-id 0Af000000000009AAA --target-org ALIAS --json`") in out
+    assert "0 failed" not in out and "0 created" not in out
+    assert out.splitlines()[-1].startswith("Next: the file does not list what failed; save `sf project deploy report")
+    data = json.loads(run("check", "result", str(path), "--json")[1])
+    assert data["counts"] == {"created": None, "changed": None, "unchanged": None, "deleted": None, "failed": 1}
+    assert data["declared"] == {"total": 3, "deployed": 2, "failed": 1} and data["component_detail"] is False
+
+
+def test_changed_from_refuses_a_result_without_a_component_list(tmp_path):
+    """The change cannot be told from totals alone; an empty scope would look like nothing to check."""
+    from check_fixtures import Tree
+    t = Tree(tmp_path / "p")
+    t.field("Shift__c", "Hours__c")
+    path = tmp_path / "counts.json"
+    path.write_text(json.dumps(COUNTS_ONLY), encoding="utf-8")
+    code, _, err = run("check", "metadata", str(t.root), "--changed-from", str(path), "--analyzer", "off")
+    assert code == 2 and "no per-component list" in err and "sf project deploy report" in err
+
+
 def test_changed_from_reads_the_same_tolerant_way(tmp_path):
     from check_fixtures import Tree
     t = Tree(tmp_path / "p")

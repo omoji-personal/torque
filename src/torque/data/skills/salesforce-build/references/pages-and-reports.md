@@ -2,7 +2,8 @@
 
 Use this when a change must be seen or used by people: a field on a page, a new page, a list
 view, a report or a dashboard. State described: Winter '27 (API 68.0), checked 2026-11-14.
-`[check]` = testable in the source files. **verify** = not confirmed in a fetched primary
+A tag such as `[check: page.sections-lost]` names the `torque check metadata` rule that tests
+the statement. **verify** = not confirmed in a fetched primary
 source: verify in the org or the current documentation. field-reported = seen in client
 work, usually one org. "House standard" = this playbook's convention where no Salesforce
 rule was found. Where this file gives no element name, retrieve an existing component of the
@@ -44,14 +45,19 @@ and can be edited or not as designed.
 - **Edit the file surgically** (field-reported: a broad clean-up of `label` properties,
   meant to remove one tab label that blocked deploys, wiped every field-section header on a
   live page during user testing). Start from a fresh retrieve, change only the exact property
-  and value, and after deploying retrieve again. `[check]` the count of section labels equals
-  the baseline.
+  and value, and after deploying retrieve again. `[check: page.sections-lost]` (with
+  `--baseline`) counts section labels; it does not see a label changed in place, so also
+  read the `git diff` of the page file: only the property you meant changed.
 - **Assignment in metadata**: app-level assignments are `profileActionOverrides` in the app
   file; they are not removed by a destructive manifest and must be added to change sets by
   hand (**verify**). To learn the shape for this org, activate in a sandbox and retrieve the
   app and the object.
-- **Performance**: use Analyze in Lightning App Builder; keep the first view light and move
-  secondary components to tabs that are not the default (**verify**).
+- **Performance**: use Analyze in Lightning App Builder; it scores only what shows on first
+  load, not other tabs or closed accordion sections. Measure Experienced Page Time with
+  `?eptVisible=1` on the page address. Keep the first view light and move secondary
+  components to tabs that are not the default (**verify** all three).
+- **A new object or key field** also goes on the compact layout (highlights panel) and the
+  search layout, so users can tell records apart in lookups and search results.
 - **Rich text** entered on a form: sanitise it on the server for every source, not only in
   the form [DG-FORMS].
 - **Inclusive forms**: visible labels (placeholder text alone fails), keyboard-only
@@ -69,8 +75,8 @@ and can be edited or not as designed.
   deployed first (field-reported).
 - A managed package's layouts retrieve only when the namespace is inside the layout name
   (field-reported). Do not edit a package's layout; assign your own.
-- A screen flow placed on a page is hidden from users who lack Run Flows
-  (`salesforce-flow/references/gotchas.md`, item 9).
+- A screen flow placed on a page was hidden from a user who lacked Run Flows (field-reported)
+  (`salesforce-flow/references/gotchas.md`, "A screen flow on a record page").
 
 ## 4. List views
 

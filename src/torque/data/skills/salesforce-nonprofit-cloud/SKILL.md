@@ -30,7 +30,7 @@ Reference files in this folder:
 | Which features are licensed? | Setup > Company Information > Permission Set Licenses: Fundraising Access, Grantmaking, VolunteerManagementPsl, Record Aggregation, Data Pipelines Base User |
 | Person Accounts on? | `SELECT IsPersonAccount FROM Account LIMIT 1` compiles |
 | Rollups running? | Setup > Data Processing Engine has an active copy of each template in use; Setup > Monitor Workflow Services shows recent Completed runs |
-| Commitment processing healthy? | `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null` |
+| Commitment processing healthy? | `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null` (describe first; if the field is not `filterable`, select it and count non-empty rows) |
 | Fundraising settings | `FundraisingConfig` (retrieve it): donor matching, lapsed and failing counts, next-transaction creation, household soft credits |
 
 A query that errors can also mean the running user lacks the licence or access: treat an
@@ -81,7 +81,7 @@ features, or a sandbox of a licensed org.
 | Grantmaking | Grantmaking Manager, reviewer and Experience Cloud permission sets; every viewer needs a paid license |
 | Volunteer Management | Volunteer Management User group; portal and guest sets for sign-up sites |
 | Outcome Management | Outcome Management permission set |
-| DPE | Data Pipelines Base User (only 3 included, and `Fundraising_Admin` uses one per admin) |
+| DPE | Data Pipelines Base User (few are included, and `Fundraising_Admin` uses one per admin; count them in Setup > Company Information, **verify**) |
 
 Assign permission set groups and extend with custom or muting sets, not ad hoc object
 permissions. Person Account object access comes from Account permissions, field-level

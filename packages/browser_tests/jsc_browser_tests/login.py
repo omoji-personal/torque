@@ -44,16 +44,38 @@ EXIT_PLAYWRIGHT = 8       # Playwright or its browser is not installed (--storag
 EXIT_SIGN_IN = 9          # the sign-in itself failed
 
 EXIT_CODES_HELP = (
-    "exit codes: 0 signed in (the redirect was sent, or the session file was written); 1 nobody opened "
-    "the address in time; 2 options; 3 the alias is not authorized in the Salesforce CLI or its "
+    "exit codes: 0 the tab was sent to the org's sign-in address (not yet confirmed: check the page), or the "
+    "session file was written after the page's user was checked; 1 the address "
+    "expired before a browser opened it (nothing was signed in); 2 options; 3 the alias is not authorized in the Salesforce CLI or its "
     "authorization expired; 4 the Salesforce CLI is not installed; 5 another org or user than recorded; 6 refused by this "
     "workspace's mode; 7 no local port; 8 Playwright or its browser is missing; 9 the sign-in failed.")
 API_ONLY_NOTE = ("A user with the API Only User permission cannot be signed in to a browser; "
                  "use a separate user for browser tests.")
 NOT_CHECKED = "org not checked against the client record"
+CHECK_IN_PAGE = ("Next: wait until the tab shows the org's page (an action sent while it still redirects can fail), "
+                 "then check which user the page shows before testing. A login page means the sign-in failed: retry "
+                 "once, then stop and report; never type or ask for a password. A \"Change Your Password\" page means "
+                 "that user's password has expired: only the consultant can change it (the CLI and API keep working). "
+                 "A device verification page needs the consultant too.")
 # One word that the CLI cannot read as an option. It is passed as one argument, never through a shell.
 _ALIAS = re.compile(r"[^\s-]\S*")
 _ORG_ID = re.compile(r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?")
+# What the CLI's identity fields look like. A value of another shape is printed as UNREADABLE:
+# the command prints what the CLI returned, and a field that does not look like what it should
+# be is not repeated, so that it can never carry an address or a token into the output.
+_USER_ID = re.compile(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?")
+_USERNAME = re.compile(r"[A-Za-z0-9._'+-]{1,80}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,10}")
+_EDITION = re.compile(r"[A-Za-z][A-Za-z ]{0,59}")
+UNREADABLE = "(unreadable)"
+
+
+def shown(value, shape: re.Pattern) -> str:
+    """`value` when it has the shape it should have, "" when there is none, else UNREADABLE."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, str) and shape.fullmatch(value) and redact(value) == value:
+        return value
+    return UNREADABLE
 
 
 class LoginError(Exception):
@@ -72,20 +94,24 @@ class Output:
     out: object = None
     err: object = None
 
+    # Everything printed passes the package's redaction as well: the loopback address the
+    # command prints on purpose has no credential shape and comes through unchanged.
+
     def result(self, text: str, **event) -> None:
         stream = self.out or sys.stdout
-        print(json.dumps(event) if self.as_json else text, file=stream, flush=True)
+        print(json.dumps(redact(event)) if self.as_json else redact(text), file=stream, flush=True)
 
     def hint(self, text: str) -> None:
         if not self.as_json:
-            print(text, file=self.err or sys.stderr, flush=True)
+            print(redact(text), file=self.err or sys.stderr, flush=True)
 
     def fail(self, error: LoginError) -> int:
+        reason = redact(error.reason)
         if self.as_json:
-            print(json.dumps({"event": "failed", "exit_code": error.code, "reason": error.reason}),
+            print(json.dumps({"event": "failed", "exit_code": error.code, "reason": reason}),
                   file=self.out or sys.stdout, flush=True)
         else:
-            print(f"error: {error.reason}", file=self.err or sys.stderr, flush=True)
+            print(f"error: {reason}", file=self.err or sys.stderr, flush=True)
         return error.code
 
 
@@ -116,6 +142,11 @@ def policy_refusal() -> str | None:
     (torque.browser_guard, the gate): a sign-in for a host tab, or a saved session
     for another browser, would step outside that guard. Nothing is added here that
     the existing policy does not already say."""
+    if auth.in_build_only_mode():
+        # The gate hook blocks the command here too; this covers a host with no hook wired.
+        return ("build-only mode: this workspace keeps the AI session away from the org, and a browser sent into "
+                "the org is org access. Nothing was signed in. Run the command yourself outside the AI session, "
+                "or the owner sets the workspace's ai_access to full or connected.")
     if not auth.in_connected_mode():
         return None
     return ("connected mode: this workspace allows only Torque's own guarded browser, which checks every "
@@ -213,15 +244,15 @@ def org_edition(identity: dict) -> str:
     """The org's edition as the Organization query names it, or "". A Developer Edition org is
     "production" by the platform's sandbox flag; printing the edition beside it says what it is."""
     edition = identity.get("organization_type")
-    return edition.strip() if isinstance(edition, str) else ""
+    return shown(edition.strip(), _EDITION) if isinstance(edition, str) else ""
 
 
 def wrong_user(alias: str, username: str, expected: str) -> str | None:
     """Why the alias's user is not the user the seed's role records, or None."""
     if not expected or username.casefold() == expected.casefold():
         return None
-    return (f"{alias} signs in as {username or 'an unknown user'}, but the test-user seed records {expected} for "
-            "that role; nothing was signed in")
+    return (f"{alias} signs in as {shown(username, _USERNAME) or 'an unknown user'}, but the test-user seed records "
+            f"{shown(expected, _USERNAME)} for that role; nothing was signed in")
 
 
 def minter(client: SfClient, alias: str, identity: dict, path: str | None, api_version: str | None,
@@ -246,11 +277,15 @@ def minter(client: SfClient, alias: str, identity: dict, path: str | None, api_v
 
 
 def user_id_of(client: SfClient, username: str) -> str | None:
+    """The User Id for a username the CLI returned, or None. A username that does not
+    look like one is not looked up."""
+    if shown(username, _USERNAME) in ("", UNREADABLE):
+        return None
     try:
-        found = client.user_by_username(username) if username else None
+        found = client.user_by_username(username)
     except SfError:
         return None
-    return found["user_id"] if found else None
+    return shown(found["user_id"], _USER_ID) if found else None
 
 
 
@@ -311,8 +346,9 @@ def prepare(args) -> Plan:
         other = identify(user_client, user_alias)
         if not same_org(other["org_id"], identity["org_id"]):
             raise LoginError(EXIT_ORG_MISMATCH,
-                             f"--as-alias {user_alias} is authorized for org {other['org_id']}, but --target-org "
-                             f"{target} is org {identity['org_id']}. Nothing was signed in. Authorize the test user "
+                             f"--as-alias {user_alias} is authorized for org {shown(other['org_id'], _ORG_ID)}, but "
+                             f"--target-org {target} is org {shown(identity['org_id'], _ORG_ID)}. Nothing was signed "
+                             "in. Authorize the test user "
                              "in the same org first (the consultant runs `sf org login web --alias "
                              f"{user_alias}` against that org, outside the agent).")
         plan.alias, plan.client = user_alias, user_client
@@ -324,14 +360,51 @@ def prepare(args) -> Plan:
         if not found:
             raise LoginError(EXIT_SIGN_IN, f"no user {args.as_user!r} in org {identity['org_id']}; give the full "
                                            "username or the User Id")
-        if not found["is_active"]:
-            raise LoginError(EXIT_SIGN_IN, f"user {found['username'] or found['user_id']} is inactive; an inactive "
-                                           "user cannot be logged in as")
+        if not _USER_ID.fullmatch(found["user_id"]):
+            raise LoginError(EXIT_SIGN_IN, f"the user lookup for {args.as_user!r} returned an unreadable User Id; "
+                                           "nothing was signed in. Give the User Id itself")
+        username = shown(found["username"], _USERNAME)
+        blocker = login_as_blocker(found, admin)
+        if blocker:
+            raise LoginError(EXIT_SIGN_IN, f"user {username or found['user_id']} {blocker}. Nothing was sent to the "
+                                           "org.")
         route = "direct" if args.direct else "setup-page"
-        plan.login_as = {"user_id": found["user_id"], "username": found["username"], "route": route}
+        plan.login_as = {"user_id": found["user_id"], "username": username, "route": route}
         plan.path = (auth.login_as_path(identity["org_id"], found["user_id"]) if args.direct
                      else auth.user_setup_path(found["user_id"]))
     return plan
+
+
+# User types that the Setup page's Login does not reach: Experience Cloud and portal users
+# (an admin reaches them from their contact, "Log in to Experience as User") and the guest user.
+_SITE_USER_TYPES = {"PowerPartner", "PowerCustomerSuccess", "CustomerSuccess", "CspLitePortal", "SelfService"}
+
+
+def login_as_blocker(found: dict, admin: SfClient) -> str | None:
+    """Why an admin cannot log in as this user from the user's Setup page, as a phrase
+    that says what to do, or None. What the org does not answer is not a blocker; the
+    org's Log in as policy cannot be read here and is named in the next steps instead."""
+    if not found["is_active"]:
+        return ("is inactive, and an inactive user cannot be logged in as: activate the user in Setup, Users, or "
+                "choose an active test user")
+    user_type = found.get("user_type") or ""
+    if user_type == "Guest":
+        return "is a site guest user, which nobody can log in as: open the site itself without signing in"
+    if user_type in _SITE_USER_TYPES:
+        return (f"is an Experience Cloud or portal user (user type {user_type}), whom the Setup page's Login does not "
+                "reach: an admin logs in as that user from the user's contact (\"Log in to Experience as User\"), "
+                "by hand, outside the agent")
+    try:
+        facts = admin.login_as_facts(found["user_id"])
+    except SfError:
+        facts = {}
+    if facts.get("frozen"):
+        return ("is frozen, and a frozen user cannot be logged in as: the consultant unfreezes the user in Setup, "
+                "Users, or chooses another test user")
+    if facts.get("api_only"):
+        return ("has the API Only User permission (from the profile or a permission set), so Salesforce allows no "
+                "browser session for it, Log in as included: use a separate user for browser tests")
+    return None
 
 
 def login_as_steps(plan: Plan) -> list[str]:
@@ -339,8 +412,9 @@ def login_as_steps(plan: Plan) -> list[str]:
     user = plan.login_as["username"] or plan.login_as["user_id"]
     setup = auth.user_setup_path(plan.login_as["user_id"])
     needs = ("Log in as needs the org's \"Administrators Can Log in as Any User\" policy (Setup, Login Access "
-             "Policies) or login access granted by the user, and Modify All Data for the signed-in admin. "
-             + API_ONLY_NOTE)
+             "Policies) or login access granted by the user, and Modify All Data for the signed-in admin. The command "
+             "cannot read that policy: no Login button on the user's page means it is off, and an admin of the org "
+             "turns it on (or the user grants access); do not change it without the consultant. " + API_ONLY_NOTE)
     done = ("When done, do not click \"Log out as\" (it can end the whole session): close the tab, or run "
             "torque browser login again to be the admin.")
     if plan.login_as["route"] == "direct":
@@ -349,7 +423,7 @@ def login_as_steps(plan: Plan) -> list[str]:
                 f"Confirm the \"Logged in as {user}\" banner at the top of the page. Without it the tab is still "
                 f"the admin: go to {setup} in the org and click Login there.",
                 done, needs]
-    return [f"The tab opens the page of {user} in Setup, signed in as the admin. If it shows another page, "
+    return [f"The tab was sent, as the admin, to the page of {user} in Setup. If it shows another page, "
             f"navigate to {setup} in the org.",
             "Click Login on that page.",
             f"Confirm the \"Logged in as {user}\" banner at the top of the page before testing. Without it the tab "
@@ -363,32 +437,40 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
     except OSError as error:
         raise LoginError(EXIT_BIND, f"no local port could be opened on 127.0.0.1 ({type(error).__name__}). "
                                     "Close programs that hold many local ports, then run this again.") from None
-    expires = time.time() + args.timeout
+    # One deadline: the printed expiry is the moment the relay stops asking for, and sending, an address.
+    deadline, expires = time.monotonic() + args.timeout, time.time() + args.timeout
     output.result(listener.address, event="waiting", address=listener.address, timeout_seconds=args.timeout,
-                  expires_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires)))
+                  expires_at=time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(expires))
+                  + f".{int(expires % 1 * 1000):03d}Z")
     output.hint(f"Open the address above in the browser tab within {args.timeout} seconds. It works once, on this "
                 "machine only. Navigate the tab to it; do not fetch it with curl or a web fetch tool.")
     outcome = listener.serve(minter(plan.client, plan.alias, plan.identity, plan.path, args.api_version,
                                     plan.expect_username),
-                             timeout=args.timeout, navigation_only=not args.any_client)
+                             timeout=args.timeout, deadline=deadline, navigation_only=not args.any_client)
     if outcome.status == "timeout":
-        raise LoginError(EXIT_TIMEOUT, outcome.reason + "; the listener closed and nothing was signed in")
+        raise LoginError(EXIT_TIMEOUT, outcome.reason + "; the listener closed"
+                         + ("" if "nothing was signed in" in outcome.reason else " and nothing was signed in"))
     if outcome.status != "redirected":
         code = int(outcome.status) if outcome.status.isdigit() else EXIT_SIGN_IN
         raise LoginError(code, outcome.reason)
-    username = outcome.minted.username
-    user_id = user_id_of(plan.client, username)
+    user_id = user_id_of(plan.client, outcome.minted.username)
+    username = shown(outcome.minted.username, _USERNAME)
+    org_id = shown(plan.identity["org_id"], _ORG_ID)
     kind = org_kind(plan.identity)
     edition = org_edition(plan.identity)
-    event = {"event": "redirected", "org_id": plan.identity["org_id"], "org_kind": kind,
+    # All the command knows: the tab was sent to the org's sign-in address as this user. It
+    # cannot see the tab, so nothing here says "signed in".
+    event = {"event": "sent", "session_verified": False, "org_id": org_id, "org_kind": kind,
              "org_edition": edition or None,
-             "username": username or None, "user_id": user_id, "org_check": plan.org_check}
-    text = (f"Redirect sent: org {plan.identity['org_id']} ({kind}{', ' + edition if edition else ''}), "
+             "username": username or None, "user_id": user_id, "org_check": plan.org_check,
+             "check_in_page": CHECK_IN_PAGE}
+    text = (f"Tab sent to the org's sign-in address: org {org_id} ({kind}{', ' + edition if edition else ''}), "
             f"user {username or 'unknown'}"
-            f"{', User Id ' + user_id if user_id else ''}; {plan.org_check}.")
+            f"{', User Id ' + user_id if user_id else ''}; {plan.org_check}. Not confirmed: the command cannot see "
+            "the tab.")
     if plan.alias != plan.target_alias:
         event["as_alias"] = plan.alias
-        text += f" Signed in through alias {plan.alias}."
+        text += f" Sent through alias {plan.alias}."
     if plan.role:
         event["role"] = plan.role
         text += f" Role {plan.role} of the test-user seed."
@@ -397,11 +479,7 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
         event.update(login_as=plan.login_as, next_steps=steps)
         text += "\nNext steps:\n" + "\n".join(f"{number}. {step}" for number, step in enumerate(steps, 1))
     output.result(text, **event)
-    output.hint("Wait until the tab shows the org (an action sent while it still redirects can fail), then confirm "
-                "the signed-in user in the page before testing. A login page means the sign-in failed: retry once, "
-                "then stop and report; never type or ask for a password. A \"Change Your Password\" page means the "
-                "sign-in worked and that user's password has expired: only the consultant can change it, and the "
-                "CLI and API keep working meanwhile.")
+    output.hint(CHECK_IN_PAGE)
     return EXIT_OK
 
 
@@ -412,10 +490,36 @@ PLAYWRIGHT_MISSING = ("Playwright mode needs Torque's browser extra and a Playwr
                       "chromium`. Signing a host browser tab in (without --storage-state) needs neither.")
 
 
+def workspace_folder_problem(path: Path) -> str | None:
+    """Why `path` lies in a Torque workspace folder that is not the selected client's:
+    another client's folder (clients/OTHER/...) or an initiative's (initiatives/NAME/...).
+    A session file signs a browser in to this org, so it belongs with this client only."""
+    selected = _client_folder()
+    for parent in path.parents:
+        root = parent.parent
+        if parent.name not in ("clients", "initiatives") or root == parent \
+                or not ((root / "workspace.json").is_file() or (root / ".torque").is_dir()):
+            continue
+        owner = path.relative_to(parent).parts[0]
+        if parent.name == "clients" and selected is not None and selected == (parent / owner).resolve():
+            return None
+        whose = "an initiative's folder" if parent.name == "initiatives" else (
+            "a client folder, and no client is selected (pass --client)" if selected is None
+            else "another client's folder")
+        return (f"{path} is inside {whose} of the workspace ({parent.name}/{owner}). A session file signs a browser "
+                "in to this org, so it belongs in the selected client's folder, for example "
+                "clients/NAME/state/browser-auth/ALIAS.json, or outside any repository.")
+    return None
+
+
 def storage_path_problem(path: Path) -> str | None:
     """Why a session file may not be written at `path`, or None. The file signs a browser
-    in as the user, so it must not be able to reach a repository: a path inside a git
-    work tree is refused unless git ignores it."""
+    in as the user, so it must stay with the selected client and must not be able to reach
+    a repository: a path in another client's or an initiative's folder of the workspace is
+    refused, and a path inside a git work tree is refused unless git ignores it."""
+    elsewhere = workspace_folder_problem(path)
+    if elsewhere:
+        return elsewhere
     folder = next((parent for parent in path.parents if parent.is_dir()), None)
     if folder is None or not any((parent / ".git").exists() for parent in [folder, *folder.parents]):
         return None
@@ -506,20 +610,24 @@ def run_storage_state(args, output: Output) -> int:
         raise LoginError(EXIT_USAGE, problem)
     debug = auth.debug_env_problem()
     if debug:
-        raise LoginError(EXIT_USAGE, debug.replace("a connected run does not start with it", "the sign-in does "
-                                                                                           "not start with it"))
+        raise LoginError(EXIT_USAGE, debug)
     if importlib.util.find_spec("playwright") is None:
         raise LoginError(EXIT_PLAYWRIGHT, "Playwright is not installed. " + PLAYWRIGHT_MISSING)
     plan = prepare(args)
     state, user_id, username = asyncio.run(capture_state(plan, args.api_version))
     write_private(path, json.dumps(state))
+    write_private(marker_path(path), json.dumps({"written_by": MARKER_TEXT, "file": path.name}))
     kind = org_kind(plan.identity)
-    event = {"event": "saved", "storage_state": str(path), "org_id": plan.identity["org_id"], "org_kind": kind,
+    edition = org_edition(plan.identity)
+    username, user_id = shown(username, _USERNAME), shown(user_id, _USER_ID)
+    event = {"event": "saved", "session_verified": True, "storage_state": str(path),
+             "org_id": plan.identity["org_id"], "org_kind": kind, "org_edition": edition or None,
              "username": username, "user_id": user_id, "org_check": plan.org_check}
     if plan.alias != plan.target_alias:
         event["as_alias"] = plan.alias
-    output.result(f"Session file written: {path}\norg {plan.identity['org_id']} ({kind}), user {username}, User Id "
-                  f"{user_id}; {plan.org_check}.", **event)
+    output.result(f"Session file written: {path}\norg {plan.identity['org_id']} ({kind}"
+                  f"{', ' + edition if edition else ''}), user {username}, User Id {user_id}; {plan.org_check}.",
+                  **event)
     output.hint("The file signs a browser in as that user until the session ends. Keep it out of repositories and "
                 f"delete it when done: torque browser logout --storage-state {path}")
     return EXIT_OK
@@ -542,24 +650,52 @@ def cmd_login(args, out=None, err=None) -> int:
                                                     "signed in"))
 
 
+MARKER_SUFFIX = ".torque-session"
+MARKER_TEXT = "written by torque browser login --storage-state"
+
+
+def marker_path(path: Path) -> Path:
+    """The small file `login --storage-state` writes beside a session file it wrote, so that
+    `logout` deletes only such a file. The session file itself stays exactly Playwright's
+    format; the marker holds no session value."""
+    return path.with_name(path.name + MARKER_SUFFIX)
+
+
+def written_by_torque(path: Path) -> bool:
+    try:
+        data = json.loads(marker_path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("written_by") == MARKER_TEXT and data.get("file") == path.name
+
+
 def cmd_logout(args, out=None, err=None) -> int:
-    """Delete a session file that `login --storage-state` wrote. Nothing else is deleted:
-    a file that is not a browser session file is left alone."""
+    """Delete a session file that `login --storage-state` wrote, and its marker. Nothing
+    else is deleted: a file without the marker, or that is not a browser session file,
+    is left alone."""
     output = Output(bool(getattr(args, "json", False)), out, err)
     path = Path(args.storage_state).expanduser().resolve()
+    by_hand = ("If it is a session file you no longer need, delete it yourself; the Salesforce session itself ends "
+               "at the org's own timeout.")
     try:
         if not path.exists():
+            if written_by_torque(path):
+                marker_path(path).unlink()
             output.result(f"No session file at {path}; nothing to delete.", event="absent", storage_state=str(path))
             return EXIT_OK
+        if not path.is_file() or not written_by_torque(path):
+            raise LoginError(EXIT_USAGE, f"{path} was not written by torque browser login --storage-state (no "
+                                         f"{marker_path(path).name} beside it); nothing was deleted. " + by_hand)
         try:
-            state = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+            state = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             state = None
         if not (isinstance(state, dict) and isinstance(state.get("cookies"), list)
                 and isinstance(state.get("origins"), list)):
-            raise LoginError(EXIT_USAGE, f"{path} is not a browser session file written by torque browser login; "
-                                         "nothing was deleted")
+            raise LoginError(EXIT_USAGE, f"{path} is not a browser session file any more (something replaced it); "
+                                         "nothing was deleted. " + by_hand)
         path.unlink()
+        marker_path(path).unlink()
         output.result(f"Session file deleted: {path}", event="deleted", storage_state=str(path))
         output.hint("The Salesforce session itself ends at the org's own timeout; no browser can reuse it from "
                     "this file any more.")
@@ -573,12 +709,14 @@ def cmd_logout(args, out=None, err=None) -> int:
 def add_parsers(sub) -> None:
     """Add `login` and `logout` to the browser command's subparsers."""
     login = sub.add_parser(
-        "login", help="sign a browser in through the Salesforce front door; prints only a local address",
-        description="Sign a browser in to an org the Salesforce CLI is already authorized for. No password is "
-                    "used and the Salesforce sign-in address is never printed. By default the command prints a "
-                    "local address and waits: navigate the browser tab to it and the tab is redirected into the "
-                    "org. With --storage-state it signs Torque's own headless browser in and writes a session "
-                    "file for a scripted browser instead. " + API_ONLY_NOTE,
+        "login", help="send a browser to the org through the Salesforce front door; prints only a local address",
+        description="Send a browser to an org the Salesforce CLI is already authorized for, through its "
+                    "single-use sign-in address. No password is used and that address is never printed. By "
+                    "default the command prints a local address and waits: navigate the browser tab to it and the "
+                    "tab is redirected to the org's sign-in address. The command cannot see the tab: check the "
+                    "page and its user afterwards. With --storage-state it signs Torque's own headless browser "
+                    "in, checks the page's user, and writes a session file for a scripted browser instead. "
+                    + API_ONLY_NOTE,
         epilog=EXIT_CODES_HELP)
     login.add_argument("--target-org", required=True, help="org alias the Salesforce CLI is authorized for")
     login.add_argument("--path", help="page to land on, for example /lightning/page/home (default: the org's own "

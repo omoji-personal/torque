@@ -59,11 +59,14 @@ def test_a_lesson_saved_with_a_session_comes_back_for_its_client_and_never_for_a
 
     # 1. torque context for the client shows it, in text and in JSON.
     code, out, _ = torque("context")
-    assert code == 0 and "Lessons from earlier work: 1 of 1 for this client (firm 1, platform " in out
+    assert code == 0 and ("Lessons from earlier work: 1 of 1 for this client; 1 of the firm's, marked firm "
+                          "(firm 1, platform ") in out
     assert f"[{lesson['id']}] WHEN you are about to compare a choice-based screen field in a flow formula" in out
+    assert "WHEN you deploy a new custom field" in out                   # the firm's standing correction
     assert "torque lesson for TOPIC --workspace" in out and "--client alpha-nonprofit" in out
     context = json.loads(torque("context", "--json")[1])["lessons"]
-    assert [item["id"] for item in context["shown"]] == [lesson["id"]]
+    assert [item["id"] for item in context["shown"]][0] == lesson["id"]
+    assert [item["scope"] for item in context["shown"]] == ["client", "firm"]
     assert (context["engagement_active"], context["firm_active"], context["candidates_waiting"]) == (1, 1, 0)
     # 2. It is found by metadata type.
     code, out, _ = torque("lesson", "for", "--type", "Flow", "--json")
@@ -72,7 +75,8 @@ def test_a_lesson_saved_with_a_session_comes_back_for_its_client_and_never_for_a
     # 3. Never for the other client: not in context, not in recall, not by id, not in the listing.
     other = torque("context", client="beta-land-trust")[1]
     assert lesson["id"] not in other and "choice" not in other
-    assert "Lessons: none active for this client yet (firm 1, platform " in other
+    assert ("Lessons from earlier work: 0 of 0 for this client; 1 of the firm's, marked firm (firm 1, platform "
+            in other) and "WHEN you deploy a new custom field" in other
     listed = json.loads(torque("lesson", "for", "--type", "Flow", "--limit", "50", "--json", client="beta-land-trust")[1])
     assert lesson["id"] not in [item["id"] for item in listed["lessons"]]
     code, out, err = torque("lesson", "show", lesson["id"], client="beta-land-trust")
@@ -94,9 +98,54 @@ def test_what_the_agent_learned_waits_as_a_candidate_and_is_counted(torque):
     assert "1 candidate lesson(s) wait for review: torque lesson review" in text
     code, out, _ = torque("lesson", "for", "deploy", "permission", "--json")
     answer = json.loads(out)
-    assert all(item["scope"] == "platform" for item in answer["lessons"]) and answer["candidates_not_shown"] == 1
+    assert all(item["scope"] == "platform" for item in answer["lessons"]) and answer["candidates_not_shown"] == 0
+    assert [item["state"] for item in answer["candidate_hints"]] == ["candidate"]       # a hint, under its own key
     shown = json.loads(torque("lesson", "for", "deploy", "permission", "--include-candidates", "--json")[1])
     assert shown["lessons"][0]["state"] == "candidate"
+
+
+NO_COLUMN = "No such column 'Hours__c' on entity 'Contact'"
+
+
+def test_a_clients_own_candidate_is_a_hint_to_an_explicit_query_and_nowhere_else(torque, root, monkeypatch, capsys):
+    from jsc_revert import cli as revert_cli
+    for number in range(3):
+        assert torque("session", "add", "--summary", f"Query failed, then worked ({number})", "--learned",
+                      f"When: a query fails with No such column on Contact ({number}). Do: describe Contact and use "
+                      "the API name it lists. Because: the label and the API name differ.")[0] == 0
+    assert torque("lesson", "add", "--scope", "firm", "--when", "a query fails with No such column", "--do",
+                  "ask the firm", "--error", "No such column")[0] == 0                       # a firm candidate
+    code, out, _ = torque("lesson", "for", "--error", NO_COLUMN)
+    text = out.splitlines()
+    assert code == 0 and text[0].startswith("Lessons for this error (client alpha-nonprofit + firm + platform)")
+    heading = text.index("Not reviewed yet, from this client's own work (2):")
+    assert any(line.startswith("[") for line in text[1:heading])                   # the active lessons come first
+    marked = [index for index, line in enumerate(text) if HINT in line]
+    assert len(marked) == 2 and min(marked) > heading
+    verify = [line.strip() for line in text[heading:] if line.strip().startswith("If it worked: torque lesson verify")]
+    assert len(verify) == 2 and all(line.endswith(" --evidence reproduced") for line in verify)
+    assert "ask the firm" not in out and "2 matching candidate(s) wait for review" in out    # one client, one firm
+    answer = json.loads(torque("lesson", "for", "--error", NO_COLUMN, "--json")[1])
+    assert answer["lessons"] and all(item["state"] == "active" for item in answer["lessons"])
+    assert [(item["scope"], item["mark"]) for item in answer["candidate_hints"]] == [("client", HINT)] * 2
+    assert answer["candidates_not_shown"] == 2
+    # Never in the context block, never before a deploy or a data change, never for another client.
+    context = json.loads(torque("context", "--json")[1])["lessons"]
+    assert context["shown"] == [] and context["candidates_waiting"] == 4                   # three here, one firm
+    assert "describe Contact" not in torque("context")[1]
+    printed: list[str] = []
+    monkeypatch.setattr(revert_cli, "cmd_deploy", lambda args: printed.append(capsys.readouterr().err) or 0)
+    assert torque("deploy", "--metadata", "CustomField:Contact.Hours__c", "--target-org", "example-dev")[0] == 0
+    from jsc_memory import recall, storage
+    before = recall.for_command("sf data query", error=NO_COLUMN, scopes=storage.scopes_for(
+        root / "clients" / "alpha-nonprofit"))
+    for text in (printed[0], before):
+        assert "describe Contact" not in text and HINT not in text
+    other = json.loads(torque("lesson", "for", "--error", NO_COLUMN, "--json", client="beta-land-trust")[1])
+    assert other["candidate_hints"] == [] and other["candidates_not_shown"] == 1          # the firm's, not alpha's
+
+
+HINT = "candidate, not reviewed: a hint, check it"
 
 
 def test_a_lesson_that_cannot_be_saved_never_loses_the_session_record(torque, root):
@@ -215,21 +264,26 @@ def test_advisory_notes_add_scoped_lessons_under_their_own_key(torque, root):
     torque("lesson", "add", "--when", "you deploy a flow for this client", "--do", "read the active version back",
            "--source", "consultant")
     command = "sf project deploy start --metadata Flow:Gift_Entry"
-    code, out, _ = torque("advisory", "notes", "--command", command, "--limit", "4", "--json")
+    code, out, _ = torque("advisory", "notes", "--command", command, "--limit", "4", "--json", "--with-lessons")
     answer = json.loads(out)
     assert code == 0 and set(answer) == {"platform_notes", "scoped_lessons"}
     assert answer["platform_notes"] and all("remedy" in note for note in answer["platform_notes"])
     scoped = answer["scoped_lessons"]
-    assert scoped[0]["scope"] == "client" and scoped[0]["when"] == "you deploy a flow for this client"
+    # Strength first, the client's own favoured: its lesson is among the four, stronger shipped ones may lead.
+    assert [item["when"] for item in scoped if item["scope"] == "client"] == ["you deploy a flow for this client"]
     assert {item["scope"] for item in scoped} <= {"client", "firm", "platform"}
     assert not any(item["id"].startswith("A-") for item in scoped)          # the catalogue is the other key
     text = torque("advisory", "notes", "--command", command)[1]
     assert "remedy :" in text and "WHEN you deploy a flow for this client" in text
-    # Without a selected client the answer keeps its earlier shape: the list of notes.
-    code, out, _ = torque("advisory", "notes", "--command", command, "--json", client=None)
-    assert code == 0 and isinstance(json.loads(out), list)
+    # Without the option the JSON is the list of notes, with a client selected or not; with it, always the object.
+    for client in ("alpha-nonprofit", None):
+        code, out, _ = torque("advisory", "notes", "--command", command, "--json", client=client)
+        assert code == 0 and isinstance(json.loads(out), list)
+    code, out, _ = torque("advisory", "notes", "--command", command, "--json", "--with-lessons", client=None)
+    assert set(json.loads(out)) == {"platform_notes", "scoped_lessons"}
     # Another client gets its own answer, never this client's lesson.
-    other = json.loads(torque("advisory", "notes", "--command", command, "--json", client="beta-land-trust")[1])
+    other = json.loads(torque("advisory", "notes", "--command", command, "--json", "--with-lessons",
+                              client="beta-land-trust")[1])
     assert "you deploy a flow for this client" not in json.dumps(other)
 
 

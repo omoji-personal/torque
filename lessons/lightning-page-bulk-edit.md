@@ -22,4 +22,4 @@ review_by: 2027-02-14
 supersedes: []
 promoted_to: []
 ---
-Check: after the deploy, the count of section labels on the page equals the count before.
+Check: diff the page XML you retrieved before the edit against the edited file, and after the deploy against a fresh retrieve; only the elements you meant to change differ.

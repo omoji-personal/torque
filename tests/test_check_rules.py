@@ -25,7 +25,7 @@ def test_field_without_grant_and_its_exemptions(tmp_path):
     names = {f["component"]["name"] for f in hits(r, "access.field-without-grant")}
     assert names == {"Shift__c.Hours__c"}
     f = hits(r, "access.field-without-grant")[0]
-    assert f["severity"] == "error" and "Shift_User" in f["action"] and f["line"] == 2
+    assert f["severity"] == "warning" and "Shift_User" in f["action"] and f["line"] == 2   # no scope given
 
 
 def test_grant_found_elsewhere_is_named(tmp_path):
@@ -34,6 +34,7 @@ def test_grant_found_elsewhere_is_named(tmp_path):
     t.permset("Shift_User", fields=["Shift__c.Hours__c"])
     r = t.check(only=["CustomField:Shift__c.Hours__c"])
     f = hits(r, "access.field-without-grant")[0]
+    assert f["severity"] == "note"            # the project grants it; --only did not name the permission set
     assert "PermissionSet Shift_User under the checked folder grants it" in f["action"]
     assert "Permission sets in this change: none" in f["action"]
 
@@ -78,6 +79,39 @@ def test_profile_in_change_and_powerful_permission(tmp_path):
                                                       "The permission set grants Modify All on Shift__c."]
 
 
+def test_powerful_permissions_in_a_profile_and_the_wider_list(tmp_path):
+    """Gemini F-14: profiles were not inspected; Author Apex and permission management were not listed."""
+    t = Tree(tmp_path)
+    up = "    <userPermissions>\n        <enabled>{on}</enabled>\n        <name>{name}</name>\n    </userPermissions>\n"
+    t.add("force-app/main/default/profiles/Ops.profile-meta.xml", xml("Profile", up.format(on="true", name="ModifyAllData")
+          + up.format(on="true", name="AssignPermissionSets") + up.format(on="true", name="ApiEnabled")
+          + "    <custom>true</custom>\n"))
+    t.profile("Quiet")
+    t.permset("Coder", extra=up.format(on="true", name="AuthorApex"))
+    r = t.check()
+    powerful = {f["component"]["name"]: f["message"] for f in hits(r, "access.powerful-permission")}
+    assert powerful == {"Ops": "The profile enables Modify All Data, Assign Permission Sets.",
+                        "Coder": "The permission set enables Author Apex."}
+
+
+def test_grants_the_deploy_rejects(tmp_path):
+    """Gemini F-13: an editable auto-number field, edit without read, and a formula field on Activity."""
+    t = Tree(tmp_path)
+    t.field("Shift__c", "Ref__c", type="AutoNumber", help=None)
+    t.field("Activity", "Age__c", type="Number", formula="TODAY() - DATEVALUE(CreatedDate)", help=None)
+    t.field("Shift__c", "Hours__c", type="Number")
+    t.add("force-app/main/default/permissionsets/Bad.permissionset-meta.xml", xml("PermissionSet", "".join(
+        f"    <fieldPermissions>\n        <editable>true</editable>\n        <field>{f}</field>\n"
+        f"        <readable>{r}</readable>\n    </fieldPermissions>\n"
+        for f, r in (("Shift__c.Ref__c", "true"), ("Task.Age__c", "true"), ("Shift__c.Hours__c", "false")))
+        + "    <label>Bad</label>\n"))
+    r = t.check()
+    got = sorted(f["message"] for f in hits(r, "access.formula-field-editable"))
+    assert got == ["Shift__c.Hours__c is granted editable but not readable; the deploy fails on it (edit needs read).",
+                   "Shift__c.Ref__c is an auto-number field granted as editable; the deploy fails on it.",
+                   "Task.Age__c is a formula field granted as editable; the deploy fails on it."]
+
+
 def test_descriptions_missing_and_placeholder(tmp_path):
     t = Tree(tmp_path)
     t.obj("Shift__c", desc=None)
@@ -111,6 +145,8 @@ def test_help_text_only_where_a_user_fills_in(tmp_path):
     t.field("Shift__c", "Number__c", type="AutoNumber", help=None)
     t.field("Switch__mdt", "On__c", type="Checkbox", help=None)
     t.field("Shift__c", "Helped__c")
+    t.field("Shift__c", "Legacy_Key__c", help=None, extra="    <externalId>true</externalId>\n")   # Gemini F-12/22
+    t.field("Reading__b", "Value__c", type="Number", help=None)                                  # a big object
     r = t.check()
     assert {f["component"]["name"] for f in hits(r, "doc.help-text-missing")} == {"Shift__c.Hours__c"}
 
@@ -208,16 +244,37 @@ def test_entry_conditions_reruns_and_same_record(tmp_path):
     t.flow("Reruns", start(target="Do_It") + create_task(fault="Do_It"))
     t.flow("Once", start(target="Do_It", extra="        <doesRequireRecordChangedToMeetCriteria>true"
                                                "</doesRequireRecordChangedToMeetCriteria>\n") + create_task(fault="Do_It"))
-    t.flow("Prior_Checked", start(target="Do_It") + create_task(fault="Do_It")
-           + "    <formulas><name>Was</name><dataType>Boolean</dataType><expression>{!$Record__Prior.IsClosed}"
-             "</expression></formulas>\n")
+    was = ("    <formulas><name>Was</name><dataType>Boolean</dataType><expression>{!$Record__Prior.IsClosed}"
+           "</expression></formulas>\n")
+
+    def decide(left, operator="EqualTo", right="<booleanValue>false</booleanValue>"):
+        return element("decisions", "Check", "        <rules><name>Go</name><conditionLogic>and</conditionLogic>"
+                       f"<conditions><leftValueReference>{left}</leftValueReference><operator>{operator}</operator>"
+                       f"<rightValue>{right}</rightValue></conditions><connector><targetReference>Do_It"
+                       "</targetReference></connector><label>Go</label></rules>\n")
+    t.flow("Prior_Through_Formula", start(target="Check") + decide("Was") + create_task(fault="Do_It") + was)
+    t.flow("Prior_In_Decision", start(target="Check") + decide("$Record__Prior.StageName", "NotEqualTo",
+                                                                "<elementReference>$Record.StageName</elementReference>")
+           + create_task(fault="Do_It"))
+    t.flow("Prior_On_The_Right", start(target="Check") + decide("$Record.StageName", "NotEqualTo",
+                                                                 "<elementReference>$Record__Prior.StageName"
+                                                                 "</elementReference>") + create_task(fault="Do_It"))
+    t.flow("Is_Changed_Filter", start(target="Do_It", extra="        <filters><field>Amount</field><operator>IsChanged"
+                                                            "</operator><value><booleanValue>true</booleanValue>"
+                                                            "</value></filters>\n") + create_task(fault="Do_It"))
+    t.flow("Prior_Unused", start(target="Do_It") + create_task(fault="Do_It") + was)       # a resource no one reads
+    t.flow("Prior_In_Words", start(target="Do_It") + create_task(fault="Do_It"),
+           desc="Creates a task on every qualifying save; consider $Record__Prior.")    # review R2-C05
+    t.flow("Prior_In_A_Label", start(target="Check") + decide("$Record.StageName").replace(
+        "<label>Go</label>", "<label>Unlike $Record__Prior</label>") + create_task(fault="Do_It"))
     t.flow("Create_Only", start(target="Do_It", when="Create") + create_task(fault="Do_It"))
     same = element("recordUpdates", "Touch", "        <inputReference>$Record</inputReference>\n", fault="Touch_Log")
     t.flow("Same_Record", start(target="Touch") + same + element("assignments", "Touch_Log"))
     t.flow("Same_And_Task", start(target="Touch") + same.replace("Touch_Log", "Do_It") + create_task(fault="Do_It"))
     r = t.check()
     assert [f["component"]["name"] for f in hits(r, "flow.no-entry-conditions")] == ["No_Entry"]
-    assert [f["component"]["name"] for f in hits(r, "flow.reruns-on-every-update")] == ["Reruns", "Same_And_Task"]
+    assert sorted(f["component"]["name"] for f in hits(r, "flow.reruns-on-every-update")) == [
+        "Prior_In_A_Label", "Prior_In_Words", "Prior_Unused", "Reruns", "Same_And_Task"]
     assert [f["component"]["name"] for f in hits(r, "flow.after-save-same-record")] == ["Same_Record"]
 
 
@@ -240,10 +297,11 @@ def test_api_version_behind(tmp_path):
     t = Tree(tmp_path, api="62.0")
     t.flow("Old", start(target="Do_It") + create_task(fault="Do_It"), api="60.0")
     t.flow("New", start(target="Do_It") + create_task(fault="Do_It"), api="64.0")
+    t.flow("Held", start(target="Do_It") + create_task(fault="Do_It"), api="63.0")   # above the project: silent
     r = t.check()
     found = hits(r, "flow.api-version-behind")
     assert [(f["component"]["name"], f["severity"]) for f in found] == [("Old", "note")]
-    assert "64.0" in found[0]["message"] and "New" in found[0]["message"]
+    assert "below 62.0, the project's sourceApiVersion" in found[0]["message"]
 
 
 def test_screen_action_without_trigger(tmp_path):
@@ -273,8 +331,10 @@ def test_default_names_status_and_run_mode(tmp_path):
     r = t.check()
     names = hits(r, "flow.default-names")
     assert [f["component"]["name"] for f in names] == ["Copied"] and "2 name(s)" in names[0]["message"]
-    assert [f["component"]["name"] for f in hits(r, "flow.status-not-active")] == ["Copied"]
-    assert {f["component"]["name"] for f in hits(r, "flow.active-in-source")} == {"Named", "Explained"}
+    # one note for the report, not one per flow, and none for a Draft (Gemini F-18)
+    assert [f["component"]["name"] for f in hits(r, "flow.active-in-source")] == ["Explained"]
+    assert "This and any other flow file here that asks for status Active" in hits(r, "flow.active-in-source")[0][
+        "message"]
     assert [f["component"]["name"] for f in hits(r, "flow.system-mode-without-sharing")] == ["Named"]
 
 
@@ -412,3 +472,48 @@ def test_metadata_api_format_object_file(tmp_path):
     assert ("doc.description-missing", "Gizmo__c.Size__c") in rules
     assert ("rule.hard-coded-id", "Gizmo__c.Size_Positive") in rules
     assert ("doc.description-missing", "Gizmo__c") not in rules
+
+
+def test_hard_coded_id_shapes():
+    """Gemini F-20: an 18 character Id carries a case checksum; timestamps, hex and zeros are not Ids; custom
+    metadata record and knowledge article prefixes are."""
+    from torque.checks.model import checksum, find_ids
+    cmt = "m005g000000AbCd"
+    assert find_ids(f"x {cmt + checksum(cmt)} y") == [cmt + checksum(cmt)]
+    assert find_ids("x kA05g000000AbCd y") == ["kA05g000000AbCd"]
+    assert find_ids(f"x {USER_ID} {USER_ID_15} y") == [USER_ID, USER_ID_15]
+    for not_an_id in ("202600114T12000", "202600114T12000000", "a4f3b0c9e8d1a2b3c4", "000000000000000AAA",
+                      USER_ID_15 + "1AB", "Route_Request_2026"):
+        assert find_ids(f"x {not_an_id} y") == [], not_an_id
+
+
+def test_a_fault_handler_is_not_asked_for_its_own_fault_path(tmp_path):
+    """Gemini F-16: Create_Task's fault path goes to Log_Error; Log_Error runs only on that path. An empty fault
+    connector is no fault path."""
+    t = Tree(tmp_path)
+    log = element("recordCreates", "Log_Error", "        <object>Task</object>\n")
+    t.flow("Handled", start(target="Create_Task") + create_task("Create_Task", fault="Log_Error") + log)
+    empty = create_task("Create_Task").replace("    </recordCreates>", "        <faultConnector/>\n    </recordCreates>")
+    t.flow("Empty_Fault", start(target="Create_Task") + empty)
+    shared = create_task("Create_Task", fault="Log_Error", connector=None).replace(
+        "    </recordCreates>", "        <connector><targetReference>Log_Error</targetReference></connector>\n"
+                               "    </recordCreates>")
+    t.flow("Also_On_The_Main_Path", start(target="Create_Task") + shared + log)
+    r = t.check()
+    got = sorted((f["component"]["name"], f["message"].split(" ")[0]) for f in hits(r, "flow.no-fault-path"))
+    assert got == [("Also_On_The_Main_Path", "Log_Error"), ("Empty_Fault", "Create_Task")]
+
+
+def test_a_screen_component_that_names_the_action_runs_it(tmp_path):
+    """Gemini F-18: an action button names the screen action in its input; it needs no trigger."""
+    action = ("        <actions>\n            <name>Fetch_Price</name>\n            <actionName>Search</actionName>\n"
+              "            <actionType>flow</actionType>\n            <label>Fetch</label>\n        </actions>\n")
+    button = ("        <fields>\n            <name>Fetch_Button</name>\n"
+              "            <extensionName>flowruntime:actionButton</extensionName>\n"
+              "            <inputParameters><name>actionName</name><value><stringValue>Fetch_Price</stringValue>"
+              "</value></inputParameters>\n            <fieldType>ComponentInstance</fieldType>\n        </fields>\n")
+    t = Tree(tmp_path)
+    t.flow("Button", element("screens", "S", action + button), process="Flow")
+    t.flow("Nothing", element("screens", "S", action), process="Flow")
+    r = t.check()
+    assert [f["component"]["name"] for f in hits(r, "flow.screen-action-without-trigger")] == ["Nothing"]

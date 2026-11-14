@@ -2,7 +2,8 @@
 
 Write the description when you build the component, in the one current source, not in a
 later clean-up deploy. State described: Winter '27 (API 68.0), checked 2026-11-14.
-`[check]` = testable in the source files. **verify** = not confirmed in a fetched primary
+A tag such as `[check: doc.too-long]` names the `torque check metadata` rule that tests the
+statement. **verify** = not confirmed in a fetched primary
 source: verify in the org (an element name: in a retrieved file) or the current
 documentation. field-reported = seen in client work, usually one org.
 
@@ -31,12 +32,12 @@ found more than 40% of active flows with none (field-reported).
 | Validation rule | `description`, `errorMessage`, `errorDisplayField` in the rule file; `/* */` comments in the formula | Description: the business rule and who asked for it. Message: what is wrong and what to do. Comments: why each condition is there | [BLOG-DOC] [SK-VR]; the description is a house standard |
 | Formula field | `/* */` comments in the formula, plus the field description | Why the formula is built this way | [BLOG-DOC] |
 | Permission set | `label`, `description` | What it grants, for which task | [SK-PS] |
-| Permission set group | `description` | Who it is for (which role or persona) | **verify** |
-| Custom permission | Its description (**verify** the element in a retrieved file) | What holding it allows or skips | house standard |
+| Permission set group | `description` | Who it is for (which role or persona) | element [MD-TYPES]; house standard |
+| Custom permission | `description` and `label` | What holding it allows or skips | element [MD-TYPES]; house standard |
 | Flow | `description` on the flow and each element and resource | `salesforce-flow/references/build-checklist.md`, step 8 | [DG-RT] |
 | Apex class | A `/** */` block before the class and each public or global method | What it does, why it is code, how it is called | [SK-APEX] |
-| Record type, report, dashboard | Its description | Who uses it and for what decision | house standard: no Salesforce rule was found. Retrieve one to see the element |
-| Lightning web component | A header comment | Why it exists and what it replaces | house standard: no Salesforce rule was confirmed |
+| Record type, report, dashboard | `description` | Who uses it and for what decision | element [MD-TYPES]; house standard: no Salesforce rule was found |
+| Lightning web component | `description` in `*.js-meta.xml`; a header comment in the JavaScript file; a doc comment on each `@api` property and method | Why it exists, what it replaces, what a parent passes in | element [MD-TYPES]; house standard: no Salesforce rule was confirmed |
 
 Also record the decision behind non-obvious configuration: "Document configuration decisions
 and their rationale" [WA-OE].
@@ -106,11 +107,12 @@ for all elements and variables" [DG-RT].
 
 ## 7. Check it
 
-- `[check]` every changed object, field, validation rule, permission set and flow file has a
-  non-empty `description`; every field a user fills in has `inlineHelpText`; no description
-  equals the label; validation rule names and messages are within the limits.
-- Flows and their elements: `sf code-analyzer run --rule-selector flow --target PATH` (rule
-  `MissingDescription`, **verify**).
+- `torque check metadata PATH`: `[check: doc.description-missing, doc.help-text-missing,
+  doc.description-placeholder, doc.too-long]` (field, help text, permission set and
+  validation rule description lengths). Validation rule names and error messages within
+  their limits: by hand, and a dry-run deploy.
+- Flows and their elements: the same command, which runs Code Analyzer's
+  `MissingDescription` too (skill `salesforce-code-analyzer-review` without Torque).
 - Custom fields without a description across a project: `sf hardis:lint:missingattributes`
   if the community sfdx-hardis plugin is already installed (run it as an external command)
   [HARDIS].
@@ -128,6 +130,9 @@ rows, which is the point. See `salesforce-delivery/references/handover-and-suppo
 ## Sources
 
 - [BLOG-DOC] Salesforce blog, how to document inside your Salesforce instance (2019): https://www.salesforce.com/blog/how-to-document-inside-your-salesforce-instance/
+- [MD-TYPES] Salesforce's Metadata API type definitions shipped with the Salesforce CLI
+  (`@salesforce/types` 1.8.0), read 2026-11-14: `description` on `PermissionSetGroup`,
+  `CustomPermission`, `RecordType`, `Report`, `Dashboard`, `LightningComponentBundle`.
 - [SK-FIELD] https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-custom-field-generate/SKILL.md
 - [SK-OBJ] https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-custom-object-generate/SKILL.md
 - [SK-VR] https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-validation-rule-generate/SKILL.md

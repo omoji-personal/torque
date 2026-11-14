@@ -79,7 +79,8 @@ VOCABULARY = (
     (r"debug logs?|fault emails?|error emails?|unhandled fault|stack traces?|troubleshoot\w*|diagnos\w+",
      ("diagnose",), ()),
 )
-_COMPILED = tuple((re.compile(r"(?<![A-Za-z0-9])(?:" + words + r")(?![A-Za-z0-9])", re.I), tasks, types)
+# An underscore joins a name (Update_Layout_Flow is one name, not the word layout).
+_COMPILED = tuple((re.compile(r"(?<![A-Za-z0-9_])(?:" + words + r")(?![A-Za-z0-9_])", re.I), tasks, types)
                   for words, tasks, types in VOCABULARY)
 
 # Source-format file endings (lower case) and folders, to their metadata type.
@@ -239,10 +240,30 @@ def types_for_path(path: str) -> list[str]:
     return []
 
 
+# The value is one shell word: any run of plain characters and quoted stretches (`Name='A B'`).
+_ORG_VALUE = re.compile(r"(?<!\S)(--target-org|--target-dev-hub|-o|--where|--values)(?:=|\s+)"
+                        r"(?:\"[^\"]*\"|'[^']*'|[^\s\"'])+")
+
+
+def without_org_names(command: str) -> str:
+    """A command with the names and record values it carries left out: `--target-org dev-sandbox`
+    is a name, not a sandbox task, and what follows `--where` or `--values` is record data, which
+    has no part in finding a lesson. Both spellings (`--where X` and `--where=X`). Used for
+    matching only."""
+    return _ORG_VALUE.sub(r"\1", command or "")
+
+
 def for_command(command: str) -> tuple[list[str], list[str]]:
     """(tasks, metadata types) a command line points to: its verbs, the `Type:Name`
     members it names, and the source files and folders it mentions."""
     tasks, types = infer(command)
+    return tasks, _unique(types + command_members(command))
+
+
+def command_members(command: str) -> list[str]:
+    """The metadata types a command names as such: `Type:Name` members, a bare type name
+    (`--metadata Layout`) and source files and folders. Not the words of the command."""
+    types: list[str] = []
     for token in re.split(r"[\s,]+", command or ""):
         token = token.strip("\"'")
         head = token.split(":", 1)[0]
@@ -250,7 +271,7 @@ def for_command(command: str) -> tuple[list[str], list[str]]:
             types.append(TYPES[head.lower()])
         elif "/" in token or "\\" in token or token.lower().endswith(tuple(SUFFIXES)):
             types += types_for_path(token)
-    return tasks, _unique(types)
+    return _unique(types)
 
 
 def topic_words(words) -> list[str]:
@@ -260,3 +281,56 @@ def topic_words(words) -> list[str]:
         if word not in _STOP:
             found.append(word)
     return _unique(found)
+
+
+# Every task word the vocabulary gives, so that a topic word naming one is asked as that task.
+TASKS = frozenset(task for _, tasks, _ in VOCABULARY for task in tasks)
+_SIBILANT = ("s", "x", "z", "ch", "sh")
+
+
+def word_forms(word: str) -> set[str]:
+    """A lower-case word with its plural or singular ending: flow and flows, query and
+    queries, box and boxes. Nothing else: report is not reporting, note is not not."""
+    forms = {word}
+    if word.endswith("ies") and len(word) > 4:
+        forms.add(word[:-3] + "y")
+    elif word.endswith("es") and word[:-2].endswith(_SIBILANT):
+        forms |= {word[:-2], word[:-1]}
+    elif word.endswith("s") and not word.endswith(("ss", "us", "is")) and len(word) > 3:
+        forms.add(word[:-1])
+    else:
+        forms.add(word + ("es" if word.endswith(_SIBILANT) else "s"))
+        if word.endswith("y") and len(word) > 3:
+            forms.add(word[:-1] + "ies")
+    return forms
+
+
+def topic_terms(topic) -> tuple[list[str], list[str], list[str]]:
+    """(tasks, metadata types, words) of a topic. A phrase the vocabulary knows (`flow`,
+    `dashboard`, `field access`), a task's own name (`deploy`, `report`, `data-load`) and
+    a type's name (`CustomField`) are asked as that task or type; only the words left over
+    are matched as words, so `report dashboard` is the report task and the Dashboard type."""
+    token = re.compile(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*")
+    task_of = lambda word: next((task for task in TASKS if task in word_forms(tag(word))), None)  # noqa: E731
+    # A task written as Torque writes it (sandbox-refresh, data-load) first, then the phrases.
+    words = token.findall(" ".join(str(word) for word in topic or ()))
+    tasks = [task_of(word) for word in words if "-" in word and task_of(word)]
+    text = " ".join(word for word in words if not ("-" in word and task_of(word)))
+    more, types = infer(text)
+    tasks += more
+    for pattern, _, _ in _COMPILED:
+        text = pattern.sub(" ", text)
+    left = []
+    for word in token.findall(text):
+        if task_of(word):
+            tasks.append(task_of(word))
+        elif word.lower() in TYPES:
+            types.append(TYPES[word.lower()])
+        else:
+            left.append(word)
+    asked = {name.lower() for name in [*tasks, *types]}
+    words: list[str] = []
+    for word in topic_words(left):
+        if not word_forms(word) & (asked | set(words)):
+            words.append(word)
+    return _unique(tasks), _unique(types), words

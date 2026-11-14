@@ -1,26 +1,16 @@
 ---
-description: "Read relevant saved lessons and distinguish active, pending and archived records."
+description: "Read saved lessons: the ones that fit the work, one in full, or a list by state. Use it before work earlier lessons may cover, or when the consultant asks what Torque has learned."
 ---
 
 # /lesson-show
 
-Read relevant saved lessons and distinguish active, pending and archived records.
+Read saved lessons: the ones that fit the work, one in full, or a list by state. Use it before work earlier lessons may cover, or when the consultant asks what Torque has learned.
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-Use the selected client and the requested state:
-
-```sh
-torque lesson show pending --workspace <private-path> --client <client-name>
-torque lesson show active --workspace <private-path> --client <client-name>
-torque lesson show archive --workspace <private-path> --client <client-name>
-```
-
-Read only relevant records. Show ID, concise lesson, scope, source/date and lifecycle
-state. A pending queue is an optional working aid, not an action gate or evidence
-that past sessions failed. Active means retained as useful, not verified-current.
-Recheck drift-prone facts before using them for a current operation. Do not load
-every other client's lessons into a shared model context.
+`torque lesson for <words> --workspace <private-path> --client <client-name>` finds the lessons that fit the work.
+`torque lesson show <id>` prints one in full; `torque lesson list --state candidate|active|retired|stale` lists them.
+Every lesson command, and how to judge what you read, is in `/lesson`.
 
 **Conversation input:** $ARGUMENTS
 Use supplied context and existing authorization. Ask only for consequential missing information. Keep work and evidence in the selected private client workspace.

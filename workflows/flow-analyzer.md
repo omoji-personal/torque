@@ -1,24 +1,35 @@
 # /flow-analyzer
 
-Explain, review and improve a Flow from its current definition and actual behavior.
+Explain, review or fix a flow from its active definition and its actual behavior. Use it when someone asks what a flow does, why it failed, or how to improve it.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-Locate the requested Flow in the selected org or supplied metadata. Retrieve its current
-definition and identify the active version separately from the latest/draft version.
-Use `/advisory flow` for definition-scoped activation evidence when available.
+Read skill `salesforce-flow` (`salesforce-flow/references/review.md`) first.
 
-Explain purpose, entry conditions, trigger timing, screen path, decisions, variables,
-subflows, formulas, DML and external actions. Tie important statements to elements.
-Review bulk behavior, queries/DML in loops, recursion, fault handling, permissions,
-transaction boundaries, hardcoded identifiers, nulls, naming and maintainability.
-Consider a simpler field/formula/before-save approach only when functionally equivalent.
-Do not require an employer-specific bypass object or a bypass in every Flow.
+First, ask for the lessons that fit this work and read them before you act:
+`torque lesson for --task flow-build --type Flow --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
+and what is wrong with `torque lesson stale <id> --reason <why>`.
 
-Distinguish source findings from observed runtime behavior. If the user asked for a
-fix, preserve current metadata, make a targeted edit, validate it, test relevant paths,
-deploy/activate within the existing authorized scope and verify the intended active
-version and behavior. Do not replace the whole Flow just because XML generation is easy.
+1. Locate the flow in the selected org or the supplied metadata. Retrieve its current definition
+   (`/retrieve-current`) and name the active version apart from the latest or draft one:
+   `torque advisory flow --target-org <org-alias> --api-name <FlowApiName> --json`.
+2. Run `torque check metadata <flow-file> [--baseline <folder-retrieved-before-the-change>]`
+   first. It reports missing fault paths, data elements inside a loop, missing entry conditions,
+   flows that rerun on every update, hard-coded Ids, choice fields compared to text in formulas,
+   screen actions without a trigger and undescribed elements, and merges Code Analyzer's flow
+   rules when installed; with a baseline it labels what the flow already had as inherited. Then
+   read the logic for what no check sees.
+3. Explain purpose, entry conditions, trigger timing, screen path, decisions, variables,
+   subflows, formulas, data changes and external actions, tying each statement to an element.
+4. Review bulk behavior, recursion, transaction boundaries, nulls, permissions and running
+   context, naming and maintainability. Offer a simpler field, formula or before-save design only
+   when it does the same job.
+5. Separate what the source shows from what was observed at runtime. For a fix, keep the
+   retrieved baseline, edit only the elements the fix needs (never regenerate the whole flow),
+   validate (`/validate-change`), test the relevant paths, deploy within the authorized scope and
+   confirm which version is active afterwards.
 
-Save the explanation, change rationale, tests and unresolved paths. For discovery or
-training use plain-language steps; for implementation include exact elements and diffs.
+Save the explanation, the rationale for a change, the tests and the paths not tested. For
+discovery or training write plain-language steps; for an implementation give the exact elements
+and the diff.

@@ -105,6 +105,13 @@ def test_a_command_points_to_tasks_and_types(command, tasks, types):
     assert tasks <= set(found_tasks) and types == set(found_types)
 
 
+def test_an_underscore_joins_a_name_and_its_parts_are_not_words():
+    assert vocab.infer("Update_Layout_Flow") == ([], [])
+    assert vocab.for_command("sf project deploy start --metadata Flow:Update_Layout_Flow") == (
+        ["flow-build", "deploy"], ["Flow"])
+    assert "Layout" in vocab.infer("the page layout")[1]
+
+
 def test_types_are_spelled_as_salesforce_spells_them():
     assert [vocab.canonical_type(word) for word in ("flow", "Flows", "customfield", "permission set", "Bot")] == [
         "Flow", "Flow", "CustomField", "PermissionSet", "Bot"]
@@ -113,3 +120,33 @@ def test_types_are_spelled_as_salesforce_spells_them():
 
 def test_topic_words_drop_filler():
     assert vocab.topic_words(["the", "Flow", "for", "gift-entry", "and", "FLS"]) == ["flow", "gift", "entry", "fls"]
+
+
+@pytest.mark.parametrize("word,same,different", [
+    ("flow", {"flows"}, {"flowing", "flo", "workflow"}),
+    ("flows", {"flow"}, {"flowss"}),
+    ("query", {"queries"}, {"querying", "quer"}),
+    ("queries", {"query"}, {"querie"}),
+    ("box", {"boxes"}, {"boxing"}),
+    ("process", {"processes"}, {"proces", "processing"}),
+    ("processes", {"process"}, set()),
+    ("report", {"reports"}, {"reporting", "reported", "rep"}),
+    ("notes", {"note"}, {"not"}),
+    ("status", {"statuses"}, {"statu"}),
+])
+def test_a_word_matches_itself_with_a_plural_or_singular_ending_and_nothing_more(word, same, different):
+    assert same <= vocab.word_forms(word) and not different & vocab.word_forms(word)
+
+
+@pytest.mark.parametrize("topic,tasks,types,words", [
+    (["report", "dashboard"], ["report"], ["Dashboard"], []),
+    (["Reports"], ["report"], [], []),
+    (["flow", "activation"], ["flow-build"], ["Flow"], ["activation"]),
+    (["data-load", "owner"], ["data-load"], [], ["owner"]),
+    (["CustomField", "help"], [], ["CustomField"], ["help"]),
+    (["snapshot", "snapshots", "owner"], [], [], ["snapshot", "owner"]),
+    (["field", "access"], ["field-build", "access"], ["CustomField", "PermissionSet"], []),
+    (["sandbox-refresh"], ["sandbox-refresh"], [], []),
+])
+def test_a_topic_word_the_vocabulary_knows_is_asked_as_its_task_or_type(topic, tasks, types, words):
+    assert vocab.topic_terms(topic) == (tasks, types, words)
