@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+import re
+from urllib.parse import unquote
 
 from .components import Component, code_text
 
@@ -57,7 +59,10 @@ ACCESS_SECTIONS = {"fieldPermissions": ("field", "CustomField"), "objectPermissi
                    "layoutAssignments": ("layout", "Layout"), "userPermissions": ("name", None)}
 MERGE_TYPES = {"PermissionSet", "Profile"}
 KEYS = ("fullName", "name", "field", "object", "apexClass", "recordType", "tab", "application", "apexPage", "flow",
-        "layout")
+        "layout", "picklist")
+NUMBER = re.compile(r"-?\d+(\.\d+)?")
+# Same-tag siblings at the top level whose order is what a user sees (rule 5 keeps order below the top level).
+ORDERED_TOP = {"Layout": {"layoutSections", "relatedLists"}}
 
 
 def _default_action_override(node) -> bool:
@@ -100,7 +105,7 @@ SERVER_ADDITIONS = {
 
 @dataclass
 class Outcome:
-    status: str                                            # same, different, unexplained-additions, could-not-compare
+    status: str        # same, different, unexplained-additions, partly-compared, could-not-compare
     differences: list[str] = field(default_factory=list)
     not_compared: int = 0                                  # source entries about components not in this retrieve
     unexplained: list[str] = field(default_factory=list)   # top-level content only the org has, not explained
@@ -125,19 +130,45 @@ def _key(node) -> str:
     return ""
 
 
+def _nk(node) -> str:
+    """The key for matching: API names are not case-sensitive, and record type picklist values are URL-encoded."""
+    return unquote(_key(node)).lower()
+
+
+def _text(node) -> str:
+    """A leaf's value for comparing: 0 and 0.0 (or 65 and 65.0) are one number; an API name's case does not count."""
+    t = node.text.strip()
+    if NUMBER.fullmatch(t) and "." in t:
+        return t.rstrip("0").rstrip(".")          # 65.0 is 65 and 1.50 is 1.5; 007 stays 007
+    return unquote(t).lower() if node.tag in KEYS else t
+
+
 def _short(text: str) -> str:
     text = " ".join(text.split())
     return text if len(text) <= 60 else text[:57] + "..."
 
 
 def _defaultish(node) -> bool:
-    return not node.children and node.text.strip().lower() in DEFAULTISH
+    """A leaf with a default value, or an element holding only such leaves: it carries nothing."""
+    if node.children:
+        return all(_defaultish(c) for c in node.children)
+    return node.text.strip().lower() in DEFAULTISH
 
 
 def _fp(node) -> tuple:
     """Content of an element for matching, default-valued leaves left out (rule: a default leaf on one side only)."""
-    return (node.tag, node.text.strip() if not node.children else "",
+    return (node.tag, _text(node) if not node.children else "",
             tuple(_fp(c) for c in node.children if not _defaultish(c)))
+
+
+def retrieved_key(typ: str, key: str) -> list[tuple[str, str]]:
+    """The (type, name) a retrieve must have held for an access entry to be in the org's copy. A Task or Event field
+    is defined on Activity."""
+    key = key.lower()
+    out = [(typ, key)]
+    if typ == "CustomField" and key.split(".", 1)[0] in ("task", "event"):
+        out.append((typ, "activity." + key.split(".", 1)[1]))
+    return out
 
 
 def _groups(children) -> dict:
@@ -166,18 +197,22 @@ class _Run:
                     if not (_defaultish(c) or (access and not _grants(c))):
                         self.diff(f"{self._label(tag, c)}: only in source")
                 continue
-            if len(x) == 1 and len(y) == 1 and _key(x[0]) == _key(y[0]):
+            if len(x) == 1 and len(y) == 1 and _nk(x[0]) == _nk(y[0]):
                 self.pair(x[0], y[0], f"{tag} {_key(x[0])}" if _key(x[0]) else tag, access)
                 continue
-            kx, ky = {_key(c): c for c in x}, {_key(c): c for c in y}
+            kx, ky = {_nk(c): c for c in x}, {_nk(c): c for c in y}
             if x and "" not in kx and "" not in ky and len(kx) == len(x) and len(ky) == len(y):
                 for k in sorted(kx):
                     if k in ky:
-                        self.pair(kx[k], ky[k], f"{tag} {k}", access)
+                        self.pair(kx[k], ky[k], f"{tag} {_key(kx[k])}", access)
                     elif not (access and not _grants(kx[k])):
-                        self.diff(f"{tag} {k}: only in source")
+                        self.diff(f"{tag} {_key(kx[k])}: only in source")
                 for k in sorted(set(ky) - set(kx)):
-                    self.org_only(tag, ky[k], f"{tag} {k}", source_has=True)
+                    self.org_only(tag, ky[k], f"{tag} {_key(ky[k])}", source_has=True)
+                continue
+            if tag in ORDERED_TOP.get(self.type, ()) and Counter(map(_fp, x)) == Counter(map(_fp, y)):
+                if list(map(_fp, x)) != list(map(_fp, y)):
+                    self.diff(f"{tag}: order differs")
                 continue
             left = Counter(_fp(c) for c in y)
             missing = 0
@@ -223,7 +258,7 @@ class _Run:
             self.diff(f"{label}: source revokes it; the org still grants {', '.join(_grants(b))}")
             return
         if not a.children and not b.children:
-            if a.text.strip() != b.text.strip():
+            if _text(a) != _text(b):
                 self.diff(f"{label}: source {_short(a.text)!r}, org {_short(b.text)!r}")
             return
         if not a.children or not b.children:
@@ -243,20 +278,20 @@ class _Run:
                 self.diff(f"{label}: only in org" + (f" ({_short(sy[0].text)!r})" if not sy[0].children else "")
                           if len(sy) == 1 else f"{label}: {len(sy)} only in org")
             return
-        if len(x) == 1 and len(y) == 1 and _key(x[0]) == _key(y[0]):
+        if len(x) == 1 and len(y) == 1 and _nk(x[0]) == _nk(y[0]):
             self.pair(x[0], y[0], label)
             return
-        kx, ky = [_key(c) for c in x], [_key(c) for c in y]
+        kx, ky = [_nk(c) for c in x], [_nk(c) for c in y]
         if "" not in kx and "" not in ky and len(set(kx)) == len(kx) and len(set(ky)) == len(ky):
             bx, by = dict(zip(kx, x)), dict(zip(ky, y))
             for k in kx:
                 if k in by:
-                    self.pair(bx[k], by[k], f"{label} {k}")
+                    self.pair(bx[k], by[k], f"{label} {_key(bx[k])}")
                 else:
-                    self.diff(f"{label} {k}: only in source")
+                    self.diff(f"{label} {_key(bx[k])}: only in source")
             for k in ky:
                 if k not in bx:
-                    self.diff(f"{label} {k}: only in org")
+                    self.diff(f"{label} {_key(by[k])}: only in org")
             if [k for k in kx if k in by] != [k for k in ky if k in bx]:
                 self.diff(f"{label}: order differs")
             return
@@ -302,12 +337,13 @@ def compare(source: Component, org: Component, retrieved: set[tuple[str, str]]) 
                 continue
             if c.tag in ACCESS_SECTIONS:
                 key_tag, typ = ACCESS_SECTIONS[c.tag]
-                if typ is not None and (typ, c.value(key_tag).lower()) not in retrieved:
+                if typ is not None and not any(k in retrieved for k in retrieved_key(typ, c.value(key_tag))):
                     if not is_org:
                         run.out.not_compared += 1
                     continue
             side[c.tag].append(c)
     run.top(a, b)
     out = run.out
-    out.status = "different" if out.differences else ("unexplained-additions" if out.unexplained else "same")
+    out.status = ("different" if out.differences else "partly-compared" if out.not_compared
+                  else "unexplained-additions" if out.unexplained else "same")
     return out

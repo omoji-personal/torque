@@ -138,7 +138,12 @@ def test_report_on_a_stubbed_org(world):
     assert by[("CustomField", "Shift__c.Stage__c")]["comparison"] == "same"
     assert by[("CustomObject", "Shift__c")]["comparison"] == "same"               # fields and list views ignored
     flow = by[("Flow", "Gift_Thank_You_Task")]
-    assert flow["comparison"] == "different" and flow["differences"] == ["status: source 'Active', org 'Draft'"]
+    # the org runs version 2 and the deploy made version 3: the retrieve's copy may be either, so no verdict
+    # (Gemini F-10); what it showed is kept
+    assert flow["comparison"] == "could-not-compare" and flow["differences"] == ["status: source 'Active', org 'Draft'"]
+    assert "a retrieve returns one version without saying which" in flow["reason"]
+    assert flow["reason"].endswith("(against that copy: different)")
+    assert flow["compared_version"] == "one of version 2 (active) and version 3 (latest)"
     pset = by[("PermissionSet", "Shift_Coordinator")]
     assert pset["comparison"] == "same"            # a grant-nothing entry for Hours__c equals no entry
     assert by[("ValidationRule", "Shift__c.Hours_In_Range")]["comparison"] == "not-in-org"
@@ -181,7 +186,25 @@ def test_active_latest_flow_is_reported_active(world):
     fake.flow_active_is_latest = True
     code, out, _ = run("check", "deployed", "--target-org", "sandbox", "--only", "Flow:Gift_Thank_You_Task",
                        "--source-dir", str(t.root), "--json")
-    assert json.loads(out)["flows"][0]["latest_is_active"] is True
+    rep = json.loads(out)
+    assert rep["flows"][0]["latest_is_active"] is True
+    [row] = rep["components"]
+    assert row["comparison"] == "different" and row["compared_version"] == "version 2, the latest and the active one"
+    queries = [a[a.index("--query") + 1] for a in fake.calls if a[1:3] == ["data", "query"]]
+    assert any("FROM FlowDefinition WHERE DeveloperName = 'Gift_Thank_You_Task' AND NamespacePrefix = null" in q
+               for q in queries)
+
+
+def test_a_permission_set_is_retrieved_with_the_components_its_entries_name(world):
+    """Gemini F-08: the org returns access entries only for components in the same retrieve."""
+    t, fake, result = world
+    t.permset("Shift_Coordinator", fields=["Shift__c.Stage__c", "Account.Region__c", "Task.Call__c"])
+    run("check", "deployed", "--target-org", "sandbox", "--only", "PermissionSet:Shift_Coordinator",
+        "--source-dir", str(t.root), "--json")
+    [argv] = [a for a in fake.calls if a[1:4] == ["project", "retrieve", "start"]]
+    members = [argv[i + 1] for i, a in enumerate(argv) if a == "--metadata"]
+    assert members == ["PermissionSet:Shift_Coordinator", "CustomField:Account.Region__c", "CustomField:Activity.Call__c",
+                       "CustomField:Shift__c.Stage__c"]
 
 
 def test_org_that_cannot_be_read_exits_3(world):
@@ -329,7 +352,7 @@ def test_the_live_pair_reads_same(tmp_path, monkeypatch):
     out = read_back(monkeypatch, project, org)
     assert "CustomObject Torque_Check__c: same (the org copy also has 36 properties Salesforce is known to add on " \
            "save)" in out
-    assert ": 6 same, 0 as submitted plus content only the org has (look at it), 0 different," in out
+    assert ": 6 same, 0 as submitted plus content only the org has (look at it), 0 partly compared, 0 different," in out
 
 
 def test_the_live_pair_with_an_unlisted_addition_is_not_same(tmp_path, monkeypatch):
@@ -340,7 +363,7 @@ def test_the_live_pair_with_an_unlisted_addition_is_not_same(tmp_path, monkeypat
     out = read_back(monkeypatch, project, org)
     assert ("CustomObject Torque_Check__c: as submitted, plus content only the org has (look at it): enableSearch"
             in out)
-    assert ": 5 same, 1 as submitted plus content only the org has (look at it), 0 different," in out
+    assert ": 5 same, 1 as submitted plus content only the org has (look at it), 0 partly compared, 0 different," in out
 
 
 def test_review_r2_c01_a_space_inside_an_apex_string(tmp_path, monkeypatch):
@@ -398,3 +421,17 @@ def test_review_r2_c03_a_decision_outcome_the_org_keeps(tmp_path, monkeypatch):
     assert row["comparison"] == "different"
     assert row["differences"] == ["decisions Route.rules Old_First_Outcome: only in org"]
     assert rep["totals"]["different"] == 1 and rep["totals"]["same"] == 0
+
+
+def test_a_standard_object_is_compared_not_dropped(tmp_path, monkeypatch):
+    """Gemini F-10: a retrieved standard object defines no label of its own and was dropped (could not compare)."""
+    t = Tree(tmp_path / "p")
+    t.add(f"{DEFAULT}/objects/Account/Account.object-meta.xml",
+          xml("CustomObject", "    <enableHistory>true</enableHistory>\n"))
+    org = tmp_path / "org"
+    (org / "objects").mkdir(parents=True)
+    (org / "objects/Account.object").write_text(mdapi("CustomObject", "<enableHistory>false</enableHistory>"),
+                                                encoding="utf-8")
+    rep = json.loads(read_back(monkeypatch, t.root, org, "--json"))
+    [row] = rep["components"]
+    assert row["comparison"] == "different" and row["differences"] == ["enableHistory: source 'true', org 'false'"]

@@ -15,9 +15,12 @@ PATHS = {"Flow": "flows/Route_Request.flow-meta.xml", "CustomObject": "objects/T
          "CustomField": "objects/Thing__c/fields/Kind__c.field-meta.xml",
          "ValidationRule": "objects/Thing__c/validationRules/Amount_Not_Negative.validationRule-meta.xml",
          "PermissionSet": "permissionsets/Thing_Access.permissionset-meta.xml",
-         "Profile": "profiles/Thing_Profile.profile-meta.xml", "ApexClass": "classes/Greeting.cls"}
+         "Profile": "profiles/Thing_Profile.profile-meta.xml", "ApexClass": "classes/Greeting.cls",
+         "Layout": "layouts/Thing__c-Thing Layout.layout-meta.xml",
+         "RecordType": "objects/Thing__c/recordTypes/Special.recordType-meta.xml"}
 ROOTS = {"Flow": "Flow", "CustomObject": "CustomObject", "CustomField": "CustomField",
-         "ValidationRule": "ValidationRule", "PermissionSet": "PermissionSet", "Profile": "Profile"}
+         "ValidationRule": "ValidationRule", "PermissionSet": "PermissionSet", "Profile": "Profile",
+         "Layout": "Layout", "RecordType": "RecordType"}
 # What a retrieve of these members returns entries for (the Metadata API returns access entries only for them).
 RETRIEVED = {("CustomField", "thing__c.kind__c"), ("CustomField", "thing__c.other__c"), ("CustomObject", "thing__c"),
              ("ApexClass", "greeting"), ("CustomTab", "thing__c"), ("RecordType", "thing__c.special"),
@@ -151,6 +154,31 @@ def profile(*entries):
     return x("Profile", "    <custom>true</custom>\n" + "".join(entries))
 
 
+# -- a page layout and a record type -------------------------------------------------------------------------------
+def section(label, *fields):
+    items = "".join(f"            <layoutItems>\n                <behavior>Edit</behavior>\n"
+                    f"                <field>{f}</field>\n            </layoutItems>\n" for f in fields)
+    return (f"    <layoutSections>\n        <customLabel>true</customLabel>\n        <label>{label}</label>\n"
+            f"        <layoutColumns>\n{items}        </layoutColumns>\n        <style>OneColumn</style>\n"
+            "    </layoutSections>\n")
+
+
+def layout(*sections):
+    return x("Layout", "".join(sections) + "    <showRunAssignmentRulesCheckbox>false</showRunAssignmentRulesCheckbox>\n")
+
+
+INFO, MORE = section("Information", "Name", "Kind__c"), section("More", "Amount__c")
+
+
+def rtype(*picklists):
+    body = "".join(f"    <picklistValues>\n        <picklist>{p}</picklist>\n"
+                   + "".join(f"        <values>\n            <fullName>{v}</fullName>\n"
+                             "            <default>false</default>\n        </values>\n" for v in values)
+                   + "    </picklistValues>\n" for p, values in picklists)
+    return x("RecordType", "    <fullName>Special</fullName>\n    <active>true</active>\n    <label>Special</label>\n"
+                           + body)
+
+
 # -- Apex ----------------------------------------------------------------------------------------------------------
 CLS = ("public with sharing class Greeting {\n    public static String text() {\n        // the greeting\n"
        "        return 'Hello world';\n    }\n}\n")
@@ -262,6 +290,32 @@ CASES = [
      profile(tab("DefaultOn", "tabVisibilities")), "different", "tabVisibilities Thing__c: source revokes it"),
     ("profile-org-has-entries-the-file-does-not-name", "Profile", profile(ca("true")),
      profile(ca("true"), up("true", "ApiEnabled")), "same", None),
+    # shapes from the second review (Gemini F-07, F-09)
+    ("flow-start-filter-removed-in-source-org-keeps-it", "Flow", flow(),
+     flow().replace("<object>Thing__c</object>", "<filters><field>Amount__c</field><operator>GreaterThan</operator>"
+                    "<value><numberValue>0.0</numberValue></value></filters>\n        <object>Thing__c</object>"),
+     "different", "start Thing__c.filters: only in org"),
+    ("flow-api-version-written-without-decimal", "Flow", flow(), flow().replace("<apiVersion>62.0<", "<apiVersion>62<"),
+     "same", None),
+    ("field-zero-written-as-0-and-0.0", "CustomField", field(extra="    <defaultValue>0</defaultValue>\n"),
+     field(extra="    <defaultValue>0.0</defaultValue>\n"), "same", None),
+    ("field-number-really-changed", "CustomField", field(extra="    <defaultValue>0</defaultValue>\n"),
+     field(extra="    <defaultValue>10</defaultValue>\n"), "different", "defaultValue"),
+    ("field-org-wrapper-of-defaults-only", "CustomField", field(),
+     field(extra="    <summaryFilterItems>\n        <isRequired>false</isRequired>\n    </summaryFilterItems>\n"),
+     "same", None),
+    ("pset-api-name-case-differs", "PermissionSet", pset(fp("Thing__c.kind__c", "true", "false")),
+     pset(fp("Thing__c.Kind__c", "true", "false")), "same", None),
+    ("layout-unchanged", "Layout", layout(INFO, MORE), layout(INFO, MORE), "same", None),
+    ("layout-item-removed-in-source-org-keeps-it", "Layout", layout(INFO, MORE),
+     layout(section("Information", "Name", "Kind__c", "Secret__c"), MORE), "different", "not found unchanged"),
+    ("layout-sections-reordered", "Layout", layout(INFO, MORE), layout(MORE, INFO), "different",
+     "layoutSections: order differs"),
+    ("layout-section-only-in-org", "Layout", layout(INFO), layout(INFO, MORE), "different", "only in org"),
+    ("recordtype-two-picklists", "RecordType", rtype(("Kind__c", ("Small", "Large")), ("Size__c", ("A%26B", "C"))),
+     rtype(("Size__c", ("A%26B", "C")), ("Kind__c", ("Small", "Large"))), "same", None),
+    ("recordtype-value-only-in-org", "RecordType", rtype(("Kind__c", ("Small",))),
+     rtype(("Kind__c", ("Small", "Large"))), "different", "values Large: only in org"),
     # Apex: exact after line endings and trailing whitespace
     ("class-space-inside-a-string", "ApexClass", CLS, CLS.replace("'Hello world'", "'Helloworld'"), "different",
      "code differs from line 4"),
@@ -277,7 +331,7 @@ CASES = [
      CLS.replace("}\n}\n", "}\n    public static void old() {}\n}\n"), "different", "code differs"),
 ]
 # Rows whose two files the baseline fingerprint must call unchanged; every other row is a change.
-BASELINE_UNCHANGED = {"flow-unchanged", "flow-edge-whitespace-of-a-value-limit",
+BASELINE_UNCHANGED = {"flow-unchanged", "layout-unchanged", "flow-edge-whitespace-of-a-value-limit",
                       "class-line-endings-and-trailing-whitespace", "pset-field-revoked-org-all-false"}
 
 
@@ -348,8 +402,17 @@ def test_known_server_additions_are_reported_as_such(tmp_path):
     assert (u.status, u.unexplained, u.differences) == ("unexplained-additions", ["enableEnhancedLookup"], [])
 
 
-def test_a_revoke_of_a_component_not_retrieved_is_counted_not_compared(tmp_path):
-    a = component(tmp_path, "source", "PermissionSet", pset(fp("Account.Region__c", "false", "false")))
+def test_an_entry_about_a_component_not_retrieved_is_never_same(tmp_path):
+    """Gemini F-08: the org returns access entries only for components in the same retrieve, so an entry about
+    another component cannot be checked; the permission set is "partly-compared", never "same"."""
+    a = component(tmp_path, "source", "PermissionSet", pset(fp("Account.Region__c", "true", "false")))
     b = component(tmp_path, "org", "PermissionSet", pset())
     o = compare.compare(a, b, RETRIEVED)
-    assert (o.status, o.not_compared) == ("same", 1)
+    assert (o.status, o.not_compared, o.differences) == ("partly-compared", 1, [])
+    assert compare.compare(a, b, RETRIEVED | {("CustomField", "account.region__c")}).status == "different"
+
+
+def test_a_task_or_event_field_entry_is_checked_against_the_activity_field(tmp_path):
+    a = component(tmp_path, "source", "PermissionSet", pset(fp("Task.Call__c", "true", "false")))
+    b = component(tmp_path, "org", "PermissionSet", pset(fp("Task.Call__c", "true", "false")))
+    assert compare.compare(a, b, {("CustomField", "activity.call__c")}).status == "same"

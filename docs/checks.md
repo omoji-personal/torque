@@ -231,7 +231,8 @@ CLI login). Not checked: permission set assignments and what a user really sees,
 | `same` | everything the file specifies is in the org unchanged, and the org copy has nothing else except default values, the properties Salesforce is known to add on save, or permission entries the file does not name | byte equality; that the component works; who can use it |
 | `unexplained-additions` | everything the file specifies is in the org unchanged; the org copy also has top-level properties Torque cannot explain (listed: look at them) | whether those properties are harmless server defaults or someone's change |
 | `different` | something submitted is missing or changed; or the org has content where a deploy replaces the definition; or the file revokes access the org still grants | which side is right |
-| `could-not-compare`, `not-in-org` | the pair could not be read, or the org reports no such component | anything about its content |
+| `partly-compared` | what could be compared is as submitted, but some access entries of a permission set or profile could not be (their components were not in the retrieve; the count is shown) | that those entries are in the org |
+| `could-not-compare`, `not-in-org` | the pair could not be read, or the org reports no such component; for a flow whose latest version is not the active one, the retrieve's copy may be either version, so no verdict is given (what that copy showed is in the reason) | anything about its content |
 
 The text summary counts `unexplained-additions` apart, never with `same`; so does `--json`
 (`totals.unexplained-additions`, and per component `unexplained_additions`, `known_server_additions`,
@@ -254,8 +255,11 @@ Rules:
    entries only the org has are expected (counted, shown as information). An entry the file names with every
    flag false (or a tab set to None or Hidden) is a revoke: met when the org has no such entry or an all-false
    one; `different` ("source revokes it; the org still grants ...") when the org entry grants anything. This
-   covers field, object, class, tab, record type, custom permission and user permission entries. Entries
-   about components not in the same retrieve are counted as not compared.
+   covers field, object, class, tab, record type, custom permission and user permission entries. The org
+   returns an access entry only for a component in the same retrieve, so the components a permission set or
+   profile names are retrieved with it (a Task or Event field as the Activity field). An entry that still
+   could not be compared is counted ("N entries not compared: their components were not in this retrieve")
+   and the component is `partly-compared`, never `same`.
 4. Code (classes, triggers): exact, after making line endings one kind and removing whitespace at the end of
    lines and of the file. A space inside a string or the line break after a `//` comment is content. The
    same function decides what changed for `torque check metadata --baseline` (also for the files of a
@@ -263,10 +267,20 @@ Rules:
 5. Order: the Metadata API writes top-level elements in its own order, so that order is not compared; the
    order of same-tag siblings below it (picklist values, decision outcomes) is.
 
-Also normalised: a leaf present on one side only with a default value (false, 0, empty), and leading and
-trailing whitespace of an XML value (a known limit: `" Approved "` and `"Approved"` compare equal).
+Also normalised, each with a corpus row: a leaf present on one side only with a default value (false, 0,
+empty), and an element holding only such leaves; a number written with or without trailing zeros after the
+point (`0` and `0.0`, `62` and `62.0`; `007` and `7` stay different); the case of an API name in a key or
+reference (`Thing__c.kind__c` and `Thing__c.Kind__c`) and URL encoding in a record type's picklist value
+names; leading and trailing whitespace of an XML value (a known limit: `" Approved "` and `"Approved"`
+compare equal). On a layout, the order of sections and related lists is compared (it is what users see).
+A standard object retrieved for the change is compared like a custom one.
 
-The mutation corpus (`tests/test_check_mutations.py`, 56 pairs, the same pairs through the baseline scope),
+Flows: each flow row says which version was compared (`compared_version`). When the latest version is the
+active one, or none is active, that is the latest. When the org runs an older active version, a retrieve
+returns one version without saying which, so the row is `could-not-compare`. The version queries filter on
+the project's namespace (`NamespacePrefix = null` without one).
+
+The mutation corpus (`tests/test_check_mutations.py`, 68 pairs, the same pairs through the baseline scope),
 in short:
 
 | Mutation | Flow | Object | Field | Rule | Permission set or profile | Class |
@@ -281,6 +295,9 @@ in short:
 | the server's defaults on a new object | | same | same | | | |
 | an unknown property on an object | | unexplained-additions | | | | |
 | line endings and trailing whitespace only | | | | | | same |
+| a layout item or section only in the org; sections reordered | | | | | | |
+
+The last row is for layouts: `different` for all three. A record type value only the org has is `different`.
 
 What none of this establishes: a grant entry in a permission set is not a user's effective access
 (assignments, groups, muting, license and sharing decide that: test as that user), and the comparison does

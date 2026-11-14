@@ -134,8 +134,10 @@ def _read_bytes(path: str) -> bytes:
         return fh.read()
 
 
-def read_file(path: str) -> list[Component]:
-    """The components one file holds. Unreadable files give one component with `error`."""
+def read_file(path: str, keep_objects: bool = False) -> list[Component]:
+    """The components one file holds. Unreadable files give one component with `error`. `keep_objects`: a
+    Metadata API object file is also its object, even a standard object that defines nothing of its own (a
+    retrieve of that object)."""
     hit = classify(path)
     if not hit:
         return []
@@ -160,14 +162,14 @@ def read_file(path: str) -> list[Component]:
     except OSError as exc:
         return [Component(typ, name, path, fmt=fmt, error=f"could not read the file ({exc.strerror or exc})")]
     if typ == "CustomObject" and fmt == "mdapi":
-        return _mdapi_object(node, stem, path)
+        return _mdapi_object(node, stem, path, keep_objects)
     return [Component(typ, name, path, node=node, fmt=fmt)]
 
 
-def _mdapi_object(node: Node, obj: str, path: str) -> list[Component]:
+def _mdapi_object(node: Node, obj: str, path: str, keep: bool = False) -> list[Component]:
     out = []
     defines = any(node.child(k) is not None for k in ("label", "nameField", "deploymentStatus", "customSettingsType"))
-    if defines or is_custom(obj):
+    if keep or defines or is_custom(obj):
         out.append(Component("CustomObject", obj, path, node=node, fmt="mdapi"))
     for tag, typ in MDAPI_CHILDREN.items():
         for c in node.all(tag):
@@ -198,7 +200,7 @@ def bundles(root: str) -> list[Component]:
     return out
 
 
-def read_tree(paths: list[str]) -> list[Component]:
+def read_tree(paths: list[str], keep_objects: bool = False) -> list[Component]:
     """Every component under the given folders and files, in a stable order."""
     out: list[Component] = []
     seen: set[str] = set()
@@ -209,7 +211,7 @@ def read_tree(paths: list[str]) -> list[Component]:
             if key in seen:
                 continue
             seen.add(key)
-            out.extend(read_file(f))
+            out.extend(read_file(f, keep_objects))
         for b in bundles(root):
             if os.path.normcase(b.path) not in seen:
                 seen.add(os.path.normcase(b.path))
