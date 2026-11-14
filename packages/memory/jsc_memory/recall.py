@@ -172,7 +172,7 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
     topic = [str(word) for word in topic or ()]
     error = record.one_line(error)
     only_error = bool(error) and not (topic or tasks or types or command or paths)
-    found_tasks, found_types = vocab.infer(" ".join(topic))
+    found_tasks, found_types, words = vocab.topic_terms(topic)
     all_tasks = [vocab.tag(task) for task in tasks or ()]
     all_types = [vocab.canonical_type(kind) for kind in types or ()]
     for task in tasks or ():
@@ -184,7 +184,7 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
         more_tasks, more_types = vocab.for_command(command)
         all_tasks += more_tasks
         all_types += more_types
-    return Query(words=vocab.topic_words(topic), tasks=list(dict.fromkeys(all_tasks + found_tasks)),
+    return Query(words=words, tasks=list(dict.fromkeys(all_tasks + found_tasks)),
                  types=list(dict.fromkeys(all_types + found_types + path_types(paths, scopes))), command=command,
                  error=error, only_error=only_error)
 
@@ -208,11 +208,12 @@ def _command_hits(item: Lesson, command: str) -> int:
     return hits
 
 
-def _text_words(item: Lesson) -> set[str]:
-    text = " ".join([item.title, item.when, item.do, item.because, *item.applies.get("keywords", []),
-                     *item.applies.get("tasks", []), *item.applies.get("types", []),
-                     *item.applies.get("errors", [])])
-    return record.words(text)
+def _about_words(item: Lesson) -> tuple[set[str], set[str]]:
+    """The words that say what a lesson is about: (title and keywords, `when`, tasks and
+    types). `do`, `because` and the body explain it and are not matched."""
+    named = record.words(" ".join([item.title, *item.applies.get("keywords", [])]))
+    return named, record.words(" ".join([item.when, *item.applies.get("tasks", []),
+                                         *item.applies.get("types", [])]))
 
 
 def _error_hits(item: Lesson, error: str) -> int:
@@ -223,10 +224,19 @@ def _error_hits(item: Lesson, error: str) -> int:
     return hits or int(bool(item.error_text) and vocab.shares_wording(error, item.error_text))
 
 
+# How a lesson matches a query. Strength 0 means it does not match; precision comes first.
+#   error    an error matcher of the lesson is in the error text     5, +1 a matcher, at most 8
+#   type     the lesson names a metadata type the query names        4 each, at most 8
+#   task     the lesson names a task the query names                 3 each, at most 6
+#   command  a command pattern of the lesson fits the command        2, +1 a pattern, at most 5
+#   word     a topic word is a whole word of the lesson's title, `when`, keywords, tasks or
+#            types (a plural or singular ending may differ)          1 each, at most 3
+# A topic word the vocabulary knows (flow, dashboard, deploy) is asked as its task or type,
+# not as a word (vocab.topic_terms). A lesson about other component types than the ones
+# asked for (both name types, none shared) does not match on its task, command or words.
+# A lesson found by words alone needs a hit in its title or keywords, or two different words.
 def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
-    """(strength, reasons) of a lesson for a query; strength 0 means it does not match.
-    A lesson about other component types than the ones asked for (both name types and
-    none is shared) does not match on its task or command alone."""
+    """(strength, reasons) of a lesson for a query; strength 0 means it does not match."""
     score, reasons = 0, []
     if query.error:
         number = _error_hits(item, query.error)
@@ -249,10 +259,10 @@ def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
         if number:
             score += min(5, 2 + number)
             reasons.append("command")
-    if query.words:
-        known = _text_words(item)
-        hits = [word for word in query.words if word in known or any(other.startswith(word) for other in known)]
-        if hits:
+    if query.words and not other_components:
+        named, described = _about_words(item)
+        hits = [word for word in query.words if vocab.word_forms(word) & (named | described)]
+        if hits and (score or len(hits) > 1 or any(vocab.word_forms(word) & named for word in hits)):
             score += min(3, len(hits))
             reasons += [f"word {word}" for word in hits]
     return score, reasons
@@ -369,8 +379,11 @@ def render(result: Result) -> str:
     if not result.hits and result.query.error:
         text = [f"No lesson matches {what} ({scope}). When you have fixed it, save what worked: "
                 'torque session add ... --learned "When: <the error>. Do: <what fixed it>. Because: <why>"']
+    elif not result.hits and result.query:
+        text = [f"No lesson matches {what} ({scope}). If this work teaches something, save it: "
+                'torque session add ... --learned "When: ... Do: ... Because: ..."']
     elif not result.hits:
-        text = [f"No lesson matches {what} ({scope})." if result.query else f"No lessons yet ({scope})."]
+        text = [f"No lessons yet ({scope})."]
     else:
         text = [f"Lessons{' for ' + what if what else ''} ({scope}): {len(result.hits)} of {result.matched}"]
         for hit in result.hits:

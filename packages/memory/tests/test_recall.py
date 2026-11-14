@@ -55,7 +55,9 @@ def test_with_sixty_active_lessons_an_older_matching_one_is_still_found_and_an_u
     assert own(recall.find(alpha, topic=["validation", "rule"])) [:1] == ["0000"]
     nothing = recall.find(alpha, topic=["quantum", "chromodynamics"])
     assert nothing.hits == [] and nothing.matched == 0
-    assert recall.render(nothing) == "No lesson matches quantum, chromodynamics (client alpha + firm + platform)."
+    assert recall.render(nothing) == (
+        "No lesson matches quantum, chromodynamics (client alpha + firm + platform). If this work teaches something, "
+        'save it: torque session add ... --learned "When: ... Do: ... Because: ..."')
     # Without selectors the lessons that matter most come back, bounded.
     assert len(recall.find(alpha).hits) == 5 and recall.find(alpha).matched >= 60
 
@@ -102,6 +104,41 @@ def test_a_lesson_about_other_components_does_not_match_on_its_task_or_command_a
     assert own(recall.find(alpha, command="sf project deploy start --source-dir force-app", limit=None)) == [
         "9e9e", "f1e1"]
     assert own(recall.find(alpha, topic=["field", "access"], types=["Flow"], limit=None)) == ["f1e1"]
+
+
+def test_a_loose_word_is_not_a_match(scopes):
+    alpha = scopes("alpha")
+    # What a lesson says it does or why is not what it is about: its `do` and `because` are not matched.
+    save(alpha, "client", "verb", title="Read the deploy result", tasks=["deploy"],
+         when="a deploy finishes", do="read the component results; it reports success while reporting nothing",
+         because="the dashboard of the job shows the job, not the components")
+    save(alpha, "client", "dash", title="A dashboard runs as its running user", types=["Dashboard"], tasks=["report"],
+         when="you build a dashboard for many viewers", do="choose the running user on purpose")
+    save(alpha, "client", "snap", title="Analytic snapshots run as their owner", when="you schedule one",
+         do="check the owner is active")
+    save(alpha, "client", "when", title="Check the target first", when="you schedule a snapshot for an owner",
+         do="check the owner is active")
+    save(alpha, "client", "flow", title="Snapshots of a flow interview", types=["Flow"], when="you debug a flow")
+    found = lambda *topic, **more: own(recall.find(alpha, topic=topic, limit=None, **more))
+    # A vocabulary word is asked as its task or type, and only lessons about it answer.
+    assert found("report", "dashboard") == ["dash"] and found("reports") == ["dash"]
+    # A whole word, with a plural or singular ending and nothing more.
+    assert found("snapshot") == ["flow", "snap"] and found("snapshots") == ["flow", "snap"]
+    assert found("snap") == [] and found("shot") == []
+    # One word in `when` alone is not enough; two different words are.
+    assert "when" not in found("snapshot") and "when" in found("snapshot", "owner")
+    # Words do not rescue a lesson about other component types than the ones asked for.
+    assert "flow" not in found("snapshot", types=["Dashboard"]) and found("snapshot", types=["Flow"])[0] == "flow"
+    assert found("running", "reporting", types=["ApexClass"]) == []
+
+
+def test_shipped_lessons_answer_report_dashboard_only_with_lessons_about_reports_or_dashboards():
+    result = recall.find(storage.Scopes(), topic=["report", "dashboard"], limit=None)
+    assert (result.query.tasks, result.query.types, result.query.words) == (["report"], ["Dashboard"], [])
+    for hit in result.hits:                   # the shipped data changes; whatever answers is about reports
+        assert set(hit.reasons) <= {"task report", "type Dashboard"}, (hit.lesson.id, hit.lesson.title)
+    if not result.hits:
+        assert recall.render(result).startswith("No lesson matches report, Dashboard (platform).")
 
 
 def test_a_command_pattern_matches_the_command_and_torques_own_name_for_it(scopes):

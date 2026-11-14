@@ -170,7 +170,15 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 - Matching runs over every lesson the call may read, then ranks: scope (client or
   initiative, then firm, then platform), match strength, helpful minus stale marks, and
   how recently the lesson was verified. With selectors a lesson must match at least one;
-  when nothing matches, one line says so and the command exits 0.
+  when nothing matches, one line says so (with how to save a lesson) and the command
+  exits 0. Precision comes first: when in doubt, nothing is shown.
+- Topic words: a word the vocabulary knows is asked as its task or type (`flow` is the
+  Flow type, `dashboard` the Dashboard type, `deploy` and `report` are tasks). The other
+  words are compared with what a lesson is about: its title, `when`, keywords, tasks and
+  types, never its `do`, `because` or body. A word matches a whole word; a plural or
+  singular ending may differ (`snapshot`, `snapshots`), nothing else (`report` is not
+  `reporting`). A lesson found by words alone needs a word in its title or keywords, or two
+  different words.
 - `--path` infers the metadata type from a file name, a folder or a `package.xml`
   (`*.flow-meta.xml` is Flow, `*.field-meta.xml` is CustomField, and so on). Only names
   are read, links to folders are not followed, and a path inside the folder of another
@@ -178,8 +186,8 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 - `--error` takes the first line of an error. It matches the lessons' error matchers and,
   for the advisory catalogue, a note whose title or symptom names the same error code or
   shares the error's wording.
-- A lesson about other component types than the ones asked for does not match on its task
-  or command alone.
+- A lesson about other component types than the ones asked for does not match on its
+  task, its command or its words.
 - Not shown by default: candidates, retired lessons, lessons marked stale, and lessons
   with `promoted_to` set (they live on in their promoted form).
 - Each lesson prints in three lines: id and WHEN, DO and WHY, then scope, evidence type,
