@@ -64,12 +64,14 @@ source). None was re-tested for this release: run the check.
     date and time fields are not (field-reported, 13). Check: `groupable` in describe; group
     by a date function such as `CALENDAR_YEAR()`, or count rows yourself.
 16. **A field must be filterable to appear in WHERE.** Long text areas and several setup
-    fields are not (field-reported, 7). Check: `filterable` in describe.
+    fields are not (field-reported, 7); a compound field (an address or geolocation as a
+    whole) is filtered by its parts (**verify**). Check: `filterable` in describe.
 17. **COUNT(Id) with GROUP BY is refused on some entities** (field-reported, 6). Check: use
     `COUNT()` without grouping, or fetch the rows and count.
-18. **A sub-select cannot read the same object as the outer query,** and its left side must
-    be an Id [ADV `self-join-forbidden`] (field-reported, 3). Check: fetch parent Ids first
-    and bind them, or walk a hierarchy level by level.
+18. **A semi-join or anti-join cannot read the outer query's own object,** and its left side
+    must be an Id or reference field [ADV `self-join-forbidden`] (field-reported, 3).
+    Parent-to-child relationship sub-queries are not semi-joins and are not covered here.
+    Check: fetch parent Ids first and bind them, or walk a hierarchy level by level.
 19. **`first` and `last` are reserved** and fail as aggregate aliases; SOQL has no string
     functions in SELECT (field-reported, 3).
 20. **`ALL ROWS` in the query text is rejected by the CLI**: pass `--all-rows` [ADV
