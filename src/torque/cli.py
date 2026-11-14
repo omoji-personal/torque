@@ -215,6 +215,11 @@ def build_parser() -> argparse.ArgumentParser:
     clients = client_sub.add_parser("list")
     clients.add_argument("--workspace", required=True)
     clients.add_argument("--json", action="store_true")
+    set_org = client_sub.add_parser("set-org", help="change the org alias a client names; no login or org call")
+    set_org.add_argument("--workspace", required=True)
+    set_org.add_argument("--client", required=True)
+    set_org.add_argument("--target-org", required=True, metavar="ALIAS")
+    set_org.add_argument("--json", action="store_true")
     cli_approval.register_consent(client_sub)
     initiative = sub.add_parser("initiative", help="manage an internal initiative's private context")
     initiative_sub = initiative.add_subparsers(dest="action", required=True)
@@ -2029,7 +2034,16 @@ def main(argv: list[str] | None = None) -> int:
         elif parsed.command == "client":
             if parsed.action == "consent":
                 return cli_approval.run_consent(parsed)
-            if parsed.action == "add":
+            if parsed.action == "set-org":
+                result = ws.set_client_org(parsed.workspace, parsed.client, parsed.target_org)
+                if parsed.json:
+                    _print_json(result)
+                else:
+                    print(f"{result['client']}: org alias {result['from'] or 'none'} -> {result['to']} "
+                          f"(recorded as session {result['session']}; no org call)")
+                    for note in result["notes"]:
+                        print("Note: " + note)
+            elif parsed.action == "add":
                 path = ws.add_client(parsed.workspace, parsed.name, parsed.org)
                 _print_json({"client_root": str(path), "org_calls": False}) if parsed.json else print(path)
             else:

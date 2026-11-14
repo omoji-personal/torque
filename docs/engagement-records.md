@@ -38,6 +38,17 @@ An archived initiative refuses new sessions, changes, notes and checks until
 `torque initiative set-state NAME active --workspace PATH` reopens it.
 `torque engagement list --workspace PATH` shows clients and initiatives together.
 
+A client needs no org alias (`torque client add NAME --workspace PATH` without `--org`).
+`torque client set-org --workspace PATH --client NAME --target-org ALIAS` sets or changes
+it: the registration (`client.json`) keeps the earlier alias in `org_history`, and the
+change is recorded as a session record, so `context` and `handoff` show it. An alias is a
+name for an org, not the org: no org is called, and the consent record, which binds approved
+aliases to org Ids for connected mode, is never changed by this command. The output names
+what depended on the old alias: whether consent approves the new one (connected mode refuses
+an unapproved alias until the owner records consent), and each change whose planned org is the
+old alias. In connected mode the gate reads the command as an org write, so it needs the
+owner's approval like any command that names an org with `--target-org`.
+
 ## Session records
 
 `torque session add` appends one record. Beyond `--summary` and `--status`, it can say

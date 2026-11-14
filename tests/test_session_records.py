@@ -320,6 +320,45 @@ def test_a_session_linked_to_a_change_appears_in_the_change_handoff_and_others_d
     assert code == 2 and "no change" in json.loads(out)["message"] and len(sessions(firm)) == 2
 
 
+# ---- step 7: clients as they really are
+
+def test_set_org_changes_the_alias_records_it_and_names_what_depended_on_the_old_one(firm):
+    scope = ["--workspace", firm, "--client", "alpha"]
+    consent = firm / "clients/alpha/consent.json"
+    consent.write_text(json.dumps({"schema": "torque.consent/1", "client": "alpha", "approved_orgs": [
+        {"alias": "alpha-sandbox", "org_id_18": "00D000000000000AAA", "kind": "sandbox"}]}), encoding="utf-8")
+    before = consent.read_bytes()
+    cid = json.loads(invoke("change", "create", *scope, "--title", "T", "--outcome", "O", "--org", "alpha-sandbox",
+                            "--json")[1])["id"]
+    code, out, err = invoke("client", "set-org", *scope, "--target-org", "alpha-uat", "--json")
+    assert code == 0, err
+    result = json.loads(out)
+    assert (result["from"], result["to"], result["org_calls"]) == ("alpha-sandbox", "alpha-uat", False)
+    assert any("Consent does not approve alpha-uat" in note for note in result["notes"])
+    assert any(cid in note and "plans the old org alpha-sandbox" in note for note in result["notes"])
+    assert consent.read_bytes() == before                       # consent is never changed here
+    config = json.loads((firm / "clients/alpha/client.json").read_text(encoding="utf-8"))
+    assert config["org"] == "alpha-uat" and config["org_history"][-1]["from"] == "alpha-sandbox"
+    context = invoke("context", *scope)[1]
+    assert "Configured org: alpha-uat" in context and "Org alias changed from alpha-sandbox to alpha-uat" in context
+    # the same alias again: nothing changes but the record, and the output says what an alias is
+    same = json.loads(invoke("client", "set-org", *scope, "--target-org", "alpha-uat", "--json")[1])
+    assert any("The alias is unchanged" in note for note in same["notes"])
+    # a client that had no org
+    none = json.loads(invoke("client", "set-org", "--workspace", firm, "--client", "beta", "--target-org",
+                             "beta-sandbox", "--json")[1])
+    assert none["from"] is None and none["notes"] == []
+    assert "beta: Beta (org: beta-sandbox)" in invoke("client", "list", "--workspace", firm)[1]
+    assert invoke("client", "set-org", *scope, "--target-org", "two words")[0] == 2
+
+
+def test_a_client_can_be_added_without_an_org(firm):
+    code, out, err = invoke("client", "add", "Gamma", "--workspace", firm, "--json")
+    assert code == 0, err
+    assert "gamma: Gamma (org: not configured)" in invoke("client", "list", "--workspace", firm)[1]
+    assert add(firm, "--summary", "Discovery call notes", client="gamma")[0] == 0
+
+
 # ---- step 6: errors an agent can act on
 
 def error_object(out):

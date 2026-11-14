@@ -970,6 +970,52 @@ def add_client(workspace: str | Path, name: str, org: str | None = None) -> Path
     return client
 
 
+def set_client_org(workspace: str | Path, name: str, alias: str) -> dict:
+    """Change the org alias a client's registration names (client.json), keep the
+    earlier one in its `org_history`, and record the change as a session record. An alias
+    is a name for an org, not the org: nothing here calls an org, and the consent record
+    (which binds approved aliases to org Ids for connected mode) is never changed here;
+    whatever depends on the old alias is named in `notes`."""
+    client, _, config = load_client(workspace, name)
+    require_engagement_writable(client)
+    if not isinstance(alias, str) or not alias.strip() or any(c.isspace() for c in alias.strip()):
+        raise WorkspaceError("--target-org takes one org alias, username or ID, without spaces")
+    alias, old = alias.strip(), config.get("org")
+    notes = []
+    if old == alias:
+        notes.append(f"The alias is unchanged ({alias}). If it now points at another org (a sandbox refresh or a new "
+                     "login), the Salesforce CLI decides which org it is; Torque keeps no org Id in client.json.")
+    from .consent import load_consent
+    try:
+        consent = load_consent(workspace, name)
+    except WorkspaceError:
+        consent = None
+        notes.append("The consent record could not be read; check it with torque doctor.")
+    if consent:
+        approved = {org.get("alias"): org for org in consent.get("approved_orgs") or [] if isinstance(org, dict)}
+        if alias in approved:
+            notes.append(f"Consent approves {alias} as org Id {approved[alias].get('org_id_18')}: if the alias now "
+                         "points at another org, connected mode refuses it until the owner records consent again "
+                         "(check with torque doctor --live).")
+        else:
+            notes.append(f"Consent does not approve {alias} (it approves {', '.join(sorted(approved)) or 'none'}): "
+                         "connected mode refuses it until the owner records consent for it. Consent is not changed "
+                         "here.")
+    from .changes import list_changes
+    for change in list_changes(workspace, name, problems=[]):
+        if old and change.get("planned_org") == old and old != alias:
+            notes.append(f"Change {change['id']} ({change['title']}) plans the old org {old}; note the new one with "
+                         f"torque change note {change['id']} --kind decision --text \"Target org is now {alias}\".")
+    history = [*(config.get("org_history") or []), {"from": old, "to": alias, "at": _now()}]
+    updated = {**config, "org": alias, "org_history": history}
+    _atomic_replace_text(_inside(client, client / "client.json"),
+                         json.dumps(updated, indent=2, ensure_ascii=False) + "\n", keep_mode=True)
+    entry = add_session(workspace, name, f"Org alias changed from {old or 'none'} to {alias} with torque client "
+                        "set-org. No org was called.", "executed")
+    return {"client": config["slug"], "from": old, "to": alias, "session": entry["id"], "notes": notes,
+            "org_calls": False}
+
+
 def list_clients(workspace: str | Path) -> list[dict]:
     root, _ = load_workspace(workspace)
     directory = _inside(root, root / "clients")
