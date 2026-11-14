@@ -33,6 +33,11 @@ Reference files in this folder:
 | Commitment processing healthy? | `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null` |
 | Fundraising settings | `FundraisingConfig` (retrieve it): donor matching, lapsed and failing counts, next-transaction creation, household soft credits |
 
+A query that errors can also mean the running user lacks the licence or access: treat an
+error as "not checked" and confirm with the permission set licences. General build practice
+is in skills `salesforce-build` and `salesforce-flow`; this skill holds what is specific to
+Nonprofit Cloud.
+
 A plain Developer Edition cannot be switched to NPC. For testing, use the 30-day trial, a
 scratch org with the `Fundraising`, `ProgramManagement`, `Grantmaking`,
 `VolunteerManagement`, `OutcomeManagement`, `PersonAccounts` and `DataProcessingEngine`

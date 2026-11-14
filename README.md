@@ -173,7 +173,7 @@ removing the flag resumes admission. The workflow updater remains available. See
 | Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original command mappings |
 | Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs |
 | Org and metadata investigation | `torque advisory`; use current official Salesforce CLI, skills and MCP tools alongside it |
-| Platform knowledge | Five [skills](docs/skills.md): architecture, Code Analyzer and SOQL review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
+| Salesforce practice | Eight [skills](docs/skills.md): the build standard (descriptions, simplest option first, access with every field), flows, the delivery lifecycle, architecture, SOQL and Code Analyzer review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
 | Deploy, data operations and scoped recovery | `torque deploy`, `torque data`, `torque org`, `torque recover` |
 | QA, debug logs, browser flows, lessons and probes | `torque qa`, `logs`, `browser`, `lesson`, `probes`; coverage and limits depend on the configured adapter |
 | Meeting preparation and prompt contracts | Optional `torque meeting` and `ai-regression`; live model-provider behavior remains experimental |

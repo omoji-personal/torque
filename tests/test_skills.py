@@ -18,7 +18,9 @@ NONPROFIT = ("salesforce-npsp", "salesforce-nonprofit-cloud")
 PRACTICE = ("salesforce-flow", "salesforce-build", "salesforce-delivery")
 REVIEW = ("salesforce-architecture-review", "salesforce-code-analyzer-review", "salesforce-soql-review")
 ALL = (*REVIEW, *PRACTICE, *NONPROFIT)
-WITH_REFERENCES = (*PRACTICE, *NONPROFIT)
+# Skills written to the current standard: a description that says when, sources at the end of every file.
+CURRENT = (*PRACTICE, *REVIEW)
+WITH_REFERENCES = ALL
 
 
 def _frontmatter(path):
@@ -47,8 +49,8 @@ def test_every_skill_has_well_formed_frontmatter():
         assert body.lstrip().startswith("# "), name
 
 
-@pytest.mark.parametrize("name", PRACTICE)
-def test_practice_skill_says_when_to_use_it_and_stays_short(name):
+@pytest.mark.parametrize("name", CURRENT)
+def test_skill_says_when_to_use_it_and_stays_short(name):
     fields, body = _frontmatter(SOURCE / name / "SKILL.md")
     description = fields["description"]
     # The description is what a host lists: it must say when to load the skill, and parse as plain YAML.
@@ -86,11 +88,11 @@ def test_pointers_between_skill_files_resolve():
                 assert (path.parent / sibling).is_file(), (path, sibling)
 
 
-@pytest.mark.parametrize("name", PRACTICE)
-def test_practice_skill_files_cite_sources_and_stay_plain(name):
+@pytest.mark.parametrize("name", CURRENT)
+def test_skill_files_cite_sources_and_stay_plain(name):
     for path in sorted((SOURCE / name).rglob("*.md")):
         text = path.read_text(encoding="utf-8")
-        assert "—" not in text and "–" not in text, path
+        assert chr(0x2014) not in text and chr(0x2013) not in text, path  # no long dashes
         sources = text.split("\n## Sources\n", 1)
         assert len(sources) == 2 and "\n## " not in sources[1], path  # sources come last
         assert "https://" in sources[1] or "field-reported" in sources[1], path
@@ -115,9 +117,18 @@ def test_npsp_skill_covers_the_required_topics():
                   "Partial_Soft_Credit", "Gift Entry", "pmdm__ProgramEngagement__c",
                   "pmdm__ServiceDelivery__c", "pmdm__ServiceSession__c", "pmdm__ServiceSchedule__c",
                   "pmdm__ServiceParticipant__c", "feature gate", "outfunds",
-                  "partially save", "DATEVALUE()", "no fault connector", "field-level security",
-                  "subscriber copies of managed custom metadata", "rollback mode"):
+                  "subscriber copies of managed custom metadata",
+                  # nonprofit lessons from the field record
+                  "CampaignMember.AccountId", "Opening NPSP Settings can write"):
         assert topic in text, topic
+    # The platform lessons that apply to every org moved to the general skills; the NPSP skill points
+    # to them and test_flow_skill_covers_the_required_topics and test_build_skill_covers_the_required_topics
+    # check that they arrived.
+    skill = (SOURCE / "salesforce-npsp" / "SKILL.md").read_text(encoding="utf-8")
+    for pointer in ("salesforce-flow/references/gotchas.md", "salesforce-build/references/access-and-sharing.md"):
+        assert pointer in skill, pointer
+    for moved in ("DATEVALUE()", "rollback mode"):
+        assert moved not in text, moved
 
 
 def test_flow_skill_covers_the_required_topics():
@@ -189,6 +200,23 @@ def test_delivery_skill_maps_every_phase_and_carries_the_field_lessons():
             "Restate the request and get a yes", "one-page outline", "One vet, then post once",
             "A review loop converging is not the reader accepting"):
         assert topic in text, topic
+
+
+def test_review_skills_carry_their_methods_and_traps():
+    architecture = _text("salesforce-architecture-review")
+    for topic in ("Trace one real transaction", "Fairness", "| A01 |", "| A40 |", "| 40 |",
+                  "Stop-and-ask lists", "2026-09-14"):
+        assert topic in architecture, topic
+    soql = _text("salesforce-soql-review")
+    for topic in ("Describe before you query", "Do not guess again", "--use-tooling-api",
+                  "Disjunctions not supported", "groupable", "filterable", "--all-rows",
+                  "An error means the query did not run", "caret line"):
+        assert topic in soql, topic
+    analyzer = _text("salesforce-code-analyzer-review")
+    for topic in ("sf code-analyzer run", "--rule-selector flow", "MissingFaultHandler", "MissingDescription",
+                  "Recommended", "--output-file", "What it does not cover", "Lightning Flow Scanner",
+                  "never rebuild"):
+        assert topic in analyzer, topic
 
 
 def test_nonprofit_cloud_skill_covers_the_required_topics():

@@ -78,7 +78,7 @@ deploys local files "even if they overwrite changes in the org" [DR-README].
 | Route | When | Evidence |
 | --- | --- | --- |
 | Activate in Flow Builder or the flow's version list | Default. Anyone can see and repeat it | Setup |
-| Deploy the flow file with `<status>Active</status>` [SAMPLE-FLOW] | Sandboxes, and production orgs that deploy flows as active | section 2 |
+| Deploy the flow file with its `status` element set to `Active` [SAMPLE-FLOW] | Sandboxes, and production orgs that deploy flows as active | section 2 |
 | Deploy a `FlowDefinition` with `activeVersionNumber` | Orgs that deploy flows inactive | field-reported. Salesforce's reference recommends no longer using `FlowDefinition` to activate (**verify**) |
 | Update the Tooling `FlowDefinition` record | Scripted activation; version number 0 deactivates | field-reported |
 

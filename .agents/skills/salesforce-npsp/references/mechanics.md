@@ -148,3 +148,8 @@ Jobs owned by an inactive user stop. `Don_t_Auto_Schedule_Default_NPSP_Jobs__c` 
 - The "This Year" report filter is calendar; use "Current FY" for fiscal reporting. Each
   rollup feature has its own fiscal-year setting, and RD fiscal values support standard
   fiscal years only.
+
+## Sources
+
+- NPSP source (behavior and defaults): https://github.com/SalesforceFoundation/NPSP
+- The Salesforce Help pages listed in SKILL.md. "verify" marks practitioner knowledge.
