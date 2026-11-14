@@ -118,7 +118,8 @@ def test_refusals_say_the_class_never_the_value_and_exit_4(run, workspace):
 def test_for_prints_one_line_and_exits_zero_when_nothing_matches(run):
     code, out, err = run("for", "quantum", "chromodynamics")
     assert (code, err) == (0, "") and out.strip() == (
-        "No lesson matches quantum, chromodynamics (client alpha + firm + platform).")
+        "No lesson matches quantum, chromodynamics (client alpha + firm + platform). If this work teaches something, "
+        'save it: torque session add ... --learned "When: ... Do: ... Because: ..."')
     code, out, _ = run("for", "--command", "sf project deploy start --metadata Flow:Gift_Entry", "--limit", "2",
                        client=None)
     assert code == 0 and out.count("\n[") == 2 and "(firm + platform): 2 of " in out

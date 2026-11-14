@@ -53,7 +53,7 @@ def _row(item: Lesson, tally: Tally | None = None) -> str:
     tally = tally or Tally()
     state = "stale" if tally.stale_mark else "promoted" if item.promoted_to and item.state == "active" else item.state
     counted = ", ".join(f"{name} {count}" for name, count in tally.counters().items() if count)
-    return (f"{item.id}  {item.scope:<10} {state:<9} {item.title}  ({item.evidence_type}, {record.age_text(item)}"
+    return (f"{item.id}  {item.scope:<10} {state:<9} {item.title}  ({', '.join(recall.basis(item))}"
             + (f"; {counted}" if counted else "") + ")")
 
 
@@ -100,7 +100,8 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
                      + (f" ({guessed} inferred from the text; correct with torque lesson edit {item.id} "
                         "--set applies.types=...)" if guessed else ""))
         if item.state == "candidate":
-            lines.append("  A candidate is not shown at the point of use until it has a basis: "
+            lines.append("  A candidate is not shown at the point of use (only as a hint to torque lesson for) "
+                         "until it has a basis: "
                          f"torque lesson verify {item.id} --evidence reproduced|official-doc|consultant-said")
         if result.masked:
             lines.append("  masked: " + ", ".join(f"{name} ({count})" for name, count in result.masked.items()))
@@ -113,8 +114,8 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
 def cmd_for(args: argparse.Namespace, scopes: Scopes) -> int:
     result = recall.find(scopes, topic=args.topic, tasks=args.task, types=args.type, command=args.command or "",
                          paths=args.path, error=args.error or "", limit=max(1, args.limit),
-                         include_candidates=args.include_candidates)
-    recall.mark_shown(scopes, [hit.lesson for hit in result.hits], "for")
+                         include_candidates=args.include_candidates, hints=recall.HINTS)
+    recall.mark_shown(scopes, [hit.lesson for hit in result.hits + result.hints], "for")
     _out(args, recall.as_json(result), recall.render(result))
     return EXIT_OK
 
@@ -180,9 +181,11 @@ def _full(item: Lesson, tally: Tally) -> str:
              f"scope {item.scope}; kind {item.kind}; state {item.state}; source {item.source}"]
     lines += [f"{label:<5} {value}" for label, value in (("WHEN", item.when), ("DO", item.do), ("WHY", item.because))
               if value]
-    lines += [f"applies: {applies or 'nothing set'}", f"evidence: {evidence or 'none'}",
-              f"created {item.created or '?'}; last verified {item.last_verified or 'never'}; "
-              f"review by {item.review_by or 'not set'}",
+    dates = (f"catalogue note, {item.extra.get('confidence')}; updated {recall.updated(item) or '?'}; "
+             "never verified as a lesson" if item.origin == "advisory" else
+             f"created {item.created or '?'}; last verified {item.last_verified or 'never'}; "
+             f"review by {item.review_by or 'not set'}")
+    lines += [f"applies: {applies or 'nothing set'}", f"evidence: {evidence or 'none'}", dates,
               "counters: " + ", ".join(f"{name} {count}" for name, count in tally.counters().items())]
     if tally.stale_mark:
         lines.append(f"marked stale {tally.stale_mark['at'][:10]}: {tally.stale_mark['reason'] or 'no reason given'}"
@@ -390,7 +393,8 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument("--path", action="append", default=[],
                       help="a source file, folder or package.xml you are about to change (repeatable)")
     find.add_argument("--limit", type=int, default=5)
-    find.add_argument("--include-candidates", action="store_true", help="also show lessons not yet reviewed")
+    find.add_argument("--include-candidates", action="store_true", help="show every matching lesson not yet reviewed among the lessons (by default up to two of "
+                           "the selected client's or initiative's are shown apart, as hints)")
 
     listing = command("list", cmd_list, "the lessons of the selected scope, with state and counters")
     listing.add_argument("--scope", choices=record.SCOPES)

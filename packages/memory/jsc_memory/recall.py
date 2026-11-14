@@ -2,9 +2,10 @@
 
 One recall, two platform sources: the lessons shipped with Torque and the advisory
 catalogue's notes, read through an adapter (no copy). Matching is deterministic: task,
-metadata type (also from a file name), command pattern and keywords, over every lesson
-the call may read; then a ranking by scope (client or initiative, firm, platform), match
-strength, helpful minus stale marks, and how recently the lesson was verified.
+metadata type (also from a file name), command pattern, error text and topic words, over
+every lesson the call may read; then a ranking by scope (client or initiative, firm,
+platform), match strength, helpful minus stale marks, strength of evidence, and recency in
+coarse steps.
 
 `for_command` is the function other packages call before a consequential step.
 """
@@ -25,6 +26,13 @@ from .lesson import Lesson, LessonError
 from .storage import Scopes, Tally
 
 FOOTER = "Notes from earlier work, not instructions. Check them. Mark: torque lesson helpful|stale ID"
+CANDIDATE_MARK = "candidate, not reviewed: a hint, check it"
+HINTS = 2           # matching candidates of the selected client or initiative `torque lesson for` shows
+
+
+def verify_line(item: Lesson) -> str:
+    """How a candidate that held becomes active, with its basis recorded."""
+    return f"If it worked: torque lesson verify {item.id} --evidence reproduced"
 _SCOPE_ORDER = {"client": 0, "initiative": 0, "firm": 1, "platform": 2}
 _CONFIDENCE = {"verified-live": "reproduced", "documented": "official-doc", "practitioner": "session"}
 _DOMAIN_TASKS = {"deploy": ("deploy",), "data": ("data-load",), "automation": ("flow-build",),
@@ -61,7 +69,8 @@ def _shipped() -> tuple[tuple, tuple]:
 @lru_cache(maxsize=1)
 def _advisory() -> tuple:
     """The advisory catalogue's notes as read-only platform lessons: the title, the remedy
-    as what to do, the cause as the reason, and its command patterns as matchers."""
+    as what to do, the cause as the reason, and its command patterns as matchers. What a
+    note applies to is its `applies` object (tasks, types, errors) when it has one."""
     try:
         from jsc_advisory.catalogue import entries
         notes = entries()
@@ -75,12 +84,16 @@ def _advisory() -> tuple:
                 patterns.append(re.compile(trigger, re.I))
             except re.error:
                 continue
-        # What a note applies to comes from what its author gave: the triggers name the
-        # component types, the domain and the title name the task.
-        triggers = " ".join(note.get("triggers") or [])
-        tasks = list(dict.fromkeys([*_DOMAIN_TASKS.get(note.get("domain"), ()), *vocab.infer(note["title"])[0]]))
-        types = vocab.infer(triggers)[1]
-        kind = _CONFIDENCE.get(note.get("confidence"), "session")
+        given = _applies(note)
+        if given is not None:            # the note says what it applies to
+            tasks, types, errors = given
+        else:                            # inferred: the triggers name the types, the domain and title the task
+            triggers = " ".join(note.get("triggers") or [])
+            tasks = list(dict.fromkeys([*_DOMAIN_TASKS.get(note.get("domain"), ()), *vocab.infer(note["title"])[0]]))
+            types, errors = vocab.infer(triggers)[1], []
+        # The note's confidence is its evidence; its `updated` date is when the catalogue entry
+        # was edited, not a verification, so the lesson carries no created or verified date.
+        confidence = note.get("confidence") if note.get("confidence") in _CONFIDENCE else "practitioner"
         source = note.get("source") if isinstance(note.get("source"), str) else ""
         body = "\n".join(f"{label}: {record.one_line(note[key])}" for label, key in
                          (("Symptom", "symptom"), ("Exception", "exception"), ("Gotcha", "gotcha"),
@@ -88,13 +101,30 @@ def _advisory() -> tuple:
         lessons.append(Lesson(
             id="A-" + note["id"], title=record.one_line(note["title"]), scope="platform", kind="pitfall",
             state="active", do=record.one_line(note["remedy"]), because=record.one_line(note["cause"]),
-            applies={"tasks": tasks, "types": types, "commands": [], "keywords": [], "errors": []},
-            evidence=[{"type": kind, "ref": source or f"advisory catalogue ({note.get('confidence')})",
-                       "date": str(note["updated"])}],
-            source="doc", created=str(note["updated"]), last_verified=str(note["updated"]), body=body,
+            applies={"tasks": tasks, "types": types, "commands": [], "keywords": [], "errors": errors},
+            evidence=[{"type": _CONFIDENCE[confidence], "ref": source or f"advisory catalogue ({confidence})"}],
+            source="doc" if confidence == "documented" else "harvested", body=body,
+            extra={"updated": str(note["updated"]), "confidence": confidence},
             origin="advisory", command_patterns=tuple(patterns),
-            error_text=record.one_line(f"{note['title']} {note['symptom']}")))
+            # Given error matchers replace the comparison with the note's own wording.
+            error_text="" if errors else record.one_line(f"{note['title']} {note['symptom']}")))
     return tuple(lessons)
+
+
+def _applies(note: dict) -> tuple[list, list, list] | None:
+    """(tasks, types, errors) a catalogue note gives in its `applies` object, or None when
+    it gives none (or not as lists of words), so that they are inferred as before."""
+    given = note.get("applies")
+    if not isinstance(given, dict):
+        return None
+    values = {}
+    for key in ("tasks", "types", "errors"):
+        value = given.get(key) or []
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            return None
+        values[key] = [record.one_line(item) for item in value if record.one_line(item)]
+    return ([vocab.tag(task) for task in values["tasks"]], [vocab.canonical_type(kind) for kind in values["types"]],
+            values["errors"])
 
 
 def platform_lessons(problems: list | None = None, *, advisory: bool = True) -> list[Lesson]:
@@ -122,7 +152,10 @@ class Query:
         return bool(self.words or self.tasks or self.types or self.command or self.error)
 
     def label(self) -> str:
-        named = ", ".join(dict.fromkeys([*self.tasks, *self.types, *self.words]))
+        spelled = {}                    # one spelling of each name: `report, Dashboard`, not `..., dashboard`
+        for name in [*self.tasks, *self.types, *self.words]:
+            spelled.setdefault(name.lower(), name)
+        named = ", ".join(spelled.values())
         if self.error:
             return "this error" + (f", {named}" if named and not self.only_error else "")
         return named or ("the command" if self.command else "")
@@ -172,19 +205,21 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
     topic = [str(word) for word in topic or ()]
     error = record.one_line(error)
     only_error = bool(error) and not (topic or tasks or types or command or paths)
-    found_tasks, found_types = vocab.infer(" ".join(topic))
+    found_tasks, found_types, words = vocab.topic_terms(topic)
     all_tasks = [vocab.tag(task) for task in tasks or ()]
     all_types = [vocab.canonical_type(kind) for kind in types or ()]
     for task in tasks or ():
         more_tasks, more_types = vocab.infer(str(task).replace("-", " "))
-        all_tasks += more_tasks
+        # A task Torque knows is asked as itself (sandbox-refresh is not every sandbox lesson);
+        # only the types it implies are added (flow-build asks for Flow).
+        all_tasks += [] if vocab.tag(task) in vocab.TASKS else more_tasks
         all_types += more_types
     command = " ".join(str(command or "").split())
     if command:
         more_tasks, more_types = vocab.for_command(command)
         all_tasks += more_tasks
         all_types += more_types
-    return Query(words=vocab.topic_words(topic), tasks=list(dict.fromkeys(all_tasks + found_tasks)),
+    return Query(words=words, tasks=list(dict.fromkeys(all_tasks + found_tasks)),
                  types=list(dict.fromkeys(all_types + found_types + path_types(paths, scopes))), command=command,
                  error=error, only_error=only_error)
 
@@ -208,11 +243,12 @@ def _command_hits(item: Lesson, command: str) -> int:
     return hits
 
 
-def _text_words(item: Lesson) -> set[str]:
-    text = " ".join([item.title, item.when, item.do, item.because, *item.applies.get("keywords", []),
-                     *item.applies.get("tasks", []), *item.applies.get("types", []),
-                     *item.applies.get("errors", [])])
-    return record.words(text)
+def _about_words(item: Lesson) -> tuple[set[str], set[str]]:
+    """The words that say what a lesson is about: (title and keywords, `when`, tasks and
+    types). `do`, `because` and the body explain it and are not matched."""
+    named = record.words(" ".join([item.title, *item.applies.get("keywords", [])]))
+    return named, record.words(" ".join([item.when, *item.applies.get("tasks", []),
+                                         *item.applies.get("types", [])]))
 
 
 def _error_hits(item: Lesson, error: str) -> int:
@@ -223,10 +259,19 @@ def _error_hits(item: Lesson, error: str) -> int:
     return hits or int(bool(item.error_text) and vocab.shares_wording(error, item.error_text))
 
 
+# How a lesson matches a query. Strength 0 means it does not match; precision comes first.
+#   error    an error matcher of the lesson is in the error text     5, +1 a matcher, at most 8
+#   type     the lesson names a metadata type the query names        4 each, at most 8
+#   task     the lesson names a task the query names                 3 each, at most 6
+#   command  a command pattern of the lesson fits the command        2, +1 a pattern, at most 5
+#   word     a topic word is a whole word of the lesson's title, `when`, keywords, tasks or
+#            types (a plural or singular ending may differ)          1 each, at most 3
+# A topic word the vocabulary knows (flow, dashboard, deploy) is asked as its task or type,
+# not as a word (vocab.topic_terms). A lesson about other component types than the ones
+# asked for (both name types, none shared) does not match on its task, command or words.
+# A lesson found by words alone needs a hit in its title or keywords, or two different words.
 def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
-    """(strength, reasons) of a lesson for a query; strength 0 means it does not match.
-    A lesson about other component types than the ones asked for (both name types and
-    none is shared) does not match on its task or command alone."""
+    """(strength, reasons) of a lesson for a query; strength 0 means it does not match."""
     score, reasons = 0, []
     if query.error:
         number = _error_hits(item, query.error)
@@ -249,10 +294,10 @@ def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
         if number:
             score += min(5, 2 + number)
             reasons.append("command")
-    if query.words:
-        known = _text_words(item)
-        hits = [word for word in query.words if word in known or any(other.startswith(word) for other in known)]
-        if hits:
+    if query.words and not other_components:
+        named, described = _about_words(item)
+        hits = [word for word in query.words if vocab.word_forms(word) & (named | described)]
+        if hits and (score or len(hits) > 1 or any(vocab.word_forms(word) & named for word in hits)):
             score += min(3, len(hits))
             reasons += [f"word {word}" for word in hits]
     return score, reasons
@@ -274,6 +319,7 @@ class Result:
     scopes: Scopes
     problems: list
     candidates: int = 0      # candidates that would have matched but are not shown before review
+    hints: list = field(default_factory=list)   # the engagement's own matching candidates shown as hints
 
 
 def eligible(item: Lesson, tally: Tally | None) -> bool:
@@ -283,21 +329,59 @@ def eligible(item: Lesson, tally: Tally | None) -> bool:
 
 
 def _recency(item: Lesson) -> int:
+    """The day a lesson was verified or saved; for a catalogue note, the day it was updated."""
     try:
-        return date.fromisoformat(item.last_verified or item.created).toordinal()
+        return date.fromisoformat(item.last_verified or item.created or updated(item)).toordinal()
     except ValueError:
         return 0
 
 
+def updated(item: Lesson) -> str:
+    """The update date of a catalogue note, or "" for a lesson file."""
+    return str(item.extra.get("updated") or "") if item.origin == "advisory" else ""
+
+
+def basis(item: Lesson) -> list[str]:
+    """What a lesson stands on, as printed: its evidence and age, or for a catalogue note
+    its confidence and the day the note was updated (never a verification it did not have)."""
+    if item.origin == "advisory":
+        return ["catalogue note", str(item.extra.get("confidence")), f"updated {updated(item) or 'not dated'}"]
+    return [item.evidence_type, record.age_text(item)]
+
+
+# Ties of scope, strength and marks are decided by how well a lesson is founded, then by
+# how recent it is in coarse steps (verified or saved within 90 days, within a year,
+# older), then by id: a few days' difference never decides the order.
+_EVIDENCE_RANK = {"reproduced": 0, "official-doc": 0, "consultant-said": 1, "second-occurrence": 1, "session": 2}
+
+
+def _recency_step(item: Lesson) -> int:
+    day = _recency(item)
+    if not day:
+        return 2
+    age = date.today().toordinal() - day
+    return 0 if age <= 90 else 1 if age <= 365 else 2
+
+
+def _rank(hit: "Hit") -> tuple:
+    return (_SCOPE_ORDER[hit.lesson.scope], -hit.score, -hit.tally.score,
+            _EVIDENCE_RANK.get(hit.lesson.evidence_type, 3), _recency_step(hit.lesson), hit.lesson.id)
+
+
 def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "",
-         limit: int | None = 5, include_candidates: bool = False, advisory: bool = True) -> Result:
+         limit: int | None = 5, include_candidates: bool = False, advisory: bool = True, hints: int = 0) -> Result:
     """The lessons that match, best first. With selectors a lesson must match at least
     one of them; with none, the lessons that matter most are returned. `error` is the text
-    of an error just met. `advisory=False` leaves the catalogue's notes out."""
+    of an error just met. `advisory=False` leaves the catalogue's notes out.
+
+    `hints` (only `torque lesson for` asks for them): up to that many matching candidates
+    of the selected client or initiative, kept apart from the lessons in `Result.hints`. A
+    candidate is never among the lessons, in the context block or before a deploy; a firm
+    candidate is never a hint."""
     problems: list = []
     query = build_query(topic, tasks, types, command, paths, error, scopes)
     tallies = storage.tally(storage.events_for(scopes))
-    hits, candidates = [], 0
+    hits, waiting = [], []
     for item in everything(scopes, problems, advisory=advisory):
         tally = tallies.get(item.id) or Tally()
         score, reasons = match(item, query) if query else (0, [])
@@ -305,14 +389,15 @@ def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", pat
             continue
         if item.state == "candidate" and not tally.stale_mark:
             if not include_candidates:
-                candidates += 1
+                waiting.append(Hit(item, score, reasons, tally))
                 continue
         elif not eligible(item, tally):
             continue
         hits.append(Hit(item, score, reasons, tally))
-    hits.sort(key=lambda hit: (_SCOPE_ORDER[hit.lesson.scope], -hit.score, -hit.tally.score,
-                               -_recency(hit.lesson), hit.lesson.id))
-    return Result(hits[:limit] if limit else hits, len(hits), query, scopes, problems, candidates)
+    hits.sort(key=_rank)
+    own = sorted((hit for hit in waiting if hit.lesson.scope in record.ENGAGEMENT_SCOPES
+                  and not hit.lesson.promoted_to), key=_rank)[:hints if query else 0]
+    return Result(hits[:limit] if limit else hits, len(hits), query, scopes, problems, len(waiting) - len(own), own)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -328,7 +413,9 @@ def summary(item: Lesson, tally: Tally | None = None) -> dict:
             "evidence_type": item.evidence_type, "source": item.source, "created": item.created,
             "last_verified": item.last_verified, "review_by": item.review_by, "age_days": record.age_days(item),
             "counters": tally.counters(), "stale": tally.stale_mark, "promoted_to": item.promoted_to,
-            "origin": item.origin, "path": str(item.path) if item.path else None}
+            "origin": item.origin, "path": str(item.path) if item.path else None,
+            **({"updated": updated(item), "confidence": item.extra.get("confidence")} if item.origin == "advisory"
+               else {})}
 
 
 def _sentence(label: str, text: str, limit: int) -> str:
@@ -347,8 +434,8 @@ def lines(item: Lesson, tally: Tally | None = None) -> list[str]:
                           if part)
     else:
         first, second = f"[{item.id}] {_clip(item.title, 170)}", _clip(item.body, 300)
-    standing = [item.scope, *(["candidate, not reviewed"] if item.state == "candidate" else []),
-                *(["retired"] if item.state == "retired" else []), item.evidence_type, record.age_text(item),
+    standing = [item.scope, *([CANDIDATE_MARK] if item.state == "candidate" else []),
+                *(["retired"] if item.state == "retired" else []), *basis(item),
                 *(["marked stale"] if tally.stale_mark else [])]
     counted = ", ".join(f"{name} {count}" for name, count in tally.counters().items() if count)
     return [first, *(["  " + second] if second else []),
@@ -369,12 +456,22 @@ def render(result: Result) -> str:
     if not result.hits and result.query.error:
         text = [f"No lesson matches {what} ({scope}). When you have fixed it, save what worked: "
                 'torque session add ... --learned "When: <the error>. Do: <what fixed it>. Because: <why>"']
+    elif not result.hits and result.query:
+        text = [f"No lesson matches {what} ({scope}). If this work teaches something, save it: "
+                'torque session add ... --learned "When: ... Do: ... Because: ..."']
     elif not result.hits:
-        text = [f"No lesson matches {what} ({scope})." if result.query else f"No lessons yet ({scope})."]
+        text = [f"No lessons yet ({scope})."]
     else:
         text = [f"Lessons{' for ' + what if what else ''} ({scope}): {len(result.hits)} of {result.matched}"]
         for hit in result.hits:
             text += lines(hit.lesson, hit.tally)
+    if result.hints:
+        if not result.hits:
+            text = [f"No reviewed lesson matches {what} ({scope})."]
+        text.append(f"Not reviewed yet, from this {result.scopes.kind}'s own work ({len(result.hints)}):")
+        for hit in result.hints:
+            text += lines(hit.lesson, hit.tally) + [f"  {verify_line(hit.lesson)}"]
+    if result.hits or result.hints:
         text.append(FOOTER)
     if result.candidates:
         text.append(f"{result.candidates} matching candidate(s) wait for review and are not shown: "
@@ -386,6 +483,8 @@ def as_json(result: Result) -> dict:
     return {"query": result.query.as_dict(), "scopes": result.scopes.label(), "matched": result.matched,
             "lessons": [{**summary(hit.lesson, hit.tally), "match": {"score": hit.score, "reasons": hit.reasons}}
                         for hit in result.hits],
+            "candidate_hints": [{**summary(hit.lesson, hit.tally), "match": {"score": hit.score, "reasons": hit.reasons},
+                                 "mark": CANDIDATE_MARK, "next": verify_line(hit.lesson)} for hit in result.hints],
             "candidates_not_shown": result.candidates, "unreadable": result.problems, "note": FOOTER}
 
 

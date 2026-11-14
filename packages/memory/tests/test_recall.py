@@ -1,4 +1,6 @@
 """Recall at the point of use: match over every readable lesson, then rank; print few."""
+from datetime import date, timedelta
+
 import pytest
 
 from jsc_memory import intake, recall, storage
@@ -55,9 +57,15 @@ def test_with_sixty_active_lessons_an_older_matching_one_is_still_found_and_an_u
     assert own(recall.find(alpha, topic=["validation", "rule"])) [:1] == ["0000"]
     nothing = recall.find(alpha, topic=["quantum", "chromodynamics"])
     assert nothing.hits == [] and nothing.matched == 0
-    assert recall.render(nothing) == "No lesson matches quantum, chromodynamics (client alpha + firm + platform)."
+    assert recall.render(nothing) == (
+        "No lesson matches quantum, chromodynamics (client alpha + firm + platform). If this work teaches something, "
+        'save it: torque session add ... --learned "When: ... Do: ... Because: ..."')
     # Without selectors the lessons that matter most come back, bounded.
     assert len(recall.find(alpha).hits) == 5 and recall.find(alpha).matched >= 60
+
+
+def days_ago(days):
+    return (date.today() - timedelta(days=days)).isoformat()
 
 
 def test_ranking_is_scope_then_match_strength_then_feedback_then_recency(scopes):
@@ -65,14 +73,30 @@ def test_ranking_is_scope_then_match_strength_then_feedback_then_recency(scopes)
     save(alpha, "firm", "f001", types=["Flow"], tasks=["deploy"])
     save(alpha, "client", "c001", tasks=["deploy"])                                  # weaker match, nearer scope
     save(alpha, "client", "c002", types=["Flow"], tasks=["deploy"])                  # strongest client match
-    save(alpha, "client", "c003", types=["Flow"], last_verified="2026-01-01")        # same strength as c004, older
-    save(alpha, "client", "c004", types=["Flow"], last_verified="2026-06-01")
-    save(alpha, "client", "c005", types=["Flow"], last_verified="2025-01-01")        # oldest, but marked helpful
+    save(alpha, "client", "c003", types=["Flow"], last_verified=days_ago(400))       # same strength as c004, older
+    save(alpha, "client", "c004", types=["Flow"], last_verified=days_ago(100))
+    save(alpha, "client", "c005", types=["Flow"], last_verified=days_ago(700))       # oldest, but marked helpful
     storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c005"}])
     result = recall.find(alpha, types=["Flow"], tasks=["deploy"], limit=None)
     assert own(result) == ["c002", "c005", "c004", "c003", "c001", "f001"]
     assert result.hits[0].score == 7 and result.hits[0].reasons == ["type Flow", "task deploy"]
     assert all(hit.lesson.scope == "platform" for hit in result.hits[6:])
+
+
+def test_equal_matches_are_ordered_by_evidence_then_by_recency_in_coarse_steps_never_by_a_few_days(scopes):
+    alpha = scopes("alpha")
+    reproduced = [{"type": "reproduced", "date": days_ago(80)}]
+    session = [{"type": "session", "date": days_ago(1)}]
+    told = [{"type": "consultant-said", "date": days_ago(1)}]
+    save(alpha, "client", "a001", types=["Flow"], evidence=session, last_verified=days_ago(60))
+    save(alpha, "client", "a002", types=["Flow"], evidence=told, last_verified=days_ago(2))
+    save(alpha, "client", "a003", types=["Flow"], evidence=reproduced, last_verified=days_ago(80))
+    save(alpha, "client", "a004", types=["Flow"], evidence=session, last_verified=days_ago(1))
+    save(alpha, "client", "a005", types=["Flow"], evidence=session, last_verified=days_ago(200))
+    save(alpha, "client", "a006", types=["Flow"], evidence=reproduced, last_verified=days_ago(500))
+    # Reproduced before consultant-said before session, whatever the dates; within one
+    # evidence class, within 90 days before within a year; inside a step, the id decides.
+    assert own(recall.find(alpha, types=["Flow"], limit=None)) == ["a003", "a006", "a002", "a001", "a004", "a005"]
 
 
 def test_candidates_stale_marks_retired_and_promoted_lessons_stay_out_of_default_recall(scopes):
@@ -91,6 +115,45 @@ def test_candidates_stale_marks_retired_and_promoted_lessons_stay_out_of_default
     assert own(recall.find(alpha, types=["Flow"], limit=None)) == ["0001", "0005"]
 
 
+def test_the_clients_own_matching_candidates_are_hints_when_asked_and_never_lessons(scopes):
+    alpha, beta = scopes("alpha"), scopes("beta")
+    save(alpha, "client", "0001", types=["Flow"], when="you deploy a flow", do="read the active version")
+    for suffix, evidence in (("c001", "session"), ("c002", "reproduced"), ("c003", "session")):
+        save(alpha, "client", suffix, types=["Flow"], state="candidate", when=f"candidate {suffix}",
+             evidence=[{"type": evidence, "date": "2026-11-14"}])
+    save(alpha, "client", "c004", types=["ApexClass"], state="candidate", when="not about flows")
+    save(alpha, "firm", "c005", types=["Flow"], state="candidate", when="a firm candidate")
+    save(beta, "client", "c006", types=["Flow"], state="candidate", when="another client's candidate")
+    result = recall.find(alpha, types=["Flow"], limit=None, hints=recall.HINTS)
+    assert "0001" in own(result) and all(hit.lesson.state == "active" for hit in result.hits)
+    assert [hit.lesson.id[-4:] for hit in result.hits if hit.lesson.id.endswith(("c001", "c002", "c003"))] == []
+    assert [hit.lesson.id[-4:] for hit in result.hits if hit.lesson.id.endswith(("c004", "c005", "c006"))] == []
+    assert [hit.lesson.id[-4:] for hit in result.hints] == ["c002", "c001"]          # at most two, best first
+    assert result.candidates == 2                                                    # c003 and the firm's c005
+    text = recall.render(result).splitlines()
+    first_hint = text.index("Not reviewed yet, from this client's own work (2):")
+    assert text.index("[L-20250303-0001] WHEN you deploy a flow") < first_hint
+    assert text[first_hint + 1] == "[L-20250303-c002] WHEN candidate c002"
+    assert text[first_hint + 2].startswith("  (client, candidate, not reviewed: a hint, check it, reproduced, ")
+    assert text[first_hint + 3] == "  If it worked: torque lesson verify L-20250303-c002 --evidence reproduced"
+    assert text[-2] == recall.FOOTER and text[-1].startswith("2 matching candidate(s) wait for review")
+    answer = recall.as_json(result)
+    assert [item["id"][-4:] for item in answer["candidate_hints"]] == ["c002", "c001"]
+    assert all(item["state"] == "active" for item in answer["lessons"])
+    # Only an explicit query asks for hints: not the default, not the context block, not before a step.
+    assert recall.find(alpha, types=["Flow"]).hints == [] and recall.find(alpha, hints=2).hints == []
+    assert "candidate c00" not in recall.for_command("torque deploy --metadata Flow:X", scopes=alpha)
+    assert "candidate c00" not in " ".join(recall.context_section(alpha)["lines"])
+    assert recall.find(beta, types=["Flow"], hints=2).hints[0].lesson.id.endswith("c006")
+    assert len(recall.find(beta, types=["Flow"], hints=2).hints) == 1
+    # Nothing reviewed matches, but a candidate does: one line says so, then the hint.
+    only = recall.find(beta, types=["Flow"], advisory=False, hints=2)
+    only.hits = []
+    assert recall.render(only).splitlines()[:2] == [
+        "No reviewed lesson matches Flow (client beta + firm + platform).",
+        "Not reviewed yet, from this client's own work (1):"]
+
+
 def test_a_lesson_about_other_components_does_not_match_on_its_task_or_command_alone(scopes):
     alpha = scopes("alpha")
     save(alpha, "client", "f1e1", types=["CustomField", "PermissionSet"], tasks=["deploy"],
@@ -102,6 +165,59 @@ def test_a_lesson_about_other_components_does_not_match_on_its_task_or_command_a
     assert own(recall.find(alpha, command="sf project deploy start --source-dir force-app", limit=None)) == [
         "9e9e", "f1e1"]
     assert own(recall.find(alpha, topic=["field", "access"], types=["Flow"], limit=None)) == ["f1e1"]
+
+
+def test_a_loose_word_is_not_a_match(scopes):
+    alpha = scopes("alpha")
+    # What a lesson says it does or why is not what it is about: its `do` and `because` are not matched.
+    save(alpha, "client", "verb", title="Read the deploy result", tasks=["deploy"],
+         when="a deploy finishes", do="read the component results; it reports success while reporting nothing",
+         because="the dashboard of the job shows the job, not the components")
+    save(alpha, "client", "dash", title="A dashboard runs as its running user", types=["Dashboard"], tasks=["report"],
+         when="you build a dashboard for many viewers", do="choose the running user on purpose")
+    save(alpha, "client", "snap", title="Analytic snapshots run as their owner", when="you schedule one",
+         do="check the owner is active")
+    save(alpha, "client", "when", title="Check the target first", when="you schedule a snapshot for an owner",
+         do="check the owner is active")
+    save(alpha, "client", "flow", title="Snapshots of a flow interview", types=["Flow"], when="you debug a flow")
+    found = lambda *topic, **more: own(recall.find(alpha, topic=topic, limit=None, **more))
+    # A vocabulary word is asked as its task or type, and only lessons about it answer.
+    assert found("report", "dashboard") == ["dash"] and found("reports") == ["dash"]
+    # A whole word, with a plural or singular ending and nothing more.
+    assert found("snapshot") == ["flow", "snap"] and found("snapshots") == ["flow", "snap"]
+    assert found("snap") == [] and found("shot") == []
+    # One word in `when` alone is not enough; two different words are.
+    assert "when" not in found("snapshot") and "when" in found("snapshot", "owner")
+    # Words do not rescue a lesson about other component types than the ones asked for.
+    assert "flow" not in found("snapshot", types=["Dashboard"]) and found("snapshot", types=["Flow"])[0] == "flow"
+    assert found("running", "reporting", types=["ApexClass"]) == []
+
+
+def test_a_task_torque_knows_is_asked_as_itself_and_brings_only_the_types_it_implies(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "rfsh", tasks=["sandbox-refresh", "sandbox"], when="a sandbox was just refreshed")
+    save(alpha, "client", "sbox", tasks=["sandbox"], when="you work in any sandbox")
+    assert recall.build_query(tasks=["sandbox-refresh"]).tasks == ["sandbox-refresh"]
+    assert (recall.build_query(tasks=["flow-build"]).tasks, recall.build_query(tasks=["flow-build"]).types) == (
+        ["flow-build"], ["Flow"])
+    assert own(recall.find(alpha, tasks=["sandbox-refresh"], limit=None)) == ["rfsh"]
+    assert own(recall.find(alpha, topic=["sandbox-refresh"], limit=None)) == ["rfsh"]
+    assert own(recall.find(alpha, tasks=["sandbox"], limit=None)) == ["rfsh", "sbox"]
+
+
+def test_the_heading_names_each_thing_asked_for_once_whatever_its_spelling():
+    assert recall.build_query(topic=["report", "dashboard"]).label() == "report, Dashboard"
+    assert recall.build_query(tasks=["Flow"], types=["flow"]).label() == "flow, flow-build"
+    assert recall.build_query(topic=["Gift", "gift"], error="x").label() == "this error, gift"
+
+
+def test_shipped_lessons_answer_report_dashboard_only_with_lessons_about_reports_or_dashboards():
+    result = recall.find(storage.Scopes(), topic=["report", "dashboard"], limit=None)
+    assert (result.query.tasks, result.query.types, result.query.words) == (["report"], ["Dashboard"], [])
+    for hit in result.hits:                   # the shipped data changes; whatever answers is about reports
+        assert set(hit.reasons) <= {"task report", "type Dashboard"}, (hit.lesson.id, hit.lesson.title)
+    if not result.hits:
+        assert recall.render(result).startswith("No lesson matches report, Dashboard (platform).")
 
 
 def test_a_command_pattern_matches_the_command_and_torques_own_name_for_it(scopes):
@@ -126,13 +242,85 @@ def test_the_advisory_catalogue_is_read_as_platform_lessons_without_a_copy(scope
     note = found["A-flow-activation-on-deploy"]
     assert "command" in note.reasons and "type Flow" in note.reasons
     assert note.lesson.do.startswith("Verify activation after every flow deploy")
-    assert note.lesson.because and note.lesson.evidence[0]["date"]
+    assert note.lesson.because and note.lesson.extra["updated"] and not note.lesson.last_verified
     assert "A-fls-not-automatic" not in found                         # a field note, not for a flow deploy
     field = recall.find(storage.Scopes(), command="sf project deploy start --metadata CustomField:Account.X__c",
                         limit=None)
     assert "A-fls-not-automatic" in ids(field)
     assert recall.platform_lessons(advisory=False) == [item for item in recall.platform_lessons()
                                                       if item.origin != "advisory"]
+
+
+@pytest.fixture
+def catalogue(monkeypatch):
+    """Made-up catalogue notes in place of the shipped ones, for one test."""
+    from jsc_advisory import catalogue as module
+
+    def use(*notes):
+        monkeypatch.setattr(module, "entries", lambda: tuple(notes))
+        recall._advisory.cache_clear()
+    yield use
+    recall._advisory.cache_clear()
+
+
+def _note(name, **more):
+    return {"id": name, "title": "Field labels are hidden from text selectors", "domain": "auth",
+            "confidence": "practitioner", "triggers": ["field label", "shadowRoot"], "updated": "2026-08-04",
+            "symptom": "the selector finds no element for a field label", "cause": "labels sit in shadow roots",
+            "remedy": "walk the shadow roots", **more}
+
+
+def test_a_catalogue_note_that_says_what_it_applies_to_is_taken_at_its_word(catalogue):
+    given = {"tasks": ["browser-test"], "types": [], "errors": ["no element * field label"]}
+    catalogue(_note("given", applies=given), _note("guessed"))
+    notes = {item.id: item for item in recall.platform_lessons() if item.origin == "advisory"}
+    assert (notes["A-given"].applies["tasks"], notes["A-given"].applies["types"],
+            notes["A-given"].applies["errors"]) == (["browser-test"], [], ["no element * field label"])
+    # Without `applies`, the note's tasks and types are inferred as before (the title says "field labels").
+    assert notes["A-guessed"].applies["tasks"] == ["sign-in", "field-build"]
+    assert notes["A-guessed"].applies["types"] == ["CustomField"] and notes["A-guessed"].applies["errors"] == []
+    found = lambda **query: [hit.lesson.id for hit in recall.find(storage.Scopes(), limit=None, **query).hits
+                             if hit.lesson.origin == "advisory"]
+    assert found(tasks=["field-build"], types=["CustomField"]) == ["A-guessed"]
+    assert found(tasks=["browser-test"]) == ["A-given"]
+    # Given error matchers answer the error; the guessed note still answers through its symptom's wording.
+    assert found(error="Timeout: no element matched the field label 'Amount'") == ["A-given"]
+    assert found(error="the selector finds no element for the label") == ["A-guessed"]
+    # An `applies` that is not lists of words is ignored, and the note is inferred.
+    catalogue(_note("odd", applies={"tasks": "browser-test"}))
+    assert [item.applies["tasks"] for item in recall.platform_lessons() if item.origin == "advisory"] == [
+        ["sign-in", "field-build"]]
+
+
+def test_a_catalogue_notes_update_date_is_not_a_verification_and_its_confidence_is_its_evidence(catalogue):
+    from jsc_memory import cli
+    flow = {"tasks": ["flow-build"], "types": ["Flow"]}
+    catalogue(_note("z-live", confidence="verified-live", updated=days_ago(300), applies=flow),
+              _note("y-doc", confidence="documented", updated=days_ago(300), applies=flow,
+                    source="Developer Guide, a made-up page"),
+              _note("x-practice-new", confidence="practitioner", updated=days_ago(1), applies=flow),
+              _note("w-practice-old", confidence="practitioner", updated=days_ago(200), applies=flow))
+    notes = {item.id: item for item in recall.platform_lessons() if item.origin == "advisory"}
+    expected = {"A-z-live": ("reproduced", "harvested"), "A-y-doc": ("official-doc", "doc"),
+                "A-x-practice-new": ("session", "harvested"), "A-w-practice-old": ("session", "harvested")}
+    assert {name: (item.evidence_type, item.source) for name, item in notes.items()} == expected
+    assert all(item.last_verified == "" and item.created == "" for item in notes.values())
+    assert all("date" not in item.evidence[0] for item in notes.values())
+    old = notes["A-w-practice-old"]
+    assert recall.lines(old)[-1] == f"  (platform, catalogue note, practitioner, updated {days_ago(200)})"
+    assert recall.lines(notes["A-z-live"])[-1] == f"  (platform, catalogue note, verified-live, updated {days_ago(300)})"
+    assert not any("days ago" in line or "verified today" in line for item in notes.values()
+                   for line in recall.lines(item))
+    summary = recall.summary(old)
+    assert (summary["updated"], summary["confidence"], summary["last_verified"]) == (days_ago(200), "practitioner", "")
+    shown = cli._full(old, storage.Tally())
+    assert f"catalogue note, practitioner; updated {days_ago(200)}; never verified as a lesson" in shown
+    assert "last verified" not in shown
+    # Evidence from the confidence first: a practitioner note updated yesterday does not outrank a
+    # reproduced or documented one; among equals the update date counts in coarse steps.
+    found = [hit.lesson.id for hit in recall.find(storage.Scopes(), types=["Flow"], tasks=["flow-build"],
+                                                   limit=None).hits if hit.lesson.origin == "advisory"]
+    assert found == ["A-y-doc", "A-z-live", "A-x-practice-new", "A-w-practice-old"]
 
 
 def test_paths_tell_types_from_names_folders_and_manifests(tmp_path):

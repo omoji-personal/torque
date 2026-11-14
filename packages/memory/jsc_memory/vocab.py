@@ -260,3 +260,56 @@ def topic_words(words) -> list[str]:
         if word not in _STOP:
             found.append(word)
     return _unique(found)
+
+
+# Every task word the vocabulary gives, so that a topic word naming one is asked as that task.
+TASKS = frozenset(task for _, tasks, _ in VOCABULARY for task in tasks)
+_SIBILANT = ("s", "x", "z", "ch", "sh")
+
+
+def word_forms(word: str) -> set[str]:
+    """A lower-case word with its plural or singular ending: flow and flows, query and
+    queries, box and boxes. Nothing else: report is not reporting, note is not not."""
+    forms = {word}
+    if word.endswith("ies") and len(word) > 4:
+        forms.add(word[:-3] + "y")
+    elif word.endswith("es") and word[:-2].endswith(_SIBILANT):
+        forms |= {word[:-2], word[:-1]}
+    elif word.endswith("s") and not word.endswith(("ss", "us", "is")) and len(word) > 3:
+        forms.add(word[:-1])
+    else:
+        forms.add(word + ("es" if word.endswith(_SIBILANT) else "s"))
+        if word.endswith("y") and len(word) > 3:
+            forms.add(word[:-1] + "ies")
+    return forms
+
+
+def topic_terms(topic) -> tuple[list[str], list[str], list[str]]:
+    """(tasks, metadata types, words) of a topic. A phrase the vocabulary knows (`flow`,
+    `dashboard`, `field access`), a task's own name (`deploy`, `report`, `data-load`) and
+    a type's name (`CustomField`) are asked as that task or type; only the words left over
+    are matched as words, so `report dashboard` is the report task and the Dashboard type."""
+    token = re.compile(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*")
+    task_of = lambda word: next((task for task in TASKS if task in word_forms(tag(word))), None)  # noqa: E731
+    # A task written as Torque writes it (sandbox-refresh, data-load) first, then the phrases.
+    words = token.findall(" ".join(str(word) for word in topic or ()))
+    tasks = [task_of(word) for word in words if "-" in word and task_of(word)]
+    text = " ".join(word for word in words if not ("-" in word and task_of(word)))
+    more, types = infer(text)
+    tasks += more
+    for pattern, _, _ in _COMPILED:
+        text = pattern.sub(" ", text)
+    left = []
+    for word in token.findall(text):
+        if task_of(word):
+            tasks.append(task_of(word))
+        elif word.lower() in TYPES:
+            types.append(TYPES[word.lower()])
+        else:
+            left.append(word)
+    asked = {name.lower() for name in [*tasks, *types]}
+    words: list[str] = []
+    for word in topic_words(left):
+        if not word_forms(word) & (asked | set(words)):
+            words.append(word)
+    return _unique(tasks), _unique(types), words

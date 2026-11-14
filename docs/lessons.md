@@ -60,7 +60,16 @@ go to the selected client or initiative; `--scope firm` is explicit; nothing wri
 the package.
 
 The platform scope also holds the advisory catalogue's notes (`torque advisory`), read
-through an adapter: one recall, two sources, no copy. Their ids start with `A-`.
+through an adapter: one recall, two sources, no copy. Their ids start with `A-`. A note's
+`applies` object (`tasks`, `types`, optional `errors`, as in a lesson) says what it applies
+to; a note without one has its types guessed from its triggers and its tasks from its
+domain and title, and answers an error through its symptom's wording. A note's
+`confidence` is its evidence (`verified-live` reads as `reproduced`, `documented` as
+`official-doc`, `practitioner` as `session`) and sets its source (`doc` for documented,
+`harvested` otherwise). Its `updated` date is the day the catalogue entry was edited, not
+a verification: it prints as `catalogue note, practitioner, updated 2026-08-01`, is
+`updated` in JSON (`created` and `last_verified` stay empty), and counts only for the
+recency step of the ranking.
 
 Events (shown, helpful, stale, verified, promoted, retired, restored) are appended to
 `.torque/lessons/events.jsonl` under the scope's folder: a client's events stay in the
@@ -115,7 +124,11 @@ Optional body, about 15 lines at most: the error text, a minimal reproduction, o
 A lesson is saved `active` when it comes from the consultant (their correction or
 instruction: `--source consultant`, `--learned-from consultant`) or carries `reproduced`,
 `official-doc` or `second-occurrence` evidence. Otherwise it is a `candidate`: counted in
-`torque context`, listed by `torque lesson review`, and not shown at the point of use.
+`torque context`, listed by `torque lesson review`, and not shown at the point of use (not
+in the `torque context` block, not before `torque deploy` or `torque data`). The one
+exception is an explicit question: `torque lesson for` shows up to two matching candidates
+of the selected client or initiative as hints, after the active lessons (see Recall). A
+firm candidate is never a hint, and a candidate never leaves its client.
 
 A candidate becomes active on a basis: `torque lesson verify ID --evidence
 reproduced[:REF] | official-doc:URL | second-occurrence[:REF] | consultant-said`. The same
@@ -168,9 +181,19 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 [--path P] [--limit 5] [--include-candidates] [--json]` (also `recall`).
 
 - Matching runs over every lesson the call may read, then ranks: scope (client or
-  initiative, then firm, then platform), match strength, helpful minus stale marks, and
-  how recently the lesson was verified. With selectors a lesson must match at least one;
-  when nothing matches, one line says so and the command exits 0.
+  initiative, then firm, then platform), match strength, helpful minus stale marks, then
+  evidence (`reproduced` or `official-doc`; then `consultant-said` or `second-occurrence`;
+  then `session`), then recency in coarse steps (verified or saved within 90 days, within
+  a year, older), then id. A few days' difference never decides the order. With selectors a lesson must match at least one;
+  when nothing matches, one line says so (with how to save a lesson) and the command
+  exits 0. Precision comes first: when in doubt, nothing is shown.
+- Topic words: a word the vocabulary knows is asked as its task or type (`flow` is the
+  Flow type, `dashboard` the Dashboard type, `deploy` and `report` are tasks). The other
+  words are compared with what a lesson is about: its title, `when`, keywords, tasks and
+  types, never its `do`, `because` or body. A word matches a whole word; a plural or
+  singular ending may differ (`snapshot`, `snapshots`), nothing else (`report` is not
+  `reporting`). A lesson found by words alone needs a word in its title or keywords, or two
+  different words.
 - `--path` infers the metadata type from a file name, a folder or a `package.xml`
   (`*.flow-meta.xml` is Flow, `*.field-meta.xml` is CustomField, and so on). Only names
   are read, links to folders are not followed, and a path inside the folder of another
@@ -178,10 +201,17 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 - `--error` takes the first line of an error. It matches the lessons' error matchers and,
   for the advisory catalogue, a note whose title or symptom names the same error code or
   shares the error's wording.
-- A lesson about other component types than the ones asked for does not match on its task
-  or command alone.
+- A lesson about other component types than the ones asked for does not match on its
+  task, its command or its words.
 - Not shown by default: candidates, retired lessons, lessons marked stale, and lessons
   with `promoted_to` set (they live on in their promoted form).
+- Hints: after the active lessons, `torque lesson for` shows up to two matching candidates
+  of the selected client or initiative (the commonest case: an agent's own "this failed,
+  then that worked"). Each is marked `candidate, not reviewed: a hint, check it` and
+  followed by `If it worked: torque lesson verify ID --evidence reproduced`, which makes
+  it active with its basis recorded. With `--json` they are under `candidate_hints`, apart
+  from `lessons`; other matching candidates are counted in `candidates_not_shown`.
+  `--include-candidates` lists every matching candidate among the lessons instead.
 - Each lesson prints in three lines: id and WHEN, DO and WHY, then scope, evidence type,
   age and counters. Every print appends `shown` events.
 
