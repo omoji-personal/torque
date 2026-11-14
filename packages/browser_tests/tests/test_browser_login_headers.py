@@ -53,12 +53,26 @@ def test_an_expired_address_refusal_carries_them():
 
 
 def test_http_servers_own_error_page_carries_them_too():
+    # A method the relay does not define is answered by http.server's own error page (501), with a status line
+    # on every Python version. (A request line that is not one at all may be answered HTTP/0.9-style, a body with
+    # no status line and no headers, as CI showed on Linux with Python 3.10 and 3.12: nothing can carry a header
+    # there; see the test below.)
+    run = Command("--target-org", "acme-sbx", "--timeout", "5")
+    status, headers, _ = run.get(method="BREW")
+    assert status == 501 and "Location" not in headers and has_the_headers(headers)
+    run.get()
+    run.done()
+
+
+def test_a_request_line_that_is_not_one_gets_no_redirect():
     run = Command("--target-org", "acme-sbx", "--timeout", "5")
     with socket.create_connection(("127.0.0.1", run.port), timeout=10) as connection:
         connection.sendall(b"NOT A REQUEST LINE AT ALL\r\n\r\n")
         answer = connection.recv(8192).decode("latin-1")
-    assert answer.startswith("HTTP/1.0 400")
-    for name, value in EXPECTED.items():
-        assert f"{name}: {value}" in answer
+    assert "Location:" not in answer and " 302" not in answer.split("\n", 1)[0]
+    if answer.startswith("HTTP/"):                  # where http.server answers with a status line
+        assert answer.startswith("HTTP/1.0 400")
+        for name, value in EXPECTED.items():
+            assert f"{name}: {value}" in answer
     run.get()
     run.done()
