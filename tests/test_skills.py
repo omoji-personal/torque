@@ -15,7 +15,7 @@ SOURCE = ROOT / ".agents" / "skills"
 BUNDLED = ROOT / "src" / "torque" / "data" / "skills"
 NONPROFIT = ("salesforce-npsp", "salesforce-nonprofit-cloud")
 # Practice skills: a short body that says what to do first, depth in references/.
-PRACTICE = ("salesforce-flow", "salesforce-build")
+PRACTICE = ("salesforce-flow", "salesforce-build", "salesforce-delivery")
 REVIEW = ("salesforce-architecture-review", "salesforce-code-analyzer-review", "salesforce-soql-review")
 ALL = (*REVIEW, *PRACTICE, *NONPROFIT)
 WITH_REFERENCES = (*PRACTICE, *NONPROFIT)
@@ -69,6 +69,21 @@ def test_skill_references_exist_and_are_linked(name):
         assert f"`references/{path.name}`" in skill, path
     for mentioned in re.findall(r"`(references/[a-z0-9-]+\.md)`", skill):
         assert (SOURCE / name / mentioned).is_file(), mentioned
+
+
+def test_pointers_between_skill_files_resolve():
+    for path in sorted(SOURCE.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        # `salesforce-build/references/data-model.md` is relative to the skills folder.
+        for pointer in re.findall(r"`(salesforce-[a-z-]+/references/[a-z0-9-]+\.md)`", text):
+            assert (SOURCE / pointer).is_file(), (path, pointer)
+        # skill `salesforce-flow` names another skill.
+        for skill in re.findall(r"skills? `(salesforce-[a-z-]+)`", text):
+            assert (SOURCE / skill / "SKILL.md").is_file(), (path, skill)
+        # Inside references/, `gotchas.md` names a file beside the one being read.
+        if path.parent.name == "references":
+            for sibling in re.findall(r"`([a-z0-9-]+\.md)`", text):
+                assert (path.parent / sibling).is_file(), (path, sibling)
 
 
 @pytest.mark.parametrize("name", PRACTICE)
@@ -144,6 +159,35 @@ def test_build_skill_covers_the_required_topics():
             "Dynamic Forms", "list view", "dashboard", "running user",
             # code and integration
             "with sharing", "API 67.0", "Assert", "upsert on an external Id", "Deliverability"):
+        assert topic in text, topic
+
+
+def test_delivery_skill_maps_every_phase_and_carries_the_field_lessons():
+    skill = (SOURCE / "salesforce-delivery" / "SKILL.md").read_text(encoding="utf-8")
+    # One screen: each phase with what matters most, the artifact it produces and the human sign-off.
+    for phase in ("Take over or assess an org", "Discovery and requirements", "Solution design", "Environments",
+                  "Testing and UAT", "Data migration", "Release", "Documentation, training, hand-over",
+                  "Support and org health", "Estimating and scope"):
+        assert f". {phase} |" in skill, phase
+    for topic in ("| Produces |", "| Human sign-off |", "torque browser login", "torque session add",
+                  'Say what "verified" rests on'):
+        assert topic in skill, topic
+    text = _text("salesforce-delivery")
+    for topic in (
+            # phase checklists and artifacts
+            "acceptance criteria", "decision record", "options table", "build register",
+            "manual-steps register", "leftover ledger", "data dictionary", "teach-back", "Reconcile",
+            "Health Check", "Release Updates", "| 26 |",
+            # the checks that would have caught escaped defects
+            "non-admin", "one person per user group", "every record type that shares the page layout",
+            "zero starting rows", "exact username", "Known open defects",
+            "Inject a fault into any step you add to someone else's automation",
+            # deploy and retrieve mechanics from failed commands
+            "Check-only before every real deploy", "--target-metadata-dir",
+            # what verified means, and documents
+            "A check counts only if its result would differ when the thing is wrong",
+            "Restate the request and get a yes", "one-page outline", "One vet, then post once",
+            "A review loop converging is not the reader accepting"):
         assert topic in text, topic
 
 
