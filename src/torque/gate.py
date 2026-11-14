@@ -2056,7 +2056,10 @@ CHECK_ALONE_REASON = ("torque check runs here only as the whole command: nothing
                       "paths such as project/force-app")
 CHECK_LITERAL_REASON = ("torque check's paths must be written out here: no variable, glob, `~` or other "
                         "character the shell expands, so that the gate reads the paths the command reads")
-CHECK_PATH_REASON = "torque check would read client context." + NARROW_PATH_HINT
+CHECK_PATH_REASON = ("torque check would read client context (a client's folder, or a whole initiative folder)."
+                     + NARROW_PATH_HINT)
+CHECK_NO_PATH_REASON = ("torque check metadata needs its folders or files named here, such as project/force-app: "
+                        "without a PATH it reads the whole current folder")
 CHECK_PROJECT_REASON = ("torque check metadata would read the whole Salesforce project folder around its paths "
                         "(the nearest folder with sfdx-project.json at or above the first PATH), where it runs "
                         "Code Analyzer, and that folder reaches clients/. Keep the Salesforce project under "
@@ -2184,12 +2187,25 @@ def _check_reason(args: list[str], clients: Path | None, workspace: Path | None,
         values.setdefault(name, []).append(value)
     if action == "result" and len(positionals) != 1:
         return CHECK_REASON
-    roots = positionals or ["."]
+    if not positionals:
+        return CHECK_NO_PATH_REASON
+    roots = positionals
     paths = roots + [value for name in CHECK_PATH_OPTIONS for value in values.get(name, [])]
+    try:
+        initiatives = [Path(os.path.realpath(str(folder))) for folder in (workspace / "initiatives").iterdir()
+                       if folder.is_dir()]
+    except OSError:
+        initiatives = []
+    _spend()
     for raw in paths:
         if CHECK_LOOSE_CHARS & set(raw):
             return CHECK_LITERAL_REASON
         if _root_reaches(raw, clients, cwd, workspace) or _reaches(_check_lexical(cwd, raw), clients):
+            return CHECK_PATH_REASON
+        # A folder that is, or holds, a whole initiative folder (its binding.json with it), as
+        # for every other recursive read in this mode.
+        if any(_is_within(folder, target) for folder in initiatives
+               for target in (_check_lexical(cwd, raw), *_token_paths(raw, cwd, workspace)[0])):
             return CHECK_PATH_REASON
     if action == "result":
         return ""

@@ -231,8 +231,9 @@ local files only, when:
 - the check is the whole command (nothing chained, piped, redirected or wrapped);
 - it uses only its own options (no `--client`, `--initiative`, `--workspace` or org option, no option cut
   short, no `--`);
-- every path is written out (no variable, glob or `~`) and stays out of `clients/`: each PATH (default: the
-  current folder, so from the workspace root name `project/force-app`), `--changed-from`, `--baseline`;
+- every path is written out (no variable, glob or `~`) and stays out of `clients/`: each PATH (at least one named,
+  such as `project/force-app`; the default, the current folder, is not accepted there), `--changed-from`,
+  `--baseline`; none of them may be or hold a whole initiative folder;
 - it runs from a folder outside `clients/`;
 - for `check metadata`, the project folder around the paths (the nearest `sfdx-project.json` at or above the
   first PATH), which it reads when given files and where it runs Code Analyzer, does not hold `clients/`;

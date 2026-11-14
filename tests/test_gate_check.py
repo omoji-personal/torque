@@ -17,7 +17,6 @@ PROJECT_ALLOWED = [
     "torque check metadata force-app --only Flow:Gift_Entry --json --fail-on error --ignore doc.help-text-missing",
     "torque check metadata force-app --analyzer=off --changed-from=result.json",
     "torque check metadata force-app/main/default/flows/Gift_Entry.flow-meta.xml",
-    "torque check metadata",                                  # the current folder, project/
     "torque check result result.json --json",
     "python -m torque check metadata force-app --analyzer off",
     "torque check --help",
@@ -139,6 +138,36 @@ def test_the_workspace_root_is_not_a_path_to_check(root):
     for command in ("torque check metadata", "torque check metadata .", "torque check metadata . --analyzer off"):
         allowed, reason = decide(root, command, cwd=root)
         assert not allowed and "project/" in reason, command
+
+
+def test_no_folder_that_is_or_holds_the_workspace_is_read(root):
+    # No PATH reads the whole current folder; the workspace root, by any spelling, or a
+    # folder above it holds clients/; the same goes for --baseline and --changed-from.
+    top, above = root.as_posix(), root.parent.as_posix()
+    for command, cwd in [("torque check metadata", root / "project"), ("torque check metadata --analyzer off", root),
+                         ("torque check metadata .", root), (f"torque check metadata {top} --analyzer off", root),
+                         (f"torque check metadata {above} --analyzer off", root),
+                         (f'torque check metadata "{root}" --analyzer off', root / "project"),
+                         ("torque check metadata force-app --baseline ..", root / "project"),
+                         (f"torque check metadata force-app --baseline {top}", root / "project"),
+                         (f"torque check metadata force-app --baseline {above}", root / "project"),
+                         ("torque check metadata force-app --changed-from ..", root / "project"),
+                         (f"torque check metadata force-app --changed-from {top}", root / "project"),
+                         ("torque check result ..", root / "project")]:
+        allowed, reason = decide(root, command, cwd=cwd)
+        assert not allowed and reason, command
+
+
+def test_a_whole_initiative_folder_is_not_read(root):
+    playbook = root / "initiatives" / "playbook"
+    (playbook / "force-app").mkdir(parents=True)
+    (playbook / "binding.json").write_text("{}", encoding="utf-8")
+    for command in ("torque check metadata ../initiatives/playbook --analyzer off",
+                    "torque check metadata ../initiatives --analyzer off",
+                    "torque check metadata force-app --baseline ../initiatives/playbook"):
+        allowed, reason = decide(root, command)
+        assert not allowed and "initiative" in reason, command
+    assert decide(root, "torque check metadata ../initiatives/playbook/force-app --analyzer off")[0]
 
 
 def test_check_deployed_says_why_and_names_the_two_forms(root):
@@ -361,5 +390,17 @@ def test_connected_check_reads_only_the_bound_clients_folders(tmp_path, monkeypa
     assert _connected_action(base, "torque check deployed --target-org acme-sbx --changed-from "
                                    "clients/acme/project/result.json", base) == "deny"
     assert _connected_action(base, "torque check deployed --help", base) == "allow"
+    # check deployed's local reads: the result, the source folder (default: the working folder).
+    for command, cwd in [("torque check deployed --target-org acme-sbx --changed-from ../../beta/project/result.json",
+                          own),
+                         ("torque check deployed --target-org acme-sbx --only Flow:X", base / "clients" / "beta"),
+                         ("torque check deployed --target-org acme-sbx --changed-from result.json",
+                          base / "clients" / "beta" / "project"),
+                         ("torque check deployed --target-org acme-sbx --only Flow:X --source-dir ..", base / "clients")]:
+        assert _connected_action(base, command, cwd) == "deny", command
+    assert _connected_action(base, "torque check deployed --target-org acme-sbx --changed-from result.json", own) == "allow"
+    outside = base / "project"
+    outside.mkdir()
+    assert _connected_action(base, "torque check deployed --target-org acme-sbx --only Flow:X", outside) == "allow"
     assert _connected_action(base, "torque check metadata force-app --analyzer off",
                              base / "clients" / "beta" / "project") == "deny"

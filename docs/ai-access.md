@@ -109,7 +109,8 @@ later release narrows the check.
   create the `sfdx-project.json` it looks for). Every path is written out (no variable,
   glob or `~`) and must not reach `clients/` (or a worktree copy's), read both as the shell
   resolves it and as the command does (`abspath` first, so `link/..` is the current
-  folder); the default PATH is the current folder. `check metadata` also reads the project
+  folder), and no path may be or hold a whole initiative folder; `check metadata` needs at
+  least one PATH named (without one it reads the whole current folder). `check metadata` also reads the project
   folder around its paths (the nearest folder with `sfdx-project.json` at or above the
   first PATH) when it is given files, and runs Code Analyzer there unless `--analyzer off`:
   that folder must not reach `clients/` either, must hold every PATH (elsewhere the analyzer
