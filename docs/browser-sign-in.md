@@ -166,7 +166,7 @@ in Playwright's storage-state format. A script then starts with
 | Mode | Behaviour |
 | --- | --- |
 | `full` (default) | Works. The gate does not block it. |
-| build-only | The gate blocks every `torque browser` call, this one included, with its usual message. |
+| build-only | The gate blocks every `torque browser` call, this one included, with its usual message. The command also refuses itself (exit 6), read the way the gate reads the mode, so a host with no gate hook wired is stopped too. Run it yourself outside the AI session. |
 | connected | Refused (exit 6). Connected mode allows one browser, Torque's own guarded one, and refuses host browser tabs because their org cannot be checked. A sign-in for a host tab, or a session file for another browser, would step outside that guard. Use `torque browser browser FLOW --target-org ALIAS` under a granted browser window. |
 
 ## Exit codes

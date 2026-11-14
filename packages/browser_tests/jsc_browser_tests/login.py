@@ -142,6 +142,11 @@ def policy_refusal() -> str | None:
     (torque.browser_guard, the gate): a sign-in for a host tab, or a saved session
     for another browser, would step outside that guard. Nothing is added here that
     the existing policy does not already say."""
+    if auth.in_build_only_mode():
+        # The gate hook blocks the command here too; this covers a host with no hook wired.
+        return ("build-only mode: this workspace keeps the AI session away from the org, and a browser sent into "
+                "the org is org access. Nothing was signed in. Run the command yourself outside the AI session, "
+                "or the owner sets the workspace's ai_access to full or connected.")
     if not auth.in_connected_mode():
         return None
     return ("connected mode: this workspace allows only Torque's own guarded browser, which checks every "

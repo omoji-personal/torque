@@ -189,6 +189,33 @@ def refuse_debug_env_before_sign_in(cdp_endpoint: str | None = None) -> None:
         raise AuthError(problem)
 
 
+def in_build_only_mode() -> bool:
+    """This run is in a build-only Torque workspace, read as the gate reads it
+    (torque.gate._workspace_mode: the strictest workspace wins, and one whose
+    configuration cannot be read is build-only): the workspace TORQUE_WORKSPACE selects,
+    or one at or above the working folder. Without Torque installed there is no
+    workspace mode to read."""
+    import os
+    from pathlib import Path
+    try:
+        from torque import gate
+    except ImportError:
+        return False
+    folders = []
+    selected = os.environ.get("TORQUE_WORKSPACE")
+    if selected:
+        path = Path(selected).expanduser()
+        folders.append(path.parent.parent if (path / "client.json").is_file() else path)
+    folders.append(Path(os.getcwd()))
+    for folder in folders:
+        try:
+            if gate._workspace_mode(Path(os.path.realpath(folder)))[1] == "build-only":
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def in_connected_mode() -> bool:
     """This run is in a connected Torque workspace (or that cannot be ruled out)."""
     try:

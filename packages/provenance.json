@@ -737,7 +737,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "1eadf30d6035e3f29a4ddb060e4f95e6cba68283c1c89feaaa00ac7c9a983111",
+      "destination_sha256": "22453d63dc8bd4a1c2b3b30618ea66814d1e7652c50af35768fe590c6ad79eb3",
       "adapted": true
     },
     {
