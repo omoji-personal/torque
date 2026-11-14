@@ -57,7 +57,8 @@ def build(scopes: Scopes) -> dict:
     tallies = storage.tally(storage.events_for(scopes))
     today = record.today()
     tally = lambda item: tallies.get(item.id) or Tally()
-    live = [item for item in own if item.state != "retired"]
+    # A promoted lesson and its firm copy say the same on purpose: not a duplicate to resolve.
+    live = [item for item in own if item.state != "retired" and not item.promoted_to]
     report: dict = {"scopes": scopes.label(), "date": today, "lessons": len(own)}
     report["candidates"] = [_entry(item, tally(item)) for item in sorted(
         (item for item in own if item.state == "candidate"), key=lambda item: (item.created, item.id))]
@@ -68,7 +69,8 @@ def build(scopes: Scopes) -> dict:
         if _related(one, other) and record.overlap(one, other) >= DUPLICATE]
     recheck = []
     for item in own:
-        if item.state != "active" or tally(item).stale_mark:
+        # A promoted lesson is not shown any more: it lives on in its promoted form.
+        if item.state != "active" or item.promoted_to or tally(item).stale_mark:
             continue
         counted = tally(item)
         reasons = []

@@ -253,3 +253,11 @@ def test_lessons_not_shown_for_half_a_year_are_listed_for_a_check(scopes, monkey
     assert review.build(alpha)["recheck"][0]["reasons"] == ["not shown in 180 days"]
     storage.log(alpha.engagement, [{"event": "shown", "id": old.id}])
     assert review.build(alpha)["recheck"] == []
+    # A lesson that lives on in a promoted form is not shown any more, so it is not asked about either.
+    moved = intake.add(alpha, when="you build a screen flow", do="store the choice value", source="consultant").lesson
+    stored = next(item for item in storage.load(alpha) if item.id == moved.id)
+    stored.created, stored.review_by = "2026-01-01", "2026-02-01"
+    storage.save(stored, alpha.folder("client"))
+    assert [entry["id"] for entry in review.build(alpha)["recheck"]] == [moved.id]
+    feedback.edit(alpha, moved.id, ["promoted_to=rule:flows"])
+    assert review.build(alpha)["recheck"] == []

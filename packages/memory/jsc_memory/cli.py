@@ -51,7 +51,7 @@ def _candidates(lessons: list[Lesson]) -> list[dict]:
 
 def _row(item: Lesson, tally: Tally | None = None) -> str:
     tally = tally or Tally()
-    state = "stale" if tally.stale_mark else item.state
+    state = "stale" if tally.stale_mark else "promoted" if item.promoted_to and item.state == "active" else item.state
     counted = ", ".join(f"{name} {count}" for name, count in tally.counters().items() if count)
     return (f"{item.id}  {item.scope:<10} {state:<9} {item.title}  ({item.evidence_type}, {record.age_text(item)}"
             + (f"; {counted}" if counted else "") + ")")
@@ -73,7 +73,7 @@ def _file_text(path: str) -> str:
 
 
 def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
-    text, title, source = _read_text(args), args.title or "", args.source
+    text, title, source, evidence = _read_text(args), args.title or "", args.source, list(args.evidence)
     body = _file_text(args.body_file) if args.body_file else ""
     if args.from_file:
         # A note from a host's own memory: its text becomes the lesson, in the scope chosen here.
@@ -81,10 +81,11 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
         title = title or meta.get("description") or meta.get("name") or ""
         body = "\n\n".join(part for part in (body, note) if part)
         source = source or "harvested"
+        evidence = evidence or [f"session:host note {Path(args.from_file).name}"]
     result = intake.add(scopes, text=text, title=title, when=args.when or "", do=args.do or "",
                         because=args.because or "", body=body, scope=args.scope, kind=args.kind, tasks=args.task,
                         types=args.type, commands=args.command, keywords=args.keyword, errors=args.error,
-                        evidence=args.evidence, source=source or "agent", session=args.session)
+                        evidence=evidence, source=source or "agent", session=args.session)
     item = result.lesson
     verb = {"saved": "Saved", "duplicate": "Already saved:", "second-occurrence": "Second occurrence of"}[result.status]
     lines = [f"{verb} {item.id} ({item.scope}, {item.state}): {item.title}"]
@@ -370,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--evidence", action="append", default=[], metavar="TYPE[:REF]",
                      help="one of " + ", ".join(record.EVIDENCE_TYPES) + "; reproduced, official-doc and "
                           "second-occurrence admit the lesson as active")
-    add.add_argument("--from", dest="source", choices=("consultant", "agent", "doc"),
+    add.add_argument("--source", dest="source", choices=("consultant", "agent", "doc"),
                      help="who the lesson comes from (default agent); the consultant's word admits it as active")
     add.add_argument("--body-file", metavar="PATH", help="a short body: the error text, a reproduction, one example")
     add.add_argument("--from-file", metavar="PATH", help="a note from a host's own memory (see `harvest`)")

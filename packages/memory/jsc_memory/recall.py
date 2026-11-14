@@ -274,18 +274,15 @@ def _recency(item: Lesson) -> int:
 
 
 def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "",
-         limit: int | None = 5, include_candidates: bool = False, only: str | None = None,
-         advisory: bool = True) -> Result:
+         limit: int | None = 5, include_candidates: bool = False, advisory: bool = True) -> Result:
     """The lessons that match, best first. With selectors a lesson must match at least
     one of them; with none, the lessons that matter most are returned. `error` is the text
-    of an error just met. `only` narrows the search to one scope."""
+    of an error just met. `advisory=False` leaves the catalogue's notes out."""
     problems: list = []
     query = build_query(topic, tasks, types, command, paths, error)
     tallies = storage.tally(storage.events_for(scopes))
     hits, candidates = [], 0
     for item in everything(scopes, problems, advisory=advisory):
-        if only and item.scope != only:
-            continue
         tally = tallies.get(item.id) or Tally()
         score, reasons = match(item, query) if query else (0, [])
         if query and not score:

@@ -30,7 +30,7 @@ def run(workspace, monkeypatch, capsys):
 def test_add_then_find_show_list_and_search(run, workspace):
     code, out, _ = run("add", "--when", "you are about to deploy a new custom field", "--do",
                        "grant field permissions in a permission set in the same deploy", "--because",
-                       "a field created through the Metadata API has no field access", "--from", "consultant",
+                       "a field created through the Metadata API has no field access", "--source", "consultant",
                        "--command", "sf project deploy *", "--json")
     assert code == 0
     saved = json.loads(out)
@@ -105,7 +105,7 @@ def test_for_prints_one_line_and_exits_zero_when_nothing_matches(run):
 
 def test_show_keeps_the_old_listing_names(run):
     run("add", "a candidate lesson")
-    run("add", "an active lesson", "--from", "consultant")
+    run("add", "an active lesson", "--source", "consultant")
     assert "A candidate lesson" in run("show", "pending")[1] and "An active lesson" not in run("show", "pending")[1]
     assert "An active lesson" in run("show", "active")[1]
     assert run("show", "archive")[1].startswith("No lessons to list")
@@ -126,7 +126,7 @@ def test_an_unknown_or_ambiguous_id_changes_nothing_and_says_so(run, scopes):
 
 
 def test_unreadable_files_are_named_and_never_break_a_command(run, workspace):
-    run("add", "a good lesson", "--from", "consultant")
+    run("add", "a good lesson", "--source", "consultant")
     folder = workspace / "clients" / "alpha" / "lessons"
     (folder / "handedited.md").write_text("---\nid: [broken\n---\n", encoding="utf-8")
     for args in (("list",), ("for", "good"), ("search", "good"), ("show",)):
@@ -147,7 +147,7 @@ def test_a_command_that_is_not_understood_exits_2(run):
 def test_for_error_finds_what_fixed_an_error_before(run):
     code, out, _ = run("add", "--when", "a query fails on an unknown field name", "--do",
                        "look the name up with sf sobject describe and do not guess again", "--because",
-                       "a second guess usually fails too", "--error", "No such column", "--from", "consultant",
+                       "a second guess usually fails too", "--error", "No such column", "--source", "consultant",
                        "--json")
     saved = json.loads(out)
     assert code == 0 and saved["applies"]["errors"] == ["No such column"]
@@ -163,3 +163,47 @@ def test_for_error_finds_what_fixed_an_error_before(run):
     assert "--learned" in out and out.count("\n") == 1
     code, out, _ = run("for", "--error", "UNABLE_TO_LOCK_ROW on 12 rows", "--limit", "1", client=None)
     assert code == 0 and "[A-unable-to-lock-row]" in out
+
+
+def test_a_lock_held_by_another_command_exits_7_and_says_to_run_again(run, monkeypatch, scopes):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def held(root):
+        raise storage.Busy("another Torque command is writing lessons here. Nothing was written; run the command again.")
+        yield
+
+    monkeypatch.setattr(storage, "transaction", held)
+    code, out, err = run("add", "a lesson while the folder is locked", "--json")
+    assert code == 7 and "run the command again" in err and json.loads(out)["exit_code"] == 7
+    assert storage.load(scopes("alpha")) == []
+
+
+def test_the_package_holds_only_what_has_a_caller():
+    """The hook-driven half of the earlier package (session spool, trigger synthesis,
+    ranker, index, injector, the framework-memory shim) had no caller and is gone; what
+    the package says about itself names modules and a guide that exist."""
+    import importlib
+    import importlib.util
+    import re
+    from pathlib import Path
+    import jsc_memory
+    for gone in ("spool", "capture", "injector", "index", "ranker"):
+        assert importlib.util.find_spec(f"jsc_memory.{gone}") is None, gone
+    for name in ("load_framework_memory", "active_lessons_path", "index_path", "spool_dir", "write_review_candidate"):
+        assert not hasattr(storage, name), name
+    named = re.findall(r"^- `(\w+)`", jsc_memory.__doc__, re.M)
+    assert set(named) == {"lesson", "storage", "scrubber", "vocab", "intake", "recall", "feedback", "review",
+                          "promote", "cli"}
+    for name in named:
+        importlib.import_module(f"jsc_memory.{name}")
+    package = Path(jsc_memory.__file__).resolve().parent
+    assert sorted(path.stem for path in package.glob("*.py")) == sorted([*named, "__init__"])
+    guide = package.parents[2] / "docs" / "lessons.md"
+    assert "docs/lessons.md" in jsc_memory.__doc__ and (not (package.parents[2] / "pyproject.toml").is_file()
+                                                        or guide.is_file())
+    # Nothing printed needs more than ASCII, so a console that is not UTF-8 cannot break a command.
+    for module in named:
+        source = (package / f"{module}.py").read_text(encoding="utf-8")
+        for call in re.findall(r"print\((.*)", source):
+            assert call.isascii(), (module, call)

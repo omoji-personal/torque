@@ -121,7 +121,7 @@ def test_lessons_work_for_an_initiative_as_for_a_client(torque, root):
     assert code == 0 and "(initiative, active)" in out
     assert list((root / "initiatives" / "internal-playbook" / "lessons").glob("L-*.md"))
     assert "for this initiative" in torque("context", initiative="internal-playbook")[1]
-    code, out, _ = torque("lesson", "add", "always retrieve first", "--from", "consultant",
+    code, out, _ = torque("lesson", "add", "always retrieve first", "--source", "consultant",
                           initiative="internal-playbook")
     assert code == 0 and "(initiative, active)" in out
     listed = torque("lesson", "list", initiative="internal-playbook")[1]
@@ -186,7 +186,7 @@ def test_deploy_and_data_print_matching_lessons_before_the_step_and_never_fail(t
     from jsc_revert import cli as revert_cli
     from jsc_memory import recall
     assert torque("lesson", "add", "--when", "you deploy a flow for this client", "--do",
-                  "read the active version back", "--because", "a deploy can leave it inactive", "--from",
+                  "read the active version back", "--because", "a deploy can leave it inactive", "--source",
                   "consultant", "--json")[0] == 0
     before_step: list[str] = []
     monkeypatch.setattr(revert_cli, "cmd_deploy", lambda args: before_step.append(capsys.readouterr().err) or 0)
@@ -213,7 +213,7 @@ def test_deploy_and_data_print_matching_lessons_before_the_step_and_never_fail(t
 
 def test_advisory_notes_add_scoped_lessons_under_their_own_key(torque, root):
     torque("lesson", "add", "--when", "you deploy a flow for this client", "--do", "read the active version back",
-           "--from", "consultant")
+           "--source", "consultant")
     command = "sf project deploy start --metadata Flow:Gift_Entry"
     code, out, _ = torque("advisory", "notes", "--command", command, "--limit", "4", "--json")
     answer = json.loads(out)
@@ -285,6 +285,57 @@ def test_doctor_prints_the_lessons_lines_and_the_selfcheck_passes(torque, root):
     # Without a workspace doctor still checks the wiring and the shipped lessons.
     plain = json.loads(run_doctor_without_workspace())["lessons"]
     assert plain["firm"] is None and plain["selfcheck"]["passed"] is True
+
+
+def test_the_legacy_entry_point_runs_the_same_commands_without_utf8_mode_or_tracebacks(torque, root):
+    import os
+    import subprocess
+    import sys
+    title = "Rollup ≥ 0 → vérifié"
+    assert torque("lesson", "add", title, "--source", "consultant")[0] == 0
+    env = {key: value for key, value in os.environ.items() if key not in ("PYTHONIOENCODING", "TORQUE_WORKSPACE")}
+    env["PYTHONUTF8"] = "0"                              # the console's own code page, as on a plain Windows shell
+    scope = ["--workspace", str(root), "--client", "alpha-nonprofit"]
+
+    def legacy(*words):
+        return subprocess.run([sys.executable, "-m", "jsc_memory.cli", *words], env=env, capture_output=True,
+                              timeout=120)
+    listed = legacy("list", *scope)
+    assert listed.returncode == 0 and title in listed.stdout.decode("utf-8"), listed.stderr
+    shown = legacy("for", "rollup", *scope)
+    assert shown.returncode == 0 and title in shown.stdout.decode("utf-8")
+    saved = legacy("capture", "another → lesson", *scope)
+    assert saved.returncode == 0 and b"Saved L-" in saved.stdout
+    missing = legacy("add", "a lesson with nowhere to go")
+    assert missing.returncode == 2 and b"Traceback" not in missing.stderr and b"needs a workspace" in missing.stderr
+    assert legacy("for", "flow").returncode == 0
+
+
+def test_the_commands_the_guide_shows_parse_as_written():
+    import shlex
+    from pathlib import Path
+    from jsc_memory import cli as lesson_cli
+    guide = (Path(__file__).resolve().parents[1] / "docs" / "lessons.md").read_text(encoding="utf-8")
+    block = guide.split("```sh", 1)[1].split("```", 1)[0].replace("\\\n", " ")
+    commands = [line.split("  #")[0].strip() for line in block.splitlines() if line.strip().startswith("torque ")]
+    assert len(commands) >= 12
+    for command in commands:
+        words = shlex.split(command)[1:]
+        try:
+            if words[0] == "lesson":
+                own, scope = cli._scope_options(words[1:], ("--workspace", "--client", "--initiative"))
+                assert scope.get("--workspace") == "."
+                lesson_cli.build_parser().parse_args(own)
+            else:
+                cli.build_parser().parse_args(words)
+        except SystemExit:
+            pytest.fail(f"the guide shows a command that does not parse: {command}")
+    # Every lesson command and exit code the guide names exists.
+    names = set(lesson_cli.build_parser()._subparsers._group_actions[0].choices)
+    for name in ("add", "capture", "for", "recall", "list", "show", "search", "helpful", "stale", "verify", "retire",
+                 "restore", "edit", "review", "promote", "stats", "harvest", "migrate", "selfcheck"):
+        assert name in names and name in guide, name
+    assert names <= cli.LESSON_NEEDS_WORKSPACE | {"for", "recall", "list", "show", "search", "stats", "selfcheck"}
 
 
 def run_doctor_without_workspace() -> str:

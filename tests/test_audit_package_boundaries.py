@@ -229,7 +229,7 @@ def test_lesson_capture_pauses_without_writing_then_resumes(root, capsys):
 
 def test_context_in_maintenance_shows_lessons_and_records_nothing(root, capsys):
     assert cli.main(["lesson", "--workspace", str(root), "--client", "Alpha", "add", "Synthetic lesson",
-                     "--from", "consultant"]) == 0
+                     "--source", "consultant"]) == 0
     log = root / "clients" / "alpha" / ".torque" / "lessons" / "events.jsonl"
     assert not log.exists()
     (root / ws.MAINTENANCE_FLAG).write_text("migration", encoding="utf-8")

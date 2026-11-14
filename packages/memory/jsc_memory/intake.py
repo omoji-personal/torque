@@ -184,13 +184,14 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
 
 
 def _again(same: Lesson, new: Lesson, folder: Path, reference: str, day: str, masked: dict) -> Added:
-    """The same lesson captured again. On a new occasion (another session, or another
-    day) that is a second occurrence: evidence that admits a candidate. Otherwise nothing changes."""
-    occasions = {entry.get("ref") or entry.get("date") for entry in same.evidence}
+    """The same lesson captured again. On a new occasion (another session; without a
+    session, another day) that is a second occurrence: evidence that admits a candidate.
+    Otherwise nothing changes."""
     if same.state == "retired":
         return Added(same, same.path, "duplicate", masked=masked, notes=[
             f"This lesson exists and is retired. If it holds after all: torque lesson restore {same.id}"])
-    if (reference or day) in occasions:
+    seen = {entry.get("ref") if reference else entry.get("date") for entry in same.evidence}
+    if (reference or day) in seen:
         return Added(same, same.path, "duplicate", masked=masked,
                      notes=["This lesson is already saved; nothing was added."])
     same.evidence.append(record.evidence_entry("second-occurrence", reference, day))
@@ -332,7 +333,7 @@ def migrate(scopes: Scopes) -> dict:
     problems: list = []
     folder = scopes.folder(scopes.kind)
     report = {"imported": [], "already": 0, "problems": problems,
-              "old_store": (scopes.engagement / "state" / "memory" / "lessons").as_posix()}
+              "old_store": str(scopes.engagement / "state" / "memory" / "lessons")}
     states = {"review_pending": "candidate", "active": "active", "archive": "retired"}
     with storage.transaction(scopes.engagement):
         taken = storage.taken_ids(folder)

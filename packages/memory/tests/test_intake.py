@@ -139,6 +139,7 @@ def test_the_same_lesson_again_is_not_a_second_file(scopes):
     assert first.lesson.state == "candidate"
     same = intake.add(alpha, text=FLOW.upper(), session="s1")
     assert (same.status, same.lesson.id) == ("duplicate", first.lesson.id)
+    assert intake.add(alpha, text=FLOW).status == "duplicate"        # the same day, outside any session: no new occasion
     assert len(storage.load(alpha)) == 1 and storage.load(alpha)[0].state == "candidate"
     # On another occasion it is a second occurrence: evidence that admits the candidate.
     again = intake.add(alpha, text=FLOW, session="s2")

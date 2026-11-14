@@ -83,6 +83,8 @@ def test_apply_writes_the_firm_copy_without_client_words_and_marks_the_source(ru
     found = [hit.lesson.id for hit in recall.find(alpha, types=["Flow"], limit=None).hits if hit.lesson.scope != "platform"]
     assert found == [copy.id]
     assert copy.id in [hit.lesson.id for hit in recall.find(scopes("beta"), types=["Flow"], limit=None).hits]
+    # The pair is one lesson in two forms: the listing says so and the review does not call it a duplicate.
+    assert review.build(alpha)["duplicates"] == [] and " promoted " in run("list")[1]
     # Applying again is harmless, by path or by the proposal's name.
     for proposal in (made["proposal"], f"promote-{item.id}-to-firm.md"):
         code, out, _ = run("promote", "--apply", proposal)

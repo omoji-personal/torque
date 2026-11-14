@@ -1108,7 +1108,9 @@ def lesson_lines(section: dict, kind: str = "client") -> list[str]:
     else:
         lines = [f"Lessons: none active for this {kind} yet ({counts})."]
     lines.append(f"For the ones that fit the task: {section['commands']['query']} "
-                 "(or --task, --type, --command, --path)")
+                 "(or --task, --type, --command, --path; after a failure --error \"its first line\")")
+    lines.append("Save what this session teaches with its record: torque session add ... --learned "
+                 "\"When: ... Do: ... Because: ...\"")
     if section["candidates_waiting"]:
         lines.append(f"{section['candidates_waiting']} candidate lesson(s) wait for review: "
                      + section["commands"]["review"])
