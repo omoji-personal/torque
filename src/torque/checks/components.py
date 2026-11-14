@@ -67,11 +67,36 @@ class Component:
         return self.node.line if self.node is not None else None
 
     def fingerprint(self):
+        """What "changed" means for `--baseline`: the same comparison `check deployed` uses for code."""
         if self.node is not None:
             return ("xml", self.node.fingerprint())
         if self.source is not None:
-            return ("text", re.sub(r"\s+", "", self.source))
+            return ("text", code_text(self.source))
+        if self.type in BUNDLE_TYPES.values() and os.path.isdir(self.path):
+            return ("bundle", bundle_files(self.path))
         return ("none", self.error or "")
+
+
+def code_text(text: str) -> str:
+    """Code as compared: line endings made one kind, whitespace at the end of each line and of the file removed.
+    Nothing else: a space inside a string, or the line break that ends a // comment, is content."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join(line.rstrip() for line in lines).rstrip()
+
+
+def bundle_files(folder: str) -> tuple:
+    """(relative path, compared text) for each file of a Lightning component bundle, tests left out."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        for f in sorted(filenames):
+            full = os.path.join(dirpath, f)
+            try:
+                text = code_text(_read_bytes(full).decode("utf-8", errors="replace"))
+            except OSError as exc:
+                text = f"unreadable: {exc.strerror or exc}"
+            out.append((Path(os.path.relpath(full, folder)).as_posix(), text))
+    return tuple(out)
 
 
 @dataclass

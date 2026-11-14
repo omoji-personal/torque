@@ -26,8 +26,10 @@ try:  # the shared launcher finds sf where Windows installs it as a batch file
 except ImportError:  # pragma: no cover
     run_tool = subprocess.run
 
-LABEL = ("proven against a stubbed CLI and one live run on a Developer Edition org, 2026-11; not yet run against a "
-         "sandbox or a production org")
+LABEL = ("proven against a stubbed CLI; one live run on a Developer Edition org, 2026-11, then the comparison rules "
+         "changed after the live run and have not yet been re-run against a real org; not yet run against a sandbox "
+         "or a production org")
+STATUSES = ("same", "unexplained-additions", "different", "could-not-compare", "not-in-org")
 RETRIEVABLE = {"CustomField", "CustomObject", "ValidationRule", "RecordType", "Flow", "PermissionSet",
                "PermissionSetGroup", "CustomPermission", "Profile", "FlexiPage", "Layout", "CustomMetadata",
                "ApexClass", "ApexTrigger"}
@@ -217,12 +219,14 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
     rows = []
     for c in comps:
         row = {"type": c.type, "name": c.name, "status": c.status, "differences": [], "not_compared_entries": 0,
-               "org_only": []}
+               "unexplained_additions": [], "known_server_additions": 0, "other_org_entries": 0}
         if c.type not in RETRIEVABLE:
             row.update(comparison="could-not-compare", reason=f"{c.type} is not compared by this command")
         elif c.key in org_side:
-            result, diffs, skipped, org_only = compare.compare(c, org_side[c.key], requested)
-            row.update(comparison=result, differences=diffs, not_compared_entries=skipped, org_only=org_only)
+            o = compare.compare(c, org_side[c.key], requested)
+            row.update(comparison=o.status, differences=o.differences, not_compared_entries=o.not_compared,
+                       unexplained_additions=o.unexplained, known_server_additions=len(o.known_additions),
+                       other_org_entries=o.other_entries)
         elif c.key in missing:
             row.update(comparison="not-in-org", reason="the org reports it cannot be found")
         elif errors and not ok:
@@ -240,8 +244,7 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
     attempted = bool(members or flows or access or vrules)
     reached = not attempted or ok > 0 or any(f.get("status") not in (None, "UNKNOWN") for f in flows) or any(
         a.get("rows") is not None for a in access) or any("could not read" not in r["message"] for r in vrules)
-    counts = {k: sum(1 for r in rows if r["comparison"] == k)
-              for k in ("same", "same-org-has-more", "different", "could-not-compare", "not-in-org")}
+    counts = {k: sum(1 for r in rows if r["comparison"] == k) for k in STATUSES}
     return {
         "schema_version": 1, "command": "torque check deployed", "label": LABEL, "target_org": target_org,
         "scope": {"mode": sc.mode, "source": sc.source, "components": len(comps),
@@ -253,10 +256,23 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
                    "fields_without_grants": sum(1 for a in access if a.get("rows") == 0),
                    "inactive_validation_rules": sum(1 for r in vrules if r["active"] is False)},
         "org_reached": reached,
-        "not_checked": ["permission set assignments and what a user really sees (test as that user)",
+        "meaning": MEANING,
+        "not_checked": ["permission set assignments and what a user really sees (a grant entry is not a user's "
+                        "access; test as that user)",
                         "whether the change does what the requirement asks (business acceptance)",
                         "components of types this command does not compare"],
     }
+
+
+MEANING = {
+    "same": "everything the file specifies is in the org unchanged, and the org copy has nothing else but default "
+            "values, the properties Salesforce is known to add on save, or permission entries the file does not "
+            "name (containment under these rules, not byte equality)",
+    "unexplained-additions": "everything the file specifies is in the org unchanged, and the org copy also has "
+                             "properties Torque cannot explain: look at them",
+    "different": "something submitted is missing or changed in the org, the org has content where the deploy "
+                 "replaces the definition, or the file revokes access the org still grants",
+}
 
 
 def text(rep: dict) -> str:
@@ -265,8 +281,8 @@ def text(rep: dict) -> str:
              f"Scope: {rep['scope']['components']} component(s) ({rep['scope']['mode']}"
              + (f" {rep['scope']['source']}" if rep["scope"]["source"] else "") + ").",
              f"Retrieved {rep['retrieve']['members']} into a fresh private folder (removed afterwards): "
-             f"{t['same'] + t.get('same-org-has-more', 0)} as submitted ({t.get('same-org-has-more', 0)} of them with "
-             f"more in the org), {t['different']} different, {t['could-not-compare']} could not compare, "
+             f"{t['same']} same, {t['unexplained-additions']} as submitted plus content only the org has (look at "
+             f"it), {t['different']} different, {t['could-not-compare']} could not compare, "
              f"{t['not-in-org']} not in the org."]
     for e in rep["retrieve"]["errors"]:
         lines.append(f"Retrieve error: {e}")
@@ -277,12 +293,21 @@ def text(rep: dict) -> str:
         more = f" (+{len(r['differences']) - 6} more)" if len(r["differences"]) > 6 else ""
         skipped = (f" ({r['not_compared_entries']} entries about components not in this retrieve not compared)"
                    if r["not_compared_entries"] else "")
-        shown = {"same-org-has-more": "same as submitted"}.get(r["comparison"], r["comparison"])
-        only = r.get("org_only") or []
-        also = ""
-        if only and r["comparison"] != "different":
-            also = ("; the org also has " + ", ".join(only[:5]) + (f" (+{len(only) - 5} more)" if len(only) > 5 else "")
-                    + " (defaults Salesforce adds on save, or someone else's change)")
+        only = r.get("unexplained_additions") or []
+        shown = r["comparison"]
+        if shown == "unexplained-additions":
+            shown = "as submitted, plus content only the org has (look at it)"
+            tail = ", ".join(only[:6]) + (f" (+{len(only) - 6} more)" if len(only) > 6 else "")
+            more = ""
+        notes = []
+        n = r.get("known_server_additions") or 0
+        if n:
+            notes.append(f"{n} propert{'y' if n == 1 else 'ies'} Salesforce is known to add on save")
+        n = r.get("other_org_entries") or 0
+        if n:
+            notes.append(f"{n} access entr{'y' if n == 1 else 'ies'} the file does not name, which a deploy leaves "
+                         "as they are")
+        also = f" (the org copy also has {' and '.join(notes)})" if notes else ""
         lines.append(f"  {r['type']} {r['name']}: {shown}" + (f": {tail}{more}" if tail else "") + also + skipped)
     if rep["flows"]:
         lines.append("Flow activation:")
@@ -293,10 +318,12 @@ def text(rep: dict) -> str:
     if rep["validation_rules"]:
         lines.append("Validation rules:")
         lines += [f"  {r['name']}: {r['message']}" for r in rep["validation_rules"]]
-    lines.append(f"Totals: {t['different']} different, {t['not-in-org']} not in the org, {t['could-not-compare']} not "
+    lines.append(f"Totals: {t['different']} different, {t['unexplained-additions']} with content only the org has, "
+                 f"{t['not-in-org']} not in the org, {t['could-not-compare']} not "
                  f"compared, {t['flows_latest_not_active']} flow(s) whose latest version is not active, "
                  f"{t['fields_without_grants']} new field(s) with no grant, {t['inactive_validation_rules']} inactive "
                  f"validation rule(s). Not checked: {'; '.join(rep['not_checked'])}.")
+    lines.append(f"\"same\" means {rep['meaning']['same']}.")
     return "\n".join(lines)
 
 
@@ -306,8 +333,10 @@ def register(actions) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "After a deploy: retrieve the same components into a fresh private temporary folder and compare them\n"
-            "with the submitted source (same, different with the element that differs, could not compare, not in\n"
-            "the org); report whether each flow's latest version is the active one; which permission sets grant\n"
+            "with the submitted source (same, different with the element that differs, unexplained-additions when\n"
+            "the org copy also has properties Torque cannot explain, could not compare, not in the org; \"same\" is\n"
+            "containment under the rules in docs/checks.md, not byte equality); report whether each flow's latest\n"
+            "version is the active one; which permission sets grant\n"
             "each new field in the org (and whether each --as-permission-set does); whether each validation rule\n"
             "is active. Read-only: it retrieves and queries through the Salesforce CLI with --target-org on every\n"
             f"call and changes nothing in the org. Status: {LABEL}.\n\n"

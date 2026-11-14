@@ -191,7 +191,9 @@ CLI error instead of a result, JSON that is not a deploy result). No org call.
 
 ## `torque check deployed`
 
-Status: proven against a stubbed CLI; needs one live run on a sandbox.
+Status: proven against a stubbed CLI and a mutation corpus. One live run on a Developer Edition org
+(2026-11); the comparison rules changed after the live run and have not yet been re-run against a real org;
+not yet run against a sandbox or a production org.
 
 ```
 torque check deployed --target-org ALIAS (--changed-from RESULT.json | --source-dir DIR | --only Type:Name ...)
@@ -202,15 +204,10 @@ After a deploy, read-only:
 
 - **Same as submitted?** Retrieves the Created and Changed components of the result (or those named, or
   everything under `--source-dir`) with `sf project retrieve start --target-metadata-dir TMP --unzip` into a
-  fresh private temporary folder, removed afterwards, and compares each with the submitted source: `same`,
-  `different` (with the element that differs), `could-not-compare` (with why) or `not-in-org`. Only known
-  serialisation differences are normalised: the order of a component's top-level elements (order inside an
-  element, such as picklist values or decision outcomes, is compared), a leaf the org writes with a default
-  value (false, 0, empty) that the source leaves out, permission entries that grant nothing, the parts of an
-  object that source format keeps in their own files, and, for permission sets and profiles, entries about
-  components that were not in the same retrieve (counted and reported as not compared). Types compared:
-  custom objects, fields, validation rules, record types, flows, permission sets and groups, custom
-  permissions, profiles, Lightning pages, layouts, custom metadata records, Apex classes and triggers.
+  fresh private temporary folder, removed afterwards, and compares each with the submitted source. Types
+  compared: custom objects, fields, validation rules, record types, flows, permission sets and groups, custom
+  permissions, profiles, Lightning pages, layouts, custom metadata records, Apex classes and triggers. See
+  [What the comparison establishes](#what-the-comparison-establishes).
 - **Flows:** the active and the latest version through the flow definition (the route of
   `torque advisory flow`: Tooling `FlowDefinition` and `FlowDefinitionView`, plus the version numbers), and
   whether the latest version, the one a deploy creates, is the active one.
@@ -222,6 +219,68 @@ Every call goes through Torque's launcher with an argument list (`sf.cmd` on Win
 and only retrieves or queries. It never calls `sf org display` and prints no token. Exit 0 when the report
 completes, whatever it found; 2 unusable input; 3 the org could not be read (for example an alias with no
 CLI login). Not checked: permission set assignments and what a user really sees, and business acceptance.
+
+### What the comparison establishes
+
+| Status | Establishes | Does not establish |
+|---|---|---|
+| `same` | everything the file specifies is in the org unchanged, and the org copy has nothing else except default values, the properties Salesforce is known to add on save, or permission entries the file does not name | byte equality; that the component works; who can use it |
+| `unexplained-additions` | everything the file specifies is in the org unchanged; the org copy also has top-level properties Torque cannot explain (listed: look at them) | whether those properties are harmless server defaults or someone's change |
+| `different` | something submitted is missing or changed; or the org has content where a deploy replaces the definition; or the file revokes access the org still grants | which side is right |
+| `could-not-compare`, `not-in-org` | the pair could not be read, or the org reports no such component | anything about its content |
+
+The text summary counts `unexplained-additions` apart, never with `same`; so does `--json`
+(`totals.unexplained-additions`, and per component `unexplained_additions`, `known_server_additions`,
+`other_org_entries`).
+
+Rules:
+
+1. Replace by default. A deploy of a flow, field, rule, class, trigger, layout or page replaces its
+   definition. In a flow, content only the org has is always a difference (a retained decision outcome
+   means the latest version is not what was submitted). In other types, content only the org has inside an
+   element the file has, or an extra member of a collection the file lists, is a difference; a top-level
+   property the file does not have at all is `unexplained-additions` unless rule 2 explains it.
+2. Known server additions, one table in `src/torque/checks/compare.py` (`SERVER_ADDITIONS`), each entry with
+   the value and the retrieve it was seen in. Today: a custom object's action overrides of type Default,
+   `compactLayoutAssignment` SYSTEM, the activity, bulk, feed, history, licensing, report, search, sharing and
+   streaming switches, `externalSharingModel` Private, `deploymentStatus` Deployed, an empty `searchLayouts`
+   and `visibility` Public, as the live run of 2026-11-14 returned them. A value not seen there is not
+   explained.
+3. Merge for permission sets and profiles. A deploy changes only the access entries the file names, so
+   entries only the org has are expected (counted, shown as information). An entry the file names with every
+   flag false (or a tab set to None or Hidden) is a revoke: met when the org has no such entry or an all-false
+   one; `different` ("source revokes it; the org still grants ...") when the org entry grants anything. This
+   covers field, object, class, tab, record type, custom permission and user permission entries. Entries
+   about components not in the same retrieve are counted as not compared.
+4. Code (classes, triggers): exact, after making line endings one kind and removing whitespace at the end of
+   lines and of the file. A space inside a string or the line break after a `//` comment is content. The
+   same function decides what changed for `torque check metadata --baseline` (also for the files of a
+   Lightning component bundle).
+5. Order: the Metadata API writes top-level elements in its own order, so that order is not compared; the
+   order of same-tag siblings below it (picklist values, decision outcomes) is.
+
+Also normalised: a leaf present on one side only with a default value (false, 0, empty), and leading and
+trailing whitespace of an XML value (a known limit: `" Approved "` and `"Approved"` compare equal).
+
+The mutation corpus (`tests/test_check_mutations.py`, 56 pairs, the same pairs through the baseline scope),
+in short:
+
+| Mutation | Flow | Object | Field | Rule | Permission set or profile | Class |
+|---|---|---|---|---|---|---|
+| removed in the file, the org keeps it | different | unexplained-additions | different (picklist value); unexplained-additions (property) | unexplained-additions | different when it was a grant the file now revokes | different |
+| added in the org only | different | unexplained-additions; different inside an element | different | unexplained-additions | same (other entries); different when inside a named entry | different |
+| a literal changed | different | different | different | different | different | different |
+| whitespace inside a string | different | | different | different (formula) | | different |
+| two outcomes or values reordered | different | same (top level) | different | same (top level) | same (top level) | |
+| revoked in the file, the org keeps the grant | | | | | different | |
+| revoked in the file, the org dropped it | | | | | same | |
+| the server's defaults on a new object | | same | same | | | |
+| an unknown property on an object | | unexplained-additions | | | | |
+| line endings and trailing whitespace only | | | | | | same |
+
+What none of this establishes: a grant entry in a permission set is not a user's effective access
+(assignments, groups, muting, license and sharing decide that: test as that user), and the comparison does
+not show that the change does what the requirement asks.
 
 ## Build-only mode
 
