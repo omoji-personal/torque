@@ -25,7 +25,7 @@ def test_field_without_grant_and_its_exemptions(tmp_path):
     names = {f["component"]["name"] for f in hits(r, "access.field-without-grant")}
     assert names == {"Shift__c.Hours__c"}
     f = hits(r, "access.field-without-grant")[0]
-    assert f["severity"] == "error" and "Shift_User" in f["action"] and f["line"] == 2
+    assert f["severity"] == "warning" and "Shift_User" in f["action"] and f["line"] == 2   # no scope given
 
 
 def test_grant_found_elsewhere_is_named(tmp_path):
@@ -34,6 +34,7 @@ def test_grant_found_elsewhere_is_named(tmp_path):
     t.permset("Shift_User", fields=["Shift__c.Hours__c"])
     r = t.check(only=["CustomField:Shift__c.Hours__c"])
     f = hits(r, "access.field-without-grant")[0]
+    assert f["severity"] == "note"            # the project grants it; --only did not name the permission set
     assert "PermissionSet Shift_User under the checked folder grants it" in f["action"]
     assert "Permission sets in this change: none" in f["action"]
 

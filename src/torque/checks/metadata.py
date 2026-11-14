@@ -67,6 +67,7 @@ def check(paths: list[str], *, changed_from: str | None = None, baseline: str | 
     ignored_components = [c for c in sc.in_scope if cfg.path_ignored(c.path)]
     in_scope = [c for c in sc.in_scope if c not in ignored_components]
     ctx = rules.build_context(project, sc.everything, in_scope, sc.grant_scope, sc.baseline)
+    ctx.scope_mode = sc.mode
     if sc.mode == "all":
         ctx.scope_word = "in scope"
     found = rules.run(in_scope, ctx)

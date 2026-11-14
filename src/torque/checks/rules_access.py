@@ -68,7 +68,12 @@ def field_without_grant(comp: Component, ctx: Context) -> list[Finding]:
                  if s not in in_scope]
     hint = (f" {elsewhere[0].type} {elsewhere[0].name} under the checked folder grants it but is not in this change; "
             "add it to the deploy." if elsewhere else "")
-    return [Finding("access.field-without-grant", "error", comp,
+    # An error only when the change is known (a deploy result or a baseline): then a grant outside it does not ship.
+    # With no scope the field may not be new; with --only or files the grant may be in a component not named,
+    # and when the project around them holds one, that is a note.
+    known = ctx.scope_mode in ("changed-from", "baseline", "")
+    severity = "error" if known else ("note" if elsewhere and ctx.scope_mode in ("only", "files") else "warning")
+    return [Finding("access.field-without-grant", severity, comp,
                     f"No permission set {ctx.scope_word} grants {comp.name}, so nobody but an admin can see it{maybe}.",
                     f"Add a fieldPermissions entry for {comp.name} (readable true; editable true only if users enter "
                     f"it) to the permission set its users get. Permission sets {ctx.scope_word}: {listed}.{hint}",

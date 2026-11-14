@@ -76,7 +76,7 @@ inherited; 2 unusable input (missing path, unreadable result, bad `--only`, unkn
 | Rule | Severity | Inspects | Known limits |
 |---|---|---|---|
 | `file.unreadable` | error | a file that is not well-formed XML, holds a DOCTYPE, or cannot be read | no other rule runs on that file |
-| `access.field-without-grant` | error | a new custom field that takes field-level security (not required, not master-detail, not on a custom metadata type, platform event or custom setting) with no readable or editable `fieldPermissions` entry in a permission set in the change | grants made in Setup or as data records are invisible; a custom setting is recognised only when its object file is read; with no scope every field counts as possibly new |
+| `access.field-without-grant` | error with `--changed-from` or `--baseline`; warning with no scope (the field may not be new) or with `--only` or files; note when a permission set elsewhere in the project grants it and `--only` or the files did not name it | a new custom field that takes field-level security (not required, not master-detail, not on a custom metadata type, platform event or custom setting) with no readable or editable `fieldPermissions` entry in a permission set in the change | grants made in Setup or as data records are invisible; a custom setting is recognised only when its object file is read; with no scope every field counts as possibly new |
 | `access.grant-only-in-profile` | warning | the same field granted only by a profile in the change | |
 | `access.formula-field-editable` | error | an editable `fieldPermissions` entry for a formula or roll-up summary field | only when the field's definition is in the files |
 | `access.profile-in-change` | warning | a profile file in the change | |

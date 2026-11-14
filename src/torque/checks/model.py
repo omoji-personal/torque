@@ -86,6 +86,7 @@ class Context:
     objects: dict = field(default_factory=dict)   # "obj" (lower) -> CustomObject component
     baseline_mode: bool = False
     scope_word: str = "in this change"       # "in scope" when no change scope was given
+    scope_mode: str = ""                     # changed-from, baseline, only, files, all ("" outside check metadata)
     not_checked: list[str] = field(default_factory=list)
     said: set = field(default_factory=set)        # report-wide notes already given
 
