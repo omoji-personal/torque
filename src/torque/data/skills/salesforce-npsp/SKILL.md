@@ -30,9 +30,10 @@ Confirm these before designing anything; the answers change most other advice.
 | Question | Read-only check |
 | --- | --- |
 | NPSP or Nonprofit Cloud? | `sf package installed list --target-org ALIAS` shows `npsp`, `npe01`, `npo02`, `npe03`, `npe4`, `npe5`. SOQL on `InstalledSubscriberPackage` by namespace is unreliable. `SELECT COUNT() FROM GiftTransaction` succeeds only in Nonprofit Cloud. |
-| Account model | `SELECT npe01__Account_Processor__c FROM npe01__Contacts_And_Orgs_Settings__c` (Household Account is the default and current model) |
+| Account model | `SELECT npe01__Account_Processor__c FROM npe01__Contacts_And_Orgs_Settings__c` (Household Account is the default and current model; this skill describes it, so for any other value stop and read the org's own model first) |
 | Recurring donation model | `SELECT npsp__IsRecurringDonations2Enabled__c FROM npe03__Recurring_Donations_Settings__c` |
 | Rollup engine | `SELECT npsp__Customizable_Rollups_Enabled__c FROM npsp__Customizable_Rollup_Settings__c` |
+| Another rollup tool | A rollup package in the installed package list (for example DLRS, namespace `dlrs`): describe its rule type, then read each rule's mode and any scheduled job in `CronTrigger` before adding a rollup or trigger on the same objects |
 | Scheduled jobs alive | `SELECT CronJobDetail.Name, State, NextFireTime, CreatedBy.IsActive FROM CronTrigger WHERE CronJobDetail.Name LIKE 'NPSP%'` |
 | Errors and who hears about them | `SELECT npsp__Store_Errors_On__c, npsp__Error_Notifications_On__c, npsp__Error_Notifications_To__c, npsp__Disable_Error_Handling__c FROM npsp__Error_Settings__c`; recent `npsp__Error__c` rows |
 | Handlers switched off | `SELECT npsp__Class__c, npsp__Object__c, npsp__Active__c, npsp__User_Managed__c, npsp__Usernames_to_Exclude__c FROM npsp__Trigger_Handler__c WHERE npsp__Active__c = false OR npsp__Usernames_to_Exclude__c != null` |
