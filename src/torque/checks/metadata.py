@@ -57,8 +57,8 @@ def check(paths: list[str], *, changed_from: str | None = None, baseline: str | 
         elif only:
             sc = scopes.only(paths, only)
         elif any(os.path.isfile(p) for p in paths):
-            dirs = [p for p in paths if os.path.isdir(p)] or ([project.root] if project.root else [])
-            sc = scopes.files([p for p in paths if os.path.isfile(p)], dirs)
+            # Every file and folder given is in scope; the project around them is read for context only.
+            sc = scopes.files(paths, [project.root] if project.root else [])
         else:
             sc = scopes.everything_under(paths)
     except (scopes.ScopeError, config.ConfigError, scopes.deploy_result.ResultError) as exc:

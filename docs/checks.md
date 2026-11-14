@@ -47,7 +47,7 @@ against 257 the agent authored), so the check needs to know which components are
 | `--changed-from RESULT.json` | components the result reports as Created, Changed or Failed | Recommended. Unchanged and Deleted are counted, not checked. Result entries with no file under PATH are listed. Read with the same tolerant reader as `torque check result`. |
 | `--baseline DIR` | new and changed components, by comparison with a copy retrieved before the change | A finding on a changed component says `inherited` (it was already there) or `new in this change`. Flow element descriptions count only elements new in this change. Needed for `page.sections-lost` and for an apiVersion that the change lowers. |
 | `--only Type:Name` (repeatable) | the named components | Names not found are listed. |
-| PATH that is a file | those files | The project folder around them is read for context (field definitions, grants elsewhere). |
+| a PATH that is a file (with or without folders) | every file and folder given | The project folder around them is read for context (field definitions, grants elsewhere). |
 | none | everything under PATH | The first line says so, with the counts and the three options above. |
 
 Field access is looked up in the permission sets and profiles that ship with the change: those in the

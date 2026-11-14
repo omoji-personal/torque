@@ -19,7 +19,7 @@ Scope (a retrieved folder is mostly baseline, so say what the change is):
   --baseline DIR              a copy retrieved before the change; new and changed components are
                               checked, and a finding on a changed one says whether it was inherited.
   --only Type:Name            these components only (repeatable), e.g. CustomField:Account.Region__c.
-  PATH that is a file         those files only.
+  a PATH that is a file       every file and folder given; the project around them is context.
   none of these               everything under PATH; the first line of the report says so.
 
 Code Analyzer (--analyzer): auto runs `sf code-analyzer run` on the in-scope flow, Apex and

@@ -28,8 +28,8 @@ def scope_line(report: dict) -> str:
     if s["mode"] == "only":
         return (f"Scope: {n} component(s) named with --only; {s['outside_the_change']} other component(s) under "
                 f"{where} were read for context only.")
-    return (f"Scope: {n} component(s) in the files given; {s['outside_the_change']} component(s) around them were read "
-            "for context only.")
+    return (f"Scope: {n} component(s) in the files and folders given; {s['outside_the_change']} component(s) around "
+            "them were read for context only.")
 
 
 def _label(f: dict, mode: str) -> str:
