@@ -24,6 +24,15 @@ Do this for every such field:
 
 1. Add a `fieldPermissions` entry (`field` as `Object__c.Field__c`, `readable`, `editable`)
    to a permission set in the same deployment. Create the permission set if none fits.
+   **A permission set deploy replaces the set**: whatever the file does not list is removed
+   in the org. So for an existing permission set, retrieve it first and add the entry to
+   the full file; never deploy a copy that holds only the new entries. Reproduced on a
+   practice org for this release (project API version 62.0): a permission set deployed
+   without one of its field entries lost that grant. The PermissionSet reference says the
+   same for API version 40.0 and later [MD-PS] (**verify**). Profiles are different: a
+   profile deploy changes only what the file names. Check before the deploy: with a
+   baseline, `torque check metadata --baseline DIR` compares the file with the retrieved
+   copy; after it, `torque check deployed` reads the set back.
 2. `editable` true only for fields users enter, and then `readable` true as well
    (**verify**: edit without read is refused); a formula or roll-up summary field's entry
    has `editable` false, or the whole deploy fails [SK-PS] [ADV].
@@ -195,6 +204,9 @@ permission sets, groups and View All Data, in each org separately.
 - [REL-W27] https://www.salesforce.com/blog/winter-27-release-architect-highlights/
 - [ADV] Torque advisory catalogue (`torque advisory notes --command TEXT`). `fls-not-automatic`
   and `full-profile-deploy` are marked verified live there; the others practitioner.
+- [MD-PS] https://developer.salesforce.com/docs/platform/api-metadata/references/meta-types/metadata-permissionset.html
+  (read through a search summary for this release, hence **verify**; the replace behaviour
+  itself was reproduced on a practice org on 2026-11-14).
 - **verify** items: field permissions on deploy (https://help.salesforce.com/s/articleView?id=000386377&type=1),
   profile-permission retirement (https://help.salesforce.com/s/articleView?id=003834041&type=1),
   integration user (https://help.salesforce.com/s/articleView?id=platform.integration_user.htm&type=5),

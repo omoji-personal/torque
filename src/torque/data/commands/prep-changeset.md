@@ -19,8 +19,10 @@ and what is wrong with `torque lesson stale <id> --reason <why>`.
    earlier deploy results; not every recent commit belongs to the task. For each: type and API
    name, new, changed or deleted, dependencies, source path and destination.
 3. Ship access with the change: every new field goes out with the permission set that grants it,
-   in the same deploy, and no profile file is in the packet. Skill `salesforce-build`
-   (`salesforce-build/references/access-and-sharing.md`) says what the grant holds.
+   in the same deploy, and no profile file is in the packet. A permission set deploy replaces the
+   set: for a permission set the target already has, the packet holds its full retrieved file with
+   the new entries added, never only the new entries (what the file leaves out is removed). Skill
+   `salesforce-build` (`salesforce-build/references/access-and-sharing.md`) says what the grant holds.
 4. Order by real dependencies: objects and fields, what references them, code and its tests,
    permission sets, automation, pages. Activation and assignment follow the target's release
    process, not a fixed order.

@@ -86,9 +86,12 @@ def test_every_shipped_lesson_parses_as_an_active_platform_lesson_with_honest_ev
         assert item.when and item.do and item.because and item.body.startswith("Check:"), name
         assert item.review_by and item.evidence, name
         for entry in item.evidence:
-            assert entry["type"] in ("official-doc", "session"), name
+            assert entry["type"] in ("official-doc", "session", "reproduced"), name
             if entry["type"] == "official-doc":
                 assert entry["ref"].startswith("https://"), name
+            elif entry["type"] == "reproduced":
+                # Reproduced for a release on a practice org: says where, and carries the date it was verified.
+                assert entry["ref"].startswith("reproduced on a practice org") and item.last_verified, name
             else:
                 assert entry["ref"].startswith("field-reported"), name
         assert any(item.applies[key] for key in ("tasks", "types", "commands", "errors")), name
