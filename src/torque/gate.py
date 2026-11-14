@@ -488,13 +488,12 @@ def _sf_topic(rest: list[str]) -> tuple[str, ...]:
 
 
 def _sf_org_flags(topic: tuple[str, ...]) -> set[str]:
-    """The flags that name an org for this sf command. code-analyzer has no org;
-    its `-o` is `--output-file` and its `-v` is `--view`, so neither counts (but a
-    long org flag such as `--target-org` still does). `-v` names the Dev Hub only
-    for package and org commands; elsewhere it carries a value (mirrors
-    connected_routes._sf_org_flags, the shared reading)."""
-    if topic[:1] == ("code-analyzer",):
-        return ORG_FLAGS - {"-o", "-v"}
+    """The flags that name an org for this sf command. `-v` names the Dev Hub only
+    for package and org commands; elsewhere it carries a value (code-analyzer's `-v`
+    is `--view`). Mirrors connected_routes._sf_org_flags, the shared reading.
+    code-analyzer's `-o` is `--target-org` ("Target org username or alias for remote
+    analysis engines", `sf code-analyzer run --help`, plugin 5.x), so it counts;
+    its output file is `-f`/`--output-file`, a path checked like any other."""
     if topic[:1] in (("package",), ("package1",), ("org",)):
         return set(ORG_FLAGS)
     return ORG_FLAGS - {"-v"}
@@ -2255,6 +2254,10 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
                         + NARROW_PATH_HINT)
         elif _is_sf_token(tok):
             topic = _sf_topic(rest)
+            if _sf_has_org_flag(rest, topic) and topic[:1] == ("code-analyzer",):
+                return (f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} names an org (-o is --target-org, the org "
+                        "its remote analysis engines reach). Run it without -o and --target-org for a local "
+                        "analysis; -f/--output-file names the output file")
             if _sf_has_org_flag(rest, topic):
                 return f"{_basename(tok) or 'sf'} {' '.join(rest[:2])} can reach a Salesforce org"
             if not _sf_is_local(rest):

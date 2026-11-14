@@ -53,7 +53,10 @@ LOCAL_ALLOWED = [
     "sf doctor",
     "sf plugins",
     "sf plugins inspect",
-    "sf code-analyzer run -v detail -o out.json --workspace force-app",
+    # -f is code-analyzer's --output-file and -v its --view (`sf code-analyzer run --help`, plugin 5.x).
+    "sf code-analyzer run -v detail -f out.json --workspace force-app",
+    "sf code-analyzer run -w . -f out.json",
+    "sf code-analyzer run --workspace force-app --output-file=out.json",
 ]
 
 
@@ -70,6 +73,13 @@ ORG_BLOCKED = [
     "sf plugins install some-plugin",
     "sf org list",
     "sf code-analyzer run --workspace force-app --target-org prod",
+    # code-analyzer's -o is --target-org, for its remote analysis engines (plugin 5.x help).
+    "sf code-analyzer run -o ALIAS",
+    "sf code-analyzer run -w . -o ALIAS -f out.json",
+    "sf code-analyzer run -o=ALIAS",
+    "sf code-analyzer run --target-org=ALIAS",
+    "sf code-analyzer rules -o ALIAS",
+    "sf.cmd code-analyzer run -o ALIAS",
     # Round 2 (P1): a command's own --version is an operand, not the global flag. This
     # creates a package version through the configured default org.
     "sf package1 version create --package-id 033000000000001 --name Synthetic --version 1.0",
@@ -227,9 +237,35 @@ def test_connected_agent_generate_is_refused(tmp_path, monkeypatch):
     assert _connected_decide(root, "sf agent generate agent-spec --type customer").action == "deny"
 
 
-def test_code_analyzer_short_flags_are_not_org_flags():
-    # -o is --output-file and -v is --view for code-analyzer, so neither reads as an org.
-    assert not gate._sf_has_org_flag(["code-analyzer", "run", "-v", "detail", "-o", "out.json"],
+def test_code_analyzer_short_flags_read_as_the_installed_analyzer_reads_them():
+    # `sf code-analyzer run --help` (plugin 5.x): "-o, --target-org=<value>  Target org username or alias for
+    # remote analysis engines", "-f, --output-file=<value>...", "-v, --view=<option>". The base read -o as the
+    # output file and let `sf code-analyzer run -o ALIAS` through build-only as a local command.
+    assert gate._sf_has_org_flag(["code-analyzer", "run", "-o", "ALIAS"], ("code-analyzer", "run"))
+    assert not gate._sf_has_org_flag(["code-analyzer", "run", "-v", "detail", "-f", "out.json"],
                                      ("code-analyzer", "run"))
-    # A long org flag still counts even on code-analyzer.
     assert gate._sf_has_org_flag(["code-analyzer", "run", "--target-org", "prod"], ("code-analyzer", "run"))
+
+
+def test_code_analyzer_with_an_org_says_why(root):
+    ok, reason = gate.decide("Bash", {"command": "sf code-analyzer run -o ALIAS"}, root, "build-only", root / "project")
+    assert not ok and "-o is --target-org" in reason
+
+
+def test_code_analyzer_output_file_is_still_checked_as_a_path(root):
+    for command in ("sf code-analyzer run -w . -f ../clients/acme/out.json",
+                    "sf code-analyzer run -w . --output-file=../clients/acme/out.json"):
+        assert not allowed(root, command, root / "project"), command
+
+
+def test_connected_mode_reads_code_analyzer_with_an_org_as_reaching_that_org():
+    for command in ("sf code-analyzer run -o acme-sbx", "sf code-analyzer run --target-org acme-sbx -f out.json"):
+        assert [(r.kind, r.org) for r in classify("Bash", {"command": command})] == [("unverifiable", "acme-sbx")]
+    assert [(r.kind, r.org) for r in classify("Bash", {"command": "sf code-analyzer run -w . -f out.json"})] == [
+        ("unverifiable", None)]
+
+
+def test_connected_code_analyzer_org_is_bound_to_the_consent(tmp_path, monkeypatch):
+    root = _connected_fixture(tmp_path, monkeypatch, ["metadata"])
+    assert _connected_decide(root, "sf code-analyzer run -w project -o other-org").action == "deny"
+    assert _connected_decide(root, "sf code-analyzer run -w project -o acme-prod").action == "ask"

@@ -81,8 +81,9 @@ later release narrows the check.
   `project convert`, `project list ignored`, `code-analyzer run` and `code-analyzer rules` (their
   roots must not reach `clients/`: `--workspace`/`--target` for code-analyzer,
   `--root-dir`/`--source-dir` for convert, and the current directory when none is given or when
-  convert uses `--manifest`/`--metadata`; code-analyzer's `-o` and `-v` are its `--output-file`
-  and `--view`), `version`, `help`, `which` and `plugins` (not `plugins install`). A command's
+  convert uses `--manifest`/`--metadata`; code-analyzer's `-f` and `-v` are its `--output-file`
+  and `--view`, and its `-o` is `--target-org`, the org its remote analysis engines reach, so
+  `sf code-analyzer run -o ALIAS` is blocked as org access), `version`, `help`, `which` and `plugins` (not `plugins install`). A command's
   `--help` or `-h`, and `sf --version`, pass too: the CLI shows help or its version and runs
   nothing. Build-only still blocks `agent generate` and `doctor --command`, which can reach an
   org with no org flag on the line, and a command's own `--version` value
