@@ -94,14 +94,15 @@
       "title": "Deploy order is not cosmetic — dependencies fail in a fixed direction",
       "symptom": "Deploys fail with missing-component errors that disappear if you re-run them.",
       "cause": "Components reference each other, and the Metadata API resolves dependencies WITHIN a single payload but does not reorder across separate deploy calls.",
-      "remedy": "Objects and fields first, then Apex, then permission sets — permission sets frequently carry classAccesses, so deploying them ahead of the classes they reference fails on a missing component. Then flows, then layouts and FlexiPages, then profiles last and minimal. Within one payload the API resolves this for you; across separate calls it is yours to get right.\n",
+      "remedy": "Prefer one payload: within it the API resolves the order for you. Across separate calls, deploy each component after what it references: objects and fields first; then Apex and the permission sets that grant field access; a permission set that grants class access (classAccesses) after those classes; then flows, as Draft where activation is a separate step, then activation; then layouts and Lightning pages; profiles last and minimal. Salesforce's own deploy skill lists objects and fields, permission sets, Apex, flows: that order holds when no permission set in the change grants access to a class it ships.\n",
       "triggers": [
         "project\\s+deploy",
         "deploy:start"
       ],
-      "requires": "Metadata deployed out of order fails on dependencies that exist but are not yet visible. Objects and fields first; then permission sets, so FLS exists before anything references it; then Apex; then flows as Draft; then activation; then layouts and pages; profiles last and minimal.\n",
+      "requires": "Across separate deploy calls, every component goes after what it references: objects and fields first; permission sets after the fields they grant and after any classes they grant access to; Apex after the fields it uses; flows after the fields, classes and permission sets they use, as Draft, then activation; then layouts and pages; profiles last and minimal. Within one payload the API resolves this.\n",
       "confidence": "practitioner",
-      "updated": "2026-08-01"
+      "source": "Corrected 2026-11-14: the remedy (Apex before permission sets) and the requires text (permission sets before Apex) disagreed. Both are now the dependency rule, with Salesforce's deploy skill order as its common case: https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-metadata-deploy/SKILL.md",
+      "updated": "2026-11-14"
     },
     {
       "id": "full-profile-deploy",
@@ -178,7 +179,7 @@
       "domain": "limits",
       "title": "The synchronous limits that actually bite",
       "symptom": "\"Too many SOQL queries: 101\" or \"Too many DML statements: 151\" under load only.",
-      "cause": "Per-transaction governor limits: 100 SOQL queries synchronous (200 asynchronous), 150 DML statements, 50,000 rows retrieved by SOQL, 10,000 records processed by DML ACROSS THE WHOLE TRANSACTION, 6 MB heap synchronous (12 MB async), 10,000 ms CPU synchronous (60,000 ms async).\n",
+      "cause": "Per-transaction governor limits: 100 SOQL queries synchronous (200 asynchronous), 150 DML statements, 50,000 rows retrieved by SOQL, 10,000 records processed by DML ACROSS THE WHOLE TRANSACTION, 10 MB heap synchronous (25 MB async) from Winter '27 (6 MB and 12 MB before, and some Salesforce pages still show those), 10,000 ms CPU synchronous (60,000 ms async). Read the limits in the org's own debug log when a number decides a design.\n",
       "gotcha": "The DML row limit is per TRANSACTION, not per statement. This entry read \"10,000 records per DML operation\" until 2026-08-04, which invites the reading that each statement gets its own 10,000 — so five updates of 5,000 rows sounds fine and is not: it is 25,000 against a 10,000 ceiling. Caught by an adversarial audit of a task plan that proposed rehearsing a 40,000-record update inside a single transaction.\n",
       "remedy": "Bulkify: no SOQL or DML inside a loop, ever. These limits are per transaction, so code that passes with one record fails at 200 — which is exactly the batch size the platform uses.\n",
       "triggers": [
@@ -190,8 +191,8 @@
         "--file.*\\\\.apex"
       ],
       "confidence": "documented",
-      "source": "Apex Developer Guide — Execution Governors and Limits — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm [verified 2026-08-06: all six numbers]",
-      "updated": "2026-08-01"
+      "source": "Apex Developer Guide — Execution Governors and Limits — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm [verified 2026-08-06: all six numbers]. Heap corrected 2026-11-14 to the Winter '27 values: https://www.salesforce.com/blog/winter-27-release-architect-highlights/",
+      "updated": "2026-11-14"
     },
     {
       "id": "with-sharing-is-not-fls",
@@ -554,8 +555,8 @@
       "domain": "api",
       "title": "The Tooling API does not serve the permission objects, and says so only at run time",
       "symptom": "\"sObject type 'FieldPermissions' is not supported\" from a query that is valid SOQL and works without --use-tooling-api. Same for PermissionSetAssignment.\n",
-      "cause": "FieldDefinition and EntityDefinition exist ONLY in the Tooling API; FieldPermissions, PermissionSet and PermissionSetAssignment are ordinary objects the Tooling endpoint does not serve. A verification routine that checks a field exists and then checks who can see it needs BOTH endpoints, and code that reaches for one helper reaches for one endpoint.\n",
-      "remedy": "Pass --use-tooling-api per query, not per tool. Query FieldDefinition with it and FieldPermissions without it.\n",
+      "cause": "FieldPermissions, PermissionSet and PermissionSetAssignment are ordinary objects the Tooling endpoint does not serve. FieldDefinition and EntityDefinition answer on the standard API as well as on the Tooling API. Code that reaches for one helper reaches for one endpoint, and a routine that sends every query with the Tooling flag fails on the permission objects.\n",
+      "remedy": "Pass --use-tooling-api per query, not per tool: never for FieldPermissions, PermissionSet or PermissionSetAssignment. FieldDefinition and EntityDefinition answer with or without it; say which API served a query.\n",
       "gotcha": "This cannot be caught by testing against an org that does not resolve. Every query fails there for its own reason, so a layer that was never going to return a row looks identical to one that legitimately found nothing. It took one run against a real org, and the code had passed every offline check.\n",
       "triggers": [
         "use-tooling-api",
@@ -563,9 +564,10 @@
         "PermissionSetAssignment",
         "FieldDefinition"
       ],
-      "requires": "A check that a field is deployed AND visible needs two endpoints: FieldDefinition through the Tooling API, FieldPermissions and PermissionSetAssignment through the ordinary one.\n",
+      "requires": "A check that a field is deployed AND visible queries FieldPermissions and PermissionSetAssignment without the Tooling flag; FieldDefinition answers either way.\n",
       "confidence": "practitioner",
-      "updated": "2026-08-04"
+      "source": "Corrected 2026-11-14: the earlier text said FieldDefinition and EntityDefinition exist only in the Tooling API; field-reported, 48 queries on them succeeded on the standard API in one consultant's work over 2.5 weeks.",
+      "updated": "2026-11-14"
     },
     {
       "id": "bulk-partial-failure",

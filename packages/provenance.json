@@ -1268,7 +1268,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
       "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
       "source_tracked": true,
-      "destination_sha256": "a60655ab11a26c259a77c89b4c17d6d3b444d1abe753ca1c0b8cc984cff16a36",
+      "destination_sha256": "92f435439971cb440311ec2bc8269080a2610c8b60ef04e1a14447faeed39d7b",
       "adapted": true
     },
     {
@@ -1322,7 +1322,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/provenance.json",
       "source_sha256": "3d2f4d9da6fe038d03b08f0b6df2063451d03c7b95fef4a89f8c79fc2edcfbf0",
       "source_tracked": true,
-      "destination_sha256": "905aefb230bf0b7a750910e02c5c492babb4462c105e36e8b4adab074f6ccabf",
+      "destination_sha256": "4780f1dd3818cbc6b802b7c625b65d13a3dbc79b9e26f73e116cf22750e070f8",
       "adapted": true
     },
     {
@@ -1331,7 +1331,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
       "source_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
       "source_tracked": true,
-      "destination_sha256": "1e780596d7ea9d5c8bc46484936e02d133330be99954b1e94e8e9a2359c14fae",
+      "destination_sha256": "9d473e1249a485c9bb733e446d640a3fd33170f8f1f19b695db460f923fa5a2d",
       "adapted": true
     },
     {
