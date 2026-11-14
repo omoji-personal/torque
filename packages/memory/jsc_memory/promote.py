@@ -102,6 +102,7 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
         text = record.render(copy).rstrip("\n")
     else:
         text = _text_for(copy, target)
+    custom = sorted(set(scrubber.CUSTOM_NAME.findall(text)))
     label = f" `{name}`" if name else ""
     replaced = ", ".join(f"{kind} ({count})" for kind, count in found.masked.items()) or "nothing"
     path = storage._private_dir(folder) / f"promote-{item.id}-to-{target}.md"
@@ -120,14 +121,17 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
         f"Destination: {_DESTINATION[target].format(name=label)}.",
         f"The scrub replaced: {replaced}. It is a heuristic that knows the shapes of secrets and Ids and this "
         "workspace's client list, not every name or every way to write a secret: read the text.",
-        *([_left_out_line(left_out)] if left_out else []), "",
+        *([_left_out_line(left_out)] if left_out else []),
+        *([f"Custom names in this text: {', '.join(custom)}. A firm lesson may name fields; confirm none of these "
+           "identifies the client (a field only that client has)."] if custom else []), "",
         "## Text", "", "Edit it here if it needs rewording; the text between the fences is what is applied.", "",
         f"{_FENCE}lesson", text, _FENCE, "",
         "## To confirm", "", *(f"- [ ] {line}" for line in _CONFIRM[target]), "",
         "## Apply", "", apply_line, ""])
     storage._atomic_write(path, body)
     return {"proposal": str(path), "lesson": item.id, "from": item.scope, "to": target, "name": name,
-            "replaced": dict(found.masked), "left_out": left_out, "text": text, "applies_itself": target == "firm"}
+            "replaced": dict(found.masked), "left_out": left_out, "custom_names": custom, "text": text,
+            "applies_itself": target == "firm"}
 
 
 def _key_name(key: object, terms: list) -> str:

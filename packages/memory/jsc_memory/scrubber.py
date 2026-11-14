@@ -48,13 +48,18 @@ _CREDENTIALS = (
     ("sign-in address", re.compile(
         r"https?://[^\s\"'<>]*[?&#](?:sid|session_?id|access_token|refresh_token|token)=" + _URL_VALUE, re.I), 1),
     ("address with a password", re.compile(r"https?://[^\s/@:]+:([^\s/@]{3,})@"), 1),
-    ("authorization header", re.compile(r"\bBearer\s+([A-Za-z0-9._~+/=\-]{20,})"), 1),
+    ("authorization header", re.compile(r"(?<!Authorization: )\bBearer\s+([A-Za-z0-9._~+/=\-]{20,})"), 1),
     ("private key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"), None),
     ("provider token", re.compile(
         r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}"
         r"|sk-(?:proj-|ant-)?[A-Za-z0-9_\-]{32,}|xox[baprs]-[A-Za-z0-9\-]{24,}"
         r"|eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})"), None),
 )
+
+# The value of an Authorization header, whatever its scheme (Basic, Bearer, Token, ...) and
+# whatever it is made of: the header says it is a credential.
+_HEADER = re.compile(r"(?i)\bAuthorization\s*:\s*(?:(?:Basic|Bearer|Token|Digest|OAuth|Negotiate)\s+)?"
+                     r"([A-Za-z0-9._~+/=\-]{8,})")
 
 # A value written after an explicit secret label. The label decides, not what the value
 # is made of: `password=onlyletters` and `The password is "X"` are refused alike.
@@ -126,12 +131,23 @@ _INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 _ORG_HOST = re.compile(
     r"(?<![A-Za-z0-9.\-])([A-Za-z0-9][A-Za-z0-9\-]*)((?:\.[a-z]+)?\.(?:my\.salesforce(?:-setup|-sites)?\.com"
     r"|lightning\.force\.com|my\.site\.com|vf\.force\.com|visualforce\.com|cloudforce\.com))(?![A-Za-z0-9\-])", re.I)
+# Older shapes: an instance host (na139.salesforce.com), and any name under force.com or
+# documentforce.com (sites, Visualforce and file hosts). Salesforce's own public hosts
+# (login, test, developer, help, ...) are not an org's.
+_OLD_HOST = re.compile(
+    r"(?<![A-Za-z0-9.\-])(?:((?:na|cs|eu|ap|um|usa|gs)\d{1,3})(\.salesforce\.com)"
+    r"|([A-Za-z0-9][A-Za-z0-9\-]*)((?:\.[A-Za-z0-9\-]+)*\.(?:document)?force\.com))(?![A-Za-z0-9\-])", re.I)
 _HOST_PLACEHOLDERS = {"mydomain", "mydomainname", "yourdomain", "your-domain", "example", "domain", "orgname",
                       "yourorg", "your-org", "company", "yourcompany", "myorg", "my-org"}
+_PUBLIC_HOSTS = {"login", "test", "developer", "developers", "help", "www", "trailhead", "appexchange", "lightning",
+                 "partners", "success", "status", "trust", "api", "admin"}
 
 WITHHELD = "(withheld: it holds a credential-looking value; open the file to read it)"
+# A custom object, field, metadata type or event name. Not refused (a firm lesson may name a
+# field), but a promotion lists them, since a client's own field can identify it.
+CUSTOM_NAME = re.compile(r"\b[A-Za-z][A-Za-z0-9_]*?__(?:c|r|mdt|e|x|b)\b")
 GENERAL = {"client name": "the client", "client slug": "the client", "org alias": "the org",
-           "org Id": "<org-id>", "org host name": "<org-host>"}
+           "initiative name": "the initiative", "org Id": "<org-id>", "org host name": "<org-host>"}
 FIRM_ONLY = tuple(GENERAL)
 
 
@@ -181,42 +197,55 @@ class Found:
             return (f"Not saved: the text holds a credential-looking value ({', '.join(secret)}). A lesson is "
                     "shown to agents again and again, so it must hold no secret. Remove the value (say where it "
                     "is kept instead) and save the lesson again.")
-        return (f"Not saved in {scope} scope: the text identifies a client of this workspace ({', '.join(firm)}). "
-                "A firm lesson is shown for every client. Rewrite it without that (say `the client`), or keep "
-                "it with the client by leaving out --scope firm.")
+        return (f"Not saved in {scope} scope: the text identifies a client or an initiative of this workspace "
+                f"({', '.join(firm)}). "
+                "A firm lesson is shown for every client and initiative. Rewrite it without that (say `the "
+                "client`), or keep it with the client or initiative by leaving out --scope firm.")
 
 
 def workspace_terms(workspace: Path | None) -> list[tuple[str, re.Pattern]]:
-    """Patterns for the names, slugs and org aliases of this workspace's clients, read
-    from each client's own registration (client.json) and nothing else in its folder."""
+    """Patterns for the names, slugs and org aliases of this workspace's clients and the slugs of its
+    initiatives, read from each one's own registration (client.json, binding.json) and nothing else."""
     terms: list[tuple[str, re.Pattern]] = []
     seen: set[str] = set()
-    clients = workspace / "clients" if workspace else None
-    if clients is None or not clients.is_dir():
+    if workspace is None:
         return terms
-    for folder in sorted(clients.iterdir()):
+
+    def registration(folder: Path, name: str) -> dict:
         try:
-            data = json.loads((folder / "client.json").read_text(encoding="utf-8"))
+            data = json.loads((folder / name).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        if not isinstance(data, dict):
-            data = {}
-        for kind, value in (("client name", data.get("name")), ("client slug", data.get("slug") or folder.name),
-                            ("org alias", data.get("org"))):
-            value = value.strip() if isinstance(value, str) else ""
-            if len(value) < 2:
-                continue        # one character would refuse every firm lesson with the word "a" or "I"
-            if len(value) < 3:
-                # Two characters: as registered and in capitals, on word boundaries. A name XY matches XY, not
-                # "Xy"; its slug xy matches xy and XY.
-                pattern, flags = "|".join(dict.fromkeys(re.escape(form) for form in (value, value.upper()))), 0
+        return data if isinstance(data, dict) else {}
+
+    found = []
+    for parent, marker in (("clients", "client.json"), ("initiatives", "binding.json")):
+        folders = sorted(path for path in (workspace / parent).iterdir() if path.is_dir()) \
+            if (workspace / parent).is_dir() else []
+        for folder in folders:
+            data = registration(folder, marker)
+            if parent == "clients":
+                found += [("client name", data.get("name")), ("client slug", data.get("slug") or folder.name),
+                          ("org alias", data.get("org"))]
             else:
-                # A name matches however its words are joined: Sample Nonprofit, sample-nonprofit, sample_nonprofit.
-                pattern, flags = r"[\s_\-]*".join(re.escape(part) for part in re.split(r"[\s_\-]+", value.lower())
-                                                  if part), re.I
-            if (pattern, flags) not in seen:
-                seen.add((pattern, flags))
-                terms.append((kind, re.compile(r"(?<![A-Za-z0-9])(?:" + pattern + r")(?![A-Za-z0-9])", flags)))
+                # An initiative's registration holds its slug; the slug pattern also matches the name
+                # written with spaces (internal-playbook matches Internal Playbook).
+                found.append(("initiative name", data.get("slug") or folder.name))
+    for kind, value in found:
+        value = value.strip() if isinstance(value, str) else ""
+        if len(value) < 2:
+            continue        # one character would refuse every firm lesson with the word "a" or "I"
+        if len(value) < 3:
+            # Two characters: as registered and in capitals, on word boundaries. A name XY matches XY, not
+            # "Xy"; its slug xy matches xy and XY.
+            pattern, flags = "|".join(dict.fromkeys(re.escape(form) for form in (value, value.upper()))), 0
+        else:
+            # A name matches however its words are joined: Sample Nonprofit, sample-nonprofit, sample_nonprofit.
+            pattern, flags = r"[\s_\-]*".join(re.escape(part) for part in re.split(r"[\s_\-]+", value.lower())
+                                              if part), re.I
+        if (pattern, flags) not in seen:
+            seen.add((pattern, flags))
+            terms.append((kind, re.compile(r"(?<![A-Za-z0-9])(?:" + pattern + r")(?![A-Za-z0-9])", flags)))
     # Longest first, so a name or an alias is found whole before the slug inside it.
     return sorted(terms, key=lambda term: -len(term[1].pattern))
 
@@ -240,6 +269,9 @@ def scrub(text: str, *, firm_terms: list | None = None, generalize: bool = False
             least = 6 if name == "address with a password" else 12
             if value_group is None or _secret_like(match.group(value_group), least):
                 count(found.refused, name)
+    headers = sum(not _placeholder(match.group(1)) for match in _HEADER.finditer(text))
+    if headers:
+        count(found.refused, "authorization header", headers)
     labelled = _labelled_secrets(text)
     if labelled:
         count(found.refused, "password or secret", labelled)
@@ -271,8 +303,16 @@ def scrub(text: str, *, firm_terms: list | None = None, generalize: bool = False
             return match.group()
         return firm_hit("org host name") or match.group()
 
+    def old_host(match: re.Match) -> str:
+        if match.group(1) is None and match.group(3).lower() in _HOST_PLACEHOLDERS | _PUBLIC_HOSTS:
+            return match.group()
+        if _ORG_HOST.fullmatch(match.group()):
+            return match.group()             # counted already, as a current host shape
+        return firm_hit("org host name") or match.group()
+
     if firm:
         text = _ORG_HOST.sub(host, text)
+        text = _OLD_HOST.sub(old_host, text)
         for name, pattern in firm_terms:
             text = pattern.sub(lambda match, name=name: firm_hit(name) or match.group(), text)
     text = _SF_ID.sub(salesforce_id, text)

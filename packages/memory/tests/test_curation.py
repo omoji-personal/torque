@@ -177,6 +177,20 @@ def test_a_wider_scope_copy_leaves_out_the_keys_torque_does_not_know_and_names_t
         assert "client_context" not in made["text"] and "Alpha" not in made["text"]
 
 
+def test_a_proposal_lists_custom_names_for_the_person_to_confirm_and_refuses_none(run, scopes):
+    alpha = scopes("alpha")
+    item = intake.add(alpha, when="you change Gift_Batch__c or npsp__Batch__c in a flow",
+                      do="retrieve Batch_Rule__mdt first", because="the rule decides the batch",
+                      source="consultant").lesson
+    code, out, _ = run("promote", item.id, "--to", "firm", "--json")
+    made = json.loads(out)
+    assert code == 0 and made["custom_names"] == ["Batch_Rule__mdt", "Gift_Batch__c", "npsp__Batch__c"]
+    proposal = open(made["proposal"], encoding="utf-8").read()
+    assert "Custom names in this text: Batch_Rule__mdt, Gift_Batch__c, npsp__Batch__c." in proposal
+    assert "Custom names in the text: " in run("promote", item.id, "--to", "firm")[1]
+    assert run("promote", "--apply", made["proposal"])[0] == 0                 # listed, not refused
+
+
 @pytest.mark.parametrize("added,refused", [
     ("client_context: Alpha Nonprofit", "client name"),
     (f"secret_context: pass{'word'}={FAKE_SECRET}", "password or secret"),

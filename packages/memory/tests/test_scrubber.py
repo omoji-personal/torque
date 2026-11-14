@@ -138,7 +138,7 @@ def test_invisible_characters_are_removed():
 
 def test_firm_scope_refuses_what_identifies_a_client_without_printing_it(workspace):
     terms = scrubber.workspace_terms(workspace)
-    assert sorted({kind for kind, _ in terms}) == ["client name", "client slug", "org alias"]
+    assert sorted({kind for kind, _ in terms}) == ["client name", "client slug", "initiative name", "org alias"]
     cases = {
         "client name": "At Alpha  Nonprofit the gift batch failed.",
         "client slug": "Copy the layout from the beta sandbox.",
@@ -244,3 +244,56 @@ def test_every_text_of_a_lesson_is_scrubbed(workspace):
     assert (item.title, item.when, item.body) == ("Mail <email>", "you see <record-id>", "call <phone>")
     assert item.applies["keywords"] == ["<email>"] and item.evidence[0]["ref"] == "record <record-id>"
     assert "client slug" in found.refused
+
+
+def test_an_initiative_of_the_workspace_is_an_identifier_for_the_firm_scrub(workspace):
+    folder = workspace / "initiatives" / "internal-playbook"
+    folder.mkdir()
+    (folder / "binding.json").write_text('{"kind": "initiative", "slug": "internal-playbook"}', encoding="utf-8")
+    (folder / "context.md").write_text("Never read by the scrub: Hidden Words", encoding="utf-8")
+    terms = scrubber.workspace_terms(workspace)
+    for text in ("Ask the Internal Playbook team first.", "See internal_playbook for the steps."):
+        cleaned, found = scrubber.scrub(text, firm_terms=terms)
+        assert set(found.refused) == {"initiative name"} and "Internal" not in found.refusal("firm"), text
+    cleaned, found = scrubber.scrub("Ask the Internal Playbook team first.", firm_terms=terms, generalize=True)
+    assert cleaned == "Ask the the initiative team first." and found.refused == {}
+    assert not any(pattern.search("Hidden Words") for _, pattern in terms)
+
+
+@pytest.mark.parametrize("host", [
+    "na139.salesforce" + ".com", "cs42.salesforce" + ".com", "sample-nonprofit.force" + ".com",
+    "sample-nonprofit--uat.sandbox.my.site.com/s", "c.na139.visual.force" + ".com",
+    "sample-nonprofit--c.documentforce" + ".com",
+])
+def test_older_org_host_shapes_are_org_hosts_in_firm_scope(workspace, host):
+    text = f"Open https://{host}/home first."
+    cleaned, found = scrubber.scrub(text, firm_terms=scrubber.workspace_terms(workspace))
+    assert found.refused == {"org host name": 1}, host
+    cleaned, found = scrubber.scrub(text, firm_terms=scrubber.workspace_terms(workspace), generalize=True)
+    assert host.split("/")[0] not in cleaned and "<org-host>" in cleaned
+
+
+@pytest.mark.parametrize("text", [
+    "Sign in at login.salesforce.com or test.salesforce.com; read help.salesforce.com.",
+    "developer.salesforce.com and trailhead.salesforce.com, then lightning.force.com.",
+    "The Lightning host is MyDomainName.lightning.force.com, a placeholder.",
+])
+def test_salesforces_own_public_hosts_are_not_org_hosts(workspace, text):
+    assert scrubber.scrub(text, firm_terms=scrubber.workspace_terms(workspace))[1].refused == {}
+
+
+@pytest.mark.parametrize("value", [
+    "Basic " + "c2FtcGxlOnZhbHVl", "Token " + "plainlowercase", "Bearer " + "abc" + "12345", "Digest " + "x" * 3 + "yzw" * 3,
+    "abcd" + "efgh1234",
+])
+def test_an_authorization_header_value_is_a_credential_whatever_its_scheme(value):
+    cleaned, found = scrubber.scrub(f"curl -H 'Authorization: {value}' https://api.example.com/v1")
+    assert found.refused == {"authorization header": 1}, value
+    assert value.split()[-1] not in found.refusal("client")
+
+
+@pytest.mark.parametrize("text", [
+    "Authorization: Bearer <token>", "Authorization: Basic $CREDENTIALS", "Send an Authorization: header.",
+])
+def test_an_authorization_header_placeholder_is_not_a_credential(text):
+    assert scrubber.scrub(text)[1].refused == {}

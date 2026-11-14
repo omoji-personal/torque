@@ -289,7 +289,9 @@ def cmd_promote(args: argparse.Namespace, scopes: Scopes) -> int:
         f"It proposes {made['lesson']} ({made['from']}) for: {made['to']}"
         + (f" `{made['name']}`" if made["name"] else "") + f". The scrub replaced: {replaced}."
         + (f" Left out: {len(made['left_out'])} front-matter key(s) Torque does not know "
-           f"({', '.join(made['left_out'])}); their values are not copied." if made["left_out"] else ""),
+           f"({', '.join(made['left_out'])}); their values are not copied." if made["left_out"] else "")
+        + (f" Custom names in the text: {', '.join(made['custom_names'])}; confirm none identifies the client."
+           if made["custom_names"] else ""),
         "Read it with the consultant. " + (
             f"On their word: torque lesson promote --apply {Path(made['proposal']).name}" if made["applies_itself"]
             else "A person applies it in the destination it names; Torque does not change shared guidance."),

@@ -53,8 +53,9 @@ Scopes are folders. One lesson is one Markdown file.
 
 A command reads the selected client or initiative, the firm and the platform. It never
 reads another client's lessons, events or files, under any option. The one thing read
-of every client is its registration (`client.json`: name, slug, org alias), so that a
-firm lesson that names a client can be refused. Without `--client` or `--initiative` a
+of every client and initiative is its registration (`client.json`: name, slug, org alias;
+`binding.json`: the initiative's slug), so that a
+firm lesson that names a client or an initiative can be refused. Without `--client` or `--initiative` a
 command reads the firm and the platform; without `--workspace`, the platform only. New lessons
 go to the selected client or initiative; `--scope firm` is explicit; nothing writes into
 the package.
@@ -133,7 +134,7 @@ lesson counts as active only when its record carries a basis: source `consultant
 evidence of type `reproduced`, `official-doc`, `second-occurrence` or `consultant-said`.
 Without one it is treated as a candidate: `torque lesson review` lists it under "Marked
 active without a basis", `torque doctor` counts it, `promote` refuses it, and `verify`
-asks for a basis. (Recall applies the same rule through `lesson.unbacked_active`.)
+asks for a basis. The rule is one function, `lesson.unbacked_active`.
 
 ## Capture
 
@@ -174,8 +175,8 @@ asks for a basis. (Recall applies the same rule through `lesson.unbacked_active`
 
 | Scope | Refused | Masked |
 | --- | --- | --- |
-| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, authorization headers, private keys, provider tokens, and a value after an explicit secret label (below) | email addresses, phone numbers, social security numbers, Salesforce org, user and record Ids; invisible characters are removed |
-| firm | also the names, slugs and org aliases of this workspace's clients, org Ids and org host names | |
+| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, the value of an `Authorization:` header (Basic, Bearer, Token or any scheme) and a long `Bearer` token, private keys, provider tokens, and a value after an explicit secret label (below) | email addresses, phone numbers, social security numbers, Salesforce org, user and record Ids; invisible characters are removed |
+| firm | also the names, slugs and org aliases of this workspace's clients, the slugs (and so the names) of its initiatives, org Ids and org host names: My Domain, site, Visualforce and Lightning hosts, instance hosts (`na139.salesforce.com`), names under `force.com` and `documentforce.com` (Salesforce's own public hosts such as `login`, `test` and `developer` pass) | |
 
 The same scrub runs wherever text enters a lesson or its log: `lesson add`, `session
 add --learned`, `edit`, a stale reason, a helpful note, evidence references, `migrate`,
@@ -290,6 +291,8 @@ with a neutral word.
 `torque lesson promote ID --to firm|platform|rule|skill|recipe|check [--name N]` writes a
 proposal: the exact text, the destination, what the scrub replaced, the front-matter keys
 Torque does not know that were left out (a wider-scope copy carries only the known keys),
+the custom names (`Something__c`) in the text for a person to confirm (not refused: a
+firm lesson may name fields),
 and what a person must confirm. It applies nothing. `torque lesson promote --apply
 PROPOSAL` performs the one promotion that stays inside the workspace, client (or
 initiative) to firm: it scrubs the text between the fences again, every key in it
