@@ -274,7 +274,10 @@ file out of sight, and a person who wants it gone deletes the file.
 past their review date, shown five times with no helpful mark or not shown in 180 days,
 stale marks, lessons worth promoting (helpful three times, or seen a second time) and
 client lessons that could serve every client. It changes nothing; each line names the
-command that acts on it.
+command that acts on it. A lesson file may have been edited by hand, so the report prints
+each text through the same scrub as a capture: a credential-looking value withholds the
+line, Ids and personal data are masked, and in a firm lesson a client's name is replaced
+with a neutral word.
 
 `torque lesson promote ID --to firm|platform|rule|skill|recipe|check [--name N]` writes a
 proposal: the exact text, the destination, what the scrub replaced, the front-matter keys

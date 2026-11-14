@@ -259,7 +259,7 @@ def _harvest_state(workspace: Path) -> Path:
     return storage.state_dir(workspace) / "harvest.json"
 
 
-WITHHELD = "(withheld: it holds a credential-looking value; open the file to read it)"
+WITHHELD = scrubber.WITHHELD
 
 
 def _shown(text: str) -> str:

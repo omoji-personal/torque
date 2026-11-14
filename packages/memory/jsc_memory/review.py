@@ -101,7 +101,28 @@ def build(scopes: Scopes) -> dict:
     report["firm_worthy"] = [_entry(item, tally(item)) for item in own
                              if firm_worthy(item, terms) and not tally(item).stale_mark]
     report["unreadable"] = problems
+    _displayed(report, {item.id: item.scope for item in [*own, *recall.platform_lessons()]}, terms)
     return report
+
+
+def _displayed(report: dict, scope_of: dict, terms: list) -> None:
+    """The review prints what lesson files say, and a file may have been edited by hand.
+    Each printed text is scrubbed as it would be at capture: a credential-looking value
+    withholds the text, Ids and personal data are masked, and in a firm or platform
+    lesson a client's name is replaced with a neutral word."""
+    def shown(text: str, lesson_id: str) -> str:
+        wider = scope_of.get(lesson_id) in ("firm", "platform")
+        cleaned, found = scrubber.scrub(text or "", firm_terms=terms if wider else None, generalize=wider)
+        return scrubber.WITHHELD if found.refused else cleaned
+
+    for name in ("candidates", "recheck", "stale", "promote", "firm_worthy"):
+        for entry in report[name]:
+            for key in ("title", "when", "do", "reason"):
+                if entry.get(key):
+                    entry[key] = shown(entry[key], entry["id"])
+    for pair in report["duplicates"]:
+        pair["titles"] = [shown(title, lesson_id) for title, lesson_id in zip(pair["titles"],
+                                                                             (pair["keep"], pair["other"]))]
 
 
 def render(report: dict) -> str:

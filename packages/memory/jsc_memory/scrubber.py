@@ -129,6 +129,7 @@ _ORG_HOST = re.compile(
 _HOST_PLACEHOLDERS = {"mydomain", "mydomainname", "yourdomain", "your-domain", "example", "domain", "orgname",
                       "yourorg", "your-org", "company", "yourcompany", "myorg", "my-org"}
 
+WITHHELD = "(withheld: it holds a credential-looking value; open the file to read it)"
 GENERAL = {"client name": "the client", "client slug": "the client", "org alias": "the org",
            "org Id": "<org-id>", "org host name": "<org-host>"}
 FIRM_ONLY = tuple(GENERAL)
