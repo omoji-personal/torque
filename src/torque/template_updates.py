@@ -502,6 +502,29 @@ def _claude_md(root_fd, check: bool) -> tuple[dict | None, str]:
                   "@AGENTS.md at the top of CLAUDE.md; your own text can stay below it.")
 
 
+def _floor(root_fd, check: bool) -> dict:
+    """Add or replace the floor block in AGENTS.md, between its markers only
+    (workspace.floor_splice). Returns {"path", "status", "version", "previous_version",
+    "applied"}; status `unreadable` when the file is not UTF-8 text, `damaged` when its
+    markers do not pair, `changed_during_update` when it changed while this ran."""
+    raw = _read(root_fd, "AGENTS.md")
+    row = {"path": "AGENTS.md", "applied": False}
+    try:
+        text = None if raw is None else raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {**row, "status": "unreadable", "version": ws.floor_block()[1], "previous_version": None}
+    plan = ws.floor_splice(text)
+    new = plan.pop("text")
+    row.update(plan)
+    if check or new is None or plan["status"] == "current":
+        return row
+    if _publish(root_fd, "AGENTS.md", new.encode("utf-8"), raw):
+        row["applied"] = True
+    else:
+        row["status"] = "changed_during_update"
+    return row
+
+
 def _workspace_relative(root: Path, spec) -> str:
     """A managed path as the consultant typed it, relative to the workspace with forward slashes."""
     text = str(spec).strip()
@@ -532,8 +555,9 @@ def _run(workspace: Path, *, check: bool, initial: bool = False, only=None, acce
     """`only`, a set of workspace paths, limits the run to those files; every other
     manifest entry is carried over as it is. `accept`, paths or folders, records the
     packaged text as the base of each named file that differs locally and writes
-    nothing else. A whole run (neither) also renames Claude Code copies (`_renames`)
-    and replaces an unchanged CLAUDE.md from an earlier version."""
+    nothing else. A whole run (neither) also renames Claude Code copies (`_renames`),
+    replaces an unchanged CLAUDE.md from an earlier version and adds or replaces the
+    floor block in AGENTS.md (`_floor`)."""
     # Reject a symlink at the user-supplied root before load_workspace resolves it.
     if Path(workspace).expanduser().is_symlink():
         raise ws.WorkspaceError("workspace root must not be a symlink")
@@ -617,6 +641,7 @@ def _run(workspace: Path, *, check: bool, initial: bool = False, only=None, acce
                     actions.append(row)
                 if note:
                     notes["claude_md"] = note
+                notes["floor"] = _floor(root_fd, check)
             next_manifest = {"schema": _SCHEMA, "files": {k: v for k, v in updated.items() if not _derived(k)}}
             derived = {k: v for k, v in updated.items() if _derived(k)}
             if derived:

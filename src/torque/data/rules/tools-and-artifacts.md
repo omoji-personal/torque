@@ -25,6 +25,10 @@
   it prints no credential. Do not run `sf org display` (older Salesforce CLIs print the
   access token), `sf org open --url-only`, `sf org auth show-*` or `sf org list --json`:
   a command's output reaches the model before anything can filter it.
+- To sign a browser tab in to an org the CLI is authorized for, run
+  `torque browser login --target-org ALIAS --workspace . --client NAME` and navigate the tab
+  to the local address it prints: it never shows the sign-in address. Never type or ask for
+  a password, and do not ask the consultant to sign in.
 - Summarize credential scan findings with masked markers, category and location;
   do not repeat the matched secret. A pattern scan does not prove complete privacy.
 - Local files and optional provider calls have different data paths. Make actual

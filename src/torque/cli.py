@@ -625,6 +625,60 @@ def _workflow_text(workspace: Path | None, slug: str) -> str | None:
     return ws.claude_copy("commands", f"{slug}.md", packaged)[1]
 
 
+_SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
+_REFERENCE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
+
+
+def _packaged_skills() -> dict[str, str]:
+    """{name: one-line description} of the practice skills shipped in the package."""
+    found = {}
+    try:
+        folder = resources.files("torque").joinpath("data", "skills")
+        items = sorted(folder.iterdir(), key=lambda item: item.name) if folder.is_dir() else []
+    except (OSError, TypeError, ModuleNotFoundError):
+        items = []
+    for item in items:
+        page = item.joinpath("SKILL.md")
+        if not (_SKILL_NAME.match(item.name) and page.is_file()):
+            continue
+        meta = re.match(r"\A---\n(.*?)\n---\n", page.read_text(encoding="utf-8"), re.S)
+        line = next((row.partition(":")[2].strip().strip("\"'") for row in (meta.group(1).splitlines() if meta else [])
+                     if row.startswith("description:")), "")
+        first = re.split(r"(?<=[.;:])\s", line, maxsplit=1)[0]
+        found[item.name] = first if len(first) <= 110 else first[:107].rsplit(" ", 1)[0].rstrip(",;") + " ..."
+    return found
+
+
+def _skill_text(workspace: Path | None, spec: str) -> tuple[str, str] | None:
+    """The text of a practice skill (`NAME`) or one of its references (`NAME/REF`,
+    `NAME/references/REF`, with or without `.md`), and where it was read: the selected
+    workspace's `.agents/skills/` copy when there is one, else the packaged skill.
+    None when `spec` names no skill."""
+    parts = spec.strip().replace("\\", "/").strip("/").split("/")
+    if parts[1:2] == ["references"]:
+        parts = [parts[0], *parts[2:]]
+    if len(parts) > 2 or not _SKILL_NAME.match(parts[0]):
+        return None
+    if len(parts) == 2:
+        reference = parts[1] if parts[1].endswith(".md") else parts[1] + ".md"
+        if not _REFERENCE_NAME.match(reference):
+            return None
+        relative = ["references", reference]
+    else:
+        relative = ["SKILL.md"]
+    if workspace is not None:
+        local = ws._inside(workspace, workspace.joinpath(".agents", "skills", parts[0], *relative))
+        if local.is_file():
+            return local.read_text(encoding="utf-8"), "/".join([".agents/skills", parts[0], *relative])
+    try:
+        item = resources.files("torque").joinpath("data", "skills", parts[0], *relative)
+        if item.is_file():
+            return item.read_text(encoding="utf-8"), "/".join(["torque/data/skills", parts[0], *relative])
+    except (OSError, TypeError, ModuleNotFoundError):
+        pass
+    return None
+
+
 def _workflows(args: argparse.Namespace) -> int:
     raw = _data_text("catalogue.json")
     if raw is None:
@@ -641,8 +695,6 @@ def _workflows(args: argparse.Namespace) -> int:
         if not args.name:
             raise ws.WorkspaceError("workflows show needs a workflow name")
         entry = next((e for e in entries if e["name"] == args.name), None)
-        if entry is None:
-            raise ws.WorkspaceError(f"unknown workflow: {args.name}; run torque workflows")
         selected = getattr(args, "workspace", None) or os.environ.get("TORQUE_WORKSPACE")
         workspace = None
         if selected:
@@ -652,6 +704,16 @@ def _workflows(args: argparse.Namespace) -> int:
                 workspace = client.parent.parent
             else:
                 workspace, _ = ws.load_workspace(candidate)
+        if entry is None:
+            # A practice skill, or one of its references, read the same way on every host.
+            skill = _skill_text(workspace, args.name)
+            if skill is None:
+                raise ws.WorkspaceError(f"unknown workflow or skill: {args.name}; run torque workflows")
+            if args.json:
+                _print_json({"name": args.name, "kind": "skill", "source": skill[1], "text": skill[0]})
+            else:
+                print(skill[0], end="" if skill[0].endswith("\n") else "\n")
+            return 0
         if args.json:
             # Catalogue JSON remains stable; workspace precedence selects text.
             _print_json(entry)
@@ -664,6 +726,15 @@ def _workflows(args: argparse.Namespace) -> int:
         for entry in entries:
             print(f"{entry['name']:22} [{entry.get('kind', 'guided')}] {entry.get('description', '')}")
         print("\nRead a workflow: torque workflows show NAME")
+        skills = _packaged_skills()
+        if skills:
+            # Skills are not recipes: the catalogue and its --json stay as they are.
+            print("\nPractice skills (read one before that kind of work; every workspace also has them in "
+                  ".agents/skills/NAME/SKILL.md):")
+            for name, description in skills.items():
+                print(f"  {name:32} {description}")
+            print("Read a skill: torque workflows show NAME; one of its references: "
+                  "torque workflows show NAME/REFERENCE")
     return 0
 
 
@@ -932,11 +1003,48 @@ def _upgrade_summary(report: dict, path: str, mode: str) -> str:
             lines.append(f"Retired: {name}: {row['suggestion']}")
     if counts.get("customized"):
         lines.append("Customized files are kept as they are and are not listed; --json lists every file.")
+    lines += _floor_lines(report.get("floor"), check)
     for key in ("connected_rule", "claude_md"):
         if key in report:
             lines.append("Note: " + report[key])
     lines += _hook_lines(report.get("hooks", []), mode, path)
     return "\n".join(lines)
+
+
+OWN_TEXT_NOTE = ("Note: AGENTS.md holds instructions of its own beside the Torque block. Read the two together "
+                 "once and settle anything in yours that contradicts the block; the upgrade never changes your text.")
+
+
+def _floor_lines(row: dict | None, check: bool) -> list[str]:
+    """What the upgrade did, or would do, to the Torque block in AGENTS.md, in one line, and
+    one more when the file also holds its own instructions; nothing when the block is current."""
+    if not row or row["status"] == "current":
+        return []
+    line = _floor_line(row, check)
+    return [line] + ([OWN_TEXT_NOTE] if row.get("own_text") and row["status"] != "damaged" else [])
+
+
+def _floor_line(row: dict, check: bool) -> str:
+    version, previous = row["version"], row.get("previous_version")
+    verb = (lambda now, later: later if check else now)
+    lines = {
+        "added": verb("Added", "Add") + f": AGENTS.md with the Torque block (version {version}).",
+        "legacy": verb("Replaced", "Replace") + f": AGENTS.md, which held the unchanged text an earlier Torque "
+                  f"wrote, with the current text and the Torque block (version {version}).",
+        "appended": verb("Appended", "Append") + f": the Torque block (version {version}) at the end of AGENTS.md, "
+                    "which had none; your text above it is unchanged.",
+        "replaced": verb("Updated", "Update") + f": the Torque block in AGENTS.md from version {previous} to "
+                    f"{version}; text outside its markers is unchanged.",
+        "edited": verb("Replaced", "Replace") + f": edits inside the Torque block in AGENTS.md with the packaged "
+                  f"text (version {version}). Keep firm text outside the markers; the upgrade never changes it.",
+        "damaged": f"Not changed: AGENTS.md has {row.get('problem') or 'damaged Torque markers'}. Leave one "
+                   "<!-- torque:floor:begin N --> line and one <!-- torque:floor:end --> line after it, or remove "
+                   "both, then run the upgrade again.",
+        "unreadable": "Not changed: AGENTS.md is not UTF-8 text, so the Torque block was not added. Save it as "
+                      "UTF-8, then run the upgrade again.",
+        "changed_during_update": "Not changed: AGENTS.md changed while the upgrade ran; run it again.",
+    }
+    return lines.get(row["status"], f"AGENTS.md: {row['status']}.")
 
 
 def _hook_lines(rows: list[dict], mode: str, path: str = ".") -> list[str]:
@@ -1550,6 +1658,8 @@ def _doctor(args: argparse.Namespace) -> int:
                                 "changes_checked": len(changes), "evidence_problems": evidence_problems,
                                 "record_problems": len(skipped), "skipped_records": skipped}
         report["synced_folders"] = {"workspace": _synced_folder(root), "interpreter": _synced_folder(sys.executable)}
+        # The always-loaded instructions (the Torque block in AGENTS.md) and which hosts load them.
+        report["instructions"] = ws.floor_report(Path(root))
     report["lessons"] = _lessons_doctor(Path(report["client"]["path"]) if report["client"] else
                                         Path(report["workspace"]["path"]) if report["workspace"] else None)
     # Browser work has two modes with different needs, reported separately: signing a host
@@ -1834,6 +1944,7 @@ def _doctor(args: argparse.Namespace) -> int:
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
             "in this client's handoff before relying on the recorded checks.")
     report["next_actions"] += report["lessons"].get("next_actions", [])
+    report["next_actions"] += (report.get("instructions") or {}).get("next_actions", [])
     if not available["sf"]:
         report["next_actions"].append("Install the official Salesforce CLI before live org work; context and the offline demo remain usable.")
     if not available["playwright"]:
@@ -1924,6 +2035,19 @@ def _doctor(args: argparse.Namespace) -> int:
                 elif not claude_in_use:
                     print("Record protection (Antigravity): NOT IN FORCE (no torque.gate_antigravity hook in "
                           ".agents/hooks.json)")
+        if report.get("instructions"):
+            floor = report["instructions"]
+            state = {"present": f"version {floor['version']}" + ("" if floor["current"] else
+                                                                 f", not the packaged version {floor['packaged_version']}"),
+                     "absent": "MISSING (AGENTS.md has none)", "missing": "MISSING (no AGENTS.md)",
+                     "damaged": f"DAMAGED markers ({floor.get('problem')})",
+                     "unreadable": "AGENTS.md is not readable UTF-8"}[floor["state"]]
+            print(f"Torque block in AGENTS.md: {state}. In the files, loaded by "
+                  + "; ".join(f"{host}: {'yes' if row['loads'] else 'NO'} ({row['how']})"
+                              for host, row in floor["hosts"].items()))
+            if floor.get("own_text") and floor["state"] == "present":
+                print("AGENTS.md also holds instructions of its own beside the Torque block; read the two "
+                      "together once and settle anything that contradicts the block.")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
         for name, label in (("browser-login", "Browser sign-in in a host tab (torque browser login)"),

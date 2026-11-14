@@ -1,45 +1,35 @@
 # Torque
 
-**Keep Salesforce consulting work easy to resume and hand over.**
+**Your AI coding agent builds in Salesforce the way a careful consultant would, and leaves
+a record the next person can resume.**
 
-Torque is a Python command-line tool and a set of conversational workflows for
-consultants who use an AI coding assistant on Salesforce work. It keeps one folder
-of plain files per client: business context, requirements, decisions, evidence and
-a handoff another consultant can use. It also wraps Salesforce CLI operations so
-that a change leaves a record and, where supported, a way back.
+Torque is a command-line tool and playbook for consultants who use Claude Code, Codex or
+Antigravity on Salesforce client work. Each client gets a private folder, and the agent gets:
+
+- **The practice, loaded every session:** a short block in the workspace `AGENTS.md` that all
+  three hosts read, with the standing rules, how to build (access with every field, the
+  simplest option first, descriptions, fault paths) and which skill or command to use when.
+- **Eight Salesforce skills:** build, flows, delivery, architecture, SOQL, Code Analyzer, NPSP, Nonprofit Cloud.
+- **Checks around a deploy:** `torque check result`, `check metadata` and `check deployed`.
+- **Browser sign-in without a password**, through the CLI's existing authorization.
+- **Records and lessons:** resume a client, record what was done, find the fix an earlier session found.
+
+The first three commands, once Torque is [installed](#install-and-try-the-offline-demo):
+
+```sh
+torque workspace init ../torque-private --name "My consulting workspace"
+torque client add sample --workspace ../torque-private --org sample-sandbox
+torque context --workspace ../torque-private --client sample
+```
+
+Then open `../torque-private` in your agent. [Getting started](docs/getting-started.md) takes
+one made-up ticket from there to a checked deploy; the
+[consulting walkthrough](examples/consulting-walkthrough.md) shows the same in conversation.
 
 **Status: development alpha, version 2.0.0a21.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
 have offline acceptance coverage; live operations have narrower coverage, stated
 separately in [validation](docs/validation.md).
-
-## What to know before you use it
-
-- **The assistant acts with your own Salesforce login.** Torque adds no service
-  account. Whatever your login can do in an org, sandbox or production, a command
-  the assistant runs can do.
-- **By default nothing is restrained.** A new workspace runs in `full` mode: Torque
-  records and guides, it does not block. Two optional modes add a gate that checks
-  each tool call. `build-only` keeps org access and client context out of the
-  session. `connected` binds a session to one client and requires your approval,
-  from your own terminal, for each org write. Reads require consent for their data
-  class, including ApexLog queries and gets. Packaged entry points use the same
-  rules as Torque commands. See [AI access](docs/ai-access.md).
-- **The gate is a seat belt, not a sandbox.** It reads the commands and tool calls
-  it recognizes. Code the assistant writes and runs under your account can get
-  past it, and under Claude Code a hook that cannot start does not block. The
-  known gaps are listed under
-  [what it cannot stop](docs/ai-access.md#what-it-cannot-stop).
-- **The files are local; the conversation is not.** The workspace is plain files
-  on your disk or drive. What the assistant reads from them goes to that
-  assistant's model provider under your account's terms. See
-  [security and data boundaries](SECURITY.md).
-- **Recovery is scoped.** Supported operations save the state before a change and
-  can restore it. It is not a universal undo or Salesforce backup.
-- **Two hosts, to different depths.** Claude Code and Antigravity are both
-  supported; [hosts](docs/hosts.md) says what works under each and what was
-  verified live. Codex reads a workspace's `AGENTS.md` and skills, but no rules,
-  and no gate checks its calls.
 
 ## A handoff you can resume
 
@@ -64,6 +54,28 @@ remaining work so the next consultant can see where to continue.
 | Run QA, log analysis, browser flows and probes | Coverage depends on the configured adapter; synthesized probes are not executed tests |
 | Keep what was learned and find it again at the point of use: by task, metadata type, command or error text | [Lessons](docs/lessons.md) are notes with their evidence and age, not instructions; what an agent saves waits as a candidate until it is reviewed, and meanwhile `torque lesson for` shows it to that client as a marked hint |
 | Prepare meetings and check prompt contracts | Optional dependencies apply; live model-provider behavior remains experimental |
+
+## What to know before you use it
+
+- **The assistant acts with your own Salesforce login.** Torque adds no service
+  account. Whatever your login can do in an org, sandbox or production, a command
+  the assistant runs can do.
+- **By default nothing is restrained.** A new workspace runs in `full` mode: Torque
+  records and guides, it does not block. Two optional modes add a gate that checks
+  each tool call ([optional workspace controls](#optional-workspace-controls),
+  [AI access](docs/ai-access.md)). The gate is a seat belt, not a sandbox: code the
+  assistant writes and runs under your account can get past it
+  ([what it cannot stop](docs/ai-access.md#what-it-cannot-stop)).
+- **The files are local; the conversation is not.** The workspace is plain files
+  on your disk or drive. What the assistant reads from them goes to that
+  assistant's model provider under your account's terms. See
+  [security and data boundaries](SECURITY.md).
+- **Recovery is scoped.** Supported operations save the state before a change and
+  can restore it. It is not a universal undo or Salesforce backup.
+- **Three hosts, to different depths.** Claude Code and Antigravity are both
+  supported; [hosts](docs/hosts.md) says what works under each and what was
+  verified live. Codex reads a workspace's `AGENTS.md`, with its Torque block, and
+  the skills, but not the rule files, and no gate checks its calls.
 
 ## Install and try the offline demo
 
@@ -119,8 +131,9 @@ torque context --workspace ../torque-private --client sample
 
 These commands create local files. An alias refers to existing Salesforce CLI
 authentication; it does not log in or authorize an org. Replace the sample names.
-Open the private workspace in your assistant; its `AGENTS.md` explains how to use the
-client context and bundled workflows (`CLAUDE.md` imports it for Claude Code). Torque works
+Open the private workspace in your assistant; the Torque block in its `AGENTS.md` tells the
+agent how to start, record, build and check (`CLAUDE.md` imports it for Claude Code;
+`torque workspace upgrade` refreshes the block and never changes your text outside it). Torque works
 with any assistant that reads `AGENTS.md` and can run commands. The gate runs as a Claude
 Code hook, which `init` wires (`--no-hook` skips it), and as an
 [Antigravity hook](docs/ai-access.md#wiring-the-antigravity-hook).
@@ -131,7 +144,7 @@ commands) and worker roles there in [its format](docs/workspace-upgrades.md#anti
 
 | Host | Reads from the workspace | Gate for build-only and connected mode |
 | --- | --- | --- |
-| Claude Code | `CLAUDE.md` (pointing to `AGENTS.md`), and rules, recipes, skills and worker roles in `.claude/` | Hook; connected mode run live |
+| Claude Code | `CLAUDE.md` (importing `AGENTS.md` and its Torque block), and rules, recipes, skills and worker roles in `.claude/` | Hook; connected mode run live |
 | Antigravity | `AGENTS.md`, and the same content in `.agents/` | Hook; connected mode tested offline only |
 | Codex | `AGENTS.md` and the skills in `.agents/skills/`, recipes included (OpenAI's documentation; not run with Torque) | None: do not use it in a build-only or connected workspace |
 

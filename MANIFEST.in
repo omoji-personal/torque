@@ -5,6 +5,7 @@ recursive-include scripts *.py
 recursive-include tests *.py
 recursive-include workflows *.py *.md *.json
 recursive-include lessons *.md
+recursive-include floor *.md
 recursive-include examples *.md *.json *.yaml
 recursive-include .agents/skills *.md
 recursive-include .claude/commands *.md

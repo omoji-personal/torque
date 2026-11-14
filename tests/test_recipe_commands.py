@@ -34,7 +34,7 @@ import pytest
 from torque import cli
 
 REPO = Path(__file__).resolve().parents[1]
-SOURCES = ("workflows/*.md", ".claude/rules/*.md")
+SOURCES = ("workflows/*.md", ".claude/rules/*.md", "floor/AGENTS-floor.md", "docs/getting-started.md")
 
 # (file, start of the command as written): why it is not checked as a command.
 ALLOWED: dict[tuple[str, str], str] = {}

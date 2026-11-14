@@ -25,9 +25,14 @@ not appear in `torque workflows list`.
   pointers. Depth is in `references/` files that load only when the body sends the
   assistant there. A path such as `salesforce-build/references/data-model.md` is relative
   to the skills folder.
-- On-demand skills are easy to skip. Name the skill in the request ("read the
-  `salesforce-flow` skill first") or in the workspace's standing instructions for the kinds
-  of work you do most.
+- On-demand skills are easy to skip. The Torque block in the workspace `AGENTS.md` names the
+  file to read for each kind of work (`.agents/skills/NAME/SKILL.md`, in every workspace), so
+  a host with no skill mechanism follows it too. You can also name the skill in the request
+  ("read the `salesforce-flow` skill first").
+- `torque workflows` ends with the eight skills, one line each. `torque workflows show NAME`
+  prints a skill and `torque workflows show NAME/REFERENCE` one of its references (for
+  example `salesforce-flow/gotchas`), from the selected workspace's copy when `--workspace`
+  names one, otherwise from the installed package.
 
 ## How to read them
 

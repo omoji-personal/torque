@@ -21,6 +21,8 @@ def expected_files():
     # Platform lessons: one Markdown file each, shipped read-only (docs/lessons.md).
     for path in sorted((ROOT / "lessons").glob("*.md")):
         result[f"lessons/{path.name}"] = path.read_bytes()
+    # The floor: the always-loaded block `workspace init` and `upgrade` write into AGENTS.md.
+    result["floor/AGENTS-floor.md"] = (ROOT / "floor/AGENTS-floor.md").read_bytes()
     return result
 
 
@@ -33,7 +35,7 @@ def main():
     actual = {p.relative_to(target).as_posix(): p.read_bytes()
               for p in target.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
     managed = lambda key: key == "catalogue.json" or key.split("/")[0] in {"commands", "rules", "agents", "skills",
-                                                                         "lessons"}
+                                                                         "lessons", "floor"}
     drift = sorted(k for k in set(expected) | set(actual)
                    if managed(k) and expected.get(k) != actual.get(k))
     if args.check:
