@@ -7,15 +7,8 @@ description: Build, change, review or debug any Salesforce Flow, including recor
 
 Read this before you open, write, review or explain a flow. State described: Winter '27
 (API 68.0), checked 2026-11-14. Flow behaviour changes with each release and with the flow's
-own API version, so where a line says "Check", run the check in the target org.
-
-Marks used in this skill:
-
-- `[check: flow.no-fault-path]` and the like: the `torque check metadata` rule that tests the
-  statement in the flow file. "Analyzer" names a Code Analyzer rule; "by hand" says what to read.
-- **verify**: not confirmed in a fetched primary source. Verify in the org or the current
-  documentation before you rely on it or repeat it to a client.
-- field-reported: seen in real client work, usually in one org. Run its check first.
+own API version, so where a line says "Check", run the check in the target org. Marks are
+explained below the first table.
 
 ## Start here
 
@@ -26,6 +19,14 @@ Marks used in this skill:
 | Deploy or activate a flow | Find out whether the target activates on deploy; plan the read-back (rule 15) | `references/activation-and-deploy.md` |
 | Review a flow | Get the active version and the object's other automation | `references/review.md` |
 | Debug a fault, or say when a flow runs | Read the active version, its schedule, entry conditions and run-as user | `references/gotchas.md` |
+
+Marks used in this skill:
+
+- `[check: flow.no-fault-path]` and the like: the `torque check metadata` rule that tests the
+  statement in the flow file. "Analyzer" names a Code Analyzer rule; "by hand" says what to read.
+- **verify**: not confirmed in a fetched primary source. Verify in the org or the current
+  documentation before you rely on it or repeat it to a client.
+- field-reported: seen in real client work, usually in one org. Run its check first.
 
 Two read-only commands answer most first questions:
 
