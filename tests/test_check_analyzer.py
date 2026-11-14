@@ -201,3 +201,29 @@ def test_adapter_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr(adapter, "run_tool", fake_run)
     with pytest.raises(RuntimeError, match="timeout"):
         adapter.run_code_analyzer(str(tmp_path), str(tmp_path / "o.json"))
+
+
+def test_an_ignored_flow_rule_keeps_the_analyzers_apex_finding_and_twins_are_named_once(tmp_path):
+    """Gemini F-19: --ignore flow.api-version-behind dropped the analyzer's old-API finding on a class too; and
+    one Torque finding confirmed by several analyzer hits listed the same rule each time."""
+    t = Tree(tmp_path)
+    cls = t.apex("Old", "/** Old. */\npublic with sharing class Old {}")
+    rel = os.path.join("force-app", "main", "default", "flows", "Gift_Thank_You_Task.flow-meta.xml")
+    e10 = e10_project(tmp_path / "e10")
+
+    def runner(workspace, output, **kw):
+        return {"runDir": str(t.root), "violations": [
+            {"engine": "regex", "rule": "AvoidOldSalesforceApiVersions", "severity": 3, "message": "Old API.",
+             "locations": [{"file": str(cls), "startLine": 1}]}]}
+    r = t.check(analyzer_mode="auto", runner=runner, ignore=["flow.api-version-behind"])
+    assert [f["rule"] for f in r["findings"] if f["source"] == "code-analyzer"] == [
+        "code-analyzer:regex:AvoidOldSalesforceApiVersions"]
+    element, _owner = lines_of(e10)
+
+    def twice(workspace, output, **kw):
+        v = {"engine": "flow", "rule": "MissingDescription", "severity": 4, "message": "m",
+             "locations": [{"file": rel, "startLine": element}]}
+        return {"runDir": str(e10.root), "violations": [v, dict(v)]}
+    r = e10.check(analyzer_mode="auto", runner=twice)
+    [f] = [f for f in r["findings"] if f["rule"] == "doc.flow-elements-undescribed"]
+    assert f["confirmed_by"] == ["code-analyzer flow:MissingDescription"]

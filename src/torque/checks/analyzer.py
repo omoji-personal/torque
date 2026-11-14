@@ -123,6 +123,8 @@ def run(mode: str, in_scope: list[Component], project_root: str | None, findings
         engine, rule = str(v.get("engine") or "?"), str(v.get("rule") or "?")
         line = loc.get("startLine") if isinstance(loc.get("startLine"), int) else None
         own = SAME_AS.get((engine, rule), ())
+        if comp.type != "Flow":      # Torque's flow rules say nothing about Apex: an ignored one must not drop it
+            own = tuple(r for r in own if not r.startswith("flow."))
         if any(r in ignored_rules for r in own):
             continue
         severity = v.get("severity") if isinstance(v.get("severity"), int) else 5
@@ -134,8 +136,8 @@ def run(mode: str, in_scope: list[Component], project_root: str | None, findings
             if RANK[level] < RANK[twin.severity]:
                 twin.severity = level
                 twin.confirmed_by.append(f"code-analyzer {engine}:{rule} (severity {severity}, so {level})")
-            else:
-                twin.confirmed_by.append(f"code-analyzer {engine}:{rule}")
+            elif not any(c.startswith(f"code-analyzer {engine}:{rule}") for c in twin.confirmed_by):
+                twin.confirmed_by.append(f"code-analyzer {engine}:{rule}")   # once, however many elements
             result.merged += 1
             continue
         resources = [r for r in v.get("resources") or [] if isinstance(r, str)]
