@@ -270,9 +270,15 @@ CASES = [
     ("pset-user-permission-revoked-org-keeps-it", "PermissionSet", pset(up("false")), pset(up("true")), "different",
      "userPermissions ViewSetup: source revokes it"),
     ("pset-user-permission-revoked-org-dropped-it", "PermissionSet", pset(up("false")), pset(), "same", None),
+    # a permission set deploy replaces the set (seen live 2026-11-14): a grant the file does not name differs
     ("pset-org-has-entries-the-file-does-not-name", "PermissionSet", pset(fp("Thing__c.Kind__c", "true", "false")),
      pset(fp("Thing__c.Kind__c", "true", "false"), fp("Thing__c.Other__c", "true", "true"), up("true", "ApiEnabled")),
-     "same", None),
+     "different", "userPermissions ApiEnabled: only in org: a permission set deploy replaces the set"),
+    ("pset-entry-deleted-from-the-file-org-still-grants", "PermissionSet", pset(),
+     pset(fp("Thing__c.Kind__c", "true", "true")), "different",
+     "fieldPermissions Thing__c.Kind__c: only in org: a permission set deploy replaces the set"),
+    ("pset-org-has-an-all-false-entry-the-file-does-not-name", "PermissionSet", pset(),
+     pset(fp("Thing__c.Kind__c", "false", "false"), up("false", "ApiEnabled")), "same", None),
     ("pset-grant-lowered-in-org", "PermissionSet", pset(fp("Thing__c.Kind__c", "true", "true")),
      pset(fp("Thing__c.Kind__c", "true", "false")), "different", "editable: source 'true', org 'false'"),
     ("pset-org-grants-more-inside-an-entry", "PermissionSet", pset(op("true")),
@@ -288,8 +294,9 @@ CASES = [
      profile(fp("Thing__c.Kind__c", "true", "true")), "different", "source revokes it; the org still grants"),
     ("profile-tab-hidden-org-shows-it", "Profile", profile(tab("Hidden", "tabVisibilities")),
      profile(tab("DefaultOn", "tabVisibilities")), "different", "tabVisibilities Thing__c: source revokes it"),
+    # a profile deploy changes only the entries the file names: what only the org has is expected
     ("profile-org-has-entries-the-file-does-not-name", "Profile", profile(ca("true")),
-     profile(ca("true"), up("true", "ApiEnabled")), "same", None),
+     profile(ca("true"), up("true", "ApiEnabled"), fp("Thing__c.Kind__c", "true", "true")), "same", None),
     # shapes from the second review (Gemini F-07, F-09)
     ("flow-start-filter-removed-in-source-org-keeps-it", "Flow", flow(),
      flow().replace("<object>Thing__c</object>", "<filters><field>Amount__c</field><operator>GreaterThan</operator>"
@@ -393,8 +400,8 @@ def test_known_server_additions_are_reported_as_such(tmp_path):
     # 30 action overrides; compactLayoutAssignment, enableBulkApi, enableSharing, enableStreamingApi,
     # externalSharingModel and visibility; the false switches and the empty searchLayouts are default leaves
     assert len(o.known_additions) == 30 + 6
-    p = compare.compare(component(tmp_path, "s2", "PermissionSet", pset(ca("true"))),
-                        component(tmp_path, "o2", "PermissionSet", pset(ca("true"), up("true", "ApiEnabled"))),
+    p = compare.compare(component(tmp_path, "s2", "Profile", profile(ca("true"))),
+                        component(tmp_path, "o2", "Profile", profile(ca("true"), up("true", "ApiEnabled"))),
                         RETRIEVED)
     assert (p.status, p.other_entries) == ("same", 1)
     u = compare.compare(a, component(tmp_path, "o3", "CustomObject",

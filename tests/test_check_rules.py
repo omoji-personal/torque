@@ -517,3 +517,35 @@ def test_a_screen_component_that_names_the_action_runs_it(tmp_path):
     t.flow("Nothing", element("screens", "S", action), process="Flow")
     r = t.check()
     assert [f["component"]["name"] for f in hits(r, "flow.screen-action-without-trigger")] == ["Nothing"]
+
+
+def test_a_permission_set_deploy_that_removes_grants(tmp_path):
+    """Live 2026-11-14: a permission set deploy replaces the set, so a file listing only the new entries removes
+    every other grant."""
+    fields = ["Shift__c.A__c", "Shift__c.B__c", "Shift__c.C__c", "Shift__c.D__c"]
+    before = Tree(tmp_path / "before")
+    before.permset("Kept", fields=fields)
+    before.permset("Trimmed", fields=fields)
+    before.permset("Halved", fields=fields)
+    now = Tree(tmp_path / "now")
+    now.permset("Kept", fields=fields, desc="Who gets it and what it does, now with more words.")
+    now.permset("Trimmed", fields=fields[:3])
+    now.permset("Halved", fields=fields[:1])
+    now.permset("Brand_New", fields=fields[:1])
+    r = now.check(baseline=str(before.root))
+    got = {f["component"]["name"]: (f["severity"], f["message"].split(":")[0])
+           for f in hits(r, "access.permission-set-removes-grants")}
+    assert got == {"Trimmed": ("warning", "This deploy removes 1 of the 4 grants the baseline has"),
+                   "Halved": ("error", "This deploy removes 3 of the 4 grants the baseline has")}
+    assert "fieldPermissions Shift__c.D__c" in hits(r, "access.permission-set-removes-grants", "Trimmed")[0]["message"]
+
+    result = tmp_path / "dry-run.json"
+    result.write_text(json.dumps({"status": 0, "result": {"checkOnly": True, "done": True, "status": "Succeeded",
+                                  "files": [{"type": "PermissionSet", "fullName": "Trimmed", "state": "Changed"},
+                                            {"type": "PermissionSet", "fullName": "Brand_New", "state": "Created"}]}}),
+                      encoding="utf-8")
+    r = now.check(changed_from=str(result))
+    [note] = hits(r, "access.permission-set-removes-grants")
+    assert note["component"]["name"] == "Trimmed" and note["severity"] == "note"
+    assert "Retrieve the set from the org and compare before deploying" in note["action"]
+    assert not hits(now.check(), "access.permission-set-removes-grants")          # no scope: nothing to say

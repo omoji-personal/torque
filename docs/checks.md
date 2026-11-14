@@ -80,6 +80,7 @@ inherited; 2 unusable input (missing path, unreadable result, bad `--only`, unkn
 | `access.grant-only-in-profile` | warning | the same field granted only by a profile in the change | |
 | `access.formula-field-editable` | error | an editable `fieldPermissions` entry for a formula, roll-up summary or auto-number field (an Activity field matched through Task and Event), or one that is editable but not readable | only when the field's definition is in the files |
 | `access.profile-in-change` | warning | a profile file in the change | |
+| `access.permission-set-removes-grants` | warning; error when the file drops more than half; note | a permission set deploy replaces the set, so a grant the file does not list is removed. With `--baseline`: a changed set whose file has fewer granting entries than its baseline copy, with the count and the first few. With `--changed-from` and no baseline: a set the result reports as Changed gets a note to retrieve and compare first | a Created set is silent; without either option nothing is said; entries are counted by section and name, not by flag |
 | `access.powerful-permission` | warning | Modify All Data, View All Data, Manage Users, Author Apex, Customize Application, Modify Metadata, Manage Profiles and Permission Sets, Assign Permission Sets; View All, Modify All or View All Fields on an object; in a permission set (one finding each) or a profile (one finding listing them) | |
 | `doc.description-missing` | warning | an empty or missing description on a custom field, custom object, flow, validation rule, permission set or group, record type or custom permission | presence only, not whether the text is right; standard and managed components are skipped |
 | `doc.description-placeholder` | note | a description that repeats the label or API name, or is TODO, TBD, test, ... | |
@@ -195,7 +196,9 @@ CLI error instead of a result, JSON that is not a deploy result). No org call.
 ## `torque check deployed`
 
 Status: proven against a stubbed CLI and a mutation corpus. One live run on a Developer Edition org
-(2026-11); the comparison rules changed after the live run and have not yet been re-run against a real org;
+(2026-11), then a re-run on 2026-11-14 of the current rules for the positive case and three negative cases
+(a changed formula, a revoked grant, a permission set entry removed by a deploy); the permission-set rule
+(replace, not merge) changed after that run and has not been re-run;
 not yet run against a sandbox or a production org.
 
 ```
@@ -227,7 +230,7 @@ CLI login). Not checked: permission set assignments and what a user really sees,
 
 | Status | Establishes | Does not establish |
 |---|---|---|
-| `same` | everything the file specifies is in the org unchanged, and the org copy has nothing else except default values, the properties Salesforce is known to add on save, or permission entries the file does not name | byte equality; that the component works; who can use it |
+| `same` | everything the file specifies is in the org unchanged, and the org copy has nothing else except default values, the properties Salesforce is known to add on save, or, for a profile, access entries the file does not name | byte equality; that the component works; who can use it; a permission set's entries about components outside the retrieve |
 | `unexplained-additions` | everything the file specifies is in the org unchanged; the org copy also has top-level properties Torque cannot explain (listed: look at them) | whether those properties are harmless server defaults or someone's change |
 | `different` | something submitted is missing or changed; or the org has content where a deploy replaces the definition; or the file revokes access the org still grants | which side is right |
 | `partly-compared` | what could be compared is as submitted, but some access entries of a permission set or profile could not be (their components were not in the retrieve; the count is shown) | that those entries are in the org |
@@ -250,8 +253,12 @@ Rules:
    streaming switches, `externalSharingModel` Private, `deploymentStatus` Deployed, an empty `searchLayouts`
    and `visibility` Public, as the live run of 2026-11-14 returned them. A value not seen there is not
    explained.
-3. Merge for permission sets and profiles. A deploy changes only the access entries the file names, so
-   entries only the org has are expected (counted, shown as information). An entry the file names with every
+3. Access entries. A permission set deploy replaces the set: an entry the file does not name is disabled
+   (Metadata API 40.0 and later, and seen live on 2026-11-14: an entry deleted from the file and deployed was
+   gone from the org). So in a permission set, an org entry that grants something and that the file does not
+   name is `different` ("only in org: a permission set deploy replaces the set, so this entry was added after
+   the deploy, or the file is not what was deployed"). A profile deploy changes only the entries the file
+   names, so for a profile such entries are expected (counted, shown as information). An entry the file names with every
    flag false (or a tab set to None or Hidden) is a revoke: met when the org has no such entry or an all-false
    one; `different` ("source revokes it; the org still grants ...") when the org entry grants anything. This
    covers field, object, class, tab, record type, custom permission and user permission entries. The org
@@ -285,7 +292,7 @@ in short:
 | Mutation | Flow | Object | Field | Rule | Permission set or profile | Class |
 |---|---|---|---|---|---|---|
 | removed in the file, the org keeps it | different | unexplained-additions | different (picklist value); unexplained-additions (property) | unexplained-additions | different when it was a grant the file now revokes | different |
-| added in the org only | different | unexplained-additions; different inside an element | different | unexplained-additions | same (other entries); different when inside a named entry | different |
+| added in the org only | different | unexplained-additions; different inside an element | different | unexplained-additions | different for a permission set (it is replaced); same for a profile (other entries); different inside a named entry | different |
 | a literal changed | different | different | different | different | different | different |
 | whitespace inside a string | different | | different | different (formula) | | different |
 | two outcomes or values reordered | different | same (top level) | different | same (top level) | same (top level) | |

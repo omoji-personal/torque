@@ -3,8 +3,8 @@
 The question is whether what was submitted is what the org now holds. Statuses:
 
 - "same": everything the source specifies is in the org with the same content, and the org copy has nothing
-  else except a leaf with a default value, a known server addition (SERVER_ADDITIONS) or, for a permission set
-  or profile, entries the file does not name.
+  else except a leaf with a default value, a known server addition (SERVER_ADDITIONS) or, for a profile,
+  entries the file does not name.
 - "different": something submitted is missing or changed; or the org has content the source does not, where the
   deploy replaces the definition (anywhere in a flow; inside any element the source has; an extra member of a
   collection the source lists); or the source revokes an access entry the org still grants.
@@ -18,9 +18,12 @@ Rules:
 2. Known server additions (SERVER_ADDITIONS), per type, only at the top level and only where the source does not
    have the element; each entry names where it was seen. Anything else the org alone has at the top level of a
    type that is not rule 3 is an unexplained addition; in a flow it is a difference.
-3. Merge semantics for permission sets and profiles: a deploy changes only the access entries the file names, so
-   entries only the org has are expected (counted as information). An entry in the source that grants nothing is
-   an expectation: met by an absent or all-false org entry, a difference when the org entry grants anything.
+3. Access entries. A permission set deploy replaces the set (Metadata API 40.0 and later; seen live on
+   2026-11-14: an entry deleted from the file and deployed was gone from the org), so an org entry that grants
+   something and that the file does not name is a difference. A profile deploy changes only the entries the file
+   names, so for a profile such entries are expected (counted as information). For both, an entry in the source
+   that grants nothing is an expectation: met by an absent or all-false org entry, a difference when the org
+   entry grants anything. Only entries about components in the same retrieve can be seen.
 4. Code: exact after `code_text` (line endings, whitespace at the end of lines and of the file), the same
    function the baseline fingerprint uses.
 5. Order: the Metadata API writes top-level elements in its own order, so that order is not compared; below the
@@ -57,7 +60,8 @@ ACCESS_SECTIONS = {"fieldPermissions": ("field", "CustomField"), "objectPermissi
                    "applicationVisibilities": ("application", "CustomApplication"),
                    "pageAccesses": ("apexPage", "ApexPage"), "flowAccesses": ("flow", "Flow"),
                    "layoutAssignments": ("layout", "Layout"), "userPermissions": ("name", None)}
-MERGE_TYPES = {"PermissionSet", "Profile"}
+ACCESS_TYPES = {"PermissionSet", "Profile"}     # files made of access entries
+MERGE_TYPES = {"Profile"}                       # a deploy changes only the entries the file names
 KEYS = ("fullName", "name", "field", "object", "apexClass", "recordType", "tab", "application", "apexPage", "flow",
         "layout", "picklist")
 NUMBER = re.compile(r"-?\d+(\.\d+)?")
@@ -110,7 +114,7 @@ class Outcome:
     not_compared: int = 0                                  # source entries about components not in this retrieve
     unexplained: list[str] = field(default_factory=list)   # top-level content only the org has, not explained
     known_additions: list[str] = field(default_factory=list)   # server additions accepted (SERVER_ADDITIONS)
-    other_entries: int = 0                                 # permission set or profile entries the file does not name
+    other_entries: int = 0                                 # profile entries the file does not name
 
 
 def _grants(node) -> list[str]:
@@ -239,6 +243,11 @@ class _Run:
             return
         if self.merge and tag in ACCESS_SECTIONS:
             self.out.other_entries += 1
+            return
+        if self.type in ACCESS_TYPES and tag in ACCESS_SECTIONS:
+            if _grants(node):
+                self.diff(f"{label}: only in org: a permission set deploy replaces the set, so this entry was added "
+                          "after the deploy, or the file is not what was deployed")
             return
         known = SERVER_ADDITIONS.get(self.type, {}).get(tag)
         if known is not None:

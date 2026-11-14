@@ -26,9 +26,10 @@ try:  # the shared launcher finds sf where Windows installs it as a batch file
 except ImportError:  # pragma: no cover
     run_tool = subprocess.run
 
-LABEL = ("proven against a stubbed CLI; one live run on a Developer Edition org, 2026-11, then the comparison rules "
-         "changed after the live run and have not yet been re-run against a real org; not yet run against a sandbox "
-         "or a production org")
+LABEL = ("proven against a stubbed CLI and a mutation corpus; re-run live on 2026-11-14 on a Developer Edition org "
+         "for the positive case and three negative cases (a changed formula, a revoked grant, a permission set entry "
+         "removed by a deploy); the permission-set rule changed after that run and has not been re-run; not yet run "
+         "against a sandbox or a production org")
 STATUSES = ("same", "unexplained-additions", "partly-compared", "different", "could-not-compare", "not-in-org")
 RETRIEVABLE = {"CustomField", "CustomObject", "ValidationRule", "RecordType", "Flow", "PermissionSet",
                "PermissionSetGroup", "CustomPermission", "Profile", "FlexiPage", "Layout", "CustomMetadata",
@@ -93,7 +94,7 @@ def referenced(comps) -> set[str]:
     field is retrieved as the Activity field that defines it."""
     out = set()
     for c in comps:
-        if c.type not in compare.MERGE_TYPES or c.node is None:
+        if c.type not in compare.ACCESS_TYPES or c.node is None:
             continue
         for e in c.node.children:
             key_tag, typ = compare.ACCESS_SECTIONS.get(e.tag, ("", None))
@@ -324,8 +325,9 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
 
 MEANING = {
     "same": "everything the file specifies is in the org unchanged, and the org copy has nothing else but default "
-            "values, the properties Salesforce is known to add on save, or permission entries the file does not "
-            "name (containment under these rules, not byte equality)",
+            "values, the properties Salesforce is known to add on save, or, for a profile, access entries the file "
+            "does not name (containment under these rules, not byte equality; a permission set's entries about "
+            "components outside the retrieve cannot be seen)",
     "unexplained-additions": "everything the file specifies is in the org unchanged, and the org copy also has "
                              "properties Torque cannot explain: look at them",
     "partly-compared": "what could be compared is as submitted, but some access entries could not be: their "
@@ -368,8 +370,8 @@ def text(rep: dict) -> str:
             notes.append(f"{n} propert{'y' if n == 1 else 'ies'} Salesforce is known to add on save")
         n = r.get("other_org_entries") or 0
         if n:
-            notes.append(f"{n} access entr{'y' if n == 1 else 'ies'} the file does not name, which a deploy leaves "
-                         "as they are")
+            notes.append(f"{n} access entr{'y' if n == 1 else 'ies'} the file does not name, which a profile "
+                         "deploy leaves as they are")
         also = f" (the org copy also has {' and '.join(notes)})" if notes else ""
         lines.append(f"  {r['type']} {r['name']}: {shown}" + (f": {tail}{more}" if tail else "") + also + skipped)
     if rep["flows"]:
