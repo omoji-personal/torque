@@ -21,10 +21,10 @@ REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "floor" / "AGENTS-floor.md"
 MAX_LINES = 60
 # Files whose `torque ...` lines must parse as written (the floor and the newcomer's page).
-COMMAND_FILES = ("floor/AGENTS-floor.md",)
+COMMAND_FILES = ("floor/AGENTS-floor.md", "docs/getting-started.md")
 # Placeholder words in those lines and a value that parses in their place.
 VALUES = {"NAME": "acme", "SLUG": "acme", "TEXT": "Add Tier", "ID": "L-20261114-ab12", "TASK": "deploy",
-          "ALIAS": "acme-sbx", "PROJECT": "force-app", "PATH": "."}
+          "ALIAS": "acme-sbx", "PROJECT": "force-app", "PATH": ".", "COMMAND": "context"}
 
 
 def invoke(*args):
@@ -62,11 +62,17 @@ def test_the_packaged_block_is_the_source():
     assert block.startswith(f"<!-- torque:floor:begin {version} -->\n") and block.endswith("<!-- torque:floor:end -->\n")
 
 
-def test_every_skill_the_routing_index_names_exists():
-    named = set(re.findall(r"skill `([a-z0-9-]+)`", SOURCE.read_text(encoding="utf-8")))
-    assert len(named) >= 8, named
+def test_every_skill_the_routing_index_names_exists_at_that_path_in_a_workspace(firm):
+    # A host without a skill mechanism (Codex as observed) follows a file path, not a skill
+    # name, so each routing line names the file, and the file is where init puts it.
+    text = SOURCE.read_text(encoding="utf-8")
+    named = re.findall(r"`(\.agents/skills/([a-z0-9-]+)/SKILL\.md)`", text)
+    assert len({name for _, name in named}) >= 8, named
     shipped = {path.name for path in (REPO / ".agents" / "skills").iterdir() if (path / "SKILL.md").is_file()}
-    assert named <= shipped, sorted(named - shipped)
+    assert {name for _, name in named} <= shipped, sorted({name for _, name in named} - shipped)
+    for relative, _ in named:
+        assert (firm / relative).is_file(), relative
+    assert "read skill `" not in text, "name the file to read, not only the skill"
 
 
 def test_the_block_has_no_em_dash_and_names_no_private_place():
@@ -118,6 +124,25 @@ def parse_error(words):
     except SystemExit as exc:
         return None if exc.code == 0 else (err.getvalue().strip().splitlines() or ["exit"])[-1]
     return None
+
+
+def subcommands(parser):
+    for action in parser._actions:
+        if isinstance(action, __import__("argparse")._SubParsersAction):
+            return action.choices
+    return {}
+
+
+def test_every_torque_subcommand_the_block_names_exists():
+    top = subcommands(cli.build_parser())
+    for command in torque_lines(SOURCE.read_text(encoding="utf-8")):
+        words = words_of(command)[1:]
+        assert words[0] in top, command
+        if words[0] in cli.DELEGATES:
+            module = __import__(cli.DELEGATES[words[0]], fromlist=["build_parser"])
+            assert words[1] in subcommands(module.build_parser()), command
+        elif subcommands(top[words[0]]):
+            assert words[1] in subcommands(top[words[0]]), command
 
 
 def test_the_parse_check_catches_a_wrong_command():
