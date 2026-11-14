@@ -701,7 +701,7 @@
       "source_path": "packages/memory/jsc_memory/cli.py",
       "source_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
       "source_tracked": true,
-      "destination_sha256": "54ec7fb69f88ed52c974e6b6586ac9ef6d41a88eaf3f8f7933e7c397ab2d6a04",
+      "destination_sha256": "7b7b49feb3abf9e9dec4d737f158aa34cc6a70cda196a85692c9f4adcdca5158",
       "adapted": true
     },
     {
