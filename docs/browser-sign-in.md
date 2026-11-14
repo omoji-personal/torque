@@ -52,6 +52,10 @@ With `--json` the first line is
 `{"event": "waiting", "address": "...", "timeout_seconds": 180, "expires_at": "..."}` and the
 second `{"event": "redirected", "org_id": "...", "org_kind": "sandbox", "username": "...",
 "user_id": "...", "org_check": "..."}`, or `{"event": "failed", "exit_code": N, "reason": "..."}`.
+The org ID, username, User Id and edition are the CLI's; one that does not look like what it
+should be (an Id of 15 or 18 characters, a username, an edition name) is printed as
+`(unreadable)`, in the JSON and in the text. Everything printed also passes the package's
+redaction; the local address comes through unchanged.
 
 A login page after the redirect means the sign-in failed. Retry once, then stop and report.
 Never type or ask for a password.

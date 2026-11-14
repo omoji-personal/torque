@@ -23,7 +23,7 @@ NAVIGATION = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-F
 class FakeCli:
     """Stands in for SfClient. `orgs` maps an alias to what the CLI would answer:
     org_id, is_sandbox, username, url, and optional identity_error / mint_error /
-    mint_seconds (how long the sign-in request takes)."""
+    mint_seconds (how long the sign-in request takes) / organization_type / user_lookup_id."""
     orgs: dict = {}
     calls: list = []
 
@@ -47,7 +47,8 @@ class FakeCli:
         org = self._org()
         if org.get("identity_error"):
             raise org["identity_error"]
-        return {"org_id": org["org_id"], "is_sandbox": org["is_sandbox"], "organization_type": "Enterprise Edition"}
+        return {"org_id": org["org_id"], "is_sandbox": org["is_sandbox"],
+                "organization_type": org.get("organization_type", "Enterprise Edition")}
 
     def org_frontdoor(self, target_org=None, *, path=None, api_version=None) -> dict:
         self.calls.append(("mint", self.alias, path, api_version))
@@ -59,7 +60,7 @@ class FakeCli:
 
     def user_by_username(self, username):
         self.calls.append(("user", self.alias, username))
-        return {"user_id": "005000000000001AAA", "is_active": True}
+        return {"user_id": self.orgs.get(self.alias, {}).get("user_lookup_id", "005000000000001AAA"), "is_active": True}
 
     def find_user(self, value):
         self.calls.append(("find_user", self.alias, value))

@@ -54,6 +54,22 @@ NOT_CHECKED = "org not checked against the client record"
 # One word that the CLI cannot read as an option. It is passed as one argument, never through a shell.
 _ALIAS = re.compile(r"[^\s-]\S*")
 _ORG_ID = re.compile(r"00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?")
+# What the CLI's identity fields look like. A value of another shape is printed as UNREADABLE:
+# the command prints what the CLI returned, and a field that does not look like what it should
+# be is not repeated, so that it can never carry an address or a token into the output.
+_USER_ID = re.compile(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?")
+_USERNAME = re.compile(r"[A-Za-z0-9._'+-]{1,80}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,10}")
+_EDITION = re.compile(r"[A-Za-z][A-Za-z ]{0,59}")
+UNREADABLE = "(unreadable)"
+
+
+def shown(value, shape: re.Pattern) -> str:
+    """`value` when it has the shape it should have, "" when there is none, else UNREADABLE."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, str) and shape.fullmatch(value) and redact(value) == value:
+        return value
+    return UNREADABLE
 
 
 class LoginError(Exception):
@@ -72,20 +88,24 @@ class Output:
     out: object = None
     err: object = None
 
+    # Everything printed passes the package's redaction as well: the loopback address the
+    # command prints on purpose has no credential shape and comes through unchanged.
+
     def result(self, text: str, **event) -> None:
         stream = self.out or sys.stdout
-        print(json.dumps(event) if self.as_json else text, file=stream, flush=True)
+        print(json.dumps(redact(event)) if self.as_json else redact(text), file=stream, flush=True)
 
     def hint(self, text: str) -> None:
         if not self.as_json:
-            print(text, file=self.err or sys.stderr, flush=True)
+            print(redact(text), file=self.err or sys.stderr, flush=True)
 
     def fail(self, error: LoginError) -> int:
+        reason = redact(error.reason)
         if self.as_json:
-            print(json.dumps({"event": "failed", "exit_code": error.code, "reason": error.reason}),
+            print(json.dumps({"event": "failed", "exit_code": error.code, "reason": reason}),
                   file=self.out or sys.stdout, flush=True)
         else:
-            print(f"error: {error.reason}", file=self.err or sys.stderr, flush=True)
+            print(f"error: {reason}", file=self.err or sys.stderr, flush=True)
         return error.code
 
 
@@ -213,15 +233,15 @@ def org_edition(identity: dict) -> str:
     """The org's edition as the Organization query names it, or "". A Developer Edition org is
     "production" by the platform's sandbox flag; printing the edition beside it says what it is."""
     edition = identity.get("organization_type")
-    return edition.strip() if isinstance(edition, str) else ""
+    return shown(edition.strip(), _EDITION) if isinstance(edition, str) else ""
 
 
 def wrong_user(alias: str, username: str, expected: str) -> str | None:
     """Why the alias's user is not the user the seed's role records, or None."""
     if not expected or username.casefold() == expected.casefold():
         return None
-    return (f"{alias} signs in as {username or 'an unknown user'}, but the test-user seed records {expected} for "
-            "that role; nothing was signed in")
+    return (f"{alias} signs in as {shown(username, _USERNAME) or 'an unknown user'}, but the test-user seed records "
+            f"{shown(expected, _USERNAME)} for that role; nothing was signed in")
 
 
 def minter(client: SfClient, alias: str, identity: dict, path: str | None, api_version: str | None,
@@ -246,11 +266,15 @@ def minter(client: SfClient, alias: str, identity: dict, path: str | None, api_v
 
 
 def user_id_of(client: SfClient, username: str) -> str | None:
+    """The User Id for a username the CLI returned, or None. A username that does not
+    look like one is not looked up."""
+    if shown(username, _USERNAME) in ("", UNREADABLE):
+        return None
     try:
-        found = client.user_by_username(username) if username else None
+        found = client.user_by_username(username)
     except SfError:
         return None
-    return found["user_id"] if found else None
+    return shown(found["user_id"], _USER_ID) if found else None
 
 
 
@@ -311,8 +335,9 @@ def prepare(args) -> Plan:
         other = identify(user_client, user_alias)
         if not same_org(other["org_id"], identity["org_id"]):
             raise LoginError(EXIT_ORG_MISMATCH,
-                             f"--as-alias {user_alias} is authorized for org {other['org_id']}, but --target-org "
-                             f"{target} is org {identity['org_id']}. Nothing was signed in. Authorize the test user "
+                             f"--as-alias {user_alias} is authorized for org {shown(other['org_id'], _ORG_ID)}, but "
+                             f"--target-org {target} is org {shown(identity['org_id'], _ORG_ID)}. Nothing was signed "
+                             "in. Authorize the test user "
                              "in the same org first (the consultant runs `sf org login web --alias "
                              f"{user_alias}` against that org, outside the agent).")
         plan.alias, plan.client = user_alias, user_client
@@ -324,11 +349,15 @@ def prepare(args) -> Plan:
         if not found:
             raise LoginError(EXIT_SIGN_IN, f"no user {args.as_user!r} in org {identity['org_id']}; give the full "
                                            "username or the User Id")
+        if not _USER_ID.fullmatch(found["user_id"]):
+            raise LoginError(EXIT_SIGN_IN, f"the user lookup for {args.as_user!r} returned an unreadable User Id; "
+                                           "nothing was signed in. Give the User Id itself")
+        username = shown(found["username"], _USERNAME)
         if not found["is_active"]:
-            raise LoginError(EXIT_SIGN_IN, f"user {found['username'] or found['user_id']} is inactive; an inactive "
+            raise LoginError(EXIT_SIGN_IN, f"user {username or found['user_id']} is inactive; an inactive "
                                            "user cannot be logged in as")
         route = "direct" if args.direct else "setup-page"
-        plan.login_as = {"user_id": found["user_id"], "username": found["username"], "route": route}
+        plan.login_as = {"user_id": found["user_id"], "username": username, "route": route}
         plan.path = (auth.login_as_path(identity["org_id"], found["user_id"]) if args.direct
                      else auth.user_setup_path(found["user_id"]))
     return plan
@@ -379,14 +408,15 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
     if outcome.status != "redirected":
         code = int(outcome.status) if outcome.status.isdigit() else EXIT_SIGN_IN
         raise LoginError(code, outcome.reason)
-    username = outcome.minted.username
-    user_id = user_id_of(plan.client, username)
+    user_id = user_id_of(plan.client, outcome.minted.username)
+    username = shown(outcome.minted.username, _USERNAME)
+    org_id = shown(plan.identity["org_id"], _ORG_ID)
     kind = org_kind(plan.identity)
     edition = org_edition(plan.identity)
-    event = {"event": "redirected", "org_id": plan.identity["org_id"], "org_kind": kind,
+    event = {"event": "redirected", "org_id": org_id, "org_kind": kind,
              "org_edition": edition or None,
              "username": username or None, "user_id": user_id, "org_check": plan.org_check}
-    text = (f"Redirect sent: org {plan.identity['org_id']} ({kind}{', ' + edition if edition else ''}), "
+    text = (f"Redirect sent: org {org_id} ({kind}{', ' + edition if edition else ''}), "
             f"user {username or 'unknown'}"
             f"{', User Id ' + user_id if user_id else ''}; {plan.org_check}.")
     if plan.alias != plan.target_alias:
@@ -517,6 +547,7 @@ def run_storage_state(args, output: Output) -> int:
     state, user_id, username = asyncio.run(capture_state(plan, args.api_version))
     write_private(path, json.dumps(state))
     kind = org_kind(plan.identity)
+    username, user_id = shown(username, _USERNAME), shown(user_id, _USER_ID)
     event = {"event": "saved", "storage_state": str(path), "org_id": plan.identity["org_id"], "org_kind": kind,
              "username": username, "user_id": user_id, "org_check": plan.org_check}
     if plan.alias != plan.target_alias:
