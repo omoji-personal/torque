@@ -447,6 +447,143 @@ CLAUDE_NOTES = "@AGENTS.md\n"
 LEGACY_CLAUDE_NOTES = ("# Torque workspace\n\nRead AGENTS.md in this directory for the shared workflow, "
                        "then use `torque context --workspace . --client NAME` for the selected client.\n",)
 
+# The floor: the block of instructions every host loads at the start of every session
+# (Claude Code through the CLAUDE.md import, Codex and Antigravity directly). Its one
+# source is floor/AGENTS-floor.md, bundled to torque/data/floor/. `workspace init` writes
+# it into AGENTS.md; `workspace upgrade` adds or replaces it between its markers only.
+FLOOR_BEGIN = re.compile(r"^<!-- torque:floor:begin (\d+) -->\r?$", re.M)
+FLOOR_END = re.compile(r"^<!-- torque:floor:end -->\r?$", re.M)
+# AGENTS.md as `workspace init` wrote it from 2.0.0a10 to this release (SHA-256 of the
+# UTF-8 text with LF endings). An unchanged one is replaced whole by `workspace upgrade`;
+# an edited one keeps its text and gets the block appended.
+LEGACY_AGENT_NOTES_SHA256 = frozenset({
+    "94221b81f6d9aa9224753da8d18fea29f13523d4fd8d342e68c0683a550674d6",  # 2.0.0a10 to 2.0.0a18
+    "bf4ed42e99bc5953f4c2c73aa93e3c419ca988407701053778f97f4c34925d54",  # 2.0.0a19
+    "2a847eda80ed79b422c929b5e22d604e30883509211d9c1ffa15fcc51aacb421",  # 2.0.0a20
+    "433382464afd0437e98f17486973bff66fd8507faf3461bac2438f6214ec146a",  # 2.0.0a21
+    "6729affb84b4c2cfda9c4b8c30121a851ea2a5c361da2148926db48c5b25224c",  # unreleased fix round
+})
+AGENT_NOTES_HEAD = ("# Private Torque workspace\n\n"
+                    "This folder holds private firm and client work. Read profile.md for the firm's own conventions.\n")
+
+
+def floor_block() -> tuple[str, int]:
+    """The packaged floor block, markers included, with LF endings, and its version. Read
+    beside this module, so it belongs to the installed engine whatever data folder a caller
+    substitutes for the recipes and rules."""
+    text = (Path(__file__).resolve().parent / "data" / "floor" / "AGENTS-floor.md").read_text(encoding="utf-8")
+    text = text.replace("\r\n", "\n").rstrip("\n") + "\n"
+    begin = FLOOR_BEGIN.search(text)
+    if not begin or begin.start() != 0 or not FLOOR_END.search(text):
+        raise WorkspaceError("the packaged floor block has no markers; reinstall Torque")
+    return text, int(begin.group(1))
+
+
+def agent_notes() -> str:
+    """The AGENTS.md `workspace init` writes: the firm's part, then the floor block."""
+    return AGENT_NOTES_HEAD + "\n" + floor_block()[0]
+
+
+def floor_state(text: str) -> dict:
+    """Where the floor block is in an AGENTS.md text: {"state": "absent" | "present" |
+    "damaged", "version", "span": (start, end) of the block without its last newline}."""
+    begins, ends = list(FLOOR_BEGIN.finditer(text)), list(FLOOR_END.finditer(text))
+    if not begins and not ends:
+        return {"state": "absent", "version": None, "span": None}
+    if len(begins) != 1 or len(ends) != 1 or ends[0].start() < begins[0].end():
+        return {"state": "damaged", "version": None, "span": None}
+    end = ends[0].end() - (1 if text[ends[0].end() - 1:ends[0].end()] == "\r" else 0)
+    return {"state": "present", "version": int(begins[0].group(1)), "span": (begins[0].start(), end)}
+
+
+def floor_splice(text: str | None) -> dict:
+    """What `workspace upgrade` does to AGENTS.md text (None when the file is missing):
+    {"status", "version", "previous_version", "text"}. Status: added (no file), legacy
+    (unchanged text of an earlier init, replaced whole), appended (no markers: the block
+    goes at the end), current, replaced (another version), edited (same version, other
+    text: replaced), damaged (markers that do not pair; text is None). Every character
+    outside the markers is kept; the block takes the file's line endings."""
+    block, version = floor_block()
+    result = {"version": version, "previous_version": None}
+    if text is None:
+        return {**result, "status": "added", "text": agent_notes()}
+    if hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest() in LEGACY_AGENT_NOTES_SHA256:
+        return {**result, "status": "legacy", "text": agent_notes()}
+    crlf = "\r\n" in text
+    body = block.rstrip("\n")
+    if crlf:
+        body = body.replace("\n", "\r\n")
+    newline = "\r\n" if crlf else "\n"
+    found = floor_state(text)
+    if found["state"] == "damaged":
+        return {**result, "status": "damaged", "text": None}
+    if found["state"] == "absent":
+        lead = text if not text or text.endswith(("\n", "\r")) else text + newline
+        return {**result, "status": "appended", "text": lead + (newline if lead.strip() else "") + body + newline}
+    start, end = found["span"]
+    result["previous_version"] = found["version"]
+    if text[start:end].replace("\r\n", "\n") == block.rstrip("\n"):
+        return {**result, "status": "current", "text": text}
+    status = "edited" if found["version"] == version else "replaced"
+    return {**result, "status": status, "text": text[:start] + body + text[end:]}
+
+
+# Codex adds AGENTS.md files only up to this many bytes in total (project_doc_max_bytes).
+CODEX_INSTRUCTION_BYTES = 32 * 1024
+
+
+def floor_report(root: Path) -> dict:
+    """What `torque doctor` says about the floor: whether AGENTS.md holds the block, its
+    version against the packaged one, and whether each host loads AGENTS.md. Reads two
+    files; never writes. `next_actions` holds one plain step per problem."""
+    from .template_updates import _imports_agents
+    _, packaged = floor_block()
+    report = {"path": "AGENTS.md", "packaged_version": packaged, "state": "missing", "version": None,
+              "current": False, "hosts": {}, "next_actions": []}
+    upgrade = command_text(["torque", "workspace", "upgrade", str(root)])
+    agents = root / "AGENTS.md"
+    try:
+        raw = agents.read_bytes() if agents.is_file() and not agents.is_symlink() else None
+        text = None if raw is None else raw.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        raw, text = b"", None
+        report["state"] = "unreadable"
+    if text is not None:
+        found = floor_state(text)
+        report["state"], report["version"] = found["state"], found["version"]
+        report["current"] = (found["state"] == "present" and floor_splice(text)["status"] == "current")
+    if report["state"] in ("missing", "absent"):
+        report["next_actions"].append(f"AGENTS.md has no Torque block, so no host reads Torque's working rules. "
+                                      f"Add it with {upgrade}.")
+    elif report["state"] in ("damaged", "unreadable"):
+        report["next_actions"].append("AGENTS.md has a damaged Torque block (markers without their pair) or is not "
+                                      f"UTF-8 text. Repair or remove the markers, then run {upgrade}.")
+    elif not report["current"]:
+        report["next_actions"].append(f"The Torque block in AGENTS.md is version {report['version']} or edited; "
+                                      f"this Torque ships version {packaged}. Replace it with {upgrade}.")
+    claude = root / "CLAUDE.md"
+    try:
+        imports = claude.is_file() and _imports_agents(claude.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        imports = False
+    has_agents = raw is not None
+    report["hosts"]["claude-code"] = {
+        "loads": has_agents and (imports or not claude.exists()),
+        "how": ("CLAUDE.md imports AGENTS.md" if imports else "CLAUDE.md does not import AGENTS.md"
+                if claude.exists() else "no CLAUDE.md: read directly only when no CLAUDE.md is above this folder")}
+    if has_agents and claude.exists() and not imports:
+        report["next_actions"].append("CLAUDE.md does not import AGENTS.md, so Claude Code does not load the Torque "
+                                      "block. Add the line @AGENTS.md at the top of CLAUDE.md.")
+    size = len(raw or b"")
+    report["hosts"]["codex"] = {"loads": has_agents and size <= CODEX_INSTRUCTION_BYTES,
+                                "how": f"reads AGENTS.md directly, {size} of at most "
+                                       f"{CODEX_INSTRUCTION_BYTES} bytes"}
+    if size > CODEX_INSTRUCTION_BYTES:
+        report["next_actions"].append(f"AGENTS.md is {size} bytes; Codex adds instruction files only up to "
+                                      f"{CODEX_INSTRUCTION_BYTES} bytes in total. Move firm text to profile.md.")
+    report["hosts"]["antigravity"] = {"loads": has_agents, "how": "reads AGENTS.md directly"}
+    return report
+
 
 def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Path:
     if not name.strip():
@@ -498,38 +635,8 @@ def init_workspace(path: str | Path, name: str, profile: str = "generic") -> Pat
         if any(rule not in original.splitlines() for rule in private_rules):
             updated = original.rstrip("\n") + "\n\n# Torque private workspace\n" + "\n".join(private_rules) + "\n"
             _atomic_replace_text(ignore, updated)
-    agent_notes = (
-        "# Private Torque workspace\n\n"
-        "This directory holds private employer and client work. Begin by reading profile.md. "
-        "Select the client the user named; never infer another client or org. From this directory, "
-        "use `torque context --workspace . --client NAME` to resume that client's notes and journal.\n\n"
-        "Discover the working recipes with `torque workflows`, then read one with "
-        "`torque workflows show NAME --workspace .`. An explicitly selected workspace uses the local "
-        "copy its host runs when present (.claude/commands/NAME.md for Claude Code, "
-        ".agents/skills/NAME/SKILL.md for Antigravity, torque-NAME for the recipes renamed below), "
-        "then the packaged recipe written for that host. "
-        "Without a selected workspace, show reads the packaged reference. These recipes support conversational work; "
-        "use the user's actual authorization and existing Salesforce access for operations. "
-        "Where Torque's gate hook is wired (`torque doctor --workspace .` says where), it stops tools from "
-        "changing a client's consent, approval and control records in every mode; in build-only or connected "
-        "mode it checks each tool call, and the rule file in the rules folder (`build-only.md` or "
-        "`production-approval.md`) says what to expect. No approval tokens or global sf replacement are required. "
-        "Claude Code answers /help, /context, /status, /security-review and /undo itself, so there those "
-        "recipes are /torque-help, /torque-context, /torque-status, /torque-security-review and /torque-undo. "
-        "Antigravity offers the same recipes as skills and slash commands from .agents/skills/; "
-        "its own /help, /context and /undo keep those names, so there those three recipes are "
-        "/torque-help, /torque-context and /torque-undo.\n\n"
-        "Keep client files in clients/SLUG/. Use --workspace . --client SLUG when calling "
-        "stateful native workflows. Keep internal work (not for a client) in initiatives/SLUG/, "
-        "created with `torque initiative add NAME --workspace .`, and select it with --initiative SLUG. "
-        "Keep credentials out of notes and session summaries. "
-        "Record progress with `torque session add --workspace . --client NAME --summary TEXT "
-        "--status prepared|executed|verified|incomplete`. Status is user-reported; distinguish "
-        "actual evidence, assertions and unanswered questions. Use `torque handoff` to render "
-        "the recorded history. Nothing here implies organizational approval or completed QA.\n"
-    )
     for filename, content in {
-        "AGENTS.md": agent_notes,
+        "AGENTS.md": agent_notes(),
         "CLAUDE.md": CLAUDE_NOTES,
         "profile.md": f"# {name.strip()}\n\nProfile: {profile}\n\n"
                       + focus_notes + "Record the firm's actual delivery conventions, approved tools, artifact locations "

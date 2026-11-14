@@ -65,7 +65,9 @@ def test_generated_claude_md_imports_agents_md(firm):
     lines = (firm / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
     assert "@AGENTS.md" in lines
     agents = (firm / "AGENTS.md").read_text(encoding="utf-8")
-    assert "/torque-status" in agents and "/torque-security-review" in agents
+    # The imported file carries the floor; host command names live in docs/hosts.md, and no
+    # line of it names a renamed recipe by the command Claude Code answers itself.
+    assert "<!-- torque:floor:begin " in agents and not MENTION.search(agents)
 
 
 def test_recipes_named_like_claude_code_commands_install_as_torque_names(firm):

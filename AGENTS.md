@@ -22,6 +22,7 @@ Necessary public attribution, license notices and dependency provenance are reta
 | `.claude/commands/` | Generated workflow adapters; edit `workflows/*.md`, then regenerate |
 | `.claude/rules/`, `.claude/agents/`, `.agents/skills/` | Source standing rules, worker roles and skills; bundled with the adapters into `src/torque/data/` |
 | `lessons/` | Source platform lessons, one Markdown file each (format: `docs/lessons.md`); bundled into `src/torque/data/lessons/` |
+| `floor/AGENTS-floor.md` | Source of the Torque block every host loads from a workspace's `AGENTS.md` (at most 60 lines; `docs/workspace-upgrades.md`); bundled into `src/torque/data/floor/` |
 | `tests/`, `scripts/` | Offline tests and release checks |
 | `docs/`, `examples/` | User guides, one validation record per release, design records |
 
@@ -56,7 +57,7 @@ page and `CHANGELOG.md`. Report observed, asserted, unknown and untested outcome
 
 - No private firm, client or personal material, credentials, org mappings or real record data in tracked files. Necessary public authorship, LICENSE/NOTICE text, dependency attribution and provenance are allowed; retain required notices. Fictional fixtures use reserved example domains. See `CONTRIBUTING.md`; `tests/test_public_hygiene.py` enforces part of this policy.
 - Use the user's existing Salesforce access and authorization; never select another client or org silently. Live org and browser tests run only when explicitly in scope.
-- Edit recipes in `workflows/*.md` and the catalogue in `workflows/catalogue.json`; run `python workflows/sync_adapters.py` to regenerate `.claude/commands/`, then `python scripts/sync-workflows.py` to rebuild `src/torque/data/`. Edit standing rules in `.claude/rules/`, worker roles in `.claude/agents/`, skills in `.agents/skills/` and platform lessons in `lessons/`, then rebuild the bundle. Do not edit generated adapters or bundled files by hand.
+- Edit recipes in `workflows/*.md` and the catalogue in `workflows/catalogue.json`; run `python workflows/sync_adapters.py` to regenerate `.claude/commands/`, then `python scripts/sync-workflows.py` to rebuild `src/torque/data/`. Edit standing rules in `.claude/rules/`, worker roles in `.claude/agents/`, skills in `.agents/skills/`, platform lessons in `lessons/` and the workspace block in `floor/AGENTS-floor.md` (raise the version in its first line when its text changes), then rebuild the bundle. Do not edit generated adapters or bundled files by hand.
 - Prefer integrating a mature existing tool over building one; no feature-count targets or extra user ceremonies.
 - Retain material adoption decisions in `docs/research-adoption.md`.
 - No commit, push or release is implied by a local change; the maintainer decides.

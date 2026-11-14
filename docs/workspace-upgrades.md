@@ -22,13 +22,38 @@ Only packaged Markdown files in these locations participate:
 - `.agents/rules/`, `.agents/agents/` and one `.agents/skills/NAME/SKILL.md` per recipe:
   the [Antigravity copies](#antigravity-copies)
 
-Client and initiative folders (configurations, evidence, state, sessions),
-profiles, and root `AGENTS.md` files remain outside this updater's scope. Other locally added workflow files
-also remain untouched. The one root file it changes is a `CLAUDE.md` that an earlier
-version wrote and nobody edited: it asked the model to read `AGENTS.md`, and is replaced
+Client and initiative folders (configurations, evidence, state, sessions) and
+profiles remain outside this updater's scope. Other locally added workflow files
+also remain untouched. Two root files are changed. A `CLAUDE.md` that an earlier
+version wrote and nobody edited asked the model to read `AGENTS.md`; it is replaced
 by the `@AGENTS.md` import (`update`), because with both files present Claude Code reads
 only `CLAUDE.md`. An edited `CLAUDE.md` is kept; when it does not import `AGENTS.md`,
-the report says so under `claude_md`.
+the report says so under `claude_md`. In `AGENTS.md`, only the Torque block changes
+([below](#the-torque-block-in-agentsmd)).
+
+## The Torque block in AGENTS.md
+
+`AGENTS.md` is the one instruction file Claude Code (through the `CLAUDE.md` import), Codex
+and Antigravity all load at the start of every session. Torque keeps a block of at most 60
+lines in it, between `<!-- torque:floor:begin N -->` and `<!-- torque:floor:end -->`, where
+`N` is the block's version: where to start and how to record work, the standing rules, the
+Salesforce build practice, and which skill to read and which command to run for which work.
+Everything outside the two markers is yours; put firm instructions there, or in `profile.md`.
+
+| Your `AGENTS.md` | What `upgrade` does (report key `floor`, one line in the summary) |
+| --- | --- |
+| Holds the current block | Nothing (`current`); the summary says nothing. |
+| Holds an older version, or an edited block | Replaces the text between the markers (`replaced`, `edited`); every byte outside them is kept. |
+| Has no markers | Appends the block at the end (`appended`); your text above it is unchanged. |
+| Is the unchanged text an earlier `init` wrote | Replaces the whole file with the current text (`legacy`). |
+| Is missing | Writes the current text (`added`). |
+| Has a marker without its pair, or two blocks | Changes nothing (`damaged`); repair or remove the markers. |
+
+The block takes the file's line endings. `--check` reports the same without writing;
+`--diff` and `--accept` do not touch `AGENTS.md`. `torque doctor --workspace PATH` reports
+the block's version, whether it is the packaged one, and whether each host loads
+`AGENTS.md`: Claude Code only when `CLAUDE.md` imports it, Codex only while the file stays
+under 32 KiB.
 
 ## What the result means
 
@@ -147,9 +172,7 @@ selection also applies; an explicit `--workspace` takes precedence. Without eith
 selection, the command shows the installed recipe. Catalogue `--json` output keeps
 its existing metadata format. This does not contact an org or an AI provider.
 
-Newly generated `AGENTS.md` files describe this precedence. Existing private
-`AGENTS.md` files remain untouched by upgrade; use the same local-first command
-when incorporating newer guidance into an existing workspace.
+The Torque block in `AGENTS.md` points agents at this command.
 
 ## Keeping a local customization
 

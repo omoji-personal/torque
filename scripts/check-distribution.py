@@ -52,6 +52,9 @@ def main():
         lessons = [name for name in names if name.startswith("torque/data/lessons/") and name.endswith(".md")]
         if not lessons:
             raise SystemExit("Wheel holds no platform lessons (torque/data/lessons/*.md)")
+        if "torque/data/floor/AGENTS-floor.md" not in names:
+            raise SystemExit("Wheel holds no floor block (torque/data/floor/AGENTS-floor.md): "
+                             "workspace init could not write AGENTS.md")
         home_prefix = (Path.home().as_posix().rstrip("/") + "/").encode()
         home_paths = [n for n in names if n.endswith((".py", ".md", ".json", ".yaml"))
                       and home_prefix in archive.read(n)]

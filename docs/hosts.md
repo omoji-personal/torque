@@ -10,8 +10,8 @@ markers, playbook folder, hook file and launch options.
 
 | From the workspace | Claude Code | Antigravity | Codex |
 |---|---|---|---|
-| Instructions | `CLAUDE.md`, which points it to `AGENTS.md` | `AGENTS.md` | `AGENTS.md` (1) |
-| Standing and mode rules | `.claude/rules/` | `.agents/rules/` | Not loaded (2) |
+| Instructions | `CLAUDE.md`, which imports `AGENTS.md` and its Torque block (3) | `AGENTS.md` and its Torque block (3) | `AGENTS.md` and its Torque block (1) (3) |
+| Standing and mode rules | `.claude/rules/` | `.agents/rules/` | Not loaded; the Torque block carries them in short and names the mode rule (2) |
 | Recipes | `.claude/commands/`, as slash commands | `.agents/skills/`, as skills and slash commands | `.agents/skills/`, as skills (1) |
 | Knowledge skills | `.claude/skills/` | `.agents/skills/` | `.agents/skills/` (1) |
 | Worker roles | `.claude/agents/` | `.agents/agents/` | Not checked |
@@ -27,7 +27,18 @@ markers, playbook folder, hook file and launch options.
 (2) Codex's own rules are command-approval files in `.codex/rules/`, also from its
 documentation ([rules](https://learn.chatgpt.com/codex/agent-configuration/rules)). It names
 no folder of Markdown rules, so the standing rules, `build-only.md` and
-`production-approval.md` reach Codex only if something tells it to read them.
+`production-approval.md` reach Codex only if something tells it to read them. The Torque
+block in `AGENTS.md` does: it states the standing rules in one line each and tells the agent
+to read the mode rule first when one exists.
+
+(3) The Torque block is the same text on all three hosts, at most 60 lines between the
+markers `<!-- torque:floor:begin N -->` and `<!-- torque:floor:end -->`: where to start
+and how to record, the standing rules, the Salesforce build practice, and which skill to read
+and which command to run for which work. Its one source is `floor/AGENTS-floor.md` in this
+repository. `workspace init` writes it; `workspace upgrade` adds or replaces it between the
+markers and never changes text outside them
+([workspace upgrades](workspace-upgrades.md#the-torque-block-in-agentsmd)); `torque doctor`
+reports its version and whether each host loads it.
 
 Codex can run repository hooks from `.codex/hooks.json` once the owner trusts them, and a
 hook there can deny a call ([hooks](https://learn.chatgpt.com/docs/hooks)). Torque ships no
