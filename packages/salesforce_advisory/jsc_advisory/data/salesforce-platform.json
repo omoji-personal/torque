@@ -32,6 +32,17 @@
         "project\\s+deploy.*manifest",
         "deploy.*package\\.xml"
       ],
+      "applies": {
+        "tasks": [
+          "deploy",
+          "field-build",
+          "access"
+        ],
+        "types": [
+          "CustomField",
+          "PermissionSet"
+        ]
+      },
       "requires": "A CustomField alone is not a feature. To be usable it needs, in the same deploy: field-level security carried by a PermissionSet (or Profile) — nothing grants it implicitly — and, to be seen rather than merely queryable, a place on the page layout. Formula fields additionally need editable=false in the fieldPermissions or the whole deploy fails.\n",
       "confidence": "verified-live",
       "verify": "fls_absent_without_permset",
@@ -51,6 +62,15 @@
         "destructiveChanges",
         "purge-on-delete"
       ],
+      "applies": {
+        "tasks": [
+          "deploy",
+          "field-build"
+        ],
+        "types": [
+          "CustomField"
+        ]
+      },
       "confidence": "verified-live",
       "verify": "del_tombstones_visible",
       "updated": "2026-08-01"
@@ -69,6 +89,15 @@
         "metadata\\s+.?Flow:",
         "retrieve.*Flow:"
       ],
+      "applies": {
+        "tasks": [
+          "retrieve",
+          "flow-build"
+        ],
+        "types": [
+          "Flow"
+        ]
+      },
       "confidence": "verified-live",
       "verify": "flowdefinition_queryable",
       "updated": "2026-08-01"
@@ -84,6 +113,16 @@
       "triggers": [
         "FlowDefinitionView"
       ],
+      "applies": {
+        "tasks": [
+          "query",
+          "flow-build"
+        ],
+        "types": [],
+        "errors": [
+          "FlowDefinitionView*not supported"
+        ]
+      },
       "confidence": "verified-live",
       "verify": "flowdefinitionview_standard_api",
       "updated": "2026-08-01"
@@ -99,6 +138,12 @@
         "project\\s+deploy",
         "deploy:start"
       ],
+      "applies": {
+        "tasks": [
+          "deploy"
+        ],
+        "types": []
+      },
       "requires": "Across separate deploy calls, every component goes after what it references: objects and fields first; permission sets after the fields they grant and after any classes they grant access to; Apex after the fields it uses; flows after the fields, classes and permission sets they use, as Draft, then activation; then layouts and pages; profiles last and minimal. Within one payload the API resolves this.\n",
       "confidence": "practitioner",
       "source": "Corrected 2026-11-14: the remedy (Apex before permission sets) and the requires text (permission sets before Apex) disagreed. Both are now the dependency rule, with Salesforce's deploy skill order as its common case: https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-metadata-deploy/SKILL.md",
@@ -113,6 +158,15 @@
         "deploy.*Profile:",
         "metadata\\s+Profile:"
       ],
+      "applies": {
+        "tasks": [
+          "deploy",
+          "access"
+        ],
+        "types": [
+          "Profile"
+        ]
+      },
       "symptom": "Access disappears after a profile deployment, and the usual explanation — \"the file did not mention it, so it was removed\" — does not survive testing.\n",
       "cause": "A profile deployment applies what the file specifies and leaves unmentioned permissions alone. This entry previously claimed the opposite, that absence removes, cited to the Metadata API guide. That claim cannot be right: a retrieved profile contains permissions only for components in the package, so under a destructive-by-absence model every ordinary sparse retrieve-and-deploy would strip the target org, which plainly does not happen. The real mechanism is the reverse — a FULL profile export carries explicit readable=false and visible=false entries, and deploying it overwrites exactly what it does mention.\n",
       "remedy": "Deploy the narrowest profile file that expresses your intent, and read it for explicit false values rather than worrying about omissions. Prefer permission sets, which compose. Verify the specific grants you care about after the deploy rather than inferring from the deploy result.\n",
@@ -134,6 +188,12 @@
         "data:update",
         "--values"
       ],
+      "applies": {
+        "tasks": [
+          "data-load"
+        ],
+        "types": []
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -150,6 +210,12 @@
         "NewValue",
         "OldValue"
       ],
+      "applies": {
+        "tasks": [
+          "query"
+        ],
+        "types": []
+      },
       "detect_expect": "error",
       "verify": "history_newvalue_not_filterable",
       "confidence": "verified-live",
@@ -168,6 +234,12 @@
         "--hard-delete",
         "hardDelete"
       ],
+      "applies": {
+        "tasks": [
+          "data-load"
+        ],
+        "types": []
+      },
       "requires": "A hard delete needs the \"Bulk API Hard Delete\" user permission granted to the running user before the job is submitted, and a decision made in advance that the records are not wanted back — a normal delete is recoverable from the Recycle Bin for 15 days and this is not.\n",
       "verify": "hard_delete_permission_is_off_by_default",
       "confidence": "verified-live",
@@ -190,6 +262,19 @@
         "--apexcodefile",
         "--file.*\\\\.apex"
       ],
+      "applies": {
+        "tasks": [
+          "apex"
+        ],
+        "types": [
+          "ApexClass",
+          "ApexTrigger"
+        ],
+        "errors": [
+          "Too many SOQL queries",
+          "Too many DML statements"
+        ]
+      },
       "confidence": "documented",
       "source": "Apex Developer Guide — Execution Governors and Limits — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm [verified 2026-08-06: all six numbers]. Heap corrected 2026-11-14 to the Winter '27 values: https://www.salesforce.com/blog/winter-27-release-architect-highlights/",
       "updated": "2026-11-14"
@@ -206,6 +291,15 @@
         "apex:run",
         "ApexClass"
       ],
+      "applies": {
+        "tasks": [
+          "apex",
+          "access"
+        ],
+        "types": [
+          "ApexClass"
+        ]
+      },
       "requires": "Apex that returns user data needs field and object access enforced explicitly: queries run in USER_MODE or carrying WITH SECURITY_ENFORCED, and Security.stripInaccessible applied before anything is returned. A sharing declaration does not supply this and cannot.\n",
       "confidence": "documented",
       "source": "Apex Developer Guide — Enforcing Object and Field Permissions — https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_keywords_sharing.htm [verified 2026-08-06]",
@@ -222,6 +316,16 @@
         "PermissionSet",
         "fieldPermissions"
       ],
+      "applies": {
+        "tasks": [
+          "access",
+          "field-build"
+        ],
+        "types": [
+          "CustomField",
+          "PermissionSet"
+        ]
+      },
       "confidence": "practitioner",
       "source": "Salesforce Security Guide — Field-Level Security [DEMOTED to practitioner 2026-08-06: the one still-fetchable FLS page, securityImplGuide/admin_fls.htm, does not mention formula fields at all. Checked, not assumed. The behaviour is real and widely reported by practitioners; no reachable Salesforce page states it.]",
       "updated": "2026-08-01"
@@ -240,6 +344,15 @@
         "FieldPermissions",
         "Profile:"
       ],
+      "applies": {
+        "tasks": [
+          "access"
+        ],
+        "types": [
+          "PermissionSet",
+          "Profile"
+        ]
+      },
       "confidence": "practitioner",
       "source": "Salesforce Security Guide — View All and Modify All Permissions Overview [DEMOTED to practitioner 2026-08-06: securityImplGuide/users_profiles_view_all_mod_all.htm now 301-redirects to help.salesforce.com, which is Lightning-rendered and returns a CSS Error to any fetcher. Salesforce migrated the Security Implementation Guide into Help, so this claim has no machine-verifiable source. The claim is standard and almost certainly correct; the EVIDENCE is what is missing, and documented is a claim about evidence.]",
       "updated": "2026-08-01"
@@ -258,6 +371,16 @@
         "Flow",
         "Trigger"
       ],
+      "applies": {
+        "tasks": [
+          "flow-build",
+          "apex"
+        ],
+        "types": [
+          "Flow",
+          "ApexTrigger"
+        ]
+      },
       "confidence": "documented",
       "source": "Apex Developer Guide — Triggers and Order of Execution; developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_order_of_execution.htm\n",
       "updated": "2026-08-01"
@@ -273,6 +396,14 @@
         "data\\s+update",
         "Flow"
       ],
+      "applies": {
+        "tasks": [
+          "flow-build"
+        ],
+        "types": [
+          "Flow"
+        ]
+      },
       "confidence": "practitioner",
       "source": "Salesforce Help — Flow entry conditions [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only a 2021 engineering blog post, no Atlas documentation. Flow documentation lives in Help, which is unfetchable. Searched, not assumed.]",
       "updated": "2026-08-01"
@@ -289,6 +420,12 @@
         "namespace",
         "package\\s+(create|version)"
       ],
+      "applies": {
+        "tasks": [
+          "packaging"
+        ],
+        "types": []
+      },
       "confidence": "documented",
       "source": "Salesforce Developer Guide — Namespaces",
       "updated": "2026-08-01"
@@ -306,6 +443,16 @@
         "fieldSet",
         "FieldSet"
       ],
+      "applies": {
+        "tasks": [
+          "packaging",
+          "deploy"
+        ],
+        "types": [],
+        "errors": [
+          "Cannot modify managed object"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -322,6 +469,13 @@
         "org:display",
         "IsSandbox"
       ],
+      "applies": {
+        "tasks": [
+          "preflight",
+          "production"
+        ],
+        "types": []
+      },
       "confidence": "verified-live",
       "verify": "de_org_reports_not_sandbox",
       "updated": "2026-08-01"
@@ -338,6 +492,14 @@
         "delete\\s+bulk",
         "--hard-delete"
       ],
+      "applies": {
+        "tasks": [
+          "data-load",
+          "sandbox",
+          "testing"
+        ],
+        "types": []
+      },
       "confidence": "practitioner",
       "source": "Salesforce Help — Sandbox types and templates [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only blog posts. The authoritative statement that Full and Partial Copy sandboxes carry production data lives in Help, which is unfetchable. Searched, not assumed. The claim is correct and the operational warning it carries is the most important line in this entry.]",
       "updated": "2026-08-01"
@@ -355,6 +517,13 @@
         "org\\s+display.*--verbose",
         "s[i]d="
       ],
+      "applies": {
+        "tasks": [
+          "sign-in",
+          "browser-test"
+        ],
+        "types": []
+      },
       "confidence": "practitioner",
       "source": "Salesforce Help — frontdoor.jsp [DEMOTED to practitioner 2026-08-06: searched developer.salesforce.com and found only forum threads. frontdoor.jsp has never been properly documented by Salesforce, which is itself worth knowing given this tool depends on it for every browser check. Searched, not assumed.]",
       "updated": "2026-08-01"
@@ -372,6 +541,17 @@
         "--api-version",
         "project\\s+(deploy|retrieve)"
       ],
+      "applies": {
+        "tasks": [
+          "deploy",
+          "retrieve"
+        ],
+        "types": [
+          "Flow",
+          "ApexClass",
+          "ApexTrigger"
+        ]
+      },
       "live_evidence": "VERIFIED LIVE 2026-08-06, and the storage half is the only half a read-only check can reach. On a managed-package org: 345 Apex classes carrying 24 DISTINCT API versions, v38 through v64, coexisting in one org — classes written years apart each keeping the version they were saved against. That is this entry made visible rather than asserted. The release org tells the weaker version of the same story: 4 classes, all v64, each carrying its own ApiVersion. So the verifier asserts the claim that holds anywhere — the version is a property of the CLASS — rather than requiring variance an org may not have, which would report \"cannot tell\" and drag a release to DEGRADED for a reason that says nothing about the claim. NOT VERIFIED, and left documented: that the stored version changes runtime BEHAVIOUR. That needs the same code deployed twice under different versions and executed, which no read-only check may do. Cited to the Apex Developer Guide: \"a class or trigger is still bound to versions with specific, known behavior\".\n",
       "verify": "api_version_is_stored_per_class",
       "confidence": "verified-live",
@@ -390,6 +570,12 @@
         "CustomField",
         "project\\s+deploy"
       ],
+      "applies": {
+        "tasks": [
+          "deploy"
+        ],
+        "types": []
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -406,6 +592,13 @@
         "data:delete",
         "--hard-delete"
       ],
+      "applies": {
+        "tasks": [
+          "data-load",
+          "recovery"
+        ],
+        "types": []
+      },
       "confidence": "documented",
       "source": "Best Practices for Deployments with Large Data Volumes — Deleting Data — https://developer.salesforce.com/docs/atlas.en-us.salesforce_large_data_volumes_bp.meta/salesforce_large_data_volumes_bp/ldv_deployments_techniques_deleting_data.htm [re-cited 2026-08-06 off the unfetchable Salesforce Help. Verified verbatim: \"Deleted items remain in the Recycle Bin for 15 days, and during that time they can be restored.\"]",
       "updated": "2026-08-01"
@@ -423,6 +616,15 @@
         "REQUEST_LIMIT_EXCEEDED",
         "TotalRequests"
       ],
+      "applies": {
+        "tasks": [
+          "diagnose"
+        ],
+        "types": [],
+        "errors": [
+          "REQUEST_LIMIT_EXCEEDED"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -439,6 +641,12 @@
         "IN\\s*\\(\\s*SELECT",
         "NOT\\s+IN\\s*\\(\\s*SELECT"
       ],
+      "applies": {
+        "tasks": [
+          "query"
+        ],
+        "types": []
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -452,6 +660,15 @@
       "triggers": [
         "SELECT\\s+COUNT\\(\\s*\\)"
       ],
+      "applies": {
+        "tasks": [
+          "query"
+        ],
+        "types": [],
+        "errors": [
+          "EXTERNAL_OBJECT_UNSUPPORTED_EXCEPTION"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -468,6 +685,15 @@
         "ALL\\s+ROWS",
         "IsDeleted\\s*=\\s*true"
       ],
+      "applies": {
+        "tasks": [
+          "query"
+        ],
+        "types": [],
+        "errors": [
+          "unexpected token: 'ALL'"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -486,6 +712,12 @@
         "field label",
         "Sorry to interrupt"
       ],
+      "applies": {
+        "tasks": [
+          "browser-test"
+        ],
+        "types": []
+      },
       "requires": "Verifying in the UI that a profile can see a field needs an explicit shadow-root walk, the Details tab clicked, and a poll until labels appear — plus an admin baseline on the same record, since a differential against nothing proves nothing.\n",
       "confidence": "practitioner",
       "updated": "2026-08-04"
@@ -506,6 +738,12 @@
         "CSS Error",
         "record page"
       ],
+      "applies": {
+        "tasks": [
+          "browser-test"
+        ],
+        "types": []
+      },
       "requires": "Verifying field visibility in a browser needs proof the record page rendered at all, not just that the Lightning shell did — the shell renders even when the record does not.\n",
       "confidence": "practitioner",
       "updated": "2026-08-04"
@@ -527,6 +765,13 @@
         "sulogout",
         "impersonat"
       ],
+      "applies": {
+        "tasks": [
+          "browser-test",
+          "access"
+        ],
+        "types": []
+      },
       "requires": "Rendering as another user needs three things established first: the \"Administrators Can Log In as Any User\" preference enabled, a target user who is NOT the session's own user, and an assertion that the session is actually impersonating — the \"Log out as\" link, which Salesforce renders only while impersonating. Without the third, a failed hop is indistinguishable from a successful one.\n",
       "confidence": "practitioner",
       "updated": "2026-08-04"
@@ -546,6 +791,13 @@
         "Savepoint\\s+\\w+\\s*=",
         "torque\\s+shadow"
       ],
+      "applies": {
+        "tasks": [
+          "apex",
+          "testing"
+        ],
+        "types": []
+      },
       "requires": "A shadow or rehearsal run needs governor headroom for the savepoint, the DML and the rollback — three statements where the real operation spends one — so the headroom it needs is larger than the operation it is standing in for.\n",
       "confidence": "practitioner",
       "updated": "2026-08-04"
@@ -564,6 +816,17 @@
         "PermissionSetAssignment",
         "FieldDefinition"
       ],
+      "applies": {
+        "tasks": [
+          "query",
+          "access"
+        ],
+        "types": [],
+        "errors": [
+          "FieldPermissions*is not supported",
+          "PermissionSetAssignment*is not supported"
+        ]
+      },
       "requires": "A check that a field is deployed AND visible queries FieldPermissions and PermissionSetAssignment without the Tooling flag; FieldDefinition answers either way.\n",
       "confidence": "practitioner",
       "source": "Corrected 2026-11-14: the earlier text said FieldDefinition and EntityDefinition exist only in the Tooling API; field-reported, 48 queries on them succeeded on the standard API in one consultant's work over 2.5 weeks.",
@@ -581,6 +844,12 @@
         "data:\\w+:bulk",
         "--file\\b.*\\.csv"
       ],
+      "applies": {
+        "tasks": [
+          "data-load"
+        ],
+        "types": []
+      },
       "requires": "A bulk operation needs its per-record results read for the job id, and a before-and-after count compared, before anyone says the data changed. The exit code and the job state answer a different question — whether the job finished — and both say success when every row failed.\n",
       "confidence": "documented",
       "source": "Salesforce Bulk API 2.0 Developer Guide — Get Job Failed Record Results — https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/get_job_failed_results.htm [verified 2026-08-06]",
@@ -599,6 +868,13 @@
         "org\\s+create\\s+sandbox",
         "sandbox.*(create|clone|delete)"
       ],
+      "applies": {
+        "tasks": [
+          "sandbox-refresh",
+          "sign-in"
+        ],
+        "types": []
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -615,6 +891,16 @@
         "deploy:start",
         "--test-level"
       ],
+      "applies": {
+        "tasks": [
+          "deploy",
+          "production"
+        ],
+        "types": [
+          "ApexClass",
+          "ApexTrigger"
+        ]
+      },
       "confidence": "documented",
       "source": "Salesforce Metadata API Developer Guide — Running Tests in a Deployment — https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_deploy.htm [verified 2026-08-06: supports the RunLocalTests default; org-wide coverage claim NOT supported and withdrawn]",
       "updated": "2026-08-01"
@@ -631,6 +917,15 @@
         "metadata\\s+Flow",
         "Flow:[A-Za-z_]"
       ],
+      "applies": {
+        "tasks": [
+          "deploy",
+          "flow-build"
+        ],
+        "types": [
+          "Flow"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -646,6 +941,15 @@
         "OwnerId",
         "data\\s+update"
       ],
+      "applies": {
+        "tasks": [
+          "data-load"
+        ],
+        "types": [],
+        "errors": [
+          "UNABLE_TO_LOCK_ROW"
+        ]
+      },
       "confidence": "documented",
       "source": "Designing Record Access for Enterprise Scale — Record-Level Locking — https://developer.salesforce.com/docs/atlas.en-us.draes.meta/draes/draes_object_relationships_record_level_locking.htm [re-cited 2026-08-06 away from the unfetchable Salesforce Help. Verified: \"when you update child records, the system locks the parent and the child records to prevent inconsistencies\". CAVEAT: this page supports the MECHANISM and never names UNABLE_TO_LOCK_ROW; it speaks of locking errors generally.]",
       "updated": "2026-08-01"
@@ -662,6 +966,15 @@
         "--values",
         "picklist"
       ],
+      "applies": {
+        "tasks": [
+          "data-load"
+        ],
+        "types": [],
+        "errors": [
+          "INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -678,6 +991,12 @@
         "delete\\s+source",
         "project\\s+delete"
       ],
+      "applies": {
+        "tasks": [
+          "deploy"
+        ],
+        "types": []
+      },
       "confidence": "practitioner",
       "updated": "2026-08-01"
     },
@@ -697,6 +1016,12 @@
         "data\\s+import.*tree",
         "bulk\\s+upsert"
       ],
+      "applies": {
+        "tasks": [
+          "data-load"
+        ],
+        "types": []
+      },
       "requires": "A load carrying original timestamps needs the org setting \"Set Audit Fields upon Record Creation\" enabled AND the matching user permission granted, both established from the describe before the load rather than inferred from the result afterwards.\n",
       "confidence": "verified-live",
       "verify": "audit_fields_not_createable",
@@ -716,6 +1041,15 @@
         "required",
         "nillable"
       ],
+      "applies": {
+        "tasks": [
+          "data-load"
+        ],
+        "types": [],
+        "errors": [
+          "REQUIRED_FIELD_MISSING"
+        ]
+      },
       "requires": "A payload needs every non-nillable createable field on the target object. Layout-required is not the list; describe is.\n",
       "confidence": "verified-live",
       "verify": "nillable_is_the_api_contract",
@@ -736,6 +1070,16 @@
         "picklist",
         "INVALID_OR_NULL_FOR_RESTRICTED"
       ],
+      "applies": {
+        "tasks": [
+          "data-load",
+          "field-build"
+        ],
+        "types": [],
+        "errors": [
+          "INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST"
+        ]
+      },
       "confidence": "verified-live",
       "verify": "picklist_restriction_is_visible",
       "updated": "2026-08-02"
@@ -754,6 +1098,18 @@
         "bulk\\s+upsert",
         "DUPLICATES_DETECTED"
       ],
+      "applies": {
+        "tasks": [
+          "data-load",
+          "flow-build"
+        ],
+        "types": [
+          "DuplicateRule"
+        ],
+        "errors": [
+          "DUPLICATES_DETECTED"
+        ]
+      },
       "requires": "A data load that must not be blocked needs the active duplicate rules on that object established BEFORE the load, not after a partial failure — and a deliberate decision to deactivate them, not a retry loop.\n",
       "confidence": "verified-live",
       "verify": "duplicate_rules_are_visible",
@@ -772,6 +1128,14 @@
         "apex\\s+run",
         "Flow"
       ],
+      "applies": {
+        "tasks": [
+          "testing",
+          "flow-build",
+          "data-load"
+        ],
+        "types": []
+      },
       "confidence": "documented",
       "source": "Apex Developer Guide — Triggers and Order of Execution, final step; developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_order_of_execution.htm\n",
       "updated": "2026-08-02"
@@ -789,6 +1153,15 @@
         "PermissionSetGroup",
         "permission\\s+set\\s+group"
       ],
+      "applies": {
+        "tasks": [
+          "access",
+          "query"
+        ],
+        "types": [
+          "PermissionSetGroup"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-07"
     },
@@ -806,6 +1179,15 @@
         "INVALID_TYPE_FOR_OPERATION",
         "does not support query"
       ],
+      "applies": {
+        "tasks": [
+          "query"
+        ],
+        "types": [],
+        "errors": [
+          "does not support query"
+        ]
+      },
       "confidence": "practitioner",
       "updated": "2026-08-07"
     }

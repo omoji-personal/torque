@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from jsc_advisory import cli
 from jsc_advisory.catalogue import entries, provenance
@@ -43,6 +44,29 @@ def test_governor_limits_state_the_current_heap():
 def test_each_correction_is_recorded_in_the_catalogue_provenance():
     corrected = {item["entry"] for item in provenance()["adaptations"]}
     assert {"tooling-api-refuses-permission-objects", "deploy-order", "governor-limits-core"} <= corrected
+
+
+def test_every_note_says_by_hand_what_it_applies_to():
+    """`applies` is the contract the lessons recall reads in place of guessing from a note's title."""
+    try:
+        from jsc_memory import vocab
+    except ImportError:  # the advisory package also works without the lessons package
+        vocab = None
+    for item in entries():
+        applies = item.get("applies")
+        assert isinstance(applies, dict), item["id"]
+        assert set(applies) <= {"tasks", "types", "errors"} and {"tasks", "types"} <= set(applies), item["id"]
+        for key, values in applies.items():
+            assert isinstance(values, list) and all(isinstance(value, str) and value.strip() for value in values), \
+                (item["id"], key)
+        assert applies["tasks"], item["id"]
+        assert all(re.fullmatch(r"[a-z][a-z-]*", task) for task in applies["tasks"]), item["id"]
+        assert all(len(matcher.replace("*", "").strip()) >= 4 for matcher in applies.get("errors", [])), item["id"]
+        if vocab is not None:
+            assert all(vocab.TYPES.get(kind.lower()) == kind for kind in applies["types"]), item["id"]
+    # The two notes the guess got wrong: a browser note is not a field-build note.
+    assert _entry("lightning-field-labels-live-in-shadow-dom")["applies"]["tasks"] == ["browser-test"]
+    assert "field-build" in _entry("fls-not-automatic")["applies"]["tasks"]
 
 
 def test_the_default_notes_for_a_field_deploy_include_field_level_security(capsys):

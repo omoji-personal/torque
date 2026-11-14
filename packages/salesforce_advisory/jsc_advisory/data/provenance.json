@@ -30,6 +30,10 @@
     {
       "entry": "governor-limits-core",
       "reason": "2026-11-14: heap is 10 MB synchronous and 25 MB asynchronous from Winter '27, per Salesforce's Winter '27 architect release highlights."
+    },
+    {
+      "entry": "all entries",
+      "reason": "2026-11-14: each entry carries a hand-written applies object (tasks, types, optional error matchers) that the lessons recall reads instead of guessing from the title."
     }
   ],
   "note": "Confidence labels describe the Torque source catalogue. The advisory layer re-verifies a fact when a dedicated read-only verifier is available and never uses a catalogue entry to deny an operation."
