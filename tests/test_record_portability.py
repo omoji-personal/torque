@@ -221,7 +221,10 @@ def test_an_unknown_client_is_named_as_missing_not_damaged(firm):
     code, output, error = invoke("context", "--workspace", str(root), "--client", "Gamma")
     assert code == 2 and output == ""
     assert 'no client "Gamma"' in error and "torque client list" in error and "torque client add" in error
-    assert "cannot read valid local configuration" not in error and "beta" not in error.lower()
+    assert "cannot read valid local configuration" not in error
+    # In full mode the workspace's own clients are named by slug; build-only and connected
+    # mode name none (tests/test_session_records.py).
+    assert "clients: alpha, beta." in error
 
 
 def test_an_unknown_initiative_is_named_as_missing(firm):

@@ -17,7 +17,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 PROFILES = ("generic", "solution-lead")
-STATUSES = ("prepared", "executed", "verified", "incomplete")
+STATUSES = ("prepared", "executed", "verified", "incomplete", "accepted")
+# What a check rested on (`session add --check`): what was sent read back, a script or
+# test, a page rendered and looked at, the real entry point used live, or a review.
+CHECK_KINDS = ("read-back", "scripted", "rendered", "live", "reviewed")
+CHECK_FIELDS = ("kinds", "as_user", "org", "org_type", "not_covered")
+FIELD_LIMIT = 1000
 AI_ACCESS_MODES = ("full", "build-only", "connected")
 APPROVAL_VALUES = ("required",)
 APPROVAL_VERIFY = ("hmac", "owner-uid")
@@ -31,16 +36,27 @@ SCHEMA_GUARDED = "torque.workspace/2"
 GUARDED_READS = "guarded_reads"
 MAINTENANCE_FLAG = ".torque/maintenance"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
+_CHANGE_ID = re.compile(r"chg-[a-f0-9]{12}\Z")
 
 
 class WorkspaceError(ValueError):
-    """An actionable local configuration or input error."""
+    """An actionable local configuration or input error. `code` names the kind of
+    mistake for an agent (`torque.error/1`, docs/engagement-records.md, "Errors"); `next_command` is the
+    command that helps, when there is one."""
+
+    def __init__(self, message: str = "", *, code: str = "invalid_input", next_command: str | None = None):
+        super().__init__(message)
+        self.code = code
+        self.next_command = next_command
 
 
 class BoundaryError(WorkspaceError):
     """A path or record outside the selected engagement: a symlink, a path outside
     the workspace, or a record that names another client or initiative. Readers that
     skip a damaged record (`problems`) still stop on this."""
+
+    def __init__(self, message: str = "", *, code: str = "outside_engagement", next_command: str | None = None):
+        super().__init__(message, code=code, next_command=next_command)
 
 
 def _now() -> str:
@@ -105,12 +121,14 @@ def foreign_engagement(own: Path, path: Path) -> bool:
                for folder in ENGAGEMENT_FOLDERS)
 
 
-def _read_json(path: Path, missing: str | None = None) -> dict:
+def _read_json(path: Path, missing: str | WorkspaceError | None = None) -> dict:
     """The JSON object in `path`. With `missing`, a file that does not exist raises
-    that message, so a typo or a wrong folder does not read as damaged data."""
+    that message (or that error), so a typo or a wrong folder does not read as damaged data."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
+        if isinstance(missing, WorkspaceError):
+            raise missing from exc
         raise WorkspaceError(missing or f"cannot read valid local configuration: {path}") from exc
     except (OSError, ValueError) as exc:
         raise WorkspaceError(f"cannot read valid local configuration: {path}") from exc
@@ -561,11 +579,17 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
     root = Path(path).expanduser().resolve()
     config_path = _inside(root, root / CONFIG)
     if not config_path.exists() and not config_path.is_symlink():
+        nearest = next((folder for folder in root.parents if (folder / CONFIG).is_file()), None)
+        if nearest is not None:
+            raise WorkspaceError(f"this folder is not a Torque workspace (no {CONFIG} here: {root}); the nearest "
+                                 f"one is {nearest}. Name it with --workspace", code="not_a_workspace",
+                                 next_command=command_text(["torque", "client", "list", "--workspace", str(nearest)]))
         hint = (" This is an engagement folder; select the workspace two folders up."
                 if (root / "client.json").is_file() or (root / "binding.json").is_file() else "")
         raise WorkspaceError(f"not a Torque workspace: {root} has no workspace configuration ({CONFIG}).{hint} "
                              "Select the workspace folder, or create a workspace with "
-                             "`torque workspace init PATH --name NAME`.")
+                             "`torque workspace init PATH --name NAME`.", code="not_a_workspace",
+                             next_command="torque workspace init PATH --name NAME")
     config = _validate_config(_read_json(config_path), config_path)
     _inside(root, root / "clients")
     return root, config
@@ -946,6 +970,52 @@ def add_client(workspace: str | Path, name: str, org: str | None = None) -> Path
     return client
 
 
+def set_client_org(workspace: str | Path, name: str, alias: str) -> dict:
+    """Change the org alias a client's registration names (client.json), keep the
+    earlier one in its `org_history`, and record the change as a session record. An alias
+    is a name for an org, not the org: nothing here calls an org, and the consent record
+    (which binds approved aliases to org Ids for connected mode) is never changed here;
+    whatever depends on the old alias is named in `notes`."""
+    client, _, config = load_client(workspace, name)
+    require_engagement_writable(client)
+    if not isinstance(alias, str) or not alias.strip() or any(c.isspace() for c in alias.strip()):
+        raise WorkspaceError("--target-org takes one org alias, username or ID, without spaces")
+    alias, old = alias.strip(), config.get("org")
+    notes = []
+    if old == alias:
+        notes.append(f"The alias is unchanged ({alias}). If it now points at another org (a sandbox refresh or a new "
+                     "login), the Salesforce CLI decides which org it is; Torque keeps no org Id in client.json.")
+    from .consent import load_consent
+    try:
+        consent = load_consent(workspace, name)
+    except WorkspaceError:
+        consent = None
+        notes.append("The consent record could not be read; check it with torque doctor.")
+    if consent:
+        approved = {org.get("alias"): org for org in consent.get("approved_orgs") or [] if isinstance(org, dict)}
+        if alias in approved:
+            notes.append(f"Consent approves {alias} as org Id {approved[alias].get('org_id_18')}: if the alias now "
+                         "points at another org, connected mode refuses it until the owner records consent again "
+                         "(check with torque doctor --live).")
+        else:
+            notes.append(f"Consent does not approve {alias} (it approves {', '.join(sorted(approved)) or 'none'}): "
+                         "connected mode refuses it until the owner records consent for it. Consent is not changed "
+                         "here.")
+    from .changes import list_changes
+    for change in list_changes(workspace, name, problems=[]):
+        if old and change.get("planned_org") == old and old != alias:
+            notes.append(f"Change {change['id']} ({change['title']}) plans the old org {old}; note the new one with "
+                         f"torque change note {change['id']} --kind decision --text \"Target org is now {alias}\".")
+    history = [*(config.get("org_history") or []), {"from": old, "to": alias, "at": _now()}]
+    updated = {**config, "org": alias, "org_history": history}
+    _atomic_replace_text(_inside(client, client / "client.json"),
+                         json.dumps(updated, indent=2, ensure_ascii=False) + "\n", keep_mode=True)
+    entry = add_session(workspace, name, f"Org alias changed from {old or 'none'} to {alias} with torque client "
+                        "set-org. No org was called.", "executed")
+    return {"client": config["slug"], "from": old, "to": alias, "session": entry["id"], "notes": notes,
+            "org_calls": False}
+
+
 def list_clients(workspace: str | Path) -> list[dict]:
     root, _ = load_workspace(workspace)
     directory = _inside(root, root / "clients")
@@ -963,11 +1033,23 @@ def load_client(workspace: str | Path, name: str) -> tuple[Path, dict, dict]:
     root, firm = load_workspace(workspace)
     slug = slug_for(name)
     client = _inside(root, root / "clients" / slug)
-    missing = (f'no client "{name.strip()}" in the workspace at {root} (no clients/{slug}/client.json). List the '
-               "clients with " + command_text(["torque", "client", "list", "--workspace", str(root)])
-               + ", or create this one with "
-               + command_text(["torque", "client", "add", name.strip(), "--workspace", str(root)]) + ".")
-    config = _read_json(_inside(root, client / "client.json"), missing)
+    path = _inside(root, client / "client.json")
+    if not path.is_file() and not path.is_symlink():
+        # Only this workspace's own client folders are named, by slug, and only in full mode:
+        # in build-only and connected mode a session works for one client and is not told the others.
+        parent = root / "clients"
+        listing = command_text(["torque", "client", "list", "--workspace", str(root)])
+        if access_mode(firm) == "full":
+            known = sorted(child.name for child in parent.iterdir()
+                           if child.is_dir() and (child / "client.json").is_file()) if parent.is_dir() else []
+            clients = "clients: " + (", ".join(known) if known else "none yet") + ". Name one by its slug, list them"
+        else:
+            clients = "list its clients"
+        raise WorkspaceError(f'no client "{name.strip()}" in this workspace ({root}); ' + clients
+                             + " with " + listing + ", or create this one with "
+                             + command_text(["torque", "client", "add", name.strip(), "--workspace", str(root)]) + ".",
+                             code="unknown_client", next_command=listing)
+    config = _read_json(path)
     if config.get("schema") != "torque.client/1" or config.get("slug") != slug:
         raise WorkspaceError(f"invalid client configuration: {client / 'client.json'}")
     if not isinstance(config.get("name"), str) or not config["name"].strip():
@@ -1000,11 +1082,18 @@ def require_engagement_writable(folder: Path) -> None:
 def add_session(workspace: str | Path, client_name: str, summary: str,
                 status: str = "prepared", evidence: str | Path | None = None, *,
                 kind: str = "client", learned=(), learned_scope: str = "client",
-                learned_from: str = "agent") -> dict:
+                learned_from: str = "agent", check=None, as_user: str | None = None,
+                org: str | None = None, not_covered: str | None = None, accepted_by: str | None = None,
+                corrects: str | None = None, change: str | None = None) -> dict:
     """Append a session record. Each text in `learned` is also saved as a lesson linked
     to the record (scope: the engagement, or the firm). The record is written first and
     stands whatever happens to a lesson: the returned entry then names the lessons saved
-    (`lessons`) and those that were not, with the reason (`lesson_problems`)."""
+    (`lessons`) and those that were not, with the reason (`lesson_problems`).
+
+    What a check rested on is kept in `check` (kind, as_user, org, org_type when the
+    workspace knows the org, not_covered), who accepted the work in `accepted_by`, and
+    the earlier record this one corrects in `corrects`; the earlier record is never
+    rewritten (its correction is derived when records are read)."""
     client, _, config = load_engagement(workspace, client_name, kind)
     require_engagement_writable(client)
     if not summary.strip():
@@ -1013,33 +1102,54 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
         raise WorkspaceError(f"unknown session status: {status}")
     if learned_scope not in ("client", "firm") or learned_from not in ("consultant", "agent"):
         raise WorkspaceError("a learned lesson's scope is client or firm, and it comes from the consultant or the agent")
-    evidence_ref = None
-    if evidence is not None:
-        path = Path(evidence).expanduser().resolve()
-        if not path.is_file():
-            raise WorkspaceError(f"evidence is not a readable file: {path}")
-        if foreign_engagement(client, path):
-            raise WorkspaceError("evidence belongs to a different client or initiative")
-        try:
-            digest = _file_hash(path)
-        except OSError as exc:
-            raise WorkspaceError(f"cannot read evidence: {path}") from exc
-        evidence_ref = {"path": str(path), "sha256": digest, "basis": EVIDENCE_BASIS}
-        try:
-            # Inside the workspace the reference is also kept relative to it, so it still
-            # resolves after the workspace moves or is copied to another machine. The
-            # absolute path stays for versions that read only that.
-            evidence_ref["workspace_path"] = path.relative_to(client.parent.parent).as_posix()
-        except ValueError:
-            # Outside the workspace the absolute path is the reference, and it is read
-            # only there: never matched with a copy inside the workspace.
-            evidence_ref["scope"] = "external"
+    basis = {}
+    kinds = [check] if isinstance(check, str) else list(check or [])
+    for item in kinds:
+        if item not in CHECK_KINDS:
+            raise WorkspaceError(f"unknown check kind: {item}; choose from {', '.join(CHECK_KINDS)}")
+    if kinds:
+        basis["kinds"] = list(dict.fromkeys(kinds))
+    for key, value, option in (("as_user", as_user, "--as-user"), ("org", org, "--in-org"),
+                               ("not_covered", not_covered, "--not-covered")):
+        if value is not None:
+            basis[key] = _field_text(value, option)
+    if "org" in basis:
+        if any(c.isspace() for c in basis["org"]):
+            raise WorkspaceError("--in-org takes one org alias, username or ID, without spaces")
+        org_type = known_org_type(client, kind, basis["org"])
+        if org_type:
+            basis["org_type"] = org_type
+    accepted = _field_text(accepted_by, "--accepted-by") if accepted_by is not None else None
+    if status == "accepted" and not accepted:
+        raise WorkspaceError("status accepted needs --accepted-by TEXT: who accepted the work (a lead, a tester, "
+                             "the client, by role or name); an agent never accepts work alone")
+    if corrects is not None:
+        _require_session(client, config, kind, corrects)
+    if change is not None:
+        from .changes import load_change
+        load_change(workspace, client_name, change, engagement_kind=kind)
+    references = []
+    for item in _evidence_arguments(evidence):
+        reference = _evidence_reference(client, item)
+        if all(reference["path"] != earlier["path"] for earlier in references):
+            references.append(reference)
+    # One file is stored as before, an object, so every version reads it; several are an
+    # ordered list of the same objects (docs/engagement-records.md, "Session record").
+    evidence_ref = None if not references else references[0] if len(references) == 1 else references
     at = _now()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:12]
     entry = {"schema": "torque.session/1", "id": entry_id, "created_at": at,
              kind: config["slug"], "summary": summary.strip(), "status": status,
              "status_basis": "user_reported", "independently_verified": False,
              "evidence": evidence_ref}
+    if basis:
+        entry["check"] = basis
+    if accepted:
+        entry["accepted_by"] = accepted
+    if corrects is not None:
+        entry["corrects"] = corrects
+    if change is not None:
+        entry["change"] = change
     sessions = _inside(client, client / "sessions")
     sessions.mkdir(mode=0o700, exist_ok=True)
     _write_json(_inside(client, sessions / f"{entry_id}.json"), entry, private=True)
@@ -1052,6 +1162,133 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
             saved, problems = [], [{"learned": 0, "reason": f"lessons are unavailable ({type(exc).__name__})"}]
         entry = {**entry, "lessons": saved, "lesson_problems": problems}
     return entry
+
+
+def _field_text(value: object, option: str) -> str:
+    """One line of free text for a record field."""
+    if not isinstance(value, str) or not value.strip() or any(c in value for c in "\r\n\0"):
+        raise WorkspaceError(f"{option} must be nonempty and on one line")
+    if len(value.strip()) > FIELD_LIMIT:
+        raise WorkspaceError(f"{option} holds more than {FIELD_LIMIT:,} characters; put the detail in the summary")
+    return value.strip()
+
+
+def known_org_type(engagement: Path, kind: str, alias: str) -> str | None:
+    """sandbox, developer, scratch or production when the workspace knows the org: the
+    client's consent record names it with the type the Salesforce CLI reported when the
+    consent was recorded. None when it does not (no org call is made)."""
+    if kind != "client":
+        return None
+    try:
+        from .consent import load_consent
+        record = load_consent(engagement.parent.parent, engagement.name) or {}
+        for org in record.get("approved_orgs") or []:
+            if isinstance(org, dict) and org.get("alias") == alias and isinstance(org.get("kind"), str):
+                return org["kind"]
+    except (OSError, WorkspaceError, ValueError):
+        return None
+    return None
+
+
+def _require_session(client: Path, config: dict, kind: str, identifier: object) -> None:
+    """The session record `identifier` exists in this engagement and reads as valid.
+    The refusal names no other record."""
+    listing = command_text(["torque", "session", "list", "--workspace", str(client.parent.parent),
+                            "--" + kind, config["slug"]])
+    if not isinstance(identifier, str) or not _SESSION_ID.fullmatch(identifier):
+        raise WorkspaceError(f"--corrects takes a session ID as `torque session add` printed it; list this "
+                             f"{kind}'s records with {listing}")
+    path = _inside(client, client / "sessions" / f"{identifier}.json")
+    try:
+        value = _read_json(path)
+    except BoundaryError:
+        raise
+    except WorkspaceError:
+        value = None
+    if value is None or foreign_owner(value, kind, config["slug"]) or _session_problem(path, value, kind, config["slug"]):
+        raise WorkspaceError(f"--corrects names no readable session record of this {kind}; list its records with "
+                             f"{listing}")
+
+
+def session_hints(entry: dict) -> list[str]:
+    """What a new record leaves unsaid that the reader will want: a hint, never a refusal."""
+    hints = []
+    check = entry.get("check") or {}
+    if entry.get("status") == "verified":
+        unstated = [text for key, text in (("kinds", "how it was checked (--check " + "|".join(CHECK_KINDS) + ")"),
+                                           ("as_user", "as whom (--as-user)"),
+                                           ("org", "in which org (--in-org)"),
+                                           ("not_covered", "what was not covered (--not-covered)"))
+                    if not check.get(key)]
+        if unstated:
+            hints.append("verified, but not stated: " + "; ".join(unstated))
+    return hints
+
+
+def basis_text(entry: dict) -> str:
+    """The check basis of a record on one line, or ''. Acceptance is what the record's
+    author reported, never Torque's confirmation."""
+    check = entry.get("check") or {}
+    parts = []
+    if check.get("kinds"):
+        parts.append("check " + " + ".join(check["kinds"]))
+    if check.get("as_user"):
+        parts.append(f"as {check['as_user']}")
+    if check.get("org"):
+        parts.append(f"in {check['org']}" + (f" ({check['org_type']})" if check.get("org_type") else ""))
+    if check.get("not_covered"):
+        parts.append(f"not covered: {check['not_covered']}")
+    if entry.get("accepted_by"):
+        parts.append(f"accepted by {entry['accepted_by']} (reported)")
+    return "; ".join(parts)
+
+
+def session_link_lines(entry: dict) -> list[str]:
+    """A record's basis and correction links, one line each, for context and handoff."""
+    lines = []
+    if basis_text(entry):
+        lines.append("Basis: " + basis_text(entry))
+    if entry.get("corrects"):
+        lines.append(f"Corrects: {entry['corrects']}")
+    if entry.get("corrected_by"):
+        lines.append("CORRECTED by " + ", ".join(entry["corrected_by"]) + ": what this record says no longer "
+                     "holds as written; read the correction")
+    if entry.get("change"):
+        lines.append(f"Change: {entry['change']}")
+    return lines
+
+
+def _evidence_arguments(evidence) -> list:
+    """The evidence files a caller named: none, one path, or several in order."""
+    if evidence is None:
+        return []
+    if isinstance(evidence, (str, os.PathLike)):
+        return [evidence]
+    return list(evidence)
+
+
+def _evidence_reference(client: Path, evidence) -> dict:
+    """The reference to one evidence file: its path and SHA-256 when recorded."""
+    path = Path(evidence).expanduser().resolve()
+    if not path.is_file():
+        raise WorkspaceError(f"evidence is not a readable file: {path}")
+    if foreign_engagement(client, path):
+        raise WorkspaceError("evidence belongs to a different client or initiative")
+    try:
+        digest = _file_hash(path)
+    except OSError as exc:
+        raise WorkspaceError(f"cannot read evidence: {path}") from exc
+    reference = {"path": str(path), "sha256": digest, "basis": EVIDENCE_BASIS}
+    try:
+        # Inside the workspace the reference is also kept relative to it, so it still
+        # resolves after the workspace moves or is copied to another machine. The
+        # absolute path stays for versions that read only that.
+        reference["workspace_path"] = path.relative_to(client.parent.parent).as_posix()
+    except ValueError:
+        # Outside the workspace the absolute path is the reference, and it is read
+        # only there: never matched with a copy inside the workspace.
+        reference["scope"] = "external"
+    return reference
 
 
 def _lesson_scopes(engagement: Path, kind: str):
@@ -1213,14 +1450,10 @@ def _workspace_reference(text: object) -> tuple[str, ...]:
     return tuple(text.split("/"))
 
 
-def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
-    """(integrity, location) of a session's evidence reference. A reference inside the
-    workspace is read relative to it (workspace_path), so it resolves after a move or a
-    copy to another machine. One outside it ("scope": "external") is read at its
-    absolute path only. A reference an earlier version wrote, which could not say which
-    it was, is also looked for under this engagement when its path no longer opens."""
-    if evidence is None:
-        return "not_supplied", None
+def _reference_shape(evidence: object) -> tuple[str, ...] | None:
+    """Check one evidence reference without opening its file: the parts of its
+    workspace-relative path, or None for an absolute-only reference. A reference that
+    leaves the workspace raises BoundaryError, any other malformed one WorkspaceError."""
     # A reference that leaves the workspace stops the read before anything else is checked.
     relative = (_workspace_reference(evidence["workspace_path"])
                 if isinstance(evidence, dict) and "workspace_path" in evidence else None)
@@ -1232,6 +1465,18 @@ def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
             or evidence.get("basis") != EVIDENCE_BASIS
             or ("scope" in evidence and (evidence["scope"] != "external" or relative is not None))):
         raise WorkspaceError("invalid session evidence reference")
+    return relative
+
+
+def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
+    """(integrity, location) of a session's evidence reference. A reference inside the
+    workspace is read relative to it (workspace_path), so it resolves after a move or a
+    copy to another machine. One outside it ("scope": "external") is read at its
+    absolute path only. A reference an earlier version wrote, which could not say which
+    it was, is also looked for under this engagement when its path no longer opens."""
+    if evidence is None:
+        return "not_supplied", None
+    relative = _reference_shape(evidence)
     if relative is not None:
         return _check_evidence(client, client.parent.parent.joinpath(*relative), evidence["sha256"])
     stored = Path(evidence["path"])
@@ -1247,6 +1492,36 @@ def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
         if found[0] != "missing":
             return found
     return "missing", evidence["path"]
+
+
+def _evidence_items(evidence: object) -> list:
+    """The references in a session's `evidence`: none (null), one (an object, as every
+    version writes one file) or several (a nonempty list of such objects, in order)."""
+    if evidence is None:
+        return []
+    if isinstance(evidence, list):
+        if not evidence or any(not isinstance(item, dict) for item in evidence):
+            raise WorkspaceError("invalid session evidence reference")
+        return evidence
+    return [evidence]
+
+
+def _session_evidence_all(client: Path, evidence: object) -> tuple[str, str | None, list[dict]]:
+    """(integrity, location, items) of every evidence reference of a session. The
+    integrity and location are the first file's when it is the only one; with several,
+    the integrity is the first that does not match (missing, changed, unavailable) or
+    matches_reference when all do. `items` holds each file: where it is now, its
+    recorded SHA-256 and its integrity, in the order recorded."""
+    items = []
+    for reference in _evidence_items(evidence):
+        integrity, location = _session_evidence(client, reference)
+        items.append({"location": location, "sha256": reference["sha256"], "integrity": integrity,
+                      "where": "outside this workspace" if _absolute_reference(location) else "in this workspace"})
+    if not items:
+        return "not_supplied", None, []
+    overall = next((item["integrity"] for item in items if item["integrity"] != "matches_reference"),
+                   "matches_reference")
+    return overall, items[0]["location"], items
 
 
 def _session_timestamp(value: object) -> bool:
@@ -1279,26 +1554,75 @@ def _session_problem(path: Path, value: dict, kind: str, slug: str) -> str:
             or not isinstance(value.get("summary"), str)
             or not value["summary"].strip() or not _session_timestamp(value.get("created_at"))):
         return "not a valid session record"
+    check = value.get("check")
+    if "check" in value and (not isinstance(check, dict) or not check or any(
+            key not in CHECK_FIELDS or (key != "kinds" and (not isinstance(item, str) or not item.strip()))
+            for key, item in check.items())
+            or ("kinds" in check and (not isinstance(check["kinds"], list) or not check["kinds"]
+                                      or any(kind not in CHECK_KINDS for kind in check["kinds"])))):
+        return "its check basis is not valid"
+    if "accepted_by" in value and (not isinstance(value["accepted_by"], str) or not value["accepted_by"].strip()):
+        return "its accepted_by is not valid"
+    if value["status"] == "accepted" and "accepted_by" not in value:
+        return "it is accepted but names no one who accepted it"
+    if "corrects" in value and (not isinstance(value["corrects"], str) or not _SESSION_ID.fullmatch(value["corrects"])
+                                or value["corrects"] == value["id"]):
+        return "its corrects link is not a session ID"
+    if "change" in value and (not isinstance(value["change"], str) or not _CHANGE_ID.fullmatch(value["change"])):
+        return "its change link is not a change ID"
     return ""
 
 
 def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 20, *,
-                  kind: str = "client", problems: list | None = None) -> list[dict]:
+                  kind: str = "client", problems: list | None = None, since: datetime | None = None) -> list[dict]:
     """The engagement's session records, newest first, at most `limit` of them. A
     record that fails its checks, its evidence reference included, stops the read,
     unless `problems` is a list: then it is skipped and named there, so one stray or
     damaged file does not hide the rest of the history; a skipped record is never read
     as valid. A record or evidence that belongs to another client or initiative, an
     evidence reference that leaves the workspace, and a symlink stop the read either
-    way (BoundaryError)."""
+    way (BoundaryError). With `since` (an aware datetime), only records made at or
+    after it. A record a later record corrects carries `corrected_by` (their IDs)."""
+    client, entries = read_sessions(workspace, client_name, kind=kind, problems=problems)
+    if since is not None:
+        entries = [entry for entry in entries if datetime.fromisoformat(entry["created_at"]) >= since]
+    return with_evidence(client, entries, limit, problems)
+
+
+def with_evidence(client: Path, entries: list[dict], limit: int | None, problems: list | None) -> list[dict]:
+    """The first `limit` of `entries` (all with None) whose evidence can be checked, each
+    with its evidence integrity; one whose reference is damaged is skipped and named in
+    `problems`, or stops the read without it."""
+    selected = []
+    for value in entries:
+        if limit is not None and len(selected) >= limit:
+            break
+        path = client / "sessions" / f"{value['id']}.json"
+        try:
+            (value["evidence_integrity"], value["evidence_location"],
+             value["evidence_items"]) = _session_evidence_all(client, value.get("evidence"))
+        except BoundaryError as exc:
+            raise BoundaryError(f"{exc}: {path}") from exc
+        except WorkspaceError as exc:
+            if problems is None:
+                raise WorkspaceError(f"{exc}: {path}") from exc
+            problems.append(record_problem(client, path, str(exc)))
+            continue
+        selected.append(value)
+    return selected
+
+
+def read_sessions(workspace: str | Path, client_name: str, *, kind: str = "client",
+                  problems: list | None = None) -> tuple[Path, list[dict]]:
+    """(engagement folder, every session record of it), newest first, checked as
+    list_sessions describes but without opening evidence files. A record a later one
+    corrects carries `corrected_by`, the IDs of the records that correct it."""
     client, _, config = load_engagement(workspace, client_name, kind)
     sessions = _inside(client, client / "sessions")
     if not sessions.exists():
-        return []
+        return client, []
     entries = []
     for path in sorted(sessions.glob("*.json"), reverse=True):
-        if limit is not None and len(entries) >= limit:
-            break
         try:
             value = _read_json(_inside(client, path))
         except BoundaryError:
@@ -1309,31 +1633,45 @@ def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 2
             if foreign_owner(value, kind, config["slug"]):
                 raise BoundaryError(f"session record belongs to a different client or initiative: {path}")
             evidence = value.get("evidence")
-            if isinstance(evidence, dict) and "workspace_path" in evidence:
-                # A reference that leaves the workspace stops the read, however damaged the rest is.
+            for reference in evidence if isinstance(evidence, list) else [evidence]:
+                if isinstance(reference, dict) and "workspace_path" in reference:
+                    # A reference that leaves the workspace stops the read, however damaged the rest is.
+                    try:
+                        _workspace_reference(reference["workspace_path"])
+                    except BoundaryError as exc:
+                        raise BoundaryError(f"{exc}: {path}") from exc
+                    except WorkspaceError:
+                        pass  # Malformed: named below, with the record.
+            reason = _session_problem(path, value, kind, config["slug"])
+            if not reason and value.get("corrects") and value["corrects"] >= value["id"]:
+                # Only an earlier record can be corrected; this also rules out a cycle.
+                reason = "its corrects link names itself or a later record"
+            if not reason:
                 try:
-                    _workspace_reference(evidence["workspace_path"])
+                    for reference in _evidence_items(value.get("evidence")):
+                        _reference_shape(reference)
                 except BoundaryError as exc:
                     raise BoundaryError(f"{exc}: {path}") from exc
-                except WorkspaceError:
-                    pass  # Malformed: named below, with the record.
-            reason = _session_problem(path, value, kind, config["slug"])
+                except WorkspaceError as exc:
+                    if problems is None:
+                        raise WorkspaceError(f"{exc}: {path}") from exc
+                    reason = str(exc)
         if reason:
             if problems is None:
                 raise WorkspaceError(f"invalid session record: {path}")
             problems.append(record_problem(client, path, reason))
             continue
-        try:
-            value["evidence_integrity"], value["evidence_location"] = _session_evidence(client, value.get("evidence"))
-        except BoundaryError as exc:
-            raise BoundaryError(f"{exc}: {path}") from exc
-        except WorkspaceError as exc:
-            if problems is None:
-                raise WorkspaceError(f"{exc}: {path}") from exc
-            problems.append(record_problem(client, path, str(exc)))
-            continue
         entries.append(value)
-    return entries
+    # A correction is a later record that names an earlier one; the earlier file is never
+    # rewritten, so its correction is derived here.
+    corrections: dict[str, list[str]] = {}
+    for value in reversed(entries):
+        if value.get("corrects"):
+            corrections.setdefault(value["corrects"], []).append(value["id"])
+    for value in entries:
+        if value["id"] in corrections:
+            value["corrected_by"] = corrections[value["id"]]
+    return client, entries
 
 
 def record_problem_lines(problems: list) -> list[str]:
@@ -1392,81 +1730,467 @@ def client_output_path(workspace: str | Path, client_name: str, destination: str
     return output
 
 
-def _context_notes(client: Path) -> dict[str, str]:
-    """Read the same bounded, selected notes for resumption and handoff."""
-    notes = {}
-    candidates = [("Firm notes", client.parent.parent / "profile.md", client.parent.parent),
+# The notes `context` and `handoff` show in full, in characters, across every notes file.
+# Measured: a session summary has a median of 655 characters, so 20 records are about
+# 13,000; 24,000 characters of notes keeps a whole resume near 40,000 characters (about
+# 10,000 tokens), where two large notes files alone gave 131,489. `--max-chars` changes it.
+NOTES_BUDGET = 24_000
+NOTE_FILE_LIMIT = 65_536
+SESSION_WINDOW = 20
+
+
+def parse_since(text: str) -> datetime:
+    """A `--since` value: a date (YYYY-MM-DD, from the start of that local day) or a time
+    (YYYY-MM-DDTHH:MM[:SS], with an offset or Z, else local)."""
+    value = text.strip() if isinstance(text, str) else ""
+    try:
+        moment = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value)
+    except ValueError:
+        raise WorkspaceError("--since takes a date such as 2026-11-01, or a time such as 2026-11-01T09:00") from None
+    return moment if moment.utcoffset() is not None else moment.astimezone()
+
+
+def _context_notes(client: Path, budget: int | None = NOTES_BUDGET) -> tuple[dict[str, str], list[dict]]:
+    """The notes for resumption and handoff, and a list of every notes file with its size
+    and whether it is shown in full, cut or not shown. In order (firm notes, client notes,
+    then context/*.md by name) each file is shown while the total stays within `budget`
+    characters; the file that does not fit is cut and says where to read the rest. With no
+    budget, each file is shown up to NOTE_FILE_LIMIT characters."""
+    root = client.parent.parent
+    notes, files = {}, []
+    candidates = [("Firm notes", root / "profile.md", root),
                   ("Client notes", client / "context.md", client)]
     context_dir = _inside(client, client / "context")
     if context_dir.is_dir():
         candidates.extend((f"Client context: {p.name}", p, client)
                           for p in sorted(context_dir.glob("*.md")))
+    remaining = budget
     for title, path, owner in candidates:
         _inside(owner, path)
-        if path.is_file():
-            with path.open(encoding="utf-8") as stream:
-                text = stream.read(65537)
-            notes[title] = text[:65536] + ("\n[truncated at 65,536 characters]" if len(text) > 65536 else "")
-    return notes
+        if not path.is_file():
+            continue
+        with path.open(encoding="utf-8") as stream:
+            text = stream.read(NOTE_FILE_LIMIT + 1)
+        location = path.relative_to(root).as_posix()
+        whole = text[:NOTE_FILE_LIMIT] + ("\n[truncated at 65,536 characters]" if len(text) > NOTE_FILE_LIMIT else "")
+        state = "cut" if len(text) > NOTE_FILE_LIMIT else "full"
+        if remaining is not None and len(whole) > remaining:
+            def marker(shown: int) -> str:
+                return f"\n[cut: the first {shown:,} characters are shown; read the rest in {location}]"
+            room = remaining - len(marker(remaining))
+            if room >= 200:
+                whole, state = whole[:room] + marker(room), "cut"
+            else:
+                whole, state = None, "not shown"
+        if whole is not None:
+            notes[title] = whole
+            if remaining is not None:
+                remaining -= len(whole)
+        files.append({"title": title, "path": location, "bytes": path.stat().st_size,
+                      "shown_chars": len(whole or ""), "state": state})
+    return notes, files
+
+
+def note_file_lines(files: list[dict], budget: int | None) -> list[str]:
+    """Every notes file with its size, the ones cut or not shown marked."""
+    if not files:
+        return []
+    shown = sum(item["shown_chars"] for item in files)
+    head = (f"Notes files ({len(files)}; {shown:,} characters shown"
+            + (f", budget {budget:,}; change it with --max-chars N" if budget is not None else "") + "):")
+    marks = {"full": "shown in full", "cut": "CUT", "not shown": "NOT SHOWN (over the budget)"}
+    # A file cut at its own size limit (65,536 characters) is marked by that notice in its text.
+    return [head] + [f"- {item['path']}: {item['bytes']:,} bytes, {marks[item['state']]}"
+                     + (f" at {item['shown_chars']:,} characters" if item["state"] == "cut" else "")
+                     for item in files]
+
+
+def _standing(records: list[dict], shown: list[dict], more: str) -> dict:
+    """Where things stand: the latest record, the open records (marked incomplete and not
+    corrected) shown and not shown, and the corrections among the records shown."""
+    ids = {entry["id"] for entry in shown}
+    def open_record(entry):
+        return entry["status"] == "incomplete" and not entry.get("corrected_by")
+    older = [entry for entry in records if entry["id"] not in ids and open_record(entry)]
+    dates = {entry["id"]: entry["created_at"] for entry in records}
+    hidden = [entry for entry in records if entry.get("corrects") and entry["id"] not in ids]
+    return {"latest": shown[0]["id"] if shown else None,
+            "open": [entry["id"] for entry in shown if open_record(entry)],
+            "open_not_shown": {"count": len(older), "oldest": older[-1]["created_at"] if older else None,
+                               "command": more if older else None},
+            "corrections": [{"id": entry["id"], "corrects": entry["corrects"],
+                             "corrected_created_at": dates.get(entry["corrects"]),
+                             "corrected_shown": entry["corrects"] in ids}
+                            for entry in shown if entry.get("corrects")],
+            "corrections_not_shown": {"count": len(hidden), "command": more if hidden else None}}
+
+
+def standing_lines(context: dict) -> list[str]:
+    """`Where things stand` as text: the latest record, open items, corrections."""
+    state, sessions = context["where_things_stand"], context["sessions"]
+    lines = ["Where things stand:"]
+    latest = next((entry for entry in sessions if entry["id"] == state["latest"]), None)
+    if latest is None:
+        lines.append("- No session records yet.")
+    else:
+        lines.append(f"- Latest record {latest['id']} ({latest['created_at']}) [{latest['status']}, "
+                     f"user-reported]: {latest['summary']}")
+        lines += ["  " + line for line in session_link_lines(latest)]
+        if latest.get("evidence_integrity") in ("missing", "changed", "unavailable"):
+            lines.append(f"  Evidence: {latest['evidence_integrity']} since recording.")
+    for identifier in state["open"]:
+        entry = next(e for e in sessions if e["id"] == identifier)
+        lines.append(f"- Open (incomplete): {entry['created_at']} {entry['id']}: {entry['summary'][:200]}"
+                     + ("..." if len(entry["summary"]) > 200 else ""))
+    older = state["open_not_shown"]
+    if older["count"]:
+        lines.append(f"- Open, not shown: {older['count']} older record(s) marked incomplete and not corrected "
+                     f"(oldest {older['oldest']}); read them with {older['command']}")
+    for change in context.get("changes", []):
+        pending = change["assessment"]["not_yet_reported_pass"]
+        if pending:
+            lines.append(f"- Open in change {change['id']} ({change['title']}): not yet reported pass: "
+                         + ", ".join(pending))
+    for item in state["corrections"]:
+        where = ("" if item["corrected_shown"] else
+                 f" (made {item['corrected_created_at']}, not shown here)" if item["corrected_created_at"]
+                 else " (not found among this engagement's records)")
+        lines.append(f"- Correction: {item['id']} corrects {item['corrects']}{where}")
+    hidden = state["corrections_not_shown"]
+    if hidden["count"]:
+        lines.append(f"- Corrections, not shown: {hidden['count']} older correction record(s); read them with "
+                     f"{hidden['command']}")
+    return lines
+
+
+# The most characters `torque context` prints as text (about 10,000 tokens): where things
+# stand, lessons, changes, history and notes together. --max-chars changes it.
+CONTEXT_BUDGET = 40_000
+
+
+def _change_lines(change: dict) -> list[str]:
+    lines = [f"Change {change['id']}: {change['title']} — {change['outcome']}"]
+    unresolved = [f"{c['id']} ({c['reported_result'].replace('_', ' ')})"
+                  for c in change["criteria"] if c["reported_result"] != "pass" and not c.get("retired")]
+    lines.append("Acceptance results are operator-reported; independent business acceptance is not established.")
+    if unresolved:
+        lines.append("Not yet reported pass: " + ", ".join(unresolved))
+    elif not change["criteria"]:
+        lines.append("No acceptance criteria recorded.")
+    if change["assessment"]["evidence_problems"]:
+        lines.append(f"Evidence problems: {change['assessment']['evidence_problems']} missing, changed or "
+                     "unavailable captures.")
+    lines += [f"Decision (reported): {d['summary']}" for d in change["decisions"]]
+    lines += [f"Metadata {o['result']} · Org {o['target_org']} · Job {o['job_id']}: {o['summary']}"
+              for o in change["metadata_observations"]]
+    lines += [f"Next step (reported): {s['summary']}" for s in change["next_steps"]]
+    if any(change["history_truncated"].values()):
+        counts = ", ".join(f"{name}: {count}" for name, count in change["history_counts"].items())
+        lines.append(f"{change['history_note']} Total entries — {counts}.")
+    lines.append("Full change: " + change["show_command"])
+    return lines
+
+
+def _session_lines(entry: dict) -> list[str]:
+    lines = [f"{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}",
+             *session_link_lines(entry)]
+    if entry.get("evidence_integrity") in ("missing", "changed", "unavailable"):
+        lines.append(f"Evidence: {entry['evidence_integrity']} since recording.")
+    return lines
+
+
+def context_text(context: dict, kind: str, budget: int = CONTEXT_BUDGET, *, workspace: str | Path = ".") -> str:
+    """`torque context` as text, at most `budget` characters. Where things stand and the
+    lessons come first and always; then changes, history and notes share what is left
+    (history at most half). Whatever does not fit is named in a last line, with the
+    command that shows it. `context` holds the complete notes (get_context max_chars=None)."""
+    if budget < 2_000:
+        raise WorkspaceError("--max-chars must be at least 2,000 for the text (where things stand and the lessons "
+                             "always print); with --json it may be smaller")
+    label = "Initiative" if kind == "initiative" else "Client"
+    top = [f"{context['workspace']['name']} / {context['client']['name']}",
+           f"{label} directory: {context['client_root']}"]
+    if kind == "client":
+        top.append(f"Configured org: {context['client'].get('org') or 'not specified'}")
+    top += [context["evidence_note"], *record_problem_lines(context["record_problems"]),
+            "", *standing_lines(context), "", *lesson_lines(context["lessons"], kind)]
+    text = "\n".join(top) + "\n"
+    reserve = 700  # the line that names what was cut
+    remaining = budget - len(text) - reserve
+    cut: list[str] = []
+    changes_text = ""
+    for change in context.get("changes", []):
+        block = "\n" + "\n".join(_change_lines(change)) + "\n"
+        if len(changes_text) + len(block) > max(remaining // 4, 0):
+            cut.append(f"changes ({len(context['changes'])} in all; each with its `Full change` command: "
+                       f"torque change list)")
+            break
+        changes_text += block
+    remaining -= len(changes_text)
+    entries = context["sessions"][1:]
+    history_cap = max(remaining // 2, 0)
+    shown_history, history_text = 0, ""
+    for entry in entries:
+        block = "\n" + "\n".join(_session_lines(entry)) + "\n"
+        if len(history_text) + len(block) > history_cap:
+            break
+        history_text += block
+        shown_history += 1
+    full = f"torque context --workspace {workspace} --{kind} {context['client']['slug']} --json"
+    if shown_history < len(entries):
+        cut.append(f"history ({shown_history + 1} of {context['sessions_returned']} records printed)")
+    shown_records = shown_history + (1 if context["sessions"] else 0)
+    history_head = (f"\nHistory: {shown_records} of {context['sessions_total']} session record(s) printed, newest "
+                    "first, the latest one above"
+                    + (f"; the rest: {context['more_command']}" if context["sessions_truncated"] else "") + ".\n")
+    remaining -= len(history_text) + len(history_head)
+    files = [dict(item) for item in context.get("notes_files", [])]
+    titles = {item["title"]: item for item in files}
+    listing_room = sum(len(line) + 1 for line in note_file_lines(files, budget)) + 200
+    room = max(remaining - listing_room, 0)
+    notes_text = ""
+    for title, value in context.get("notes", {}).items():
+        item = titles.get(title)
+        block = f"\n{title}:\n{value}\n"
+        if len(block) <= room:
+            notes_text += block
+            room -= len(block)
+            if item:
+                item["shown_chars"] = len(value)
+            continue
+        marker = f"\n[cut: the rest is in {item['path'] if item else title}]"
+        keep = room - len(title) - len(marker) - 4
+        if item:
+            item["state"], item["shown_chars"] = ("cut", keep) if keep >= 200 else ("not shown", 0)
+        if keep >= 200:
+            notes_text += f"\n{title}:\n{value[:keep]}{marker}\n"
+            room = 0
+    notes_cut = [item["path"] for item in files if item["state"] != "full"]
+    if notes_cut:
+        cut.append("notes (" + ", ".join(notes_cut) + ")")
+    listing = "\n".join(note_file_lines(files, budget))
+    text += ("\n" + listing + "\n" if listing else "") + notes_text + changes_text + history_head + history_text
+    if cut:
+        line = (f"\nCut to fit {budget:,} characters: " + "; ".join(cut)
+                + f". All of it: {full}, or a larger --max-chars.\n")
+        text += line if len(line) <= reserve else line[:reserve - 5] + "...]\n"
+    return text
 
 
 def get_context(workspace: str | Path, client_name: str, *, kind: str = "client",
-                shown_via: str | None = None) -> dict:
-    """The engagement's notes, lessons, changes and recent sessions. A stray or damaged
-    record is skipped and named in record_problems instead of hiding the rest. With
-    `shown_via` (the command printing the context), the lessons listed count as shown."""
+                shown_via: str | None = None, limit: int | None = SESSION_WINDOW,
+                since: datetime | None = None, max_chars: int | None = None) -> dict:
+    """The engagement's notes, lessons, changes and recent sessions, with where things
+    stand first and what was left out counted. A stray or damaged record is skipped and
+    named in record_problems instead of hiding the rest. With `shown_via` (the command
+    printing the context), the lessons listed count as shown. `limit` None: every record."""
     client, firm, config = load_engagement(workspace, client_name, kind)
-    notes = _context_notes(client)
+    if limit is not None and limit < 1:
+        raise WorkspaceError("--limit must be 1 or more; use --all for every record")
+    if max_chars is not None and max_chars < 1:
+        raise WorkspaceError("--max-chars must be 1 or more")
+    notes, note_files = _context_notes(client, max_chars)
     problems: list[dict] = []
     changes = _change_context(workspace, client_name, client, kind, problems)
-    sessions = list_sessions(workspace, client_name, kind=kind, problems=problems)
+    _, records = read_sessions(workspace, client_name, kind=kind, problems=problems)
+    window = records if since is None else [e for e in records if datetime.fromisoformat(e["created_at"]) >= since]
+    sessions = with_evidence(client, window, limit, problems)
+    more = command_text(["torque", "context", "--workspace", str(workspace), "--" + kind, config["slug"], "--all"])
+    truncated = len(sessions) < len(records)
     return {"workspace": firm, "client": config, "client_root": str(client),
+            "where_things_stand": _standing(records, sessions, more),
             "lessons": lessons_context(workspace, client, kind, shown_via=shown_via),
-            "changes": changes, "notes": notes, "sessions": sessions, "record_problems": problems,
+            "changes": changes, "notes": notes, "notes_files": note_files, "notes_budget": max_chars,
+            "sessions": sessions, "sessions_total": len(records), "sessions_returned": len(sessions),
+            "sessions_truncated": truncated, "more_command": more if truncated else None,
+            "record_problems": problems,
             "evidence_note": "Journal statuses are user-reported, not independent verification."}
 
 
-def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "client") -> str:
-    """The engagement's handoff. A record that could not be read is named at the top,
-    so the document says it is incomplete instead of leaving the record out silently."""
+HANDOFF_SCHEMA = "torque.handoff/1"
+HANDOFF_STATEMENT = ("Statuses below were supplied by the user. This journal did not independently "
+                     "verify execution or outcomes.")
+
+
+def _session_view(entry: dict) -> dict:
+    """A session record as a handoff carries it: no absolute path into the author's
+    folders (evidence inside the workspace is named relative to it)."""
+    view = {key: entry[key] for key in ("id", "created_at", "status", "summary")}
+    for key in ("check", "accepted_by", "corrects", "corrected_by", "change"):
+        if entry.get(key):
+            view[key] = entry[key]
+    view["evidence_integrity"] = entry.get("evidence_integrity", "not_supplied")
+    view["evidence"] = [dict(item) for item in entry.get("evidence_items", [])]
+    return view
+
+
+def handoff_data(workspace: str | Path, client_name: str, *, kind: str = "client",
+                 limit: int | None = SESSION_WINDOW, since: datetime | None = None,
+                 change: str | None = None, everything: bool = False) -> dict:
+    """The handoff for the task in hand: where things stand first, then lessons, notes,
+    changes and the history, newest first. By default the 20 newest records and the
+    notes within NOTES_BUDGET; `since` and `limit` narrow it, `change` keeps only that
+    change and the sessions linked to it, `everything` is the full journal. A record that
+    could not be read is named, so the document says it is incomplete."""
     client_root, firm, client = load_engagement(workspace, client_name, kind)
-    notes = _context_notes(client_root)
+    if limit is not None and limit < 1:
+        raise WorkspaceError("--limit must be 1 or more; use --all for every record")
+    if everything:
+        limit, since = None, None
+    from .changes import get_change, list_changes, load_change
     problems: list[dict] = []
-    entries = list_sessions(workspace, client_name, limit=None, kind=kind, problems=problems)
-    from .changes import list_changes, render_change
-    rendered = [render_change(workspace, client_name, change["id"], engagement_kind=kind, problems=problems).rstrip()
-                for change in list_changes(workspace, client_name, engagement_kind=kind, problems=problems)]
-    lines = [f"# Handoff: {client['name']}", "", f"Workspace: {firm['name']}",
-             f"Profile: {firm['profile']}",
-             f"Configured org: {client.get('org') or 'not specified'}" if kind == "client"
-             else f"Initiative state: {client['state']}",
-             "", "Statuses below were supplied by the user. This journal did not independently "
-             "verify execution or outcomes.", ""]
-    if problems:
-        lines += ["## Records not shown", "", *record_problem_lines(problems), ""]
+    if change is not None:
+        load_change(workspace, client_name, change, engagement_kind=kind)
+        change_ids = [change]
+    else:
+        change_ids = [item["id"] for item in list_changes(workspace, client_name, engagement_kind=kind,
+                                                          problems=problems)]
+    changes = []
+    for identifier in change_ids:
+        item = get_change(workspace, client_name, identifier, engagement_kind=kind, problems=problems)
+        changes.append({"id": item["id"], "title": item["title"], "outcome": item["outcome"],
+                        "criteria": [{key: c[key] for key in ("id", "text", "reported_result")} for c in item["criteria"]],
+                        "assessment": item["assessment"], "next_steps": item["next_steps"]})
+    notes, note_files = _context_notes(client_root, None if everything else NOTES_BUDGET)
+    _, records = read_sessions(workspace, client_name, kind=kind, problems=problems)
+    if change is not None:
+        records = [entry for entry in records if entry.get("change") == change]
+    window = records if since is None else [e for e in records if datetime.fromisoformat(e["created_at"]) >= since]
+    sessions = [_session_view(entry) for entry in with_evidence(client_root, window, limit, problems)]
     # The commands name the workspace as `.`: a handoff does not carry the author's folder names.
-    lines += ["## Lessons", "", "```text", *lesson_lines(lessons_context(".", client_root, kind), kind), "```", ""]
-    if notes:
-        lines += ["## Working context", ""]
-        for title, contents in notes.items():
+    more = command_text(["torque", "handoff", "--workspace", ".", "--" + kind, client["slug"],
+                         *(["--change", change] if change else []), "--all"])
+    truncated = len(sessions) < len(records)
+    return {"schema": HANDOFF_SCHEMA, "title": client["name"], kind: client["slug"],
+            "workspace": firm["name"], "profile": firm["profile"],
+            **({"configured_org": client.get("org")} if kind == "client" else {"initiative_state": client["state"]}),
+            "statement": HANDOFF_STATEMENT,
+            "window": {"limit": limit, "since": since.isoformat() if since else None, "change": change,
+                       "all": everything},
+            "where_things_stand": _standing(records, sessions, more),
+            "sessions_total": len(records), "sessions_returned": len(sessions), "sessions_truncated": truncated,
+            "more_command": more if truncated else None, "record_problems": problems,
+            "lessons": lessons_context(".", client_root, kind),
+            "notes_files": note_files, "notes_budget": None if everything else NOTES_BUDGET, "notes": notes,
+            "changes": changes, "sessions": sessions}
+
+
+def render_handoff_markdown(data: dict, workspace: str | Path, client_name: str, *, kind: str = "client") -> str:
+    """The handoff as Markdown: current state first, history after."""
+    lines = [f"# Handoff: {data['title']}", "", f"Workspace: {data['workspace']}", f"Profile: {data['profile']}",
+             f"Configured org: {data.get('configured_org') or 'not specified'}" if kind == "client"
+             else f"Initiative state: {data['initiative_state']}",
+             "", data["statement"], ""]
+    window = data["window"]
+    scope = ("the full journal" if window["all"] else
+             ", ".join(part for part in (f"change {window['change']}" if window["change"] else "",
+                                         f"since {window['since']}" if window["since"] else "",
+                                         f"the {window['limit']} newest records" if window["limit"] else "") if part))
+    lines += [f"Shown: {scope}; {data['sessions_returned']} of {data['sessions_total']} session record(s)"
+              + (f". The rest: `{data['more_command']}`" if data["sessions_truncated"] else "") + ".", ""]
+    if data["record_problems"]:
+        lines += ["## Records not shown", "", *record_problem_lines(data["record_problems"]), ""]
+    lines += ["## Where things stand", "", *standing_lines(data)[1:], ""]
+    lines += ["## Lessons", "", "```text", *lesson_lines(data["lessons"], kind), "```", ""]
+    if data["notes"] or data["notes_files"]:
+        lines += ["## Working context", "", *note_file_lines(data["notes_files"], data["notes_budget"]), ""]
+        for title, contents in data["notes"].items():
             lines += [f"### {title}", "", contents.rstrip(), ""]
-    if not entries:
-        lines.append(f"No session entries have been recorded for this {kind}.")
-    for entry in reversed(entries):
-        lines += [f"## {entry['created_at']} — {entry['status']} (user-reported)", "",
+    from .changes import render_change
+    for item in data["changes"]:
+        lines += ["---", "", render_change(workspace, client_name, item["id"], engagement_kind=kind,
+                                           problems=[]).rstrip(), ""]
+    lines += ["## History", ""]
+    if not data["sessions"]:
+        lines.append(f"No session entries have been recorded for this {kind}"
+                     + (" in this window." if data["sessions_total"] else "."))
+    for entry in data["sessions"]:
+        lines += [f"### {entry['created_at']} — {entry['status']} (user-reported)", "",
                   entry["summary"], "", f"Entry: {entry['id']}"]
-        evidence = entry.get("evidence")
-        if evidence:
-            # Where the file is now: relative to the workspace inside it, so the handoff
-            # does not carry the author's own folder names.
-            location = entry.get("evidence_location") or evidence["path"]
-            where = "outside this workspace" if _absolute_reference(location) else "in this workspace"
-            lines += [f"Evidence reference: {location} ({where})", f"Recorded SHA-256: {evidence['sha256']}",
-                      f"Evidence integrity: {entry['evidence_integrity'].replace('_', ' ')}",
-                      "The reference was hashed when recorded; its content was not assessed."]
-        else:
-            lines.append("Evidence reference: none supplied.")
+        lines += session_link_lines(entry)
+        # Where each file is now: relative to the workspace inside it.
+        for item in entry["evidence"]:
+            lines += [f"Evidence reference: {item['location']} ({item['where']})",
+                      f"Recorded SHA-256: {item['sha256']}",
+                      f"Evidence integrity: {item['integrity'].replace('_', ' ')}"]
+        lines.append("The reference was hashed when recorded; its content was not assessed."
+                     if entry["evidence"] else "Evidence reference: none supplied.")
         lines.append("")
-    for text in rendered:
-        lines += ["", "---", "", text]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "client", **window) -> str:
+    """The engagement's handoff as Markdown (handoff_data takes the window options)."""
+    return render_handoff_markdown(handoff_data(workspace, client_name, kind=kind, **window),
+                                   workspace, client_name, kind=kind)
+
+
+EXPORTS = "state/exports.json"
+
+
+def _export_key(path: Path) -> str:
+    return os.path.normcase(str(path.resolve()))
+
+
+def replace_output(path: Path, text: str, engagement: Path, *, force: bool = False) -> dict:
+    """Write an export the user names again and again (a handoff). A new file is
+    published whole. An existing file is replaced, through a temporary file and a
+    rename, only when it is still exactly what Torque last wrote there (its SHA-256 is
+    kept in the engagement's state/exports.json), or with `force`; its previous content
+    is kept as PATH.bak. A file someone edited, or one Torque did not write, is left as
+    it is and the new render is written to PATH.new. Returns where it was written
+    (`written`), the backup (`backup`) and whether an edited file was kept (`kept`)."""
+    for candidate in (path, path.with_name(path.name + ".bak"), path.with_name(path.name + ".new")):
+        if candidate.is_symlink() or (candidate.exists() and not candidate.is_file()):
+            raise WorkspaceError(f"{candidate} is not a plain file; name another output, or move it away")
+    if not path.parent.is_dir():
+        raise WorkspaceError(f"output directory does not exist: {path.parent}")
+    record_path = _inside(engagement, engagement / EXPORTS)
+    try:
+        written = _read_json(record_path) if record_path.is_file() else {}
+    except WorkspaceError:
+        written = {}
+    result = {"written": path, "backup": None, "kept": False}
+    if path.exists():
+        current = _file_hash(path)
+        if not force and written.get(_export_key(path)) != current:
+            target = path.with_name(path.name + ".new")
+            _atomic_replace_text(target, text)
+            return {"written": target, "backup": None, "kept": True}
+        backup = path.with_name(path.name + ".bak")
+        fd, temporary = _temporary_file(path.parent, False)
+        try:
+            with os.fdopen(fd, "wb") as stream, open(path, "rb") as source:
+                shutil.copyfileobj(source, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, backup)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+        _atomic_replace_text(path, text)
+        result["backup"] = backup
+    else:
+        atomic_write_new(path, text)
+    written[_export_key(path)] = _file_hash(path)
+    record_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _atomic_replace_text(record_path, json.dumps(written, indent=2) + "\n", private=True)
+    return result
+
+
+def output_lines(result: dict) -> list[str]:
+    """What an export did, for the terminal."""
+    if result["kept"]:
+        original = result["written"].with_name(result["written"].name[:-len(".new")])
+        return [str(result["written"]),
+                f"{original} was edited since Torque wrote it (or Torque did not write it), so it is kept as it "
+                f"is; the new render is in {result['written']}. Compare them, or replace it with --force (the "
+                "previous content is then kept as .bak)."]
+    lines = [str(result["written"])]
+    if result["backup"]:
+        lines.append(f"Replaced the earlier file; its previous content is in {result['backup']}")
+    return lines
+
+
+def output_report(result: dict) -> dict:
+    return {"output": str(result["written"]), "replaced": result["backup"] is not None,
+            "backup": str(result["backup"]) if result["backup"] else None, "kept_edited_file": result["kept"]}

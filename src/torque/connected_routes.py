@@ -179,11 +179,12 @@ TORQUE_CONSOLE_ROUTES = {
 # these, or attached to an option with `=`, is a double-quoted variable a value and
 # nothing else: after a flag that takes no value it could become another option.
 TORQUE_VALUE_OPTIONS = frozenset({
-    "--accept", "--account", "--agreed-on", "--approval", "--approver-uid", "--audit-trail", "--before-state",
+    "--accept", "--accepted-by", "--account", "--agreed-on", "--as-user", "--corrects", "--in-org",
+    "--not-covered", "--approval", "--approver-uid", "--audit-trail", "--before-state",
     "--before-state-object", "--binding", "--capture-before-metadata", "--capture-before-record", "--change",
-    "--client", "--component", "--criterion", "--data", "--diff", "--evidence", "--for", "--hook-python", "--host",
+    "--client", "--component", "--criterion", "--data", "--diff", "--evidence", "--for", "--format", "--hook-python", "--host",
     "--idempotency-key", "--initiative", "--input", "--job-id", "--kind", "--learned", "--learned-from",
-    "--learned-scope", "--manifest", "--manual-recovery",
+    "--learned-scope", "--manifest", "--manual-recovery", "--max-chars",
     "--mcp", "--metadata", "--minutes", "--model-id", "--name", "--new-component", "--org", "--outcome",
     "--output", "--owner", "--path", "--payload-digest", "--profile", "--purpose", "--reason", "--reason-class",
     "--record", "--request-sha256", "--result", "--review-date", "--reviewer", "--role", "--since", "--status",
