@@ -76,8 +76,9 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
     if target not in TARGETS:
         raise LessonError(f"unknown destination `{target}`: use one of {', '.join(TARGETS)}.")
     item = storage.resolve(recall.everything(scopes), wanted)
-    if item.state != "active":
-        raise LessonError(f"{item.id} is {item.state}; promote an active lesson (review it first: torque lesson "
+    if item.state != "active" or record.unbacked_active(item):
+        state = "marked active without a basis" if item.state == "active" else item.state
+        raise LessonError(f"{item.id} is {state}; promote an active lesson (review it first: torque lesson "
                           f"verify {item.id} --evidence ...).")
     if target in ("firm", "platform") and item.scope in (target, "platform"):
         raise LessonError(f"{item.id} is already a {item.scope} lesson.")
@@ -85,18 +86,23 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
     if folder is None:
         raise LessonError("a proposal is written in a workspace: add --workspace PATH.")
     day = record.today()
+    # A wider-scope copy carries only the keys Torque knows: a key a person added to the
+    # file is theirs to judge, so it is named in the proposal and left out of the text.
     copy = replace(item, applies={key: list(values) for key, values in item.applies.items()},
                    evidence=[dict(entry) for entry in item.evidence], supersedes=[], promoted_to=[],
-                   extra=dict(item.extra), path=None)
-    found = scrubber.scrub_lesson(copy, firm_terms=scrubber.workspace_terms(scopes.workspace), generalize=True)
+                   extra={}, path=None)
+    terms = scrubber.workspace_terms(scopes.workspace)
+    found = scrubber.scrub_lesson(copy, firm_terms=terms, generalize=True)
     if found.refused:
         raise Refused(found.refusal(target).replace("Not saved", "No proposal written"), found)
+    left_out = [_key_name(key, terms) for key in item.extra]
     if target in ("firm", "platform"):
-        taken = storage.taken_ids(scopes.folder("firm")) | shipped_ids() | {item.id}
+        taken = storage.readable_ids(scopes) | shipped_ids() | {item.id}
         copy.id, copy.scope, copy.created, copy.review_by = record.new_id(day, taken), target, day, record.later(day)
         text = record.render(copy).rstrip("\n")
     else:
         text = _text_for(copy, target)
+    custom = sorted(set(scrubber.CUSTOM_NAME.findall(text)))
     label = f" `{name}`" if name else ""
     replaced = ", ".join(f"{kind} ({count})" for kind, count in found.masked.items()) or "nothing"
     path = storage._private_dir(folder) / f"promote-{item.id}-to-{target}.md"
@@ -107,21 +113,38 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
                   f"longer shown twice: `torque lesson edit {item.id} --set promoted_to={target}:"
                   f"{name or 'NAME'}`")
     front = {"proposal": "promote", "lesson": item.id, "from": item.scope, "to": target, "name": name,
-             "created": day, "replaced": dict(found.masked)}
+             "created": day, "replaced": dict(found.masked), "left_out": left_out}
     body = "\n".join([
         "---", *(f"{key}: {record._yaml(value)}" for key, value in front.items()), "---",
         f"# Proposal: promote {item.id} to {target}{label}", "",
         f"Source: {item.id} ({item.scope}): {copy.title}",
         f"Destination: {_DESTINATION[target].format(name=label)}.",
-        f"The scrub replaced: {replaced}. It knows shapes and this workspace's client list, not every name: read "
-        "the text.", "",
+        f"The scrub replaced: {replaced}. It is a heuristic that knows the shapes of secrets and Ids and this "
+        "workspace's client list, not every name or every way to write a secret: read the text.",
+        *([_left_out_line(left_out)] if left_out else []),
+        *([f"Custom names in this text: {', '.join(custom)}. A firm lesson may name fields; confirm none of these "
+           "identifies the client (a field only that client has)."] if custom else []), "",
         "## Text", "", "Edit it here if it needs rewording; the text between the fences is what is applied.", "",
         f"{_FENCE}lesson", text, _FENCE, "",
         "## To confirm", "", *(f"- [ ] {line}" for line in _CONFIRM[target]), "",
         "## Apply", "", apply_line, ""])
     storage._atomic_write(path, body)
     return {"proposal": str(path), "lesson": item.id, "from": item.scope, "to": target, "name": name,
-            "replaced": dict(found.masked), "text": text, "applies_itself": target == "firm"}
+            "replaced": dict(found.masked), "left_out": left_out, "custom_names": custom, "text": text,
+            "applies_itself": target == "firm"}
+
+
+def _key_name(key: object, terms: list) -> str:
+    """A key Torque does not know, as a proposal may name it: generalized like the text,
+    and withheld when it looks like a secret itself."""
+    text, found = scrubber.scrub(str(key), firm_terms=terms, generalize=True)
+    return "<a key withheld>" if found.refused else text
+
+
+def _left_out_line(keys: list) -> str:
+    return (f"Left out: {len(keys)} front-matter key(s) Torque does not know ({', '.join(keys)}). A wider-scope copy "
+            "carries only the keys Torque knows; their values are not copied. Add one to the text below only if "
+            "it names no client and holds no secret: the text between the fences is exactly what is written.")
 
 
 def _read(scopes: Scopes, proposal: str) -> tuple[Path, dict, str]:
@@ -164,8 +187,9 @@ def apply(scopes: Scopes, proposal: str) -> dict:
     source = storage.resolve(storage.load(scopes, only=scopes.kind), source_id)
     if f"firm:{copy.id}" in source.promoted_to:
         return {"firm": copy.id, "source": source.id, "status": "already applied", "path": None}
-    if source.state != "active":
-        raise LessonError(f"{source.id} is {source.state} now, and only an active lesson is promoted. Look at it "
+    if source.state != "active" or record.unbacked_active(source):
+        state = "marked active without a basis" if source.state == "active" else source.state
+        raise LessonError(f"{source.id} is {state} now, and only an active lesson is promoted. Look at it "
                           f"first (torque lesson show {source.id}), or leave the proposal unapplied.")
     found = scrubber.scrub_lesson(copy, firm_terms=scrubber.workspace_terms(scopes.workspace))
     if found.refused:
@@ -176,7 +200,7 @@ def apply(scopes: Scopes, proposal: str) -> dict:
         existing = next((item for item in storage.read_folder(folder, "firm", scopes) if item.id == copy.id), None)
         # The same lesson already there: an earlier apply wrote it and stopped before marking the source.
         written = existing is not None and record.content_key(existing) == record.content_key(copy)
-        if not written and (existing is not None or copy.id in storage.taken_ids(folder)):
+        if not written and (existing is not None or copy.id in storage.readable_ids(scopes)):
             raise LessonError(f"a firm lesson {copy.id} already exists; write a fresh proposal.")
         firm_path = existing.path if written else storage.save(copy, folder)
     with storage.transaction(scopes.engagement):

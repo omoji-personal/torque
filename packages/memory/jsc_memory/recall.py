@@ -389,9 +389,12 @@ class Result:
 
 
 def eligible(item: Lesson, tally: Tally | None) -> bool:
-    """Shown at the point of use: active, not marked stale, and not already promoted
-    into a rule, a recipe or a wider lesson (it lives on there)."""
-    return item.state == "active" and not (tally and tally.stale_mark) and not item.promoted_to
+    """Shown at the point of use: active with a basis in its record (a file edited by hand
+    to `state: active` is not trusted on that alone: lesson.unbacked_active), not marked
+    stale, and not already promoted into a rule, a recipe or a wider lesson (it lives on
+    there)."""
+    return (item.state == "active" and not record.unbacked_active(item)
+            and not (tally and tally.stale_mark) and not item.promoted_to)
 
 
 def _recency(item: Lesson) -> int:
@@ -476,7 +479,7 @@ def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", pat
         score, reasons = match(item, query) if query else (0, [])
         if query and not score:
             continue
-        if item.state == "candidate" and not tally.stale_mark:
+        if (item.state == "candidate" or record.unbacked_active(item)) and not tally.stale_mark:
             if not include_candidates:
                 waiting.append(Hit(item, score, reasons, tally))
                 continue
@@ -523,7 +526,8 @@ def lines(item: Lesson, tally: Tally | None = None) -> list[str]:
                           if part)
     else:
         first, second = f"[{item.id}] {_clip(item.title, 170)}", _clip(item.body, 300)
-    standing = [item.scope, *([CANDIDATE_MARK] if item.state == "candidate" else []),
+    standing = [item.scope,
+                *([CANDIDATE_MARK] if item.state == "candidate" or record.unbacked_active(item) else []),
                 *(["retired"] if item.state == "retired" else []), *basis(item),
                 *(["marked stale"] if tally.stale_mark else [])]
     counted = ", ".join(f"{name} {count}" for name, count in tally.counters().items() if count)
@@ -658,6 +662,7 @@ def context_section(scopes: Scopes, limit: int = 5, *, via: str | None = None) -
             "engagement_active": len(own),
             "firm_active": sum(item.scope == "firm" for item in live),
             "platform_active": sum(item.scope == "platform" for item in live),
-            "candidates_waiting": sum(item.state == "candidate" for item in lessons),
+            "candidates_waiting": sum(item.state == "candidate" or record.unbacked_active(item)
+                                      for item in lessons),
             "marked_stale": sum(bool(tallies.get(item.id) and tallies[item.id].stale_mark) for item in lessons),
             "unreadable": problems, "note": FOOTER}

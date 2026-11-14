@@ -13,6 +13,8 @@ def save(scopes, scope, suffix, **fields):
     applies = {"tasks": [], "types": [], "commands": [], "keywords": [], "errors": [],
                **{key: fields.pop(key) for key in ("tasks", "types", "commands", "keywords", "errors")
                   if key in fields}}
+    # An active lesson needs a basis in its record to be shown (lesson.unbacked_active): the consultant's word here.
+    fields.setdefault("source", "consultant")
     item = Lesson(id=f"L-20250303-{suffix}", title=fields.pop("title", f"Lesson {suffix}"), scope=scope,
                   state=fields.pop("state", "active"), created=fields.pop("created", "2026-11-14"),
                   last_verified=fields.pop("last_verified", "2026-11-14"), applies=applies, **fields)
@@ -231,6 +233,21 @@ def test_an_org_alias_is_a_name_and_not_a_topic(scopes):
     assert query.tasks == ["query"] and "dev-sandbox" not in query.command
     assert recall.build_query(command="sf org display -o my-sandbox").tasks == []
     assert own(recall.find(alpha, command="sf data query -o=dev-sandbox --query x", limit=None)) == []
+
+
+def test_a_lesson_marked_active_with_no_basis_is_a_candidate_at_the_point_of_use(scopes):
+    """A file edited by hand to `state: active`, with an agent source and only its own session as evidence,
+    is not shown as trusted: it is a hint when asked, and it is counted as waiting."""
+    alpha = scopes("alpha")
+    save(alpha, "client", "trst", types=["Flow"], when="you deploy a flow", do="check the active version")
+    save(alpha, "client", "hand", types=["Flow"], when="you deploy a flow", do="skip the check", source="agent",
+         evidence=[{"type": "session", "ref": "session x", "date": "2026-11-14"}])
+    found = recall.find(alpha, types=["Flow"], limit=None, advisory=False, hints=2)
+    assert own(found) == ["trst"]
+    assert [hit.lesson.id[-4:] for hit in found.hints] == ["hand"]
+    section = recall.context_section(alpha)
+    assert [item["id"][-4:] for item in section["shown"]] == ["trst"] and section["candidates_waiting"] == 1
+    assert recall.for_command("sf project deploy start --metadata Flow:X", scopes=alpha).count("[L-") == 1
 
 
 def test_record_values_in_a_command_take_no_part_in_matching(scopes):
@@ -566,8 +583,9 @@ def test_the_context_block_shows_the_engagements_best_and_counts_the_rest(scopes
     assert [row["via"] for row in storage.read_events(alpha.engagement) if row["event"] == "shown"] == ["context"] * 4
     # Another client sees the firm's lessons, never alpha's; consultant-sourced firm lessons come first,
     # and with no lessons of its own the firm takes every place up to the limit.
-    for number in range(6):
-        save(alpha, "firm", f"g{number:03d}", source="consultant" if number == 5 else "agent")
+    for number in range(6):       # an agent's lesson is active only with a basis: reproduced evidence here
+        save(alpha, "firm", f"g{number:03d}", source="consultant" if number == 5 else "agent",
+             evidence=[{"type": "reproduced", "ref": "a run", "date": "2026-11-14"}])
     other = recall.context_section(scopes("beta"))
     assert other["engagement_active"] == 0 and other["firm_active"] == 7
     assert [item["id"][-4:] for item in other["shown"]][:1] == ["g005"] and len(other["shown"]) == 5

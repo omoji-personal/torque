@@ -130,6 +130,114 @@ def test_apply_refuses_text_that_still_identifies_a_client_and_needs_the_sources
     assert run("promote", "--apply", path)[0] == 0
 
 
+FAKE_SECRET = "Fake" + "-Only-" + "1234"                 # made up; assembled so no tracked file holds the pair
+EXTRA_KEYS = ("client_context: Alpha Nonprofit\n"
+              f"secret_context: pass{'word'}={FAKE_SECRET}\n"
+              "notes: {owner: alpha-dev, seen: [Alpha Nonprofit, 2026-11-14]}\n")
+
+
+def _with_extra_keys(item, extra=EXTRA_KEYS):
+    """The lesson's file with front-matter keys Torque does not know, added by a person."""
+    text = item.path.read_text(encoding="utf-8").replace("\nsource:", "\n" + extra.rstrip("\n") + "\nsource:", 1)
+    item.path.write_text(text, encoding="utf-8")
+
+
+def _fenced(proposal_path):
+    return promote._BLOCK.search(open(proposal_path, encoding="utf-8").read()).group(1)
+
+
+def test_a_wider_scope_copy_leaves_out_the_keys_torque_does_not_know_and_names_them(run, workspace, scopes):
+    alpha = scopes("alpha")
+    item = client_lesson(alpha)
+    _with_extra_keys(item)
+    assert set(storage.load(alpha, only="client")[0].extra) == {"client_context", "secret_context", "notes"}
+    text = run("promote", item.id, "--to", "firm")[1]
+    assert "Left out: 3 front-matter key(s)" in text and FAKE_SECRET not in text and "Alpha" not in text
+    code, out, err = run("promote", item.id, "--to", "firm", "--json")
+    made = json.loads(out)
+    assert code == 0 and made["left_out"] == ["client_context", "secret_context", "notes"]
+    proposal = open(made["proposal"], encoding="utf-8").read()
+    for word in ("Alpha", "alpha-dev", FAKE_SECRET):
+        assert word not in proposal and word not in out + err
+    assert "Left out: 3 front-matter key(s) Torque does not know (client_context, secret_context, notes)" in proposal
+    assert "client_context" not in made["text"] and _fenced(made["proposal"]) == made["text"]
+    # Apply writes the text the proposal shows, and nothing else.
+    code, out, err = run("promote", "--apply", made["proposal"], "--json")
+    assert code == 0, err
+    firm = storage.load(scopes(None))[0]
+    written = firm.path.read_text(encoding="utf-8")
+    assert written == made["text"] + "\n" and firm.extra == {}
+    for word in ("Alpha", "alpha-dev", FAKE_SECRET, "client_context", "secret_context"):
+        assert word not in written
+    # The other destinations leave the keys out the same way.
+    for target in ("platform", "rule", "check"):
+        made = json.loads(run("promote", item.id, "--to", target, "--json")[1]) if target != "platform" else \
+            promote.propose(alpha, item.id, "platform")
+        assert made["left_out"] == ["client_context", "secret_context", "notes"]
+        assert "client_context" not in made["text"] and "Alpha" not in made["text"]
+
+
+def test_a_proposal_lists_custom_names_for_the_person_to_confirm_and_refuses_none(run, scopes):
+    alpha = scopes("alpha")
+    item = intake.add(alpha, when="you change Gift_Batch__c or npsp__Batch__c in a flow",
+                      do="retrieve Batch_Rule__mdt first", because="the rule decides the batch",
+                      source="consultant").lesson
+    code, out, _ = run("promote", item.id, "--to", "firm", "--json")
+    made = json.loads(out)
+    assert code == 0 and made["custom_names"] == ["Batch_Rule__mdt", "Gift_Batch__c", "npsp__Batch__c"]
+    proposal = open(made["proposal"], encoding="utf-8").read()
+    assert "Custom names in this text: Batch_Rule__mdt, Gift_Batch__c, npsp__Batch__c." in proposal
+    assert "Custom names in the text: " in run("promote", item.id, "--to", "firm")[1]
+    assert run("promote", "--apply", made["proposal"])[0] == 0                 # listed, not refused
+
+
+@pytest.mark.parametrize("added,refused", [
+    ("client_context: Alpha Nonprofit", "client name"),
+    (f"secret_context: pass{'word'}={FAKE_SECRET}", "password or secret"),
+    ("notes: {owner: alpha-dev}", "org alias"),
+    ("alpha_nonprofit_note: seen there", "client slug"),
+    (None, None),
+])
+def test_apply_scrubs_a_key_a_person_put_back_into_the_proposal_like_the_rest(run, workspace, scopes, added, refused):
+    alpha = scopes("alpha")
+    item = client_lesson(alpha)
+    _with_extra_keys(item)
+    made = promote.propose(alpha, item.id, "firm")
+    path = made["proposal"]
+    kept = "reviewed_by: the consultant"           # a key a person adds on purpose, naming no client
+    line = added or kept
+    body = open(path, encoding="utf-8").read().replace("\nsource:", f"\n{line}\nsource:", 1)
+    open(path, "w", encoding="utf-8", newline="\n").write(body)
+    code, out, err = run("promote", "--apply", path)
+    if refused:
+        assert code == 4 and refused in err and storage.load(scopes(None)) == []
+        assert "Alpha" not in out + err and FAKE_SECRET not in out + err
+    else:
+        assert code == 0
+        firm = storage.load(scopes(None))[0]
+        assert firm.extra == {"reviewed_by": "the consultant"}
+        shown = record.parse(_fenced(path))
+        assert (firm.front_matter(), firm.body) == (shown.front_matter(), shown.body)
+
+
+def test_keys_torque_does_not_know_are_scrubbed_when_a_lesson_is_saved_in_its_own_scope(workspace):
+    from jsc_memory import scrubber
+    from jsc_memory.lesson import Lesson
+    terms = scrubber.workspace_terms(workspace)
+    item = Lesson(id="L-20261114-0001", title="t", extra={"contact": "jane@example.org",
+                                                         "nested": {"alpha-dev": ["Beta Land Trust", 5551234567]}})
+    found = scrubber.scrub_lesson(item)
+    assert item.extra["contact"] == "<email>" and found.refused == {}
+    found = scrubber.scrub_lesson(item, firm_terms=terms)
+    assert {"org alias", "client name"} <= set(found.refused)
+    deep = value = {}
+    for _ in range(12):
+        value["next"] = {}
+        value = value["next"]
+    with pytest.raises(LessonError, match="nested too deeply"):
+        scrubber.scrub_lesson(Lesson(id="L-20261114-0002", title="t", extra={"deep": deep}))
+
+
 @pytest.mark.parametrize("target,expected", [
     ("rule", "- When you deploy a flow for the client to the org (<org-id>): read the active version back after "
              "the deploy. (a deploy can leave the flow inactive.)"),
@@ -225,8 +333,10 @@ def test_harvest_never_fails_when_the_folder_is_missing_or_the_host_is_not_docum
     code, out, _ = run("harvest", "--host", "claude", "--dir", str(tmp_path / "nowhere"), client=None)
     assert code == 0 and out.startswith("No memory folder at ") and "--dir PATH" in out
     assert not (workspace / ".torque" / "lessons" / "harvest.json").exists()
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(tmp_path / "home"))
     code, out, _ = run("harvest", "--host", "antigravity", client=None)
-    assert code == 0 and ".agents/rules/" in out and "--dir PATH" in out
+    assert code == 0 and "none of its documented places exists" in out and "--dir PATH" in out
     assert run("harvest", "--host", "notepad", client=None)[0] == 2
     assert run("harvest", "--host", "claude", "--dir", str(tmp_path), "--since", "yesterday", client=None)[0] == 2
     # The documented Claude Code layout: ~/.claude/projects/<workspace path with separators as dashes>/memory.
@@ -241,6 +351,119 @@ def test_harvest_never_fails_when_the_folder_is_missing_or_the_host_is_not_docum
     assert report["dir"] == str(folder) and [row["name"] for row in report["files"]] == ["feedback_one"]
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     assert intake.host_memory_dir("codex", workspace)[0] == tmp_path / "codex" / "memories_v2"
+
+
+def test_harvest_says_when_codex_keeps_its_memory_in_a_database_and_does_not_open_it(run, tmp_path, monkeypatch):
+    codex = tmp_path / "codex"
+    codex.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex))
+    assert run("harvest", "--host", "codex", client=None)[1].startswith("No memory folder at ")
+    database = codex / "memories_1.sqlite"
+    database.write_bytes(b"not a database the test lets anyone open")
+    opened = []
+    real_open = open
+    monkeypatch.setattr("builtins.open", lambda path, *a, **k: (opened.append(str(path)), real_open(path, *a, **k))[1])
+    code, out, err = run("harvest", "--host", "codex", "--json", client=None)
+    report = json.loads(out)
+    assert code == 0 and report["found"] is False and report["files"] == []
+    assert report["note"].startswith("Codex keeps its memory here in a database file (memories_1.sqlite in ")
+    assert "does not read" in report["note"] and "--dir PATH" in report["note"] and len(report["note"].splitlines()) == 1
+    assert str(database) not in opened
+
+
+FOREIGN = "Beta-only synthetic note 7f3k"          # text that lives only in another engagement's folder
+
+
+def _plant_foreign_notes(workspace, tmp_path):
+    """Notes in every kind of place a harvest must not open while alpha is selected: another
+    client and an initiative of this workspace, and a client of a second workspace beside it
+    (one registered, one whose registration is missing)."""
+    for folder in (workspace / "clients" / "beta", workspace / "clients" / "beta" / "lessons",
+                   workspace / "initiatives" / "playbook"):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "private-memory.md").write_text(f"# {FOREIGN}\n\nbody\n", encoding="utf-8")
+    other = tmp_path / "ws-two"
+    (other / "clients" / "gamma").mkdir(parents=True)
+    (other / "clients" / "unregistered").mkdir(parents=True)
+    (other / "workspace.json").write_text(json.dumps({"name": "Second practice"}), encoding="utf-8")
+    (other / "clients" / "gamma" / "client.json").write_text(json.dumps({"name": "Gamma", "slug": "gamma"}),
+                                                            encoding="utf-8")
+    for folder in (other / "clients" / "gamma", other / "clients" / "unregistered"):
+        (folder / "notes.md").write_text(f"{FOREIGN}\n", encoding="utf-8")
+    (workspace / "clients" / "alpha" / "own-note.md").write_text("# Alpha's own synthetic note\n", encoding="utf-8")
+    (tmp_path / "loose-note.md").write_text("# A note outside every engagement\n", encoding="utf-8")
+    return other
+
+
+def _link_folder(link, target):
+    """A linked folder the way this system allows one: a symbolic link, or on Windows a
+    junction (which needs no privilege). None when neither can be made."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return "symbolic link"
+    except (OSError, NotImplementedError, AttributeError):
+        pass
+    if os.name == "nt":
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+            return "junction"
+        except (ImportError, OSError, AttributeError):
+            pass
+    return None
+
+
+@pytest.mark.parametrize("start", ["workspace root", "common parent"])
+def test_a_harvest_that_starts_above_the_clients_never_opens_another_engagements_files(run, workspace, tmp_path,
+                                                                                         start):
+    _plant_foreign_notes(workspace, tmp_path)
+    folder = workspace if start == "workspace root" else tmp_path
+    code, out, err = run("harvest", "--host", "codex", "--dir", str(folder), "--json")
+    report = json.loads(out)
+    assert code == 0 and report["found"]
+    assert FOREIGN not in out + err
+    names = {row["description"] for row in report["files"]}
+    assert "Alpha's own synthetic note" in names                         # the selected client's own note is listed
+    assert ("A note outside every engagement" in names) == (start == "common parent")
+    assert not any("beta" in row["path"] or "playbook" in row["path"] or "ws-two" + os.sep + "clients" in row["path"]
+                   for row in report["files"])
+    expected = 2 if start == "workspace root" else 4                    # beta, playbook (+ gamma, unregistered)
+    assert report["skipped"]["other engagements"] == expected
+    text = run("harvest", "--host", "codex", "--dir", str(folder), "--since", "2020-01-01")[1]
+    assert FOREIGN not in text and f"Not read: {expected} folder(s) or file(s) of another client" in text
+
+
+def test_a_harvest_never_follows_a_link_into_another_engagement(run, workspace, tmp_path):
+    _plant_foreign_notes(workspace, tmp_path)
+    memory = tmp_path / "host-memory"
+    memory.mkdir()
+    (memory / "feedback_one.md").write_text("# One ordinary note\n", encoding="utf-8")
+    kind = _link_folder(memory / "linked", workspace / "clients" / "beta")
+    if kind is None:
+        pytest.skip("this system cannot make a linked folder (no symbolic link privilege, no junction)")
+    # Whatever the walk does, the read rule alone already refuses the file behind the link.
+    alpha = storage.scopes_for(workspace / "clients" / "alpha")
+    assert alpha.foreign(memory / "linked" / "private-memory.md"), kind
+    code, out, err = run("harvest", "--host", "claude", "--dir", str(memory), "--json")
+    report = json.loads(out)
+    assert code == 0 and [row["description"] for row in report["files"]] == ["One ordinary note"]
+    assert FOREIGN not in out + err and report["skipped"]["links"] == 1, kind
+    # A linked file is not opened either, where the system can make one.
+    try:
+        os.symlink(workspace / "clients" / "beta" / "private-memory.md", memory / "linked-file.md")
+    except (OSError, NotImplementedError):
+        return
+    code, out, err = run("harvest", "--host", "claude", "--dir", str(memory), "--since", "2020-01-01", "--json")
+    assert code == 0 and FOREIGN not in out + err and json.loads(out)["skipped"]["links"] == 2
+
+
+def test_naming_another_engagements_folder_directly_is_refused(run, workspace, tmp_path):
+    other = _plant_foreign_notes(workspace, tmp_path)
+    for folder in (workspace / "clients" / "beta", workspace / "initiatives" / "playbook",
+                   other / "clients" / "gamma", other / "clients" / "unregistered"):
+        code, out, err = run("harvest", "--host", "codex", "--dir", str(folder))
+        assert code == 2 and "another client or initiative" in err and FOREIGN not in out + err, folder
+    assert not (workspace / ".torque" / "lessons" / "harvest.json").exists()
 
 
 def test_stats_count_what_was_captured_shown_and_judged(run, scopes):
@@ -380,3 +603,41 @@ def test_v1_json_lessons_import_once_and_the_old_files_stay(run, workspace, scop
     assert run("migrate", client=None)[0] == 2
     code, out, _ = run("migrate", client="beta")
     assert code == 0 and len(storage.load(scopes("beta"), only="client")) == 5
+
+
+def test_harvest_for_antigravity_reads_its_documented_places_and_leaves_out_what_torque_wrote(run, workspace,
+                                                                                              tmp_path, monkeypatch):
+    from importlib.resources import files
+    from torque import antigravity
+    home = tmp_path / "home"
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    surface = antigravity.surface(files("torque").joinpath("data"))
+    ours, (derived, _) = next((name, value) for name, value in surface.items() if name.startswith(".agents/rules/"))
+    (workspace / ours).parent.mkdir(parents=True)
+    (workspace / ours).write_text(derived, encoding="utf-8")                  # Torque's copy, unchanged
+    rules = workspace / ".agents" / "rules"
+    (rules / "learned-flows.md").write_text("---\ntrigger: always_on\ndescription: Read flows back after a deploy\n"
+                                            "---\nRead the active version back.\n", encoding="utf-8")
+    skill = workspace / ".agents" / "skills" / "learned-retrieve" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: learned-retrieve\ndescription: Retrieve before changing\n---\nSteps.\n",
+                     encoding="utf-8")
+    (skill.parent / "notes.md").write_text("Not a skill file.\n", encoding="utf-8")
+    (home / ".gemini" / "config" / "skills" / "global-one").mkdir(parents=True)
+    (home / ".gemini" / "GEMINI.md").write_text("# Always count rows before a load\n", encoding="utf-8")
+    (home / ".gemini" / "config" / "skills" / "global-one" / "SKILL.md").write_text(
+        "---\nname: global-one\ndescription: A global skill\n---\n", encoding="utf-8")
+    code, out, _ = run("harvest", "--host", "antigravity", "--json", client=None)
+    report = json.loads(out)
+    assert code == 0 and report["found"] and report["copied"] == 0
+    assert sorted(row["name"] for row in report["files"]) == ["GEMINI", "global-one", "learned-flows",
+                                                              "learned-retrieve"]
+    assert report["skipped"]["written by Torque"] == 1
+    assert [os.path.basename(place) for place in report["looked_at"]] == ["rules", "skills", "GEMINI.md", "skills"]
+    text = run("harvest", "--host", "antigravity", "--since", "2020-01-01", client=None)[1]
+    assert "4 file(s) changed in " in text and "Left out: 1 file(s) Torque wrote there, unchanged." in text
+    # Torque's copy edited by /learn is something learned: it is listed.
+    (workspace / ours).write_text(derived + "\nOne learned line.\n", encoding="utf-8")
+    again = json.loads(run("harvest", "--host", "antigravity", "--since", "2020-01-01", "--json", client=None)[1])
+    assert len(again["files"]) == 5 and again["skipped"]["written by Torque"] == 0

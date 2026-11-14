@@ -92,16 +92,43 @@ def later(day: str, days: int = REVIEW_DAYS) -> str:
 
 
 def new_id(day: str | None = None, taken=()) -> str:
-    """L-YYYYMMDD-xxxx: the date and a short random suffix, so two machines never collide."""
+    """L-YYYYMMDD-xxxxxxxx: the date and eight random hex characters (32 bits), so two
+    machines, or two scopes that are never read together, practically never collide.
+    `taken` holds the ids of every scope the caller can read; ids written by earlier
+    versions (four characters) stay valid."""
     stamp = (day or today()).replace("-", "")
     while True:
-        candidate = f"L-{stamp}-{secrets.token_hex(2)}"
+        candidate = f"L-{stamp}-{secrets.token_hex(4)}"
         if candidate not in taken:
             return candidate
 
 
+_SHORT = re.compile(r"[A-Z]-(?:\d{8}-)?(.+)\Z")
+
+
+def short_id(identifier: str) -> str:
+    """The part of an id a person types: after the date (L-20261114-c0de1234 -> c0de1234),
+    or after the letter for an id without one (A-deploy-order -> deploy-order)."""
+    match = _SHORT.match(identifier or "")
+    return match.group(1) if match else identifier or ""
+
+
 def admitted(source: str, evidence: list) -> bool:
     return source == "consultant" or any(entry.get("type") in ADMITTING for entry in evidence)
+
+
+def backed(lesson: "Lesson") -> bool:
+    """The record carries a basis for being shown: the consultant's word (source
+    consultant, or consultant-said evidence) or evidence that it holds."""
+    return lesson.source == "consultant" or any(entry.get("type") in REVIEW_ADMITTING for entry in lesson.evidence)
+
+
+def unbacked_active(lesson: "Lesson") -> bool:
+    """A workspace lesson whose file says `state: active` with no basis in its record
+    (edited by hand, or imported active from an earlier store). It counts as a candidate
+    until it is verified with a basis: never shown as trusted at the point of use. Shipped
+    platform lessons are reviewed in the repository and are not judged here."""
+    return lesson.state == "active" and lesson.scope != "platform" and lesson.origin == "file" and not backed(lesson)
 
 
 def one_line(text: object) -> str:

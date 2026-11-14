@@ -90,20 +90,25 @@ class Scopes:
         return " + ".join(parts + (["firm"] if self.workspace else []) + ["platform"])
 
     def foreign(self, path: str | os.PathLike) -> bool:
-        """True for a path inside the folder of a client or an initiative of this workspace
-        other than the one selected. No lesson command reads there, whatever path it is
-        given (`--path`, `--from-file`, `--body-file`, `--dir`, a proposal)."""
+        """True for a path inside the folder of a client or an initiative other than the
+        one selected: of this workspace, or of any other (a folder that holds a
+        `client.json` or a `binding.json`, or lies under a workspace's `clients/` or
+        `initiatives/`). The path is resolved first, so a link is judged by where it
+        leads. No lesson command reads there, whatever path it is given (`--path`,
+        `--from-file`, `--body-file`, `--dir`, a proposal, a file found by `harvest`)."""
         if self.workspace is None:
             return False
         try:
-            here = os.path.normcase(str(Path(path).expanduser().resolve()))
+            resolved = Path(path).expanduser().resolve()
         except (OSError, RuntimeError, ValueError):
             return True
+        here = os.path.normcase(str(resolved))
         own = os.path.normcase(str(self.engagement)) if self.engagement else None
         if own and (here == own or here.startswith(own + os.sep)):
             return False
-        return any(here.startswith(os.path.normcase(str(self.workspace / name)) + os.sep)
-                   for name in _FOLDERS.values())
+        if any(here.startswith(os.path.normcase(str(self.workspace / name)) + os.sep) for name in _FOLDERS.values()):
+            return True
+        return _in_an_engagement(resolved)
 
     def shown(self, path: Path) -> str:
         """A path for a message: relative to the workspace when it lies inside it."""
@@ -111,6 +116,24 @@ class Scopes:
             return path.relative_to(self.workspace).as_posix() if self.workspace else path.name
         except ValueError:
             return path.name
+
+
+_MARKERS = ("client.json", "binding.json")
+
+
+def _in_an_engagement(resolved: Path) -> bool:
+    """A resolved path that is, or lies inside, the folder of a client or an initiative of
+    any workspace: a folder holding its registration, or a workspace's `clients/` or
+    `initiatives/` folder above it. Only names are looked at; nothing is read."""
+    try:
+        for folder in (resolved, *resolved.parents):
+            if any((folder / marker).is_file() for marker in _MARKERS):
+                return True
+            if folder != resolved and folder.name in _FOLDERS.values() and (folder.parent / "workspace.json").is_file():
+                return True
+    except OSError:
+        return True
+    return False
 
 
 def scopes_for(folder: str | os.PathLike | None) -> Scopes:
@@ -201,12 +224,15 @@ def resolve(lessons: list[Lesson], wanted: str) -> Lesson:
     if len(tail) < 4:
         raise Ambiguous(f"`{wanted}` is too short: give the whole id or at least four characters after the L-",
                         [item for item in lessons if item.id.lower().startswith(wanted.lower())][:10])
+    # The whole id, a unique start of it, or the part after the date alone (c0de1234) or a unique start of that.
     matches = exact or [item for item in lessons
-                        if item.id.lower().startswith(wanted.lower()) or item.id[2:].lower().startswith(tail.lower())]
+                        if item.id.lower().startswith(wanted.lower()) or item.id[2:].lower().startswith(tail.lower())
+                        or record.short_id(item.id).lower().startswith(wanted.lower())]
     if not matches:
         raise NotFound(f"no lesson `{wanted}` among the lessons this command can read")
     if len(matches) > 1:
-        raise Ambiguous(f"`{wanted}` matches {len(matches)} lessons", matches[:10])
+        raise Ambiguous(f"`{wanted}` matches {len(matches)} lessons (the part of an id after its date is enough: "
+                        f"{record.short_id(matches[0].id)})", matches[:10])
     return matches[0]
 
 
@@ -221,6 +247,18 @@ def save(item: Lesson, folder: Path) -> Path:
 
 def taken_ids(folder: Path | None) -> set[str]:
     return {path.stem for path in folder.glob("*.md")} if folder and folder.is_dir() else set()
+
+
+def readable_ids(scopes: Scopes) -> set[str]:
+    """The ids a new lesson must not take: those in every folder this call can read (the
+    selected engagement's and the firm's), by file name and by the id each file holds.
+    Another client's folder is never looked into; a clash with it is left to the size of
+    the random part (new_id)."""
+    taken: set[str] = set()
+    for scope in ([scopes.kind] if scopes.engagement else []) + ["firm"]:
+        folder = scopes.folder(scope)
+        taken |= taken_ids(folder) | {item.id for item in read_folder(folder, scope, scopes)}
+    return taken
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -304,6 +342,22 @@ def log(root: Path | None, rows: list[dict], *, must: bool = False) -> bool:
         return False
     try:
         with transaction(root):
+            # One "shown" per lesson, session and surface: a session that prints a lesson again and again
+            # counts once. Without a session id every print counts (a print is what "shown" means).
+            once = lambda row: row.get("event") == "shown" and bool(row.get("session"))
+            if any(once(row) for row in rows):
+                key = lambda row: (row.get("id"), row.get("session"), row.get("via"))
+                seen = {key(row) for row in read_events(root) if once(row)}
+                kept = []
+                for row in rows:
+                    if once(row):
+                        if key(row) in seen:
+                            continue
+                        seen.add(key(row))
+                    kept.append(row)
+                rows = kept
+                if not rows:
+                    return True
             with open(events_path(root), "a", encoding="utf-8", newline="\n") as stream:
                 for row in rows:
                     stream.write(json.dumps({"at": now(), **row}, ensure_ascii=False) + "\n")
@@ -314,8 +368,26 @@ def log(root: Path | None, rows: list[dict], *, must: bool = False) -> bool:
         return False
 
 
-def read_events(root: Path | None) -> list[dict]:
-    """The events of one scope root, oldest first. A damaged line is skipped."""
+_EVENT_TEXTS = ("via", "session", "reason", "superseded_by", "note", "basis", "to")
+
+
+def _valid_event(row: object) -> bool:
+    """An event row every reader can use: a known event, a lesson id, a time that starts
+    with a date, and each optional field Torque writes a text (or absent)."""
+    if not isinstance(row, dict) or row.get("event") not in EVENTS:
+        return False
+    if not isinstance(row.get("id"), str) or not row["id"] or not isinstance(row.get("at"), str):
+        return False
+    try:
+        datetime.fromisoformat(row["at"][:10])
+    except ValueError:
+        return False
+    return all(row.get(name) is None or isinstance(row[name], str) for name in _EVENT_TEXTS)
+
+
+def read_events(root: Path | None, damaged: list | None = None) -> list[dict]:
+    """The events of one scope root, oldest first. A damaged row (not JSON, or a field of
+    the wrong type) is skipped and, when `damaged` is given, counted there."""
     if root is None:
         return []
     try:
@@ -323,20 +395,24 @@ def read_events(root: Path | None) -> list[dict]:
     except OSError:
         return []
     rows = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
         try:
             row = json.loads(line)
         except ValueError:
-            continue
-        if isinstance(row, dict) and row.get("event") in EVENTS and isinstance(row.get("id"), str) \
-                and isinstance(row.get("at"), str):
+            row = None
+        if _valid_event(row):
             rows.append(row)
+        elif damaged is not None:
+            damaged.append({"path": events_path(root).as_posix(), "line": number})
     return rows
 
 
-def events_for(scopes: Scopes) -> list[dict]:
+def events_for(scopes: Scopes, damaged: list | None = None) -> list[dict]:
     """The events this call may read: the workspace's and the selected engagement's."""
-    return sorted(read_events(scopes.workspace) + read_events(scopes.engagement), key=lambda row: row["at"])
+    return sorted(read_events(scopes.workspace, damaged) + read_events(scopes.engagement, damaged),
+                  key=lambda row: row["at"])
 
 
 @dataclass
