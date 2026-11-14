@@ -186,7 +186,10 @@ queued, `sf project deploy report --job-id ID --json` to a file.
 
 It reads what saved results look like in practice: a UTF-8 byte-order mark, UTF-16 from a Windows PowerShell
 redirect, CLI warning lines before the JSON (stderr merged into the file), text after it, and the result with
-or without the CLI's `{"status": ..., "result": ...}` envelope. Exit 0 when the file was read, whatever the
+or without the CLI's `{"status": ..., "result": ...}` envelope. A result with totals but no per-component
+list prints the totals it states (in total, deployed, failed; in `--json` under `declared`, with the other
+states `null`, never 0) and the `sf project deploy report` command that saves the full list;
+`--changed-from` refuses such a file (exit 2), since the change cannot be told from it. Exit 0 when the file was read, whatever the
 deploy outcome; exit 2 with the likely cause when it was not (no such file, empty, human-readable output, a
 CLI error instead of a result, JSON that is not a deploy result). No org call.
 

@@ -91,7 +91,8 @@ def _metadata(parsed, out, err) -> int:
 def result_json(r) -> dict:
     return {"schema_version": 1, "command": "torque check result", "file": r.path, "id": r.id,
             "status": r.status, "success": r.success, "done": r.done, "check_only": r.check_only,
-            "target_org": r.target_org or None, "counts": r.counts(),
+            "target_org": r.target_org or None, "counts": r.counts(), "declared": r.declared,
+            "component_detail": r.detail,
             "component_failures": [{"type": f.type, "name": f.name, "problem": f.problem,
                                     "problem_type": f.problem_type, "line": f.line, "column": f.column,
                                     "file": f.file_path} for f in r.failures],

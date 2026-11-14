@@ -81,9 +81,17 @@ def result_text(r) -> str:
     c = r.counts()
     kind = "check-only (validate or dry-run)" if r.check_only else ("real deploy" if r.check_only is False
                                                                     else "check-only or real: not stated")
+    if None in c.values():
+        d = r.declared
+        stated = ", ".join(f"{v} {k}" for k, v in (("in total", d.get("total")), ("deployed", d.get("deployed")),
+                                                     ("failed", d.get("failed"))) if v is not None)
+        components = ("Components: the file has no per-component list" + (f"; it states {stated}" if stated else "")
+                      + f". For the list, save `sf project deploy report --job-id {r.id or 'ID'} --target-org ALIAS "
+                      "--json` to a file and read that.")
+    else:
+        components = "Components: " + ", ".join(f"{v} {k}" for k, v in c.items()) + "."
     lines = [f"Deploy {r.id or '(no id in the file)'}: {r.status or 'status not stated'}, {kind}.",
-             f"Target org: {r.target_org or 'not stated in the file'}.",
-             "Components: " + ", ".join(f"{v} {k}" for k, v in c.items()) + "."]
+             f"Target org: {r.target_org or 'not stated in the file'}.", components]
     if r.read_notes:
         lines.append("Read despite: " + "; ".join(r.read_notes) + ".")
     if r.cli_error:
@@ -112,6 +120,9 @@ def next_step(r) -> str:
                 f"{r.id or 'ID'} --target-org ALIAS --json` to a file, then rerun `torque check result` on it.")
     failed = r.success is False or r.status in ("Failed", "SucceededPartial", "Canceled") or r.failures \
         or r.test_failures
+    if failed and not r.failures and not r.test_failures and not r.detail:
+        return (f"the file does not list what failed; save `sf project deploy report --job-id {r.id or 'ID'} "
+                "--target-org ALIAS --json` to a file, then rerun `torque check result` on it.")
     if failed and r.check_only:
         return "fix the failures above and validate again (`sf project deploy start --dry-run --json` to a file)."
     if failed:
