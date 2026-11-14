@@ -128,7 +128,8 @@ you set it otherwise.
 
 Its findings are merged under their own ids (`code-analyzer:ENGINE:RULE`, severity 1 to 2 error, 3 warning,
 4 to 5 note). Where a Torque rule reports the same problem on the same file and element, it is reported once,
-as Torque's finding with the analyzer in `confirmed_by`:
+as Torque's finding with the analyzer in `confirmed_by`, at the higher of the two severities (`confirmed_by`
+then says "severity N, so error"), and `--fail-on` reads that severity:
 
 | Code Analyzer rule | Torque rule |
 |---|---|

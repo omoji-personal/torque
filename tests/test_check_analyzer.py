@@ -57,13 +57,54 @@ def test_analyzer_findings_appear_once(tmp_path):
     by_rule = {}
     for f in r["findings"]:
         by_rule.setdefault(f["rule"], []).append(f)
-    assert by_rule["flow.no-fault-path"][0]["confirmed_by"] == ["code-analyzer flow:MissingFaultHandler"]
+    # the analyzer rated these two 2 (error), above Torque's warning and note: the one finding shown keeps error
+    assert by_rule["flow.no-fault-path"][0]["confirmed_by"] == ["code-analyzer flow:MissingFaultHandler (severity 2, "
+                                                                "so error)"]
+    assert by_rule["flow.no-fault-path"][0]["severity"] == "error"
     assert by_rule["flow.hard-coded-id"][0]["confirmed_by"] == ["code-analyzer flow:HardcodedId"]
-    assert by_rule["flow.api-version-behind"][0]["confirmed_by"] == ["code-analyzer regex:AvoidOldSalesforceApiVersions"]
+    assert by_rule["flow.hard-coded-id"][0]["severity"] == "warning"
+    assert by_rule["flow.api-version-behind"][0]["confirmed_by"] == ["code-analyzer regex:AvoidOldSalesforceApiVersions "
+                                                                     "(severity 2, so error)"]
     assert not any(r_.startswith("code-analyzer:flow:Missing") or r_.endswith("HardcodedId") for r_ in by_rule)
     unused = by_rule["code-analyzer:flow:UnusedResource"]
     assert len(unused) == 1 and unused[0]["source"] == "code-analyzer" and unused[0]["severity"] == "note"
     assert "ran with rule selectors Recommended + flow on 1 file(s)" in a["summary"]
+
+
+SEE_ALL = "@isTest(SeeAllData=true) private class ReadEverythingTest { @isTest static void run() { System.assert(true); } }"
+
+
+def see_all_data(t, severity):
+    path = t.apex("ReadEverythingTest", SEE_ALL)
+
+    def runner(workspace, output, **kw):
+        return {"runDir": str(t.root), "violations": [{"engine": "pmd", "rule": "ApexUnitTestShouldNotUseSeeAllDataTrue",
+                                                       "severity": severity, "message": "Avoid SeeAllData=true",
+                                                       "locations": [{"file": str(path), "startLine": 1}]}]}
+    return runner
+
+
+@pytest.mark.parametrize("severity,expected", [(1, "error"), (2, "error"), (3, "warning"), (4, "warning"),
+                                               (5, "warning")])
+def test_a_merged_finding_keeps_the_higher_severity(tmp_path, severity, expected):
+    """Review R2-C06: Torque's warning and the analyzer's finding for the same problem are shown once, at the
+    higher of the two severities. The analyzer's number is what its report says, after any severity override in
+    code-analyzer.yml; Torque reads 1-2 as error, 3 warning, 4-5 note."""
+    t = Tree(tmp_path)
+    r = t.check(analyzer_mode="auto", runner=see_all_data(t, severity))
+    [f] = [f for f in r["findings"] if f["rule"] == "code.see-all-data"]
+    assert f["severity"] == expected and r["analyzer"]["reported_once_with_torque"] == 1
+    raised = f"code-analyzer pmd:ApexUnitTestShouldNotUseSeeAllDataTrue (severity {severity}, so error)"
+    assert f["confirmed_by"] == ([raised] if expected == "error" else
+                                 ["code-analyzer pmd:ApexUnitTestShouldNotUseSeeAllDataTrue"])
+
+
+def test_fail_on_error_survives_the_merge(tmp_path, monkeypatch):
+    t = Tree(tmp_path)
+    monkeypatch.setattr(adapter, "run_code_analyzer", see_all_data(t, 2))
+    from torque import cli
+    code = cli.main(["check", "metadata", str(t.root), "--analyzer", "required", "--fail-on", "error", "--json"])
+    assert code == 1
 
 
 def test_analyzer_absent_is_one_line_and_no_claim(tmp_path):
