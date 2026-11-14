@@ -296,6 +296,88 @@ def test_notes_over_the_budget_are_all_listed_the_cut_ones_marked_and_the_total_
     assert sum(len(text) for text in small["notes"].values()) <= 1000
 
 
+# ---- step 4: hand-off for the task in hand
+
+def test_handoff_since_renders_that_window_current_state_first_and_re_export_replaces_the_file(firm):
+    ids = write_records(firm, 23, incomplete=(2,))
+    proof = firm / "clients/alpha/artifacts/proof.txt"
+    proof.write_text("p", encoding="utf-8")
+    latest = json.loads(add(firm, "--summary", "Latest: checked as staff", "--status", "verified", "--check",
+                            "rendered", "--as-user", "staff user", "--evidence", proof, "--json")[1])
+    code, body, err = invoke("handoff", "--workspace", firm, "--client", "alpha", "--since", "2026-10-22T00:00Z")
+    assert code == 0, err
+    assert "\nrecord 21\n" in body and "\nrecord 22\n" in body and "Latest: checked as staff" in body
+    assert "\nrecord 20\n" not in body and "\nrecord 3\n" not in body
+    assert body.index("## Where things stand") < body.index("## Lessons") < body.index("## History")
+    assert body.index("Latest: checked as staff") < body.index("## History")
+    assert "Open, not shown: 1 older record(s)" in body and "--all" in body
+    assert "Evidence reference: clients/alpha/artifacts/proof.txt (in this workspace)" in body
+    assert str(firm) not in body
+    history = body.split("## History", 1)[1]
+    assert history.index("Latest: checked as staff") < history.index("\nrecord 22\n") < history.index("\nrecord 21\n")
+    target = firm / "clients/alpha/artifacts/handoff.md"
+    assert invoke("handoff", "--workspace", firm, "--client", "alpha", "--output", target)[0] == 0
+    first = target.read_text(encoding="utf-8")
+    add(firm, "--summary", "One more record")
+    code, out, err = invoke("handoff", "--workspace", firm, "--client", "alpha", "--output", target)
+    assert code == 0, err
+    assert "One more record" in target.read_text(encoding="utf-8")
+    assert (firm / "clients/alpha/artifacts/handoff.md.bak").read_text(encoding="utf-8") == first
+    assert "handoff.md.bak" in out
+    assert not [p for p in target.parent.iterdir() if p.name.startswith(".torque-")]
+    target.write_text("my own edits", encoding="utf-8")
+    code, out, _ = invoke("handoff", "--workspace", firm, "--client", "alpha", "--output", target)
+    assert code == 0 and "was edited since Torque wrote it" in out and "--force" in out
+    assert target.read_text(encoding="utf-8") == "my own edits"
+    assert "One more record" in (target.parent / "handoff.md.new").read_text(encoding="utf-8")
+    assert invoke("handoff", "--workspace", firm, "--client", "alpha", "--output", target, "--force")[0] == 0
+    assert (target.parent / "handoff.md.bak").read_text(encoding="utf-8") == "my own edits"
+    assert "One more record" in target.read_text(encoding="utf-8")
+    full = invoke("handoff", "--workspace", firm, "--client", "alpha", "--all")[1]
+    assert all(f"record {n}\n" in full for n in range(23)) and "the full journal" in full
+
+
+def test_handoff_json_and_the_change_filter(firm):
+    write_records(firm, 3)
+    created = json.loads(invoke("change", "create", "--workspace", firm, "--client", "alpha", "--title", "Contact pref",
+                                "--outcome", "Staff record a preference", "--criterion", "Staff can save it",
+                                "--json")[1])
+    json.loads(invoke("change", "create", "--workspace", firm, "--client", "alpha", "--title", "Other change",
+                      "--outcome", "Something else", "--json")[1])
+    code, out, err = invoke("handoff", "--workspace", firm, "--client", "alpha", "--format", "json")
+    assert code == 0, err
+    data = json.loads(out)
+    assert data["schema"] == "torque.handoff/1" and data["sessions_total"] == 3 and len(data["changes"]) == 2
+    assert str(firm) not in out
+    only = json.loads(invoke("handoff", "--workspace", firm, "--client", "alpha", "--change", created["id"],
+                             "--json")[1])
+    assert [c["id"] for c in only["changes"]] == [created["id"]] and only["sessions"] == []
+    text = invoke("handoff", "--workspace", firm, "--client", "alpha", "--change", created["id"])[1]
+    assert "Contact pref" in text and "Other change" not in text
+    target = firm / "clients/alpha/artifacts/handoff.json"
+    report = json.loads(invoke("handoff", "--workspace", firm, "--client", "alpha", "--format", "json", "--output",
+                               target, "--json")[1])
+    assert report["replaced"] is False and json.loads(target.read_text(encoding="utf-8"))["schema"] == "torque.handoff/1"
+    assert invoke("handoff", "--workspace", firm, "--client", "alpha", "--change", "chg-000000000000")[0] == 2
+
+
+def test_change_handoff_names_evidence_relative_to_the_workspace_and_can_be_re_exported(firm):
+    created = json.loads(invoke("change", "create", "--workspace", firm, "--client", "alpha", "--title", "T",
+                                "--outcome", "O", "--criterion", "C", "--json")[1])
+    proof = firm / "clients/alpha/artifacts/run.txt"
+    proof.write_text("ran", encoding="utf-8")
+    assert invoke("change", "check", created["id"], "--workspace", firm, "--client", "alpha", "--criterion", "AC1",
+                  "--result", "pass", "--summary", "ran", "--evidence", proof)[0] == 0
+    target = firm / "clients/alpha/artifacts/change.md"
+    for _ in range(2):
+        code, _, err = invoke("change", "handoff", created["id"], "--workspace", firm, "--client", "alpha",
+                              "--output", target)
+        assert code == 0, err
+    text = target.read_text(encoding="utf-8")
+    assert f"`clients/alpha/changes/{created['id']}/evidence/" in text and str(firm) not in text
+    assert (target.parent / "change.md.bak").is_file()
+
+
 def test_learned_keeps_working_with_input(firm):
     document = firm / "record.json"
     document.write_text(json.dumps({"summary": "Fixed the query", "status": "executed",

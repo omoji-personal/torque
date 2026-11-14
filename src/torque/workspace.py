@@ -1784,47 +1784,190 @@ def get_context(workspace: str | Path, client_name: str, *, kind: str = "client"
             "evidence_note": "Journal statuses are user-reported, not independent verification."}
 
 
-def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "client") -> str:
-    """The engagement's handoff. A record that could not be read is named at the top,
-    so the document says it is incomplete instead of leaving the record out silently."""
+HANDOFF_SCHEMA = "torque.handoff/1"
+HANDOFF_STATEMENT = ("Statuses below were supplied by the user. This journal did not independently "
+                     "verify execution or outcomes.")
+
+
+def _session_view(entry: dict) -> dict:
+    """A session record as a handoff carries it: no absolute path into the author's
+    folders (evidence inside the workspace is named relative to it)."""
+    view = {key: entry[key] for key in ("id", "created_at", "status", "summary")}
+    for key in ("check", "accepted_by", "corrects", "corrected_by", "change"):
+        if entry.get(key):
+            view[key] = entry[key]
+    view["evidence_integrity"] = entry.get("evidence_integrity", "not_supplied")
+    view["evidence"] = [dict(item) for item in entry.get("evidence_items", [])]
+    return view
+
+
+def handoff_data(workspace: str | Path, client_name: str, *, kind: str = "client",
+                 limit: int | None = SESSION_WINDOW, since: datetime | None = None,
+                 change: str | None = None, everything: bool = False) -> dict:
+    """The handoff for the task in hand: where things stand first, then lessons, notes,
+    changes and the history, newest first. By default the 20 newest records and the
+    notes within NOTES_BUDGET; `since` and `limit` narrow it, `change` keeps only that
+    change and the sessions linked to it, `everything` is the full journal. A record that
+    could not be read is named, so the document says it is incomplete."""
     client_root, firm, client = load_engagement(workspace, client_name, kind)
-    notes, _ = _context_notes(client_root, None)
+    if limit is not None and limit < 1:
+        raise WorkspaceError("--limit must be 1 or more; use --all for every record")
+    if everything:
+        limit, since = None, None
+    from .changes import get_change, list_changes, load_change
     problems: list[dict] = []
-    entries = list_sessions(workspace, client_name, limit=None, kind=kind, problems=problems)
-    from .changes import list_changes, render_change
-    rendered = [render_change(workspace, client_name, change["id"], engagement_kind=kind, problems=problems).rstrip()
-                for change in list_changes(workspace, client_name, engagement_kind=kind, problems=problems)]
-    lines = [f"# Handoff: {client['name']}", "", f"Workspace: {firm['name']}",
-             f"Profile: {firm['profile']}",
-             f"Configured org: {client.get('org') or 'not specified'}" if kind == "client"
-             else f"Initiative state: {client['state']}",
-             "", "Statuses below were supplied by the user. This journal did not independently "
-             "verify execution or outcomes.", ""]
-    if problems:
-        lines += ["## Records not shown", "", *record_problem_lines(problems), ""]
+    if change is not None:
+        load_change(workspace, client_name, change, engagement_kind=kind)
+        change_ids = [change]
+    else:
+        change_ids = [item["id"] for item in list_changes(workspace, client_name, engagement_kind=kind,
+                                                          problems=problems)]
+    changes = []
+    for identifier in change_ids:
+        item = get_change(workspace, client_name, identifier, engagement_kind=kind, problems=problems)
+        changes.append({"id": item["id"], "title": item["title"], "outcome": item["outcome"],
+                        "criteria": [{key: c[key] for key in ("id", "text", "reported_result")} for c in item["criteria"]],
+                        "assessment": item["assessment"], "next_steps": item["next_steps"]})
+    notes, note_files = _context_notes(client_root, None if everything else NOTES_BUDGET)
+    _, records = read_sessions(workspace, client_name, kind=kind, problems=problems)
+    if change is not None:
+        records = [entry for entry in records if entry.get("change") == change]
+    window = records if since is None else [e for e in records if datetime.fromisoformat(e["created_at"]) >= since]
+    sessions = [_session_view(entry) for entry in with_evidence(client_root, window, limit, problems)]
     # The commands name the workspace as `.`: a handoff does not carry the author's folder names.
-    lines += ["## Lessons", "", "```text", *lesson_lines(lessons_context(".", client_root, kind), kind), "```", ""]
-    if notes:
-        lines += ["## Working context", ""]
-        for title, contents in notes.items():
+    more = command_text(["torque", "handoff", "--workspace", ".", "--" + kind, client["slug"],
+                         *(["--change", change] if change else []), "--all"])
+    truncated = len(sessions) < len(records)
+    return {"schema": HANDOFF_SCHEMA, "title": client["name"], kind: client["slug"],
+            "workspace": firm["name"], "profile": firm["profile"],
+            **({"configured_org": client.get("org")} if kind == "client" else {"initiative_state": client["state"]}),
+            "statement": HANDOFF_STATEMENT,
+            "window": {"limit": limit, "since": since.isoformat() if since else None, "change": change,
+                       "all": everything},
+            "where_things_stand": _standing(records, sessions, more),
+            "sessions_total": len(records), "sessions_returned": len(sessions), "sessions_truncated": truncated,
+            "more_command": more if truncated else None, "record_problems": problems,
+            "lessons": lessons_context(".", client_root, kind),
+            "notes_files": note_files, "notes_budget": None if everything else NOTES_BUDGET, "notes": notes,
+            "changes": changes, "sessions": sessions}
+
+
+def render_handoff_markdown(data: dict, workspace: str | Path, client_name: str, *, kind: str = "client") -> str:
+    """The handoff as Markdown: current state first, history after."""
+    lines = [f"# Handoff: {data['title']}", "", f"Workspace: {data['workspace']}", f"Profile: {data['profile']}",
+             f"Configured org: {data.get('configured_org') or 'not specified'}" if kind == "client"
+             else f"Initiative state: {data['initiative_state']}",
+             "", data["statement"], ""]
+    window = data["window"]
+    scope = ("the full journal" if window["all"] else
+             ", ".join(part for part in (f"change {window['change']}" if window["change"] else "",
+                                         f"since {window['since']}" if window["since"] else "",
+                                         f"the {window['limit']} newest records" if window["limit"] else "") if part))
+    lines += [f"Shown: {scope}; {data['sessions_returned']} of {data['sessions_total']} session record(s)"
+              + (f". The rest: `{data['more_command']}`" if data["sessions_truncated"] else "") + ".", ""]
+    if data["record_problems"]:
+        lines += ["## Records not shown", "", *record_problem_lines(data["record_problems"]), ""]
+    lines += ["## Where things stand", "", *standing_lines(data)[1:], ""]
+    lines += ["## Lessons", "", "```text", *lesson_lines(data["lessons"], kind), "```", ""]
+    if data["notes"] or data["notes_files"]:
+        lines += ["## Working context", "", *note_file_lines(data["notes_files"], data["notes_budget"]), ""]
+        for title, contents in data["notes"].items():
             lines += [f"### {title}", "", contents.rstrip(), ""]
-    if not entries:
-        lines.append(f"No session entries have been recorded for this {kind}.")
-    for entry in reversed(entries):
-        lines += [f"## {entry['created_at']} — {entry['status']} (user-reported)", "",
+    from .changes import render_change
+    for item in data["changes"]:
+        lines += ["---", "", render_change(workspace, client_name, item["id"], engagement_kind=kind,
+                                           problems=[]).rstrip(), ""]
+    lines += ["## History", ""]
+    if not data["sessions"]:
+        lines.append(f"No session entries have been recorded for this {kind}"
+                     + (" in this window." if data["sessions_total"] else "."))
+    for entry in data["sessions"]:
+        lines += [f"### {entry['created_at']} — {entry['status']} (user-reported)", "",
                   entry["summary"], "", f"Entry: {entry['id']}"]
         lines += session_link_lines(entry)
-        # Where each file is now: relative to the workspace inside it, so the handoff
-        # does not carry the author's own folder names.
-        for item in entry.get("evidence_items", []):
+        # Where each file is now: relative to the workspace inside it.
+        for item in entry["evidence"]:
             lines += [f"Evidence reference: {item['location']} ({item['where']})",
                       f"Recorded SHA-256: {item['sha256']}",
                       f"Evidence integrity: {item['integrity'].replace('_', ' ')}"]
-        if entry.get("evidence_items"):
-            lines.append("The reference was hashed when recorded; its content was not assessed.")
-        else:
-            lines.append("Evidence reference: none supplied.")
+        lines.append("The reference was hashed when recorded; its content was not assessed."
+                     if entry["evidence"] else "Evidence reference: none supplied.")
         lines.append("")
-    for text in rendered:
-        lines += ["", "---", "", text]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "client", **window) -> str:
+    """The engagement's handoff as Markdown (handoff_data takes the window options)."""
+    return render_handoff_markdown(handoff_data(workspace, client_name, kind=kind, **window),
+                                   workspace, client_name, kind=kind)
+
+
+EXPORTS = "state/exports.json"
+
+
+def _export_key(path: Path) -> str:
+    return os.path.normcase(str(path.resolve()))
+
+
+def replace_output(path: Path, text: str, engagement: Path, *, force: bool = False) -> dict:
+    """Write an export the user names again and again (a handoff). A new file is
+    published whole. An existing file is replaced, through a temporary file and a
+    rename, only when it is still exactly what Torque last wrote there (its SHA-256 is
+    kept in the engagement's state/exports.json), or with `force`; its previous content
+    is kept as PATH.bak. A file someone edited, or one Torque did not write, is left as
+    it is and the new render is written to PATH.new. Returns where it was written
+    (`written`), the backup (`backup`) and whether an edited file was kept (`kept`)."""
+    for candidate in (path, path.with_name(path.name + ".bak"), path.with_name(path.name + ".new")):
+        if candidate.is_symlink() or (candidate.exists() and not candidate.is_file()):
+            raise WorkspaceError(f"{candidate} is not a plain file; name another output, or move it away")
+    if not path.parent.is_dir():
+        raise WorkspaceError(f"output directory does not exist: {path.parent}")
+    record_path = _inside(engagement, engagement / EXPORTS)
+    try:
+        written = _read_json(record_path) if record_path.is_file() else {}
+    except WorkspaceError:
+        written = {}
+    result = {"written": path, "backup": None, "kept": False}
+    if path.exists():
+        current = _file_hash(path)
+        if not force and written.get(_export_key(path)) != current:
+            target = path.with_name(path.name + ".new")
+            _atomic_replace_text(target, text)
+            return {"written": target, "backup": None, "kept": True}
+        backup = path.with_name(path.name + ".bak")
+        fd, temporary = _temporary_file(path.parent, False)
+        try:
+            with os.fdopen(fd, "wb") as stream, open(path, "rb") as source:
+                shutil.copyfileobj(source, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, backup)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+        _atomic_replace_text(path, text)
+        result["backup"] = backup
+    else:
+        atomic_write_new(path, text)
+    written[_export_key(path)] = _file_hash(path)
+    record_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _atomic_replace_text(record_path, json.dumps(written, indent=2) + "\n", private=True)
+    return result
+
+
+def output_lines(result: dict) -> list[str]:
+    """What an export did, for the terminal."""
+    if result["kept"]:
+        original = result["written"].with_name(result["written"].name[:-len(".new")])
+        return [str(result["written"]),
+                f"{original} was edited since Torque wrote it (or Torque did not write it), so it is kept as it "
+                f"is; the new render is in {result['written']}. Compare them, or replace it with --force (the "
+                "previous content is then kept as .bak)."]
+    lines = [str(result["written"])]
+    if result["backup"]:
+        lines.append(f"Replaced the earlier file; its previous content is in {result['backup']}")
+    return lines
+
+
+def output_report(result: dict) -> dict:
+    return {"output": str(result["written"]), "replaced": result["backup"] is not None,
+            "backup": str(result["backup"]) if result["backup"] else None, "kept_edited_file": result["kept"]}

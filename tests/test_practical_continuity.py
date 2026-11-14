@@ -149,8 +149,10 @@ def test_handoff_includes_same_bounded_notes_as_context_without_sibling_data(fir
     target = alpha / 'artifacts/handoff.md'
     assert invoke('handoff', '--workspace', str(root), '--client', 'Alpha', '--output', str(target))[0] == 0
     body = target.read_text(encoding="utf-8")
-    for text in ws.get_context(root, 'Alpha', max_chars=None)['notes'].values(): assert text.rstrip() in body
-    assert '[truncated at 65,536 characters]' in body and 'SYNTHETIC_TRUNCATED_TAIL' not in body
+    for text in ws.get_context(root, 'Alpha')['notes'].values(): assert text.rstrip() in body
+    assert 'read the rest in clients/alpha/context/long.md]' in body and 'SYNTHETIC_TRUNCATED_TAIL' not in body
+    full = ws.render_handoff(root, 'Alpha', everything=True)
+    assert '[truncated at 65,536 characters]' in full and 'SYNTHETIC_TRUNCATED_TAIL' not in full
     assert 'SYNTHETIC_BETA_PRIVATE' not in body
     assert all(x in body for x in ('SYNTHETIC_JOURNAL', 'SYNTHETIC_CHANGE_OUTCOME', 'SYNTHETIC_REPORTED_FAILURE', 'user-reported', 'operator-reported'))
 
@@ -164,7 +166,7 @@ def test_multibyte_context_and_handoff_use_character_limit_without_sibling_data(
     notes = ws.get_context(root, 'Alpha', max_chars=None)['notes']
     assert notes['Client context: multibyte.md'] == contents + '\n' + marker
     assert len(contents.encode('utf-8')) > 65536
-    body = ws.render_handoff(root, 'Alpha')
+    body = ws.render_handoff(root, 'Alpha', everything=True)
     assert contents + '\n' + marker in body
     assert 'SYNTHETIC_MULTIBYTE_TAIL' not in body and 'SYNTHETIC_BETA_PRIVATE' not in body
     assert '64 KiB' not in body

@@ -495,8 +495,11 @@ def render_change(workspace: str | Path, client: str, identifier: str, *, engage
                 lines += [f"  {event['criterion']}: {event['result']} (operator-reported)"]
             evidence = event.get("evidence")
             if evidence:
-                path = Path(item["change_root"]).joinpath(*_evidence_path(evidence["path"]).parts)
-                lines += [f"  Evidence: [{evidence['name']}](<{path}>) ({event['evidence_integrity']})",
+                # Relative to the workspace, so a handoff carries no folder names of its author.
+                change_root = Path(item["change_root"])
+                path = PurePosixPath(*change_root.relative_to(_workspace_of(change_root)).parts,
+                                     *_evidence_path(evidence["path"]).parts)
+                lines += [f"  Evidence: {evidence['name']}, `{path}` ({event['evidence_integrity']})",
                           f"  SHA-256: `{evidence['sha256']}`"]
     approvals = [e for e in item["events"] if e["kind"] in APPROVAL_KINDS or e["kind"] == BEFORE_STATE_KIND]
     if approvals:

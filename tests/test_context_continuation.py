@@ -134,8 +134,15 @@ def test_explicit_new_exports_work_in_selected_client_firm_and_outside(engagemen
     assert code == 0 and error == ""
     assert "ALPHA_EXPORT_SENTINEL" in output.read_text(encoding="utf-8")
     before = output.read_bytes()
-    assert invoke(*command)[0] == 2
-    assert output.read_bytes() == before
+    # Run again, the export Torque wrote is replaced and the previous one kept beside it.
+    assert invoke(*command)[0] == 0
+    assert output.with_name("handoff.md.bak").read_bytes() == before
+    # A file a person edited is not replaced: the new render goes next to it.
+    output.write_text("edited by hand", encoding="utf-8")
+    code, stdout, error = invoke(*command)
+    assert code == 0 and output.read_text(encoding="utf-8") == "edited by hand"
+    assert "ALPHA_EXPORT_SENTINEL" in output.with_name("handoff.md.new").read_text(encoding="utf-8")
+    assert "edited" in stdout
 
 
 def project_layout(root, pyproject):

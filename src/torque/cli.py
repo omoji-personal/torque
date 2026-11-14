@@ -228,7 +228,17 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("entry_id")
     handoff = sub.add_parser("handoff", help="render a handoff from the actual selected-client journal")
     _client_args(handoff)
-    handoff.add_argument("--output", help="write a new file; otherwise print Markdown")
+    _window_args(handoff)
+    handoff.add_argument("--change", metavar="ID", help="only this change and the session records linked to it")
+    handoff.add_argument("--format", choices=("markdown", "json"), default="markdown",
+                         help="the document's format (default markdown)")
+    handoff.add_argument("--output", metavar="FILE",
+                         help="write the document to FILE; run again, it replaces the file and keeps the previous "
+                              "one as FILE.bak. Otherwise print it")
+    handoff.add_argument("--force", action="store_true",
+                         help="with --output: replace the file even when it was edited since Torque wrote it")
+    handoff.add_argument("--json", action="store_true",
+                         help="report as JSON: with --output, where it was written; without, the document as JSON")
     doctor = sub.add_parser("doctor", help="inspect local dependencies and config; makes no org calls")
     doctor.add_argument("--workspace")
     doctor.add_argument("--client")
@@ -266,7 +276,10 @@ def build_parser() -> argparse.ArgumentParser:
             cp.add_argument("--component", action="append", default=[])
             cp.add_argument("--manifest")
         elif action == "handoff":
-            cp.add_argument("--output", help="write a new report file")
+            cp.add_argument("--output", help="write the report to a file; run again, it replaces the file it wrote "
+                                             "(keeping FILE.bak), and leaves an edited one as it is (writing FILE.new)")
+            cp.add_argument("--force", action="store_true",
+                            help="with --output: replace the file even when it was edited since Torque wrote it")
     workflows = sub.add_parser("workflows", help="discover bundled conversational and native workflows")
     workflows.add_argument("action", nargs="?", choices=("list", "show"), default="list")
     workflows.add_argument("name", nargs="?")
@@ -619,14 +632,19 @@ def _change(args: argparse.Namespace) -> int:
             if problems:
                 text += "\n" + "\n".join(["## Records not shown", "", *ws.record_problem_lines(problems)]) + "\n"
             if action == "handoff" and args.output:
-                ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind), text)
-                print(args.output)
+                written = ws.replace_output(ws.client_output_path(*common, args.output, kind=kind), text,
+                                            ws.load_engagement(*common, kind)[0], force=args.force)
+                print("\n".join(ws.output_lines(written)))
             else:
                 print(text, end="")
             return 0
         if action == "handoff" and args.output:
-            ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind),
-                                json.dumps(result, indent=2) + "\n")
+            written = ws.replace_output(ws.client_output_path(*common, args.output, kind=kind),
+                                        json.dumps(result, indent=2) + "\n", ws.load_engagement(*common, kind)[0],
+                                        force=args.force)
+            result = {**result, "export": ws.output_report(written)}
+            if written["kept"]:
+                result["export"]["message"] = ws.output_lines(written)[1]
     elif action == "note":
         result = changes.add_note(*common, args.change_id, args.text, args.kind, engagement_kind=kind)
     elif action == "check":
@@ -2048,11 +2066,19 @@ def main(argv: list[str] | None = None) -> int:
                             print(line)
         elif parsed.command == "handoff":
             name, kind = _scope(parsed)
-            body = ws.render_handoff(parsed.workspace, name, kind=kind)
+            data = ws.handoff_data(parsed.workspace, name, kind=kind, change=parsed.change,
+                                   everything=parsed.everything, **_window(parsed))
+            as_json = parsed.format == "json" or (parsed.json and not parsed.output)
+            body = (json.dumps(data, indent=2, ensure_ascii=False) + "\n" if as_json
+                    else ws.render_handoff_markdown(data, parsed.workspace, name, kind=kind))
             if parsed.output:
                 output = ws.client_output_path(parsed.workspace, name, parsed.output, kind=kind)
-                ws.atomic_write_new(output, body)
-                print(output)
+                engagement = ws.load_engagement(parsed.workspace, name, kind)[0]
+                result = ws.replace_output(output, body, engagement, force=parsed.force)
+                if parsed.json:
+                    _print_json({**ws.output_report(result), "format": "json" if as_json else "markdown"})
+                else:
+                    print("\n".join(ws.output_lines(result)))
             else:
                 print(body, end="")
         elif parsed.command == "doctor":

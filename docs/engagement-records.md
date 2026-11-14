@@ -129,9 +129,25 @@ Context includes a compact continuation summary; `change show --json` exposes th
 full selected record. The focused handoff includes outcome, criteria, decisions,
 metadata observations, evidence and next actions. The client handoff also includes
 its session journal and the same bounded firm/client notes shown during context
-resumption. Notes longer than 65,536 characters retain an explicit truncation notice; sibling-client notes
-are excluded. Use `--output NEW_FILE` to save a new report. Review private
-references before sending a report to a client; saving it does not send anything.
+resumption. Sibling-client notes are excluded.
+
+`torque handoff` is written for the task in hand: where things stand first (latest
+record, open items, open criteria, corrections), then lessons, notes, the changes and the
+history, newest first. By default it holds the 20 newest records and the notes within the
+same budget as `context`; `--since DATE` and `--limit N` set the window, `--change ID`
+keeps that change and the session records linked to it, and `--all` is the full journal
+(every record, every change, each notes file up to 65,536 characters, with a truncation
+notice). `--format json` gives the same content as one JSON object (`torque.handoff/1`).
+Evidence inside the workspace is named relative to it, so the document carries no folder
+names of its author.
+
+`--output FILE` writes the document. Run again with the same file, it replaces the file it
+wrote last time (through a temporary file and a rename) and keeps the previous content as
+`FILE.bak`. A file that was edited since Torque wrote it, or that Torque did not write, is
+left as it is: the new render goes to `FILE.new` and the output says so; `--force` replaces
+it anyway (keeping `FILE.bak`). Torque keeps the hash of each export it wrote in the
+engagement's `state/exports.json`. `change handoff --output` works the same way. Review
+private references before sending a report to a client; saving it does not send anything.
 
 Session evidence is a reference to the original file, while `change check
 --evidence` captures a private copy. Session resumption and handoffs recheck the
