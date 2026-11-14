@@ -295,9 +295,10 @@ in short:
 | the server's defaults on a new object | | same | same | | | |
 | an unknown property on an object | | unexplained-additions | | | | |
 | line endings and trailing whitespace only | | | | | | same |
-| a layout item or section only in the org; sections reordered | | | | | | |
 
-The last row is for layouts: `different` for all three. A record type value only the org has is `different`.
+Layouts: a layout item or a section only the org has, and reordered sections, are `different`. A record type
+picklist value only the org has is `different`. Numbers written `0` and `0.0`, and API names in another
+case, are `same`.
 
 What none of this establishes: a grant entry in a permission set is not a user's effective access
 (assignments, groups, muting, license and sharing decide that: test as that user), and the comparison does
