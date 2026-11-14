@@ -330,7 +330,13 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
     if folder is None:
         return report
     if not folder.is_dir():
-        report["note"] = f"No memory folder at {folder}. If {host} keeps it elsewhere, name it: --dir PATH"
+        # Names only: the database is never opened (its format is not documented).
+        databases = sorted(path.name for path in folder.parent.glob("memories_*.sqlite")) \
+            if host == "codex" and not given else []
+        report["note"] = (
+            f"Codex keeps its memory here in a database file ({databases[0]} in {folder.parent}), which this command "
+            "does not read; export it to a folder of notes, or name a folder with --dir PATH." if databases else
+            f"No memory folder at {folder}. If {host} keeps it elsewhere, name it: --dir PATH")
         return report
     if since:
         cutoff = datetime.fromisoformat(record._day(since, "--since")).replace(tzinfo=timezone.utc).timestamp()

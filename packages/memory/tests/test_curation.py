@@ -337,6 +337,24 @@ def test_harvest_never_fails_when_the_folder_is_missing_or_the_host_is_not_docum
     assert intake.host_memory_dir("codex", workspace)[0] == tmp_path / "codex" / "memories_v2"
 
 
+def test_harvest_says_when_codex_keeps_its_memory_in_a_database_and_does_not_open_it(run, tmp_path, monkeypatch):
+    codex = tmp_path / "codex"
+    codex.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex))
+    assert run("harvest", "--host", "codex", client=None)[1].startswith("No memory folder at ")
+    database = codex / "memories_1.sqlite"
+    database.write_bytes(b"not a database the test lets anyone open")
+    opened = []
+    real_open = open
+    monkeypatch.setattr("builtins.open", lambda path, *a, **k: (opened.append(str(path)), real_open(path, *a, **k))[1])
+    code, out, err = run("harvest", "--host", "codex", "--json", client=None)
+    report = json.loads(out)
+    assert code == 0 and report["found"] is False and report["files"] == []
+    assert report["note"].startswith("Codex keeps its memory here in a database file (memories_1.sqlite in ")
+    assert "does not read" in report["note"] and "--dir PATH" in report["note"] and len(report["note"].splitlines()) == 1
+    assert str(database) not in opened
+
+
 FOREIGN = "Beta-only synthetic note 7f3k"          # text that lives only in another engagement's folder
 
 

@@ -155,9 +155,12 @@ day, a capture without a session record is not a new occasion.
   another client or initiative, of this workspace or any other (a folder with a
   `client.json` or `binding.json`, or under a workspace's `clients/` or `initiatives/`),
   follows no linked folder or file, and checks each file by where it resolves before it
-  opens it. The output counts what was left out. Claude Code's folder is found from the workspace path
-  (`~/.claude/projects/<path with separators as dashes>/memory/`), Codex's under
-  `~/.codex/`; other places need `--dir`.
+  opens it. The output counts what was left out. Claude Code's folder is found from the
+  workspace path (`~/.claude/projects/<path with separators as dashes>/memory/`),
+  Codex's as `~/.codex/memories_v2/` or `memories/`; other places need `--dir`. Where
+  Codex keeps its memory in a database file (`~/.codex/memories_*.sqlite`) and no such
+  folder exists, the output says so in one line: the database is not opened or read;
+  export it to a folder of notes, or name one with `--dir`.
 
 ### What is refused or masked
 
