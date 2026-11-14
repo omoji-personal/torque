@@ -26,9 +26,10 @@ try:  # the shared launcher finds sf where Windows installs it as a batch file
 except ImportError:  # pragma: no cover
     run_tool = subprocess.run
 
-LABEL = ("proven against a stubbed CLI; one live run on a Developer Edition org, 2026-11, then the comparison rules "
-         "changed after the live run and have not yet been re-run against a real org; not yet run against a sandbox "
-         "or a production org")
+LABEL = ("proven against a stubbed CLI and a mutation corpus; re-run live on 2026-11-14 on a Developer Edition org "
+         "for the positive case and three negative cases (a changed formula, a revoked grant, a permission set entry "
+         "removed by a deploy); the permission-set rule changed after that run and has not been re-run; not yet run "
+         "against a sandbox or a production org")
 STATUSES = ("same", "unexplained-additions", "partly-compared", "different", "could-not-compare", "not-in-org")
 RETRIEVABLE = {"CustomField", "CustomObject", "ValidationRule", "RecordType", "Flow", "PermissionSet",
                "PermissionSetGroup", "CustomPermission", "Profile", "FlexiPage", "Layout", "CustomMetadata",

@@ -224,7 +224,9 @@ def test_input_errors(tmp_path):
 def test_help_states_the_proof_level(capsys):
     with pytest.raises(SystemExit):
         cli.main(["check", "deployed", "--help"])
-    assert "stubbed CLI" in capsys.readouterr().out.replace("\n", " ")
+    text = " ".join(capsys.readouterr().out.split())
+    assert "stubbed CLI" in text
+    assert "re-run live on 2026-11-14" in text and "the permission-set rule changed after that run" in text
 
 
 def comp(tmp_path, name, text, suffix=".field-meta.xml"):

@@ -196,7 +196,9 @@ CLI error instead of a result, JSON that is not a deploy result). No org call.
 ## `torque check deployed`
 
 Status: proven against a stubbed CLI and a mutation corpus. One live run on a Developer Edition org
-(2026-11); the comparison rules changed after the live run and have not yet been re-run against a real org;
+(2026-11), then a re-run on 2026-11-14 of the current rules for the positive case and three negative cases
+(a changed formula, a revoked grant, a permission set entry removed by a deploy); the permission-set rule
+(replace, not merge) changed after that run and has not been re-run;
 not yet run against a sandbox or a production org.
 
 ```
