@@ -84,11 +84,10 @@ class Context:
     grant_scope: list[Component]                  # permission sets and profiles that ship with the change
     fields: dict = field(default_factory=dict)    # "obj.field" (lower) -> CustomField component
     objects: dict = field(default_factory=dict)   # "obj" (lower) -> CustomObject component
-    newest_flow_version: float | None = None
-    newest_flow_name: str = ""
     baseline_mode: bool = False
     scope_word: str = "in this change"       # "in scope" when no change scope was given
     not_checked: list[str] = field(default_factory=list)
+    said: set = field(default_factory=set)        # report-wide notes already given
 
 
 def version(text: str) -> float | None:

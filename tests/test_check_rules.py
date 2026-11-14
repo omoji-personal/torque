@@ -261,10 +261,11 @@ def test_api_version_behind(tmp_path):
     t = Tree(tmp_path, api="62.0")
     t.flow("Old", start(target="Do_It") + create_task(fault="Do_It"), api="60.0")
     t.flow("New", start(target="Do_It") + create_task(fault="Do_It"), api="64.0")
+    t.flow("Held", start(target="Do_It") + create_task(fault="Do_It"), api="63.0")   # above the project: silent
     r = t.check()
     found = hits(r, "flow.api-version-behind")
     assert [(f["component"]["name"], f["severity"]) for f in found] == [("Old", "note")]
-    assert "64.0" in found[0]["message"] and "New" in found[0]["message"]
+    assert "below 62.0, the project's sourceApiVersion" in found[0]["message"]
 
 
 def test_screen_action_without_trigger(tmp_path):
@@ -294,8 +295,10 @@ def test_default_names_status_and_run_mode(tmp_path):
     r = t.check()
     names = hits(r, "flow.default-names")
     assert [f["component"]["name"] for f in names] == ["Copied"] and "2 name(s)" in names[0]["message"]
-    assert [f["component"]["name"] for f in hits(r, "flow.status-not-active")] == ["Copied"]
-    assert {f["component"]["name"] for f in hits(r, "flow.active-in-source")} == {"Named", "Explained"}
+    # one note for the report, not one per flow, and none for a Draft (Gemini F-18)
+    assert [f["component"]["name"] for f in hits(r, "flow.active-in-source")] == ["Explained"]
+    assert "This and any other flow file here that asks for status Active" in hits(r, "flow.active-in-source")[0][
+        "message"]
     assert [f["component"]["name"] for f in hits(r, "flow.system-mode-without-sharing")] == ["Named"]
 
 

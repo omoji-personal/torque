@@ -261,12 +261,12 @@ def api_version(comp, flow, ctx):
                            "can change.", f"Keep apiVersion at {before:.1f} or higher.",
                            line=line, subject="apiVersion-lowered", match_lines={line}))
         return out
-    project = version(ctx.project.source_api_version)
-    reference, why = max(((ctx.newest_flow_version or 0.0), f"the newest flow in scope ({ctx.newest_flow_name})"),
-                         ((project or 0.0), "the project's sourceApiVersion"))
+    # Only the project's sourceApiVersion: a newer flow elsewhere says nothing about this one, whose version
+    # may be held back on purpose (it decides runtime behaviour).
+    reference = version(ctx.project.source_api_version)
     if reference and mine < reference:
         out.append(Finding("flow.api-version-behind", "note", comp,
-                           f"apiVersion {mine:.1f} is below {reference:.1f}, {why}.",
+                           f"apiVersion {mine:.1f} is below {reference:.1f}, the project's sourceApiVersion.",
                            "Raise it when you next change this flow and test it again; the version decides runtime "
                            "behaviour.", line=line, subject="apiVersion", match_lines={line}))
     return out
@@ -321,18 +321,16 @@ def status(comp, flow, ctx):
     node = flow.child("status")
     if not value or node is None:
         return []
-    if value == "Active":
-        return [Finding("flow.active-in-source", "note", comp,
-                        "The file asks for status Active. A sandbox makes the deployed version the running one; "
-                        "production does so only when 'Deploy processes and flows as active' is on, otherwise the new "
-                        "version lands inactive.",
-                        "Make sure that is intended; after the deploy, `torque check deployed` reports which version "
-                        "is active.", line=node.line, subject="status")]
-    return [Finding("flow.status-not-active", "note", comp,
-                    f"The file asks for status {value}: the deploy saves an inactive version and the org keeps running "
-                    "its current active version, if there is one.",
-                    "Activate it after the deploy if it should run; `torque check deployed` reports which version is "
-                    "active.", line=node.line, subject="status")]
+    # Said once per report, on the first flow that asks for Active: it is about the org, not about this file.
+    if value != "Active" or "flow.active-in-source" in ctx.said:
+        return []
+    ctx.said.add("flow.active-in-source")
+    return [Finding("flow.active-in-source", "note", comp,
+                    "This and any other flow file here that asks for status Active: whether the deployed version "
+                    "becomes the running one depends on the org. A sandbox activates it; production does so only "
+                    "when 'Deploy processes and flows as active' is on, otherwise the new version lands inactive.",
+                    "Make sure that is intended; after the deploy, `torque check deployed` reports which version "
+                    "is active.", line=node.line, subject="status")]
 
 
 def system_mode(comp, flow, ctx):

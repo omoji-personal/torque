@@ -31,13 +31,12 @@ RULES = {
                                                "save meeting its conditions"),
     "flow.after-save-same-record": ("note", "an after-save flow whose only change updates the triggering record"),
     "flow.hard-coded-id": ("warning", "a 15 or 18 character record Id in a flow value, formula or text template"),
-    "flow.api-version-behind": ("note", "a flow apiVersion below the project's or the newest flow's (error when the "
+    "flow.api-version-behind": ("note", "a flow apiVersion below the project's sourceApiVersion (error when the "
                                         "change lowers it)"),
     "flow.screen-action-without-trigger": ("warning", "a screen action no trigger runs (note: an unknown trigger "
                                                       "event name)"),
     "flow.default-names": ("note", "default or copied element names and labels"),
-    "flow.status-not-active": ("note", "a flow file that asks for Draft or Obsolete"),
-    "flow.active-in-source": ("note", "a flow file that asks for Active"),
+    "flow.active-in-source": ("note", "a flow file that asks for Active (said once per report)"),
     "flow.system-mode-without-sharing": ("note", "system mode without sharing with no reason in the description"),
     "flow.choice-compared-to-literal": ("warning", "a formula comparing a choice screen field to a text literal"),
     "flow.lookup-missing-first-record-only": ("warning", "Get Records storing output automatically without "
@@ -64,11 +63,6 @@ def build_context(project, everything: list[Component], in_scope: list[Component
             ctx.fields[c.name.lower()] = c
         elif c.type == "CustomObject":
             ctx.objects[c.name.lower()] = c
-    for c in in_scope:
-        if c.type == "Flow" and c.node is not None:
-            v = version(c.node.value("apiVersion"))
-            if v is not None and (ctx.newest_flow_version is None or v > ctx.newest_flow_version):
-                ctx.newest_flow_version, ctx.newest_flow_name = v, c.name
     return ctx
 
 
