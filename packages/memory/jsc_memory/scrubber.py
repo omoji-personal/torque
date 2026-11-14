@@ -5,7 +5,7 @@ Every scope:
            carry one (front door, auth URL), authorization headers, private keys, provider
            tokens, and a value after an explicit secret label (password, passcode, secret,
            token, API key, client secret, session id), in an assignment or in prose
-  masked   email addresses, phone numbers, social security numbers, Salesforce record and
+  masked   email addresses, phone numbers, social security numbers, Salesforce user, record and
            org Ids; invisible characters are removed
 
 Firm scope, because a firm lesson is shown for every client:
@@ -134,8 +134,31 @@ GENERAL = {"client name": "the client", "client slug": "the client", "org alias"
 FIRM_ONLY = tuple(GENERAL)
 
 
-def _is_sf_id(token: str) -> bool:
-    return ("00" in token[5:10] and sum(c.isdigit() for c in token) >= 3 and any(c.isalpha() for c in token))
+_KEYED = {"00D": "org Id", "005": "user Id"}
+_CHECKSUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+
+
+def _checksum_holds(token: str) -> bool:
+    """An 18-character Id ends in three characters computed from the case of the first 15."""
+    return len(token) == 18 and all(
+        _CHECKSUM[sum(1 << bit for bit, char in enumerate(token[part * 5:part * 5 + 5]) if "A" <= char <= "Z")]
+        == token[15 + part] for part in range(3))
+
+
+def _keyed_id(token: str) -> str | None:
+    """High confidence: an org or a user Id, known by its key prefix and its length (15
+    or 18), whatever the rest is made of. `00DXXXXXXXXXXXX`, a placeholder, is not one."""
+    kind = _KEYED.get(token[:3])
+    return kind if kind and len(set(token[3:15])) > 1 else None
+
+
+def _looks_like_record_id(token: str) -> bool:
+    """The broader heuristic for other record Ids, which have no fixed prefix: zeros where
+    the record number is padded (001A000001AbCdE) and digits beside letters, or an 18-
+    character token whose checksum holds. A camel-case word, a hash or a version number is
+    neither, so an ordinary 15-letter word is left alone."""
+    mixed = sum(c.isdigit() for c in token) >= 3 and any(c.isalpha() for c in token)
+    return mixed and ("00" in token[5:10] or _checksum_holds(token))
 
 
 @dataclass
@@ -179,13 +202,20 @@ def workspace_terms(workspace: Path | None) -> list[tuple[str, re.Pattern]]:
             data = {}
         for kind, value in (("client name", data.get("name")), ("client slug", data.get("slug") or folder.name),
                             ("org alias", data.get("org"))):
-            if isinstance(value, str) and len(value.strip()) >= 3:
+            value = value.strip() if isinstance(value, str) else ""
+            if len(value) < 2:
+                continue        # one character would refuse every firm lesson with the word "a" or "I"
+            if len(value) < 3:
+                # Two characters: as registered and in capitals, on word boundaries. A name XY matches XY, not
+                # "Xy"; its slug xy matches xy and XY.
+                pattern, flags = "|".join(dict.fromkeys(re.escape(form) for form in (value, value.upper()))), 0
+            else:
                 # A name matches however its words are joined: Sample Nonprofit, sample-nonprofit, sample_nonprofit.
-                pattern = r"[\s_\-]*".join(re.escape(part) for part in re.split(r"[\s_\-]+", value.strip().lower())
-                                           if part)
-                if pattern not in seen:
-                    seen.add(pattern)
-                    terms.append((kind, re.compile(r"(?<![A-Za-z0-9])" + pattern + r"(?![A-Za-z0-9])", re.I)))
+                pattern, flags = r"[\s_\-]*".join(re.escape(part) for part in re.split(r"[\s_\-]+", value.lower())
+                                                  if part), re.I
+            if (pattern, flags) not in seen:
+                seen.add((pattern, flags))
+                terms.append((kind, re.compile(r"(?<![A-Za-z0-9])(?:" + pattern + r")(?![A-Za-z0-9])", flags)))
     # Longest first, so a name or an alias is found whole before the slug inside it.
     return sorted(terms, key=lambda term: -len(term[1].pattern))
 
@@ -221,13 +251,17 @@ def scrub(text: str, *, firm_terms: list | None = None, generalize: bool = False
 
     def salesforce_id(match: re.Match) -> str:
         token = match.group()
-        if not _is_sf_id(token):
-            return token
-        if token.startswith("00D"):
+        keyed = _keyed_id(token)
+        if keyed == "org Id":
             if firm:
                 return firm_hit("org Id") or token
             count(found.masked, "org Id")
             return "<org-id>"
+        if keyed == "user Id":
+            count(found.masked, "user Id")
+            return "<user-id>"
+        if not _looks_like_record_id(token):
+            return token
         count(found.masked, "record Id")
         return "<record-id>"
 

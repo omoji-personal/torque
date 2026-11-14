@@ -163,7 +163,7 @@ day, a capture without a session record is not a new occasion.
 
 | Scope | Refused | Masked |
 | --- | --- | --- |
-| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, authorization headers, private keys, provider tokens, and a value after an explicit secret label (below) | email addresses, phone numbers, social security numbers, Salesforce record and org Ids; invisible characters are removed |
+| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, authorization headers, private keys, provider tokens, and a value after an explicit secret label (below) | email addresses, phone numbers, social security numbers, Salesforce org, user and record Ids; invisible characters are removed |
 | firm | also the names, slugs and org aliases of this workspace's clients, org Ids and org host names | |
 
 The same scrub runs wherever text enters a lesson or its log: `lesson add`, `session
@@ -187,6 +187,17 @@ secret, API key, token (also access, refresh, security, session token), session 
 
 Placeholders pass: `<value>`, `$NAME`, `%NAME%`, `{{name}}`, `****`, `...`, an
 environment variable's name (`SF_PASSWORD`) and words such as `required` or `redacted`.
+
+Identifiers. An org Id (`00D`) or a user Id (`005`) is known by its key prefix and its
+length, 15 or 18 characters, whatever the rest is made of; `00DXXXXXXXXXXXX` is a
+placeholder. Other record Ids have no fixed prefix, so a broader heuristic marks a 15 or
+18 character token as one when it mixes three or more digits with letters and has the
+padding zeros of a record number, or when its 18-character checksum holds; an ordinary
+15-letter word, a short hash or a version number is left alone. In firm scope a client
+name, slug or org alias of two characters is matched as registered and in capitals, on
+word boundaries (`XY`, not `XYZ`); a one-character name is not matched, since it would
+refuse every lesson with the word "a". A short or everyday name makes firm captures with
+that word fail; the message names the class.
 
 The scrub is a heuristic: it catches known shapes, not every secret or every name. Known
 ways through, by design: an unquoted ordinary word as a password in prose (`the password

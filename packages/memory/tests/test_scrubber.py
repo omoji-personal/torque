@@ -176,6 +176,65 @@ def test_generalizing_replaces_client_words_instead_of_refusing(workspace):
     assert scrubber.scrub(cleaned, firm_terms=scrubber.workspace_terms(workspace))[1].refused == {}
 
 
+def with_checksum(fifteen):
+    """The 18-character form of a 15-character Id, computed here independently of the scrubber."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    return fifteen + "".join(alphabet[sum(1 << bit for bit, char in enumerate(fifteen[part * 5:part * 5 + 5])
+                                          if char.isupper())] for part in range(3))
+
+
+# Made up: key prefix, then twelve characters of different kinds; none has the padding zeros.
+SHAPES = ["8c012345678A", "abcdefGHIJKL", "123456789123", "Zz9Yy8Xx7Ww6", "5g000004XyZa"]
+ORG_IDS = [prefix + rest for prefix in ("00D",) for rest in SHAPES]
+ORG_IDS += [with_checksum(token) for token in ORG_IDS[:3]] + ["00D" + SHAPES[1] + "QQQ"]
+USER_IDS = ["005" + rest for rest in SHAPES[:3]] + [with_checksum("005" + SHAPES[3])]
+
+
+@pytest.mark.parametrize("token", ORG_IDS)
+def test_an_org_id_is_known_by_its_prefix_and_length_whatever_the_rest_is_made_of(workspace, token):
+    text = f"The org {token} is the full copy."
+    cleaned, found = scrubber.scrub(text, firm_terms=scrubber.workspace_terms(workspace))
+    assert found.refused == {"org Id": 1} and token not in found.refusal("firm")
+    cleaned, found = scrubber.scrub(text)
+    assert cleaned == "The org <org-id> is the full copy." and found.masked == {"org Id": 1}
+
+
+@pytest.mark.parametrize("token", USER_IDS)
+def test_a_user_id_is_masked_in_every_scope(token):
+    cleaned, found = scrubber.scrub(f"Run it as {token} first.")
+    assert cleaned == "Run it as <user-id> first." and found.masked == {"user Id": 1}
+
+
+@pytest.mark.parametrize("token,masked", [
+    ("001A000001AbCdE", True),                      # padding zeros
+    (with_checksum("a0B5g0XyZ7BcDeF"), True),        # another prefix, no padding, its checksum holds
+    (with_checksum("a0B5g0XyZ7BcDeF")[:15] + "ZZZ", False),   # the same with a checksum that does not hold
+    ("acknowledgement", False),                     # an ordinary 15-letter word
+    ("approvalProcess", False),
+    ("Internationalizations"[:18], False),
+    ("3f9c2e1a7b4d5e6", False),                     # a short hash
+    ("3f9c2e1a7b4d5e6f80", False),
+    ("00DXXXXXXXXXXXX", False),                     # the placeholder docs use for an org Id
+    ("005000000000000", False),
+])
+def test_other_record_ids_use_a_separate_broader_heuristic(token, masked):
+    cleaned, found = scrubber.scrub(f"See {token} here.")
+    assert (cleaned == "See <record-id> here.") is masked and (found.masked == {}) is not masked, token
+
+
+def test_a_short_registered_client_name_is_matched_on_word_boundaries(workspace):
+    for slug, name in (("xy", "XY"), ("q", "Q")):
+        folder = workspace / "clients" / slug
+        folder.mkdir()
+        (folder / "client.json").write_text(f'{{"name": "{name}", "slug": "{slug}"}}', encoding="utf-8")
+    terms = scrubber.workspace_terms(workspace)
+    for text in ("XY needs field permission grants.", "Deploy (XY) first.", "the xy sandbox", "Ask XY-ops."):
+        assert scrubber.scrub(text, firm_terms=terms)[1].refused, text
+    for text in ("XYZ and AXY are other words.", "Xy is not how it is written.", "A field needs Q4 access; I see.",
+                 "Plot the x and y axes."):
+        assert scrubber.scrub(text, firm_terms=terms)[1].refused == {}, text
+
+
 def test_every_text_of_a_lesson_is_scrubbed(workspace):
     item = Lesson(id="L-20261114-0001", title="Mail jane@example.org", when=f"you see {RECORD_ID}", do="ask Beta",
                   because="x", body="call 555-123-4567")
