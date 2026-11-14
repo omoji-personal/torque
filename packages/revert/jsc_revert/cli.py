@@ -521,11 +521,32 @@ def _wait_minutes(value: str) -> int:
     return minutes
 
 
+def _show_lessons(args: argparse.Namespace, argv: list[str] | None) -> None:
+    """Before a deploy or a data change, print the notes from earlier work that match it
+    (the selected client's, the firm's and the platform's), on stderr so stdout stays
+    as it was. It reads lesson files only, never blocks and never fails the command."""
+    if args.command not in ("deploy", "data"):
+        return
+    try:
+        from jsc_memory.recall import for_command
+        words = [word for word in (sys.argv[1:] if argv is None else argv)]
+        # Record values are not needed to find a lesson, and are left out of the text matched.
+        command = "torque " + " ".join(word for index, word in enumerate(words)
+                                       if not (index and words[index - 1] in ("--values", "--where")))
+        paths = [*getattr(args, "source_dir", []), *getattr(args, "manifest", [])]
+        text = for_command(command, paths=paths, via=args.command)
+        if text:
+            print(text + "\n", file=sys.stderr)
+    except Exception:  # A lesson is an aid; the operation goes ahead without it.
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     from .org_sequence import LockOwnershipError
     from .wrappers._common import IncompleteSubprocessOutput
+    _show_lessons(args, argv)
     try:
         return args.func(args)
     except LockOwnershipError as exc:

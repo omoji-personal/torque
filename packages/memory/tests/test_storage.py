@@ -12,7 +12,7 @@ from jsc_memory.lesson import Lesson
 
 
 def make(folder, number, scope="client", **fields):
-    item = Lesson(id=f"L-20261114-{number:04x}", title=fields.pop("title", f"Lesson {number}"), scope=scope,
+    item = Lesson(id=f"L-20250303-{number:04x}", title=fields.pop("title", f"Lesson {number}"), scope=scope,
                   state=fields.pop("state", "active"), created="2026-11-14", **fields)
     storage.save(item, folder)
     return item
@@ -61,7 +61,7 @@ def test_an_unreadable_file_is_skipped_and_named_and_the_rest_still_loads(worksp
     (folder / "broken.md").write_text("---\nid: [unclosed\n---\n", encoding="utf-8")
     (folder / "no-front-matter.md").write_text("just a note\n", encoding="utf-8")
     (folder / "binary.md").write_bytes(b"\xff\xfe\x00junk")
-    (folder / "wrong-scope.md").write_text(record.render(Lesson(id="L-20261114-0009", title="t", scope="firm")),
+    (folder / "wrong-scope.md").write_text(record.render(Lesson(id="L-20250303-0009", title="t", scope="firm")),
                                            encoding="utf-8")
     (folder / "copy.md").write_text(record.render(good), encoding="utf-8")
     (folder / "huge.md").write_bytes(b"x" * (storage.MAX_BYTES + 1))
@@ -93,13 +93,13 @@ def test_a_linked_lessons_folder_is_not_followed(workspace, scopes):
 def test_an_id_resolves_exactly_or_by_a_unique_start(scopes):
     folder = scopes("alpha").folder("client")
     for suffix in ("a3f2", "a3f9", "b111"):
-        storage.save(Lesson(id=f"L-20261114-{suffix}", title=suffix, created="2026-11-14"), folder)
+        storage.save(Lesson(id=f"L-20250303-{suffix}", title=suffix, created="2026-11-14"), folder)
     lessons = storage.load(scopes("alpha"))
-    assert storage.resolve(lessons, "L-20261114-a3f2").title == "a3f2"
-    assert storage.resolve(lessons, "L-20261114-b").title == "b111"
-    assert storage.resolve(lessons, "20261114-b1").title == "b111"       # without the L-
+    assert storage.resolve(lessons, "L-20250303-a3f2").title == "a3f2"
+    assert storage.resolve(lessons, "L-20250303-b").title == "b111"
+    assert storage.resolve(lessons, "20250303-b1").title == "b111"       # without the L-
     with pytest.raises(storage.Ambiguous) as caught:
-        storage.resolve(lessons, "L-20261114-a3f")
+        storage.resolve(lessons, "L-20250303-a3f")
     assert [item.title for item in caught.value.candidates] == ["a3f2", "a3f9"]
     for nothing in ("", "   ", "L-", "L-20"):
         with pytest.raises(storage.Ambiguous):
@@ -178,7 +178,7 @@ def test_concurrent_writers_lose_no_event_and_no_lesson(scopes):
               "root, worker = Path(sys.argv[1]), sys.argv[2]\nprint('ready', flush=True)\nsys.stdin.readline()\n"
               "for number in range(25):\n"
               "    storage.log(root, [{'event': 'helpful', 'id': 'L-shared'}], must=True)\n"
-              "    storage.save(Lesson(id=f'L-20261114-{worker}{number:03d}', title='t', created='2026-11-14'), root / 'lessons')\n")
+              "    storage.save(Lesson(id=f'L-20250303-{worker}{number:03d}', title='t', created='2026-11-14'), root / 'lessons')\n")
     workers = [subprocess.Popen([sys.executable, "-c", script, str(alpha.engagement), str(number)],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 encoding="utf-8") for number in range(4)]

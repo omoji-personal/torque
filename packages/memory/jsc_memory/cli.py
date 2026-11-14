@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import sys
 
-from . import feedback, intake, recall, review, storage
+from . import feedback, intake, promote, recall, review, storage
 from . import lesson as record
 from .lesson import Lesson, LessonError
 from .storage import Scopes, Tally
@@ -263,6 +264,78 @@ def cmd_review(args: argparse.Namespace, scopes: Scopes) -> int:
     return EXIT_OK
 
 
+def cmd_promote(args: argparse.Namespace, scopes: Scopes) -> int:
+    if args.apply:
+        if args.id or args.to:
+            raise LessonError("give either a lesson id with --to, or --apply PROPOSAL, not both.")
+        done = promote.apply(scopes, args.apply)
+        _out(args, done, f"Already applied: firm lesson {done['firm']} exists for {done['source']}."
+             if done["status"] == "already applied" else
+             f"Applied: firm lesson {done['firm']} written ({done['path']}); {done['source']} is marked "
+             f"promoted_to firm:{done['firm']} and is no longer shown on its own.")
+        return EXIT_OK
+    if not args.id or not args.to:
+        raise LessonError("say what to promote and where: torque lesson promote ID --to "
+                          + "|".join(promote.TARGETS) + " [--name NAME], or --apply PROPOSAL.")
+    made = promote.propose(scopes, args.id, args.to, args.name or "")
+    replaced = ", ".join(f"{kind} ({count})" for kind, count in made["replaced"].items()) or "nothing"
+    _out(args, made, "\n".join([
+        f"Proposal written, nothing applied: {made['proposal']}",
+        f"It proposes {made['lesson']} ({made['from']}) for: {made['to']}"
+        + (f" `{made['name']}`" if made["name"] else "") + f". The scrub replaced: {replaced}.",
+        "Read it with the consultant. " + (
+            f"On their word: torque lesson promote --apply {Path(made['proposal']).name}" if made["applies_itself"]
+            else "A person applies it in the destination it names; Torque does not change shared guidance."),
+        "", made["text"]]))
+    return EXIT_OK
+
+
+def cmd_stats(args: argparse.Namespace, scopes: Scopes) -> int:
+    report = review.stats(scopes, args.since)
+    _out(args, report, review.render_stats(report))
+    return EXIT_OK
+
+
+def cmd_harvest(args: argparse.Namespace, scopes: Scopes) -> int:
+    report = intake.harvest(scopes, args.host, args.dir, args.since)
+    files = report["files"]
+    if not report["found"]:
+        text = [report["note"]]
+    else:
+        text = [f"{len(files)} file(s) changed in {report['dir']}"
+                + (f" since {report['since']}" if report["since"] else "") + ". Nothing was copied."]
+        text += [f"- {item['name']} [{item['type'] or 'note'}, {item['modified']}] {item['description']}\n"
+                 f"  {item['path']}" for item in files[:args.limit]]
+        if len(files) > args.limit:
+            text.append(f"... and {len(files) - args.limit} more (--limit N, or --json for all)")
+        if files:
+            text.append("A host's memory mixes clients. To keep one as a lesson, choose its scope: "
+                        "torque lesson add --from-file PATH --when ... --do ... --because ... [--scope firm]")
+    _out(args, report, "\n".join(text))
+    return EXIT_OK
+
+
+def cmd_migrate(args: argparse.Namespace, scopes: Scopes) -> int:
+    report = intake.migrate(scopes)
+    text = [f"Imported {len(report['imported'])} lesson(s) from the earlier store; {report['already']} were "
+            f"already imported. The old files are left in place: {report['old_store']}"]
+    text += [f"- {item['id']} ({item['state']}): {item['title']}" for item in report["imported"]]
+    text += [f"Not imported: {problem['path']} ({problem['reason']})" for problem in report["problems"]]
+    _out(args, report, "\n".join(text))
+    return EXIT_OK
+
+
+def cmd_selfcheck(args: argparse.Namespace, scopes: Scopes) -> int:
+    report = review.selfcheck()
+    text = [f"Lessons self-check: {'passed' if report['passed'] else 'FAILED'}"]
+    text += [f"  {'ok  ' if item['passed'] else 'FAIL'} {item['step']}" + (f" ({item['detail']})" if item["detail"] else "")
+             for item in report["steps"]]
+    if not report["passed"]:
+        text.append("The lessons loop is not working in this installation; reinstall Torque, then run this again.")
+    _out(args, report, "\n".join(text))
+    return EXIT_OK if report["passed"] else EXIT_FAILED
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Lessons: capture what was learned, find it again at the point of use, judge it.",
@@ -356,6 +429,25 @@ def build_parser() -> argparse.ArgumentParser:
                       help="one of " + ", ".join(feedback.EDITABLE) + "; lists as comma-separated words (repeatable)")
 
     command("review", cmd_review, "what waits, what repeats, what to re-check and what to promote; changes nothing")
+
+    promoted = command("promote", cmd_promote, "write a proposal to promote a lesson; --apply performs a "
+                                               "client-to-firm promotion")
+    promoted.add_argument("id", nargs="?")
+    promoted.add_argument("--to", choices=promote.TARGETS)
+    promoted.add_argument("--name", help="the rule, skill, recipe or check the text is for")
+    promoted.add_argument("--apply", metavar="PROPOSAL", help="apply a proposal written for --to firm")
+
+    stats = command("stats", cmd_stats, "what was captured, shown and judged, and what waits")
+    stats.add_argument("--since", metavar="DATE", help="count from this day (YYYY-MM-DD)")
+
+    harvested = command("harvest", cmd_harvest, "list the files a host's own memory changed; copies nothing")
+    harvested.add_argument("--host", required=True, choices=intake.HOSTS)
+    harvested.add_argument("--dir", metavar="PATH", help="the host's memory or rules folder, when it is not found")
+    harvested.add_argument("--since", metavar="DATE", help="list what changed from this day (default: the last harvest)")
+    harvested.add_argument("--limit", type=int, default=40)
+
+    command("migrate", cmd_migrate, "import the earlier JSON lessons of the selected client, once")
+    command("selfcheck", cmd_selfcheck, "prove the wiring in a temporary folder: write a lesson, find it again")
     return parser
 
 

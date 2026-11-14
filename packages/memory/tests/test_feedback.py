@@ -4,7 +4,7 @@ import json
 import pytest
 
 from jsc_memory import cli, feedback, intake, lesson as record, recall, review, storage
-from jsc_memory.lesson import LessonError
+from jsc_memory.lesson import Lesson, LessonError
 
 FLOW = ("When: you compare a choice-based screen field in a flow formula. Do: compare the field to the choice "
         "resource in a decision. Because: the formula sees the label.")
@@ -37,19 +37,20 @@ def flow_ids(scopes):
 
 @pytest.mark.parametrize("command", [("helpful",), ("stale", "--reason", "x"), ("verify",), ("retire", "--reason", "x"),
                                      ("restore",), ("edit", "--set", "title=x")])
-@pytest.mark.parametrize("wanted,code", [("", 3), ("   ", 3), ("L-", 3), ("0", 3), ("L-2026", 3),
+@pytest.mark.parametrize("wanted,code", [("", 3), ("   ", 3), ("L-", 3), ("0", 3), ("L-2020", 3),
                                          ("L-20991231-zzzz", 1)])
 def test_an_empty_ambiguous_or_unknown_id_changes_nothing_and_exits_nonzero(run, workspace, scopes, command,
                                                                             wanted, code):
-    for text in ("first lesson about flows", "second lesson about fields"):
-        intake.add(scopes("alpha"), text=text, source="consultant")
+    for suffix in ("ab01", "ab02"):
+        storage.save(Lesson(id=f"L-20200101-{suffix}", title=f"Lesson {suffix}", state="active",
+                            created="2020-01-01"), scopes("alpha").folder("client"))
     before = snapshot(workspace)
     name, *options = command
     status, out, err = run(name, wanted, *options, "--json")
     assert status == code and snapshot(workspace) == before
     answer = json.loads(out)
     assert answer["exit_code"] == code and "torque lesson:" in err
-    if wanted == "L-2026":
+    if wanted == "L-2020":
         assert "nothing was changed" in err and len(answer["candidates"]) == 2
 
 

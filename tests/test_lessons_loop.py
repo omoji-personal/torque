@@ -156,3 +156,141 @@ def test_scope_selection_on_the_lesson_route(torque, root, monkeypatch):
     assert cli.main(["lesson", "list", "--workspace", str(root), "--initiative", "no-such-initiative"]) == 2
     # The other delegated routes are still for clients only.
     assert cli.main(["qa", "run", "x", "--workspace", str(root), "--initiative", "internal-playbook"]) == 2
+
+
+FLOW_DEPLOY = ["--metadata", "Flow:Gift_Entry", "--target-org", "example-dev"]
+
+
+def test_shipped_lessons_and_the_advisory_catalogue_both_answer_a_flow_deploy(torque):
+    code, out, _ = torque("lesson", "for", "--command", "sf project deploy start " + " ".join(FLOW_DEPLOY),
+                          "--limit", "10", "--json", client=None)
+    found = json.loads(out)["lessons"]
+    assert code == 0 and all(item["scope"] == "platform" for item in found)
+    origins = {item["origin"] for item in found}
+    assert origins == {"shipped", "advisory"}
+    assert "A-flow-activation-on-deploy" in [item["id"] for item in found]
+    shipped = [item for item in found if item["origin"] == "shipped"]
+    assert any("Flow" in item["applies"]["types"] for item in shipped)
+    # Every shipped lesson reads as a platform lesson with honest evidence and a review date.
+    listed = json.loads(torque("lesson", "list", "--scope", "platform", "--json", client=None)[1])["lessons"]
+    seeds = [item for item in listed if item["origin"] == "shipped"]
+    assert len(seeds) >= 12 and all(item["state"] == "active" and item["review_by"] for item in seeds)
+    assert all(item["evidence_type"] in ("official-doc", "session", "reproduced") for item in seeds)
+    assert sum(bool(item["applies"]["errors"]) for item in seeds) >= 4
+    # An error just met finds what fixed it before, also among the shipped lessons.
+    code, out, _ = torque("lesson", "for", "--error", "No such column 'Region__c' on entity 'Account'", client=None)
+    assert code == 0 and "WHEN a query fails on an unknown field or relationship name" in out
+
+
+def test_deploy_and_data_print_matching_lessons_before_the_step_and_never_fail(torque, root, monkeypatch, capsys):
+    from jsc_revert import cli as revert_cli
+    from jsc_memory import recall
+    assert torque("lesson", "add", "--when", "you deploy a flow for this client", "--do",
+                  "read the active version back", "--because", "a deploy can leave it inactive", "--from",
+                  "consultant", "--json")[0] == 0
+    before_step: list[str] = []
+    monkeypatch.setattr(revert_cli, "cmd_deploy", lambda args: before_step.append(capsys.readouterr().err) or 0)
+    monkeypatch.setattr(revert_cli, "cmd_data_update", lambda args: before_step.append(capsys.readouterr().err) or 7)
+    assert torque("deploy", *FLOW_DEPLOY)[0] == 0
+    printed = before_step[0]
+    assert "WHEN you deploy a flow for this client" in printed and printed.rstrip().endswith(recall.FOOTER)
+    assert printed.count("\n[") + printed.startswith("[") <= 3
+    events = (root / "clients" / "alpha-nonprofit" / ".torque" / "lessons" / "events.jsonl").read_text("utf-8")
+    assert '"via": "deploy"' in events and "example-dev" not in events
+    # A data change gets the catalogue's notes; the record's values are never matched, shown or logged.
+    code, _, _ = torque("data", "update", "--target-org", "example-dev", "--sobject", "Account", "--record-id",
+                        "001A000001AbCdEFGH", "--values", "Name=Flow Deploy Secretperson")
+    assert code == 7 and "[A-" in before_step[1] and "Secretperson" not in before_step[1]
+    assert "Flow" not in before_step[1].splitlines()[0]          # the values did not steer the match
+    logs = "".join(path.read_text("utf-8") for path in root.rglob("events.jsonl"))
+    assert "Secretperson" not in logs and '"via": "data"' in logs
+    # No lessons, or a failure inside the lessons code: the operation runs all the same.
+    monkeypatch.setattr(recall, "find", lambda *args, **more: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert torque("deploy", *FLOW_DEPLOY)[0] == 0 and before_step[2] == ""
+    monkeypatch.setattr("jsc_memory.recall.for_command", lambda *args, **more: (_ for _ in ()).throw(OSError("x")))
+    assert torque("deploy", *FLOW_DEPLOY)[0] == 0 and len(before_step) == 4
+
+
+def test_advisory_notes_add_scoped_lessons_under_their_own_key(torque, root):
+    torque("lesson", "add", "--when", "you deploy a flow for this client", "--do", "read the active version back",
+           "--from", "consultant")
+    command = "sf project deploy start --metadata Flow:Gift_Entry"
+    code, out, _ = torque("advisory", "notes", "--command", command, "--limit", "4", "--json")
+    answer = json.loads(out)
+    assert code == 0 and set(answer) == {"platform_notes", "scoped_lessons"}
+    assert answer["platform_notes"] and all("remedy" in note for note in answer["platform_notes"])
+    scoped = answer["scoped_lessons"]
+    assert scoped[0]["scope"] == "client" and scoped[0]["when"] == "you deploy a flow for this client"
+    assert {item["scope"] for item in scoped} <= {"client", "firm", "platform"}
+    assert not any(item["id"].startswith("A-") for item in scoped)          # the catalogue is the other key
+    text = torque("advisory", "notes", "--command", command)[1]
+    assert "remedy :" in text and "WHEN you deploy a flow for this client" in text
+    # Without a selected client the answer keeps its earlier shape: the list of notes.
+    code, out, _ = torque("advisory", "notes", "--command", command, "--json", client=None)
+    assert code == 0 and isinstance(json.loads(out), list)
+    # Another client gets its own answer, never this client's lesson.
+    other = json.loads(torque("advisory", "notes", "--command", command, "--json", client="beta-land-trust")[1])
+    assert "you deploy a flow for this client" not in json.dumps(other)
+
+
+def test_one_unreadable_lesson_file_breaks_no_command_and_doctor_names_it(torque, root):
+    torque("session", "add", "--summary", "Fixed the flow", "--learned", FLOW, "--learned-from", "consultant")
+    folder = root / "clients" / "alpha-nonprofit" / "lessons"
+    (folder / "handedited.md").write_text("---\nid: [broken\n---\n", encoding="utf-8")
+    (root / "lessons").mkdir()
+    (root / "lessons" / "notes.md").write_text("just some notes, not a lesson\n", encoding="utf-8")
+    good = next(folder.glob("L-*.md")).stem
+    for words in (("context",), ("context", "--json"), ("handoff",), ("lesson", "for", "--type", "Flow"),
+                  ("lesson", "list"), ("lesson", "show", good), ("lesson", "search", "choice"), ("lesson", "review"),
+                  ("lesson", "stats"), ("lesson", "helpful", good), ("lesson", "verify", good),
+                  ("lesson", "edit", good, "--set", "kind=fact"), ("lesson", "promote", good, "--to", "rule"),
+                  ("lesson", "stale", good, "--reason", "testing"), ("lesson", "restore", good),
+                  ("session", "add", "--summary", "More", "--learned", "When: x happens. Do: y.")):
+        code, out, err = torque(*words)
+        assert code == 0, (words, err)
+    text = torque("context")[1]
+    assert "Skipped 2 lesson file(s) that could not be read" in text
+    assert "clients/alpha-nonprofit/lessons/handedited.md (the front matter is not valid YAML" in text
+    assert "handedited.md" in torque("handoff")[1] and "handedited.md" in torque("lesson", "list")[1]
+    code, out, _ = torque("doctor")
+    assert code in (0, 3) and "Next: 2 lesson file(s) could not be read and are skipped everywhere" in out
+    assert "clients/alpha-nonprofit/lessons/handedited.md" in out and "lessons/notes.md" in out
+    report = json.loads(torque("doctor", "--json")[1])["lessons"]
+    assert [problem["path"] for problem in report["engagement"]["unreadable"]] == [
+        "clients/alpha-nonprofit/lessons/handedited.md"]
+    assert [problem["path"] for problem in report["firm"]["unreadable"]] == ["lessons/notes.md"]
+    # Another client's doctor does not read this client's folder: it names the firm's file only.
+    other = json.loads(torque("doctor", "--json", client="beta-land-trust")[1])["lessons"]
+    assert other["engagement"]["unreadable"] == [] and len(other["firm"]["unreadable"]) == 1
+
+
+def test_doctor_prints_the_lessons_lines_and_the_selfcheck_passes(torque, root):
+    code, out, _ = torque("lesson", "selfcheck", client=None)
+    assert code == 0 and "Lessons self-check: passed" in out
+    assert cli.main(["lesson", "selfcheck"]) == 0                 # also without any workspace
+    code, out, _ = torque("doctor")
+    assert code in (0, 3)
+    assert "Lessons (firm): 0 candidate, 0 active, 0 retired; unreadable files 0; last saved never" in out
+    assert "Lessons (client alpha-nonprofit): 0 candidate, 0 active, 0 retired" in out
+    assert "Lessons (platform): " in out and "Lessons loop: idle" in out
+    assert "Lessons self-check: passed" in out
+    torque("session", "add", "--summary", "Fixed the flow", "--learned", FLOW, "--learned-from", "consultant")
+    torque("context")
+    out = torque("doctor")[1]
+    assert "Lessons (client alpha-nonprofit): 0 candidate, 1 active, 0 retired" in out
+    assert "Lessons loop: live (a lesson was saved or shown in the last 30 days)" in out
+    report = json.loads(torque("doctor", "--json")[1])["lessons"]
+    assert report["loop"] == "live" and report["selfcheck"]["passed"] is True
+    assert report["engagement"]["last_shown"] is not None and report["platform"]["shipped"] >= 12
+    # Without a workspace doctor still checks the wiring and the shipped lessons.
+    plain = json.loads(run_doctor_without_workspace())["lessons"]
+    assert plain["firm"] is None and plain["selfcheck"]["passed"] is True
+
+
+def run_doctor_without_workspace() -> str:
+    import contextlib
+    import io
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["doctor", "--json"])
+    return out.getvalue()

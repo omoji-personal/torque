@@ -166,3 +166,143 @@ def write(scopes: Scopes, report: dict) -> Path | None:
     path = storage._private_dir(folder) / f"{report['date']}.md"
     storage._atomic_write(path, render(report))
     return path
+
+
+def stats(scopes: Scopes, since: str | None = None) -> dict:
+    """Counts that show whether the loop runs: what was captured (by source and scope),
+    what was shown and on which surface, how it was judged, and what waits."""
+    if since:
+        since = record._day(since, "--since")
+    problems: list = []
+    own = storage.load(scopes, problems)
+    events = storage.events_for(scopes)
+    tallies = storage.tally(events)
+    recent = [row for row in events if not since or row["at"][:10] >= since]
+    captured = [item for item in own if not since or (item.created or "") >= since]
+    count = lambda values: {value: values.count(value) for value in sorted(set(values))}
+    candidates = sorted((item for item in own if item.state == "candidate"), key=lambda item: (item.created, item.id))
+    oldest = candidates[0] if candidates else None
+    never = [item.id for item in own
+             if recall.eligible(item, tallies.get(item.id)) and not (tallies.get(item.id) or Tally()).shown]
+    return {
+        "scopes": scopes.label(), "since": since, "lessons": len(own),
+        "states": count([item.state for item in own]),
+        "captured": {"total": len(captured), "by_source": count([item.source for item in captured]),
+                     "by_scope": count([item.scope for item in captured])},
+        "events": {name: sum(row["event"] == name for row in recent) for name in storage.EVENTS},
+        "shown_by_surface": count([row.get("via") or "unknown" for row in recent if row["event"] == "shown"]),
+        "candidates_waiting": len(candidates),
+        "oldest_candidate": ({"id": oldest.id, "created": oldest.created, "days": record.age_days(oldest)}
+                             if oldest else None),
+        "never_shown": never, "marked_stale": sum(bool(tally.stale_mark) for tally in tallies.values()),
+        "platform_lessons": len(recall.platform_lessons()), "unreadable": problems}
+
+
+def render_stats(report: dict) -> str:
+    listed = lambda values: ", ".join(f"{name} {number}" for name, number in values.items()) or "none"
+    oldest = report["oldest_candidate"]
+    return "\n".join([
+        f"Lessons ({report['scopes']})" + (f" since {report['since']}" if report["since"] else "")
+        + f": {report['lessons']} in the workspace ({listed(report['states'])}), {report['platform_lessons']} platform",
+        f"Captured: {report['captured']['total']} (by source: {listed(report['captured']['by_source'])}; by scope: "
+        f"{listed(report['captured']['by_scope'])})",
+        f"Events: {listed(report['events'])}",
+        f"Shown by surface: {listed(report['shown_by_surface'])}",
+        f"Candidates waiting: {report['candidates_waiting']}"
+        + (f"; the oldest is {oldest['id']} ({oldest['days']} days): torque lesson review" if oldest else ""),
+        f"Active and never shown: {len(report['never_shown'])}"
+        + (f" ({', '.join(report['never_shown'][:5])}{' ...' if len(report['never_shown']) > 5 else ''})"
+           if report["never_shown"] else ""),
+        f"Marked stale: {report['marked_stale']}", *recall.problem_lines(report["unreadable"])])
+
+
+LIVE_DAYS = 30
+
+
+def health(scopes: Scopes) -> dict:
+    """What `torque doctor` reports about lessons: counts by state, unreadable files, the
+    last capture and the last time a lesson was shown, for the firm and for the selected
+    engagement; and whether the loop is live (a lesson was saved or shown in the last
+    30 days) or idle."""
+    def of(scope: str, root) -> dict:
+        problems: list = []
+        lessons = storage.read_folder(scopes.folder(scope), scope, scopes, problems)
+        shown = [row["at"][:10] for row in storage.read_events(root) if row["event"] == "shown"]
+        return {"states": {state: sum(item.state == state for item in lessons) for state in record.STATES},
+                "unreadable": problems, "last_capture": max((item.created for item in lessons), default="") or None,
+                "last_shown": max(shown, default=None)}
+    platform_problems: list = []
+    platform = recall.platform_lessons(platform_problems)
+    report: dict = {
+        "firm": of("firm", scopes.workspace) if scopes.workspace else None,
+        "engagement": ({"kind": scopes.kind, "slug": scopes.slug, **of(scopes.kind, scopes.engagement)}
+                       if scopes.engagement else None),
+        "platform": {"shipped": sum(item.origin == "shipped" for item in platform),
+                     "advisory": sum(item.origin == "advisory" for item in platform),
+                     "unreadable": platform_problems}}
+    dates = [value for part in (report["firm"], report["engagement"]) if part
+             for value in (part["last_capture"], part["last_shown"]) if value]
+    report["loop"] = "live" if any(value >= _days_ago(LIVE_DAYS) for value in dates) else "idle"
+    return report
+
+
+def health_lines(report: dict) -> list[str]:
+    """The lessons lines of `torque doctor`."""
+    lines = []
+    for label, part in (("firm", report["firm"]),
+                        (f"{report['engagement']['kind']} {report['engagement']['slug']}"
+                         if report["engagement"] else "", report["engagement"])):
+        if part:
+            states = ", ".join(f"{number} {state}" for state, number in part["states"].items())
+            lines.append(f"Lessons ({label}): {states}; unreadable files {len(part['unreadable'])}; last saved "
+                         f"{part['last_capture'] or 'never'}; last shown {part['last_shown'] or 'never'}")
+    platform = report["platform"]
+    lines.append(f"Lessons (platform): {platform['shipped']} shipped, {platform['advisory']} catalogue notes")
+    lines.append("Lessons loop: live (a lesson was saved or shown in the last 30 days)" if report["loop"] == "live"
+                 else "Lessons loop: idle (no lesson was saved or shown in the last 30 days). Save one with "
+                      "`torque session add ... --learned TEXT`; ask with `torque lesson for TOPIC`.")
+    return lines
+
+
+def selfcheck() -> dict:
+    """Prove the wiring in a temporary folder: write a lesson, then find it again by
+    metadata type, by command, through the context block and through the function other
+    packages call, and see that showing it was recorded. Touches no workspace."""
+    import json
+    import tempfile
+    from . import intake
+    steps: list[dict] = []
+
+    def step(name: str, passed: bool, detail: str = "") -> bool:
+        steps.append({"step": name, "passed": bool(passed), "detail": detail})
+        return bool(passed)
+
+    with tempfile.TemporaryDirectory(prefix="torque-lessons-") as temporary:
+        try:
+            root = Path(temporary).resolve() / "ws"
+            client = root / "clients" / "selfcheck"
+            client.mkdir(parents=True)
+            (root / "workspace.json").write_text(json.dumps({"name": "selfcheck"}), encoding="utf-8")
+            (client / "client.json").write_text(json.dumps({"name": "Selfcheck", "slug": "selfcheck"}),
+                                                encoding="utf-8")
+            scopes = storage.scopes_for(client)
+            added = intake.add(scopes, when="you are about to deploy a flow in the selfcheck",
+                               do="read the active version back", because="a deploy can leave a flow inactive",
+                               types=["Flow"], commands=["sf project deploy *"], source="consultant")
+            wanted = added.lesson.id
+            step("write a lesson", added.status == "saved" and added.path.is_file(), wanted)
+            found = lambda **query: wanted in [hit.lesson.id for hit in recall.find(scopes, **query).hits]
+            step("recall by metadata type", found(types=["Flow"]))
+            command = "sf project deploy start --metadata Flow:Selfcheck --target-org selfcheck"
+            step("recall by command", found(command=command))
+            step("the context block", wanted in [item["id"] for item in recall.context_section(scopes)["shown"]])
+            text = recall.for_command(command, scopes=scopes, via="selfcheck")
+            step("the function other packages call", wanted in text)
+            step("showing it was recorded", storage.tally(storage.events_for(scopes)).get(wanted, Tally()).shown == 1)
+            platform = recall.platform_lessons()
+            step("platform lessons are readable", bool(platform),
+                 f"{sum(item.origin == 'shipped' for item in platform)} shipped, "
+                 f"{sum(item.origin == 'advisory' for item in platform)} catalogue notes")
+        except Exception as exc:  # A self-check reports; it never raises into doctor.
+            step("run to the end", False, f"{type(exc).__name__}: {exc}")
+    return {"passed": all(item["passed"] for item in steps), "steps": steps}

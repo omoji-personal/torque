@@ -368,7 +368,7 @@
       "source_path": "packages/revert/jsc_revert/cli.py",
       "source_sha256": "c2cd6105a45d7ce342063ec2be0b556eec6b0057e458d95644818adcec421e26",
       "source_tracked": true,
-      "destination_sha256": "ae1e9b3c1fed6c655a663af19d13b3eee5b54c77c0bfa1f37c3cd15aafa5546c",
+      "destination_sha256": "eae8793ae04c4f66639b3d1650398c8ec307ac999ca28aafd9e2c81da6bd462b",
       "adapted": true
     },
     {
@@ -674,7 +674,7 @@
       "source_path": "packages/memory/tests/test_storage.py",
       "source_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
       "source_tracked": true,
-      "destination_sha256": "c76c114a3e831c2029181b1c9fe4ef1e173ef91c1f0463d3a2bfdcf1e6bf47ad",
+      "destination_sha256": "5088cf0c5cab6d233c46124e7cfd60b564b69b9ccd6024c2c5fa3b843140280e",
       "adapted": true
     },
     {
@@ -692,7 +692,7 @@
       "source_path": "packages/memory/jsc_memory/__init__.py",
       "source_sha256": "b879d0aac327e28b7f9ddfa3f1705902421def0fe5652febca1e239746e20bde",
       "source_tracked": true,
-      "destination_sha256": "9850669992171ef08bdec49c8391b5868ba47e4555e9e1c968c6bde9a309dda9",
+      "destination_sha256": "33e5af635c52006efbd5baa24dfe6683014613a7bb9bf7ea43990bd91d236f29",
       "adapted": true
     },
     {
@@ -701,7 +701,7 @@
       "source_path": "packages/memory/jsc_memory/cli.py",
       "source_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
       "source_tracked": true,
-      "destination_sha256": "b5c81e71a3d446d38a11cf315eaa256cf3d3020a27f40f3081b126a9ff50805e",
+      "destination_sha256": "6bdeabccd34005adf9437a9b38ec342fee58f74751f119ed613dc6a4c801bb7d",
       "adapted": true
     },
     {
@@ -1268,7 +1268,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
       "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
       "source_tracked": true,
-      "destination_sha256": "a227aaa47c862edf54bf0c72fae4888162110d171703c1cf289ea20528c2eb5e",
+      "destination_sha256": "a60655ab11a26c259a77c89b4c17d6d3b444d1abe753ca1c0b8cc984cff16a36",
       "adapted": true
     },
     {

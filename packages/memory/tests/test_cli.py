@@ -6,6 +6,7 @@ import json
 import pytest
 
 from jsc_memory import cli, storage
+from jsc_memory.lesson import Lesson
 
 
 @pytest.fixture
@@ -44,7 +45,7 @@ def test_add_then_find_show_list_and_search(run, workspace):
                               "error": False}
     code, out, _ = run("recall", "field", "access")
     assert code == 0 and f"[{saved['id']}] WHEN you are about to deploy a new custom field" in out
-    code, out, _ = run("show", saved["id"][:12], "--json")
+    code, out, _ = run("show", saved["id"], "--json")
     shown = json.loads(out)
     assert code == 0 and shown["id"] == saved["id"] and shown["counters"]["shown"] == 2
     assert shown["evidence"][0]["type"] == "consultant-said"
@@ -99,7 +100,7 @@ def test_for_prints_one_line_and_exits_zero_when_nothing_matches(run):
         "No lesson matches quantum, chromodynamics (client alpha + firm + platform).")
     code, out, _ = run("for", "--command", "sf project deploy start --metadata Flow:Gift_Entry", "--limit", "2",
                        client=None)
-    assert code == 0 and out.count("\n[A-") == 2 and "(firm + platform): 2 of " in out
+    assert code == 0 and out.count("\n[") == 2 and "(firm + platform): 2 of " in out
 
 
 def test_show_keeps_the_old_listing_names(run):
@@ -112,15 +113,16 @@ def test_show_keeps_the_old_listing_names(run):
     assert code == 0 and "A candidate lesson" in out and "An active lesson" in out
 
 
-def test_an_unknown_or_ambiguous_id_changes_nothing_and_says_so(run):
-    run("add", "first lesson")
-    run("add", "second lesson")
+def test_an_unknown_or_ambiguous_id_changes_nothing_and_says_so(run, scopes):
+    folder = scopes("alpha").folder("client")
+    for suffix in ("ab01", "ab02"):
+        storage.save(Lesson(id=f"L-20200101-{suffix}", title=f"Lesson {suffix}", created="2020-01-01"), folder)
     code, out, err = run("show", "L-20991231-ffff", "--json")
     assert code == 1 and "no lesson" in err and json.loads(out)["exit_code"] == 1
-    day = storage.load(storage.scopes_from_env())[0].id[:11]
-    code, out, err = run("show", day, "--json")
+    code, out, err = run("show", "L-20200101-ab", "--json")
     assert code == 3 and "matches 2 lessons" in err and len(json.loads(out)["candidates"]) == 2
     assert run("show", "L-")[0] == 3
+    assert "Lesson ab02" in run("show", "L-20200101-ab02")[1] and "Lesson ab01" in run("show", "20200101-ab01")[1]
 
 
 def test_unreadable_files_are_named_and_never_break_a_command(run, workspace):

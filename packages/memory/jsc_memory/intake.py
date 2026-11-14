@@ -8,8 +8,12 @@ consultant's word or with evidence that it holds; otherwise it waits as a candid
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import json
+import os
 from pathlib import Path
 import re
+import time
 
 from . import lesson as record
 from . import scrubber, storage, vocab
@@ -95,6 +99,12 @@ def target_scope(scopes: Scopes, wanted: str | None) -> str:
     return scopes.kind
 
 
+def shipped_ids() -> set[str]:
+    """Ids of the lessons shipped with Torque, so a new lesson never takes one of them."""
+    from . import recall
+    return {item.id for item in recall.platform_lessons(advisory=False)}
+
+
 def parse_evidence(values, day: str) -> list[dict]:
     """`TYPE[:REF]` words to evidence entries."""
     entries = []
@@ -168,7 +178,7 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
             notes.append("Similar to " + ", ".join(f"{other.id} ({other.title})" for other in close[:3])
                          + ". If it is the same lesson, retire this one and mark the other: "
                          "torque lesson verify ID --evidence second-occurrence")
-        item.id = record.new_id(day, storage.taken_ids(folder))
+        item.id = record.new_id(day, storage.taken_ids(folder) | shipped_ids())
         path = storage.save(item, folder)
     return Added(item, path, "saved", inferred, found.masked, [note.replace(" ID ", f" {item.id} ") for note in notes])
 
@@ -207,3 +217,159 @@ def learned(scopes: Scopes, texts, *, scope: str | None = None, source: str = "a
         except Exception as exc:  # The session is already recorded; report, never lose it.
             problems.append({"learned": number, "reason": f"the lesson could not be written ({type(exc).__name__})"})
     return saved, problems
+
+
+HOSTS = ("claude", "codex", "antigravity")
+
+
+def host_memory_dir(host: str, workspace: Path, given: str | None = None) -> tuple[Path | None, str]:
+    """(folder, how to name one) where a host keeps its own memory or learned rules for
+    this workspace. Only documented places are guessed; anything else needs --dir."""
+    if given:
+        return Path(given).expanduser(), ""
+    home = Path.home()
+    if host == "claude":
+        base = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude") / "projects"
+        text = str(workspace)
+        names = dict.fromkeys((re.sub(r"[\\/:]", "-", text), re.sub(r"[^A-Za-z0-9]", "-", text)))
+        folders = [base / name / "memory" for name in names]
+        return next((folder for folder in folders if folder.is_dir()), folders[0]), ""
+    if host == "codex":
+        base = Path(os.environ.get("CODEX_HOME") or home / ".codex")
+        folders = [base / "memories_v2", base / "memories"]
+        return next((folder for folder in folders if folder.is_dir()), folders[0]), ""
+    return None, ("Antigravity keeps what it learned as rules: in this workspace under .agents/rules/, and for the "
+                  "user under ~/.gemini/. Name the folder: --dir PATH")
+
+
+def _harvest_state(workspace: Path) -> Path:
+    return storage.state_dir(workspace) / "harvest.json"
+
+
+def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | None = None) -> dict:
+    """The files in a host's own memory that changed since the last harvest, as pointers:
+    name, type, one-line description, path. It copies nothing: a host's memory mixes
+    clients, so a note enters a scope only through `torque lesson add --from-file PATH`
+    once someone has chosen the scope. The harvest time is recorded per host."""
+    if host not in HOSTS:
+        raise LessonError(f"unknown host `{host}`: use one of {', '.join(HOSTS)}.")
+    if scopes.workspace is None:
+        raise LessonError("harvest records when it last ran in a workspace: add --workspace PATH.")
+    folder, hint = host_memory_dir(host, scopes.workspace, given)
+    state_path = _harvest_state(scopes.workspace)
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    state = state if isinstance(state, dict) else {}
+    earlier = state.get(host) if isinstance(state.get(host), dict) else {}
+    last, seen = earlier.get("at"), earlier.get("seen")
+    report = {"host": host, "dir": str(folder) if folder else None, "since": since or (last or None),
+              "files": [], "copied": 0, "found": False, "note": hint}
+    if folder is None:
+        return report
+    if not folder.is_dir():
+        report["note"] = f"No memory folder at {folder}. If {host} keeps it elsewhere, name it: --dir PATH"
+        return report
+    if since:
+        cutoff = datetime.fromisoformat(record._day(since, "--since")).replace(tzinfo=timezone.utc).timestamp()
+    else:
+        cutoff = float(seen) if isinstance(seen, (int, float)) else 0.0
+    started = time.time()
+    files = []
+    for path in sorted(folder.rglob("*.md")):
+        try:
+            if path.name == "MEMORY.md" or path.is_symlink() or not path.is_file():
+                continue
+            modified = path.stat().st_mtime
+            if modified < cutoff:
+                continue
+            with open(path, encoding="utf-8", errors="replace") as stream:
+                meta, body = host_note(stream.read(64 * 1024))
+        except OSError:
+            continue
+        first = next((line.strip(" #*-") for line in body.splitlines() if line.strip(" #*-")), "")
+        files.append({"name": meta.get("name") or path.stem,
+                      "type": meta.get("type") or (path.stem.split("_", 1)[0] if "_" in path.stem else ""),
+                      "description": (meta.get("description") or first)[:160],
+                      "modified": datetime.fromtimestamp(modified, timezone.utc).date().isoformat(),
+                      "path": str(path)})
+    report.update(files=files, found=True)
+    # `seen` is the moment this listing began: a file changed after it shows up next time.
+    state[host] = {"at": storage.now(), "seen": started, "dir": str(folder), "files": len(files)}
+    storage._private_dir(state_path.parent)
+    storage._atomic_write(state_path, json.dumps(state, indent=2) + "\n")
+    return report
+
+
+def _v1_records(engagement: Path, problems: list) -> list[dict]:
+    """The lessons of the earlier JSON store (state/memory/lessons), as they were written."""
+    folder = engagement / "state" / "memory" / "lessons"
+    found: list[dict] = []
+    files = [*sorted((folder / "_review_queue").glob("*.json")), folder / "active.json",
+             *sorted((folder / "_archive").glob("*.json"))]
+    for path in files:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            problems.append({"path": path.relative_to(engagement).as_posix(), "reason": "not readable JSON"})
+            continue
+        for item in data if isinstance(data, list) else [data]:
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]:
+                found.append(item)
+            else:
+                problems.append({"path": path.relative_to(engagement).as_posix(), "reason": "not a lesson record"})
+    return found
+
+
+def migrate(scopes: Scopes) -> dict:
+    """Import the earlier store's JSON lessons of the selected client into the new format,
+    once: a lesson already imported is skipped, and the old files are left in place."""
+    if scopes.engagement is None:
+        raise LessonError("select the client whose old lessons to import: --workspace PATH --client NAME.")
+    problems: list = []
+    folder = scopes.folder(scopes.kind)
+    report = {"imported": [], "already": 0, "problems": problems,
+              "old_store": (scopes.engagement / "state" / "memory" / "lessons").as_posix()}
+    states = {"review_pending": "candidate", "active": "active", "archive": "retired"}
+    with storage.transaction(scopes.engagement):
+        taken = storage.taken_ids(folder)
+        for old in _v1_records(scopes.engagement, problems):
+            stamp = old.get("captured_at") if type(old.get("captured_at")) is int else 0
+            day = datetime.fromtimestamp(stamp, timezone.utc).date().isoformat() if stamp else record.today()
+            suffix = re.sub(r"[^a-z0-9]", "", old["id"].lower())[:16].ljust(4, "0")
+            identifier = f"L-{day.replace('-', '')}-{suffix}"
+            if identifier in taken:
+                report["already"] += 1
+                continue
+            text = str(old.get("full_text") or old.get("short") or "").strip()
+            title = re.sub(r"^\[[a-z_]+\]\s*", "", str(old.get("title") or "")).strip()
+            if not (text or title):
+                problems.append({"path": f"v1 lesson {old['id'][:12]}", "reason": "it holds no text"})
+                continue
+            parts = structure(text)
+            helpful = old.get("helpful_count") if type(old.get("helpful_count")) is int else 0
+            seen = old.get("last_seen") if type(old.get("last_seen")) is int else 0
+            item = Lesson(
+                id=identifier, title=record.first_sentence(parts.get("do") or text or title), scope=scopes.kind,
+                state=states.get(old.get("state"), "candidate"), when=parts.get("when", ""), do=parts.get("do", ""),
+                because=parts.get("because", ""), source="harvested", created=day, review_by=record.later(record.today()),
+                body=parts.get("lead", "") if parts else text,
+                evidence=[record.evidence_entry("session", f"earlier store, lesson {old['id'][:16]}"
+                                                + (f", marked helpful {helpful} times" if helpful else ""), day)])
+            if item.state == "active" and seen:
+                item.last_verified = datetime.fromtimestamp(seen, timezone.utc).date().isoformat()
+            whole = "\n".join((item.title, item.when, item.do, item.because, item.body))
+            item.applies["tasks"], item.applies["types"] = vocab.infer(whole)
+            item.applies["keywords"], item.applies["errors"] = vocab.keywords(whole), vocab.errors(whole)
+            found = scrubber.scrub_lesson(item)
+            if found.refused:
+                problems.append({"path": f"v1 lesson {old['id'][:12]}",
+                                 "reason": "not imported: " + ", ".join(found.refused) + " in its text"})
+                continue
+            storage.save(item, folder)
+            taken.add(identifier)
+            report["imported"].append({"id": identifier, "state": item.state, "title": item.title})
+    return report

@@ -1149,6 +1149,38 @@ def _links_out(root: Path) -> dict:
     return {"found": sorted(dict.fromkeys(found)), "complete": True}
 
 
+def _lessons_doctor(folder: Path | None) -> dict:
+    """What doctor says about lessons, for the firm and the selected client: counts by
+    state, unreadable files, the last capture and the last time a lesson was shown,
+    whether the loop is live or idle, and a self-check that writes a lesson in a temporary
+    folder and finds it again. Reads lesson files only; never stops doctor."""
+    try:
+        from jsc_memory import review, storage
+        report = review.health(storage.scopes_for(folder))
+        check = report["selfcheck"] = review.selfcheck()
+        failed = [step["step"] for step in check["steps"] if not step["passed"]]
+        report["lines"] = [*review.health_lines(report),
+                           "Lessons self-check: " + ("passed (wrote a lesson and found it again by type, by "
+                                                     "command and through the context block)" if check["passed"]
+                                                     else "FAILED at: " + ", ".join(failed))]
+        unreadable = [problem for part in (report["firm"], report["engagement"], report["platform"]) if part
+                      for problem in part["unreadable"]]
+        report["next_actions"] = []
+        if unreadable:
+            shown = "; ".join(f"{problem['path']} ({problem['reason']})" for problem in unreadable[:5])
+            report["next_actions"].append(
+                f"{len(unreadable)} lesson file(s) could not be read and are skipped everywhere: {shown}"
+                + (" ..." if len(unreadable) > 5 else "") + ". Fix the file or move it out of the lessons folder.")
+        if failed:
+            report["next_actions"].append(
+                "The lessons self-check failed (" + ", ".join(failed) + "), so lessons may not be saved or shown. "
+                "Run `torque lesson selfcheck` for the detail and reinstall Torque if it keeps failing.")
+        return report
+    except Exception as exc:  # Lessons are an aid: doctor reports the rest whatever happens here.
+        return {"problem": f"lessons could not be checked ({type(exc).__name__})",
+                "lines": [f"Lessons: could not be checked ({type(exc).__name__})"], "next_actions": []}
+
+
 def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
@@ -1182,6 +1214,8 @@ def _doctor(args: argparse.Namespace) -> int:
                                 "changes_checked": len(changes), "evidence_problems": evidence_problems,
                                 "record_problems": len(skipped), "skipped_records": skipped}
         report["synced_folders"] = {"workspace": _synced_folder(root), "interpreter": _synced_folder(sys.executable)}
+    report["lessons"] = _lessons_doctor(Path(report["client"]["path"]) if report["client"] else
+                                        Path(report["workspace"]["path"]) if report["workspace"] else None)
     requirements = {"workspace": (), "salesforce": ("sf",), "browser": ("sf", "playwright"),
                     "meeting": ("ffmpeg", "PIL")}
     available = {**{name: bool(path) for name, path in report["executables"].items()}, **report["optional_modules"]}
@@ -1443,6 +1477,7 @@ def _doctor(args: argparse.Namespace) -> int:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
             "in this client's handoff before relying on the recorded checks.")
+    report["next_actions"] += report["lessons"].get("next_actions", [])
     if not available["sf"]:
         report["next_actions"].append("Install the official Salesforce CLI before live org work; context and the offline demo remain usable.")
     if not available["playwright"]:
@@ -1528,6 +1563,8 @@ def _doctor(args: argparse.Namespace) -> int:
                           ".agents/hooks.json)")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
+        for line in report["lessons"].get("lines", []):
+            print(line)
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")
         for action in report["next_actions"]:
             print(f"Next: {action}")

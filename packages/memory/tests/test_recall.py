@@ -11,7 +11,7 @@ def save(scopes, scope, suffix, **fields):
     applies = {"tasks": [], "types": [], "commands": [], "keywords": [], "errors": [],
                **{key: fields.pop(key) for key in ("tasks", "types", "commands", "keywords", "errors")
                   if key in fields}}
-    item = Lesson(id=f"L-20261114-{suffix}", title=fields.pop("title", f"Lesson {suffix}"), scope=scope,
+    item = Lesson(id=f"L-20250303-{suffix}", title=fields.pop("title", f"Lesson {suffix}"), scope=scope,
                   state=fields.pop("state", "active"), created=fields.pop("created", "2026-11-14"),
                   last_verified=fields.pop("last_verified", "2026-11-14"), applies=applies, **fields)
     storage.save(item, scopes.folder(scope))
@@ -68,7 +68,7 @@ def test_ranking_is_scope_then_match_strength_then_feedback_then_recency(scopes)
     save(alpha, "client", "c003", types=["Flow"], last_verified="2026-01-01")        # same strength as c004, older
     save(alpha, "client", "c004", types=["Flow"], last_verified="2026-06-01")
     save(alpha, "client", "c005", types=["Flow"], last_verified="2025-01-01")        # oldest, but marked helpful
-    storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20261114-c005"}])
+    storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c005"}])
     result = recall.find(alpha, types=["Flow"], tasks=["deploy"], limit=None)
     assert own(result) == ["c002", "c005", "c004", "c003", "c001", "f001"]
     assert result.hits[0].score == 7 and result.hits[0].reasons == ["type Flow", "task deploy"]
@@ -80,14 +80,14 @@ def test_candidates_stale_marks_retired_and_promoted_lessons_stay_out_of_default
     save(alpha, "client", "0001", types=["Flow"])
     save(alpha, "client", "0002", types=["Flow"], state="candidate")
     save(alpha, "client", "0003", types=["Flow"], state="retired")
-    save(alpha, "client", "0004", types=["Flow"], promoted_to=["firm:L-20261114-ffff"])
+    save(alpha, "client", "0004", types=["Flow"], promoted_to=["firm:L-20250303-ffff"])
     save(alpha, "client", "0005", types=["Flow"])
-    storage.log(alpha.engagement, [{"event": "stale", "id": "L-20261114-0005", "reason": "fixed upstream"}])
+    storage.log(alpha.engagement, [{"event": "stale", "id": "L-20250303-0005", "reason": "fixed upstream"}])
     result = recall.find(alpha, types=["Flow"], limit=None)
     assert own(result) == ["0001"] and result.candidates == 1
     assert "1 matching candidate(s) wait for review" in recall.render(result)
     assert own(recall.find(alpha, types=["Flow"], include_candidates=True, limit=None)) == ["0001", "0002"]
-    storage.log(alpha.engagement, [{"event": "restored", "id": "L-20261114-0005"}])
+    storage.log(alpha.engagement, [{"event": "restored", "id": "L-20250303-0005"}])
     assert own(recall.find(alpha, types=["Flow"], limit=None)) == ["0001", "0005"]
 
 
@@ -157,11 +157,11 @@ def test_a_lesson_prints_in_three_short_lines_and_the_block_ends_with_the_standi
          do="grant field permissions in a permission set in the same deploy",
          because="a field created through the Metadata API has no field access",
          evidence=[{"type": "reproduced", "date": "2026-11-12"}])
-    storage.log(alpha.engagement, [{"event": "shown", "id": "L-20261114-a3f2"}] * 2
-                + [{"event": "helpful", "id": "L-20261114-a3f2"}])
+    storage.log(alpha.engagement, [{"event": "shown", "id": "L-20250303-a3f2"}] * 2
+                + [{"event": "helpful", "id": "L-20250303-a3f2"}])
     text = recall.render(recall.find(alpha, types=["CustomField"], limit=1)).splitlines()
     assert text[0].startswith("Lessons for CustomField (client alpha + firm + platform): 1 of ")
-    assert text[1] == "[L-20261114-a3f2] WHEN you are about to deploy a new custom field"
+    assert text[1] == "[L-20250303-a3f2] WHEN you are about to deploy a new custom field"
     assert text[2] == ("  DO grant field permissions in a permission set in the same deploy. "
                        "WHY a field created through the Metadata API has no field access.")
     assert text[3].startswith("  (client, reproduced, verified ") and text[3].endswith("; shown 2, helpful 1)")
@@ -169,7 +169,7 @@ def test_a_lesson_prints_in_three_short_lines_and_the_block_ends_with_the_standi
     long = save(alpha, "client", "10n9", types=["Report"], when="x " * 400, do="y " * 400, because="z " * 400)
     assert all(len(line) <= 420 for line in recall.lines(long))
     free = save(alpha, "client", "f4ee", title="Always retrieve first", body="always retrieve first.\nThen compare.")
-    assert recall.lines(free)[:2] == ["[L-20261114-f4ee] Always retrieve first",
+    assert recall.lines(free)[:2] == ["[L-20250303-f4ee] Always retrieve first",
                                       "  always retrieve first. Then compare."]
 
 
@@ -179,10 +179,10 @@ def test_the_function_other_packages_call_returns_text_or_nothing_and_never_rais
          do="read the active version back")
     monkeypatch.setenv("TORQUE_WORKSPACE", str(alpha.engagement))
     text = recall.for_command("torque deploy --metadata Flow:Gift_Entry --target-org example-dev", via="deploy")
-    assert text.splitlines()[1] == "[L-20261114-0001] WHEN you deploy a flow" and text.endswith(recall.FOOTER)
+    assert text.splitlines()[1] == "[L-20250303-0001] WHEN you deploy a flow" and text.endswith(recall.FOOTER)
     assert len([line for line in text.splitlines() if line.startswith("[")]) <= 3
     events = storage.read_events(alpha.engagement)
-    assert [(row["event"], row["id"], row["via"]) for row in events] == [("shown", "L-20261114-0001", "deploy")]
+    assert [(row["event"], row["id"], row["via"]) for row in events] == [("shown", "L-20250303-0001", "deploy")]
     assert "torque deploy" not in storage.events_path(alpha.engagement).read_text(encoding="utf-8")
     assert recall.for_command("git status") == ""
     # Other callers pass what they know (a task, types, paths); the catalogue's sign-in notes answer here.
@@ -211,13 +211,13 @@ def test_the_context_block_shows_the_engagements_best_and_counts_the_rest(scopes
         save(alpha, "client", f"c{number:03d}", when=f"case {number}", do="act", last_verified=f"2026-10-{number + 1:02d}")
     save(alpha, "client", "cand", state="candidate")
     save(alpha, "firm", "f001")
-    storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20261114-c000"}])
+    storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c000"}])
     (alpha.folder("client") / "broken.md").write_text("not a lesson", encoding="utf-8")
     section = recall.context_section(alpha)
     assert [item["id"][-4:] for item in section["shown"]] == ["c000", "c006", "c005", "c004", "c003"]
     assert (section["engagement_active"], section["firm_active"], section["candidates_waiting"]) == (7, 1, 1)
     assert section["platform_active"] >= 40 and section["note"] == recall.FOOTER
-    assert section["lines"][0] == "[L-20261114-c000] WHEN case 0"
+    assert section["lines"][0] == "[L-20250303-c000] WHEN case 0"
     assert [problem["path"] for problem in section["unreadable"]] == ["clients/alpha/lessons/broken.md"]
     assert storage.read_events(alpha.engagement)[-1]["event"] == "helpful"     # reading logs nothing
     recall.context_section(alpha, via="context")

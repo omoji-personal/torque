@@ -40,7 +40,8 @@ def _shipped() -> tuple[tuple, tuple]:
     lessons, problems = [], []
     try:
         folder = resources.files("torque").joinpath("data", "lessons")
-        files = sorted((item for item in folder.iterdir() if item.name.endswith(".md")), key=lambda item: item.name)
+        files = sorted((item for item in folder.iterdir()
+                        if item.name.endswith(".md") and item.name.lower() != "readme.md"), key=lambda item: item.name)
     except (ModuleNotFoundError, OSError, TypeError):
         files = []
     for item in files:
