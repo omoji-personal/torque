@@ -43,7 +43,7 @@ class Added:
     notes: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
-        return {"id": self.lesson.id, "status": self.status, "state": self.lesson.state, "scope": self.lesson.scope,
+        return {"id": self.lesson.id, "short_id": record.short_id(self.lesson.id), "status": self.status, "state": self.lesson.state, "scope": self.lesson.scope,
                 "title": self.lesson.title, "path": str(self.path) if self.path else None,
                 "applies": self.lesson.applies, "inferred": self.inferred, "masked": self.masked,
                 "notes": self.notes}

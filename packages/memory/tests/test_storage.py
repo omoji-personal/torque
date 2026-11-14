@@ -109,6 +109,23 @@ def test_an_id_resolves_exactly_or_by_a_unique_start(scopes):
         storage.resolve(lessons, "L-20991231-ffff")
 
 
+def test_the_part_of_an_id_after_its_date_is_enough(scopes):
+    folder = scopes("alpha").folder("client")
+    for identifier in ("L-20261114-c0de1234", "L-20261114-c0ffee99", "L-20261115-beef5678", "L-20250303-a3f2"):
+        storage.save(Lesson(id=identifier, title=identifier, created="2026-11-14"), folder)
+    lessons = storage.load(scopes("alpha"))
+    assert storage.resolve(lessons, "beef5678").id == "L-20261115-beef5678"
+    assert storage.resolve(lessons, "beef").id == "L-20261115-beef5678"          # a unique start of it
+    assert storage.resolve(lessons, "c0de").id == "L-20261114-c0de1234"
+    assert storage.resolve(lessons, "a3f2").id == "L-20250303-a3f2"              # an earlier, four-character id
+    with pytest.raises(storage.Ambiguous) as caught:
+        storage.resolve(lessons, "2026")                                          # the year alone names many
+    assert "the part of an id after its date is enough" in str(caught.value)
+    with pytest.raises(storage.Ambiguous):
+        storage.resolve(lessons, "c0")                                            # too short
+    assert record.short_id("L-20261114-c0de1234") == "c0de1234" and record.short_id("A-deploy-order") == "deploy-order"
+
+
 @pytest.mark.parametrize("damage", [
     {"via": ["malformed"]}, {"via": {"a": 1}}, {"reason": 7}, {"session": ["x"]}, {"superseded_by": 3},
     {"note": {"x": 1}}, {"id": ""}, {"id": 5}, {"at": 20261114}, {"at": "yesterday"}, {"event": "deleted"},

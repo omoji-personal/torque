@@ -105,6 +105,7 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
         if result.masked:
             lines.append("  masked: " + ", ".join(f"{name} ({count})" for name, count in result.masked.items()))
         lines.append(f"  file: {result.path}")
+        lines.append(f"  short id: {record.short_id(item.id)} (every lesson command takes it)")
     lines += [f"  {note}" for note in result.notes]
     _out(args, result.as_dict(), "\n".join(lines))
     return EXIT_OK
@@ -147,6 +148,9 @@ def _listing(args: argparse.Namespace, scopes: Scopes, rows, problems: list, hea
     platform = len(recall.platform_lessons())
     text = [heading] if rows else [f"No lessons to list ({scopes.label()})."]
     text += [_row(item, tally) for item, tally in rows]
+    if rows:
+        text.append(f"An id's last part is enough for every command (torque lesson show "
+                    f"{record.short_id(rows[0][0].id)}).")
     if getattr(args, "scope", None) != "platform" and not getattr(args, "everything", False):
         text.append(f"Plus {platform} platform lessons shipped with Torque: torque lesson list --scope platform")
     text += recall.problem_lines(problems, limit=20)

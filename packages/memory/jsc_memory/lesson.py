@@ -103,6 +103,16 @@ def new_id(day: str | None = None, taken=()) -> str:
             return candidate
 
 
+_SHORT = re.compile(r"[A-Z]-(?:\d{8}-)?(.+)\Z")
+
+
+def short_id(identifier: str) -> str:
+    """The part of an id a person types: after the date (L-20261114-c0de1234 -> c0de1234),
+    or after the letter for an id without one (A-deploy-order -> deploy-order)."""
+    match = _SHORT.match(identifier or "")
+    return match.group(1) if match else identifier or ""
+
+
 def admitted(source: str, evidence: list) -> bool:
     return source == "consultant" or any(entry.get("type") in ADMITTING for entry in evidence)
 

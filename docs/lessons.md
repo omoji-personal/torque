@@ -270,7 +270,10 @@ never raises.
 A new id is the date and eight random characters, chosen so that no lesson this command
 can read (the selected client or initiative, the firm, the platform) has it; another
 client's folder is never looked into for that. Ids of four random characters from earlier
-versions keep working. An id is the whole id or a unique start of at least four characters after the `L-`. An
+versions keep working. Every command takes the whole id, a unique start of at least four
+characters after the `L-`, or the part after the date alone (`c0de1234`) or a unique
+start of it: an id starts with its date, so four characters from the front are only the
+year. `add` prints that short part, and `list` says it is enough. An
 empty or ambiguous id changes nothing, lists the candidates and exits 3. A platform
 lesson can be marked helpful or stale in a workspace (a stale mark holds for that
 workspace) and is never rewritten there. No command deletes a lesson: `retire` keeps the

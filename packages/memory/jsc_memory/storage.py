@@ -224,12 +224,15 @@ def resolve(lessons: list[Lesson], wanted: str) -> Lesson:
     if len(tail) < 4:
         raise Ambiguous(f"`{wanted}` is too short: give the whole id or at least four characters after the L-",
                         [item for item in lessons if item.id.lower().startswith(wanted.lower())][:10])
+    # The whole id, a unique start of it, or the part after the date alone (c0de1234) or a unique start of that.
     matches = exact or [item for item in lessons
-                        if item.id.lower().startswith(wanted.lower()) or item.id[2:].lower().startswith(tail.lower())]
+                        if item.id.lower().startswith(wanted.lower()) or item.id[2:].lower().startswith(tail.lower())
+                        or record.short_id(item.id).lower().startswith(wanted.lower())]
     if not matches:
         raise NotFound(f"no lesson `{wanted}` among the lessons this command can read")
     if len(matches) > 1:
-        raise Ambiguous(f"`{wanted}` matches {len(matches)} lessons", matches[:10])
+        raise Ambiguous(f"`{wanted}` matches {len(matches)} lessons (the part of an id after its date is enough: "
+                        f"{record.short_id(matches[0].id)})", matches[:10])
     return matches[0]
 
 

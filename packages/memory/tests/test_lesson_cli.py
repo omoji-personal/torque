@@ -123,6 +123,20 @@ def test_a_labelled_secret_in_prose_or_lowercase_is_refused_and_never_written(ru
     assert not any(path.is_file() for path in workspace.rglob("L-*.md"))
 
 
+def test_every_command_takes_the_short_id_that_add_and_list_print(run):
+    code, out, _ = run("add", "When: you deploy a flow. Do: read it back.", "--source", "consultant", "--json")
+    saved = json.loads(out)
+    short = saved["short_id"]
+    assert saved["id"].endswith("-" + short) and len(short) == 8
+    text = run("add", "When: you load data. Do: count rows first.", "--source", "consultant")[1]
+    assert "  short id: " in text and "(every lesson command takes it)" in text
+    assert "An id's last part is enough for every command" in run("list")[1]
+    for command in (("show", short), ("helpful", short), ("verify", short), ("stale", short, "--reason", "x"),
+                    ("restore", short), ("edit", short, "--set", "kind=works")):
+        code, out, err = run(*command, "--json")
+        assert code == 0 and json.loads(out)["id"] == saved["id"], (command, err)
+
+
 def test_harvest_withholds_a_host_note_line_that_holds_a_credential(run, workspace, tmp_path):
     memory = tmp_path / "host-memory"
     memory.mkdir()
