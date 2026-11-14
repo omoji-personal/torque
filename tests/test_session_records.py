@@ -146,6 +146,79 @@ def test_input_document_errors_name_the_problem_and_write_nothing(firm):
     assert sessions(firm) == []
 
 
+def test_a_verified_record_without_a_basis_saves_and_hints_and_with_one_keeps_every_field(firm):
+    code, out, err = add(firm, "--summary", "Checked the page", "--status", "verified")
+    assert code == 0, err
+    hint = [line for line in out.splitlines() if line.startswith("Hint: ")]
+    assert len(hint) == 1 and all(word in hint[0] for word in ("--check", "--as-user", "--in-org", "--not-covered"))
+    entry = json.loads(add(firm, "--summary", "Checked again", "--status", "verified", "--json")[1])
+    assert entry["hints"] and "check" not in entry
+    stored = json.loads((firm / "clients/alpha/sessions" / f"{entry['id']}.json").read_text(encoding="utf-8"))
+    assert "hints" not in stored
+    entry = json.loads(add(firm, "--summary", "Checked as staff", "--status", "verified", "--check", "rendered",
+                           "--as-user", "staff user", "--in-org", "alpha-sandbox", "--not-covered", "mobile",
+                           "--json")[1])
+    assert entry["hints"] == []
+    assert entry["check"] == {"kind": "rendered", "as_user": "staff user", "org": "alpha-sandbox",
+                              "not_covered": "mobile"}
+    context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
+    assert next(s for s in context["sessions"] if s["id"] == entry["id"])["check"]["as_user"] == "staff user"
+    text = invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    basis = "Basis: check rendered; as staff user; in alpha-sandbox; not covered: mobile"
+    assert basis in text
+    assert basis in invoke("handoff", "--workspace", firm, "--client", "alpha")[1]
+
+
+def test_the_org_type_comes_from_the_consent_record_when_the_workspace_knows_it(firm):
+    consent = firm / "clients/alpha/consent.json"
+    consent.write_text(json.dumps({"schema": "torque.consent/1", "client": "alpha", "approved_orgs": [
+        {"alias": "alpha-sandbox", "org_id_18": "00D000000000000AAA", "kind": "sandbox"}]}), encoding="utf-8")
+    entry = json.loads(add(firm, "--summary", "x", "--check", "live", "--in-org", "alpha-sandbox", "--json")[1])
+    assert entry["check"]["org_type"] == "sandbox"
+    entry = json.loads(add(firm, "--summary", "x", "--in-org", "other-org", "--json")[1])
+    assert "org_type" not in entry["check"]
+
+
+def test_accepted_needs_someone_who_accepted_it(firm):
+    code, _, err = add(firm, "--summary", "Lead said yes", "--status", "accepted")
+    assert code == 2 and "--accepted-by" in err and sessions(firm) == []
+    entry = json.loads(add(firm, "--summary", "Lead said yes", "--status", "accepted", "--accepted-by",
+                           "project lead", "--json")[1])
+    assert entry["status"] == "accepted" and entry["accepted_by"] == "project lead"
+    assert "accepted by project lead" in invoke("context", "--workspace", firm, "--client", "alpha")[1]
+
+
+def test_corrects_links_without_rewriting_and_an_unknown_id_names_nothing_private(firm):
+    first = json.loads(add(firm, "--summary", "Secret-ish words: the Flow passed", "--status", "verified",
+                           "--json")[1])
+    other = json.loads(add(firm, "--summary", "Beta work", "--json", client="beta")[1])
+    original = (firm / "clients/alpha/sessions" / f"{first['id']}.json").read_bytes()
+    for wrong in ("20991231T000000000000Z-000000000000", other["id"], "not an id"):
+        code, out, err = add(firm, "--summary", "x", "--corrects", wrong)
+        assert code == 2 and "session list" in err
+        assert "Secret-ish" not in err + out and "Beta work" not in err + out and wrong not in err
+    fix = json.loads(add(firm, "--summary", "The Flow failed for staff users", "--status", "executed",
+                         "--corrects", first["id"], "--json")[1])
+    assert fix["corrects"] == first["id"]
+    assert (firm / "clients/alpha/sessions" / f"{first['id']}.json").read_bytes() == original
+    context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
+    earlier = next(s for s in context["sessions"] if s["id"] == first["id"])
+    assert earlier["corrected_by"] == [fix["id"]]
+    text = invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    assert f"CORRECTED by {fix['id']}" in text
+    assert f"CORRECTED by {fix['id']}" in invoke("handoff", "--workspace", firm, "--client", "alpha")[1]
+
+
+def test_a_record_with_a_damaged_basis_is_skipped_and_named(firm):
+    entry = json.loads(add(firm, "--summary", "x", "--check", "scripted", "--json")[1])
+    path = firm / "clients/alpha/sessions" / f"{entry['id']}.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["check"] = {"kind": "guessed"}
+    path.write_text(json.dumps(value), encoding="utf-8")
+    context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
+    assert context["sessions"] == [] and context["record_problems"][0]["reason"] == "its check basis is not valid"
+
+
 def test_learned_keeps_working_with_input(firm):
     document = firm / "record.json"
     document.write_text(json.dumps({"summary": "Fixed the query", "status": "executed",

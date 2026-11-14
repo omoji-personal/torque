@@ -186,6 +186,22 @@ def build_parser() -> argparse.ArgumentParser:
     entry.add_argument("--learned-from", choices=("consultant", "agent"),
                        help="consultant: their correction or instruction, saved as an active lesson; agent "
                             "(default): saved as a candidate until it is reviewed")
+    basis = entry.add_argument_group("what a check rested on (each optional; see docs/engagement-records.md)")
+    basis.add_argument("--check", choices=ws.CHECK_KINDS,
+                       help="the kind of check: read-back (what was sent, read back), scripted (a script or test), "
+                            "rendered (a page rendered and looked at), live (the real entry point used), reviewed")
+    basis.add_argument("--as-user", metavar="TEXT",
+                       help="as whom it was checked: admin, a named persona, a guest, an integration user (a role "
+                            "is enough; no personal data needed)")
+    basis.add_argument("--in-org", metavar="ALIAS",
+                       help="the org it was checked in; Torque adds sandbox or production when the client's consent "
+                            "record names the org (no org call)")
+    basis.add_argument("--not-covered", metavar="TEXT", help="what the check did not cover")
+    basis.add_argument("--accepted-by", metavar="TEXT",
+                       help="who accepted the work (a lead, a tester, the client); required with --status accepted")
+    basis.add_argument("--corrects", metavar="SESSION_ID",
+                       help="an earlier record of this client or initiative that this one corrects; the earlier "
+                            "file is not changed, and context and handoff show it as corrected")
     entry.add_argument("--json", action="store_true")
     for action in ("list", "show"):
         p = sessions.add_parser(action)
@@ -498,7 +514,9 @@ def _workflows(args: argparse.Namespace) -> int:
 # `session add` fields that `--input FILE|-` can also give: field -> (kind, default).
 # The keys of the document are the option names, with - or _ (`learned-from`, `learned_from`).
 SESSION_FIELDS = {"summary": ("text", None), "status": ("text", "prepared"), "evidence": ("list", []),
-                  "learned": ("list", []), "learned_scope": ("text", "client"), "learned_from": ("text", "agent")}
+                  "learned": ("list", []), "learned_scope": ("text", "client"), "learned_from": ("text", "agent"),
+                  "check": ("text", None), "as_user": ("text", None), "in_org": ("text", None),
+                  "not_covered": ("text", None), "accepted_by": ("text", None), "corrects": ("text", None)}
 INPUT_LIMIT = 1_000_000
 
 
@@ -1945,6 +1963,8 @@ def main(argv: list[str] | None = None) -> int:
                     print("Full change: " + change["show_command"])
                 for entry in context["sessions"]:
                     print(f"\n{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}")
+                    for line in ws.session_link_lines(entry):
+                        print(line)
                     if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
                         print(f"Evidence: {entry['evidence_integrity']} since recording.")
         elif parsed.command == "session":
@@ -1953,11 +1973,21 @@ def main(argv: list[str] | None = None) -> int:
                 fields = _session_fields(parsed)
                 entry = ws.add_session(parsed.workspace, name, fields["summary"], fields["status"],
                                        fields["evidence"], kind=kind, learned=fields["learned"],
-                                       learned_scope=fields["learned_scope"], learned_from=fields["learned_from"])
+                                       learned_scope=fields["learned_scope"], learned_from=fields["learned_from"],
+                                       check=fields["check"], as_user=fields["as_user"], org=fields["in_org"],
+                                       not_covered=fields["not_covered"], accepted_by=fields["accepted_by"],
+                                       corrects=fields["corrects"])
+                hints = ws.session_hints(entry)
                 if parsed.json:
-                    _print_json(entry)
+                    _print_json({**entry, "hints": hints})
                 else:
                     print(f"Recorded {entry['id']} [{entry['status']}, user-reported]")
+                    if ws.basis_text(entry):
+                        print("Basis: " + ws.basis_text(entry))
+                    if entry.get("corrects"):
+                        print(f"Corrects {entry['corrects']} (that record is kept as it is and shown as corrected)")
+                    for hint in hints:
+                        print("Hint: " + hint)
                     for line in ws.learned_lines(entry):
                         print(line)
                 if entry.get("lesson_problems"):
@@ -1983,6 +2013,8 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     for entry in entries:
                         print(f"{entry['id']} [{entry['status']}, user-reported] {entry['summary']}")
+                        for line in ws.session_link_lines(entry):
+                            print("  " + line)
                         if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
                             print(f"Evidence: {entry['evidence_integrity']} since recording.")
                     if not entries:

@@ -17,7 +17,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 PROFILES = ("generic", "solution-lead")
-STATUSES = ("prepared", "executed", "verified", "incomplete")
+STATUSES = ("prepared", "executed", "verified", "incomplete", "accepted")
+# What a check rested on (`session add --check`): what was sent read back, a script or
+# test, a page rendered and looked at, the real entry point used live, or a review.
+CHECK_KINDS = ("read-back", "scripted", "rendered", "live", "reviewed")
+CHECK_FIELDS = ("kind", "as_user", "org", "org_type", "not_covered")
+FIELD_LIMIT = 1000
 AI_ACCESS_MODES = ("full", "build-only", "connected")
 APPROVAL_VALUES = ("required",)
 APPROVAL_VERIFY = ("hmac", "owner-uid")
@@ -31,6 +36,7 @@ SCHEMA_GUARDED = "torque.workspace/2"
 GUARDED_READS = "guarded_reads"
 MAINTENANCE_FLAG = ".torque/maintenance"
 _SESSION_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[a-f0-9]{12}\Z")
+_CHANGE_ID = re.compile(r"chg-[a-f0-9]{12}\Z")
 
 
 class WorkspaceError(ValueError):
@@ -1000,11 +1006,18 @@ def require_engagement_writable(folder: Path) -> None:
 def add_session(workspace: str | Path, client_name: str, summary: str,
                 status: str = "prepared", evidence: str | Path | None = None, *,
                 kind: str = "client", learned=(), learned_scope: str = "client",
-                learned_from: str = "agent") -> dict:
+                learned_from: str = "agent", check: str | None = None, as_user: str | None = None,
+                org: str | None = None, not_covered: str | None = None, accepted_by: str | None = None,
+                corrects: str | None = None) -> dict:
     """Append a session record. Each text in `learned` is also saved as a lesson linked
     to the record (scope: the engagement, or the firm). The record is written first and
     stands whatever happens to a lesson: the returned entry then names the lessons saved
-    (`lessons`) and those that were not, with the reason (`lesson_problems`)."""
+    (`lessons`) and those that were not, with the reason (`lesson_problems`).
+
+    What a check rested on is kept in `check` (kind, as_user, org, org_type when the
+    workspace knows the org, not_covered), who accepted the work in `accepted_by`, and
+    the earlier record this one corrects in `corrects`; the earlier record is never
+    rewritten (its correction is derived when records are read)."""
     client, _, config = load_engagement(workspace, client_name, kind)
     require_engagement_writable(client)
     if not summary.strip():
@@ -1013,6 +1026,27 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
         raise WorkspaceError(f"unknown session status: {status}")
     if learned_scope not in ("client", "firm") or learned_from not in ("consultant", "agent"):
         raise WorkspaceError("a learned lesson's scope is client or firm, and it comes from the consultant or the agent")
+    basis = {}
+    if check is not None:
+        if check not in CHECK_KINDS:
+            raise WorkspaceError(f"unknown check kind: {check}; choose from {', '.join(CHECK_KINDS)}")
+        basis["kind"] = check
+    for key, value, option in (("as_user", as_user, "--as-user"), ("org", org, "--in-org"),
+                               ("not_covered", not_covered, "--not-covered")):
+        if value is not None:
+            basis[key] = _field_text(value, option)
+    if "org" in basis:
+        if any(c.isspace() for c in basis["org"]):
+            raise WorkspaceError("--in-org takes one org alias, username or ID, without spaces")
+        org_type = known_org_type(client, kind, basis["org"])
+        if org_type:
+            basis["org_type"] = org_type
+    accepted = _field_text(accepted_by, "--accepted-by") if accepted_by is not None else None
+    if status == "accepted" and not accepted:
+        raise WorkspaceError("status accepted needs --accepted-by TEXT: who accepted the work (a lead, a tester, "
+                             "the client, by role or name); an agent never accepts work alone")
+    if corrects is not None:
+        _require_session(client, config, kind, corrects)
     references = []
     for item in _evidence_arguments(evidence):
         reference = _evidence_reference(client, item)
@@ -1027,6 +1061,12 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
              kind: config["slug"], "summary": summary.strip(), "status": status,
              "status_basis": "user_reported", "independently_verified": False,
              "evidence": evidence_ref}
+    if basis:
+        entry["check"] = basis
+    if accepted:
+        entry["accepted_by"] = accepted
+    if corrects is not None:
+        entry["corrects"] = corrects
     sessions = _inside(client, client / "sessions")
     sessions.mkdir(mode=0o700, exist_ok=True)
     _write_json(_inside(client, sessions / f"{entry_id}.json"), entry, private=True)
@@ -1039,6 +1079,94 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
             saved, problems = [], [{"learned": 0, "reason": f"lessons are unavailable ({type(exc).__name__})"}]
         entry = {**entry, "lessons": saved, "lesson_problems": problems}
     return entry
+
+
+def _field_text(value: object, option: str) -> str:
+    """One line of free text for a record field."""
+    if not isinstance(value, str) or not value.strip() or any(c in value for c in "\r\n\0"):
+        raise WorkspaceError(f"{option} must be nonempty and on one line")
+    if len(value.strip()) > FIELD_LIMIT:
+        raise WorkspaceError(f"{option} holds more than {FIELD_LIMIT:,} characters; put the detail in the summary")
+    return value.strip()
+
+
+def known_org_type(engagement: Path, kind: str, alias: str) -> str | None:
+    """sandbox, developer, scratch or production when the workspace knows the org: the
+    client's consent record names it with the type the Salesforce CLI reported when the
+    consent was recorded. None when it does not (no org call is made)."""
+    if kind != "client":
+        return None
+    try:
+        from .consent import load_consent
+        record = load_consent(engagement.parent.parent, engagement.name) or {}
+        for org in record.get("approved_orgs") or []:
+            if isinstance(org, dict) and org.get("alias") == alias and isinstance(org.get("kind"), str):
+                return org["kind"]
+    except (OSError, WorkspaceError, ValueError):
+        return None
+    return None
+
+
+def _require_session(client: Path, config: dict, kind: str, identifier: object) -> None:
+    """The session record `identifier` exists in this engagement and reads as valid.
+    The refusal names no other record."""
+    listing = command_text(["torque", "session", "list", "--workspace", str(client.parent.parent),
+                            "--" + kind, config["slug"]])
+    if not isinstance(identifier, str) or not _SESSION_ID.fullmatch(identifier):
+        raise WorkspaceError(f"--corrects takes a session ID as `torque session add` printed it; list this "
+                             f"{kind}'s records with {listing}")
+    path = _inside(client, client / "sessions" / f"{identifier}.json")
+    try:
+        value = _read_json(path)
+    except BoundaryError:
+        raise
+    except WorkspaceError:
+        value = None
+    if value is None or foreign_owner(value, kind, config["slug"]) or _session_problem(path, value, kind, config["slug"]):
+        raise WorkspaceError(f"--corrects names no readable session record of this {kind}; list its records with "
+                             f"{listing}")
+
+
+def session_hints(entry: dict) -> list[str]:
+    """What a new record leaves unsaid that the reader will want: a hint, never a refusal."""
+    hints = []
+    if entry.get("status") == "verified" and not entry.get("check"):
+        hints.append("verified, but not on what: say how it was checked with --check "
+                     + "|".join(CHECK_KINDS) + ", as whom with --as-user, in which org with --in-org, "
+                     "and what was not covered with --not-covered")
+    return hints
+
+
+def basis_text(entry: dict) -> str:
+    """The check basis of a record on one line, or ''."""
+    check = entry.get("check") or {}
+    parts = []
+    if check.get("kind"):
+        parts.append(f"check {check['kind']}")
+    if check.get("as_user"):
+        parts.append(f"as {check['as_user']}")
+    if check.get("org"):
+        parts.append(f"in {check['org']}" + (f" ({check['org_type']})" if check.get("org_type") else ""))
+    if check.get("not_covered"):
+        parts.append(f"not covered: {check['not_covered']}")
+    if entry.get("accepted_by"):
+        parts.append(f"accepted by {entry['accepted_by']}")
+    return "; ".join(parts)
+
+
+def session_link_lines(entry: dict) -> list[str]:
+    """A record's basis and correction links, one line each, for context and handoff."""
+    lines = []
+    if basis_text(entry):
+        lines.append("Basis: " + basis_text(entry))
+    if entry.get("corrects"):
+        lines.append(f"Corrects: {entry['corrects']}")
+    if entry.get("corrected_by"):
+        lines.append("CORRECTED by " + ", ".join(entry["corrected_by"]) + ": what this record says no longer "
+                     "holds as written; read the correction")
+    if entry.get("change"):
+        lines.append(f"Change: {entry['change']}")
+    return lines
 
 
 def _evidence_arguments(evidence) -> list:
@@ -1231,14 +1359,10 @@ def _workspace_reference(text: object) -> tuple[str, ...]:
     return tuple(text.split("/"))
 
 
-def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
-    """(integrity, location) of a session's evidence reference. A reference inside the
-    workspace is read relative to it (workspace_path), so it resolves after a move or a
-    copy to another machine. One outside it ("scope": "external") is read at its
-    absolute path only. A reference an earlier version wrote, which could not say which
-    it was, is also looked for under this engagement when its path no longer opens."""
-    if evidence is None:
-        return "not_supplied", None
+def _reference_shape(evidence: object) -> tuple[str, ...] | None:
+    """Check one evidence reference without opening its file: the parts of its
+    workspace-relative path, or None for an absolute-only reference. A reference that
+    leaves the workspace raises BoundaryError, any other malformed one WorkspaceError."""
     # A reference that leaves the workspace stops the read before anything else is checked.
     relative = (_workspace_reference(evidence["workspace_path"])
                 if isinstance(evidence, dict) and "workspace_path" in evidence else None)
@@ -1250,6 +1374,18 @@ def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
             or evidence.get("basis") != EVIDENCE_BASIS
             or ("scope" in evidence and (evidence["scope"] != "external" or relative is not None))):
         raise WorkspaceError("invalid session evidence reference")
+    return relative
+
+
+def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
+    """(integrity, location) of a session's evidence reference. A reference inside the
+    workspace is read relative to it (workspace_path), so it resolves after a move or a
+    copy to another machine. One outside it ("scope": "external") is read at its
+    absolute path only. A reference an earlier version wrote, which could not say which
+    it was, is also looked for under this engagement when its path no longer opens."""
+    if evidence is None:
+        return "not_supplied", None
+    relative = _reference_shape(evidence)
     if relative is not None:
         return _check_evidence(client, client.parent.parent.joinpath(*relative), evidence["sha256"])
     stored = Path(evidence["path"])
@@ -1327,26 +1463,73 @@ def _session_problem(path: Path, value: dict, kind: str, slug: str) -> str:
             or not isinstance(value.get("summary"), str)
             or not value["summary"].strip() or not _session_timestamp(value.get("created_at"))):
         return "not a valid session record"
+    check = value.get("check")
+    if "check" in value and (not isinstance(check, dict) or not check or any(
+            key not in CHECK_FIELDS or not isinstance(item, str) or not item.strip() for key, item in check.items())
+            or check.get("kind", CHECK_KINDS[0]) not in CHECK_KINDS):
+        return "its check basis is not valid"
+    if "accepted_by" in value and (not isinstance(value["accepted_by"], str) or not value["accepted_by"].strip()):
+        return "its accepted_by is not valid"
+    if value["status"] == "accepted" and "accepted_by" not in value:
+        return "it is accepted but names no one who accepted it"
+    if "corrects" in value and (not isinstance(value["corrects"], str) or not _SESSION_ID.fullmatch(value["corrects"])
+                                or value["corrects"] == value["id"]):
+        return "its corrects link is not a session ID"
+    if "change" in value and (not isinstance(value["change"], str) or not _CHANGE_ID.fullmatch(value["change"])):
+        return "its change link is not a change ID"
     return ""
 
 
 def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 20, *,
-                  kind: str = "client", problems: list | None = None) -> list[dict]:
+                  kind: str = "client", problems: list | None = None, since: datetime | None = None) -> list[dict]:
     """The engagement's session records, newest first, at most `limit` of them. A
     record that fails its checks, its evidence reference included, stops the read,
     unless `problems` is a list: then it is skipped and named there, so one stray or
     damaged file does not hide the rest of the history; a skipped record is never read
     as valid. A record or evidence that belongs to another client or initiative, an
     evidence reference that leaves the workspace, and a symlink stop the read either
-    way (BoundaryError)."""
+    way (BoundaryError). With `since` (an aware datetime), only records made at or
+    after it. A record a later record corrects carries `corrected_by` (their IDs)."""
+    client, entries = read_sessions(workspace, client_name, kind=kind, problems=problems)
+    if since is not None:
+        entries = [entry for entry in entries if datetime.fromisoformat(entry["created_at"]) >= since]
+    return with_evidence(client, entries, limit, problems)
+
+
+def with_evidence(client: Path, entries: list[dict], limit: int | None, problems: list | None) -> list[dict]:
+    """The first `limit` of `entries` (all with None) whose evidence can be checked, each
+    with its evidence integrity; one whose reference is damaged is skipped and named in
+    `problems`, or stops the read without it."""
+    selected = []
+    for value in entries:
+        if limit is not None and len(selected) >= limit:
+            break
+        path = client / "sessions" / f"{value['id']}.json"
+        try:
+            (value["evidence_integrity"], value["evidence_location"],
+             value["evidence_items"]) = _session_evidence_all(client, value.get("evidence"))
+        except BoundaryError as exc:
+            raise BoundaryError(f"{exc}: {path}") from exc
+        except WorkspaceError as exc:
+            if problems is None:
+                raise WorkspaceError(f"{exc}: {path}") from exc
+            problems.append(record_problem(client, path, str(exc)))
+            continue
+        selected.append(value)
+    return selected
+
+
+def read_sessions(workspace: str | Path, client_name: str, *, kind: str = "client",
+                  problems: list | None = None) -> tuple[Path, list[dict]]:
+    """(engagement folder, every session record of it), newest first, checked as
+    list_sessions describes but without opening evidence files. A record a later one
+    corrects carries `corrected_by`, the IDs of the records that correct it."""
     client, _, config = load_engagement(workspace, client_name, kind)
     sessions = _inside(client, client / "sessions")
     if not sessions.exists():
-        return []
+        return client, []
     entries = []
     for path in sorted(sessions.glob("*.json"), reverse=True):
-        if limit is not None and len(entries) >= limit:
-            break
         try:
             value = _read_json(_inside(client, path))
         except BoundaryError:
@@ -1367,23 +1550,32 @@ def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 2
                     except WorkspaceError:
                         pass  # Malformed: named below, with the record.
             reason = _session_problem(path, value, kind, config["slug"])
+            if not reason:
+                try:
+                    for reference in _evidence_items(value.get("evidence")):
+                        _reference_shape(reference)
+                except BoundaryError as exc:
+                    raise BoundaryError(f"{exc}: {path}") from exc
+                except WorkspaceError as exc:
+                    if problems is None:
+                        raise WorkspaceError(f"{exc}: {path}") from exc
+                    reason = str(exc)
         if reason:
             if problems is None:
                 raise WorkspaceError(f"invalid session record: {path}")
             problems.append(record_problem(client, path, reason))
             continue
-        try:
-            (value["evidence_integrity"], value["evidence_location"],
-             value["evidence_items"]) = _session_evidence_all(client, value.get("evidence"))
-        except BoundaryError as exc:
-            raise BoundaryError(f"{exc}: {path}") from exc
-        except WorkspaceError as exc:
-            if problems is None:
-                raise WorkspaceError(f"{exc}: {path}") from exc
-            problems.append(record_problem(client, path, str(exc)))
-            continue
         entries.append(value)
-    return entries
+    # A correction is a later record that names an earlier one; the earlier file is never
+    # rewritten, so its correction is derived here.
+    corrections: dict[str, list[str]] = {}
+    for value in reversed(entries):
+        if value.get("corrects"):
+            corrections.setdefault(value["corrects"], []).append(value["id"])
+    for value in entries:
+        if value["id"] in corrections:
+            value["corrected_by"] = corrections[value["id"]]
+    return client, entries
 
 
 def record_problem_lines(problems: list) -> list[str]:
@@ -1505,6 +1697,7 @@ def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "clie
     for entry in reversed(entries):
         lines += [f"## {entry['created_at']} — {entry['status']} (user-reported)", "",
                   entry["summary"], "", f"Entry: {entry['id']}"]
+        lines += session_link_lines(entry)
         # Where each file is now: relative to the workspace inside it, so the handoff
         # does not carry the author's own folder names.
         for item in entry.get("evidence_items", []):

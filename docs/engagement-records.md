@@ -38,6 +38,45 @@ An archived initiative refuses new sessions, changes, notes and checks until
 `torque initiative set-state NAME active --workspace PATH` reopens it.
 `torque engagement list --workspace PATH` shows clients and initiatives together.
 
+## Session records
+
+`torque session add` appends one record. Beyond `--summary` and `--status`, it can say
+what a check rested on, so a reader does not have to dig it out of prose:
+
+```sh
+torque session add --workspace . --client sample --status verified \
+  --summary "Staff can save the preferred contact method" \
+  --check rendered --as-user "staff user" --in-org sample-sandbox --not-covered "mobile layout" \
+  --evidence artifacts/run-1.txt --evidence artifacts/screenshot-notes.md
+```
+
+| Option | Field | Meaning |
+|---|---|---|
+| `--check KIND` | `check.kind` | `read-back` (what was sent, read back), `scripted` (a script or test), `rendered` (a page rendered and looked at), `live` (the real entry point used), `reviewed` |
+| `--as-user TEXT` | `check.as_user` | as whom: admin, a named persona, a guest, an integration user; a role is enough |
+| `--in-org ALIAS` | `check.org`, `check.org_type` | the org; the type (sandbox, developer, scratch, production) is added when the client's consent record names that alias. No org call |
+| `--not-covered TEXT` | `check.not_covered` | what the check did not cover |
+| `--accepted-by TEXT` | `accepted_by` | who accepted the work; required with `--status accepted` |
+| `--corrects SESSION_ID` | `corrects` | an earlier record of the same client or initiative that this one corrects |
+| `--evidence FILE` (repeatable) | `evidence` | each file referenced and hashed, in order |
+| `--input FILE` or `-` | | the same fields as a JSON or YAML mapping (keys are the option names, `learned` included); an option on the command line wins over the file |
+
+`--status verified` without any of `--check`, `--as-user`, `--in-org` or `--not-covered`
+still saves and prints one hint naming those options (`hints` in `--json` output). The
+status `accepted` means a named other party said yes; Torque never sets it on its own.
+`--corrects` refuses an ID that is not a readable record of the same engagement and names
+no other record. The earlier record is never rewritten: `context`, `handoff` and
+`session list` show it as corrected (`corrected_by` in JSON), derived when records are read.
+
+Schema note. Records keep `"schema": "torque.session/1"`, `status_basis: user_reported` and
+`independently_verified: false`; every new field is optional and appears only when given.
+One evidence file is stored as an object, exactly as earlier versions wrote it; two or more
+as an ordered list of such objects. Readers return `evidence_items` (location, recorded
+SHA-256, integrity of each) and keep `evidence_integrity` and `evidence_location` (the
+first file's; with several, the integrity is the first that does not match). Torque 2.0.0a21
+and earlier read every record except one with several evidence files or the status
+`accepted`: it skips that record and names it as unreadable, never silently.
+
 ## Record what actually happened
 
 After an actual check, record its result with `change check`. `--result` accepts
