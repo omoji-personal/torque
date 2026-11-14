@@ -1,0 +1,130 @@
+"""Access rules: new fields without a grant, editable formula grants, profiles, powerful permissions."""
+from __future__ import annotations
+
+from .components import Component, is_custom
+from .model import Context, Finding, namespace
+
+POWERFUL_USER = {"ModifyAllData": "Modify All Data", "ViewAllData": "View All Data", "ManageUsers": "Manage Users"}
+POWERFUL_OBJECT = {"modifyAllRecords": "Modify All", "viewAllRecords": "View All", "viewAllFields": "View All Fields"}
+GRANT_TYPES = ("PermissionSet", "Profile")
+
+
+def grants(comp: Component) -> dict[str, tuple[bool, bool, int]]:
+    """field (lower) -> (readable, editable, line) for a permission set or profile."""
+    out = {}
+    if comp.node is None:
+        return out
+    for fp in comp.node.all("fieldPermissions"):
+        name = fp.value("field").lower()
+        if name:
+            out[name] = (fp.flag("readable"), fp.flag("editable"), fp.line)
+    return out
+
+
+def _keys(field_name: str) -> set[str]:
+    obj, _, fld = field_name.lower().partition(".")
+    keys = {field_name.lower()}
+    if obj in ("activity", "task", "event"):
+        keys |= {f"activity.{fld}", f"task.{fld}", f"event.{fld}"}
+    return keys
+
+
+def needs_grant(comp: Component, ctx: Context) -> bool:
+    """A custom field that takes field-level security."""
+    n = comp.node
+    obj, _, fld = comp.name.partition(".")
+    if n is None or not is_custom(fld) or namespace(comp, ctx.project.namespace):
+        return False
+    if n.flag("required") or n.value("type") == "MasterDetail":
+        return False
+    if obj.lower().endswith(("__mdt", "__e")):
+        return False
+    o = ctx.objects.get(obj.lower())
+    return not (o is not None and o.node is not None and o.node.value("customSettingsType"))
+
+
+def _who_grants(field_name: str, sets: list[Component]) -> list[Component]:
+    keys = _keys(field_name)
+    return [s for s in sets if any(k in grants(s) and (grants(s)[k][0] or grants(s)[k][1]) for k in keys)]
+
+
+def field_without_grant(comp: Component, ctx: Context) -> list[Finding]:
+    if comp.type != "CustomField" or comp.status not in ("new", "unknown", "failed") or not needs_grant(comp, ctx):
+        return []
+    in_scope = ctx.grant_scope
+    by_set = _who_grants(comp.name, [s for s in in_scope if s.type == "PermissionSet"])
+    if by_set:
+        return []
+    by_profile = _who_grants(comp.name, [s for s in in_scope if s.type == "Profile"])
+    sets = sorted(s.name for s in in_scope if s.type == "PermissionSet")
+    listed = ", ".join(sets) if sets else "none"
+    maybe = " (no change scope was given, so this field may not be new)" if comp.status == "unknown" else ""
+    if by_profile:
+        return [Finding("access.grant-only-in-profile", "warning", comp,
+                        f"Only a profile {ctx.scope_word} grants {comp.name} ({', '.join(p.name for p in by_profile)}){maybe}.",
+                        "Grant it in a permission set as well, so access does not depend on deploying a profile. "
+                        f"Permission sets {ctx.scope_word}: {listed}.", line=comp.line, subject="grant")]
+    elsewhere = [s for s in _who_grants(comp.name, [c for c in ctx.everything if c.type in GRANT_TYPES])
+                 if s not in in_scope]
+    hint = (f" {elsewhere[0].type} {elsewhere[0].name} under the checked folder grants it but is not in this change; "
+            "add it to the deploy." if elsewhere else "")
+    return [Finding("access.field-without-grant", "error", comp,
+                    f"No permission set {ctx.scope_word} grants {comp.name}, so nobody but an admin can see it{maybe}.",
+                    f"Add a fieldPermissions entry for {comp.name} (readable true; editable true only if users enter "
+                    f"it) to the permission set its users get. Permission sets {ctx.scope_word}: {listed}.{hint}",
+                    line=comp.line, subject="grant")]
+
+
+def formula_field_editable(comp: Component, ctx: Context) -> list[Finding]:
+    if comp.type not in GRANT_TYPES or comp.node is None:
+        return []
+    out = []
+    for fp in comp.node.all("fieldPermissions"):
+        if not fp.flag("editable"):
+            continue
+        name = fp.value("field")
+        definition = ctx.fields.get(name.lower())
+        if definition is None or definition.node is None:
+            continue
+        kind = ("formula" if definition.node.value("formula") else
+                "roll-up summary" if definition.node.value("type") == "Summary" else None)
+        if kind:
+            out.append(Finding("access.formula-field-editable", "error", comp,
+                               f"{name} is a {kind} field granted as editable; the deploy fails on it.",
+                               f"Set editable to false for {name} (keep readable true).", line=fp.line,
+                               subject=f"editable:{name.lower()}"))
+    return out
+
+
+def profile_in_change(comp: Component, ctx: Context) -> list[Finding]:
+    if comp.type != "Profile":
+        return []
+    return [Finding("access.profile-in-change", "warning", comp, "A profile is part of this change.",
+                    "A profile deploy rewrites that profile's access to every component the file names, for everyone "
+                    "who has it. Grant access through a permission set instead, or keep only the sections you mean to "
+                    "change.", line=comp.line, subject="profile")]
+
+
+def powerful_permission(comp: Component, ctx: Context) -> list[Finding]:
+    if comp.type != "PermissionSet" or comp.node is None:
+        return []
+    out = []
+    for up in comp.node.all("userPermissions"):
+        name = up.value("name")
+        if up.flag("enabled") and name in POWERFUL_USER:
+            out.append(Finding("access.powerful-permission", "warning", comp,
+                               f"The permission set enables {POWERFUL_USER[name]}.",
+                               "Keep it only if the requirement names it in writing; otherwise grant object and field "
+                               "access instead.", line=up.line, subject=f"user:{name}"))
+    for op in comp.node.all("objectPermissions"):
+        for tag, label in POWERFUL_OBJECT.items():
+            if op.flag(tag):
+                obj = op.value("object")
+                out.append(Finding("access.powerful-permission", "warning", comp,
+                                   f"The permission set grants {label} on {obj}.",
+                                   "Keep it only if the requirement names it; record sharing is bypassed for everyone "
+                                   "who has this permission set.", line=op.line, subject=f"object:{obj}:{tag}"))
+    return out
+
+
+RULES = (field_without_grant, formula_field_editable, profile_in_change, powerful_permission)

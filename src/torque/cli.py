@@ -225,6 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
     cli_approval.register(sub)
     from . import guarded
     guarded.register(sub)
+    from .checks import command as check_command
+    check_command.register(sub)
     for route in PUBLIC_ROUTES:
         sub.add_parser(route, add_help=False, help=f"{route} operations with selected-client evidence; use {route} --help")
     for route in DELEGATES:
@@ -1645,6 +1647,9 @@ def main(argv: list[str] | None = None) -> int:
         elif parsed.command == "guarded":
             from . import guarded
             return guarded.run(parsed)
+        elif parsed.command == "check":
+            from .checks import command as check_command
+            return check_command.run(parsed)
         elif parsed.command == "client":
             if parsed.action == "consent":
                 return cli_approval.run_consent(parsed)
