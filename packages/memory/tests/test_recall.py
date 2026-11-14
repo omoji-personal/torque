@@ -1,4 +1,6 @@
 """Recall at the point of use: match over every readable lesson, then rank; print few."""
+from datetime import date, timedelta
+
 import pytest
 
 from jsc_memory import intake, recall, storage
@@ -62,19 +64,39 @@ def test_with_sixty_active_lessons_an_older_matching_one_is_still_found_and_an_u
     assert len(recall.find(alpha).hits) == 5 and recall.find(alpha).matched >= 60
 
 
+def days_ago(days):
+    return (date.today() - timedelta(days=days)).isoformat()
+
+
 def test_ranking_is_scope_then_match_strength_then_feedback_then_recency(scopes):
     alpha = scopes("alpha")
     save(alpha, "firm", "f001", types=["Flow"], tasks=["deploy"])
     save(alpha, "client", "c001", tasks=["deploy"])                                  # weaker match, nearer scope
     save(alpha, "client", "c002", types=["Flow"], tasks=["deploy"])                  # strongest client match
-    save(alpha, "client", "c003", types=["Flow"], last_verified="2026-01-01")        # same strength as c004, older
-    save(alpha, "client", "c004", types=["Flow"], last_verified="2026-06-01")
-    save(alpha, "client", "c005", types=["Flow"], last_verified="2025-01-01")        # oldest, but marked helpful
+    save(alpha, "client", "c003", types=["Flow"], last_verified=days_ago(400))       # same strength as c004, older
+    save(alpha, "client", "c004", types=["Flow"], last_verified=days_ago(100))
+    save(alpha, "client", "c005", types=["Flow"], last_verified=days_ago(700))       # oldest, but marked helpful
     storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c005"}])
     result = recall.find(alpha, types=["Flow"], tasks=["deploy"], limit=None)
     assert own(result) == ["c002", "c005", "c004", "c003", "c001", "f001"]
     assert result.hits[0].score == 7 and result.hits[0].reasons == ["type Flow", "task deploy"]
     assert all(hit.lesson.scope == "platform" for hit in result.hits[6:])
+
+
+def test_equal_matches_are_ordered_by_evidence_then_by_recency_in_coarse_steps_never_by_a_few_days(scopes):
+    alpha = scopes("alpha")
+    reproduced = [{"type": "reproduced", "date": days_ago(80)}]
+    session = [{"type": "session", "date": days_ago(1)}]
+    told = [{"type": "consultant-said", "date": days_ago(1)}]
+    save(alpha, "client", "a001", types=["Flow"], evidence=session, last_verified=days_ago(60))
+    save(alpha, "client", "a002", types=["Flow"], evidence=told, last_verified=days_ago(2))
+    save(alpha, "client", "a003", types=["Flow"], evidence=reproduced, last_verified=days_ago(80))
+    save(alpha, "client", "a004", types=["Flow"], evidence=session, last_verified=days_ago(1))
+    save(alpha, "client", "a005", types=["Flow"], evidence=session, last_verified=days_ago(200))
+    save(alpha, "client", "a006", types=["Flow"], evidence=reproduced, last_verified=days_ago(500))
+    # Reproduced before consultant-said before session, whatever the dates; within one
+    # evidence class, within 90 days before within a year; inside a step, the id decides.
+    assert own(recall.find(alpha, types=["Flow"], limit=None)) == ["a003", "a006", "a002", "a001", "a004", "a005"]
 
 
 def test_candidates_stale_marks_retired_and_promoted_lessons_stay_out_of_default_recall(scopes):

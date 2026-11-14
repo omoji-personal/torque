@@ -171,8 +171,10 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 [--path P] [--limit 5] [--include-candidates] [--json]` (also `recall`).
 
 - Matching runs over every lesson the call may read, then ranks: scope (client or
-  initiative, then firm, then platform), match strength, helpful minus stale marks, and
-  how recently the lesson was verified. With selectors a lesson must match at least one;
+  initiative, then firm, then platform), match strength, helpful minus stale marks, then
+  evidence (`reproduced` or `official-doc`; then `consultant-said` or `second-occurrence`;
+  then `session`), then recency in coarse steps (verified or saved within 90 days, within
+  a year, older), then id. A few days' difference never decides the order. With selectors a lesson must match at least one;
   when nothing matches, one line says so (with how to save a lesson) and the command
   exits 0. Precision comes first: when in doubt, nothing is shown.
 - Topic words: a word the vocabulary knows is asked as its task or type (`flow` is the

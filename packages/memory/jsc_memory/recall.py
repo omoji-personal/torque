@@ -2,9 +2,10 @@
 
 One recall, two platform sources: the lessons shipped with Torque and the advisory
 catalogue's notes, read through an adapter (no copy). Matching is deterministic: task,
-metadata type (also from a file name), command pattern and keywords, over every lesson
-the call may read; then a ranking by scope (client or initiative, firm, platform), match
-strength, helpful minus stale marks, and how recently the lesson was verified.
+metadata type (also from a file name), command pattern, error text and topic words, over
+every lesson the call may read; then a ranking by scope (client or initiative, firm,
+platform), match strength, helpful minus stale marks, strength of evidence, and recency in
+coarse steps.
 
 `for_command` is the function other packages call before a consequential step.
 """
@@ -319,6 +320,25 @@ def _recency(item: Lesson) -> int:
         return 0
 
 
+# Ties of scope, strength and marks are decided by how well a lesson is founded, then by
+# how recent it is in coarse steps (verified or saved within 90 days, within a year,
+# older), then by id: a few days' difference never decides the order.
+_EVIDENCE_RANK = {"reproduced": 0, "official-doc": 0, "consultant-said": 1, "second-occurrence": 1, "session": 2}
+
+
+def _recency_step(item: Lesson) -> int:
+    day = _recency(item)
+    if not day:
+        return 2
+    age = date.today().toordinal() - day
+    return 0 if age <= 90 else 1 if age <= 365 else 2
+
+
+def _rank(hit: "Hit") -> tuple:
+    return (_SCOPE_ORDER[hit.lesson.scope], -hit.score, -hit.tally.score,
+            _EVIDENCE_RANK.get(hit.lesson.evidence_type, 3), _recency_step(hit.lesson), hit.lesson.id)
+
+
 def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "",
          limit: int | None = 5, include_candidates: bool = False, advisory: bool = True) -> Result:
     """The lessons that match, best first. With selectors a lesson must match at least
@@ -340,8 +360,7 @@ def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", pat
         elif not eligible(item, tally):
             continue
         hits.append(Hit(item, score, reasons, tally))
-    hits.sort(key=lambda hit: (_SCOPE_ORDER[hit.lesson.scope], -hit.score, -hit.tally.score,
-                               -_recency(hit.lesson), hit.lesson.id))
+    hits.sort(key=_rank)
     return Result(hits[:limit] if limit else hits, len(hits), query, scopes, problems, candidates)
 
 
