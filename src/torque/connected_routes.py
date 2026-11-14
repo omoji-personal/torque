@@ -190,7 +190,10 @@ TORQUE_VALUE_OPTIONS = frozenset({
     "--workspace",
     # torque guarded, and --org-data of `client consent record`
     "--as", "--child", "--field", "--fields", "--group-by", "--id", "--limit", "--note", "--object", "--org-data",
-    "--target-org", "--value", "--where", "--with-children"})
+    "--target-org", "--value", "--where", "--with-children",
+    # torque check (docs/checks.md)
+    "--analyzer", "--as-permission-set", "--baseline", "--changed-from", "--fail-on", "--ignore", "--only",
+    "--source-dir"})
 # torque guarded: the lanes that read an org and the consent class each needs (None:
 # metadata), its local views, and everything else, which only the consultant runs.
 GUARDED_READS = {("counts",): "counts", ("fill-rate",): "counts", ("config",): "config_records",
