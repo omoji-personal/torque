@@ -36,7 +36,7 @@ artifacts. Credentials remain with the existing host/Salesforce tools.
 | Earlier toolkit capability | Treatment in Torque |
 |---|---|
 | Daily conversational commands | All 42 names mapped; generic recipes and new context/session helpers |
-| Client context and ongoing memory | Explicit firm/client workspace, local session journal, handoff, retained lesson engine |
+| Client context and ongoing memory | Explicit firm/client workspace, local session journal, handoff, [lessons](lessons.md) saved with the session record and found again at the point of use |
 | Org investigation and architecture | Existing CLI/connectors plus advisory, Flow and schema review skills |
 | Deployment, data changes, migrations | Guided execution and retained optional snapshot/recovery wrappers |
 | QA, browser, logs, test scaffolds | Existing generic engines ported; client test flows supplied privately |

@@ -18,6 +18,9 @@ def expected_files():
     skills = ROOT / ".agents/skills"
     for path in sorted([*skills.glob("*/SKILL.md"), *skills.glob("*/references/*.md")]):
         result["skills/" + path.relative_to(skills).as_posix()] = path.read_bytes()
+    # Platform lessons: one Markdown file each, shipped read-only (docs/lessons.md).
+    for path in sorted((ROOT / "lessons").glob("*.md")):
+        result[f"lessons/{path.name}"] = path.read_bytes()
     return result
 
 
@@ -29,7 +32,8 @@ def main():
     expected = expected_files()
     actual = {p.relative_to(target).as_posix(): p.read_bytes()
               for p in target.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
-    managed = lambda key: key == "catalogue.json" or key.split("/")[0] in {"commands", "rules", "agents", "skills"}
+    managed = lambda key: key == "catalogue.json" or key.split("/")[0] in {"commands", "rules", "agents", "skills",
+                                                                         "lessons"}
     drift = sorted(k for k in set(expected) | set(actual)
                    if managed(k) and expected.get(k) != actual.get(k))
     if args.check:

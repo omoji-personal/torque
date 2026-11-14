@@ -24,6 +24,26 @@ def _emit(payload: dict | list, human: str, as_json: bool) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True) if as_json else human)
 
 
+def _scoped_lessons(command: str, limit: int) -> tuple[list, str] | None:
+    """The lessons that match the command for the selected client (`--workspace W --client
+    C`): that client's, the firm's and the lessons shipped with Torque, each labelled with
+    its scope. None when no client is selected, so the answer keeps its earlier shape. The
+    catalogue's own notes are not repeated here: they are the platform notes."""
+    try:
+        from jsc_memory import recall, storage
+        scopes = storage.scopes_from_env()
+        if scopes.workspace is None:
+            return None
+        result = recall.find(scopes, command=command, limit=max(1, limit), advisory=False)
+        recall.mark_shown(scopes, [hit.lesson for hit in result.hits], "advisory")
+        result.candidates = 0
+        lessons = [{**recall.summary(hit.lesson, hit.tally), "match": {"score": hit.score, "reasons": hit.reasons}}
+                   for hit in result.hits]
+        return lessons, recall.render(result)
+    except Exception:  # Lessons are an addition; the catalogue's answer stands without them.
+        return None
+
+
 def _advisory_exit(strict: bool, complete: bool) -> int:
     """Default informational contract; strictness exists only by explicit request."""
     return 3 if strict and not complete else 0
@@ -120,7 +140,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"  symptom: {item['symptom']}\n  remedy : {item['remedy']}"
                 for item in found
             ) or "No catalogue note matched. That is a knowledge gap, not proof there is no risk."
-            _emit(found, human, args.json)
+            scoped = _scoped_lessons(args.command, args.limit)
+            if scoped is None:
+                _emit(found, human, args.json)
+            else:
+                # With a selected client the answer has two parts, each labelled by where it comes from.
+                _emit({"platform_notes": found, "scoped_lessons": scoped[0]}, human + "\n\n" + scoped[1], args.json)
             return 0
 
         if args.subcommand == "needs":

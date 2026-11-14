@@ -1975,9 +1975,60 @@ def _python_module(rest: list[str]) -> tuple[str | None, int]:
     return None, -1
 
 
-def _torque_reason(args: list[str]) -> str:
+# `torque lesson for` (and its old name `recall`) with the workspace named and no client
+# or initiative reads the firm's lessons (the workspace's own lessons/ folder, which
+# tools may read in this mode) and the lessons shipped with Torque, and writes only its
+# own events log: no client context. Build-only mode allows that one form.
+LESSON_VERBS = {"for", "recall"}
+LESSON_OPTIONS = {"--workspace", "--task", "--type", "--command", "--error", "--limit", "--json",
+                  "--include-candidates"}
+LESSON_REASON = ("torque lesson can read client context; only `torque lesson for [WORDS] --workspace .` is allowed "
+                 "here (with --task, --type, --command, --error, --limit, --json): it reads the firm's lessons "
+                 "and those shipped with Torque, never a client's.")
+
+
+def _lesson_reason(args: list[str], workspace: Path | None, cwd: Path | None, copy: bool = False) -> str:
+    """"" when `torque ARGS` (ARGS starting with `lesson`) can read only firm and shipped
+    lessons. The workspace must be named, so that no selection inherited from the
+    environment applies, and be this workspace itself: Torque reads a folder that holds a
+    client.json as that client, so no other folder is accepted, inside the workspace or
+    outside it. A client or an initiative is never named, not even inside another word;
+    no other option is accepted."""
+    if len(args) < 3 or args[1] not in LESSON_VERBS or workspace is None or cwd is None:
+        return LESSON_REASON
+    words = args[2:]
+    if any("--client" in word or "--initiative" in word for word in words):
+        return LESSON_REASON
+    if sum(word.count("--workspace") for word in words) != 1:
+        return LESSON_REASON
+    named = ""
+    for index, word in enumerate(words):
+        if not word.startswith("-"):
+            continue
+        name, attached, value = word.partition("=")
+        if name not in LESSON_OPTIONS:
+            return LESSON_REASON
+        if name == "--workspace":
+            named = value if attached else (words[index + 1] if index + 1 < len(words) else "")
+    if not named or named.startswith("-") or any(char in named for char in "$`*?[]{}~%!"):
+        return LESSON_REASON
+    try:
+        target = _resolve(cwd, named)
+    except (OSError, ValueError):
+        return LESSON_REASON
+    # A worktree copy's own pass has nothing to add: the folder is checked against the
+    # workspace the session works in, which is never one of its copies.
+    if not copy and _cf(str(target)) != _cf(str(workspace)):
+        return LESSON_REASON
+    return ""
+
+
+def _torque_reason(args: list[str], workspace: Path | None = None, cwd: Path | None = None,
+                   copy: bool = False) -> str:
     """The torque allowlist, shared by the console script and `python -m torque`."""
     sub = args[0] if args else None
+    if sub == "lesson":
+        return _lesson_reason(args, workspace, cwd, copy)
     if sub is not None and sub not in TORQUE_ALLOWED:
         return f"torque {sub} reads client context or an org"
     if sub == "doctor" and any(_is_long_flag(t, "--client", 3) for t in args[1:]):
@@ -2027,7 +2078,7 @@ def _without_redirections(toks: list[str]) -> list[str]:
 
 
 def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: Path, cwd: Path,
-                   org_rules: bool = True) -> str:
+                   org_rules: bool = True, copy: bool = False) -> str:
     """Scan every token (not just the head) so a wrapper, an env-var prefix, or a
     grouping construct cannot hide an org call, a client-context command, or a
     self-disable attempt behind it."""
@@ -2092,7 +2143,8 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             continue
         elif _basename(tok) in CONSOLE_SCRIPTS:
             name = _basename(tok)
-            reason = _torque_reason(rest) if CONSOLE_SCRIPTS[name] == "torque" else _delegate_reason(name, rest)
+            reason = (_torque_reason(rest, workspace, cwd, copy) if CONSOLE_SCRIPTS[name] == "torque"
+                      else _delegate_reason(name, rest))
             if reason:
                 return reason
         elif PY_LAUNCHER_RE.match(_basename(tok)) and _python_module(rest)[0]:
@@ -2102,7 +2154,7 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             args = rest[after:]
             reason = ""
             if module in TORQUE_MAIN_MODULES:
-                reason = _torque_reason(args)
+                reason = _torque_reason(args, workspace, cwd, copy)
             elif module == "pip":
                 reason = _installer_reason("python -m pip", args)
             elif DELEGATE_MODULE_RE.match(module):
@@ -2152,7 +2204,7 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         else:
             bases = [cwd, *_next_cwds([cwd], target)]
         for base in dict.fromkeys(bases):
-            reason = _block_command(rest_toks, clients, claude_dir, workspace, base, org_rules)
+            reason = _block_command(rest_toks, clients, claude_dir, workspace, base, org_rules, copy)
             if reason:
                 return reason
         return ""
@@ -2440,7 +2492,7 @@ def _add_cwds(pool: list[Path], extra: list[Path]) -> list[Path]:
 
 
 def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, cwd: Path | list[Path],
-               _depth: int = 0, org_rules: bool = True) -> str:
+               _depth: int = 0, org_rules: bool = True, copy: bool = False) -> str:
     """Check every simple command that command can run, as the command reader
     (_read_commands) finds them, against each directory it could run in."""
     if _depth == 0 and len(command) > MAX_INPUT_CHARS:
@@ -2460,7 +2512,7 @@ def _scan_bash(command: str, clients: Path, claude_dir: Path, workspace: Path, c
         elif kind == "segment":
             toks, _sep, cwds, _unknown = item
             for here in cwds:
-                reason = _block_command(toks, clients, claude_dir, workspace, here, org_rules) if toks else ""
+                reason = _block_command(toks, clients, claude_dir, workspace, here, org_rules, copy) if toks else ""
                 if reason:
                     return reason
     return ""
@@ -3118,7 +3170,7 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
         # An MCP tool that runs a command (a shell or process server) gets the
         # Bash scan on its command strings before its path arguments are checked.
         for text in _command_strings(tool_input):
-            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules)
+            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules, copy=copy)
             if reason:
                 return False, _command_block_message(reason)
     if org_rules and (tool_name.startswith("mcp__") or tool_name in MCP_LIKE_TOOLS):
@@ -3157,7 +3209,7 @@ def _decide_root_for(tool_name: str, tool_input: dict, workspace: Path, cwd: Pat
             except ValueError as exc:
                 return False, _command_block_message(str(exc))
         for text in texts:
-            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules)
+            reason = _scan_bash(text, clients, claude_dir, workspace, cwd, org_rules=org_rules, copy=copy)
             if reason:
                 return False, _command_block_message(reason)
         return True, ""

@@ -112,7 +112,8 @@ The port preserves breadth while correcting brittle defaults:
 - Browser tests can write records. Admin coverage, user-session coverage, backend
   diagnostics and human assertions are labelled according to what actually ran.
 - Session summaries are appended after meaningful work; lessons are useful scoped
-  records, not a required automatic capture/review lifecycle.
+  records, not a required automatic capture/review lifecycle. A session record can carry
+  what it taught (`torque session add --learned`); see [lessons](lessons.md).
 - Provider choice follows installed tools and the user's environment. Meeting
   extraction is separate from optional model analysis and its outbound inputs.
 - Update instructions identify the actual installation and configured upstream;

@@ -16,6 +16,8 @@ They do not authorize private client records, authentication material or persona
 paths in the distribution. When a carried file changes, retain its original
 `source_sha256`, recompute `destination_sha256` from its current bytes, set `adapted`
 to whether those hashes differ, and rerun `python scripts/check-provenance.py`.
+A carried file that is removed leaves `files` and is kept under `removed_files` with
+its source path, its source hash and the reason.
 
 Selected code and generalized tests were imported. The source's managed application, client documents, org aliases, domain browser flows and test-user records, deployment histories, log archives, credentials, and global hook installation were excluded. Empty browser configuration and synthetic fixtures are intentional template inputs. Existing Apache attribution is retained in source headers and `packages/licenses/`; the third-party browser page-object manifest records a reference dependency, not bundled `node_modules` or a required runtime download.
 
@@ -25,7 +27,7 @@ Selected code and generalized tests were imported. The source's managed applicat
 | `revert` / `jsc_revert` | Metadata pre-snapshots, drift checks, per-org concurrency locks, execution wrappers, post-operation classification and polling, supported revert plans, manual recovery guidance | Selected-client state, current explicit target checked against snapshot org, same-interpreter wrapper execution, local stale-lock audit |
 | `qa_orchestrator` / `jsc_qa` | 67-row change taxonomy, surface selection, exact-job/component MetaAPI verification, real dispatch, test-user validation | Generic application rows; no ambient global token required; client-specific adapters loaded explicitly; automatic gate-success claim removed |
 | `debug_log_analyzer` / `jsc_loganalyzer` | Debug-log parsing, findings and scoring; static code checks | JSON includes analyzed-log coverage; Side-Eff interprets findings rather than treating analyzer exit zero as healthy runtime |
-| `memory` / `jsc_memory` | Lesson capture, scrubbing, review/approval storage, ranking, indexing, spool recovery and concurrency | All state resolves dynamically under the selected client; removed CWD lessons/client-context fallback |
+| `memory` / `jsc_memory` | The `torque lesson` commands, client-private storage resolved at call time, serialized writes | Rewritten as the [lessons loop](lessons.md): one Markdown file per lesson, scopes as folders (client, initiative, firm, platform), a scrub at capture, recall at the point of use, feedback, review and promotion. The hook-driven capture, spool, ranker, index and injector had no caller and were removed (`removed_files` in the manifest); `torque lesson migrate` imports the earlier JSON lessons |
 | `browser_tests` / `jsc_browser_tests` | Authentication helpers, Login As, CDP support, Lightning component helpers, matrices, assertions, execution, screenshots/reports, registry-based cleanup, optional vision | Generic smoke flow plus explicitly supplied trusted client flow files; empty domain registry; honest empty/unknown coverage and cleanup outcomes |
 | `meeting_processor` / `meeting_processor` | Adaptive video frame extraction, transcript parsing/correlation, output assembly, optional frame descriptions | Explicit output directory or selected-client meeting artifacts |
 | `adversarial_probes` / `jsc_probes` | Static Apex analysis and probe synthesis | Generic sample inputs and install-aware dispatch; synthesized probes are not claims of executed tests |
@@ -38,7 +40,7 @@ Execution breadth includes metadata deploy and quick/resume/abort, anonymous Ape
 
 Torque sets both `TORQUE_WORKSPACE` and compatibility `JSC_ROOT` to the selected **client directory**, such as `<workspace>/clients/example`, before invoking these packages. Helpers resolve paths at call time; an in-process A → B dispatch cannot retain A's imported defaults. The launcher restores the invoking environment afterward. Direct package users may explicitly select the same private directory.
 
-Default state is under `state/revert`, `state/memory`, `state/qa-tests`, `state/meetings`, `state/vision-staging`, `state/prompt-staging`, and `state/audit-logs`. Polling uses `state/revert/_polling_queue`. In Torque scope, stale `JSC_MEMORY_DIR` and `JSC_REVERT_DIR` are ignored. Legacy direct package callers without `TORQUE_WORKSPACE` may still explicitly select those paths. Default state and configuration destinations reject resolved symlinks that escape the selected client. Explicit external configuration paths are trusted operator input, not automatically discovered documents.
+Default state is under `state/revert`, `state/qa-tests`, `state/meetings`, `state/vision-staging`, `state/prompt-staging`, and `state/audit-logs`. Polling uses `state/revert/_polling_queue`. Lessons are not state: they are Markdown files in each scope's `lessons/` folder, with their events under `.torque/lessons/` ([lessons](lessons.md)); the earlier `state/memory` store is read only by `torque lesson migrate`, and `JSC_MEMORY_DIR` is no longer read. In Torque scope, a stale `JSC_REVERT_DIR` is ignored. Legacy direct package callers without `TORQUE_WORKSPACE` may still explicitly select that path. Default state and configuration destinations reject resolved symlinks that escape the selected client. Explicit external configuration paths are trusted operator input, not automatically discovered documents.
 
 | Client input | Direct package environment / behavior |
 | --- | --- |
@@ -63,7 +65,7 @@ Browser flows are executable configuration. Domain implementations, seed users a
 - The log parsers read each line's event and that event's own fields first, so text inside a debug message is never taken for an event, and read trigger code units in the format the Apex Developer Guide documents (`<Trigger> on <Object> trigger event <Event>|__sfdc_trigger/[namespace/]<Trigger>`). Recursion is a trigger starting again for the same event while still running, not its total runs (200-record chunks repeat a trigger legitimately). A validation rule is reported when it rejects DML a trigger performed. FATAL_ERROR is reported as `unhandled-exception`, once per error, whatever follows it. The rule tied to one org's `Bypass_Trigger_Settings__c` setting is removed, and text output labels each finding with the P0/P1/P2 its totals use. Changed: `jsc_loganalyzer` (`parsers.py`, `cli.py`) and `tests/test_parsers.py`, `jsc_qa` (`cli.py`, `dispatcher.py`, `report.py`) and `tests/test_report_completeness.py`. Destination hashes and adaptation flags reflect these edits.
 - `meeting_processor/tests/test_meeting_processor.py` runs its checks only as a script, as the offline runner runs it; imported by pytest collection it is reported as skipped instead of exiting the collection. Its destination hash reflects the edit.
 - `advisory evidence --user-id` scopes direct and group assignment queries to a validated Salesforce user ID. Without it, assignment observations explicitly refer to anybody in the org. Neither proves full effective user access. Operator not-applicable declarations do not replace an observed absence or unknown result. Report completeness distinguishes observations from accepted assertions and never means actual user access was technically proven.
-- The replay scanner reports matching rule/count with redacted details and does not echo the matched credential. Lesson scrubbing remains best effort, and raw operational state stays private.
+- The replay scanner reports matching rule/count with redacted details and does not echo the matched credential. A lesson is scrubbed when it is captured (credential-looking values refused, personal data and Salesforce Ids masked, client names refused in firm scope); the scrub is an aid, not proof, and raw operational state stays private.
 - Revert execution validates the snapshot org against the current explicit target before building a command, including when `--force` is requested. A stored alias does not override the selected target. Subprocess Python invocations use the running interpreter; fallback execution does not choose an unrelated PATH `jsc` binary.
 - In a [connected](connected-approval.md) workspace (2.0.0a15), the revert wrappers (`wrappers/_common.py`) and revert execution (`revert_executor.py`) run a write only when the gate has just consumed an approval for that exact command, and refuse when the target alias now resolves to another org ID than the approved one. They find connected mode themselves (refusing when the workspace configuration cannot be read), verify the approval again, return it when the org cannot be resolved, and a revert runs only the one wrapper command it names under its approval. Dry runs and workspaces not in connected mode are unchanged.
 - In a connected workspace (2.0.0a15), the browser session setup (`jsc_browser_tests/auth.py`) checks the org against the consent and a granted browser window, and installs a request guard on the browser context that refuses requests to another Salesforce org. Outside connected mode it is unchanged.
@@ -196,11 +198,10 @@ undecodable structured output. Available invalid bytes are retained privately in
 revert evidence, never interpreted as captured field values. Browser diagnostics
 redact credential keys recursively and redact Salesforce auth URLs in text.
 
-Lesson promotions, score changes and archival hold a stable OS file lock for the
-whole read/modify/write transaction. Corrupt or unreadable active/review/archive
-records raise a visible error and preserve their bytes. Promotion publishes the
-active list before removing the pending record; a retry after interrupted removal
-does not duplicate the active lesson.
+A lesson is one file, written whole through a temporary file and a rename. A change
+to a lesson and every append to the events log hold one OS file lock per scope folder,
+with the same bounded wait on every system. A lesson file that cannot be read is
+skipped and named in the output and in `torque doctor`; its bytes are never rewritten.
 
 ## Packaging contract
 

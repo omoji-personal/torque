@@ -368,7 +368,7 @@
       "source_path": "packages/revert/jsc_revert/cli.py",
       "source_sha256": "c2cd6105a45d7ce342063ec2be0b556eec6b0057e458d95644818adcec421e26",
       "source_tracked": true,
-      "destination_sha256": "ae1e9b3c1fed6c655a663af19d13b3eee5b54c77c0bfa1f37c3cd15aafa5546c",
+      "destination_sha256": "eae8793ae04c4f66639b3d1650398c8ec307ac999ca28aafd9e2c81da6bd462b",
       "adapted": true
     },
     {
@@ -647,7 +647,7 @@
       "source_path": "packages/memory/tests/conftest.py",
       "source_sha256": "6138cc44d565adacaeadba92970574bb96638348076732939861e3c7ff45d037",
       "source_tracked": true,
-      "destination_sha256": "0ddc0ae0a42b4183ddafdce9174870794423dc62bd557afd18b59a0760b5ec33",
+      "destination_sha256": "f9306db3a2bd853469661d4108f0e4c027146154b4e0c015586f2211107106d7",
       "adapted": true
     },
     {
@@ -656,26 +656,8 @@
       "source_path": "packages/memory/tests/test_scrubber.py",
       "source_sha256": "5ba8c4e611c36dd4df662d19e37d90dd0e3603c750734547124412dd7bdf4c45",
       "source_tracked": true,
-      "destination_sha256": "1a9c9cc12f818031164eeb85e44d66cba291634e2005179375730ef2e0acef79",
+      "destination_sha256": "4ddf05035927ba5d7d3cd731a6d500ad5270770a2b1ef8c44799367747344c80",
       "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_ranker.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_ranker.py",
-      "source_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
-      "source_tracked": true,
-      "destination_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
-      "adapted": false
-    },
-    {
-      "path": "packages/memory/tests/test_injector.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_injector.py",
-      "source_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
-      "source_tracked": true,
-      "destination_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
-      "adapted": false
     },
     {
       "path": "packages/memory/tests/__init__.py",
@@ -692,52 +674,7 @@
       "source_path": "packages/memory/tests/test_storage.py",
       "source_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
       "source_tracked": true,
-      "destination_sha256": "e06fe609f7e83c3b734a2e27bd4947afb8900be19c46810ce9e3a0d4a705c041",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_capture.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_capture.py",
-      "source_sha256": "b949eb1c10fc233640684bd4e932f8b0c33ed62287a6e26127a0b596dbdab41c",
-      "source_tracked": true,
-      "destination_sha256": "036584cc7cda32d5854a7a769695f8bf18ce14f01f197f9843b088e563bd2592",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_index.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_index.py",
-      "source_sha256": "d6aec1c1d3b565a38c3486bdfcf6730c5d5b5d2bf9b49803bc4f87223c738132",
-      "source_tracked": true,
-      "destination_sha256": "388d169e52e480d1a2a59624845a396f7087595291ff92e958f0206ebe95193d",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_spool.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_spool.py",
-      "source_sha256": "2929d9c0ef196e823af91c3abf75599769164480119bda1c32f5c390fcac366b",
-      "source_tracked": true,
-      "destination_sha256": "1af585a9158556f68347ebeb9e9d5a36991f0d34a29902c71cf479af4177e163",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/index.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/index.py",
-      "source_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
-      "source_tracked": true,
-      "destination_sha256": "a5fc69fb4c660f15868a852416ba36643457c14ff175c5ad821dfd01bb6e4b1a",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/spool.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/spool.py",
-      "source_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
-      "source_tracked": true,
-      "destination_sha256": "546d623aaae986b8f3293e8a6b33426c6e00121c13ff828c479ba9a5366379af",
+      "destination_sha256": "9324c22b0ddde36bf82a0f64b93e4c8236090d9e7ff85603b4ee8fd81f785c3f",
       "adapted": true
     },
     {
@@ -746,8 +683,8 @@
       "source_path": "packages/memory/jsc_memory/scrubber.py",
       "source_sha256": "50867444b425b53bfc7209596b267bd842d094a28f814791ed68d6b44f5f4283",
       "source_tracked": true,
-      "destination_sha256": "50867444b425b53bfc7209596b267bd842d094a28f814791ed68d6b44f5f4283",
-      "adapted": false
+      "destination_sha256": "88a14054f3bf7fd7b82e271ea5fda1c5ee23393a46434c31562856c4512e1a74",
+      "adapted": true
     },
     {
       "path": "packages/memory/jsc_memory/__init__.py",
@@ -755,25 +692,7 @@
       "source_path": "packages/memory/jsc_memory/__init__.py",
       "source_sha256": "b879d0aac327e28b7f9ddfa3f1705902421def0fe5652febca1e239746e20bde",
       "source_tracked": true,
-      "destination_sha256": "db30b99ad681f603d9023cfd27843717483237b42ff771bab1ef2e7714adfcd6",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/injector.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/injector.py",
-      "source_sha256": "9fa7188913da15edd38b49e2340281e173277a99d5f56f03ad84c317676987f4",
-      "source_tracked": true,
-      "destination_sha256": "bd133e43c153afe4997920e105f3c5617ad15161f3ce5e3cba04cd573e972aa8",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/capture.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/capture.py",
-      "source_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
-      "source_tracked": true,
-      "destination_sha256": "e58ca75e1c54e31e88e79f40000a12c80738c5a71d4565abb7301198f99fc3de",
+      "destination_sha256": "33e5af635c52006efbd5baa24dfe6683014613a7bb9bf7ea43990bd91d236f29",
       "adapted": true
     },
     {
@@ -782,7 +701,7 @@
       "source_path": "packages/memory/jsc_memory/cli.py",
       "source_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
       "source_tracked": true,
-      "destination_sha256": "c36d06c061689ff91ea3bbb13cb96d9834b5d9b4d47d5ab04c4f36e880be8723",
+      "destination_sha256": "54ec7fb69f88ed52c974e6b6586ac9ef6d41a88eaf3f8f7933e7c397ab2d6a04",
       "adapted": true
     },
     {
@@ -791,25 +710,7 @@
       "source_path": "packages/memory/jsc_memory/storage.py",
       "source_sha256": "6a815a6a996f2d1359c3ba8dbab6a2aa04d9fb3ab70a510feb7c6c3115e9c1a9",
       "source_tracked": true,
-      "destination_sha256": "e31ee9e12c38b2cacd97288f10285bc9b895445fb440ece15a506613d00c4cec",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/ranker.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/ranker.py",
-      "source_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
-      "source_tracked": true,
-      "destination_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
-      "adapted": false
-    },
-    {
-      "path": "packages/memory/tests/fixtures/pii_shapes.yaml",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/fixtures/pii_shapes.yaml",
-      "source_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
-      "source_tracked": true,
-      "destination_sha256": "7366cf8137e188a12a37423531245caca57c36c3ab9d7641caa8ef8f360dc75d",
+      "destination_sha256": "870352cac68db40f29285e9df4b772063bfc94b62b065a729e3e65ae2591bd2a",
       "adapted": true
     },
     {
@@ -1367,7 +1268,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
       "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
       "source_tracked": true,
-      "destination_sha256": "a227aaa47c862edf54bf0c72fae4888162110d171703c1cf289ea20528c2eb5e",
+      "destination_sha256": "a60655ab11a26c259a77c89b4c17d6d3b444d1abe753ca1c0b8cc984cff16a36",
       "adapted": true
     },
     {
@@ -1481,7 +1382,7 @@
     {
       "path": "packages/jsc_common/tests/test_continuation.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "74b2c9f734b1498f29bf411cb904443c67541aabc546cc880a2f9bb228819cbf"
+      "destination_sha256": "711455fe7db025aaadfa6e4c4959254a8a163560d34a88f1034f861465ae3846"
     },
     {
       "path": "packages/licenses/Apache-2.0.txt",
@@ -1673,5 +1574,85 @@
     "org/auth state, actual debug logs, snapshots and meeting artifacts",
     "global hooks, restrictive command shims and shell installation",
     "node_modules, caches and egg metadata"
-  ]
+  ],
+  "removed_files": [
+    {
+      "path": "packages/memory/tests/test_ranker.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_ranker.py",
+      "source_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_injector.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_injector.py",
+      "source_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_capture.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_capture.py",
+      "source_sha256": "b949eb1c10fc233640684bd4e932f8b0c33ed62287a6e26127a0b596dbdab41c",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_index.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_index.py",
+      "source_sha256": "d6aec1c1d3b565a38c3486bdfcf6730c5d5b5d2bf9b49803bc4f87223c738132",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_spool.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_spool.py",
+      "source_sha256": "2929d9c0ef196e823af91c3abf75599769164480119bda1c32f5c390fcac366b",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/index.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/index.py",
+      "source_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/spool.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/spool.py",
+      "source_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/injector.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/injector.py",
+      "source_sha256": "9fa7188913da15edd38b49e2340281e173277a99d5f56f03ad84c317676987f4",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/capture.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/capture.py",
+      "source_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/ranker.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/ranker.py",
+      "source_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/fixtures/pii_shapes.yaml",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/fixtures/pii_shapes.yaml",
+      "source_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    }
+  ],
+  "removed_files_meaning": "Files selected from the source and later removed here; the source hash is retained, there is no destination."
 }

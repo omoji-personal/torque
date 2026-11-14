@@ -19,13 +19,18 @@ def test_sequential_clients_resolve_storage_at_call_time(tmp_path, monkeypatch):
     (stale / "lessons.md").write_text("Private stale client context must never be selected", encoding="utf-8")
     monkeypatch.chdir(tmp_path / "old-repo")
     paths=[]
+    (tmp_path/"ws").mkdir()
+    (tmp_path/"ws/workspace.json").write_text("{}", encoding="utf-8")
     for client in ("alpha", "beta"):
-        root=tmp_path/client
+        root=tmp_path/"ws/clients"/client
+        root.mkdir(parents=True)
+        (root/"client.json").write_text("{}", encoding="utf-8")
         monkeypatch.setenv("TORQUE_WORKSPACE", str(root))
         paths.append(bundle.revert_dir())
         assert bundle.revert_dir() == root/"state/revert"
-        assert storage.memory_root() == root/"state/memory"
-        assert storage.active_lessons_path() == root/"state/memory/lessons/lessons.md"
+        selected = storage.scopes_from_env()
+        assert (selected.engagement, selected.folder("client")) == (root, root/"lessons")
+        assert selected.folder("firm") == tmp_path/"ws/lessons" and storage.load(selected) == []
         assert post_deploy_polling._queue_dir() == root/"state/revert/_polling_queue"
         assert harness._stage_prompt_to_workspace("synthetic").is_relative_to(root)
         assert state_dir("vision-staging").is_relative_to(root)

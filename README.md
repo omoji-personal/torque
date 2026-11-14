@@ -61,7 +61,8 @@ remaining work so the next consultant can see where to continue.
 | Resume work from private client context, session/change records and Markdown/JSON handoffs | Recorded evidence supports review; it does not prove a supplied claim |
 | Guide discovery, architecture, Flow review, migration planning, training and release notes | Workflows guide the assistant; live outcomes require separate checks |
 | Investigate orgs, deploy metadata, perform data operations and prepare scoped recovery | Requires existing tools and explicit org selection; recovery coverage varies by operation |
-| Run QA, log analysis, browser flows, lessons and probes | Coverage depends on the configured adapter; synthesized probes are not executed tests |
+| Run QA, log analysis, browser flows and probes | Coverage depends on the configured adapter; synthesized probes are not executed tests |
+| Keep what was learned and find it again at the point of use: by task, metadata type, command or error text | [Lessons](docs/lessons.md) are notes with their evidence and age, not instructions; what an agent saves waits as a candidate until it is reviewed |
 | Prepare meetings and check prompt contracts | Optional dependencies apply; live model-provider behavior remains experimental |
 
 ## Install and try the offline demo
@@ -176,8 +177,9 @@ removing the flag resumes admission. The workflow updater remains available. See
 | Check a change before and after a deploy | `torque check metadata` (field access, descriptions, fragile flows, hard-coded Ids, profiles, managed components, with Salesforce Code Analyzer merged in when installed), `torque check result` (a saved deploy result on one screen) and `torque check deployed` (what landed in the org); see [checks](docs/checks.md) |
 | Salesforce practice | Eight [skills](docs/skills.md): the build standard (descriptions, simplest option first, access with every field), flows, the delivery lifecycle, architecture, SOQL and Code Analyzer review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
 | Deploy, data operations and scoped recovery | `torque deploy`, `torque data`, `torque org`, `torque recover` |
-| QA, debug logs, browser flows, lessons and probes | `torque qa`, `logs`, `browser`, `lesson`, `probes`; coverage and limits depend on the configured adapter |
+| QA, debug logs, browser flows and probes | `torque qa`, `logs`, `browser`, `probes`; coverage and limits depend on the configured adapter |
 | Sign a browser in without a password | `torque browser login` signs a browser tab (or a scripted browser) in through the Salesforce front door with the CLI's existing authorization; the sign-in address never reaches the session. Offline tests only so far: see [browser sign-in](docs/browser-sign-in.md) |
+| Lessons from earlier work | `torque session add --learned`, `torque lesson for`, a lessons block in `torque context` and before `torque deploy` and `torque data`; `torque lesson review` and `promote`; see [lessons](docs/lessons.md) |
 | Meeting preparation and prompt contracts | Optional `torque meeting` and `ai-regression`; live model-provider behavior remains experimental |
 
 ## Optional workspace controls
@@ -241,8 +243,9 @@ requires manual recovery review.
 Metadata recovery verifies captured post-deployment state while holding an org
 lease shared across aliases and workspaces for the same OS account. Unknown state
 blocks recovery, including with `--force`. Data upsert sends an atomic external-ID
-request; incomplete capture returns nonzero even when the write succeeded. Lesson
-updates preserve unreadable state and serialize concurrent changes. See
+request; incomplete capture returns nonzero even when the write succeeded. A lesson
+file that cannot be read is skipped and named, never rewritten, and concurrent lesson
+changes are serialized. See
 [package safety and limits](docs/package-migration.md#recovery-and-local-state-safety).
 
 `torque doctor --for salesforce` checks local dependencies without contacting an

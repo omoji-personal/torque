@@ -1,381 +1,378 @@
-"""Storage layer: L1 (review queue) / L2 (active) / L3 (archive).
+"""Where lessons live. Scopes are folders:
 
-Per plan-v5: review-first architecture. NO auto-promotion. Capture writes
-candidates to L1 (`_review_queue/`); Claude's `/lesson-helpful` moves L1 → L2;
-`/lesson-stale` (count >= 2) moves L2 → L3.
+  client      <workspace>/clients/<slug>/lessons/*.md
+  initiative  <workspace>/initiatives/<slug>/lessons/*.md
+  firm        <workspace>/lessons/*.md
+  platform    shipped with the package and read-only (see recall.platform_lessons)
 
-L3 framework promotion stays via existing `/collect-lessons` admin flow.
+Read rule: the selected client or initiative, then the firm, then the platform. No
+other engagement's lessons, events or files are read, under any option (the scrub reads
+each client's registration for its name: scrubber.workspace_terms). Write rule: the
+selected engagement by default, the firm when asked; nothing writes into the package.
 
-Compatibility: `load_framework_memory()` is a shim for the existing
-`session_start_context.py:_proactive_l3_section()` placeholder.
+Events (shown, helpful, stale, verified, promoted, retired, restored) are appended to
+`.torque/lessons/events.jsonl` under the scope root: a client's events stay in that
+client's folder, firm and platform events go to the workspace. An event holds a lesson
+id, a time and the surface that produced it, never the lesson's text. Counters are
+derived from the events.
+
+Each lesson is one file, written whole through a temporary file and a rename. A
+read-modify-write holds the scope root's one lock. A file that cannot be read is
+skipped and named, and never stops a command.
 """
-
 from __future__ import annotations
-from jsc_common.workspace import state_dir
 
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
 import json
 import os
-import pathlib
-import re
-import time
+from pathlib import Path
+import tempfile
 import threading
-from contextlib import contextmanager
-from functools import wraps
-from dataclasses import dataclass, field
-from typing import Optional
+import time
+
+from . import lesson as record
+from .lesson import Lesson, LessonError
+
+MAX_BYTES = 256 * 1024
+LOCK_SECONDS = 20.0
+EVENTS = ("shown", "helpful", "stale", "verified", "promoted", "retired", "restored")
+_FOLDERS = {"client": "clients", "initiative": "initiatives"}
 
 
-def memory_root() -> pathlib.Path:
-    """Resolve storage on every call so sequential clients never share state."""
-    return state_dir("memory", legacy_env="JSC_MEMORY_DIR")
+class Busy(OSError):
+    """Another process holds the lessons lock; nothing was written."""
 
 
-def _lessons_dir() -> pathlib.Path:
-    return memory_root() / "lessons"
+class NotFound(LessonError):
+    pass
 
 
-def review_queue_dir() -> pathlib.Path:
-    return _lessons_dir() / "_review_queue"
+class Ambiguous(LessonError):
+    def __init__(self, message: str, candidates: list[Lesson]):
+        super().__init__(message)
+        self.candidates = candidates
 
 
-def archive_dir() -> pathlib.Path:
-    return _lessons_dir() / "_archive"
+@dataclass(frozen=True)
+class Scopes:
+    """What one call may read and write: a workspace (the firm's lessons) and at most
+    one engagement in it. Without a workspace only the platform lessons are read."""
+    workspace: Path | None = None
+    engagement: Path | None = None
+    kind: str | None = None
 
+    @property
+    def slug(self) -> str | None:
+        return self.engagement.name if self.engagement else None
 
-def active_lessons_path() -> pathlib.Path:
-    """Active lessons belong only to the selected client scope."""
-    return _lessons_dir() / "lessons.md"
+    def root(self, scope: str) -> Path | None:
+        """The folder that owns a scope's lessons, events and proposals."""
+        if scope in record.ENGAGEMENT_SCOPES:
+            return self.engagement if scope == self.kind else None
+        return self.workspace if scope == "firm" else None
 
+    def folder(self, scope: str) -> Path | None:
+        root = self.root(scope)
+        return root / "lessons" if root else None
 
-def spool_dir() -> pathlib.Path:
-    return memory_root() / "spool"
+    def event_root(self, scope: str) -> Path | None:
+        """Where events about a lesson of this scope are kept. The platform is
+        read-only, so its events go to the workspace."""
+        return self.engagement if scope in record.ENGAGEMENT_SCOPES else self.workspace
 
+    def default_scope(self) -> str | None:
+        return self.kind if self.engagement else None
 
-def index_path() -> pathlib.Path:
-    return _lessons_dir() / "index.json"
+    def label(self) -> str:
+        parts = [f"{self.kind} {self.slug}"] if self.engagement else []
+        return " + ".join(parts + (["firm"] if self.workspace else []) + ["platform"])
 
-
-def index_top_path() -> pathlib.Path:
-    return _lessons_dir() / "index_top.json"
-
-
-def ensure_dirs() -> None:
-    """Create the storage tree if absent (mode 0o700 — operator-private memory).
-
-    Safe to call repeatedly. Tightens pre-existing dirs too: mkdir(exist_ok=True)
-    won't change the mode of a dir created before this hardening, and mkdir(mode=)
-    is masked by the umask, so an explicit chmod (best-effort) closes the
-    umask-default gap (audit 2026-06-13 follow-up to LESSON-1; the spool + L1
-    candidate FILES are already 0o600, this protects the containing dirs).
-    """
-    for p in (
-        memory_root(),
-        _lessons_dir(),
-        review_queue_dir(),
-        archive_dir(),
-        spool_dir(),
-        spool_dir() / "_quarantine",
-    ):
-        p.mkdir(parents=True, exist_ok=True, mode=0o700)
+    def foreign(self, path: str | os.PathLike) -> bool:
+        """True for a path inside the folder of a client or an initiative of this workspace
+        other than the one selected. No lesson command reads there, whatever path it is
+        given (`--path`, `--from-file`, `--body-file`, `--dir`, a proposal)."""
+        if self.workspace is None:
+            return False
         try:
-            os.chmod(p, 0o700)
+            here = os.path.normcase(str(Path(path).expanduser().resolve()))
+        except (OSError, RuntimeError, ValueError):
+            return True
+        own = os.path.normcase(str(self.engagement)) if self.engagement else None
+        if own and (here == own or here.startswith(own + os.sep)):
+            return False
+        return any(here.startswith(os.path.normcase(str(self.workspace / name)) + os.sep)
+                   for name in _FOLDERS.values())
+
+    def shown(self, path: Path) -> str:
+        """A path for a message: relative to the workspace when it lies inside it."""
+        try:
+            return path.relative_to(self.workspace).as_posix() if self.workspace else path.name
+        except ValueError:
+            return path.name
+
+
+def scopes_for(folder: str | os.PathLike | None) -> Scopes:
+    """The scopes a folder selects: a workspace root (firm lessons only) or an
+    engagement folder in one (that client or initiative, and its workspace)."""
+    if not folder:
+        return Scopes()
+    path = Path(folder).expanduser().resolve()
+    if (path / "workspace.json").is_file():
+        return Scopes(workspace=path)
+    workspace = path.parent.parent
+    for kind, marker in (("client", "client.json"), ("initiative", "binding.json")):
+        if (path.parent.name == _FOLDERS[kind] and (path / marker).is_file()
+                and (workspace / "workspace.json").is_file()):
+            return Scopes(workspace=workspace, engagement=path, kind=kind)
+    return Scopes()
+
+
+def scopes_from_env() -> Scopes:
+    """The scopes the launcher selected. TORQUE_WORKSPACE is the engagement folder for a
+    selected client or initiative, or the workspace root; a legacy JSC_ROOT selects nothing."""
+    return scopes_for(os.environ.get("TORQUE_WORKSPACE"))
+
+
+def state_dir(root: Path) -> Path:
+    return root / ".torque" / "lessons"
+
+
+def _private_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return path
+
+
+def read_folder(folder: Path | None, scope: str, scopes: Scopes, problems: list | None = None) -> list[Lesson]:
+    """The lessons in one folder. An unreadable file is skipped and named in `problems`."""
+    if folder is None or not folder.is_dir():
+        return []
+    problems = problems if problems is not None else []
+    if folder.is_symlink():
+        problems.append({"path": scopes.shown(folder), "reason": "the lessons folder is a symbolic link; not read"})
+        return []
+    found: dict[str, Lesson] = {}
+    # The file named after its id is read first, so a stray copy of it is the one reported.
+    for path in sorted(folder.glob("*.md"), key=lambda path: (not record.ID.match(path.stem), path.name.lower())):
+        if path.name.lower() == "readme.md":
+            continue
+        try:
+            if path.is_symlink():
+                raise LessonError("a symbolic link is not read")
+            if path.stat().st_size > MAX_BYTES:
+                raise LessonError("larger than 256 KB; a lesson is a short note")
+            item = record.parse(path.read_text(encoding="utf-8"), path=path)
+            if item.scope != scope:
+                raise LessonError(f"its scope says {item.scope}, but this folder holds {scope} lessons")
+            if item.id in found:
+                raise LessonError(f"its id {item.id} is already used by {found[item.id].path.name}")
+        except UnicodeDecodeError:
+            problems.append({"path": scopes.shown(path), "reason": "not UTF-8 text"})
+        except LessonError as exc:
+            problems.append({"path": scopes.shown(path), "reason": str(exc)})
+        except OSError as exc:
+            problems.append({"path": scopes.shown(path), "reason": f"cannot be read ({exc.strerror or 'error'})"})
+        else:
+            found[item.id] = item
+    return sorted(found.values(), key=lambda item: item.id)
+
+
+def load(scopes: Scopes, problems: list | None = None, *, only: str | None = None) -> list[Lesson]:
+    """Every lesson in the workspace the call may read: the selected engagement's and
+    the firm's (`only` narrows to one of them). Platform lessons come from recall."""
+    lessons: list[Lesson] = []
+    for scope in ([scopes.kind] if scopes.engagement else []) + ["firm"]:
+        if only in (None, scope):
+            lessons += read_folder(scopes.folder(scope), scope, scopes, problems)
+    return lessons
+
+
+def resolve(lessons: list[Lesson], wanted: str) -> Lesson:
+    """The one lesson an id names: the exact id, or a unique prefix of at least four
+    characters after the `L-`. Raises NotFound or Ambiguous (with the candidates)."""
+    wanted = (wanted or "").strip()
+    if not wanted:
+        raise Ambiguous("no lesson id was given", lessons[:10])
+    exact = [item for item in lessons if item.id == wanted]
+    if len(exact) == 1:
+        return exact[0]
+    tail = wanted[2:] if len(wanted) > 1 and wanted[1] == "-" else wanted
+    if len(tail) < 4:
+        raise Ambiguous(f"`{wanted}` is too short: give the whole id or at least four characters after the L-",
+                        [item for item in lessons if item.id.lower().startswith(wanted.lower())][:10])
+    matches = exact or [item for item in lessons
+                        if item.id.lower().startswith(wanted.lower()) or item.id[2:].lower().startswith(tail.lower())]
+    if not matches:
+        raise NotFound(f"no lesson `{wanted}` among the lessons this command can read")
+    if len(matches) > 1:
+        raise Ambiguous(f"`{wanted}` matches {len(matches)} lessons", matches[:10])
+    return matches[0]
+
+
+def save(item: Lesson, folder: Path) -> Path:
+    """Write the lesson's file whole. A lesson read from a file keeps that file's name."""
+    _private_dir(folder)
+    path = item.path or folder / f"{item.id}.md"
+    _atomic_write(path, record.render(item))
+    item.path = path
+    return path
+
+
+def taken_ids(folder: Path | None) -> set[str]:
+    return {path.stem for path in folder.glob("*.md")} if folder and folder.is_dir() else set()
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write to a temporary file in the same folder, then replace: readers see the old
+    file or the new one, never part of one. The temporary file is removed on failure."""
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
         except OSError:
             pass
+        raise
 
 
-@dataclass
-class Lesson:
-    id: str
-    title: str
-    short: str  # one-line summary
-    full_text: str  # full lesson body
-    confidence: str  # HIGHEST | HIGH | MEDIUM | LOW
-    trigger: str
-    captured_at: int  # unix ts
-    last_seen: int  # unix ts (updated on surfacing)
-    state: str  # review_pending | active | archive
-    helpful_count: int = 0
-    stale_count: int = 0
-    surfacing_attempts: int = 0
-    missed_review_count: int = 0
-    client_scope: list[str] = field(default_factory=list)
-    signature_keywords: list[str] = field(default_factory=list)
-    signature_hash: str = ""
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "title": self.title,
-            "short": self.short,
-            "full_text": self.full_text,
-            "confidence": self.confidence,
-            "trigger": self.trigger,
-            "captured_at": self.captured_at,
-            "last_seen": self.last_seen,
-            "state": self.state,
-            "helpful_count": self.helpful_count,
-            "stale_count": self.stale_count,
-            "surfacing_attempts": self.surfacing_attempts,
-            "missed_review_count": self.missed_review_count,
-            "client_scope": self.client_scope,
-            "signature_keywords": self.signature_keywords,
-            "signature_hash": self.signature_hash,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "Lesson":
-        if (not isinstance(d, dict) or not all(isinstance(d.get(key), str) and d[key]
-                                              for key in ("id", "title"))):
-            raise ValueError("Lesson state requires a nonempty ID and title")
-        for key in ("captured_at", "last_seen", "helpful_count", "stale_count",
-                    "surfacing_attempts", "missed_review_count"):
-            if key in d and (type(d[key]) is not int or d[key] < 0):
-                raise ValueError(f"Lesson state has an invalid {key}")
-        return cls(
-            id=d["id"],
-            title=d["title"],
-            short=d.get("short", ""),
-            full_text=d.get("full_text", ""),
-            confidence=d.get("confidence", "LOW"),
-            trigger=d.get("trigger", "unknown"),
-            captured_at=d.get("captured_at", 0),
-            last_seen=d.get("last_seen", 0),
-            state=d.get("state", "review_pending"),
-            helpful_count=d.get("helpful_count", 0),
-            stale_count=d.get("stale_count", 0),
-            surfacing_attempts=d.get("surfacing_attempts", 0),
-            missed_review_count=d.get("missed_review_count", 0),
-            client_scope=d.get("client_scope", []) or [],
-            signature_keywords=d.get("signature_keywords", []) or [],
-            signature_hash=d.get("signature_hash", ""),
-        )
+_MUTEX = threading.RLock()
+_HELD = threading.local()
 
 
-def _file_id(lesson_id: str) -> str:
-    """12-char id prefix made safe for filenames on every OS (Windows rejects <>:"|?* etc.)."""
-    return re.sub(r"[^A-Za-z0-9_-]", "_", lesson_id[:12]) or "lesson"
-
-
-_TRANSACTION_MUTEX = threading.RLock()
-_TRANSACTION_LOCAL = threading.local()
-
-
-@contextmanager
-def transaction():
-    """Serialize an entire lesson read/modify/write, across threads and processes.
-
-    The stable lock file is never removed or replaced. Closing the descriptor
-    releases the OS lock even when a process exits unexpectedly.
-    """
-    with _TRANSACTION_MUTEX:
-        if getattr(_TRANSACTION_LOCAL, "active", False):
-            yield
-            return
-        ensure_dirs()
-        fd = os.open(_lessons_dir() / ".storage.lock", os.O_CREAT | os.O_RDWR, 0o600)
+def _acquire(fd: int, path: Path) -> None:
+    """Take the lock, waiting at most LOCK_SECONDS, the same way on every system."""
+    deadline = time.monotonic() + LOCK_SECONDS
+    while True:
         try:
             if os.name == "nt":
                 import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            _TRANSACTION_LOCAL.active = True
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise Busy(f"another Torque command is writing lessons here ({path} stayed locked for "
+                           f"{LOCK_SECONDS:g} seconds). Nothing was written; run the command again.") from None
+            time.sleep(0.05)
+
+
+@contextmanager
+def transaction(root: Path):
+    """Serialize a read-modify-write of one scope root, across threads and processes.
+    The lock file is never removed; closing it releases the lock even if the process dies."""
+    held = getattr(_HELD, "roots", None)
+    if held is None:
+        held = _HELD.roots = set()
+    key = os.path.normcase(str(root))
+    with _MUTEX:
+        if key in held:
+            yield
+            return
+        path = _private_dir(state_dir(root)) / ".lock"
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            _acquire(fd, path)
+            held.add(key)
             try:
                 yield
             finally:
-                _TRANSACTION_LOCAL.active = False
+                held.discard(key)
         finally:
             os.close(fd)
 
 
-def _serialized(function):
-    @wraps(function)
-    def wrapped(*args, **kwargs):
-        with transaction():
-            return function(*args, **kwargs)
-    return wrapped
+def now() -> str:
+    """The time of an event: local, with its offset, so that its first ten characters are
+    the same day a lesson's `created` and `last_verified` would say at that moment."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _read_lesson(path: pathlib.Path) -> Lesson:
+def events_path(root: Path) -> Path:
+    return state_dir(root) / "events.jsonl"
+
+
+def log(root: Path | None, rows: list[dict], *, must: bool = False) -> bool:
+    """Append events to a scope root's log. Showing a lesson must never fail the command
+    that shows it, so a failure is swallowed unless `must` (feedback the user asked for)."""
+    if root is None or not rows:
+        return False
     try:
-        return Lesson.from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (ValueError, KeyError, TypeError) as exc:
-        raise ValueError(f"Unreadable lesson state at {path}; original bytes preserved") from exc
+        with transaction(root):
+            with open(events_path(root), "a", encoding="utf-8", newline="\n") as stream:
+                for row in rows:
+                    stream.write(json.dumps({"at": now(), **row}, ensure_ascii=False) + "\n")
+        return True
+    except OSError:
+        if must:
+            raise
+        return False
 
 
-@_serialized
-def write_review_candidate(lesson: Lesson) -> pathlib.Path:
-    """Write a Lesson to L1 review queue. Returns the path."""
-    ensure_dirs()
-    fname = f"{lesson.captured_at}-{_file_id(lesson.id)}.json"
-    p = review_queue_dir() / fname
-    _atomic_write(p, json.dumps(lesson.to_dict(), indent=2))
-    return p
-
-
-def list_review_pending() -> list[Lesson]:
-    """List L1 (review_pending) lessons."""
-    ensure_dirs()
-    out = []
-    for p in sorted(review_queue_dir().glob("*.json")):
-        out.append(_read_lesson(p))
-    return out
-
-
-def list_active() -> list[Lesson]:
-    """List L2 (active) lessons. Reads from active_lessons_path() if it's our
-    JSON sidecar; the markdown file remains operator-edited.
-    """
-    ensure_dirs()
-    sidecar = _lessons_dir() / "active.json"
-    try:
-        data = json.loads(sidecar.read_text(encoding="utf-8"))
-        if not isinstance(data, list):
-            raise ValueError("Expected an active lesson list")
-        return [Lesson.from_dict(d) for d in data]
-    except FileNotFoundError:
+def read_events(root: Path | None) -> list[dict]:
+    """The events of one scope root, oldest first. A damaged line is skipped."""
+    if root is None:
         return []
-    except (ValueError, KeyError, TypeError) as exc:
-        raise ValueError(f"Unreadable active lesson state at {sidecar}; original bytes preserved") from exc
-
-
-@_serialized
-def write_active(lessons: list[Lesson]) -> None:
-    """Persist L2 lessons to JSON sidecar (atomic)."""
-    ensure_dirs()
-    sidecar = _lessons_dir() / "active.json"
-    _atomic_write(sidecar, json.dumps([l.to_dict() for l in lessons], indent=2))
-
-
-def find_lesson(lesson_id: str) -> Optional[tuple[Lesson, str]]:
-    """Find a lesson by id (or 12-char prefix). Returns (lesson, state) or None.
-
-    State is "review_pending" | "active" | "archive".
-    """
-    for l in list_review_pending():
-        if l.id == lesson_id or l.id.startswith(lesson_id):
-            return l, "review_pending"
-    for l in list_active():
-        if l.id == lesson_id or l.id.startswith(lesson_id):
-            return l, "active"
-    for p in sorted(archive_dir().glob("*.json")):
-        l = _read_lesson(p)
-        if l.id == lesson_id or l.id.startswith(lesson_id):
-            return l, "archive"
-    return None
-
-
-@_serialized
-def promote_to_active(lesson_id: str) -> Optional[Lesson]:
-    """Move a review_pending lesson → active. Returns the promoted lesson or None."""
-    pending = list_review_pending()
-    for l in pending:
-        if l.id == lesson_id or l.id.startswith(lesson_id):
-            # Update state
-            l.state = "active"
-            l.helpful_count += 1
-            l.last_seen = int(time.time())
-            # Add to active list
-            active = list_active()
-            # A crash after publication but before queue removal must not add
-            # a duplicate on retry.
-            if not any(a.id == l.id for a in active):
-                active.append(l)
-            write_active(active)
-            # Remove from review queue
-            for p in review_queue_dir().glob(f"*-{_file_id(l.id)}.json"):
-                p.unlink()
-            return l
-    # Maybe it's already active — boost score
-    active = list_active()
-    for l in active:
-        if l.id == lesson_id or l.id.startswith(lesson_id):
-            l.helpful_count += 1
-            l.last_seen = int(time.time())
-            write_active(active)
-            return l
-    return None
-
-
-@_serialized
-def mark_stale(lesson_id: str) -> Optional[Lesson]:
-    """Increment stale_count. If >= 2, archive. Returns the affected lesson."""
-    pending = list_review_pending()
-    for l in pending:
-        if l.id == lesson_id or l.id.startswith(lesson_id):
-            l.stale_count += 1
-            if l.stale_count >= 2:
-                l.state = "archive"
-                _archive_lesson(l)
-                for p in review_queue_dir().glob(f"*-{_file_id(l.id)}.json"):
-                    p.unlink()
-            else:
-                # rewrite the file with updated count
-                for p in review_queue_dir().glob(f"*-{_file_id(l.id)}.json"):
-                    _atomic_write(p, json.dumps(l.to_dict(), indent=2))
-            return l
-    active = list_active()
-    for l in active:
-        if l.id == lesson_id or l.id.startswith(lesson_id):
-            l.stale_count += 1
-            if l.stale_count >= 2:
-                l.state = "archive"
-                _archive_lesson(l)
-                active = [a for a in active if a.id != l.id]
-            write_active(active)
-            return l
-    return None
-
-
-def _archive_lesson(lesson: Lesson) -> pathlib.Path:
-    ensure_dirs()
-    fname = f"{lesson.captured_at}-{_file_id(lesson.id)}.json"
-    p = archive_dir() / fname
-    _atomic_write(p, json.dumps(lesson.to_dict(), indent=2))
-    return p
-
-
-def review_queue_size() -> int:
-    """Count lessons currently in review queue."""
-    ensure_dirs()
-    return sum(1 for _ in review_queue_dir().glob("*.json"))
-
-
-def _atomic_write(path: pathlib.Path, content: str) -> None:
-    """Write to temp file in same dir, then os.replace for atomicity.
-
-    Cleans up temp file on failure. Per model-orchestration.md pattern.
-    """
-    import tempfile
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(content)
-        os.replace(tmp_path, path)
-    except Exception:
-        if os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-        raise
+        text = events_path(root).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    rows = []
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("event") in EVENTS and isinstance(row.get("id"), str) \
+                and isinstance(row.get("at"), str):
+            rows.append(row)
+    return rows
 
 
-# === Compatibility shim (preserves session_start_context placeholder) ===
-
-class _FrameworkMemory:
-    """Stub object with .lessons attribute for compatibility shim."""
-    lessons: list = []
+def events_for(scopes: Scopes) -> list[dict]:
+    """The events this call may read: the workspace's and the selected engagement's."""
+    return sorted(read_events(scopes.workspace) + read_events(scopes.engagement), key=lambda row: row["at"])
 
 
-def load_framework_memory() -> _FrameworkMemory:
-    """Compat shim for `session_start_context.py:_proactive_l3_section()`.
+@dataclass
+class Tally:
+    shown: int = 0
+    helpful: int = 0
+    stale: int = 0
+    last_shown: str = ""
+    stale_mark: dict | None = None        # the open stale mark: {at, reason, superseded_by}
+    last: dict = field(default_factory=dict)
 
-    Returns an empty framework-memory stub. Real lesson surfacing in v1
-    happens via `injector.top_k_for_session()` called from the new
-    `_proactive_lessons_section()` (renamed in session_start_context.py).
-    The old `_proactive_l3_section` placeholder remains a no-op.
-    """
-    return _FrameworkMemory()
+    @property
+    def score(self) -> int:
+        return self.helpful - self.stale
+
+    def counters(self) -> dict:
+        return {"shown": self.shown, "helpful": self.helpful, "stale": self.stale}
+
+
+def tally(events: list[dict]) -> dict[str, Tally]:
+    """Counters and the open stale mark per lesson id. A stale mark stays until the
+    lesson is verified or restored."""
+    result: dict[str, Tally] = {}
+    for row in events:
+        item = result.setdefault(row["id"], Tally())
+        name = row["event"]
+        item.last[name] = row["at"]
+        if name == "shown":
+            item.shown += 1
+            item.last_shown = row["at"]
+        elif name == "helpful":
+            item.helpful += 1
+        elif name == "stale":
+            item.stale += 1
+            item.stale_mark = {"at": row["at"], "reason": row.get("reason", ""),
+                               "superseded_by": row.get("superseded_by", "")}
+        elif name in ("verified", "restored"):
+            item.stale_mark = None
+    return result

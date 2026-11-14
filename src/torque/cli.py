@@ -172,6 +172,15 @@ def build_parser() -> argparse.ArgumentParser:
     entry.add_argument("--summary", required=True)
     entry.add_argument("--status", choices=ws.STATUSES, default="prepared")
     entry.add_argument("--evidence", help="reference and hash a file; does not assess its contents")
+    entry.add_argument("--learned", action="append", default=[], metavar="TEXT",
+                       help="a lesson this session taught, saved with the record and linked to it (repeatable). "
+                            "Write it as `When: ... Do: ... Because: ...`")
+    entry.add_argument("--learned-scope", choices=("client", "firm"), default="client",
+                       help="client: the selected client or initiative (default); firm: every client, so the "
+                            "text must not identify one")
+    entry.add_argument("--learned-from", choices=("consultant", "agent"), default="agent",
+                       help="consultant: their correction or instruction, saved as an active lesson; agent "
+                            "(default): saved as a candidate until it is reviewed")
     entry.add_argument("--json", action="store_true")
     for action in ("list", "show"):
         p = sessions.add_parser(action)
@@ -240,7 +249,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None]:
+def _scope_options(argv: list[str], names: tuple[str, ...] = ("--workspace", "--client")) -> tuple[list[str], dict]:
+    """Split a delegated command's words into its own arguments and the scope options
+    it names (their values by option name)."""
     remaining: list[str] = []
     values: dict[str, str] = {}
     i = 0
@@ -250,7 +261,7 @@ def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None
             remaining.extend(argv[i:])
             break
         option = arg.split("=", 1)[0]
-        if option not in ("--workspace", "--client"):
+        if option not in names:
             remaining.append(arg)
             i += 1
             continue
@@ -267,6 +278,13 @@ def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None
             raise ws.WorkspaceError(f"conflicting {option} values")
         values[option] = value
         i += 1
+    if "--client" in values and "--initiative" in values:
+        raise ws.WorkspaceError("name a client or an initiative, not both")
+    return remaining, values
+
+
+def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None]:
+    remaining, values = _scope_options(argv)
     return remaining, values.get("--workspace"), values.get("--client")
 
 
@@ -323,34 +341,53 @@ def delegated_context(path: Path | None, route: str, argv: list[str], display: s
                 os.environ[key] = value
 
 
+# `torque lesson` commands that write, or read a workspace's own state: they need a
+# workspace. The others (for, recall, list, show, search, stats, selfcheck) also work
+# without one, on the lessons shipped with Torque.
+LESSON_NEEDS_WORKSPACE = frozenset({"add", "capture", "helpful", "stale", "verify", "retire", "restore", "edit",
+                                    "review", "promote", "harvest", "migrate"})
+
+
 def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
-    args, root_arg, client_name = _context_options(argv)
+    # Lessons work for an internal initiative as for a client; the other routes are for clients.
+    lessons = route == "lesson"
+    args, selected = _scope_options(argv, ("--workspace", "--client", "--initiative") if lessons
+                                    else ("--workspace", "--client"))
+    root_arg, client_name, initiative = (selected.get(name) for name in ("--workspace", "--client", "--initiative"))
     flags = args[:args.index("--")] if "--" in args else args
     help_only = not args or any(x in ("-h", "--help", "--version") for x in flags)
     scope = None
     # Legacy JSC_ROOT may still name the old employer checkout. It is an output compatibility
     # variable, never an implicit client selection for this entry point.
     root_arg = root_arg or os.environ.get("TORQUE_WORKSPACE")
-    if client_name and not root_arg and not help_only:
-        raise ws.WorkspaceError("--client requires --workspace PATH")
+    if (client_name or initiative) and not root_arg and not help_only:
+        raise ws.WorkspaceError(f"--{'client' if client_name else 'initiative'} requires --workspace PATH")
     if not help_only:
         ws.require_package_writable(root_arg)
     if root_arg and not help_only:
         if client_name:
             scope, _, _ = ws.load_client(root_arg, client_name)
+        elif initiative:
+            scope, _, _ = ws.load_engagement(root_arg, initiative, "initiative")
         elif (Path(root_arg).expanduser() / "client.json").is_file():
             # An inherited context is already client-scoped; validate it through its firm root.
             candidate = Path(root_arg).expanduser().resolve()
             scope, _, _ = ws.load_client(candidate.parent.parent, candidate.name)
+        elif lessons:
+            # No client or initiative: the firm's lessons (the workspace root) and the platform's.
+            scope, _ = ws.load_workspace(root_arg)
         else:
             ws.load_workspace(root_arg)
-    stateful = route in {"qa", "revert", "lesson", "browser"}
+    stateful = route in {"qa", "revert", "browser"}
     stateful = stateful or (route == "ai-regression" and args[:1] in (["replay"], ["replay-all"]))
     # Neither reads a client's state or an org: one scans a script, one deletes a session file.
     local_browser = route == "browser" and args[:1] in (["sanitize-replay"], ["logout"])
     if not help_only and stateful and not local_browser and scope is None:
         raise ws.WorkspaceError(f"{route} needs a selected client for its private state; "
                                 "provide --workspace PATH --client NAME")
+    if not help_only and lessons and scope is None and args[0] in LESSON_NEEDS_WORKSPACE:
+        raise ws.WorkspaceError(f"lesson {args[0]} needs a workspace: provide --workspace PATH with --client NAME "
+                                "or --initiative NAME (a firm lesson needs only --workspace PATH --scope firm)")
     if not help_only and route == "meeting" and not any(a == "--output" or a.startswith("--output=") for a in args):
         if scope is None:
             raise ws.WorkspaceError("meeting needs --output PATH or --workspace PATH --client NAME")
@@ -1145,6 +1182,38 @@ def _playwright_browser() -> str | None:
     return str(found[-1]) if found else None
 
 
+def _lessons_doctor(folder: Path | None) -> dict:
+    """What doctor says about lessons, for the firm and the selected client: counts by
+    state, unreadable files, the last capture and the last time a lesson was shown,
+    whether the loop is live or idle, and a self-check that writes a lesson in a temporary
+    folder and finds it again. Reads lesson files only; never stops doctor."""
+    try:
+        from jsc_memory import review, storage
+        report = review.health(storage.scopes_for(folder))
+        check = report["selfcheck"] = review.selfcheck()
+        failed = [step["step"] for step in check["steps"] if not step["passed"]]
+        report["lines"] = [*review.health_lines(report),
+                           "Lessons self-check: " + ("passed (wrote a lesson and found it again by type, by "
+                                                     "command and through the context block)" if check["passed"]
+                                                     else "FAILED at: " + ", ".join(failed))]
+        unreadable = [problem for part in (report["firm"], report["engagement"], report["platform"]) if part
+                      for problem in part["unreadable"]]
+        report["next_actions"] = []
+        if unreadable:
+            shown = "; ".join(f"{problem['path']} ({problem['reason']})" for problem in unreadable[:5])
+            report["next_actions"].append(
+                f"{len(unreadable)} lesson file(s) could not be read and are skipped everywhere: {shown}"
+                + (" ..." if len(unreadable) > 5 else "") + ". Fix the file or move it out of the lessons folder.")
+        if failed:
+            report["next_actions"].append(
+                "The lessons self-check failed (" + ", ".join(failed) + "), so lessons may not be saved or shown. "
+                "Run `torque lesson selfcheck` for the detail and reinstall Torque if it keeps failing.")
+        return report
+    except Exception as exc:  # Lessons are an aid: doctor reports the rest whatever happens here.
+        return {"problem": f"lessons could not be checked ({type(exc).__name__})",
+                "lines": [f"Lessons: could not be checked ({type(exc).__name__})"], "next_actions": []}
+
+
 def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
@@ -1178,6 +1247,8 @@ def _doctor(args: argparse.Namespace) -> int:
                                 "changes_checked": len(changes), "evidence_problems": evidence_problems,
                                 "record_problems": len(skipped), "skipped_records": skipped}
         report["synced_folders"] = {"workspace": _synced_folder(root), "interpreter": _synced_folder(sys.executable)}
+    report["lessons"] = _lessons_doctor(Path(report["client"]["path"]) if report["client"] else
+                                        Path(report["workspace"]["path"]) if report["workspace"] else None)
     # Browser work has two modes with different needs, reported separately: signing a host
     # browser tab in (`torque browser login`) needs only the Salesforce CLI; Torque's own
     # Playwright browser needs the playwright module and a browser Playwright downloaded.
@@ -1459,6 +1530,7 @@ def _doctor(args: argparse.Namespace) -> int:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
             "in this client's handoff before relying on the recorded checks.")
+    report["next_actions"] += report["lessons"].get("next_actions", [])
     if not available["sf"]:
         report["next_actions"].append("Install the official Salesforce CLI before live org work; context and the offline demo remain usable.")
     if not available["playwright"]:
@@ -1554,6 +1626,8 @@ def _doctor(args: argparse.Namespace) -> int:
             mode = report["capabilities"][name]
             print(f"{label}: " + ("local dependencies ready" if mode["local_dependencies_ready"]
                                   else "missing " + ", ".join(mode["missing"])))
+        for line in report["lessons"].get("lines", []):
+            print(line)
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")
         for action in report["next_actions"]:
             print(f"Next: {action}")
@@ -1760,7 +1834,7 @@ def main(argv: list[str] | None = None) -> int:
             return _change(parsed)
         elif parsed.command == "context":
             name, kind = _scope(parsed)
-            context = ws.get_context(parsed.workspace, name, kind=kind)
+            context = ws.get_context(parsed.workspace, name, kind=kind, shown_via="context")
             if parsed.json:
                 _print_json(context)
             else:
@@ -1771,6 +1845,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(context["evidence_note"])
                 for line in ws.record_problem_lines(context["record_problems"]):
                     print(line)
+                print("\n" + "\n".join(ws.lesson_lines(context["lessons"], kind)))
                 for title, value in context.get("notes", {}).items():
                     print(f"\n{title}:\n{value}")
                 for change in context.get("changes", []):
@@ -1802,11 +1877,20 @@ def main(argv: list[str] | None = None) -> int:
             name, kind = _scope(parsed)
             if parsed.action == "add":
                 entry = ws.add_session(parsed.workspace, name, parsed.summary, parsed.status, parsed.evidence,
-                                       kind=kind)
+                                       kind=kind, learned=parsed.learned, learned_scope=parsed.learned_scope,
+                                       learned_from=parsed.learned_from)
                 if parsed.json:
                     _print_json(entry)
                 else:
                     print(f"Recorded {entry['id']} [{entry['status']}, user-reported]")
+                    for line in ws.learned_lines(entry):
+                        print(line)
+                if entry.get("lesson_problems"):
+                    # The session record stands; only the lesson was not saved.
+                    print(f"torque: session {entry['id']} is recorded; do not add it again. "
+                          f"{len(entry['lesson_problems'])} lesson(s) were not saved: fix the text and save each "
+                          f"with `torque lesson add ... --session {entry['id']}`.", file=sys.stderr)
+                    return 4
             else:
                 problems: list[dict] = []
                 entries = ws.list_sessions(parsed.workspace, name, limit=None, kind=kind, problems=problems)
