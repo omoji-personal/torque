@@ -259,6 +259,41 @@ def _harvest_state(workspace: Path) -> Path:
     return storage.state_dir(workspace) / "harvest.json"
 
 
+def _walk(scopes: Scopes, folder: Path) -> tuple[list[Path], dict]:
+    """The Markdown files under a host's memory folder that a harvest may open, and what
+    was left out: the folders of other clients and initiatives (pruned, never entered),
+    and links (a linked folder is not followed, a linked file is not opened). Every file
+    is checked again by where it resolves to before it is opened."""
+    skipped = {"other engagements": 0, "links": 0}
+    found: list[Path] = []
+    for top, folders, names in os.walk(folder):
+        real = os.path.realpath(top)
+        # A symbolic link or a junction resolves somewhere other than where it is listed.
+        linked = lambda name: os.path.normcase(os.path.realpath(Path(top, name))) != os.path.normcase(
+            os.path.join(real, name))
+        kept = []
+        for name in folders:
+            path = Path(top, name)
+            if linked(name):
+                skipped["links"] += 1
+            elif scopes.foreign(path):
+                skipped["other engagements"] += 1
+            else:
+                kept.append(name)
+        folders[:] = kept
+        for name in names:
+            if not name.lower().endswith(".md"):
+                continue
+            path = Path(top, name)
+            if linked(name):
+                skipped["links"] += 1
+            elif scopes.foreign(path):
+                skipped["other engagements"] += 1
+            else:
+                found.append(path)
+    return sorted(found), skipped
+
+
 def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | None = None) -> dict:
     """The files in a host's own memory that changed since the last harvest, as pointers:
     name, type, one-line description, path. It copies nothing: a host's memory mixes
@@ -293,9 +328,10 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
         cutoff = float(seen) if isinstance(seen, (int, float)) else 0.0
     started = time.time()
     files = []
-    for path in sorted(folder.rglob("*.md")):
+    paths, skipped = _walk(scopes, folder)
+    for path in paths:
         try:
-            if path.name == "MEMORY.md" or path.is_symlink() or not path.is_file():
+            if path.name == "MEMORY.md" or not path.is_file():
                 continue
             modified = path.stat().st_mtime
             if modified < cutoff:
@@ -310,7 +346,7 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
                       "description": (meta.get("description") or first)[:160],
                       "modified": datetime.fromtimestamp(modified, timezone.utc).date().isoformat(),
                       "path": str(path)})
-    report.update(files=files, found=True)
+    report.update(files=files, found=True, skipped=skipped)
     # `seen` is the moment this listing began: a file changed after it shows up next time.
     state[host] = {"at": storage.now(), "seen": started, "dir": str(folder), "files": len(files)}
     storage._private_dir(state_path.parent)

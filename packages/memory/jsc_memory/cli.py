@@ -313,6 +313,10 @@ def cmd_harvest(args: argparse.Namespace, scopes: Scopes) -> int:
                  f"  {item['path']}" for item in files[:args.limit]]
         if len(files) > args.limit:
             text.append(f"... and {len(files) - args.limit} more (--limit N, or --json for all)")
+        skipped = report.get("skipped") or {}
+        if any(skipped.values()):
+            text.append(f"Not read: {skipped['other engagements']} folder(s) or file(s) of another client or "
+                        f"initiative, and {skipped['links']} link(s), which a harvest does not follow.")
         if files:
             text.append("A host's memory mixes clients. To keep one as a lesson, choose its scope: "
                         "torque lesson add --from-file PATH --when ... --do ... --because ... [--scope firm]")

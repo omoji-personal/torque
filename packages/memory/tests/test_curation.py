@@ -243,6 +243,101 @@ def test_harvest_never_fails_when_the_folder_is_missing_or_the_host_is_not_docum
     assert intake.host_memory_dir("codex", workspace)[0] == tmp_path / "codex" / "memories_v2"
 
 
+FOREIGN = "Beta-only synthetic note 7f3k"          # text that lives only in another engagement's folder
+
+
+def _plant_foreign_notes(workspace, tmp_path):
+    """Notes in every kind of place a harvest must not open while alpha is selected: another
+    client and an initiative of this workspace, and a client of a second workspace beside it
+    (one registered, one whose registration is missing)."""
+    for folder in (workspace / "clients" / "beta", workspace / "clients" / "beta" / "lessons",
+                   workspace / "initiatives" / "playbook"):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "private-memory.md").write_text(f"# {FOREIGN}\n\nbody\n", encoding="utf-8")
+    other = tmp_path / "ws-two"
+    (other / "clients" / "gamma").mkdir(parents=True)
+    (other / "clients" / "unregistered").mkdir(parents=True)
+    (other / "workspace.json").write_text(json.dumps({"name": "Second practice"}), encoding="utf-8")
+    (other / "clients" / "gamma" / "client.json").write_text(json.dumps({"name": "Gamma", "slug": "gamma"}),
+                                                            encoding="utf-8")
+    for folder in (other / "clients" / "gamma", other / "clients" / "unregistered"):
+        (folder / "notes.md").write_text(f"{FOREIGN}\n", encoding="utf-8")
+    (workspace / "clients" / "alpha" / "own-note.md").write_text("# Alpha's own synthetic note\n", encoding="utf-8")
+    (tmp_path / "loose-note.md").write_text("# A note outside every engagement\n", encoding="utf-8")
+    return other
+
+
+def _link_folder(link, target):
+    """A linked folder the way this system allows one: a symbolic link, or on Windows a
+    junction (which needs no privilege). None when neither can be made."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return "symbolic link"
+    except (OSError, NotImplementedError, AttributeError):
+        pass
+    if os.name == "nt":
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+            return "junction"
+        except (ImportError, OSError, AttributeError):
+            pass
+    return None
+
+
+@pytest.mark.parametrize("start", ["workspace root", "common parent"])
+def test_a_harvest_that_starts_above_the_clients_never_opens_another_engagements_files(run, workspace, tmp_path,
+                                                                                         start):
+    _plant_foreign_notes(workspace, tmp_path)
+    folder = workspace if start == "workspace root" else tmp_path
+    code, out, err = run("harvest", "--host", "codex", "--dir", str(folder), "--json")
+    report = json.loads(out)
+    assert code == 0 and report["found"]
+    assert FOREIGN not in out + err
+    names = {row["description"] for row in report["files"]}
+    assert "Alpha's own synthetic note" in names                         # the selected client's own note is listed
+    assert ("A note outside every engagement" in names) == (start == "common parent")
+    assert not any("beta" in row["path"] or "playbook" in row["path"] or "ws-two" + os.sep + "clients" in row["path"]
+                   for row in report["files"])
+    expected = 2 if start == "workspace root" else 4                    # beta, playbook (+ gamma, unregistered)
+    assert report["skipped"]["other engagements"] == expected
+    text = run("harvest", "--host", "codex", "--dir", str(folder), "--since", "2020-01-01")[1]
+    assert FOREIGN not in text and f"Not read: {expected} folder(s) or file(s) of another client" in text
+
+
+def test_a_harvest_never_follows_a_link_into_another_engagement(run, workspace, tmp_path):
+    _plant_foreign_notes(workspace, tmp_path)
+    memory = tmp_path / "host-memory"
+    memory.mkdir()
+    (memory / "feedback_one.md").write_text("# One ordinary note\n", encoding="utf-8")
+    kind = _link_folder(memory / "linked", workspace / "clients" / "beta")
+    if kind is None:
+        pytest.skip("this system cannot make a linked folder (no symbolic link privilege, no junction)")
+    # Whatever the walk does, the read rule alone already refuses the file behind the link.
+    alpha = storage.scopes_for(workspace / "clients" / "alpha")
+    assert alpha.foreign(memory / "linked" / "private-memory.md"), kind
+    code, out, err = run("harvest", "--host", "claude", "--dir", str(memory), "--json")
+    report = json.loads(out)
+    assert code == 0 and [row["description"] for row in report["files"]] == ["One ordinary note"]
+    assert FOREIGN not in out + err and report["skipped"]["links"] == 1, kind
+    # A linked file is not opened either, where the system can make one.
+    try:
+        os.symlink(workspace / "clients" / "beta" / "private-memory.md", memory / "linked-file.md")
+    except (OSError, NotImplementedError):
+        return
+    code, out, err = run("harvest", "--host", "claude", "--dir", str(memory), "--since", "2020-01-01", "--json")
+    assert code == 0 and FOREIGN not in out + err and json.loads(out)["skipped"]["links"] == 2
+
+
+def test_naming_another_engagements_folder_directly_is_refused(run, workspace, tmp_path):
+    other = _plant_foreign_notes(workspace, tmp_path)
+    for folder in (workspace / "clients" / "beta", workspace / "initiatives" / "playbook",
+                   other / "clients" / "gamma", other / "clients" / "unregistered"):
+        code, out, err = run("harvest", "--host", "codex", "--dir", str(folder))
+        assert code == 2 and "another client or initiative" in err and FOREIGN not in out + err, folder
+    assert not (workspace / ".torque" / "lessons" / "harvest.json").exists()
+
+
 def test_stats_count_what_was_captured_shown_and_judged(run, scopes):
     alpha = scopes("alpha")
     said = intake.add(alpha, text="When: you deploy a flow. Do: read it back.", source="consultant").lesson

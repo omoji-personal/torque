@@ -90,20 +90,25 @@ class Scopes:
         return " + ".join(parts + (["firm"] if self.workspace else []) + ["platform"])
 
     def foreign(self, path: str | os.PathLike) -> bool:
-        """True for a path inside the folder of a client or an initiative of this workspace
-        other than the one selected. No lesson command reads there, whatever path it is
-        given (`--path`, `--from-file`, `--body-file`, `--dir`, a proposal)."""
+        """True for a path inside the folder of a client or an initiative other than the
+        one selected: of this workspace, or of any other (a folder that holds a
+        `client.json` or a `binding.json`, or lies under a workspace's `clients/` or
+        `initiatives/`). The path is resolved first, so a link is judged by where it
+        leads. No lesson command reads there, whatever path it is given (`--path`,
+        `--from-file`, `--body-file`, `--dir`, a proposal, a file found by `harvest`)."""
         if self.workspace is None:
             return False
         try:
-            here = os.path.normcase(str(Path(path).expanduser().resolve()))
+            resolved = Path(path).expanduser().resolve()
         except (OSError, RuntimeError, ValueError):
             return True
+        here = os.path.normcase(str(resolved))
         own = os.path.normcase(str(self.engagement)) if self.engagement else None
         if own and (here == own or here.startswith(own + os.sep)):
             return False
-        return any(here.startswith(os.path.normcase(str(self.workspace / name)) + os.sep)
-                   for name in _FOLDERS.values())
+        if any(here.startswith(os.path.normcase(str(self.workspace / name)) + os.sep) for name in _FOLDERS.values()):
+            return True
+        return _in_an_engagement(resolved)
 
     def shown(self, path: Path) -> str:
         """A path for a message: relative to the workspace when it lies inside it."""
@@ -111,6 +116,24 @@ class Scopes:
             return path.relative_to(self.workspace).as_posix() if self.workspace else path.name
         except ValueError:
             return path.name
+
+
+_MARKERS = ("client.json", "binding.json")
+
+
+def _in_an_engagement(resolved: Path) -> bool:
+    """A resolved path that is, or lies inside, the folder of a client or an initiative of
+    any workspace: a folder holding its registration, or a workspace's `clients/` or
+    `initiatives/` folder above it. Only names are looked at; nothing is read."""
+    try:
+        for folder in (resolved, *resolved.parents):
+            if any((folder / marker).is_file() for marker in _MARKERS):
+                return True
+            if folder != resolved and folder.name in _FOLDERS.values() and (folder.parent / "workspace.json").is_file():
+                return True
+    except OSError:
+        return True
+    return False
 
 
 def scopes_for(folder: str | os.PathLike | None) -> Scopes:

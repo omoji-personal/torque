@@ -147,7 +147,12 @@ day, a capture without a session record is not a new occasion.
   the files the host's own memory changed since the last harvest: name, type, one-line
   description, path. It copies nothing, because a host's memory mixes clients. A note
   enters a scope only through `torque lesson add --from-file PATH ...` once someone has
-  chosen the scope. Claude Code's folder is found from the workspace path
+  chosen the scope. Started anywhere, also above the clients (`--dir` naming the
+  workspace or a folder that holds several workspaces), it never enters the folder of
+  another client or initiative, of this workspace or any other (a folder with a
+  `client.json` or `binding.json`, or under a workspace's `clients/` or `initiatives/`),
+  follows no linked folder or file, and checks each file by where it resolves before it
+  opens it. The output counts what was left out. Claude Code's folder is found from the workspace path
   (`~/.claude/projects/<path with separators as dashes>/memory/`), Codex's under
   `~/.codex/`; other places need `--dir`.
 
