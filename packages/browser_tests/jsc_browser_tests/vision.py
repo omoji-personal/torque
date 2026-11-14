@@ -290,30 +290,44 @@ def _parse_response(raw: str) -> tuple[str, list[VisionFinding], str]:
     except json.JSONDecodeError as e:
         return "PARSE_FAIL", [], f"json decode error: {e}"
 
-    status = str(payload.get("status", "")).upper()
+    # The prompt requires an object with a status and a findings list. A response
+    # without them is not a review: it must not count as one with nothing found.
+    if not isinstance(payload, dict):
+        return "PARSE_FAIL", [], "response is not a JSON object"
+    status = payload.get("status")
+    status = status.upper() if isinstance(status, str) else ""
     if status not in ("OK", "WARN", "ERROR"):
-        status = "WARN"
-
-    raw_findings = payload.get("findings") or []
+        return "PARSE_FAIL", [], "response has no valid status (OK, WARN or ERROR)"
+    if "findings" not in payload:
+        return "PARSE_FAIL", [], "response has no findings list"
+    raw_findings = payload["findings"]
     if not isinstance(raw_findings, list):
         return "PARSE_FAIL", [], "findings is not a list"
 
     parsed: list[VisionFinding] = []
+    discarded = 0
     for f in raw_findings:
         if not isinstance(f, dict):
+            discarded += 1
             continue
         sev = str(f.get("severity", "")).upper()
         if sev not in ("P0", "P1", "P2", "INFO"):
+            discarded += 1
             continue
         cat = str(f.get("category", "other")).strip() or "other"
         desc = str(f.get("description", "")).strip()
         evid = str(f.get("evidence", "")).strip()
         if not desc or not evid:
             # Anti-hallucination: drop findings without description AND evidence
+            discarded += 1
             continue
         parsed.append(
             VisionFinding(severity=sev, category=cat, description=desc, evidence=evid)
         )
+    if discarded:
+        # Something was reported that could not be used. The usable findings are kept,
+        # but the review is incomplete, not clean.
+        return "PARSE_FAIL", parsed, f"{discarded} finding(s) were malformed and discarded"
 
     return status, parsed, "ok"
 

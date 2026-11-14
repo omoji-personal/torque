@@ -1181,6 +1181,10 @@ def _doctor(args: argparse.Namespace) -> int:
     # Playwright browser needs the playwright module and a browser Playwright downloaded.
     # The module alone is not a browser, so it no longer counts as browser-ready.
     report["playwright_browser"] = _playwright_browser() if report["optional_modules"]["playwright"] else None
+    if report["optional_modules"]["playwright"] and not report["playwright_browser"] and (
+            os.environ.get("TORQUE_BROWSER_CDP") or os.environ.get("JSC_BROWSER_CDP")):
+        # An attached browser the operator started stands in for a downloaded one.
+        report["playwright_browser"] = "attached browser (TORQUE_BROWSER_CDP)"
     requirements = {"workspace": (), "salesforce": ("sf",), "browser-login": ("sf",),
                     "browser": ("sf", "playwright", "playwright browser"), "meeting": ("ffmpeg", "PIL")}
     available = {**{name: bool(path) for name, path in report["executables"].items()}, **report["optional_modules"],

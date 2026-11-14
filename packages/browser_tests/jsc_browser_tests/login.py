@@ -46,7 +46,7 @@ EXIT_SIGN_IN = 9          # the sign-in itself failed
 EXIT_CODES_HELP = (
     "exit codes: 0 signed in (the redirect was sent, or the session file was written); 1 nobody opened "
     "the address in time; 2 options; 3 the alias is not authorized in the Salesforce CLI or its "
-    "authorization expired; 4 the Salesforce CLI is not installed; 5 org mismatch; 6 refused by this "
+    "authorization expired; 4 the Salesforce CLI is not installed; 5 another org or user than recorded; 6 refused by this "
     "workspace's mode; 7 no local port; 8 Playwright or its browser is missing; 9 the sign-in failed.")
 API_ONLY_NOTE = ("A user with the API Only User permission cannot be signed in to a browser; "
                  "use a separate user for browser tests.")
@@ -128,30 +128,57 @@ def client_org_records(alias: str) -> list[tuple[str, str]]:
     """(source, org ID) for every place the selected client's own records name an org ID
     for this alias: the consent record and the test-user seed. Nothing is written and
     no new record is invented; a client that records only an alias gives an empty list."""
-    try:
-        from jsc_common.workspace import workspace_root
-        client = workspace_root()
-    except (ImportError, ValueError):
+    client = _client_folder()
+    if client is None:
         return []
     found: list[tuple[str, str]] = []
-
-    def read(path: Path):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
-
-    consent = read(client / "consent.json")
+    consent = _read_json(client / "consent.json")
     for org in (consent or {}).get("approved_orgs") or []:
         if isinstance(org, dict) and org.get("alias") == alias and isinstance(org.get("org_id_18"), str):
             found.append(("consent record", org["org_id_18"]))
-    seed_path = Path(os.environ["TORQUE_TEST_USERS"]) if os.environ.get("TORQUE_TEST_USERS") \
-        else client / "config" / "test-users.json"
-    seed = read(seed_path)
-    if seed and seed.get("alias") == alias and isinstance(seed.get("org_id_18"), str):
+    seed = _seed_for(alias)
+    if seed and isinstance(seed.get("org_id_18"), str):
         found.append(("test-user seed", seed["org_id_18"]))
     return [(source, org_id) for source, org_id in found if _ORG_ID.fullmatch(org_id)]
+
+
+def _client_folder() -> Path | None:
+    try:
+        from jsc_common.workspace import workspace_root
+        return workspace_root()
+    except (ImportError, ValueError):
+        return None
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _seed_for(alias: str) -> dict | None:
+    """The selected client's test-user seed, when it is written for this org alias."""
+    client = _client_folder()
+    if os.environ.get("TORQUE_TEST_USERS"):
+        seed = _read_json(Path(os.environ["TORQUE_TEST_USERS"]))
+    else:
+        seed = _read_json(client / "config" / "test-users.json") if client else None
+    return seed if seed and seed.get("alias") == alias else None
+
+
+def seed_role(alias: str, name: str) -> dict | None:
+    """The seed's entry for a role that names an alias of its own (`cli_alias`): the
+    alias to sign in with and the user the seed expects it to be. None for a name that
+    is not such a role, which is then taken as an alias itself."""
+    users = (_seed_for(alias) or {}).get("users")
+    entry = users.get(name) if isinstance(users, dict) else None
+    if not isinstance(entry, dict) or not isinstance(entry.get("cli_alias"), str) \
+            or not _ALIAS.fullmatch(entry["cli_alias"]):
+        return None
+    return {"cli_alias": entry["cli_alias"], "role": name,
+            "username": entry.get("username") if isinstance(entry.get("username"), str) else ""}
 
 
 def check_against_client_record(alias: str, org_id: str) -> str:
@@ -182,9 +209,19 @@ def org_kind(identity: dict) -> str:
     return {True: "sandbox", False: "production"}.get(identity.get("is_sandbox"), "unknown")
 
 
-def minter(client: SfClient, alias: str, identity: dict, path: str | None, api_version: str | None):
+def wrong_user(alias: str, username: str, expected: str) -> str | None:
+    """Why the alias's user is not the user the seed's role records, or None."""
+    if not expected or username.casefold() == expected.casefold():
+        return None
+    return (f"{alias} signs in as {username or 'an unknown user'}, but the test-user seed records {expected} for "
+            "that role; nothing was signed in")
+
+
+def minter(client: SfClient, alias: str, identity: dict, path: str | None, api_version: str | None,
+           expect_username: str = ""):
     """The relay's `mint`: ask the CLI for the address now, and refuse the redirect when
-    the answer is for another org than the one checked when the command started."""
+    the answer is for another org than the one checked when the command started, or for
+    another user than the seed's role records."""
     def mint() -> relay.Minted:
         try:
             answer = client.org_frontdoor(path=path, api_version=api_version)
@@ -194,6 +231,9 @@ def minter(client: SfClient, alias: str, identity: dict, path: str | None, api_v
         if not same_org(answer.get("org_id") or "", identity["org_id"]):
             raise relay.RelayRefused(str(EXIT_ORG_MISMATCH),
                                      f"{alias} no longer points to org {identity['org_id']}; nothing was signed in")
+        other = wrong_user(alias, answer.get("username") or "", expect_username)
+        if other:
+            raise relay.RelayRefused(str(EXIT_ORG_MISMATCH), other)
         return relay.Minted(answer.get("url") or "", answer.get("org_id") or "", answer.get("username") or "")
     return mint
 
@@ -244,6 +284,8 @@ class Plan:
     org_check: str
     path: str | None
     login_as: dict | None = None   # --as-user: {"user_id", "username", "route"}
+    role: str = ""                 # --as-alias named a role of the test-user seed
+    expect_username: str = ""      # the user that role's seed entry records
 
 
 def prepare(args) -> Plan:
@@ -253,15 +295,20 @@ def prepare(args) -> Plan:
     org_check = check_against_client_record(target, identity["org_id"])
     plan = Plan(target, target, admin, identity, org_check, args.path)
     if args.as_alias:
-        user_client = SfClient(args.as_alias)
-        other = identify(user_client, args.as_alias)
+        # A role of the client's test-user seed that names its own alias (cli_alias), or an alias itself.
+        role = seed_role(target, args.as_alias)
+        user_alias = role["cli_alias"] if role else args.as_alias
+        if role:
+            plan.role, plan.expect_username = role["role"], role["username"]
+        user_client = SfClient(user_alias)
+        other = identify(user_client, user_alias)
         if not same_org(other["org_id"], identity["org_id"]):
             raise LoginError(EXIT_ORG_MISMATCH,
-                             f"--as-alias {args.as_alias} is authorized for org {other['org_id']}, but --target-org "
+                             f"--as-alias {user_alias} is authorized for org {other['org_id']}, but --target-org "
                              f"{target} is org {identity['org_id']}. Nothing was signed in. Authorize the test user "
                              "in the same org first (the consultant runs `sf org login web --alias "
-                             f"{args.as_alias}` against that org, outside the agent).")
-        plan.alias, plan.client = args.as_alias, user_client
+                             f"{user_alias}` against that org, outside the agent).")
+        plan.alias, plan.client = user_alias, user_client
     if args.as_user:
         try:
             found = admin.find_user(args.as_user.strip())
@@ -314,7 +361,8 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
                   expires_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires)))
     output.hint(f"Open the address above in the browser tab within {args.timeout} seconds. It works once, on this "
                 "machine only. Navigate the tab to it; do not fetch it with curl or a web fetch tool.")
-    outcome = listener.serve(minter(plan.client, plan.alias, plan.identity, plan.path, args.api_version),
+    outcome = listener.serve(minter(plan.client, plan.alias, plan.identity, plan.path, args.api_version,
+                                    plan.expect_username),
                              timeout=args.timeout, navigation_only=not args.any_client)
     if outcome.status == "timeout":
         raise LoginError(EXIT_TIMEOUT, outcome.reason + "; the listener closed and nothing was signed in")
@@ -331,6 +379,9 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
     if plan.alias != plan.target_alias:
         event["as_alias"] = plan.alias
         text += f" Signed in through alias {plan.alias}."
+    if plan.role:
+        event["role"] = plan.role
+        text += f" Role {plan.role} of the test-user seed."
     if plan.login_as:
         steps = login_as_steps(plan)
         event.update(login_as=plan.login_as, next_steps=steps)
@@ -409,6 +460,9 @@ async def capture_state(plan: Plan, api_version: str | None) -> tuple[dict, str,
         if not same_org(admin.org_id_18, plan.identity["org_id"]):
             raise LoginError(EXIT_ORG_MISMATCH, f"{plan.alias} no longer points to org {plan.identity['org_id']}; "
                                                 "nothing was signed in")
+        other = wrong_user(plan.alias, admin.username, plan.expect_username)
+        if other:
+            raise LoginError(EXIT_ORG_MISMATCH, other)
         session = None
         try:
             session = await auth.open_session(playwright, admin, cdp_endpoint=None, headed=False)
@@ -522,7 +576,9 @@ def add_parsers(sub) -> None:
                                              "version is wrong after a sandbox refresh")
     login.add_argument("--as-alias", metavar="USER_ALIAS",
                        help="sign in as the user of this other alias, which the Salesforce CLI is separately "
-                            "authorized for as the test user; it must be the same org as --target-org")
+                            "authorized for as the test user; it must be the same org as --target-org. A role "
+                            "name from the client's test-user seed that has a cli_alias works too, and then the "
+                            "user is checked against the seed")
     login.add_argument("--as-user", metavar="USERNAME_OR_ID",
                        help="open that user's page in Setup in the admin's tab, where the Login button is, and "
                             "print the next steps (needs the org's Log in as policy; not for API-only or "

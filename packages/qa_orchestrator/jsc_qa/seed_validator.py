@@ -33,10 +33,21 @@ from typing import Any
 # Forbidden field names (case-insensitive substring match) — (select with TORQUE_TEST_USERS)
 FORBIDDEN_FIELD_PATTERNS = re.compile(
     r"password|session_id|sessionid|access_token|accesstoken|"
-    r"cookie|frontdoor|refresh_token|refreshtoken|sid|oauth_token|"
+    r"cookie|frontdoor|refresh_token|refreshtoken|oauth_token|"
     r"bearer|authorization",
     re.IGNORECASE,
 )
+# `sid` names the session cookie, and is also three letters inside ordinary words
+# (inside, president, resident, outside). As a field name it counts only as a whole
+# word: sid, user_sid, SID, sessionSid.
+_SID_FIELD = re.compile(r"(?i:(?:^|[^A-Za-z0-9])sid(?:$|[^A-Za-z0-9]))|[a-z0-9]Sid(?:$|[^a-z])|[a-z0-9]SID(?:$|[^A-Za-z])")
+# An alias the Salesforce CLI is authorized for: one word the CLI cannot read as an option.
+_ALIAS_RE = re.compile(r"[^\s-]\S*")
+
+
+def forbidden_field(name: str) -> bool:
+    """A field name that says the value is a credential."""
+    return bool(FORBIDDEN_FIELD_PATTERNS.search(name) or _SID_FIELD.search(name))
 
 # Secret-VALUE detection. Audit 2026-05-30 P2: must NOT reuse
 # FORBIDDEN_FIELD_PATTERNS on values — its bare tokens (`sid`, etc.) would
@@ -94,8 +105,7 @@ def load_seed(path: Path) -> dict:
     if not path.exists():
         raise SeedValidationError(
             f"seed file not found: {path}\n"
-            f"  create one per .claude/rules/qa-orchestration.md spec.\n"
-            f"  Schema example in design-v4.md Closure 3."
+            f"  Its format, with an example, is in docs/browser-sign-in.md (\"Test users: the seed file\")."
         )
     st = path.stat()
     # Windows has no POSIX mode bits or getuid(); this hardening is POSIX-only.
@@ -153,6 +163,13 @@ def validate_seed_schema(data: dict) -> None:
             raise SeedValidationError(
                 f"users.{role}.allowed_in_prod must be bool"
             )
+        # Optional: an alias the Salesforce CLI is separately authorized for as this
+        # user, so `torque browser login --as-alias ROLE` can sign in as the user directly.
+        if "cli_alias" in user and not (isinstance(user["cli_alias"], str)
+                                        and _ALIAS_RE.fullmatch(user["cli_alias"])):
+            raise SeedValidationError(
+                f"users.{role}.cli_alias must be one org alias, without spaces"
+            )
 
 
 def _scan_forbidden(obj: Any, path: str) -> None:
@@ -160,7 +177,9 @@ def _scan_forbidden(obj: Any, path: str) -> None:
     if isinstance(obj, dict):
         for k, v in obj.items():
             sub_path = f"{path}.{k}" if path else k
-            if FORBIDDEN_FIELD_PATTERNS.search(k):
+            # The keys directly under `users` are role names the consultant chooses
+            # (inside_sales, president), not field names; what is inside each is scanned.
+            if path != "users" and forbidden_field(k):
                 raise SeedValidationError(
                     f"forbidden field name '{k}' at {sub_path} — "
                     f"seed file MUST NOT contain credentials or tokens"

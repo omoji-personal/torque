@@ -188,7 +188,8 @@ def _print_flow_result(result: runner.FlowResult) -> None:
 
 def _result_to_dict(r: runner.FlowResult) -> dict:
     return redact({
-        "flow": r.flow_name, "profile": r.profile, "target_org": r.target_org,
+        "flow": r.flow_name, "variation": getattr(r, "variation", ""), "profile": r.profile,
+        "target_org": r.target_org,
         "status": r.overall_status, "duration_seconds": r.duration_seconds,
         "error": r.error,
         "steps": [

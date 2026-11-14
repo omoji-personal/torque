@@ -188,7 +188,8 @@ when Git Bash is installed (or named by `CLAUDE_CODE_GIT_BASH_PATH`).
 | --- | --- | --- |
 | Context, records, demo, handoff | Core installation only | `torque doctor` |
 | Live Salesforce operations | Official Salesforce CLI and explicitly selected authenticated org | `torque doctor --for salesforce` |
-| Browser tests | `browser` extra and Playwright Chromium or an explicitly configured authenticated browser | `torque doctor --for browser` |
+| Browser sign-in in a host browser tab ([browser sign-in](browser-sign-in.md)) | Official Salesforce CLI only | `torque doctor --for browser-login` |
+| Browser tests and session files (Torque's own Playwright browser) | `browser` extra and Playwright Chromium (`python -m playwright install chromium`; the module alone is not reported as ready) or an explicitly configured authenticated browser | `torque doctor --for browser` |
 | Meeting image preparation | `meeting` extra and ffmpeg | `torque doctor --for meeting` |
 | Model-assisted meeting/vision/prompt interpretation | Separately configured provider CLI/account and appropriate inputs | Check the chosen adapter's help and provider configuration |
 

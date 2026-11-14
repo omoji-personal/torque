@@ -160,3 +160,42 @@ def test_a_failed_user_lookup_is_reported_without_the_cli_text(monkeypatch):
     run = Command("--target-org", "acme-sbx", "--as-user", STD["username"], wait=False)
     assert run.done() == login.EXIT_SIGN_IN
     assert "the user lookup failed" in run.err.getvalue() and MARKER not in run.everything()
+
+
+# A role of the client's test-user seed that names its own alias (cli_alias).
+
+def _seed_with_role(tmp_path, username=STD["username"], org=ORG):
+    import json
+    (tmp_path / "client" / "config" / "test-users.json").write_text(json.dumps({
+        "schema_version": 1, "org_id_18": org, "alias": "acme-sbx",
+        "users": {"standard": {"username": username, "user_id": STD["user_id"], "cli_alias": "acme-sbx-std"},
+                  "manager": {"username": "manager@acme.example", "user_id": "005000000000004AAA"}}}),
+        encoding="utf-8")
+
+
+def test_a_seed_role_with_a_cli_alias_signs_in_through_that_alias(tmp_path):
+    _seed_with_role(tmp_path)
+    run = Command("--target-org", "acme-sbx", "--as-alias", "standard", "--json")
+    assert run.get()[0] == 302
+    assert run.done() == login.EXIT_OK
+    assert ("mint", "acme-sbx-std", None, None) in FakeCli.calls
+    redirected = run.events()[1]
+    assert redirected["role"] == "standard" and redirected["as_alias"] == "acme-sbx-std"
+    assert redirected["username"] == STD["username"]
+    assert redirected["org_check"] == "org matches this client's test-user seed"
+
+
+def test_another_user_than_the_seed_records_for_the_role_is_not_signed_in(tmp_path):
+    _seed_with_role(tmp_path, username="someone.else@acme.example")
+    run = Command("--target-org", "acme-sbx", "--as-alias", "standard", "--json")
+    status, headers, body = run.get()
+    assert status == 502 and "Location" not in headers and "nothing was signed in" in body
+    assert run.done() == login.EXIT_ORG_MISMATCH
+    assert "the test-user seed records someone.else@acme.example" in run.events()[-1]["reason"]
+
+
+def test_a_role_without_a_cli_alias_is_taken_as_an_alias_name(tmp_path):
+    _seed_with_role(tmp_path)
+    run = Command("--target-org", "acme-sbx", "--as-alias", "manager", wait=False)
+    assert run.done() == login.EXIT_NOT_AUTHORIZED, "there is no alias called manager"
+    assert "sf org login web --alias manager" in run.err.getvalue()

@@ -53,13 +53,23 @@ class LightningRecordForm:
         step = "record_form.wait_until_ready"
         try:
             spinner = self._root.locator("lightning-spinner").first
-            # Spinner may or may not appear; both states are fine
+            # A spinner that never appears is fine: the form was ready already.
             try:
                 await spinner.wait_for(state="visible", timeout=2000)
-                await spinner.wait_for(state="hidden", timeout=timeout)
             except Exception:
-                # No spinner appeared — form already ready
-                pass
+                appeared = False
+            else:
+                appeared = True
+            if appeared:
+                # A spinner that appeared and is still there is a form that is not ready.
+                try:
+                    await spinner.wait_for(state="hidden", timeout=timeout)
+                except Exception as stuck:
+                    return StepResult(
+                        step_name=step, status="FAIL", fidelity="USER_FIDELITY",
+                        duration_seconds=time.monotonic() - t0,
+                        detail=f"the form's spinner was still visible after {timeout} ms ({type(stuck).__name__})",
+                    )
             return StepResult(
                 step_name=step, status="PASS", fidelity="USER_FIDELITY",
                 duration_seconds=time.monotonic() - t0,

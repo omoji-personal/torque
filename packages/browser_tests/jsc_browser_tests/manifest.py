@@ -29,6 +29,11 @@ def write(path, cells, score, audit_entries, audit_log=None, extra=None) -> dict
             {
                 "flow": c.flow_name,
                 "profile": c.profile,
+                # Which variation of the flow this cell ran, its identity in the matrix and
+                # the folder (inside the run folder) that holds only this cell's evidence.
+                "variation": getattr(c, "variation", ""),
+                "cell_id": getattr(c, "cell_id", ""),
+                "artifact_dir": getattr(c, "artifact_dir", ""),
                 "status": c.overall_status,
                 "error": c.error,
                 "steps": [asdict(step) for step in c.steps],

@@ -94,3 +94,10 @@ def test_browsers_inside_the_package_are_found(monkeypatch, tmp_path):
     assert cli._playwright_browser().endswith("chromium-1140")
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nowhere"))
     assert cli._playwright_browser() is None
+
+
+def test_an_attached_browser_stands_in_for_a_downloaded_one(machine, monkeypatch):
+    monkeypatch.setenv("TORQUE_BROWSER_CDP", "http://127.0.0.1:9222")
+    code, output = doctor("--for", "browser", "--json")
+    report = json.loads(output)
+    assert code == 0 and report["playwright_browser"] == "attached browser (TORQUE_BROWSER_CDP)"
