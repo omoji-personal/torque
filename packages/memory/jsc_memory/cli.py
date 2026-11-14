@@ -100,7 +100,8 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
                      + (f" ({guessed} inferred from the text; correct with torque lesson edit {item.id} "
                         "--set applies.types=...)" if guessed else ""))
         if item.state == "candidate":
-            lines.append("  A candidate is not shown at the point of use until it has a basis: "
+            lines.append("  A candidate is not shown at the point of use (only as a hint to torque lesson for) "
+                         "until it has a basis: "
                          f"torque lesson verify {item.id} --evidence reproduced|official-doc|consultant-said")
         if result.masked:
             lines.append("  masked: " + ", ".join(f"{name} ({count})" for name, count in result.masked.items()))
@@ -113,8 +114,8 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
 def cmd_for(args: argparse.Namespace, scopes: Scopes) -> int:
     result = recall.find(scopes, topic=args.topic, tasks=args.task, types=args.type, command=args.command or "",
                          paths=args.path, error=args.error or "", limit=max(1, args.limit),
-                         include_candidates=args.include_candidates)
-    recall.mark_shown(scopes, [hit.lesson for hit in result.hits], "for")
+                         include_candidates=args.include_candidates, hints=recall.HINTS)
+    recall.mark_shown(scopes, [hit.lesson for hit in result.hits + result.hints], "for")
     _out(args, recall.as_json(result), recall.render(result))
     return EXIT_OK
 
@@ -390,7 +391,8 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument("--path", action="append", default=[],
                       help="a source file, folder or package.xml you are about to change (repeatable)")
     find.add_argument("--limit", type=int, default=5)
-    find.add_argument("--include-candidates", action="store_true", help="also show lessons not yet reviewed")
+    find.add_argument("--include-candidates", action="store_true", help="show every matching lesson not yet reviewed among the lessons (by default up to two of "
+                           "the selected client's or initiative's are shown apart, as hints)")
 
     listing = command("list", cmd_list, "the lessons of the selected scope, with state and counters")
     listing.add_argument("--scope", choices=record.SCOPES)

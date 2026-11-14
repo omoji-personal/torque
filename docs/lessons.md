@@ -118,7 +118,11 @@ Optional body, about 15 lines at most: the error text, a minimal reproduction, o
 A lesson is saved `active` when it comes from the consultant (their correction or
 instruction: `--source consultant`, `--learned-from consultant`) or carries `reproduced`,
 `official-doc` or `second-occurrence` evidence. Otherwise it is a `candidate`: counted in
-`torque context`, listed by `torque lesson review`, and not shown at the point of use.
+`torque context`, listed by `torque lesson review`, and not shown at the point of use (not
+in the `torque context` block, not before `torque deploy` or `torque data`). The one
+exception is an explicit question: `torque lesson for` shows up to two matching candidates
+of the selected client or initiative as hints, after the active lessons (see Recall). A
+firm candidate is never a hint, and a candidate never leaves its client.
 
 A candidate becomes active on a basis: `torque lesson verify ID --evidence
 reproduced[:REF] | official-doc:URL | second-occurrence[:REF] | consultant-said`. The same
@@ -195,6 +199,13 @@ is an aid, and a firm lesson is still read by a person before it is shared.
   task, its command or its words.
 - Not shown by default: candidates, retired lessons, lessons marked stale, and lessons
   with `promoted_to` set (they live on in their promoted form).
+- Hints: after the active lessons, `torque lesson for` shows up to two matching candidates
+  of the selected client or initiative (the commonest case: an agent's own "this failed,
+  then that worked"). Each is marked `candidate, not reviewed: a hint, check it` and
+  followed by `If it worked: torque lesson verify ID --evidence reproduced`, which makes
+  it active with its basis recorded. With `--json` they are under `candidate_hints`, apart
+  from `lessons`; other matching candidates are counted in `candidates_not_shown`.
+  `--include-candidates` lists every matching candidate among the lessons instead.
 - Each lesson prints in three lines: id and WHEN, DO and WHY, then scope, evidence type,
   age and counters. Every print appends `shown` events.
 

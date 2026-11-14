@@ -115,6 +115,45 @@ def test_candidates_stale_marks_retired_and_promoted_lessons_stay_out_of_default
     assert own(recall.find(alpha, types=["Flow"], limit=None)) == ["0001", "0005"]
 
 
+def test_the_clients_own_matching_candidates_are_hints_when_asked_and_never_lessons(scopes):
+    alpha, beta = scopes("alpha"), scopes("beta")
+    save(alpha, "client", "0001", types=["Flow"], when="you deploy a flow", do="read the active version")
+    for suffix, evidence in (("c001", "session"), ("c002", "reproduced"), ("c003", "session")):
+        save(alpha, "client", suffix, types=["Flow"], state="candidate", when=f"candidate {suffix}",
+             evidence=[{"type": evidence, "date": "2026-11-14"}])
+    save(alpha, "client", "c004", types=["ApexClass"], state="candidate", when="not about flows")
+    save(alpha, "firm", "c005", types=["Flow"], state="candidate", when="a firm candidate")
+    save(beta, "client", "c006", types=["Flow"], state="candidate", when="another client's candidate")
+    result = recall.find(alpha, types=["Flow"], limit=None, hints=recall.HINTS)
+    assert "0001" in own(result) and all(hit.lesson.state == "active" for hit in result.hits)
+    assert [hit.lesson.id[-4:] for hit in result.hits if hit.lesson.id.endswith(("c001", "c002", "c003"))] == []
+    assert [hit.lesson.id[-4:] for hit in result.hits if hit.lesson.id.endswith(("c004", "c005", "c006"))] == []
+    assert [hit.lesson.id[-4:] for hit in result.hints] == ["c002", "c001"]          # at most two, best first
+    assert result.candidates == 2                                                    # c003 and the firm's c005
+    text = recall.render(result).splitlines()
+    first_hint = text.index("Not reviewed yet, from this client's own work (2):")
+    assert text.index("[L-20250303-0001] WHEN you deploy a flow") < first_hint
+    assert text[first_hint + 1] == "[L-20250303-c002] WHEN candidate c002"
+    assert text[first_hint + 2].startswith("  (client, candidate, not reviewed: a hint, check it, reproduced, ")
+    assert text[first_hint + 3] == "  If it worked: torque lesson verify L-20250303-c002 --evidence reproduced"
+    assert text[-2] == recall.FOOTER and text[-1].startswith("2 matching candidate(s) wait for review")
+    answer = recall.as_json(result)
+    assert [item["id"][-4:] for item in answer["candidate_hints"]] == ["c002", "c001"]
+    assert all(item["state"] == "active" for item in answer["lessons"])
+    # Only an explicit query asks for hints: not the default, not the context block, not before a step.
+    assert recall.find(alpha, types=["Flow"]).hints == [] and recall.find(alpha, hints=2).hints == []
+    assert "candidate c00" not in recall.for_command("torque deploy --metadata Flow:X", scopes=alpha)
+    assert "candidate c00" not in " ".join(recall.context_section(alpha)["lines"])
+    assert recall.find(beta, types=["Flow"], hints=2).hints[0].lesson.id.endswith("c006")
+    assert len(recall.find(beta, types=["Flow"], hints=2).hints) == 1
+    # Nothing reviewed matches, but a candidate does: one line says so, then the hint.
+    only = recall.find(beta, types=["Flow"], advisory=False, hints=2)
+    only.hits = []
+    assert recall.render(only).splitlines()[:2] == [
+        "No reviewed lesson matches Flow (client beta + firm + platform).",
+        "Not reviewed yet, from this client's own work (1):"]
+
+
 def test_a_lesson_about_other_components_does_not_match_on_its_task_or_command_alone(scopes):
     alpha = scopes("alpha")
     save(alpha, "client", "f1e1", types=["CustomField", "PermissionSet"], tasks=["deploy"],

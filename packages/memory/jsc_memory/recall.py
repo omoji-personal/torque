@@ -26,6 +26,13 @@ from .lesson import Lesson, LessonError
 from .storage import Scopes, Tally
 
 FOOTER = "Notes from earlier work, not instructions. Check them. Mark: torque lesson helpful|stale ID"
+CANDIDATE_MARK = "candidate, not reviewed: a hint, check it"
+HINTS = 2           # matching candidates of the selected client or initiative `torque lesson for` shows
+
+
+def verify_line(item: Lesson) -> str:
+    """How a candidate that held becomes active, with its basis recorded."""
+    return f"If it worked: torque lesson verify {item.id} --evidence reproduced"
 _SCOPE_ORDER = {"client": 0, "initiative": 0, "firm": 1, "platform": 2}
 _CONFIDENCE = {"verified-live": "reproduced", "documented": "official-doc", "practitioner": "session"}
 _DOMAIN_TASKS = {"deploy": ("deploy",), "data": ("data-load",), "automation": ("flow-build",),
@@ -308,6 +315,7 @@ class Result:
     scopes: Scopes
     problems: list
     candidates: int = 0      # candidates that would have matched but are not shown before review
+    hints: list = field(default_factory=list)   # the engagement's own matching candidates shown as hints
 
 
 def eligible(item: Lesson, tally: Tally | None) -> bool:
@@ -343,14 +351,19 @@ def _rank(hit: "Hit") -> tuple:
 
 
 def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "",
-         limit: int | None = 5, include_candidates: bool = False, advisory: bool = True) -> Result:
+         limit: int | None = 5, include_candidates: bool = False, advisory: bool = True, hints: int = 0) -> Result:
     """The lessons that match, best first. With selectors a lesson must match at least
     one of them; with none, the lessons that matter most are returned. `error` is the text
-    of an error just met. `advisory=False` leaves the catalogue's notes out."""
+    of an error just met. `advisory=False` leaves the catalogue's notes out.
+
+    `hints` (only `torque lesson for` asks for them): up to that many matching candidates
+    of the selected client or initiative, kept apart from the lessons in `Result.hints`. A
+    candidate is never among the lessons, in the context block or before a deploy; a firm
+    candidate is never a hint."""
     problems: list = []
     query = build_query(topic, tasks, types, command, paths, error, scopes)
     tallies = storage.tally(storage.events_for(scopes))
-    hits, candidates = [], 0
+    hits, waiting = [], []
     for item in everything(scopes, problems, advisory=advisory):
         tally = tallies.get(item.id) or Tally()
         score, reasons = match(item, query) if query else (0, [])
@@ -358,13 +371,15 @@ def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", pat
             continue
         if item.state == "candidate" and not tally.stale_mark:
             if not include_candidates:
-                candidates += 1
+                waiting.append(Hit(item, score, reasons, tally))
                 continue
         elif not eligible(item, tally):
             continue
         hits.append(Hit(item, score, reasons, tally))
     hits.sort(key=_rank)
-    return Result(hits[:limit] if limit else hits, len(hits), query, scopes, problems, candidates)
+    own = sorted((hit for hit in waiting if hit.lesson.scope in record.ENGAGEMENT_SCOPES
+                  and not hit.lesson.promoted_to), key=_rank)[:hints if query else 0]
+    return Result(hits[:limit] if limit else hits, len(hits), query, scopes, problems, len(waiting) - len(own), own)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -399,7 +414,7 @@ def lines(item: Lesson, tally: Tally | None = None) -> list[str]:
                           if part)
     else:
         first, second = f"[{item.id}] {_clip(item.title, 170)}", _clip(item.body, 300)
-    standing = [item.scope, *(["candidate, not reviewed"] if item.state == "candidate" else []),
+    standing = [item.scope, *([CANDIDATE_MARK] if item.state == "candidate" else []),
                 *(["retired"] if item.state == "retired" else []), item.evidence_type, record.age_text(item),
                 *(["marked stale"] if tally.stale_mark else [])]
     counted = ", ".join(f"{name} {count}" for name, count in tally.counters().items() if count)
@@ -430,6 +445,13 @@ def render(result: Result) -> str:
         text = [f"Lessons{' for ' + what if what else ''} ({scope}): {len(result.hits)} of {result.matched}"]
         for hit in result.hits:
             text += lines(hit.lesson, hit.tally)
+    if result.hints:
+        if not result.hits:
+            text = [f"No reviewed lesson matches {what} ({scope})."]
+        text.append(f"Not reviewed yet, from this {result.scopes.kind}'s own work ({len(result.hints)}):")
+        for hit in result.hints:
+            text += lines(hit.lesson, hit.tally) + [f"  {verify_line(hit.lesson)}"]
+    if result.hits or result.hints:
         text.append(FOOTER)
     if result.candidates:
         text.append(f"{result.candidates} matching candidate(s) wait for review and are not shown: "
@@ -441,6 +463,8 @@ def as_json(result: Result) -> dict:
     return {"query": result.query.as_dict(), "scopes": result.scopes.label(), "matched": result.matched,
             "lessons": [{**summary(hit.lesson, hit.tally), "match": {"score": hit.score, "reasons": hit.reasons}}
                         for hit in result.hits],
+            "candidate_hints": [{**summary(hit.lesson, hit.tally), "match": {"score": hit.score, "reasons": hit.reasons},
+                                 "mark": CANDIDATE_MARK, "next": verify_line(hit.lesson)} for hit in result.hints],
             "candidates_not_shown": result.candidates, "unreadable": result.problems, "note": FOOTER}
 
 

@@ -62,7 +62,7 @@ remaining work so the next consultant can see where to continue.
 | Guide discovery, architecture, Flow review, migration planning, training and release notes | Workflows guide the assistant; live outcomes require separate checks |
 | Investigate orgs, deploy metadata, perform data operations and prepare scoped recovery | Requires existing tools and explicit org selection; recovery coverage varies by operation |
 | Run QA, log analysis, browser flows and probes | Coverage depends on the configured adapter; synthesized probes are not executed tests |
-| Keep what was learned and find it again at the point of use: by task, metadata type, command or error text | [Lessons](docs/lessons.md) are notes with their evidence and age, not instructions; what an agent saves waits as a candidate until it is reviewed |
+| Keep what was learned and find it again at the point of use: by task, metadata type, command or error text | [Lessons](docs/lessons.md) are notes with their evidence and age, not instructions; what an agent saves waits as a candidate until it is reviewed, and meanwhile `torque lesson for` shows it to that client as a marked hint |
 | Prepare meetings and check prompt contracts | Optional dependencies apply; live model-provider behavior remains experimental |
 
 ## Install and try the offline demo

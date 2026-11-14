@@ -94,9 +94,54 @@ def test_what_the_agent_learned_waits_as_a_candidate_and_is_counted(torque):
     assert "1 candidate lesson(s) wait for review: torque lesson review" in text
     code, out, _ = torque("lesson", "for", "deploy", "permission", "--json")
     answer = json.loads(out)
-    assert all(item["scope"] == "platform" for item in answer["lessons"]) and answer["candidates_not_shown"] == 1
+    assert all(item["scope"] == "platform" for item in answer["lessons"]) and answer["candidates_not_shown"] == 0
+    assert [item["state"] for item in answer["candidate_hints"]] == ["candidate"]       # a hint, under its own key
     shown = json.loads(torque("lesson", "for", "deploy", "permission", "--include-candidates", "--json")[1])
     assert shown["lessons"][0]["state"] == "candidate"
+
+
+NO_COLUMN = "No such column 'Hours__c' on entity 'Contact'"
+
+
+def test_a_clients_own_candidate_is_a_hint_to_an_explicit_query_and_nowhere_else(torque, root, monkeypatch, capsys):
+    from jsc_revert import cli as revert_cli
+    for number in range(3):
+        assert torque("session", "add", "--summary", f"Query failed, then worked ({number})", "--learned",
+                      f"When: a query fails with No such column on Contact ({number}). Do: describe Contact and use "
+                      "the API name it lists. Because: the label and the API name differ.")[0] == 0
+    assert torque("lesson", "add", "--scope", "firm", "--when", "a query fails with No such column", "--do",
+                  "ask the firm", "--error", "No such column")[0] == 0                       # a firm candidate
+    code, out, _ = torque("lesson", "for", "--error", NO_COLUMN)
+    text = out.splitlines()
+    assert code == 0 and text[0].startswith("Lessons for this error (client alpha-nonprofit + firm + platform)")
+    heading = text.index("Not reviewed yet, from this client's own work (2):")
+    assert any(line.startswith("[") for line in text[1:heading])                   # the active lessons come first
+    marked = [index for index, line in enumerate(text) if HINT in line]
+    assert len(marked) == 2 and min(marked) > heading
+    verify = [line.strip() for line in text[heading:] if line.strip().startswith("If it worked: torque lesson verify")]
+    assert len(verify) == 2 and all(line.endswith(" --evidence reproduced") for line in verify)
+    assert "ask the firm" not in out and "2 matching candidate(s) wait for review" in out    # one client, one firm
+    answer = json.loads(torque("lesson", "for", "--error", NO_COLUMN, "--json")[1])
+    assert answer["lessons"] and all(item["state"] == "active" for item in answer["lessons"])
+    assert [(item["scope"], item["mark"]) for item in answer["candidate_hints"]] == [("client", HINT)] * 2
+    assert answer["candidates_not_shown"] == 2
+    # Never in the context block, never before a deploy or a data change, never for another client.
+    context = json.loads(torque("context", "--json")[1])["lessons"]
+    assert context["shown"] == [] and context["candidates_waiting"] == 4                   # three here, one firm
+    assert "describe Contact" not in torque("context")[1]
+    printed: list[str] = []
+    monkeypatch.setattr(revert_cli, "cmd_deploy", lambda args: printed.append(capsys.readouterr().err) or 0)
+    assert torque("deploy", "--metadata", "CustomField:Contact.Hours__c", "--target-org", "example-dev")[0] == 0
+    from jsc_memory import recall, storage
+    before = recall.for_command("sf data query", error=NO_COLUMN, scopes=storage.scopes_for(
+        root / "clients" / "alpha-nonprofit"))
+    for text in (printed[0], before):
+        assert "describe Contact" not in text and HINT not in text
+    other = json.loads(torque("lesson", "for", "--error", NO_COLUMN, "--json", client="beta-land-trust")[1])
+    assert other["candidate_hints"] == [] and other["candidates_not_shown"] == 1          # the firm's, not alpha's
+
+
+HINT = "candidate, not reviewed: a hint, check it"
 
 
 def test_a_lesson_that_cannot_be_saved_never_loses_the_session_record(torque, root):
