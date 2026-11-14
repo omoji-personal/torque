@@ -1,9 +1,9 @@
 # Flow build checklist
 
-Work top to bottom. Each step ends with its check. State described: Winter '27 (API 68.0),
-checked 2026-11-14. `[check]` = testable in the flow file. **verify** = not confirmed in a
-fetched primary source: verify in the org (an element name: in a retrieved flow) or the
-current documentation. field-reported = seen in client work, usually one org.
+Work top to bottom; each step ends with its check. State: Winter '27 (API 68.0), checked
+2026-11-14. `[check]` = testable in the flow file. **verify** = not confirmed in a fetched
+primary source: verify in the org (an element name: in a retrieved flow) or the current
+documentation. field-reported = seen in client work, usually one org.
 
 ## 1. See what already runs on the object
 
@@ -17,18 +17,17 @@ current documentation. field-reported = seen in client work, usually one org.
    support on 2025-12-31 [WA-RC] and existing processes keep running, **verify**). Scheduled
    work: `SELECT CronJobDetail.Name, State, NextFireTime FROM CronTrigger`. Package triggers:
    `sf package installed list --target-org ALIAS`, then that package's skill or documentation.
-4. Count the automations on the object. Under 15 suits a record-triggered flow; 15 to 30
-   suits a flow that calls invocable Apex; over 30, or loads of thousands of records, suits
-   an Apex trigger framework [DG-RT].
+4. Count the object's automations. Under 15 suits a record-triggered flow; 15 to 30 a flow
+   that calls invocable Apex; over 30, or thousands of records per load, Apex [DG-RT].
 5. If Apex triggers are the object's entry point, stop and ask before you add a flow, and the
    reverse: "Use one entry point per Salesforce Object" [DG-RT]. Where a managed package owns
    the trigger, the mix is a given: learn the order instead.
 6. Read the existing flows on the same fields. Merge a fix into the flow that owns the logic,
-   leaving its other logic untouched, before you build a new flow (field-reported: an
-   existing flow already did the job a new one was designed for).
+   leaving its other logic untouched, before you build a new flow.
 
 Check: the inventory is saved with the change (field-reported: a scan limited to
-record-triggered flows missed a Process Builder process that sent marketing events).
+record-triggered flows missed a Process Builder process that sent marketing events, and an
+existing flow already did the job a new one was designed for).
 
 ## 2. Pick the trigger and the timing
 
@@ -163,9 +162,8 @@ Check: `[check]` `runInMode`; the reason is in the description when it is
   regeneration, or the next build removes them (field-reported).
 
 Check: `[check]` `description` on the flow and on every element and resource (analyzer
-`MissingDescription`, selector `flow`); after deploy, read `Description` on
-`FlowDefinitionView` (field-reported). More examples:
-`salesforce-build/references/documentation-and-naming.md`.
+`MissingDescription`, selector `flow`); after deploy, `Description` on `FlowDefinitionView`
+(field-reported). Examples: `salesforce-build/references/documentation-and-naming.md`.
 
 ## 9. Test
 
@@ -186,8 +184,7 @@ Check: `[check]` `description` on the flow and on every element and resource (an
   on in Process Automation Settings (**verify**). Then clean up: `gotchas.md`, item 6.
 - Verify a scheduled flow by its real scheduled run, and log any schedule you moved for a
   test as an open restore (field-reported: one stayed on the test time for days).
-
-Check: the result names the org, the user, the flow version and what was not tested.
+- Check: the result names the org, the user, the flow version and what was not tested.
 
 ## 10. Leftovers and the record
 
@@ -219,4 +216,7 @@ Check: the result names the org, the user, the flow version and what was not tes
   (https://help.salesforce.com/s/articleView?id=sf.flow_concepts_testing.htm&type=5), running context
   (https://developer.salesforce.com/docs/platform/secure-coding/guide/secure-coding-considerations-flow-design.html),
   naming (https://admin.salesforce.com/blog/2025/planning-for-flow-success-building-automation-that-scales).
-- field-reported: lessons from real client work, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

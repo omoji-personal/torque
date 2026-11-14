@@ -167,4 +167,7 @@ approvals and the re-scope conversation.
 - [COE] https://www.salesforce.com/blog/center-of-excellence-ai-governance/
 - [ADR] https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
 - [APM] https://www.apm.org.uk/resources/what-is-project-management/what-is-change-control/
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

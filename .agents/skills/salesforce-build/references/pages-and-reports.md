@@ -158,4 +158,7 @@ Changing a dashboard's running user changes what every viewer sees: stop and ask
 - **verify** items: page activation (https://trailhead.salesforce.com/content/learn/modules/lightning_app_builder/lightning_app_builder_recordpage),
   assignment metadata (https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_profileactionoverride.htm),
   page performance (https://help.salesforce.com/s/articleView?id=lightning_page_performance.htm&type=5).
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

@@ -180,4 +180,7 @@ connector.
 - [TH-REL] https://trailhead.salesforce.com/content/learn/modules/advanced-salesforce-release-readiness-strategies/test-new-features-before-a-release
 - [PLUGIN-LIMITS] https://raw.githubusercontent.com/salesforcecli/plugin-limits/main/README.md
 - [ADV] Torque advisory catalogue (`torque advisory notes --command TEXT`); entry ids inline.
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

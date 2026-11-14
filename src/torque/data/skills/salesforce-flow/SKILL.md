@@ -128,4 +128,7 @@ holds this skill.
 - [SAMPLE-FLOW] Salesforce sample flow with descriptions and fault connectors: https://github.com/trailheadapps/dreamhouse-lwc/blob/main/force-app/main/default/flows/Create_property.flow-meta.xml
 - [LFS] Lightning Flow Scanner source (community), element names: https://github.com/Flow-Scanner/lightning-flow-scanner
 - [ADV] Torque advisory catalogue, entries `flow-retrieve-latest-only` and `flow-activation-on-deploy`: `torque advisory notes --command "sf project deploy start --metadata Flow:Name --target-org ALIAS"`
-- field-reported: lessons from real client work with Torque and its predecessor, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

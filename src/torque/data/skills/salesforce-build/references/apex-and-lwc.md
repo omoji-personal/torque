@@ -177,4 +177,7 @@ production; raising API versions; deleting code or tests.
 - **verify** items: governor limits (https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm),
   Apex testing practice (https://developer.salesforce.com/docs/platform/apex-dev/references/apex-dev/apex-testing-best-practices.html),
   component data guidelines (https://developer.salesforce.com/docs/platform/lwc/guide/data-guidelines.html).
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

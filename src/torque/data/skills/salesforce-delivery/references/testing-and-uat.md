@@ -81,7 +81,9 @@ users were blocked (field-reported, 13 episodes).
 4. Look at the screen. Record the user, the method, the org and the window size.
 
 The agent cannot do some sign-ins alone: a shared login whose code goes to someone's mailbox,
-a passkey, a production org with no CLI authorization. Say so; a person signs in.
+a passkey, a production org with no CLI authorization. Say so; a person signs in. Never
+enrol a device-bound sign-in factor on a shared user: it locked a colleague out for a day
+(field-reported).
 An API-only user cannot be opened in a browser (**verify**): use a separate test user. A
 phone-only page rule cannot be proven in a desktop browser: state the gap.
 

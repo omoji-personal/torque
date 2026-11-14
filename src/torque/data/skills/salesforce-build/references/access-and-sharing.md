@@ -191,4 +191,7 @@ permission sets, groups and View All Data, in each org separately.
   guest users (https://help.salesforce.com/s/articleView?id=sf.networks_secure_guest_user_sharing.htm&type=5),
   record access (https://help.salesforce.com/s/articleView?id=000386023&type=1),
   Log in as (https://help.salesforce.com/s/articleView?id=xcloud.logging_in_as_another_user.htm&type=5).
-- field-reported: lessons from real client work with Torque and its predecessor, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

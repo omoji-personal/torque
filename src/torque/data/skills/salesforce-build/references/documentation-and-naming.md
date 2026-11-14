@@ -141,4 +141,7 @@ rows, which is the point. See `salesforce-delivery/references/handover-and-suppo
   permission set naming (https://help.salesforce.com/s/articleView?id=sf.perm_sets_best_practices.htm&type=5),
   flow naming (https://admin.salesforce.com/blog/2025/planning-for-flow-success-building-automation-that-scales),
   documentation advice (https://admin.salesforce.com/blog/2021/documentation-advice-from-the-awesome-admin-community).
-- field-reported: lessons from real client work with Torque and its predecessor, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

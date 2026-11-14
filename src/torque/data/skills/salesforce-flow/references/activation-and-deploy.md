@@ -161,4 +161,7 @@ Check: a validate-only run of each removal step passes before the real one.
   FlowDefinition (read as an extract of the Japanese page: https://developer.salesforce.com/docs/atlas.ja-jp.api_meta.meta/api_meta/meta_flowdefinition.htm),
   and a community note on flow versions in the Metadata API
   (https://docs.gearset.com/en/articles/2439855-changes-to-flows-in-v44-of-the-metadata-api).
-- field-reported: lessons from real client work with Torque and its predecessor, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

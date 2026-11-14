@@ -71,6 +71,9 @@ After, in this order:
 5. Scheduled jobs: they do not come across (field-reported). Recreate the ones tests need.
 6. Package settings, and any user name stored inside automation [TH-SBX].
 7. Seed data, with undeliverable addresses.
+8. Rerun behaviour checks. A restore "verified" by component names had lost public access
+   to its endpoints, and a reinstalled package had re-activated a flow (field-reported):
+   compare guest access and the active-flow list with before.
 
 Before each Salesforce release, check which sandboxes are on the preview instance: a refresh
 inside the preview window can move a sandbox off it [TH-PREVIEW].

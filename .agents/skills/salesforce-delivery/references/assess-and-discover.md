@@ -176,4 +176,7 @@ is a stakeholder, what the problem is, priority, scope, and confirms intent with
 - [TH-REQ] https://trailhead.salesforce.com/content/learn/modules/salesforce-business-analyst-certification-prep/review-requirements
 - [BEN-INHERIT] Community checklist for an inherited org: https://www.salesforceben.com/inheriting-a-salesforce-org/
 - [ADV] Torque advisory catalogue, entry `developer-edition-is-not-sandbox` (verified live): `torque advisory catalogue`
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

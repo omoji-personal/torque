@@ -174,4 +174,7 @@ diagram only for the scope that changed, with a title and a stated purpose [D-ER
   duplicate rules (https://help.salesforce.com/s/articleView?id=sales.duplicate_rules_overview.htm&type=5),
   custom permission bypass (https://trailhead.salesforce.com/content/learn/modules/validation-rules/bypass-your-validation-rules),
   indexes (https://developer.salesforce.com/docs/platform/salesforce-large-data-volumes-bp/guide/ldv-deployments-infrastructure-salesforce-query-optimizer.html).
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

@@ -107,4 +107,7 @@ client's record, each with the org, the flow version and the date.
 - [LFS] Lightning Flow Scanner (community, MIT): https://github.com/Flow-Scanner/lightning-flow-scanner
 - Record-triggered automation decision guide: https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered
 - Well-Architected automation patterns: https://architect.salesforce.com/docs/architect/well-architected/guide/operational-excellence-automation-patterns
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.

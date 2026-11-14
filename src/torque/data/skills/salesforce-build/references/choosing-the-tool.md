@@ -183,4 +183,7 @@ configuration could do the job is a stop-and-ask point. Then follow `apex-and-lw
 - [P-DATA] https://architect.salesforce.com/docs/architect/well-architected/guide/trust-data-protection-patterns
 - [TH-DM] https://trailhead.salesforce.com/content/learn/modules/data_modeling/objects_intro
 - **verify** items: relationship limits (https://help.salesforce.com/s/articleView?id=platform.relationships_considerations.htm&type=5).
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes): working notes, an after-action review
+  of 166 rework and defect episodes, and a classification of 273 failed Salesforce CLI calls.
+  Not re-tested for this release.
