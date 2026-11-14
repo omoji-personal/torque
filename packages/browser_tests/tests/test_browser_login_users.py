@@ -143,13 +143,13 @@ def test_find_user_queries_by_id_or_username_with_the_value_escaped(monkeypatch)
 
     def query(self, soql, all_rows=False):
         asked.append(soql)
-        return [{"Id": STD["user_id"], "Username": STD["username"], "IsActive": True}]
+        return [{"Id": STD["user_id"], "Username": STD["username"], "IsActive": True, "UserType": "Standard"}]
     monkeypatch.setattr(SfClient, "query", query)
     client = SfClient("acme-sbx")
-    assert client.find_user(STD["user_id"]) == STD
+    assert client.find_user(STD["user_id"]) == {**STD, "user_type": "Standard"}
     assert client.find_user("o'brien@acme.example")["user_id"] == STD["user_id"]
-    assert asked == [f"SELECT Id, Username, IsActive FROM User WHERE Id = '{STD['user_id']}'",
-                     "SELECT Id, Username, IsActive FROM User WHERE Username = 'o\\'brien@acme.example'"]
+    assert asked == [f"SELECT Id, Username, IsActive, UserType FROM User WHERE Id = '{STD['user_id']}'",
+                     "SELECT Id, Username, IsActive, UserType FROM User WHERE Username = 'o\\'brien@acme.example'"]
     assert FakeSfClient().find_user("nobody@acme.example") is None
 
 

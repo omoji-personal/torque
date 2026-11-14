@@ -183,15 +183,38 @@ class SfClient:
                 "organization_type": row.get("OrganizationType") if isinstance(row.get("OrganizationType"), str) else ""}
 
     def find_user(self, username_or_id: str) -> dict | None:
-        """{"user_id", "username", "is_active"} for a username or a User Id in this org,
-        or None when there is no such user."""
+        """{"user_id", "username", "is_active", "user_type"} for a username or a User Id in
+        this org, or None when there is no such user."""
         field = "Id" if re.fullmatch(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", username_or_id) else "Username"
-        rows = self.query(f"SELECT Id, Username, IsActive FROM User WHERE {field} = '{soql_literal(username_or_id)}'")
+        rows = self.query(f"SELECT Id, Username, IsActive, UserType FROM User "
+                          f"WHERE {field} = '{soql_literal(username_or_id)}'")
         row = rows[0] if rows and isinstance(rows[0], dict) else None
         if not row or not isinstance(row.get("Id"), str):
             return None
         return {"user_id": row["Id"], "username": row.get("Username") if isinstance(row.get("Username"), str) else "",
-                "is_active": row.get("IsActive") is not False}
+                "is_active": row.get("IsActive") is not False,
+                "user_type": row.get("UserType") if isinstance(row.get("UserType"), str) else ""}
+
+    def login_as_facts(self, user_id: str) -> dict:
+        """What keeps an admin from logging in as this user, as far as the org answers:
+        {"frozen": bool or None, "api_only": bool or None} (None: not answered). API only
+        counts from the profile or any permission set (a profile's own permission set is
+        among the assignments)."""
+        facts: dict = {"frozen": None, "api_only": None}
+        literal = soql_literal(user_id)
+        try:
+            rows = self.query(f"SELECT IsFrozen FROM UserLogin WHERE UserId = '{literal}'")
+            if rows and isinstance(rows[0], dict) and isinstance(rows[0].get("IsFrozen"), bool):
+                facts["frozen"] = rows[0]["IsFrozen"]
+        except SfError:
+            pass
+        try:
+            facts["api_only"] = bool(self.query(
+                f"SELECT Id FROM PermissionSetAssignment WHERE AssigneeId = '{literal}' "
+                "AND PermissionSet.PermissionsApiUserOnly = true LIMIT 1"))
+        except SfError:
+            pass
+        return facts
 
     def user_by_username(self, username: str) -> dict | None:
         """{"user_id", "username", "is_active"} for a username in this org, or None."""
@@ -251,8 +274,12 @@ class FakeSfClient:
 
     def find_user(self, username_or_id: str) -> dict | None:
         if username_or_id in (self._username, "005fake00000000AAA"):
-            return {"user_id": "005fake00000000AAA", "username": self._username, "is_active": True}
+            return {"user_id": "005fake00000000AAA", "username": self._username, "is_active": True,
+                    "user_type": "Standard"}
         return None
+
+    def login_as_facts(self, user_id: str) -> dict:
+        return {"frozen": False, "api_only": False}
 
     def user_by_username(self, username: str) -> dict | None:
         return self.find_user(username) if "@" in username else None

@@ -129,8 +129,14 @@ run confirms it, and its output says so.
 
 **Who cannot be signed in.** A user with the API Only User permission cannot have a browser
 session: Salesforce refuses the sign-in address for such a user. Use a separate user for
-browser tests. Inactive users cannot be logged in as. Experience Cloud site users are outside
-both routes.
+browser tests. Experience Cloud site users are outside both routes.
+
+Before anything is sent, `--as-user` refuses (exit 9), saying what is wrong and what to do, a
+user who is inactive, frozen (`UserLogin.IsFrozen`), API only (from the profile or a permission
+set), an Experience Cloud or portal user (by `UserType`: an admin reaches them from their
+contact, "Log in to Experience as User"), or the site guest user. A fact the org does not
+answer is not a refusal. The org's Log in as policy cannot be read by the command: no Login
+button on the user's page means it is off.
 
 ## Session file for a scripted browser
 

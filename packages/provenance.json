@@ -827,7 +827,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
       "source_sha256": "8e6979337830478d413126b80272eb2ed0ae4a4669952475fa51dfd3d05c48c9",
       "source_tracked": true,
-      "destination_sha256": "21aed154047e9bcefb504cf7f45134213569b6c8544ead101db5730248407e41",
+      "destination_sha256": "9186ce32768f710f8aa2c39372a45eb2749a6b73e51993a0d42f3cbcb0dabb18",
       "adapted": true
     },
     {

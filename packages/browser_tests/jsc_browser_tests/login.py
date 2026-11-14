@@ -364,9 +364,10 @@ def prepare(args) -> Plan:
             raise LoginError(EXIT_SIGN_IN, f"the user lookup for {args.as_user!r} returned an unreadable User Id; "
                                            "nothing was signed in. Give the User Id itself")
         username = shown(found["username"], _USERNAME)
-        if not found["is_active"]:
-            raise LoginError(EXIT_SIGN_IN, f"user {username or found['user_id']} is inactive; an inactive "
-                                           "user cannot be logged in as")
+        blocker = login_as_blocker(found, admin)
+        if blocker:
+            raise LoginError(EXIT_SIGN_IN, f"user {username or found['user_id']} {blocker}. Nothing was sent to the "
+                                           "org.")
         route = "direct" if args.direct else "setup-page"
         plan.login_as = {"user_id": found["user_id"], "username": username, "route": route}
         plan.path = (auth.login_as_path(identity["org_id"], found["user_id"]) if args.direct
@@ -374,13 +375,46 @@ def prepare(args) -> Plan:
     return plan
 
 
+# User types that the Setup page's Login does not reach: Experience Cloud and portal users
+# (an admin reaches them from their contact, "Log in to Experience as User") and the guest user.
+_SITE_USER_TYPES = {"PowerPartner", "PowerCustomerSuccess", "CustomerSuccess", "CspLitePortal", "SelfService"}
+
+
+def login_as_blocker(found: dict, admin: SfClient) -> str | None:
+    """Why an admin cannot log in as this user from the user's Setup page, as a phrase
+    that says what to do, or None. What the org does not answer is not a blocker; the
+    org's Log in as policy cannot be read here and is named in the next steps instead."""
+    if not found["is_active"]:
+        return ("is inactive, and an inactive user cannot be logged in as: activate the user in Setup, Users, or "
+                "choose an active test user")
+    user_type = found.get("user_type") or ""
+    if user_type == "Guest":
+        return "is a site guest user, which nobody can log in as: open the site itself without signing in"
+    if user_type in _SITE_USER_TYPES:
+        return (f"is an Experience Cloud or portal user (user type {user_type}), whom the Setup page's Login does not "
+                "reach: an admin logs in as that user from the user's contact (\"Log in to Experience as User\"), "
+                "by hand, outside the agent")
+    try:
+        facts = admin.login_as_facts(found["user_id"])
+    except SfError:
+        facts = {}
+    if facts.get("frozen"):
+        return ("is frozen, and a frozen user cannot be logged in as: the consultant unfreezes the user in Setup, "
+                "Users, or chooses another test user")
+    if facts.get("api_only"):
+        return ("has the API Only User permission (from the profile or a permission set), so Salesforce allows no "
+                "browser session for it, Log in as included: use a separate user for browser tests")
+    return None
+
+
 def login_as_steps(plan: Plan) -> list[str]:
     """Plain next steps for the agent after the admin's tab was redirected (--as-user)."""
     user = plan.login_as["username"] or plan.login_as["user_id"]
     setup = auth.user_setup_path(plan.login_as["user_id"])
     needs = ("Log in as needs the org's \"Administrators Can Log in as Any User\" policy (Setup, Login Access "
-             "Policies) or login access granted by the user, and Modify All Data for the signed-in admin. "
-             + API_ONLY_NOTE)
+             "Policies) or login access granted by the user, and Modify All Data for the signed-in admin. The command "
+             "cannot read that policy: no Login button on the user's page means it is off, and an admin of the org "
+             "turns it on (or the user grants access); do not change it without the consultant. " + API_ONLY_NOTE)
     done = ("When done, do not click \"Log out as\" (it can end the whole session): close the tab, or run "
             "torque browser login again to be the admin.")
     if plan.login_as["route"] == "direct":

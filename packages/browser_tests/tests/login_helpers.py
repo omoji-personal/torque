@@ -66,6 +66,12 @@ class FakeCli:
         self.calls.append(("find_user", self.alias, value))
         return self._org().get("users", {}).get(value)
 
+    def login_as_facts(self, user_id):
+        """A user entry may say frozen / api_only (True, False, or None for not answered)."""
+        self.calls.append(("login_as_facts", self.alias, user_id))
+        entry = next((user for user in self._org().get("users", {}).values() if user.get("user_id") == user_id), {})
+        return {"frozen": entry.get("frozen", False), "api_only": entry.get("api_only", False)}
+
     @classmethod
     def mints(cls) -> int:
         return sum(call[0] == "mint" for call in cls.calls)
