@@ -96,7 +96,7 @@ def propose(scopes: Scopes, wanted: str, target: str, name: str = "") -> dict:
         raise Refused(found.refusal(target).replace("Not saved", "No proposal written"), found)
     left_out = [_key_name(key, terms) for key in item.extra]
     if target in ("firm", "platform"):
-        taken = storage.taken_ids(scopes.folder("firm")) | shipped_ids() | {item.id}
+        taken = storage.readable_ids(scopes) | shipped_ids() | {item.id}
         copy.id, copy.scope, copy.created, copy.review_by = record.new_id(day, taken), target, day, record.later(day)
         text = record.render(copy).rstrip("\n")
     else:
@@ -194,7 +194,7 @@ def apply(scopes: Scopes, proposal: str) -> dict:
         existing = next((item for item in storage.read_folder(folder, "firm", scopes) if item.id == copy.id), None)
         # The same lesson already there: an earlier apply wrote it and stopped before marking the source.
         written = existing is not None and record.content_key(existing) == record.content_key(copy)
-        if not written and (existing is not None or copy.id in storage.taken_ids(folder)):
+        if not written and (existing is not None or copy.id in storage.readable_ids(scopes)):
             raise LessonError(f"a firm lesson {copy.id} already exists; write a fresh proposal.")
         firm_path = existing.path if written else storage.save(copy, folder)
     with storage.transaction(scopes.engagement):

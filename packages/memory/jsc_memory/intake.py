@@ -185,7 +185,7 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
             notes.append("Similar to " + ", ".join(f"{other.id} ({other.title})" for other in close[:3])
                          + ". If it is the same lesson, retire this one and mark the other: "
                          "torque lesson verify ID --evidence second-occurrence")
-        item.id = record.new_id(day, storage.taken_ids(folder) | shipped_ids())
+        item.id = record.new_id(day, storage.readable_ids(scopes) | shipped_ids())
         path = storage.save(item, folder)
     return Added(item, path, "saved", inferred, found.masked, [note.replace(" ID ", f" {item.id} ") for note in notes])
 

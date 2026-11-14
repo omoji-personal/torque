@@ -28,6 +28,35 @@ def test_a_structured_capture_writes_the_documented_file(scopes):
     assert added.inferred == {}          # everything was given, nothing guessed
 
 
+def test_a_new_id_has_eight_random_characters_and_is_unique_across_every_scope_the_call_reads(scopes, monkeypatch):
+    import re
+    from jsc_memory import feedback, promote
+    alpha = scopes("alpha")
+    assert re.fullmatch(r"L-\d{8}-[0-9a-f]{8}", intake.add(alpha, text="an ordinary remark").lesson.id)
+    # The random part is forced to repeat: the second lesson, in another scope, skips the id the first one took.
+    values = iter(["c0de1234", "c0de1234", "beef5678", "c0de1234", "beef5678", "f00d9abc"])
+    monkeypatch.setattr(record.secrets, "token_hex", lambda size: next(values))
+    own = intake.add(alpha, text="Only test the screen decision", source="consultant").lesson
+    firm = intake.add(alpha, text="Only retrieve current metadata", source="consultant", scope="firm").lesson
+    assert own.id.endswith("c0de1234") and firm.id.endswith("beef5678")
+    # A promotion's firm copy skips both, and every later command on each id is unambiguous.
+    made = promote.propose(alpha, own.id, "firm")
+    assert record.parse(made["text"]).id.endswith("f00d9abc")
+    for item in (own, firm):
+        assert feedback.helpful(alpha, item.id).id == item.id
+    # From the firm alone, the client's lessons are not read, and that is not needed for uniqueness.
+    assert storage.readable_ids(scopes(None)) == {firm.id}
+
+
+def test_an_id_written_by_an_earlier_version_keeps_working(scopes):
+    from jsc_memory import feedback
+    alpha = scopes("alpha")
+    storage.save(record.Lesson(id="L-20250303-a3f2", title="old", state="active", source="consultant"),
+                 alpha.folder("client"))
+    assert feedback.helpful(alpha, "L-20250303-a3f2").title == "old"
+    assert feedback.helpful(alpha, "20250303-a3f2").title == "old"
+
+
 def test_labelled_free_text_becomes_when_do_because_and_applicability_is_inferred(scopes):
     added = intake.add(scopes("alpha"), text=FLOW, source="consultant", session="20261114T101500000000Z-abc")
     item = added.lesson

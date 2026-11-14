@@ -246,6 +246,18 @@ def taken_ids(folder: Path | None) -> set[str]:
     return {path.stem for path in folder.glob("*.md")} if folder and folder.is_dir() else set()
 
 
+def readable_ids(scopes: Scopes) -> set[str]:
+    """The ids a new lesson must not take: those in every folder this call can read (the
+    selected engagement's and the firm's), by file name and by the id each file holds.
+    Another client's folder is never looked into; a clash with it is left to the size of
+    the random part (new_id)."""
+    taken: set[str] = set()
+    for scope in ([scopes.kind] if scopes.engagement else []) + ["firm"]:
+        folder = scopes.folder(scope)
+        taken |= taken_ids(folder) | {item.id for item in read_folder(folder, scope, scopes)}
+    return taken
+
+
 def _atomic_write(path: Path, content: str) -> None:
     """Write to a temporary file in the same folder, then replace: readers see the old
     file or the new one, never part of one. The temporary file is removed on failure."""

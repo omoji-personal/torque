@@ -74,7 +74,7 @@ are derived from the events and are never stored in a lesson file.
 
 ```markdown
 ---
-id: L-20261114-a3f2
+id: L-20261114-a3f29c0e
 title: Ship field access with every new field
 scope: client                  # client | initiative | firm | platform (must match the folder)
 kind: pitfall                  # pitfall | works | convention | fact
@@ -255,7 +255,10 @@ never raises.
 | `edit ID --set key=value ...` | changes fields; lists as comma-separated words. The body is edited in the file. State and source are not set here: they change through `verify`, `retire` and `restore`, which record why |
 | `show ID`, `list`, `search TERMS` | read; `show pending|active|archive` still lists by state |
 
-An id is the whole id or a unique start of at least four characters after the `L-`. An
+A new id is the date and eight random characters, chosen so that no lesson this command
+can read (the selected client or initiative, the firm, the platform) has it; another
+client's folder is never looked into for that. Ids of four random characters from earlier
+versions keep working. An id is the whole id or a unique start of at least four characters after the `L-`. An
 empty or ambiguous id changes nothing, lists the candidates and exits 3. A platform
 lesson can be marked helpful or stale in a workspace (a stale mark holds for that
 workspace) and is never rewritten there. No command deletes a lesson: `retire` keeps the
@@ -327,7 +330,7 @@ Every command takes `--json` and never prompts.
 Platform lessons live in `lessons/*.md` in the Torque repository and are bundled by
 `python scripts/sync-workflows.py` into `src/torque/data/lessons/`.
 
-- `scope: platform`, `state: active`, a stable `id` (`L-YYYYMMDD-xxxx`), one file per
+- `scope: platform`, `state: active`, a stable `id` (`L-YYYYMMDD-xxxxxxxx`), one file per
   lesson with a descriptive file name.
 - Fully generic: no client, person, org or firm practice. `when`, `do` and `because` on
   one line each; the body holds the check.

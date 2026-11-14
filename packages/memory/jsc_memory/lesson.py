@@ -92,10 +92,13 @@ def later(day: str, days: int = REVIEW_DAYS) -> str:
 
 
 def new_id(day: str | None = None, taken=()) -> str:
-    """L-YYYYMMDD-xxxx: the date and a short random suffix, so two machines never collide."""
+    """L-YYYYMMDD-xxxxxxxx: the date and eight random hex characters (32 bits), so two
+    machines, or two scopes that are never read together, practically never collide.
+    `taken` holds the ids of every scope the caller can read; ids written by earlier
+    versions (four characters) stay valid."""
     stamp = (day or today()).replace("-", "")
     while True:
-        candidate = f"L-{stamp}-{secrets.token_hex(2)}"
+        candidate = f"L-{stamp}-{secrets.token_hex(4)}"
         if candidate not in taken:
             return candidate
 
