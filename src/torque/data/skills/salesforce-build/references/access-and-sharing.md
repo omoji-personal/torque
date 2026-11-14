@@ -14,12 +14,19 @@ unless the same deployment grants it [ADV `fls-not-automatic`]. The deploy is gr
 field is invisible in pages, list views, reports and queries. In the field record this was
 the most frequent build miss, with hours lost to wrong theories (field-reported).
 
-Do this for every new field:
+Which fields: a new custom field that takes field-level security. Not required fields and
+not master-detail fields: they carry no field permissions, and an entry fails the deploy
+[SK-PS] [ADV]. `torque check metadata` also skips fields on custom metadata types,
+platform events and custom settings, and fields of a managed package (rule
+`access.field-without-grant`); give those types the access their own model uses.
+
+Do this for every such field:
 
 1. Add a `fieldPermissions` entry (`field` as `Object__c.Field__c`, `readable`, `editable`)
    to a permission set in the same deployment. Create the permission set if none fits.
-2. Leave these out, or the deploy fails: required fields and master-detail fields carry no
-   field permissions; a formula field's entry must have `editable` false [SK-PS] [ADV].
+2. `editable` true only for fields users enter, and then `readable` true as well
+   (**verify**: edit without read is refused); a formula or roll-up summary field's entry
+   has `editable` false, or the whole deploy fails [SK-PS] [ADV].
 3. Never invent a field name by pattern: grant only fields that exist in the change or in
    the org [SK-PS].
 4. Assign the permission set to the people who need the field, or say who must.
@@ -48,9 +55,11 @@ this rule unless the client asked for that breadth.
   profiles." Profiles remain for page layout assignment, record type defaults, login hours,
   IP ranges and app visibility [WA-T]. The planned retirement of permissions on profiles was
   cancelled; Salesforce still recommends the permission-set-led model (**verify**).
-- `[check: access.profile-in-change]`. If the org forces a profile change, deploy
-  the narrowest file: a profile deploy applies what the file says, explicit `false` values
-  included, and leaves the rest alone [ADV `full-profile-deploy`].
+- `[check: access.profile-in-change]`. A profile belongs in a change only for what still
+  lives there (the list above), never for object, field or system permissions. Deploy the
+  narrowest file: a profile deploy applies what the file says, explicit `false` values
+  included, and leaves the rest alone [ADV `full-profile-deploy`]. Check: `git diff` of the
+  profile file shows only the layout, record type or app entries you meant.
 - Name a permission set for the task, bundle sets into a group per persona, and use a muting
   permission set for exceptions [TH-PSG] [P-IAM].
 - A new component needs its own grant too: object permissions, tab, Apex class access,
@@ -151,7 +160,7 @@ separate checks. A query as an administrator proves none of the last three.
 | The permission set contains the grant | The file, or `FieldPermissions` and `ObjectPermissions` |
 | The user holds it | `PermissionSetAssignment`, directly and through groups |
 | The user can open this record | `SELECT RecordId, HasReadAccess, HasEditAccess, MaxAccessLevel FROM UserRecordAccess WHERE UserId = 'USER_ID' AND RecordId = 'RECORD_ID'` (**verify**; it ignores restriction rules) |
-| Logic and access together | Apex with `WITH USER_MODE` as a minimum-access user for the negative case; `System.runAs` needs an active user (field-reported) |
+| Logic and access together | Apex with `WITH USER_MODE` inside `System.runAs` as a minimum-access user for the negative case (outside it, user mode checks the user running the test); `System.runAs` needs an active user (field-reported) |
 | The page shows it | In a browser as that user, one person per user group, on a record someone else owns (field-reported: a user-mode code check "proved" a list that one profile could not see) |
 
 To act as the user in a browser: sign in with `torque browser login`, then use Setup "Log in

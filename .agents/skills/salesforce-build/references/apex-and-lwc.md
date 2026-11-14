@@ -30,14 +30,15 @@ file as the review list [SK-APEX].
   query once, map by Id, one DML per object.
 - Design for 200 records per transaction: 200 should cost the same number of queries and DML
   statements as one [WA-R].
-- Leave headroom. Salesforce's pages give two targets: finish within 70% of a governor limit
-  [WA-R], and stay "well under half" [WA-RC]. Record which one the design uses.
+- Leave headroom. Default: a 200-record test stays "well under half" of each limit [WA-RC].
+  Salesforce's outer bound is 70% [WA-R]; a design between the two says why in the class
+  header. Check: assert `Limits.getQueries()` and the like in the bulk test.
 - Limits per transaction, synchronous then asynchronous (**verify** with the `Limits` class
   in the org): queries 100 then 200; rows read 50,000; DML statements 150; rows written
-  10,000; CPU 10 then 60 seconds. Salesforce pages disagree on the heap limit after
-  Winter '27: read it in the org.
+  10,000; CPU 10 then 60 seconds; callouts 100. Salesforce pages disagree on the heap limit
+  after Winter '27: read `Limits.getLimitHeapSize()` in the org.
 - Setup objects (User, permission sets) and ordinary records cannot be written in one
-  transaction [WA-RC].
+  transaction [WA-RC]. In a test, put the Setup inserts inside `System.runAs` (**verify**).
 - No hard-coded Ids, record types, users or endpoints: "Use Custom Metadata/Labels/describe
   calls instead of hardcoded IDs", and named credentials for endpoints [SK-APEX].
 - "Always handle exceptions (log, rethrow, or recover)" [SK-APEX]. Never an empty catch, never
@@ -55,6 +56,7 @@ The class's API version now decides its security behaviour [REL-S26]:
 | No sharing keyword | Old behaviour: without sharing (**verify**) | Runs `with sharing` |
 | Queries and DML | Old behaviour: system mode unless stated | User mode by default |
 | `WITH SECURITY_ENFORCED` | Compiles | Does not compile: use `WITH USER_MODE` or `WITH SYSTEM_MODE` |
+| Trigger bodies | System mode | Still system mode per [REL-S26]; another Salesforce page reads differently (**verify** with a restricted-user test). Put user-context logic in a `with sharing` class that states its access mode |
 
 - Raising a class to 67.0 or later is a behaviour change with no compile error: fewer rows
   returned, DML failing for users with less access. Add tests as a restricted user first,
@@ -80,9 +82,13 @@ hand, `git diff` of every `*.cls-meta.xml` for a changed `apiVersion`, and a sea
 - Each behaviour gets a positive case, a negative case, a bulk case and a single-record case.
   Bulk means the trigger's real batch of 200.
 - Tests create their own data (`@TestSetup` or a factory), never `SeeAllData=true`; they
-  mock callouts; they wrap the unit in `Test.startTest()` and `Test.stopTest()` (**verify**).
-- At least one test runs as a user with only the intended permission sets
-  (`System.runAs`), and one as a user without them to prove the refusal.
+  mock callouts with `Test.setMock` and an `HttpCalloutMock`, with the setup DML before
+  `Test.startTest()`; they wrap the unit in `Test.startTest()` and `Test.stopTest()`
+  (**verify**).
+- At least one test runs as a user with only the intended permission sets, and one as a user
+  without them to prove the refusal. A test runs as whoever runs it, usually an admin: put
+  the assertions inside `System.runAs(thatUser)`, with the code under test in user mode, or
+  the negative case passes on the admin's access.
 - Every test asserts an outcome with the `Assert` class. A test that asserts nothing, a
   skipped test and a commented-out test are named anti-patterns [P-DEVOPS].
 - Review generated tests for meaningful assertions before you count them. A generated draft
@@ -98,8 +104,9 @@ Field-tested ways to prove behaviour without leaving data (field-reported):
 - A check-only deployment that runs a test in user mode as real staff proves logic and access
   together; a guarded `Assert.fail('REPORT ...')` returns counts from such a run without a
   debug log.
-- `System.runAs` needs an active user. For the negative case use `WITH USER_MODE` as a
-  minimum-access user.
+- `System.runAs` needs an active user. For the negative case, query `WITH USER_MODE` inside
+  `System.runAs` as a minimum-access user: user mode outside it checks the admin running the
+  test.
 - Anonymous Apex traps (error text hidden by a filter, a rollback that rolls back nothing,
   query limits in package-heavy orgs, reserved words): `gotchas.md`, "Command-line failures from the field record".
 - A check in user mode is not the page: one profile could not see a list that such a check
@@ -132,7 +139,10 @@ what it does: that description is where an admin, or an agent, learns the logic 
 - Data access, in order of preference: base components built on Lightning Data Service, then
   its wire adapters, then the GraphQL wire adapter, then Apex last (**verify**). The first
   three apply object, field and record access for you; Apex does not.
-- After an Apex write, refresh what the page shows (**verify** the current API for this).
+- After an Apex write, refresh what the page shows: `notifyRecordUpdateAvailable()` for
+  records Lightning Data Service shows, `refreshApex()` for wired Apex results. Wired Apex
+  is `@AuraEnabled(cacheable=true)`, and a cacheable method cannot do DML (**verify** all
+  three in the component data guidelines).
 - Handle the `error` of every `@wire`, not only `data` [P-AUTO].
 - New work is Lightning web components, not Aura [DG-FORMS].
 - Prefer base components: they carry labels and keyboard support. Custom markup needs

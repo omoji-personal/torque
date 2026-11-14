@@ -44,7 +44,7 @@ Read these from describe before the load, not from the result after it:
 | Active duplicate rules on the object | A blocking rule stops rows after automation has run; standard rules are active on a new org | [ADV `duplicate-rules-block-the-save`] |
 | Owners exist and are active; parents load before children | "You won't be able to load child records if the parents don't already exist" | [TH-LOAD] |
 | An external Id on each loaded object | Loads can be re-run as upserts without duplicates | [PLUGIN-DATA] |
-| Date formats match the locale; unmapped fields are not imported | Standard import preparation | [TH-IMPORT] |
+| Dates are in the format the tool reads: the Data Import Wizard follows the locale [TH-IMPORT]; the Bulk API, which `sf data ... bulk` uses, reads `yyyy-MM-dd` for a date and `yyyy-MM-ddTHH:mm:ss.SSSZ` (or with an offset) for a date and time (**verify**) [BULK-DATE]. Unmapped fields are not imported | A locale date in a bulk file fails or swaps day and month. Check: read five Date and Date/Time values in the file before the load | [TH-IMPORT] [BULK-DATE] |
 
 ## 3. Tools and commands
 
@@ -142,6 +142,7 @@ left in spreadsheets or sandboxes.
 - [TH-NPSP] https://trailhead.salesforce.com/content/learn/projects/import-your-data-using-npsp-data-importer/perform-an-import-dry-run
 - [TH-ROLLUP] https://trailhead.salesforce.com/content/learn/projects/create-an-opportunity-record-type-for-npsp/customize-rollups-to-exclude-an-opportunity-record-type
 - [PLUGIN-DATA] https://raw.githubusercontent.com/salesforcecli/plugin-data/main/README.md
+- [BULK-DATE] Bulk API date format, read as a search extract (**verify**): https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/datafiles_date_format.htm
 - [PLUGIN-LIMITS] https://raw.githubusercontent.com/salesforcecli/plugin-limits/main/README.md
 - [DG-RT] https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered
 - [WA-R] https://architect.salesforce.com/docs/architect/well-architected/guide/reliability.html

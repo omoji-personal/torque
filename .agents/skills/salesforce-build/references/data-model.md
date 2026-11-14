@@ -72,7 +72,8 @@ true only with a recorded reason.
 ## 4. Picklists
 
 - A restricted picklist rejects values outside its set; an unrestricted one accepts any text
-  from the API, which no report can then group [ADV `restricted-picklist-rejects-new-values`].
+  from the API, so stray spellings collect in the data and split counts
+  [ADV `restricted-picklist-rejects-new-values`].
   Restrict new picklists unless free text is intended. By hand: `restricted` in `valueSet`
   (lead).
 - A restricted picklist also rejects a value that is merely inactive, even on a record that
@@ -106,8 +107,12 @@ Rules on the platform run for every way in: page, API, loads and integrations [P
 5. If a load or integration must skip the rule, bypass through a custom permission:
    `NOT($Permission.Bypass_Name)` in the condition, granted by permission set (**verify**).
    Never name a profile or a user.
-6. Deploy a new rule active to the sandbox and inactive to production. Activation is its own
-   approved step, with the runbook written first (field-reported).
+6. A rule deploys with the `active` value its file holds; production does not hold it back
+   (**verify** with the check below). Practice where a rule could block live users or integrations
+   (field-reported): `<active>true</active>` in the sandbox, `<active>false</active>` in the
+   file for the first production deploy, then activation as its own approved step with the
+   runbook written first. Check: the `active` value in the file you deploy, and the rule's
+   Active flag in Setup after the deploy.
 
 Check: `[check: rule.no-error-message, rule.hard-coded-id, rule.profile-or-user-literal,
 doc.description-missing]`. After deploy, save one record

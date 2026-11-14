@@ -104,7 +104,7 @@ Sources: [F-BASICS] [DG-RT] [P-DATA]. The row choices are judgement.
 | Endpoints and secrets | Named credential with an external credential | Rotated without a code change; access by permission set |
 | Text a user reads | Custom label | Deployable and translatable |
 | Reference data the business owns and reports on | Records of a custom object | Data with sharing, history and reports |
-| Never | Ids or values in formulas, flows or code; secrets in settings or custom metadata | Named anti-patterns [P-AUTO] |
+| Never | Record Ids, org URLs and user or profile names as literals in formulas, flows or code; values an admin must change, buried in them; secrets in settings or custom metadata | Named anti-patterns [P-AUTO] |
 
 - A custom setting's values do not travel with a deployment, and after a sandbox refresh they
   come back as production's values (field-reported). List them in the post-refresh steps.
