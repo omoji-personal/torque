@@ -259,6 +259,16 @@ def _harvest_state(workspace: Path) -> Path:
     return storage.state_dir(workspace) / "harvest.json"
 
 
+WITHHELD = "(withheld: it holds a credential-looking value; open the file to read it)"
+
+
+def _shown(text: str) -> str:
+    """A host note's name or first line as a harvest may print it: scrubbed whole before it
+    is cut short, and withheld when the scrub would refuse it as a lesson."""
+    cleaned, found = scrubber.scrub(text[:4000])
+    return WITHHELD if found.refused else cleaned
+
+
 def _walk(scopes: Scopes, folder: Path) -> tuple[list[Path], dict]:
     """The Markdown files under a host's memory folder that a harvest may open, and what
     was left out: the folders of other clients and initiatives (pruned, never entered),
@@ -341,9 +351,9 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
         except OSError:
             continue
         first = next((line.strip(" #*-") for line in body.splitlines() if line.strip(" #*-")), "")
-        files.append({"name": meta.get("name") or path.stem,
+        files.append({"name": _shown(meta.get("name") or path.stem),
                       "type": meta.get("type") or (path.stem.split("_", 1)[0] if "_" in path.stem else ""),
-                      "description": (meta.get("description") or first)[:160],
+                      "description": _shown(meta.get("description") or first)[:160],
                       "modified": datetime.fromtimestamp(modified, timezone.utc).date().isoformat(),
                       "path": str(path)})
     report.update(files=files, found=True, skipped=skipped)

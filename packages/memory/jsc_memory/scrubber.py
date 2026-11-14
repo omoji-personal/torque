@@ -3,7 +3,8 @@
 Every scope:
   refused  credential-looking values: session and access tokens, sign-in addresses that
            carry one (front door, auth URL), authorization headers, private keys, provider
-           tokens, `password=...` style assignments
+           tokens, and a value after an explicit secret label (password, passcode, secret,
+           token, API key, client secret, session id), in an assignment or in prose
   masked   email addresses, phone numbers, social security numbers, Salesforce record and
            org Ids; invisible characters are removed
 
@@ -12,8 +13,9 @@ Firm scope, because a firm lesson is shown for every client:
            host names
 
 A refusal names the class of what was found (with `--json`, also how often), never the
-value. This is an aid, not proof that a text is safe to share: it knows shapes and this
-workspace's client list, not every name a person could write.
+value. This is a heuristic, not proof that a text is safe to share: it knows shapes and
+this workspace's client list, not every name a person could write or every way to write a
+secret (docs/lessons.md lists what it lets through).
 """
 from __future__ import annotations
 
@@ -52,11 +54,66 @@ _CREDENTIALS = (
         r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}"
         r"|sk-(?:proj-|ant-)?[A-Za-z0-9_\-]{32,}|xox[baprs]-[A-Za-z0-9\-]{24,}"
         r"|eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})"), None),
-    ("password or secret", re.compile(
-        r"(?i)\b(?:password|passwd|pwd|passphrase|secret|client[_-]?secret|consumer[_-]?secret|api[_-]?key"
-        r"|access[_-]?token|refresh[_-]?token|security[_-]?token|auth[_-]?token|sfdx[_-]?auth[_-]?url)"
-        r"\b[\"']?\s*[:=]\s*[\"']?([^\s\"',;}]{6,})"), 1),
 )
+
+# A value written after an explicit secret label. The label decides, not what the value
+# is made of: `password=onlyletters` and `The password is "X"` are refused alike.
+_LABEL = (r"(?:pass(?:word|wd|phrase|code)|client[ _-]?secret|consumer[ _-]?secret|secret|api[ _-]?key"
+          r"|(?:access|refresh|security|auth|session)[ _-]?token|token|session[ _-]?id|sfdx[ _-]?auth[ _-]?url)")
+_VALUE = r"(?:\"(?P<dq>[^\"\n]{1,200})\"|'(?P<sq>[^'\n]{1,200})'|`(?P<bq>[^`\n]{1,200})`|(?P<bare>[^\s\"'`,;<>]+))"
+_START = r"(?i)(?<![A-Za-z0-9:])"             # not inside a command name such as force:user:password:generate
+_LABELLED = (
+    # password=..., "api_key": "...", password:value, sid=...
+    ("assignment", re.compile(_START + r"(?:" + _LABEL + r"|pwd|sid)[\"']?[ \t]*(?:=|:(?=\S))[ \t]*" + _VALUE)),
+    # --password VALUE, --client-secret=VALUE
+    ("assignment", re.compile(r"(?i)(?<![A-Za-z0-9-])--(?:password|passwd|passcode|secret|client-secret|token"
+                              r"|access-token|api-key)(?:[ \t]+|=)" + _VALUE)),
+    # password: value
+    ("prose", re.compile(_START + r"(?:" + _LABEL + r"|pwd)[\"']?[ \t]*:[ \t]+" + _VALUE)),
+    # The password is "X"; the API key for the sync user was X; the token was set to X
+    ("prose", re.compile(_START + _LABEL + r"(?:[ \t]+(?:for|of)[ \t]+[^\n.:;\"'`]{1,40}?)?[ \t]+"
+                         r"(?:(?:(?:is|was)[ \t]+)?(?:set|changed|reset)[ \t]+to|is|was|were|are|reads|becomes"
+                         r"|became)[ \t]+" + _VALUE)),
+)
+_WORDLIKE = re.compile(r"[A-Za-z]+(?:[-/][A-Za-z]+)*")
+_VARIABLE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")      # SF_PASSWORD: the name of where it is kept
+
+
+def _placeholder(value: str) -> bool:
+    """A stand-in, not a value: <token>, $TOKEN, %TOKEN%, {{token}}, ****, xxxx, ..., an
+    environment variable's name, or a word such as `required` or `redacted`."""
+    return (not value or value[0] in "<${%*[(" or value.lower() in _PLACEHOLDERS or len(set(value.lower())) <= 1
+            or value in ("...", "…") or bool(_VARIABLE.fullmatch(value)))
+
+
+def _labelled_secrets(text: str) -> int:
+    """How many distinct values follow an explicit secret label. Quoted, or in an
+    assignment, any value counts (four characters or more unquoted). Unquoted in prose
+    (`the token is short-lived`), a value counts when it does not read as a word: six
+    characters or more with a digit or a symbol, or twenty or more of anything."""
+    spans: list[tuple[int, int]] = []
+    for form, pattern in _LABELLED:
+        for match in pattern.finditer(text):
+            group = next(name for name in ("dq", "sq", "bq", "bare") if match.group(name) is not None)
+            start, end = match.span(group)
+            if any(start < other_end and other_start < end for other_start, other_end in spans):
+                continue
+            if text[max(0, match.start() - 16):match.start()].lower().rstrip().endswith("unexpected"):
+                continue                          # a parser's "unexpected token: 'ALL'", not a credential
+            value = match.group(group).strip()
+            if group != "bare":
+                refused = not _placeholder(value) and len(value.split()) <= 4    # more words: a sentence in quotes
+            else:
+                value = value.rstrip(".,;:)!?")
+                if _placeholder(value):
+                    refused = False
+                elif form == "assignment":
+                    refused = len(value) >= 4
+                else:
+                    refused = len(value) >= 20 or (len(value) >= 6 and not _WORDLIKE.fullmatch(value))
+            if refused:
+                spans.append((start, end))
+    return len(spans)
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?:\+?\d{1,3}[\s.\-])?\(\d{3}\)\s?\d{3}[\s.\-]?\d{4}|(?<![\d.])\d{3}[\s.\-]\d{3}[\s.\-]\d{4}(?![\d.])")
@@ -149,9 +206,12 @@ def scrub(text: str, *, firm_terms: list | None = None, generalize: bool = False
         count(found.masked, "invisible characters", removed)
     for name, pattern, value_group in _CREDENTIALS:
         for match in pattern.finditer(text):
-            least = 6 if name in ("password or secret", "address with a password") else 12
+            least = 6 if name == "address with a password" else 12
             if value_group is None or _secret_like(match.group(value_group), least):
                 count(found.refused, name)
+    labelled = _labelled_secrets(text)
+    if labelled:
+        count(found.refused, "password or secret", labelled)
     firm = firm_terms is not None
 
     def firm_hit(name: str) -> str | None:

@@ -36,6 +36,55 @@ def test_a_credential_looking_value_refuses_the_text_and_is_never_echoed(name):
         assert secret not in message
 
 
+FAKE = "Fake" + "Only"                 # assembled, so no tracked line reads as a label followed by a value
+LABELLED = {
+    "prose, quoted, mixed": 'The password is "' + FAKE + '!Mix3d999"',
+    "prose, quoted, lowercase": "the client secret was '" + FAKE.lower() + "letters'",
+    "prose, quoted, digits": "The passcode is `" + "40" + "81 9921`",
+    "prose, quoted, passphrase": 'the passphrase is "correct ' + 'horse battery staple"',
+    "prose, for whom": "The password for the integration user is " + FAKE + "2026x",
+    "prose, set to": "The API key was set to " + "a1b2" + "c3d4e5f6",
+    "prose, session id": "the session id is " + "0f9e8d7c" + "6b5a4321",
+    "prose, long letters": "the token is " + "qwertyuiop" + "asdfghjklzxcv",
+    "assignment, lowercase": "pass" + "word=" + "correcthorse" + "batterystaple",
+    "assignment, digits": "pass" + "code = " + "48" + "151623",
+    "assignment, no space after colon": "pass" + "word:" + "onlyletters",
+    "assignment, prefixed name": "db_pass" + "word=" + "plainword",
+    "assignment, json": '{"api_' + 'key": "' + "abcd" + 'efgh"}',
+    "assignment, flag": "sf org create user --pass" + "word " + "simpleword",
+    "assignment, sid": "s" + "id=" + "letters" + "only",
+}
+
+
+@pytest.mark.parametrize("name", sorted(LABELLED))
+def test_a_value_after_an_explicit_secret_label_is_refused_whatever_it_is_made_of(name):
+    text = LABELLED[name]
+    cleaned, found = scrubber.scrub(text)
+    assert found.refused == {"password or secret": 1}, name
+    message = found.refusal("client")
+    assert "password or secret" in message
+    value = text.split()[-1].strip("\"'`{}")
+    assert value[2:] not in message
+
+
+@pytest.mark.parametrize("text", [
+    "The token is short-lived, so ask for a new one per run.",
+    "The password is stored in the vault, never in the repository.",
+    "The API key for the sync user is kept in a named credential.",
+    "The session id is printed by `sf org display` on older CLIs.",
+    "The token is valid for 2 hours.",
+    "MALFORMED_QUERY, unexpected token: 'ALL' on a query that works from Apex.",
+    "`force:user:password:generate` is the old name of the command.",
+    "password=<value>, password=****, password=$SF_PASSWORD, token=SF_ACCESS_TOKEN, secret=%CLIENT_SECRET%",
+    'The password is "<the one in the vault>".',
+    'The token is "the long value the server returns after sign-in".',
+    "Rotate the client secret; the passwords are reset monthly.",
+])
+def test_ordinary_prose_about_secrets_is_left_alone(text):
+    cleaned, found = scrubber.scrub(text)
+    assert found.refused == {} and cleaned == text
+
+
 @pytest.mark.parametrize("text", [
     "Never put a token in the address: no `token=` inside any endpoint string.",
     "Sign in through /secur/frontdoor.jsp?sid=<SESSION_ID> with a helper that never prints the address.",

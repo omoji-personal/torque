@@ -115,6 +115,27 @@ def test_refusals_say_the_class_never_the_value_and_exit_4(run, workspace):
     assert not (workspace / "lessons").exists() and not (workspace / "clients" / "alpha" / "lessons").exists()
 
 
+def test_a_labelled_secret_in_prose_or_lowercase_is_refused_and_never_written(run, workspace):
+    for secret, text in (("Mix3d" + "!Synthetic9", 'The password is "{}"'),
+                         ("onlylower" + "caseletters", "pass" + "word={}")):
+        code, out, err = run("add", text.format(secret), "--json")
+        assert code == 4 and secret not in out + err and "password or secret" in err
+    assert not any(path.is_file() for path in workspace.rglob("L-*.md"))
+
+
+def test_harvest_withholds_a_host_note_line_that_holds_a_credential(run, workspace, tmp_path):
+    memory = tmp_path / "host-memory"
+    memory.mkdir()
+    secret = "Mix3d" + "!Synthetic9"
+    (memory / "reference_login.md").write_text(f"The sandbox pass{'word'} is \"{secret}\"\n", encoding="utf-8")
+    (memory / "feedback_mail.md").write_text("Write to jane.doe@example.org first\n", encoding="utf-8")
+    code, out, err = run("harvest", "--host", "claude", "--dir", str(memory), "--json")
+    rows = {row["name"]: row["description"] for row in json.loads(out)["files"]}
+    assert code == 0 and secret not in out + err
+    assert rows == {"reference_login": "(withheld: it holds a credential-looking value; open the file to read it)",
+                    "feedback_mail": "Write to <email> first"}
+
+
 def test_for_prints_one_line_and_exits_zero_when_nothing_matches(run):
     code, out, err = run("for", "quantum", "chromodynamics")
     assert (code, err) == (0, "") and out.strip() == (

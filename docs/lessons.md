@@ -163,12 +163,39 @@ day, a capture without a session record is not a new occasion.
 
 | Scope | Refused | Masked |
 | --- | --- | --- |
-| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, authorization headers, private keys, provider tokens, `password=...` style assignments | email addresses, phone numbers, social security numbers, Salesforce record and org Ids; invisible characters are removed |
+| every scope | credential-looking values: session and access tokens, sign-in addresses that carry one, authorization headers, private keys, provider tokens, and a value after an explicit secret label (below) | email addresses, phone numbers, social security numbers, Salesforce record and org Ids; invisible characters are removed |
 | firm | also the names, slugs and org aliases of this workspace's clients, org Ids and org host names | |
 
-A refusal names the class of what was found, never the value, and exits 4. The scrub
-knows shapes and this workspace's client list, not every name a person could write: it
-is an aid, and a firm lesson is still read by a person before it is shared.
+The same scrub runs wherever text enters a lesson or its log: `lesson add`, `session
+add --learned`, `edit`, a stale reason, a helpful note, evidence references, `migrate`,
+`promote` (proposal and apply). `harvest` prints a host note's line only after the same
+check, and withholds it when the check would refuse it. A refusal names the class of
+what was found, never the value, and exits 4.
+
+Explicit secret labels are password, passphrase, passcode, secret, client or consumer
+secret, API key, token (also access, refresh, security, session token), session id and
+`sfdx auth url`. After one of them:
+
+- an assignment (`password=...`, `password:value`, `"api_key": "..."`, `--password
+  VALUE`) is refused whatever the value is made of, from four characters;
+- a quoted value in prose (`The password is "..."`) is refused whatever it is made of,
+  unless the quotes hold a sentence of more than four words;
+- an unquoted value in prose (`the token is ...`, `password: ...`) is refused when it
+  does not read as a word: six characters or more with a digit or a symbol, or twenty or
+  more of anything. `The token is short-lived` and `the password is stored in the vault`
+  pass.
+
+Placeholders pass: `<value>`, `$NAME`, `%NAME%`, `{{name}}`, `****`, `...`, an
+environment variable's name (`SF_PASSWORD`) and words such as `required` or `redacted`.
+
+The scrub is a heuristic: it catches known shapes, not every secret or every name. Known
+ways through, by design: an unquoted ordinary word as a password in prose (`the password
+is swordfish`), a word between the verb and the value (`the password is now ...`), a
+value under four characters, a secret with no label and no known token shape, a quoted
+value that starts like a placeholder (`"$..."`), and anything said in an unusual way.
+Firm scope knows this workspace's registered client names, slugs and aliases, not
+people's names or a client's nickname. Read a lesson before it leaves its client: a
+firm lesson, and every promotion proposal, is read by a person before it is applied.
 
 ## Recall
 
