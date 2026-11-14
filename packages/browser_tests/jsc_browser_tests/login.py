@@ -209,6 +209,13 @@ def org_kind(identity: dict) -> str:
     return {True: "sandbox", False: "production"}.get(identity.get("is_sandbox"), "unknown")
 
 
+def org_edition(identity: dict) -> str:
+    """The org's edition as the Organization query names it, or "". A Developer Edition org is
+    "production" by the platform's sandbox flag; printing the edition beside it says what it is."""
+    edition = identity.get("organization_type")
+    return edition.strip() if isinstance(edition, str) else ""
+
+
 def wrong_user(alias: str, username: str, expected: str) -> str | None:
     """Why the alias's user is not the user the seed's role records, or None."""
     if not expected or username.casefold() == expected.casefold():
@@ -372,9 +379,12 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
     username = outcome.minted.username
     user_id = user_id_of(plan.client, username)
     kind = org_kind(plan.identity)
+    edition = org_edition(plan.identity)
     event = {"event": "redirected", "org_id": plan.identity["org_id"], "org_kind": kind,
+             "org_edition": edition or None,
              "username": username or None, "user_id": user_id, "org_check": plan.org_check}
-    text = (f"Redirect sent: org {plan.identity['org_id']} ({kind}), user {username or 'unknown'}"
+    text = (f"Redirect sent: org {plan.identity['org_id']} ({kind}{', ' + edition if edition else ''}), "
+            f"user {username or 'unknown'}"
             f"{', User Id ' + user_id if user_id else ''}; {plan.org_check}.")
     if plan.alias != plan.target_alias:
         event["as_alias"] = plan.alias
@@ -389,7 +399,9 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
     output.result(text, **event)
     output.hint("Wait until the tab shows the org (an action sent while it still redirects can fail), then confirm "
                 "the signed-in user in the page before testing. A login page means the sign-in failed: retry once, "
-                "then stop and report; never type or ask for a password.")
+                "then stop and report; never type or ask for a password. A \"Change Your Password\" page means the "
+                "sign-in worked and that user's password has expired: only the consultant can change it, and the "
+                "CLI and API keep working meanwhile.")
     return EXIT_OK
 
 
