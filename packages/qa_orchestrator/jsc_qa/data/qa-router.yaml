@@ -9,7 +9,7 @@ surfaces:
       and/or by a strict SHA-256-fingerprinted local package.xml to report terminal
       success in the explicit target-org context
     status: production
-    invocation: jsc-qa run <change-description> --org <alias> --deploy-job-id <0Af...>
+    invocation: torque qa run <change-description> --org <alias> --deploy-job-id <0Af...>
       (--deploy-manifest <package.xml> and/or --deploy-component <TYPE:FULL_NAME>
       [...]) (invokes sf project deploy report --target-org <alias> --job-id <0Af...>
       --json; rejects manifest wildcards, never uses most-recent, and excludes package.xml
@@ -42,10 +42,10 @@ surfaces:
     description: 'Side-effect verification: SOQL post-check + jsc_loganalyzer health
       score (packages/debug_log_analyzer)'
     status: production
-    invocation: jsc_loganalyzer.cli --target-org <explicit-org>
+    invocation: torque logs --target-org <explicit-org>
   Parity:
-    description: Cross-org per-field SOQL parity check (verify-deploy.py); DATA rows
-      only
+    description: Cross-org per-field SOQL parity check (the client's own script, named
+      in config/parity.json); DATA rows only
     status: production
     invocation: TORQUE_PARITY_SCRIPT with explicit TORQUE_BASELINE_ORG
   Vision:
@@ -70,8 +70,8 @@ surfaces:
     status: available_draft_generation
     invocation: "Auto-invoked when /qa change-description names .cls paths (.trigger\
       \ paths are filtered + surfaced as dropped \u2014 jsc_probes does not yet support\
-      \ trigger-aware synthesis per R1-Codex-007). Also accessible directly: PYTHONPATH=packages/adversarial_probes\
-      \ python3 -m jsc_probes.cli --target-class <file> --output <dir>. Honors JSC_QA_ADV_PROBE_MAX_FILES\
+      \ trigger-aware synthesis per R1-Codex-007). Also accessible directly: torque probes\
+      \ --target-class <file> --output <dir>. Honors JSC_QA_ADV_PROBE_MAX_FILES\
       \ (default 10, min 1), JSC_QA_ADV_PROBE_BUDGET_S (default 300, min 10), JSC_QA_ADV_PROBE_OUT\
       \ (default per-dispatch uuid'd subdir under $TMPDIR; if operator-set, must be\
       \ a writable directory; existing generated files are preserved)."
@@ -81,11 +81,10 @@ surfaces:
     status: deferred
     invocation: No global command hooks installed
   TAA:
-    description: Multi-model adversarial audit (Claude + Gemini + Codex per multi-model-audit.md)
+    description: Multi-model adversarial audit (three independent model reviews and a synthesis)
     status: production
-    invocation: scripts/run-taa-audit.sh OR manual dispatch per multi-model-audit.md
-    cost_warning: "EXPENSIVE \u2014 reserve for behavioral-rule changes + ship-gates\
-      \ per multi-model-audit.md"
+    invocation: Manual dispatch of the reviews when the consultant asks; Torque ships no runner
+    cost_warning: "EXPENSIVE \u2014 reserve for behavioral-rule changes + ship-gates"
   Hostile-QA:
     description: Adversarial QA via hostile-qa-auditor subagent (Opus)
     status: production

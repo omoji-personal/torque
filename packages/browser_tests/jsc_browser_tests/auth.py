@@ -61,7 +61,7 @@ class BrowserSession:
       token cannot carry the second factor and Salesforce serves the login form instead.
     * **cdp** — attach to a browser the OPERATOR already launched and authenticated. Required for
       passkey orgs: automation-launched Chrome disables extensions, so a password manager holding
-      the passkey is unreachable by construction. See docs/browser-testing-authenticated-setup.md.
+      the passkey is unreachable by construction. See docs/browser-sign-in.md.
     """
     page: object
     channel: str          # "frontdoor" | "cdp"

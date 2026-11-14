@@ -81,13 +81,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--since-deploy",
         action="store_true",
         help="Back-compat alias: enable bounded recent-log analysis using the "
-             "default lookback window (now - %ds). A PostToolUse hook has no "
-             "pre-deploy timestamp, so this is a bounded approximation, NOT a "
-             "true deploy-start capture. Equivalent to --since <now-%ds>. The "
-             "post-deploy hook supplies an explicit --since instead." % (
+             "default lookback window (now - %ds). It does not know when the "
+             "deploy started, so this is a bounded approximation, NOT a "
+             "true deploy-start capture. Equivalent to --since <now-%ds>; pass "
+             "--since with the deploy's start time instead when you know it." % (
                  DEFAULT_LOOKBACK_SECONDS, DEFAULT_LOOKBACK_SECONDS),
     )
-    parser.add_argument("--json", action="store_true", help="Emit JSON output (consumed by post-deploy hooks)")
+    parser.add_argument("--json", action="store_true", help="Emit JSON output")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-finding output")
     return parser.parse_args(argv)
 

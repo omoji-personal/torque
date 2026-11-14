@@ -35,7 +35,7 @@
       "source_path": "packages/qa_orchestrator/qa-router.yaml",
       "source_sha256": "d9f1c7a56817580d7692405aaf4d64bf79b94576bf0d2d88a6abf402688119bd",
       "source_tracked": true,
-      "destination_sha256": "cbda6710edeb91b21dc4f102292c8c4297e03915a96078a8875bcb89ae6c1540",
+      "destination_sha256": "b54b44ddbeb89fdc7fb854801f8069f0102e9ddd5b409fe009bf93fd775f67f0",
       "adapted": true
     },
     {
@@ -98,7 +98,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
       "source_sha256": "d37863fc4bb6f32935244976631e9a0fe509c3660d67df4968f5b13e87e8c20d",
       "source_tracked": true,
-      "destination_sha256": "4e588bca82b48cfd7ec57ac005324815cd13c155272906761fafc21382fe3479",
+      "destination_sha256": "6e582461b34dcac69a598ad75089b38527c17ca34292d7d47de2944d4dd6c50e",
       "adapted": true
     },
     {
@@ -620,7 +620,7 @@
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
       "source_sha256": "9e4f018f0645b45951bb8339c7069fd49c308f1242b3958b8313b6adf5a6856e",
       "source_tracked": true,
-      "destination_sha256": "9b0bce28e0aee67afd028552470dbfcd2abc5d857da37f2e7da1861eccfd791e",
+      "destination_sha256": "524462ddd194f9f6ec0604fdc3c7541d015625783700eed85908cbb06817d2c3",
       "adapted": true
     },
     {
@@ -737,7 +737,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "5e4d254244e76bc454469091ca07b57a3277066630909ac3a073169104a86705",
+      "destination_sha256": "36f736a1ecaa74b506be9c51c007e64a0d13c164fb5bccb3cbfd829463547670",
       "adapted": true
     },
     {
@@ -764,7 +764,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/vision.py",
       "source_sha256": "60fa4ccb2379b4827eaaa92ea8e6b41ca01e2abbdf2a5f7925c278f31dbfb394",
       "source_tracked": true,
-      "destination_sha256": "de8756a0eb632cab6a57cc5adbcb231bb4fbe39cd15e6d979a29854fc2613ce4",
+      "destination_sha256": "22387dfbfb392ba86cab6dc7698d6c85ea20eca301dd9646222c17d4290025af",
       "adapted": true
     },
     {
@@ -1169,7 +1169,7 @@
       "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/harness.py",
       "source_sha256": "a5794b54bb021fd20706ccbcef50515fd95e43ea549803025ac0181bed2d5dec",
       "source_tracked": true,
-      "destination_sha256": "2ef26d92696900bf81fb2ad3d22e7f9e20acfdf0ebc6cd0c33823b66eb6efce9",
+      "destination_sha256": "1fc5536079b523760b5a1be7b85fedaa3fa0c6df50a4cc5b39ea6fa7eca15c68",
       "adapted": true
     },
     {
