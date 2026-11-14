@@ -151,6 +151,33 @@ def test_paths_tell_types_from_names_folders_and_manifests(tmp_path):
     assert recall.build_query(paths=[str(manifest)], tasks=["Deploy"]).types == ["Layout"]
 
 
+def test_a_path_is_never_looked_into_inside_another_clients_or_initiatives_folder(workspace, scopes):
+    def source(owner, folder, name):
+        target = workspace / owner / "force-app" / "main" / "default" / folder
+        target.mkdir(parents=True)
+        (target / name).write_text("<x/>", encoding="utf-8")
+    source("clients/alpha", "flows", "Gift_Entry.flow-meta.xml")
+    source("clients/beta", "permissionsets", "Staff.permissionset-meta.xml")
+    source("initiatives/playbook", "layouts", "Account-Main.layout-meta.xml")
+    manifest = workspace / "clients" / "beta" / "package.xml"
+    manifest.write_text("<Package><types><members>*</members><name>Layout</name></types></Package>", encoding="utf-8")
+    alpha, beta, firm = scopes("alpha"), scopes("beta"), scopes(None)
+    theirs = workspace / "clients" / "beta"
+    for path in (theirs, theirs / "force-app", manifest, workspace / "initiatives" / "playbook"):
+        assert recall.path_types([str(path)], alpha) == [], path
+    # A folder above is walked without entering the others: only the selected client's names are read.
+    for path in (workspace, workspace / "clients"):
+        assert recall.path_types([str(path)], alpha) == ["Flow"], path
+        assert recall.path_types([str(path)], beta) == ["PermissionSet"], path
+        assert recall.path_types([str(path)], firm) == [], path
+    assert recall.path_types([str(workspace)], scopes("playbook")) == ["Layout"]
+    assert recall.find(alpha, paths=[str(theirs / "force-app")], limit=None).query.types == []
+    assert recall.find(beta, paths=[str(theirs / "force-app")], limit=None).query.types == ["PermissionSet"]
+    assert recall.path_types([str(manifest)], beta) == ["Layout"]
+    # What the name itself says is not a read: the caller typed it.
+    assert recall.path_types([str(theirs / "force-app" / "main" / "default" / "permissionsets")], alpha) == ["PermissionSet"]
+
+
 def test_a_lesson_prints_in_three_short_lines_and_the_block_ends_with_the_standing_note(scopes):
     alpha = scopes("alpha")
     save(alpha, "client", "a3f2", types=["CustomField"], when="you are about to deploy a new custom field",

@@ -90,6 +90,14 @@ def test_apply_writes_the_firm_copy_without_client_words_and_marks_the_source(ru
         code, out, _ = run("promote", "--apply", proposal)
         assert code == 0 and "Already applied" in out
     assert len(storage.load(scopes(None))) == 1
+    # An apply that stopped between its two writes is finished by running it again: no second firm lesson.
+    source = storage.load(alpha, only="client")[0]
+    source.promoted_to = []
+    storage.save(source, alpha.folder("client"))
+    code, out, _ = run("promote", "--apply", made["proposal"], "--json")
+    assert code == 0 and json.loads(out)["status"] == "applied"
+    assert [one.id for one in storage.load(scopes(None))] == [copy.id]
+    assert storage.load(alpha, only="client")[0].promoted_to == [f"firm:{copy.id}"]
 
 
 def test_apply_refuses_text_that_still_identifies_a_client_and_needs_the_sources_client(run, workspace, scopes):
@@ -106,9 +114,19 @@ def test_apply_refuses_text_that_still_identifies_a_client_and_needs_the_sources
     # A proposal is applied from the scope of its source lesson, never from another client's.
     with open(path, "w", encoding="utf-8", newline="\n") as stream:
         stream.write(edited.replace("for Alpha Nonprofit to the org", "for the client to the org"))
-    assert run("promote", "--apply", path, client="beta")[0] == 1
+    # Selected for another client, the proposal is not even read: it lies in this client's folder.
+    code, out, err = run("promote", "--apply", path, client="beta")
+    assert code == 2 and "another client" in err and "flow" not in (out + err).lower()
+    copied = workspace / "promote-copy.md"
+    copied.write_text(open(path, encoding="utf-8").read(), encoding="utf-8")
+    assert run("promote", "--apply", str(copied), client="beta")[0] == 1      # outside it: beta has no such lesson
     assert run("promote", "--apply", path, client=None)[0] == 2
     assert run("promote", "--apply", str(workspace / "nothing.md"))[0] == 2
+    # A lesson retired since the proposal was written is not promoted.
+    assert run("retire", item.id, "--reason", "no longer how the client works")[0] == 0
+    code, _, err = run("promote", "--apply", path)
+    assert code == 2 and "is retired now" in err and storage.load(scopes(None)) == []
+    assert run("restore", item.id)[0] == 0
     assert run("promote", "--apply", path)[0] == 0
 
 
@@ -316,6 +334,9 @@ def v1_store(workspace, slug="alpha"):
     (folder / "_archive" / "1794667931-61478dc32be7.json").write_text(json.dumps(old(
         "61478dc32be72222", "An old lesson that was archived", "archive", stale_count=2)), encoding="utf-8")
     (folder / "_review_queue" / "1794660000-handedited00.json").write_text("{broken", encoding="utf-8")
+    (folder / "_review_queue" / "1794660002-oddtimes0000.json").write_text(json.dumps(old(
+        "0dd71e5000000000", "A lesson whose times are not times", "active", captured_at=10 ** 18,
+        last_seen="yesterday")), encoding="utf-8")
     (folder / "_review_queue" / "1794660001-secret.json").write_text(json.dumps(old(
         "5ec4e70000000000", "the password: " + "Wint3r" + "!Pass99 opens the org", "review_pending")),
         encoding="utf-8")
@@ -327,10 +348,13 @@ def test_v1_json_lessons_import_once_and_the_old_files_stay(run, workspace, scop
     old_files = {path.name: path.read_bytes() for path in folder.rglob("*") if path.is_file()}
     code, out, _ = run("migrate", "--json")
     report = json.loads(out)
-    assert code == 0 and len(report["imported"]) == 4 and report["already"] == 0
+    assert code == 0 and len(report["imported"]) == 5 and report["already"] == 0
     assert sorted(problem["reason"] for problem in report["problems"]) == [
         "not imported: password or secret in its text", "not readable JSON"]
     lessons = {item.id: item for item in storage.load(scopes("alpha"))}
+    # A record whose times cannot be read is dated today and has no day of last use.
+    odd = lessons.pop(f"L-{record.today().replace('-', '')}-0dd71e5000000000")
+    assert (odd.state, odd.created, odd.last_verified) == ("active", record.today(), "")
     assert set(lessons) == {"L-20261114-a5f651d444ee6978", "L-20261114-0a6c725697530000",
                             "L-20261114-9557e450044a1111", "L-20261114-61478dc32be72222"}
     pending = lessons["L-20261114-a5f651d444ee6978"]
@@ -347,11 +371,11 @@ def test_v1_json_lessons_import_once_and_the_old_files_stay(run, workspace, scop
     # Idempotent: a second run imports nothing and changes no lesson file.
     files = lesson_files(workspace)
     code, out, _ = run("migrate")
-    assert code == 0 and out.startswith("Imported 0 lesson(s) from the earlier store; 4 were already imported.")
+    assert code == 0 and out.startswith("Imported 0 lesson(s) from the earlier store; 5 were already imported.")
     assert lesson_files(workspace) == files
     # Only the selected client is read; another client's old store is left alone.
     v1_store(workspace, "beta")
     assert storage.load(scopes("beta"), only="client") == []
     assert run("migrate", client=None)[0] == 2
     code, out, _ = run("migrate", client="beta")
-    assert code == 0 and len(storage.load(scopes("beta"), only="client")) == 4
+    assert code == 0 and len(storage.load(scopes("beta"), only="client")) == 5

@@ -17,8 +17,15 @@ from .storage import Scopes, Tally
 
 # What `torque lesson edit --set` may change. The id, the scope and the creation date are
 # fixed; evidence is added with `verify`, and the body is edited in the file.
-EDITABLE = ("title", "when", "do", "because", "kind", "state", "source", "last_verified", "review_by",
+EDITABLE = ("title", "when", "do", "because", "kind", "last_verified", "review_by",
             "supersedes", "promoted_to", *(f"applies.{name}" for name in record.APPLIES))
+# State and source decide whether a lesson is shown at the point of use, so they change
+# only through the commands that record why.
+ELSEWHERE = {
+    "state": "a candidate becomes active on a basis (`torque lesson verify ID --evidence ...`); a lesson leaves "
+             "with `torque lesson retire ID --reason ...` and comes back with `torque lesson restore ID`",
+    "source": "where a lesson comes from is fixed when it is saved; when the consultant confirms it, record that "
+              "with `torque lesson verify ID --evidence consultant-said`"}
 
 
 class ReadOnly(LessonError):
@@ -171,6 +178,8 @@ def edit(scopes: Scopes, wanted: str, assignments) -> tuple[Lesson, list[str]]:
     for assignment in assignments or ():
         key, separator, value = str(assignment).partition("=")
         key = key.strip()
+        if separator and key in ELSEWHERE:
+            raise LessonError(f"`{key}` is not set here: {ELSEWHERE[key].replace(' ID', ' ' + item.id)}.")
         if not separator or key not in EDITABLE:
             raise LessonError(f"cannot set `{key or assignment}`. Use key=value with one of: {', '.join(EDITABLE)}. "
                               "For the body or the evidence, edit the file or use `verify --evidence`.")

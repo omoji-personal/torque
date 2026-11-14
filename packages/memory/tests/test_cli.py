@@ -57,6 +57,8 @@ def test_add_then_find_show_list_and_search(run, workspace):
     code, out, _ = run("search", "metadata", "API")
     assert code == 0 and saved["id"] in out and out.startswith("Lessons that mention metadata API: ")
     assert run("search", "nothing-like-this")[1].startswith("No lessons to list")
+    # What a lesson applies to is searched too: its command pattern, its error matcher.
+    assert saved["id"] in run("search", "sf project deploy")[1]
 
 
 def test_several_words_are_one_text_and_stdin_is_read_only_when_asked(run):
@@ -82,6 +84,25 @@ def test_a_lesson_needs_somewhere_to_live(run):
     # The firm lesson is listed for a client; the initiative's is not.
     listed = run("list", client="beta")[1]
     assert "Retrieve before you change anything" in listed and "initiative lesson" not in listed
+
+
+def test_a_file_in_another_clients_folder_is_not_read_whichever_option_names_it(run, workspace, tmp_path):
+    theirs = workspace / "clients" / "beta" / "notes.md"
+    theirs.write_text("---\nname: beta-note\ndescription: Beta gift entry detail\n---\nBeta keeps gifts in batches.\n",
+                      encoding="utf-8")
+    for option in ("--from-file", "--body-file"):
+        code, out, err = run("add", "what the note says", option, str(theirs))
+        assert code == 2 and "another client" in err and "batches" not in out + err and "gift entry" not in out + err
+    code, out, err = run("harvest", "--host", "claude", "--dir", str(theirs.parent))
+    assert code == 2 and "another client" in err and "beta-note" not in out + err
+    code, out, err = run("for", "--path", str(theirs.parent), "--json")
+    assert code == 0 and json.loads(out)["query"]["types"] == []
+    assert storage.load(storage.scopes_for(workspace / "clients" / "alpha")) == []
+    # Its own client reads it, and a file outside every client's folder is read for any client.
+    assert run("add", "what the note says", "--from-file", str(theirs), client="beta")[0] == 0
+    mine = tmp_path / "note.md"
+    mine.write_text("A note about deploying flows.", encoding="utf-8")
+    assert run("add", "what the note says", "--body-file", str(mine))[0] == 0
 
 
 def test_refusals_say_the_class_never_the_value_and_exit_4(run, workspace):

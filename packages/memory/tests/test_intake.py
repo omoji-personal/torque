@@ -152,6 +152,39 @@ def test_the_same_lesson_again_is_not_a_second_file(scopes):
     assert intake.add(scopes("beta"), text=FLOW, session="s1").status == "saved"
 
 
+def test_on_one_day_only_two_different_session_records_are_two_occasions(scopes):
+    alpha = scopes("alpha")
+    first = intake.add(alpha, text=FLOW)                      # on its own, outside any session record
+    again = intake.add(alpha, text=FLOW, session="s1")        # the same day: it may be the same work
+    assert (again.status, again.lesson.id) == ("duplicate", first.lesson.id)
+    assert storage.load(alpha)[0].state == "candidate"
+    # On another day it is a second occurrence, with or without a session record.
+    stored = storage.load(alpha)[0]
+    stored.created, stored.evidence[0]["date"] = "2026-01-05", "2026-01-05"
+    storage.save(stored, alpha.folder("client"))
+    assert intake.add(alpha, text=FLOW).status == "second-occurrence"
+    assert storage.load(alpha)[0].state == "active"
+
+
+def test_the_session_a_lesson_comes_from_is_scrubbed_and_kept_beside_other_evidence(scopes):
+    alpha = scopes("alpha")
+    mail = "pat@" + "example.org"
+    first = intake.add(alpha, text=FLOW, session="s1")
+    again = intake.add(alpha, text=FLOW, session=f"call with {mail}")
+    assert (again.status, again.lesson.id) == ("second-occurrence", first.lesson.id)
+    stored = storage.load(alpha)[0]
+    assert mail not in stored.path.read_text(encoding="utf-8")
+    assert stored.evidence[-1] == {"type": "second-occurrence", "ref": "session call with <email>",
+                                   "date": record.today()}
+    assert intake.add(alpha, text=FLOW, session=f"call with {mail}").status == "duplicate"
+    # Evidence given by hand does not drop the link to the session record.
+    other = intake.add(alpha, when="you change a flow", do="read the active version back",
+                       evidence=["reproduced:run 12"], session="s3").lesson
+    assert [(entry["type"], entry.get("ref")) for entry in other.evidence] == [("reproduced", "run 12"),
+                                                                              ("session", "session s3")]
+    assert other.state == "active"
+
+
 def test_a_similar_lesson_is_pointed_out_and_still_saved(scopes):
     alpha = scopes("alpha")
     first = intake.add(alpha, when="you compare a choice field in a flow formula", do="compare it to the choice resource")

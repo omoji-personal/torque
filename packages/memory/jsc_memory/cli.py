@@ -64,7 +64,11 @@ def _read_text(args: argparse.Namespace) -> str:
     return " ".join(words)
 
 
-def _file_text(path: str) -> str:
+def _file_text(path: str, scopes: Scopes) -> str:
+    if scopes.foreign(path):
+        raise LessonError(f"{path} lies in the folder of another client or initiative, and a lesson command does "
+                          "not read there. Select the client it belongs to (--client NAME) to keep its lesson "
+                          "with it.")
     try:
         with open(path, encoding="utf-8") as stream:
             return stream.read(storage.MAX_BYTES + 1)[:storage.MAX_BYTES]
@@ -74,10 +78,10 @@ def _file_text(path: str) -> str:
 
 def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
     text, title, source, evidence = _read_text(args), args.title or "", args.source, list(args.evidence)
-    body = _file_text(args.body_file) if args.body_file else ""
+    body = _file_text(args.body_file, scopes) if args.body_file else ""
     if args.from_file:
         # A note from a host's own memory: its text becomes the lesson, in the scope chosen here.
-        meta, note = intake.host_note(_file_text(args.from_file))
+        meta, note = intake.host_note(_file_text(args.from_file, scopes))
         title = title or meta.get("description") or meta.get("name") or ""
         body = "\n\n".join(part for part in (body, note) if part)
         source = source or "harvested"
@@ -163,8 +167,8 @@ def cmd_search(args: argparse.Namespace, scopes: Scopes) -> int:
     terms = [term.lower() for term in args.terms]
     rows = [(item, tally) for item, tally in _select(scopes, args, problems)
             if all(term in " ".join([item.id, item.title, item.when, item.do, item.because, item.body,
-                                     *item.applies["keywords"], *item.applies["tasks"],
-                                     *item.applies["types"]]).lower() for term in terms)]
+                                     *(word for name in record.APPLIES for word in item.applies.get(name, []))]
+                                    ).lower() for term in terms)]
     return _listing(args, scopes, rows, problems, f"Lessons that mention {' '.join(args.terms)}: {len(rows)}")
 
 

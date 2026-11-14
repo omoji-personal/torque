@@ -6,8 +6,9 @@
   platform    shipped with the package and read-only (see recall.platform_lessons)
 
 Read rule: the selected client or initiative, then the firm, then the platform. No
-other engagement's folder is opened, under any option. Write rule: the selected
-engagement by default, the firm when asked; nothing writes into the package.
+other engagement's lessons, events or files are read, under any option (the scrub reads
+each client's registration for its name: scrubber.workspace_terms). Write rule: the
+selected engagement by default, the firm when asked; nothing writes into the package.
 
 Events (shown, helpful, stale, verified, promoted, retired, restored) are appended to
 `.torque/lessons/events.jsonl` under the scope root: a client's events stay in that
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -87,6 +88,22 @@ class Scopes:
     def label(self) -> str:
         parts = [f"{self.kind} {self.slug}"] if self.engagement else []
         return " + ".join(parts + (["firm"] if self.workspace else []) + ["platform"])
+
+    def foreign(self, path: str | os.PathLike) -> bool:
+        """True for a path inside the folder of a client or an initiative of this workspace
+        other than the one selected. No lesson command reads there, whatever path it is
+        given (`--path`, `--from-file`, `--body-file`, `--dir`, a proposal)."""
+        if self.workspace is None:
+            return False
+        try:
+            here = os.path.normcase(str(Path(path).expanduser().resolve()))
+        except (OSError, RuntimeError, ValueError):
+            return True
+        own = os.path.normcase(str(self.engagement)) if self.engagement else None
+        if own and (here == own or here.startswith(own + os.sep)):
+            return False
+        return any(here.startswith(os.path.normcase(str(self.workspace / name)) + os.sep)
+                   for name in _FOLDERS.values())
 
     def shown(self, path: Path) -> str:
         """A path for a message: relative to the workspace when it lies inside it."""
@@ -271,7 +288,9 @@ def transaction(root: Path):
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    """The time of an event: local, with its offset, so that its first ten characters are
+    the same day a lesson's `created` and `last_verified` would say at that moment."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def events_path(root: Path) -> Path:

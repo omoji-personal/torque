@@ -52,8 +52,10 @@ Scopes are folders. One lesson is one Markdown file.
 | platform | shipped with Torque (`lessons/` in the source), read-only | everyone |
 
 A command reads the selected client or initiative, the firm and the platform. It never
-opens another client's folder, under any option. Without `--client` or `--initiative` it
-reads the firm and the platform; without `--workspace`, the platform only. New lessons
+reads another client's lessons, events or files, under any option. The one thing read
+of every client is its registration (`client.json`: name, slug, org alias), so that a
+firm lesson that names a client can be refused. Without `--client` or `--initiative` a
+command reads the firm and the platform; without `--workspace`, the platform only. New lessons
 go to the selected client or initiative; `--scope firm` is explicit; nothing writes into
 the package.
 
@@ -118,7 +120,9 @@ instruction: `--source consultant`, `--learned-from consultant`) or carries `rep
 A candidate becomes active on a basis: `torque lesson verify ID --evidence
 reproduced[:REF] | official-doc:URL | second-occurrence[:REF] | consultant-said`. The same
 lesson captured again on another occasion is recorded as a second occurrence, which
-admits it; captured again on the same occasion, nothing is added.
+admits it; captured again on the same occasion, nothing is added. Another occasion is
+another session record than the ones the lesson already names, or another day; on one
+day, a capture without a session record is not a new occasion.
 
 ## Capture
 
@@ -168,7 +172,9 @@ is an aid, and a firm lesson is still read by a person before it is shared.
   how recently the lesson was verified. With selectors a lesson must match at least one;
   when nothing matches, one line says so and the command exits 0.
 - `--path` infers the metadata type from a file name, a folder or a `package.xml`
-  (`*.flow-meta.xml` is Flow, `*.field-meta.xml` is CustomField, and so on).
+  (`*.flow-meta.xml` is Flow, `*.field-meta.xml` is CustomField, and so on). Only names
+  are read, links to folders are not followed, and a path inside the folder of another
+  client or initiative of the workspace is not looked into.
 - `--error` takes the first line of an error. It matches the lessons' error matchers and,
   for the advisory catalogue, a note whose title or symptom names the same error code or
   shares the error's wording.
@@ -200,7 +206,7 @@ never raises.
 | `verify ID [--evidence TYPE[:REF]]` | dates the lesson, sets the next review date, clears a stale mark, admits a candidate |
 | `retire ID --reason TEXT` | keeps the file, never shows the lesson |
 | `restore ID` | brings a retired lesson back, or clears a stale mark |
-| `edit ID --set key=value ...` | changes fields; lists as comma-separated words. The body is edited in the file |
+| `edit ID --set key=value ...` | changes fields; lists as comma-separated words. The body is edited in the file. State and source are not set here: they change through `verify`, `retire` and `restore`, which record why |
 | `show ID`, `list`, `search TERMS` | read; `show pending|active|archive` still lists by state |
 
 An id is the whole id or a unique start of at least four characters after the `L-`. An

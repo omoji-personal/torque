@@ -131,6 +131,9 @@ def _read(scopes: Scopes, proposal: str) -> tuple[Path, dict, str]:
     folder = review.proposals_dir(scopes)
     if not path.is_file() and folder is not None and (folder / path.name).is_file():
         path = folder / path.name
+    if scopes.foreign(path):
+        raise LessonError(f"{proposal} lies in the folder of another client or initiative; select the one the "
+                          "lesson comes from: --workspace PATH --client NAME.")
     try:
         front, rest = record.split_front_matter(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError):
@@ -161,14 +164,21 @@ def apply(scopes: Scopes, proposal: str) -> dict:
     source = storage.resolve(storage.load(scopes, only=scopes.kind), source_id)
     if f"firm:{copy.id}" in source.promoted_to:
         return {"firm": copy.id, "source": source.id, "status": "already applied", "path": None}
+    if source.state != "active":
+        raise LessonError(f"{source.id} is {source.state} now, and only an active lesson is promoted. Look at it "
+                          f"first (torque lesson show {source.id}), or leave the proposal unapplied.")
     found = scrubber.scrub_lesson(copy, firm_terms=scrubber.workspace_terms(scopes.workspace))
     if found.refused:
         raise Refused(found.refusal("firm").replace("Not saved", "Not applied"), found)
     copy.state, copy.path = "active", None
+    folder = scopes.folder("firm")
     with storage.transaction(scopes.workspace):
-        if copy.id in storage.taken_ids(scopes.folder("firm")):
+        existing = next((item for item in storage.read_folder(folder, "firm", scopes) if item.id == copy.id), None)
+        # The same lesson already there: an earlier apply wrote it and stopped before marking the source.
+        written = existing is not None and record.content_key(existing) == record.content_key(copy)
+        if not written and (existing is not None or copy.id in storage.taken_ids(folder)):
             raise LessonError(f"a firm lesson {copy.id} already exists; write a fresh proposal.")
-        firm_path = storage.save(copy, scopes.folder("firm"))
+        firm_path = existing.path if written else storage.save(copy, folder)
     with storage.transaction(scopes.engagement):
         source = storage.resolve(storage.read_folder(scopes.folder(source.scope), source.scope, scopes), source.id)
         source.promoted_to.append(f"firm:{copy.id}")

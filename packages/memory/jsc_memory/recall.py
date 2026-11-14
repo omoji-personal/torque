@@ -15,6 +15,7 @@ from datetime import date
 from fnmatch import fnmatchcase
 from functools import lru_cache
 from importlib import resources
+import os
 from pathlib import Path
 import re
 
@@ -131,18 +132,32 @@ class Query:
                 "error": bool(self.error)}
 
 
-def path_types(paths) -> list[str]:
-    """Metadata types behind files, folders and package.xml manifests, from names only."""
+def _names_under(folder: Path, scopes: Scopes | None):
+    """Names of the files and folders under a folder, at most _WALK_LIMIT of them. Links to
+    folders are not followed, and the folders of other clients and initiatives are not entered."""
+    count = 0
+    for top, folders, files in os.walk(folder):
+        folders[:] = [name for name in folders if not (scopes and scopes.foreign(Path(top, name)))]
+        for name in (*folders, *files):
+            count += 1
+            if count > _WALK_LIMIT:
+                return
+            yield name
+
+
+def path_types(paths, scopes: Scopes | None = None) -> list[str]:
+    """Metadata types behind files, folders and package.xml manifests, from names only.
+    With `scopes`, a path inside another client's or initiative's folder is not looked into."""
     types: list[str] = []
     for raw in paths or ():
-        types += vocab.types_for_path(str(raw))
+        types += vocab.types_for_path(str(raw))          # from the name as it was given; nothing is read
         try:
-            path = Path(str(raw))
+            path = Path(str(raw)).resolve()
+            if scopes and scopes.foreign(path):
+                continue
             if path.is_dir():
-                for number, child in enumerate(path.rglob("*")):
-                    if number >= _WALK_LIMIT:
-                        break
-                    types += vocab.types_for_path(child.name)
+                for name in _names_under(path, scopes):
+                    types += vocab.types_for_path(name)
             elif path.is_file() and path.suffix.lower() == ".xml" and not path.name.lower().endswith("-meta.xml"):
                 text = path.read_text(encoding="utf-8", errors="replace")[:200_000]
                 types += [vocab.TYPES[name.lower()] for name in re.findall(r"<name>\s*(\w+)\s*</name>", text)
@@ -152,7 +167,8 @@ def path_types(paths) -> list[str]:
     return list(dict.fromkeys(types))
 
 
-def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "") -> Query:
+def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "",
+                scopes: Scopes | None = None) -> Query:
     topic = [str(word) for word in topic or ()]
     error = record.one_line(error)
     only_error = bool(error) and not (topic or tasks or types or command or paths)
@@ -169,7 +185,7 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
         all_tasks += more_tasks
         all_types += more_types
     return Query(words=vocab.topic_words(topic), tasks=list(dict.fromkeys(all_tasks + found_tasks)),
-                 types=list(dict.fromkeys(all_types + found_types + path_types(paths))), command=command,
+                 types=list(dict.fromkeys(all_types + found_types + path_types(paths, scopes))), command=command,
                  error=error, only_error=only_error)
 
 
@@ -279,7 +295,7 @@ def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", pat
     one of them; with none, the lessons that matter most are returned. `error` is the text
     of an error just met. `advisory=False` leaves the catalogue's notes out."""
     problems: list = []
-    query = build_query(topic, tasks, types, command, paths, error)
+    query = build_query(topic, tasks, types, command, paths, error, scopes)
     tallies = storage.tally(storage.events_for(scopes))
     hits, candidates = [], 0
     for item in everything(scopes, problems, advisory=advisory):

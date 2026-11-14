@@ -1,4 +1,5 @@
 """Scopes are folders; files are written whole; one lock; bad files are skipped and named."""
+from datetime import datetime, timezone
 import json
 import os
 import subprocess
@@ -129,6 +130,14 @@ def test_events_go_to_the_scope_root_and_counters_come_from_them(workspace, scop
     assert storage.tally(storage.events_for(alpha))["L-1"].stale_mark is None
     text = storage.events_path(alpha.engagement).read_text(encoding="utf-8")
     assert "fixed in the org" in text and '"via": "for"' in text
+
+
+def test_an_event_is_stamped_with_the_local_time_and_its_offset():
+    # Its day is then the day a lesson saved at that moment is dated, also late in the evening.
+    at = storage.now()
+    moment = datetime.fromisoformat(at)
+    assert moment.utcoffset() is not None and at[:10] == record.today()
+    assert abs((datetime.now(timezone.utc) - moment).total_seconds()) < 60
 
 
 def test_showing_a_lesson_never_fails_when_the_log_cannot_be_written(scopes, monkeypatch):

@@ -165,6 +165,19 @@ def test_edit_changes_fields_validates_them_and_scrubs_them(run, scopes):
     assert storage.load(alpha)[0].do == "mail <email>"
 
 
+def test_edit_does_not_admit_a_candidate_or_change_where_a_lesson_comes_from(run, scopes):
+    alpha = scopes("alpha")
+    waiting = intake.add(alpha, text="a guess the agent made about flows").lesson
+    before = waiting.path.read_bytes()
+    code, out, err = run("edit", waiting.id, "--set", "state=active")
+    assert code == 2 and f"torque lesson verify {waiting.id} --evidence" in out + err
+    code, out, err = run("edit", waiting.id, "--set", "source=consultant")
+    assert code == 2 and "consultant-said" in out + err
+    assert run("edit", waiting.id, "--set", "state=retired")[0] == 2
+    assert waiting.path.read_bytes() == before and storage.load(alpha)[0].state == "candidate"
+    assert storage.read_events(alpha.engagement) == []
+
+
 def test_a_platform_lesson_is_judged_here_but_never_rewritten(run, workspace, scopes):
     note = "A-flow-activation-on-deploy"
     assert note in [hit.lesson.id for hit in recall.find(scopes("alpha"), types=["Flow"], limit=None).hits]

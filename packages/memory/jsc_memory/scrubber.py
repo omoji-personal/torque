@@ -11,9 +11,9 @@ Firm scope, because a firm lesson is shown for every client:
   refused  the names, slugs and org aliases of this workspace's clients, org Ids and org
            host names
 
-A refusal names the class of what was found and how often, never the value. This is
-an aid, not proof that a text is safe to share: it knows shapes and this workspace's
-client list, not every name a person could write.
+A refusal names the class of what was found (with `--json`, also how often), never the
+value. This is an aid, not proof that a text is safe to share: it knows shapes and this
+workspace's client list, not every name a person could write.
 """
 from __future__ import annotations
 

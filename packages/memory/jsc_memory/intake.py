@@ -149,14 +149,21 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
         if not given and found:
             inferred[name] = found
     item.applies["commands"] = [record.one_line(value) for value in commands or () if record.one_line(value)]
+    session = record.one_line(session)
     reference = f"session {session}" if session else ""
     item.evidence = parse_evidence(evidence, day) or [record.evidence_entry(
         "consultant-said" if source == "consultant" else "session", reference, day)]
+    link = next((entry for entry in item.evidence if reference and entry.get("ref") == reference), None)
+    if reference and link is None:
+        # The session record a lesson comes from stays with it, also beside other evidence.
+        link = record.evidence_entry("session", reference, day)
+        item.evidence.append(link)
     if record.admitted(source, item.evidence):
         item.state, item.last_verified = "active", day
     found = scrubber.scrub_lesson(item, firm_terms=scrubber.workspace_terms(scopes.workspace) if scope == "firm" else None)
     if found.refused:
         raise Refused(found.refusal(scope), found)
+    reference = link.get("ref", "") if link else ""      # as it is stored: scrubbed like the rest
     if not item.title:
         raise LessonError("nothing to save: the text is empty once it is cleaned.")
     notes = []
@@ -184,14 +191,19 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
 
 
 def _again(same: Lesson, new: Lesson, folder: Path, reference: str, day: str, masked: dict) -> Added:
-    """The same lesson captured again. On a new occasion (another session; without a
-    session, another day) that is a second occurrence: evidence that admits a candidate.
-    Otherwise nothing changes."""
+    """The same lesson captured again. On a new occasion that is a second occurrence:
+    evidence that admits a candidate. Otherwise nothing changes. A new occasion is another
+    session record than every one the lesson names, or another day; on one day, a capture
+    without a session record may be the same work as any other, so it is not one."""
     if same.state == "retired":
         return Added(same, same.path, "duplicate", masked=masked, notes=[
             f"This lesson exists and is retired. If it holds after all: torque lesson restore {same.id}"])
-    seen = {entry.get("ref") if reference else entry.get("date") for entry in same.evidence}
-    if (reference or day) in seen:
+
+    def same_occasion(entry: dict) -> bool:
+        linked = entry.get("ref", "") if str(entry.get("ref", "")).startswith("session ") else ""
+        return reference == linked if reference and linked else entry.get("date") == day
+
+    if any(same_occasion(entry) for entry in same.evidence):
         return Added(same, same.path, "duplicate", masked=masked,
                      notes=["This lesson is already saved; nothing was added."])
     same.evidence.append(record.evidence_entry("second-occurrence", reference, day))
@@ -257,6 +269,9 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
     if scopes.workspace is None:
         raise LessonError("harvest records when it last ran in a workspace: add --workspace PATH.")
     folder, hint = host_memory_dir(host, scopes.workspace, given)
+    if folder is not None and scopes.foreign(folder):
+        raise LessonError(f"{folder} lies in the folder of another client or initiative; a host's memory is not "
+                          "kept there, and a lesson command does not read there.")
     state_path = _harvest_state(scopes.workspace)
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -303,6 +318,14 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
     return report
 
 
+def _day_of(stamp: object) -> str:
+    """The day of a Unix time in an old record, or "" when it is not one."""
+    try:
+        return datetime.fromtimestamp(stamp, timezone.utc).date().isoformat() if type(stamp) is int and stamp > 0 else ""
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
 def _v1_records(engagement: Path, problems: list) -> list[dict]:
     """The lessons of the earlier JSON store (state/memory/lessons), as they were written."""
     folder = engagement / "state" / "memory" / "lessons"
@@ -338,8 +361,7 @@ def migrate(scopes: Scopes) -> dict:
     with storage.transaction(scopes.engagement):
         taken = storage.taken_ids(folder)
         for old in _v1_records(scopes.engagement, problems):
-            stamp = old.get("captured_at") if type(old.get("captured_at")) is int else 0
-            day = datetime.fromtimestamp(stamp, timezone.utc).date().isoformat() if stamp else record.today()
+            day = _day_of(old.get("captured_at")) or record.today()
             suffix = re.sub(r"[^a-z0-9]", "", old["id"].lower())[:16].ljust(4, "0")
             identifier = f"L-{day.replace('-', '')}-{suffix}"
             if identifier in taken:
@@ -352,7 +374,6 @@ def migrate(scopes: Scopes) -> dict:
                 continue
             parts = structure(text)
             helpful = old.get("helpful_count") if type(old.get("helpful_count")) is int else 0
-            seen = old.get("last_seen") if type(old.get("last_seen")) is int else 0
             item = Lesson(
                 id=identifier, title=record.first_sentence(parts.get("do") or text or title), scope=scopes.kind,
                 state=states.get(old.get("state"), "candidate"), when=parts.get("when", ""), do=parts.get("do", ""),
@@ -360,8 +381,8 @@ def migrate(scopes: Scopes) -> dict:
                 body=parts.get("lead", "") if parts else text,
                 evidence=[record.evidence_entry("session", f"earlier store, lesson {old['id'][:16]}"
                                                 + (f", marked helpful {helpful} times" if helpful else ""), day)])
-            if item.state == "active" and seen:
-                item.last_verified = datetime.fromtimestamp(seen, timezone.utc).date().isoformat()
+            if item.state == "active":
+                item.last_verified = _day_of(old.get("last_seen"))
             whole = "\n".join((item.title, item.when, item.do, item.because, item.body))
             item.applies["tasks"], item.applies["types"] = vocab.infer(whole)
             item.applies["keywords"], item.applies["errors"] = vocab.keywords(whole), vocab.errors(whole)
