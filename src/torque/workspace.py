@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import errno
 import hashlib
 from importlib import resources
+from importlib.resources import files as _ENGINE_FILES   # the engine's own data (floor_block), bound once
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -486,10 +487,11 @@ AGENT_NOTES_HEAD = ("# Private Torque workspace\n\n"
 
 
 def floor_block() -> tuple[str, int]:
-    """The packaged floor block, markers included, with LF endings, and its version. Read
-    beside this module, so it belongs to the installed engine whatever data folder a caller
-    substitutes for the recipes and rules."""
-    text = (Path(__file__).resolve().parent / "data" / "floor" / "AGENTS-floor.md").read_text(encoding="utf-8")
+    """The packaged floor block, markers included, with LF endings, and its version. Read from
+    the installed `torque` package through a lookup bound at import (_ENGINE_FILES), so it
+    belongs to the engine whatever data folder a caller substitutes for the recipes and rules,
+    and wherever this module's file appears to be."""
+    text = _ENGINE_FILES("torque").joinpath("data", "floor", "AGENTS-floor.md").read_text(encoding="utf-8")
     text = text.replace("\r\n", "\n").rstrip("\n") + "\n"
     begin = FLOOR_BEGIN.search(text)
     if not begin or begin.start() != 0 or not FLOOR_END.search(text):
