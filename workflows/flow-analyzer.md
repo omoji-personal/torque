@@ -24,7 +24,9 @@ and what is wrong with `torque lesson stale <id> --reason <why>`.
    subflows, formulas, data changes and external actions, tying each statement to an element.
 4. Review bulk behavior, recursion, transaction boundaries, nulls, permissions and running
    context, naming and maintainability. Offer a simpler field, formula or before-save design only
-   when it does the same job.
+   when it does the same job: before-save fits a flow that only sets fields on the record being
+   saved with nothing depending on the saved values; after save fits work that needs the record's
+   Id or changes other records. Ask for the reason to be in the flow's description.
 5. Separate what the source shows from what was observed at runtime. For a fix, keep the
    retrieved baseline, edit only the elements the fix needs (never regenerate the whole flow),
    validate (`/validate-change`), test the relevant paths, deploy within the authorized scope and

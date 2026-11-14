@@ -19,17 +19,25 @@ and the access each should have. No password or token belongs in a seed; its for
 
 Each intended user needs a way in. Preferred: an org alias the Salesforce CLI is authorized for as
 that user (the consultant runs `sf org login web --alias <user-alias>` once, outside the agent; the
-seed can record it as `cli_alias`). Then `torque browser login --target-org <org-alias> --as-alias <user-alias>`
-(or a role name from the seed) signs a tab in as that user after checking it is the same org.
-Otherwise `torque browser login --target-org <org-alias> --as-user <username>` opens that user's
-page in Setup: click Login there. That route needs the org's "Administrators Can Log in as Any
-User" policy. A user with the API Only User permission cannot be signed in to a browser at all.
-The sign-in steps, and what a login or "Change Your Password" page means, are in `/qa-browser`.
+seed can record it as `cli_alias`). Otherwise Log in as from the admin's session. The two routes
+differ:
 
-Before each journey confirm the user in the page: the "Logged in as" banner for Log in as, the
-User Id otherwise. A walk without that check is admin coverage, whatever it was meant to be. To
-change user, sign in again; do not click "Log out as" (it can end the whole session). Label each
-result with the route that produced it: Log in as skips login flows and is not the user's own login.
+- Separate alias: `torque browser login --target-org <org-alias> --as-alias <user-alias>` (or a
+  role name from the seed) checks the alias is the same org and sends the tab in as that user.
+  This is the user's own session, so there is no banner: wait for the org's page, then check the
+  user's identity (the user menu or the User Id) before the journey.
+- Log in as: `torque browser login --target-org <org-alias> --as-user <username>` opens that
+  user's page in Setup: click Login there, then wait for the "Logged in as" banner before the
+  journey. It needs the org's "Administrators Can Log in as Any User" policy, which Torque cannot
+  read; it refuses inactive, frozen, API-only, Experience Cloud and guest users and says what to
+  do for each.
+
+The command reports `sent`, not signed in: it cannot see the tab. The sign-in steps, and what a
+login, "Change Your Password" or device verification page means, are in `/qa-browser`. A walk
+without the identity check is admin coverage, whatever it was meant to be. To change user, sign
+in again; do not click "Log out as" (it can end the whole session). Label each result with the
+route that produced it: Log in as skips login flows and is not the user's own login. In a
+connected or build-only workspace `torque browser login` refuses (see `/qa-browser`).
 
 For a packaged journey across the seed's roles:
 

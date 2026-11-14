@@ -171,7 +171,7 @@ removing the flag resumes admission. The workflow updater remains available. See
 
 | Work | Interface |
 | --- | --- |
-| Discovery, architecture, Flow review, migration planning, training, release notes | 53 conversational workflows (guided and native), including all 42 original command mappings |
+| Discovery, architecture, Flow review, migration planning, training, release notes | 54 conversational workflows (guided and native), including all 42 original command mappings |
 | Resume and hand over work | Private client context, append-only session/change records, captured evidence and Markdown/JSON handoffs. `torque session add` records what a check rested on (`--check`, `--as-user`, `--in-org`, `--not-covered`), several `--evidence` files, a `--corrects` link and a `--change` link, or all of it from `--input FILE`; `torque context` leads with where things stand and says what it left out; `torque handoff --since/--change` is written for the task in hand; see [engagement records](docs/engagement-records.md) |
 | Org and metadata investigation | `torque advisory`; use current official Salesforce CLI, skills and MCP tools alongside it |
 | Check a change before and after a deploy | `torque check metadata` (field access, descriptions, fragile flows, hard-coded Ids, profiles, managed components, with Salesforce Code Analyzer merged in when installed), `torque check result` (a saved deploy result on one screen) and `torque check deployed` (what landed in the org); see [checks](docs/checks.md) |

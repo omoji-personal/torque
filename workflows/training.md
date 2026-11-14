@@ -27,5 +27,5 @@ only when supplied. Exclude implementation internals that do not help the audien
 For administrator guides include maintenance/configuration decisions and known limits.
 
 Verify steps as the intended user (`torque browser login --target-org <org-alias> --as-alias <user-alias>`,
-see `/qa-multiprofile`) or name what still needs a walkthrough. Save the requested format using available document tools; if producing
+then check which user the page shows; see `/qa-multiprofile`) or name what still needs a walkthrough. Save the requested format using available document tools; if producing
 a rendered document, inspect its output. Do not send or publish it implicitly.

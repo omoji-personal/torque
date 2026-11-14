@@ -19,8 +19,10 @@ NPSP Batch Gift Entry template and its default payment status), and whether exis
 partially processed payments need a one-time backfill separate from the ongoing automation.
 
 1. Design a record-triggered flow on `npe01__OppPayment__c` (NPSP payments), running before
-   save, since it only sets fields on the payment itself; use after save only where it must write
-   other records or the trigger order on the object needs it. Entry criteria:
+   save. Before-save is the default when a flow only sets fields on the record being saved and
+   nothing depends on the saved values. After save is right when the work needs the record's Id
+   or changes other records, for example creating a task or a related record for each payment.
+   Whichever you choose, write the reason in the flow's description. Entry criteria:
    `npe01__Paid__c` equals True and `npe01__Payment_Date__c` is null. This targets a payment the
    batch just marked paid, not one already dated.
 2. Set `npe01__Payment_Date__c` to the appropriate date: today, or the batch's own

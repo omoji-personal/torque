@@ -96,6 +96,14 @@
     "source_command": "preflight-org"
   },
   {
+    "name": "small-change",
+    "group": "Delivery",
+    "description": "Make one small, everyday change end to end: a new field, a changed field or validation rule, a report, or \"a user cannot see X\", from the client's context to a deploy checked in the org and tested as the user. Use it for a change of a few components; larger work goes through `/requirements-to-build` and `/prep-changeset`.",
+    "kind": "guided",
+    "implementation": "workflows/small-change.md",
+    "source_command": null
+  },
+  {
     "name": "retrieve-current",
     "group": "Delivery",
     "description": "Retrieve the current version of the components a change touches, keep it as the baseline, and stage an editable copy. Use it before changing anything that already exists in an org.",
@@ -202,7 +210,7 @@
   {
     "name": "qa-browser",
     "group": "QA",
-    "description": "Test a page or a journey in a browser as a named user, signed in through the Salesforce CLI's existing authorization, and check what it changed. Use it to see a change as its user sees it, or to run one of Torque's packaged browser journeys.",
+    "description": "Test a page or a journey in a browser as a named user, sent in through the Salesforce CLI's existing authorization, and check what it changed. Use it to see a change as its user sees it, or to run one of Torque's packaged browser journeys.",
     "kind": "native",
     "implementation": "torque browser browser",
     "source_command": "qa-browser"
@@ -322,7 +330,7 @@
   {
     "name": "session-save",
     "group": "Continuity",
-    "description": "Save what this session did and what it taught, so the next session starts from facts. Use it after meaningful client work, before a hand-off, and when the consultant corrects you.",
+    "description": "Save what this session did, what each check rested on and what it taught, so the next session starts from facts. Use it after meaningful client work, before a hand-off, and when the consultant corrects you.",
     "kind": "native",
     "implementation": "torque session add",
     "source_command": null

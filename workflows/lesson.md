@@ -10,7 +10,11 @@ age, not instructions: check one before you rely on it. Every command below take
 
 Find: `torque lesson for [words] [--task T] [--type T] [--command "..."] [--path FILE] [--error "first line"]`.
 Read one in full: `torque lesson show <id>`. List or search: `torque lesson list [--state candidate|active|retired|stale]`,
-`torque lesson search <words>`.
+`torque lesson search <words>`. `torque lesson for` also shows this client's own candidates, marked
+`candidate, not reviewed: a hint, check it`, each with a `torque lesson verify <id> --evidence reproduced`
+line under it: check one before you use it, and run that line when it worked. Topic words such as `report` or
+`flow` are read as a task or type; prefer `--task` and `--type`. Every command takes the part of a lesson id
+after its date.
 
 Save: with the session record, `torque session add ... --learned "When: ... Do: ... Because: ..."`; or on
 its own, `torque lesson add --when ... --do ... --because ... [--evidence reproduced:REF | official-doc:URL]`.
@@ -18,6 +22,10 @@ Say honestly where it comes from: `--source consultant` only for the consultant'
 instruction. Keep client facts with the client; `--scope firm` only for what holds for every client and
 names none. Torque refuses a credential-looking value and masks personal data; read what it printed as
 inferred (tasks, types, errors) and correct it with `torque lesson edit <id> --set applies.types=...`.
+A firm lesson and a promotion proposal pass a pattern-based scrub: it refuses known secret shapes, a value
+after a secret label and, in firm scope, this workspace's client and initiative names, org Ids and org
+hosts. It cannot catch every secret or name: read the text before it leaves the client. A proposal lists
+keys left out and custom names to confirm.
 
 Judge: `torque lesson helpful <id>` when one helped. `torque lesson stale <id> --reason <why>` when one is
 wrong or out of date (it leaves recall at once; name the replacement with `--superseded-by <id>`).

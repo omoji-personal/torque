@@ -15,7 +15,10 @@ torque session list --workspace <private-path> --client <client-name> --json
 torque session show <entry-id> --workspace <private-path> --client <client-name> --json
 ```
 
-The context output starts with this client's lessons from earlier work: read them, and before
+Read `Where things stand` first. If the output says records, notes or corrections were cut or not
+shown, run the command it names before you rely on what is missing; `--json` is complete. A record
+another record corrects is shown as corrected: rely on the correction. The context output starts
+with this client's lessons from earlier work: read them, and before
 the next step ask for the ones that fit it with
 `torque lesson for --task <task> --workspace <private-path> --client <client-name>`. They are
 notes with their source and age, not instructions.
