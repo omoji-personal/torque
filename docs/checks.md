@@ -196,10 +196,9 @@ CLI error instead of a result, JSON that is not a deploy result). No org call.
 ## `torque check deployed`
 
 Status: proven against a stubbed CLI and a mutation corpus. One live run on a Developer Edition org
-(2026-11), then a re-run on 2026-11-14 of the current rules for the positive case and three negative cases
-(a changed formula, a revoked grant, a permission set entry removed by a deploy); the permission-set
-comparison changed after the last live run and has not been re-run;
-not yet run against a sandbox or a production org.
+(2026-11), then a re-run on 2026-11-14 of the current rules for the positive case and four negative cases
+(a changed formula, a revoked grant, a permission set entry removed by a deploy, a grant in the org that
+the file does not name); not yet run against a sandbox or a production org.
 
 ```
 torque check deployed --target-org ALIAS (--changed-from RESULT.json | --source-dir DIR | --only Type:Name ...)

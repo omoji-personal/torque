@@ -27,9 +27,9 @@ except ImportError:  # pragma: no cover
     run_tool = subprocess.run
 
 LABEL = ("proven against a stubbed CLI and a mutation corpus; re-run live on 2026-11-14 on a Developer Edition org "
-         "for the positive case and three negative cases (a changed formula, a revoked grant, a permission set entry "
-         "removed by a deploy); the permission-set comparison changed after the last live run and has not been "
-         "re-run; not yet run against a sandbox or a production org")
+         "for the positive case and four negative cases (a changed formula, a revoked grant, a permission set entry "
+         "removed by a deploy, a grant in the org that the file does not name); not yet run against a sandbox or a "
+         "production org")
 STATUSES = ("same", "unexplained-additions", "partly-compared", "different", "could-not-compare", "not-in-org")
 RETRIEVABLE = {"CustomField", "CustomObject", "ValidationRule", "RecordType", "Flow", "PermissionSet",
                "PermissionSetGroup", "CustomPermission", "Profile", "FlexiPage", "Layout", "CustomMetadata",
