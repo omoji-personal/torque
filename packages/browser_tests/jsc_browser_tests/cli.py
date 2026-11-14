@@ -324,6 +324,9 @@ def build_parser() -> argparse.ArgumentParser:
     ss = sub.add_parser("suite-self-test", help="run the suite's offline test files")
     ss.set_defaults(func=cmd_suite_selftest)
 
+    from . import login
+    login.add_parsers(sub)
+
     return p
 
 

@@ -107,7 +107,7 @@ async def _live_preflight(config):
                                        headed=config.get("headed", False))
         try:
             selected_seed = {"users": {p: seed["users"][p] for p in needed}}
-            return await login_as_preflight(sess.page, selected_seed, sf)
+            return await login_as_preflight(sess.page, selected_seed, admin_auth)
         finally:
             await auth.close_session(sess)
 

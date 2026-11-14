@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import NamedTuple
+from urllib.parse import urlsplit
 from .diagnostics import exception_detail
 
 
@@ -24,22 +25,28 @@ class AdminAuth(NamedTuple):
     api_version: str = ""
 
 
-def get_admin_auth(sf_client, target_org: str) -> AdminAuth:
-    """Authenticate as admin via the injected SfClient; return frontdoor URL.
+def get_admin_auth(sf_client, target_org: str, *, path: str | None = None,
+                   api_version: str | None = None) -> AdminAuth:
+    """Authenticate as the alias's user via the injected SfClient; return frontdoor URL.
 
-    The frontdoor URL contains an access token — never log/commit it.
+    One CLI call answers everything: the single-use address, the org ID and the
+    username it is for. The instance address is the address's own origin. No
+    `sf org display` call is made (older CLIs print the access token there).
+    The frontdoor URL signs a browser in: never log/commit it, and navigate to it
+    at once (it is valid once, for about a minute).
     """
-    frontdoor = sf_client.org_frontdoor_url(target_org)
-    if not frontdoor:
+    minted = sf_client.org_frontdoor(target_org, path=path, api_version=api_version)
+    frontdoor = minted.get("url") or ""
+    origin = urlsplit(frontdoor)
+    if origin.scheme != "https" or not origin.hostname:
         raise AuthError(f"sf org open returned no url for {target_org}")
-    d2 = sf_client.org_display(target_org)
     return AdminAuth(
         target_org=target_org,
-        org_id_18=d2.get("id", ""),
-        instance_url=d2.get("instanceUrl", ""),
+        org_id_18=minted.get("org_id") or "",
+        instance_url=f"https://{origin.netloc}",
         frontdoor_url=frontdoor,
-        username=d2.get("username", "") or "",
-        api_version=d2.get("apiVersion", "") or "",
+        username=minted.get("username") or "",
+        api_version=api_version or "",
     )
 
 
