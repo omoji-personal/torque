@@ -1,42 +1,44 @@
 # /verify-change
 
-Verify the actual deployed or configured outcome and record remaining uncertainty.
+Verify that a deployed or configured change is in the org as intended and works for the people it is for, and record what is still unchecked. Use it after every deploy or configuration change.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-Use the business criteria and intended actor to choose checks. Existing test or
-pipeline evidence can be reused when its exact target, source, scope and freshness
-fit this change. Add missing checks instead of repeating an entire suite merely
-to produce Torque output. When using a change record, retain actual criterion
-results, actor, target, source revision/date and private evidence with `change check`;
-those checks remain operator-reported. Keep exact technical deployment observations
-separate with `change verify-deploy`. Neither one substitutes for the other.
+First, ask for the lessons that fit this work and read them before you act:
+`torque lesson for --task deploy --path <source-folder-or-package.xml> --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
+and what is wrong with `torque lesson stale <id> --reason <why>`.
 
-Identify the exact org, change/diff, deployment job and desired user behavior. Query
-the specific job rather than “the latest deployment.” Inspect component-level and
-row-level failures; successful transport or completed processing is not full success.
+1. Name the org, the change, its deploy job (query that job, never "the latest deployment"), the
+   business criteria and the intended users. Existing test or pipeline evidence counts when its
+   target, source, scope and date fit this change.
+2. Read the deploy back:
 
-- Fields: verify metadata and relevant CRUD/FLS grants, assignment to the intended
-  user, other permission sources including groups/muting, record access and UI.
-  A missing grant in one permission set is a narrow fact, not full effective access.
-- Flows: inspect the definition's actual active version separately from retrieved
-  source; test entry/negative/fault paths and relevant automation interactions.
-- Pages: inspect metadata and assignments, then the intended user's rendered path
-  where needed. API retrieval does not substitute for a user-session observation.
-- Settings/data: read back the exact scope/keys, account for partial failures and
-  check relevant side effects. Do not prove migration success by counts alone.
+   ```sh
+   torque check deployed --target-org <org-alias> --changed-from <deploy.json> --as-permission-set <permission-set>
+   ```
 
-Use the advisory and QA delegates where useful. Keep machine observations, supplied
-human/browser assertions, inference, declared not-applicable, unknown and untested
-states distinct. Report unavailable permissions, missing sources and stale evidence.
+   Read-only, it reports whether each component in the org matches the submitted source, whether
+   each flow's latest version is the active one, which permission sets grant each new field, and
+   whether each validation rule is active. It does not show assignment, what a user sees or whether
+   the change does what was asked; the checks below and a test as the intended user do.
+3. Then what the read-back cannot see:
+   - Fields: the permission set is assigned to the intended users; other permission sources
+     (groups, muting), record access, and the field on the page those users open.
+   - Flows: entry, negative, fault and bulk paths as the change requires;
+     `torque advisory flow --target-org <org-alias> --api-name <FlowApiName>` names the active version.
+   - Pages: activation and assignment, then the page as the user sees it.
+   - Settings and data: read back the exact keys and rows and their side effects; counts alone do
+     not prove a migration.
+4. Test as the intended user, not as the admin who deployed:
+   `torque browser login --target-org <org-alias> --as-alias <user-alias>` signs a tab in as that
+   user (`/qa-browser`, `/qa-multiprofile`). Label each result with the user and the route. Test
+   records, including records automation creates: save each created record's Id when it is
+   created, in the private task directory, and delete only those Ids (an Id-file delete such as
+   `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title,
+   creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
+5. When a change record exists, record each criterion with `torque change check` and the exact
+   deploy observation with `torque change verify-deploy`; neither stands in for the other.
 
-When a check creates persistent records, including records that automation creates,
-save each created record's Id when it is created, in the private task directory.
-Clean up by deleting only those Ids (an Id-file delete such as
-`sf data delete bulk --file ids.csv` with an Id column). Never build a delete from a
-query that matches by name, title, creator or date. If the Id list is lost or
-incomplete, stop and ask instead of matching.
-
-If the user asked for a working outcome, correct newly found defects within scope
-and recheck. Save a concise session entry and artifact links. State exactly what
-was verified and what another user or tester still needs to do.
+Fix defects found within scope and check again. Save a session entry that says what was verified,
+as whom, in which org, by what kind of check, and what another user or tester still has to do.

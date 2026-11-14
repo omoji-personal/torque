@@ -250,8 +250,8 @@ def replay_fixture(
             status="GEMINI_UNAVAILABLE",
             duration_seconds=time.monotonic() - started,
             detail=(
-                "gemini CLI not installed. AI prompt regression is OPTIONAL per "
-                "model-orchestration.md. Operator may invoke claude_only fallback "
+                "gemini CLI not installed. AI prompt regression is OPTIONAL. "
+                "Operator may invoke claude_only fallback "
                 "manually by pasting the prompt into Claude + running validation."
             ),
         )

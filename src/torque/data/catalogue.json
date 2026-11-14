@@ -10,7 +10,7 @@
   {
     "name": "status",
     "group": "Workspace",
-    "description": "Check the selected workspace, installed tools, and requested org connections.",
+    "description": "Check the selected workspace, the installed tools and the requested org connections without printing a credential. Use it at the start of a session, after an install or upgrade, or when a command fails for an unclear reason.",
     "kind": "guided",
     "implementation": "workflows/status.md",
     "source_command": "status"
@@ -18,7 +18,7 @@
   {
     "name": "context",
     "group": "Workspace",
-    "description": "Load the selected client, current task, and relevant saved context.",
+    "description": "Load the selected client's configuration, recent sessions, change records and lessons from earlier work. Use it at the start of client work and whenever the client changes.",
     "kind": "native",
     "implementation": "torque context",
     "source_command": null
@@ -34,7 +34,7 @@
   {
     "name": "connect-org",
     "group": "Workspace",
-    "description": "Connect Salesforce using the existing CLI or available host integration.",
+    "description": "Connect an org through the Salesforce CLI or the host's integration and confirm which org the alias reaches. Use it when a client's org is not connected yet or its authorization expired.",
     "kind": "guided",
     "implementation": "workflows/connect-org.md",
     "source_command": "connect-org"
@@ -42,7 +42,7 @@
   {
     "name": "diagnose",
     "group": "Investigate",
-    "description": "Diagnose org, tool, deployment, context or access issues and carry through authorized fixes.",
+    "description": "Find the cause of an org, tool, deployment, context or access problem and carry the authorized fix through to a check. Use it when something fails or behaves differently than expected.",
     "kind": "guided",
     "implementation": "workflows/diagnose.md",
     "source_command": "diagnose"
@@ -50,7 +50,7 @@
   {
     "name": "triage-alert",
     "group": "Support",
-    "description": "Turn a Salesforce flow or Apex error notification into cause, fix and verification.",
+    "description": "Turn a Salesforce flow or Apex error notification into its cause, the narrowest fix, a retest and a note for the client. Use it when a fault email, an error screenshot or a user report of a failed save arrives.",
     "kind": "guided",
     "implementation": "workflows/triage-alert.md",
     "source_command": null
@@ -74,7 +74,7 @@
   {
     "name": "field-audit",
     "group": "Investigate",
-    "description": "Review field metadata, population and dependencies for cleanup or data-quality work.",
+    "description": "Review a set of fields for how they are defined, how full they are and what uses them, and group them for cleanup or data-quality work. Use it before deleting, merging or documenting fields.",
     "kind": "guided",
     "implementation": "workflows/field-audit.md",
     "source_command": "field-audit"
@@ -82,7 +82,7 @@
   {
     "name": "flow-analyzer",
     "group": "Investigate",
-    "description": "Explain, review and improve a Flow from its current definition and actual behavior.",
+    "description": "Explain, review or fix a flow from its active definition and its actual behavior. Use it when someone asks what a flow does, why it failed, or how to improve it.",
     "kind": "guided",
     "implementation": "workflows/flow-analyzer.md",
     "source_command": "flow-analyzer"
@@ -90,7 +90,7 @@
   {
     "name": "preflight-org",
     "group": "Delivery",
-    "description": "Resolve the intended org and relevant metadata before live work.",
+    "description": "Confirm which org an alias reaches and what the task needs from it (objects, fields, packages, current components) before live work. Use it at the start of work in an org, or when the selected client and the alias may disagree.",
     "kind": "guided",
     "implementation": "workflows/preflight-org.md",
     "source_command": "preflight-org"
@@ -98,7 +98,7 @@
   {
     "name": "retrieve-current",
     "group": "Delivery",
-    "description": "Retrieve current metadata, preserve the baseline and stage an editable proposal.",
+    "description": "Retrieve the current version of the components a change touches, keep it as the baseline, and stage an editable copy. Use it before changing anything that already exists in an org.",
     "kind": "guided",
     "implementation": "workflows/retrieve-current.md",
     "source_command": "retrieve-current"
@@ -106,7 +106,7 @@
   {
     "name": "prep-changeset",
     "group": "Delivery",
-    "description": "Prepare a dependency-aware deployment packet from the actual change.",
+    "description": "Build the deployment packet for one change: the exact components, their order, the permission set that grants each new field, the checks and the recovery references. Use it when a change is ready to go to another org.",
     "kind": "guided",
     "implementation": "workflows/prep-changeset.md",
     "source_command": "prep-changeset"
@@ -114,7 +114,7 @@
   {
     "name": "gift-payments",
     "group": "Delivery",
-    "description": "Design a record-triggered flow that keeps NPSP payments and gift batches in sync.",
+    "description": "Design automation that keeps an NPSP payment's date in step with its gift batch, before save where it only changes the payment. Use it when batch gift entry leaves paid payments without a payment date.",
     "kind": "guided",
     "implementation": "workflows/gift-payments.md",
     "source_command": null
@@ -122,7 +122,7 @@
   {
     "name": "grants-outbound-funds",
     "group": "Delivery",
-    "description": "Build the automation that turns an approved Outbound Funds funding request into award records.",
+    "description": "Build the automation that turns an approved Outbound Funds funding request into its disbursement records, without duplicates on a re-save. Use it when a grants team approves funding requests in Salesforce and wants the awards created for them.",
     "kind": "guided",
     "implementation": "workflows/grants-outbound-funds.md",
     "source_command": null
@@ -130,7 +130,7 @@
   {
     "name": "prep-migration",
     "group": "Delivery",
-    "description": "Plan and execute scoped data migration with reconciliation and restoration of temporary settings.",
+    "description": "Plan, rehearse and run a scoped data load or bulk change, then reconcile it and restore any setting changed for it. Use it for imports, migrations between orgs and bulk updates of existing records.",
     "kind": "guided",
     "implementation": "workflows/prep-migration.md",
     "source_command": "prep-migration"
@@ -138,7 +138,7 @@
   {
     "name": "validate-change",
     "group": "Delivery",
-    "description": "Validate the exact proposed change with relevant static, deployment and functional checks.",
+    "description": "Validate a change before it is deployed: a check-only deploy read from a file, Torque's metadata check on what that deploy would create or change, and the tests the change needs. Use it before every real deploy.",
     "kind": "guided",
     "implementation": "workflows/validate-change.md",
     "source_command": "validate-change"
@@ -146,7 +146,7 @@
   {
     "name": "verify-change",
     "group": "Delivery",
-    "description": "Verify the actual deployed or configured outcome and record remaining uncertainty.",
+    "description": "Verify that a deployed or configured change is in the org as intended and works for the people it is for, and record what is still unchecked. Use it after every deploy or configuration change.",
     "kind": "guided",
     "implementation": "workflows/verify-change.md",
     "source_command": "verify-change"
@@ -154,7 +154,7 @@
   {
     "name": "sandbox-refresh",
     "group": "Delivery",
-    "description": "Reconnect and restore the intended sandbox configuration after an actual refresh.",
+    "description": "Reconnect to a sandbox after it was refreshed and restore its intended settings, users and integrations from the saved baseline. Use it after a refresh has actually happened; it does not start one.",
     "kind": "guided",
     "implementation": "workflows/sandbox-refresh.md",
     "source_command": "sandbox-refresh"
@@ -162,7 +162,7 @@
   {
     "name": "security-review",
     "group": "Investigate",
-    "description": "Review object, field and record access for the intended users and business process.",
+    "description": "Review who can see and change which objects, fields and records against what the business process needs, and fix what is asked. Use it when users report missing or excess access, or before a change that grants access ships.",
     "kind": "guided",
     "implementation": "workflows/security-review.md",
     "source_command": "security-review"
@@ -170,7 +170,7 @@
   {
     "name": "snapshot",
     "group": "Recovery",
-    "description": "Capture a scoped point-in-time baseline, distinguishing reference evidence from recovery payloads.",
+    "description": "Capture a dated baseline of the metadata, settings or records a task may change, and say what it can restore and what it only documents. Use it before a risky change, a refresh or an audit that needs a fixed point to compare against.",
     "kind": "guided",
     "implementation": "workflows/snapshot.md",
     "source_command": "snapshot"
@@ -178,7 +178,7 @@
   {
     "name": "undo",
     "group": "Recovery",
-    "description": "Reverse the specified recent work using actual change evidence and available recovery paths.",
+    "description": "Reverse a specific recent change from its own evidence: the recovery bundle when one exists, otherwise a scoped inverse built from the saved pre-state. Use it when the user says to undo, roll back or revert something that was done.",
     "kind": "guided",
     "implementation": "workflows/undo.md",
     "source_command": "undo"
@@ -194,7 +194,7 @@
   {
     "name": "qa",
     "group": "QA",
-    "description": "Select and execute useful QA surfaces for the change, with explicit coverage and gaps.",
+    "description": "Choose and run the checks a change needs, from its acceptance criteria, and report each one's result and what stayed uncovered. Use it after a build or deploy, before calling a change ready.",
     "kind": "native",
     "implementation": "torque qa run",
     "source_command": "qa"
@@ -202,7 +202,7 @@
   {
     "name": "qa-browser",
     "group": "QA",
-    "description": "Run a selected browser journey and verify its actual user and side effects.",
+    "description": "Test a page or a journey in a browser as a named user, signed in through the Salesforce CLI's existing authorization, and check what it changed. Use it to see a change as its user sees it, or to run one of Torque's packaged browser journeys.",
     "kind": "native",
     "implementation": "torque browser browser",
     "source_command": "qa-browser"
@@ -210,7 +210,7 @@
   {
     "name": "qa-multiprofile",
     "group": "QA",
-    "description": "Test the selected journey for configured users and compare role-specific behavior.",
+    "description": "Run the same journey as each intended user and compare what each one can see and do. Use it when access, pages or automation differ by profile, permission set or role, and before calling such a change ready.",
     "kind": "native",
     "implementation": "torque browser multiprofile",
     "source_command": "qa-multiprofile"
@@ -282,15 +282,15 @@
   {
     "name": "lesson",
     "group": "Learning",
-    "description": "Save a scoped lesson from supplied content or the current session.",
+    "description": "Save, find, judge, review and promote lessons from earlier work. Use it when the consultant corrects you, when something that failed now works, and before work that earlier lessons may cover.",
     "kind": "native",
-    "implementation": "torque lesson capture",
+    "implementation": "torque lesson",
     "source_command": "lesson"
   },
   {
     "name": "lesson-show",
     "group": "Learning",
-    "description": "Read relevant saved lessons and distinguish active, pending and archived records.",
+    "description": "Read saved lessons: the ones that fit the work, one in full, or a list by state. Use it before work earlier lessons may cover, or when the consultant asks what Torque has learned.",
     "kind": "native",
     "implementation": "torque lesson show",
     "source_command": "lesson-show"
@@ -298,7 +298,7 @@
   {
     "name": "lesson-helpful",
     "group": "Learning",
-    "description": "Mark a specific saved lesson useful and retain its original evidence scope.",
+    "description": "Count a lesson as helpful when it saved time or prevented a mistake. Use it right after a lesson Torque showed you made a difference.",
     "kind": "native",
     "implementation": "torque lesson helpful",
     "source_command": "lesson-helpful"
@@ -306,7 +306,7 @@
   {
     "name": "lesson-stale",
     "group": "Learning",
-    "description": "Mark a specific lesson outdated while preserving its history.",
+    "description": "Take a wrong or outdated lesson out of recall at once, with the reason, keeping its history. Use it when a lesson Torque showed you no longer holds.",
     "kind": "native",
     "implementation": "torque lesson stale",
     "source_command": "lesson-stale"
@@ -314,7 +314,7 @@
   {
     "name": "collect-lessons",
     "group": "Learning",
-    "description": "Curate selected lessons into reusable knowledge without merging private client facts.",
+    "description": "Review the lessons waiting for a decision and propose which to keep, retire or promote to the firm, a rule, a skill, a recipe or a check. Use it when the consultant asks, or when the context shows candidates waiting.",
     "kind": "guided",
     "implementation": "workflows/collect-lessons.md",
     "source_command": "collect-lessons"
@@ -322,7 +322,7 @@
   {
     "name": "session-save",
     "group": "Continuity",
-    "description": "Save a concise factual session delta and artifact references for the next session.",
+    "description": "Save what this session did and what it taught, so the next session starts from facts. Use it after meaningful client work, before a hand-off, and when the consultant corrects you.",
     "kind": "native",
     "implementation": "torque session add",
     "source_command": null
@@ -330,7 +330,7 @@
   {
     "name": "session-resume",
     "group": "Continuity",
-    "description": "Resume a client task from durable records and fresh operational checks.",
+    "description": "Pick up a client task where the last session left it: its records, the lessons that fit, and fresh checks of what may have drifted. Use it at the start of a session on work already under way.",
     "kind": "native",
     "implementation": "torque session list",
     "source_command": null
@@ -362,7 +362,7 @@
   {
     "name": "requirements-to-build",
     "group": "Discovery",
-    "description": "Turn a stakeholder requirements note into user stories, a metadata list, a test script and open questions.",
+    "description": "Turn a stakeholder requirements note into user stories, a metadata list that starts from what the org already has, a test script and open questions. Use it when a request arrives as prose and has to become buildable work.",
     "kind": "guided",
     "implementation": "workflows/requirements-to-build.md",
     "source_command": null
@@ -370,7 +370,7 @@
   {
     "name": "training",
     "group": "Documentation",
-    "description": "Create a practical end-user or administrator guide for the configured workflow.",
+    "description": "Write a practical guide for end users or administrators of a configured process, checked against the interface they actually see. Use it when a change goes live or a client asks how their staff should use it.",
     "kind": "guided",
     "implementation": "workflows/training.md",
     "source_command": "training"
@@ -378,7 +378,7 @@
   {
     "name": "release-notes",
     "group": "Documentation",
-    "description": "Write technical and client-facing release notes from verified change evidence.",
+    "description": "Write technical and client-facing release notes from the evidence of what was actually deployed and verified. Use it when a set of changes is released or handed to a client.",
     "kind": "guided",
     "implementation": "workflows/release-notes.md",
     "source_command": "release-notes"
@@ -394,7 +394,7 @@
   {
     "name": "logs",
     "group": "Investigate",
-    "description": "Analyze supplied Salesforce debug logs and relate findings to the reported problem.",
+    "description": "Analyze Salesforce debug logs and relate what they show to the reported problem. Use it when an error, a slow transaction or an automation path needs evidence from a log.",
     "kind": "native",
     "implementation": "torque logs",
     "source_command": null
@@ -402,7 +402,7 @@
   {
     "name": "probes",
     "group": "QA",
-    "description": "Generate adversarial Apex test scaffolds and guide their validation and execution.",
+    "description": "Generate editable Apex test drafts (null and empty inputs for each public method) from class files, then turn them into real tests. Use it when Apex needs edge-case tests written quickly.",
     "kind": "native",
     "implementation": "torque probes",
     "source_command": null
@@ -410,7 +410,7 @@
   {
     "name": "update-torque",
     "group": "Workspace",
-    "description": "Update the actual Torque installation while preserving private context and local source work.",
+    "description": "Update the Torque installation, then carry its new recipes, rules and skills into the private workspace while keeping local edits. Use it when a new Torque release is out or the consultant asks to update.",
     "kind": "guided",
     "implementation": "workflows/update-torque.md",
     "source_command": null

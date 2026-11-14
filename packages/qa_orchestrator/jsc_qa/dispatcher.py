@@ -1208,8 +1208,7 @@ def dispatch_adv_probe(target_org: str, change_description: str) -> DispatchResu
             f"  Raw matches: {raw_paths}\n"
             f"  Dropped (not found relative to repo root or as absolute paths): {dropped_paths}\n"
             f"To probe, include paths to existing apex files. Manual run:\n"
-            f"  PYTHONPATH={probes_dir} python3 -m jsc_probes.cli "
-            f"--target-class <path/to/file.cls> --output \"${{JSC_QA_ADV_PROBE_OUT:-/tmp/jsc-probes-out}}\""
+            "  torque probes --target-class <path/to/file.cls> --output <private-output-directory>"
         )
         return DispatchResult(
             surface="Adv-Probe", status="MANUAL_REQUIRED",
@@ -1417,9 +1416,8 @@ def dispatch_taa(target_org: str, change_description: str) -> DispatchResult:
         surface="TAA", status="MANUAL_REQUIRED",
         detail=(
             "TAA is EXPENSIVE (3-model panel + synthesis). Operator opt-in only.\n"
-            "Per multi-model-audit.md: reserve for behavioral-rule changes + ship gates.\n"
-            "To invoke: scripts/run-taa-audit.sh OR manual dispatch per "
-            ".claude/rules/multi-model-audit.md."
+            "Reserve it for changes to behavioral rules and for release gates.\n"
+            "Torque ships no runner for it: dispatch the reviews by hand when the consultant asks."
         ),
         invocation_command="(operator-explicit)",
     )
@@ -1431,7 +1429,7 @@ def dispatch_hostile_qa(target_org: str, change_description: str) -> DispatchRes
         surface="Hostile-QA", status="MANUAL_REQUIRED",
         detail=(
             "Hostile-QA is EXPENSIVE (Opus subagent dispatch). Operator opt-in only.\n"
-            "Per Gemini-R1-P0-1 + multi-model-audit.md: do NOT auto-dispatch on QA failure.\n"
+            "Do NOT dispatch it automatically on a QA failure.\n"
             "To invoke: dispatch the hostile-qa-auditor subagent via Agent tool with a "
             "specific brief about the change."
         ),
@@ -1449,8 +1447,8 @@ _TARGET_ORG_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # (privacy-and-logging.md). Closes R2-CONSENSUS-1.
 CLAUDE_ONLY_CAVEAT = (
     "\n\n[ORCHESTRATION CAVEAT — claude_only environment]\n"
-    "Per .claude/rules/model-orchestration.md, this surface is gemini-optional. "
-    "Operator should re-audit at higher capability environment when CLI becomes available."
+    "This surface uses the Gemini CLI when it is installed, and it ran without it. "
+    "Run it again where that CLI is available."
 )
 
 
@@ -1814,7 +1812,7 @@ def _dispatch_ai_prompt_active(target_org: str, change_description: str) -> Disp
         return DispatchResult(
             surface="AI-Prompt", status="MANUAL_REQUIRED",
             detail=(
-                f"gemini CLI not installed (AI-Prompt optional per model-orchestration.md). "
+                f"gemini CLI not installed (the AI-Prompt surface is optional). "
                 f"{len(fixture_dirs)} fixture(s) available for manual review: "
                 + ", ".join(fixture_dirs[:10])
                 + ("…" if len(fixture_dirs) > 10 else "")
@@ -1858,10 +1856,7 @@ def _dispatch_ai_prompt_active(target_org: str, change_description: str) -> Disp
         detail_lines.append(f"  …and {len(results) - 5} more")
 
     # R1 gemini-R1-P2-04: invocation_command must be runnable shell form
-    invocation = (
-        "PYTHONPATH=packages/ai_prompt_regression python3 -m "
-        f"jsc_ai_prompt_regression.cli replay-all {fixtures_root}"
-    )
+    invocation = f"torque ai-regression replay-all {fixtures_root}"
     return DispatchResult(
         surface="AI-Prompt", status=status,
         detail="\n".join(detail_lines) + "\nFixture contract checks do not prove deployed Salesforce prompt execution.",

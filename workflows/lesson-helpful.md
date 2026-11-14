@@ -1,16 +1,9 @@
 # /lesson-helpful
 
-Mark a specific saved lesson useful and retain its original evidence scope.
+Count a lesson as helpful when it saved time or prevented a mistake. Use it right after a lesson Torque showed you made a difference.
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-Resolve the supplied lesson ID or unique supported prefix in the selected client:
-
-```sh
-torque lesson helpful <lesson-id> --workspace <private-path> --client <client-name>
-```
-
-Inspect the resulting lifecycle state. In the inherited store this may promote a
-pending lesson or increment its useful count. Do not present promotion as independent
-verification or widen a client observation into a universal platform rule. If an
-ID matches several records, resolve the intended record before changing one.
+`torque lesson helpful <id> --note <what-it-saved> --workspace <private-path> --client <client-name>`
+An id that matches several lessons changes nothing and lists them: choose one.
+Every lesson command is in `/lesson`.

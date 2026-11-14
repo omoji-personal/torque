@@ -1,12 +1,17 @@
 ---
-description: "Write technical and client-facing release notes from verified change evidence."
+description: "Write technical and client-facing release notes from the evidence of what was actually deployed and verified. Use it when a set of changes is released or handed to a client."
 ---
 
 # /release-notes
 
-Write technical and client-facing release notes from verified change evidence.
+Write technical and client-facing release notes from the evidence of what was actually deployed and verified. Use it when a set of changes is released or handed to a client.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
+
+First, ask for the lessons that fit this work and read them before you act:
+`torque lesson for --task documentation --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
+and what is wrong with `torque lesson stale <id> --reason <why>`.
 
 Identify the product/project, requested version, source range, release state and
 audience. Read supplied release notes, actual commits/diffs, deployment artifacts,

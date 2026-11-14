@@ -1,35 +1,35 @@
 # /session-save
 
-Save a concise factual session delta and artifact references for the next session.
+Save what this session did and what it taught, so the next session starts from facts. Use it after meaningful client work, before a hand-off, and when the consultant corrects you.
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-Summarize the meaningful change in this task: requested outcome, actual work,
-target identity, artifact paths, validation/verification, pending work and next action.
-Use exact pre-state references for recovery rather than embedding sensitive values
-in the narrative. Preserve distinctions between planned, prepared, executed,
-verified and incomplete; choose the record status based on the actual result.
+1. Write the summary: requested outcome, actual work, target org, artifact paths, what was
+   checked, pending work and the next action. Use exact references (files, job IDs) for
+   recovery values instead of putting them in the text. Choose the status from the actual
+   result: `prepared`, `executed`, `verified` or `incomplete`.
+2. Before you save, ask two questions and add each answer as a lesson: what would have saved time
+   in this session, and what worked that was not obvious? Write each as
+   `When: ... Do: ... Because: ...`. Add `--learned-from consultant` when it is the consultant's
+   correction or instruction (it is active at once); your own finding is saved as a candidate for
+   review. Use `--learned-scope firm` only for a lesson that names no client. If the session
+   taught nothing, add nothing.
+3. Save:
 
-```sh
-torque session add --workspace <private-path> --client <client-name> --summary <summary-text> --status <status> --evidence <artifact-path>
-```
+   ```sh
+   torque session add --workspace <private-path> --client <client-name> --summary <summary-text> --status <status> [--evidence <artifact-path>] [--learned "When: ... Do: ... Because: ..."]
+   ```
 
-Supported status values are `prepared`, `executed`, `verified`, `incomplete`.
-Omit `--evidence` when no file exists; never fabricate a path. Inspect `--help` for
-how many evidence arguments the installed version accepts. Save multiple useful
-artifacts through the supported record format rather than guessing extra flags.
-Session evidence references the original file and records its hash; it does not
-copy that file. Keep the artifact at its recorded path. For a captured private
-evidence copy tied to an acceptance criterion, use `torque change check --evidence`.
+   Omit `--evidence` when no file exists; never invent a path. Check `torque session add --help`
+   for how many `--evidence` values this version keeps. The record references the file and its
+   hash; it does not copy it, so leave the file where it is. If the command exits 4, the session
+   is recorded and a lesson was not: do not add the session again; fix the lesson's text (it held
+   a credential-looking value, or a firm lesson named a client) and save it with
+   `torque lesson add --session <session-id> --when ... --do ... --because ...`.
+4. Mark the lessons Torque showed you in this session: `torque lesson helpful <id>` for one that
+   helped, `torque lesson stale <id> --reason <why>` for one that was wrong.
 
-Append a new session record; do not replace previous history or copy a whole chat
-transcript. Record unattended asynchronous jobs by exact job ID and unresolved
-status. Save after meaningful work when continuity helps; no empty ceremonial
-session entry is needed for a simple question.
-
-For work that spans sessions, use an optional `torque change` record to retain the
-business outcome and acceptance criteria. Append meaningful decisions with
-`change note`, reported observations with `change check`, and exact deployment
-observations with `change verify-deploy`. Use `--help` for arguments. The assistant
-can maintain these records during ordinary work; do not make the user fill out a
-form or add a record for every small question.
+Append; never rewrite earlier records or paste a transcript. Record unattended jobs by exact job
+ID and status. For work that spans sessions, an optional `torque change` record keeps the outcome
+and acceptance criteria: `torque change note` for decisions, `torque change check` for reported
+results and captured evidence, `torque change verify-deploy` for exact deploy observations.

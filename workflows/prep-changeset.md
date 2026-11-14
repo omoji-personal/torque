@@ -1,38 +1,43 @@
 # /prep-changeset
 
-Prepare a dependency-aware deployment packet from the actual change.
+Build the deployment packet for one change: the exact components, their order, the permission set that grants each new field, the checks and the recovery references. Use it when a change is ready to go to another org.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-Read the project's existing build and release configuration before preparing the
-packet. Follow its source, test and promotion conventions, including an established
-CumulusCI, sfdx-hardis or commercial pipeline when present. Preserve the selected
-source revision, exact jobs and native outputs with the engagement change; Torque
-does not require a duplicate release pipeline or a different package format.
+First, ask for the lessons that fit this work and read them before you act:
+`torque lesson for --task deploy --path <source-folder-or-package.xml> --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
+and what is wrong with `torque lesson stale <id> --reason <why>`.
 
-Build the component inventory from the selected task's proposed source/diff, session
-records, explicit user scope and exact existing deploy results. Do not assume every
-recent commit belongs to the task. List type/API name, new/modified/deleted status,
-dependencies, source path and destination.
+1. Read the project's build and release setup and follow it, including an established CumulusCI,
+   sfdx-hardis or commercial pipeline. Torque needs no second pipeline or package format.
+2. List the components from the task's own diff, session records, the user's scope and exact
+   earlier deploy results; not every recent commit belongs to the task. For each: type and API
+   name, new, changed or deleted, dependencies, source path and destination.
+3. Ship access with the change: every new field goes out with the permission set that grants it,
+   in the same deploy, and no profile file is in the packet. Skill `salesforce-build`
+   (`salesforce-build/references/access-and-sharing.md`) says what the grant holds.
+4. Order by real dependencies: objects and fields, what references them, code and its tests,
+   permission sets, automation, pages. Activation and assignment follow the target's release
+   process, not a fixed order.
+5. Before the packet is final, check it:
 
-Choose ordering from real dependencies: objects/fields, references, code/tests,
-permissions, automation and UI. A modified page can be deployed by a reviewed merge;
-it is not automatically a manual-only change. Activation and assignment steps depend
-on the actual org/release process, not a universal fixed order.
+   ```sh
+   torque check metadata <project-folder> --changed-from <dry-run.json>
+   ```
 
-Produce an exact manifest or supported selector set, manual steps, needed validation,
-targeted tests, recovery references, deployment order and post-deploy checks. Preserve
-the submitted manifest alongside its job ID; a job's success cannot authenticate a
-later modified manifest. Mark destructive changes explicitly when in scope.
+   (or `--only Type:Name` for each component) and resolve `access.field-without-grant` and
+   `access.grant-only-in-profile`: every new field ships with the permission set that grants it, in
+   the same deploy. Keep the `--json` report beside the manifest. The dry-run comes from
+   `/validate-change`.
+6. Write the packet: the exact manifest or selectors, manual steps, validation, targeted tests,
+   recovery references, deployment order and post-deploy checks. Keep the submitted manifest with
+   its job ID; a manifest edited later is not the one that succeeded. Mark destructive changes.
+7. When a Torque recovery bundle is useful, deploy with
+   `torque deploy --metadata Type:Name --target-org <org-alias> --workspace <private-path> --client <client-name>`,
+   one `--metadata` per component. Manifest, source-directory and dry-run deploys capture no
+   complete before-state; keep the `/retrieve-current` baseline for manual recovery instead. Mixed
+   or destructive selectors need manual review.
 
-When a Torque recovery bundle is useful, execute the authorized metadata write as
-`torque deploy --metadata Type:Name --target-org ALIAS --workspace W --client C`.
-Repeat `--metadata` for each component. Manifest-only, source-directory and dry-run
-deploys do not capture complete before-state; retain the `/retrieve-current`
-baseline for manual recovery instead. Mixed or destructive selectors also need
-manual review. A bundle is usable only where its recorded recovery coverage is complete.
-
-Save the packet in the private task directory and summarize it in the session. If the
-request includes execution, carry the packet through the user's normal Salesforce
-deployment tools and actual authorization; generating a checklist is not the end
-of an implementation task. Use `/verify-change` for actual outcomes.
+Save the packet in the private task directory and summarize it in the session. When the request
+includes the deploy, carry the packet through it, then run `/verify-change`.
