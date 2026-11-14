@@ -240,12 +240,16 @@ def types_for_path(path: str) -> list[str]:
     return []
 
 
-_ORG_VALUE = re.compile(r"(?<!\S)(--target-org|--target-dev-hub|-o)(?:=|\s+)(?:\"[^\"]*\"|'[^']*'|\S+)")
+# The value is one shell word: any run of plain characters and quoted stretches (`Name='A B'`).
+_ORG_VALUE = re.compile(r"(?<!\S)(--target-org|--target-dev-hub|-o|--where|--values)(?:=|\s+)"
+                        r"(?:\"[^\"]*\"|'[^']*'|[^\s\"'])+")
 
 
 def without_org_names(command: str) -> str:
-    """A command with the org alias it names left out: `--target-org dev-sandbox` is a name,
-    not a sandbox task. Used for matching only."""
+    """A command with the names and record values it carries left out: `--target-org dev-sandbox`
+    is a name, not a sandbox task, and what follows `--where` or `--values` is record data, which
+    has no part in finding a lesson. Both spellings (`--where X` and `--where=X`). Used for
+    matching only."""
     return _ORG_VALUE.sub(r"\1", command or "")
 
 

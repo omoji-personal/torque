@@ -233,6 +233,17 @@ def test_an_org_alias_is_a_name_and_not_a_topic(scopes):
     assert own(recall.find(alpha, command="sf data query -o=dev-sandbox --query x", limit=None)) == []
 
 
+def test_record_values_in_a_command_take_no_part_in_matching(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "sbox", tasks=["sandbox"], when="you work in a sandbox")
+    for command in ("torque data update --sobject Account --where \"Name='Sandbox Flow Layout'\" --values \"Type='Flow'\"",
+                    "torque data update --sobject Account --where=Name='Sandbox' --values=Description='deploy a flow'"):
+        query = recall.build_query(command=command)
+        assert "Sandbox" not in query.command and "Flow" not in query.command and "flow" not in query.command
+        assert "Flow" not in query.types and "sandbox" not in query.tasks
+        assert own(recall.find(alpha, command=command, limit=None)) == []
+
+
 def test_a_keyword_phrase_spelled_out_in_the_topic_counts_like_a_type(scopes):
     alpha = scopes("alpha")
     save(alpha, "client", "sett", tasks=["retrieve"], types=["CustomMetadata"], keywords=["custom settings", "secret"],
