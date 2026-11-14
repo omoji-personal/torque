@@ -1,10 +1,10 @@
 ---
-description: "Reverse the specified recent work using actual change evidence and available recovery paths."
+description: "Reverse a specific recent change from its own evidence: the recovery bundle when one exists, otherwise a scoped inverse built from the saved pre-state. Use it when the user says to undo, roll back or revert something that was done."
 ---
 
 # /undo
 
-Reverse the specified recent work using actual change evidence and available recovery paths.
+Reverse a specific recent change from its own evidence: the recovery bundle when one exists, otherwise a scoped inverse built from the saved pre-state. Use it when the user says to undo, roll back or revert something that was done.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
@@ -34,9 +34,8 @@ parts and complete independent reversible parts where useful.
 
 To remove records the work created, delete only the Ids saved when they were created
 or taken from the exact job's successful results (an Id-file delete such as
-`sf data delete bulk --file ids.csv` with an Id column). Never build a delete from a
-query that matches by name, title, creator or date. If the Id list is lost or
-incomplete, stop and ask instead of matching.
+`sf data delete bulk --file ids.csv` with an Id column), never records matched by name,
+title, creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
 
 Read back the restored state and representative outcome; record actual success,
 partial failure, remaining drift and side effects. Undo is not a generic time machine:

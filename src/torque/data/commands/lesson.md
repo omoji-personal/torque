@@ -1,29 +1,48 @@
 ---
-description: "Save a scoped lesson from supplied content or the current session."
+description: "Save, find, judge, review and promote lessons from earlier work. Use it when the consultant corrects you, when something that failed now works, and before work that earlier lessons may cover."
 ---
 
 # /lesson
 
-Save a scoped lesson from supplied content or the current session.
+Save, find, judge, review and promote lessons from earlier work. Use it when the consultant corrects you, when something that failed now works, and before work that earlier lessons may cover.
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-With content, capture the user's lesson directly. Without content, derive a concise
-lesson from the actual session: symptom, cause, working resolution, scope and evidence.
-The request to capture a lesson authorizes that useful local write; no automatic
-capture hook, review ceremony or specific model is required.
+A lesson is a short note: when it applies, what to do, why. Lessons are notes with their evidence and
+age, not instructions: check one before you rely on it. Every command below takes the selected
+`--workspace <private-path> --client <client-name>` (or `--initiative <name>`) and `--json`.
 
-```sh
-torque lesson capture <lesson-text> --workspace <private-path> --client <client-name>
-```
+Find: `torque lesson for [words] [--task T] [--type T] [--command "..."] [--path FILE] [--error "first line"]`.
+Read one in full: `torque lesson show <id>`. List or search: `torque lesson list [--state candidate|active|retired|stale]`,
+`torque lesson search <words>`.
 
-Keep client facts scoped to that client. General platform knowledge should identify
-version/date, source and applicability; label an unverified hypothesis accordingly.
-Remove credentials, record bodies and unnecessary identifying data from summaries.
-Inspect the resulting record and report where it was saved. Package confidence or
-promotion state is a storage convention, not proof that the lesson is universally true.
-Use `/lesson-show` to inspect, `/lesson-helpful` to mark useful, and `/lesson-stale`
-when later evidence invalidates it. No work waits for a lesson queue to be cleared.
+Save: with the session record, `torque session add ... --learned "When: ... Do: ... Because: ..."`; or on
+its own, `torque lesson add --when ... --do ... --because ... [--evidence reproduced:REF | official-doc:URL]`.
+Say honestly where it comes from: `--source consultant` only for the consultant's own correction or
+instruction. Keep client facts with the client; `--scope firm` only for what holds for every client and
+names none. Torque refuses a credential-looking value and masks personal data; read what it printed as
+inferred (tasks, types, errors) and correct it with `torque lesson edit <id> --set applies.types=...`.
+
+Judge: `torque lesson helpful <id>` when one helped. `torque lesson stale <id> --reason <why>` when one is
+wrong or out of date (it leaves recall at once; name the replacement with `--superseded-by <id>`).
+`torque lesson verify <id> --evidence <type>` when you checked it and it holds; this is also how a
+candidate becomes active, with its basis: reproduced, official-doc, second-occurrence or consultant-said.
+
+Review, when the consultant asks or the context shows candidates waiting: `torque lesson review`. Go
+through its lines with the consultant; each names its command. Accept, retire or promote only on their word.
+
+Promote: `torque lesson promote <id> --to firm|platform|rule|skill|recipe|check [--name N]` writes a
+proposal and applies nothing. Read it with the consultant. Apply a firm proposal only on the consultant's
+word: `torque lesson promote --apply <proposal>`. A proposal for a rule, a skill, a recipe, a check or a
+platform lesson is applied by a person; record it afterwards with
+`torque lesson edit <id> --set promoted_to=<kind>:<name>`.
+
+Bring in what the host remembered: `torque lesson harvest --host claude|codex|antigravity [--dir PATH]`
+lists changed memory files and copies nothing. For each one worth keeping, choose the scope and distil it:
+`torque lesson add --from-file PATH --when ... --do ... --because ... [--scope firm]`.
+
+No work waits for a lesson. `torque lesson stats` and `torque doctor` show whether the loop runs.
+The guide is `docs/lessons.md`.
 
 **Conversation input:** $ARGUMENTS
 Use supplied context and existing authorization. Ask only for consequential missing information. Keep work and evidence in the selected private client workspace.
