@@ -4,7 +4,9 @@ Antigravity reads AGENTS.md and `.agents/` in the working folder, never `.claude
 Each copy is derived from the packaged Claude Code file when a workspace is
 created or upgraded, so the two surfaces come from one source:
 
-  rules/NAME.md     -> .agents/rules/NAME.md         `trigger: always_on` and a description
+  rules/NAME.md     -> .agents/rules/NAME.md         `trigger: always_on` (`trigger: glob` with
+                                                     `globs:` for a rule scoped by `paths:`)
+                                                     and a description
   commands/NAME.md  -> .agents/skills/NAME/SKILL.md  `name` and `description`; also the /NAME command
   agents/NAME.md    -> .agents/agents/NAME.md        Antigravity tool names, worker only
 
@@ -85,15 +87,48 @@ def _commands(body: str) -> str:
     return hosts.rename_mentions(hosts.ANTIGRAVITY, body)
 
 
+def _paths(text: str) -> list[str]:
+    """The globs of a Claude Code rule's `paths:` field, as an inline value or list
+    (`paths: "a"`, `paths: ["a", "b"]`) or a block list of `  - a` lines. Read here, not
+    from _split, because a glob can hold a comma (`*.{cls,trigger}`)."""
+    match = _FRONTMATTER.match(text)
+    if not match:
+        return []
+    lines = match.group(1).splitlines()
+    for index, line in enumerate(lines):
+        name, separator, value = line.partition(":")
+        if not separator or name.strip() != "paths" or line[:1].isspace():
+            continue
+        value = value.strip()
+        if value.startswith("[") and value.endswith("]"):
+            items = re.findall(r"\"([^\"]*)\"|'([^']*)'|([^,\s][^,]*)", value[1:-1])
+            found = [next(part for part in item if part) for item in items if any(item)]
+        elif value:
+            found = [value]
+        else:
+            found = []
+            for item in lines[index + 1:]:
+                listed = re.match(r"\s+-\s+(.+)", item)
+                if not listed:
+                    break
+                found.append(listed.group(1))
+        return [path.strip().strip("\"'").strip() for path in found if path.strip().strip("\"'").strip()]
+    return []
+
+
 def rule(name: str, text: str) -> str | None:
-    """An always-on rule. A rule scoped with `paths:` is not copied: it would
-    otherwise apply everywhere."""
+    """A rule. One scoped with `paths:` becomes a `trigger: glob` rule with those
+    globs, so it loads when a matching file is in play, as in Claude Code; every other
+    rule is `trigger: always_on`. A `paths:` field with no glob in it is read as no
+    scope (always on), so no rule is dropped."""
     fields, body = _split(text)
-    if "paths" in fields:
-        return None
+    globs = _paths(text) if "paths" in fields else []
     body = _commands(body)
     title = re.search(r"^#\s+(.+?)\s*$", body, re.M)
     description = fields.get("description") or _scalar(title.group(1) if title else name)
+    if globs:
+        return _page(["trigger: glob", "globs: " + json.dumps(", ".join(globs), ensure_ascii=False),
+                      "description: " + description], body)
     return _page(["trigger: always_on", "description: " + description], body)
 
 
