@@ -219,6 +219,83 @@ def test_a_record_with_a_damaged_basis_is_skipped_and_named(firm):
     assert context["sessions"] == [] and context["record_problems"][0]["reason"] == "its check basis is not valid"
 
 
+# ---- step 3: context that says what it left out
+
+def write_records(root, count, client="alpha", incomplete=()):
+    """`count` records, one a day from 2026-10-01; the ones in `incomplete` (by number) are incomplete."""
+    folder = root / "clients" / client / "sessions"
+    folder.mkdir(exist_ok=True)
+    ids = []
+    for number in range(count):
+        day = f"202610{number + 1:02d}"
+        entry_id = f"{day}T090000000000Z-{number:012x}"
+        record = {"schema": "torque.session/1", "id": entry_id, "created_at": f"2026-10-{number + 1:02d}T09:00:00+00:00",
+                  "client": client, "summary": f"record {number}",
+                  "status": "incomplete" if number in incomplete else "executed",
+                  "status_basis": "user_reported", "independently_verified": False, "evidence": None}
+        (folder / f"{entry_id}.json").write_text(json.dumps(record), encoding="utf-8")
+        ids.append(entry_id)
+    return ids
+
+
+def test_context_says_how_many_it_left_out_and_counts_older_open_records(firm):
+    ids = write_records(firm, 23, incomplete=(1,))
+    context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
+    assert (context["sessions_total"], context["sessions_returned"], context["sessions_truncated"]) == (23, 20, True)
+    assert context["more_command"].endswith("--all") and "context" in context["more_command"]
+    assert [s["id"] for s in context["sessions"]] == ids[::-1][:20]
+    older = context["where_things_stand"]["open_not_shown"]
+    assert older["count"] == 1 and older["oldest"].startswith("2026-10-02")
+    text = invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    assert "History: 20 of 23 session record(s)" in text and "the rest: " in text and "--all" in text
+    assert "Open, not shown: 1 older record(s) marked incomplete" in text
+    assert text.index("Where things stand:") < text.index("Lessons") < text.index("History:")
+    every = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--limit", "30", "--json")[1])
+    assert (every["sessions_returned"], every["sessions_truncated"], every["more_command"]) == (23, False, None)
+    assert every["where_things_stand"]["open"] == [ids[1]] and every["where_things_stand"]["open_not_shown"]["count"] == 0
+    assert json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--all", "--json")[1])[
+        "sessions_returned"] == 23
+    since = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--since", "2026-10-20T00:00Z",
+                              "--json")[1])
+    assert [s["summary"] for s in since["sessions"]] == [f"record {n}" for n in range(22, 18, -1)]
+    assert since["sessions_truncated"] is True
+    assert invoke("context", "--workspace", firm, "--client", "alpha", "--since", "last week")[0] == 2
+    assert invoke("context", "--workspace", firm, "--client", "alpha", "--limit", "0")[0] == 2
+
+
+def test_an_open_record_that_was_corrected_is_not_counted_as_open(firm):
+    ids = write_records(firm, 23, incomplete=(0, 1))
+    fix = json.loads(add(firm, "--summary", "record 1 is done after all", "--corrects", ids[1], "--json")[1])
+    context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
+    assert context["where_things_stand"]["open_not_shown"]["count"] == 1
+    assert context["where_things_stand"]["corrections"] == [{"id": fix["id"], "corrects": ids[1]}]
+    assert f"Correction: {fix['id']} corrects {ids[1]}" in invoke("context", "--workspace", firm, "--client",
+                                                                     "alpha")[1]
+
+
+def test_notes_over_the_budget_are_all_listed_the_cut_ones_marked_and_the_total_stays_within(firm):
+    alpha = firm / "clients/alpha"
+    (alpha / "context.md").write_text("scope " * 100, encoding="utf-8")
+    (alpha / "context/big1.md").write_text("x" * 70000, encoding="utf-8")
+    (alpha / "context/big2.md").write_text("y" * 70000, encoding="utf-8")
+    (alpha / "context/small.md").write_text("z" * 50, encoding="utf-8")
+    context = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--json")[1])
+    budget = context["notes_budget"]
+    assert budget == ws.NOTES_BUDGET and sum(len(text) for text in context["notes"].values()) <= budget
+    states = {item["path"]: item["state"] for item in context["notes_files"]}
+    assert states == {"profile.md": "full", "clients/alpha/context.md": "full",
+                      "clients/alpha/context/big1.md": "cut", "clients/alpha/context/big2.md": "not shown",
+                      "clients/alpha/context/small.md": "not shown"}
+    assert "read the rest in clients/alpha/context/big1.md" in context["notes"]["Client context: big1.md"]
+    text = invoke("context", "--workspace", firm, "--client", "alpha")[1]
+    for path in states:
+        assert f"- {path}: " in text
+    assert "clients/alpha/context/big1.md: 70,000 bytes, CUT at" in text and "NOT SHOWN (over the budget)" in text
+    small = json.loads(invoke("context", "--workspace", firm, "--client", "alpha", "--max-chars", "1000",
+                              "--json")[1])
+    assert sum(len(text) for text in small["notes"].values()) <= 1000
+
+
 def test_learned_keeps_working_with_input(firm):
     document = firm / "record.json"
     document.write_text(json.dumps({"summary": "Fixed the query", "status": "executed",

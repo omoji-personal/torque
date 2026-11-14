@@ -184,7 +184,7 @@ TORQUE_VALUE_OPTIONS = frozenset({
     "--before-state-object", "--binding", "--capture-before-metadata", "--capture-before-record", "--change",
     "--client", "--component", "--criterion", "--data", "--diff", "--evidence", "--for", "--hook-python", "--host",
     "--idempotency-key", "--initiative", "--input", "--job-id", "--kind", "--learned", "--learned-from",
-    "--learned-scope", "--manifest", "--manual-recovery",
+    "--learned-scope", "--manifest", "--manual-recovery", "--max-chars",
     "--mcp", "--metadata", "--minutes", "--model-id", "--name", "--new-component", "--org", "--outcome",
     "--output", "--owner", "--path", "--payload-digest", "--profile", "--purpose", "--reason", "--reason-class",
     "--record", "--request-sha256", "--result", "--review-date", "--reviewer", "--role", "--since", "--status",

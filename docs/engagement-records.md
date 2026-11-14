@@ -114,6 +114,17 @@ torque change handoff "$change_id" --workspace ../torque-private --client sample
 torque handoff --workspace ../torque-private --client sample
 ```
 
+`torque context` starts with where things stand: the latest record with its basis, the
+open records (marked `incomplete` and not corrected), open acceptance criteria per change,
+and corrections. Records marked `incomplete` that fall outside the window are counted in
+one line with the command that shows them, so open work does not drop out of sight. Then
+come the lessons, the notes and the changes, and the history last. It shows the 20 newest
+session records (`--limit N`, `--since DATE`, `--all` for every one) and says how many
+there are (`sessions_total`, `sessions_returned`, `sessions_truncated` and `more_command`
+in JSON). Notes are shown within a total of 24,000 characters (`--max-chars N`): every
+notes file is listed with its size, and a file that does not fit is marked cut or not
+shown, with its path. A corrected record is shown with the records that correct it.
+
 Context includes a compact continuation summary; `change show --json` exposes the
 full selected record. The focused handoff includes outcome, criteria, decisions,
 metadata observations, evidence and next actions. The client handoff also includes

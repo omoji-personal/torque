@@ -1634,37 +1634,153 @@ def client_output_path(workspace: str | Path, client_name: str, destination: str
     return output
 
 
-def _context_notes(client: Path) -> dict[str, str]:
-    """Read the same bounded, selected notes for resumption and handoff."""
-    notes = {}
-    candidates = [("Firm notes", client.parent.parent / "profile.md", client.parent.parent),
+# The notes `context` and `handoff` show in full, in characters, across every notes file.
+# Measured: a session summary has a median of 655 characters, so 20 records are about
+# 13,000; 24,000 characters of notes keeps a whole resume near 40,000 characters (about
+# 10,000 tokens), where two large notes files alone gave 131,489. `--max-chars` changes it.
+NOTES_BUDGET = 24_000
+NOTE_FILE_LIMIT = 65_536
+SESSION_WINDOW = 20
+
+
+def parse_since(text: str) -> datetime:
+    """A `--since` value: a date (YYYY-MM-DD, from the start of that local day) or a time
+    (YYYY-MM-DDTHH:MM[:SS], with an offset or Z, else local)."""
+    value = text.strip() if isinstance(text, str) else ""
+    try:
+        moment = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value)
+    except ValueError:
+        raise WorkspaceError("--since takes a date such as 2026-11-01, or a time such as 2026-11-01T09:00") from None
+    return moment if moment.utcoffset() is not None else moment.astimezone()
+
+
+def _context_notes(client: Path, budget: int | None = NOTES_BUDGET) -> tuple[dict[str, str], list[dict]]:
+    """The notes for resumption and handoff, and a list of every notes file with its size
+    and whether it is shown in full, cut or not shown. In order (firm notes, client notes,
+    then context/*.md by name) each file is shown while the total stays within `budget`
+    characters; the file that does not fit is cut and says where to read the rest. With no
+    budget, each file is shown up to NOTE_FILE_LIMIT characters."""
+    root = client.parent.parent
+    notes, files = {}, []
+    candidates = [("Firm notes", root / "profile.md", root),
                   ("Client notes", client / "context.md", client)]
     context_dir = _inside(client, client / "context")
     if context_dir.is_dir():
         candidates.extend((f"Client context: {p.name}", p, client)
                           for p in sorted(context_dir.glob("*.md")))
+    remaining = budget
     for title, path, owner in candidates:
         _inside(owner, path)
-        if path.is_file():
-            with path.open(encoding="utf-8") as stream:
-                text = stream.read(65537)
-            notes[title] = text[:65536] + ("\n[truncated at 65,536 characters]" if len(text) > 65536 else "")
-    return notes
+        if not path.is_file():
+            continue
+        with path.open(encoding="utf-8") as stream:
+            text = stream.read(NOTE_FILE_LIMIT + 1)
+        location = path.relative_to(root).as_posix()
+        whole = text[:NOTE_FILE_LIMIT] + ("\n[truncated at 65,536 characters]" if len(text) > NOTE_FILE_LIMIT else "")
+        state = "cut" if len(text) > NOTE_FILE_LIMIT else "full"
+        if remaining is not None and len(whole) > remaining:
+            def marker(shown: int) -> str:
+                return f"\n[cut: the first {shown:,} characters are shown; read the rest in {location}]"
+            room = remaining - len(marker(remaining))
+            if room >= 200:
+                whole, state = whole[:room] + marker(room), "cut"
+            else:
+                whole, state = None, "not shown"
+        if whole is not None:
+            notes[title] = whole
+            if remaining is not None:
+                remaining -= len(whole)
+        files.append({"title": title, "path": location, "bytes": path.stat().st_size,
+                      "shown_chars": len(whole or ""), "state": state})
+    return notes, files
+
+
+def note_file_lines(files: list[dict], budget: int | None) -> list[str]:
+    """Every notes file with its size, the ones cut or not shown marked."""
+    if not files:
+        return []
+    shown = sum(item["shown_chars"] for item in files)
+    head = (f"Notes files ({len(files)}; {shown:,} characters shown"
+            + (f", budget {budget:,}; change it with --max-chars N" if budget is not None else "") + "):")
+    marks = {"full": "shown in full", "cut": "CUT", "not shown": "NOT SHOWN (over the budget)"}
+    return [head] + [f"- {item['path']}: {item['bytes']:,} bytes, {marks[item['state']]}"
+                     + (f" at {item['shown_chars']:,} characters" if item["state"] == "cut" else "")
+                     for item in files]
+
+
+def _standing(records: list[dict], shown: list[dict], more: str) -> dict:
+    """Where things stand: the latest record, the open records (marked incomplete and not
+    corrected) shown and not shown, and the corrections among the records shown."""
+    ids = {entry["id"] for entry in shown}
+    def open_record(entry):
+        return entry["status"] == "incomplete" and not entry.get("corrected_by")
+    older = [entry for entry in records if entry["id"] not in ids and open_record(entry)]
+    return {"latest": shown[0]["id"] if shown else None,
+            "open": [entry["id"] for entry in shown if open_record(entry)],
+            "open_not_shown": {"count": len(older), "oldest": older[-1]["created_at"] if older else None,
+                               "command": more if older else None},
+            "corrections": [{"id": entry["id"], "corrects": entry["corrects"]}
+                            for entry in shown if entry.get("corrects")]}
+
+
+def standing_lines(context: dict) -> list[str]:
+    """`Where things stand` as text: the latest record, open items, corrections."""
+    state, sessions = context["where_things_stand"], context["sessions"]
+    lines = ["Where things stand:"]
+    latest = next((entry for entry in sessions if entry["id"] == state["latest"]), None)
+    if latest is None:
+        lines.append("- No session records yet.")
+    else:
+        lines.append(f"- Latest record {latest['id']} ({latest['created_at']}) [{latest['status']}, "
+                     f"user-reported]: {latest['summary']}")
+        lines += ["  " + line for line in session_link_lines(latest)]
+        if latest.get("evidence_integrity") in ("missing", "changed", "unavailable"):
+            lines.append(f"  Evidence: {latest['evidence_integrity']} since recording.")
+    for identifier in state["open"]:
+        entry = next(e for e in sessions if e["id"] == identifier)
+        lines.append(f"- Open (incomplete): {entry['created_at']} {entry['id']}: {entry['summary'][:200]}"
+                     + ("..." if len(entry["summary"]) > 200 else ""))
+    older = state["open_not_shown"]
+    if older["count"]:
+        lines.append(f"- Open, not shown: {older['count']} older record(s) marked incomplete and not corrected "
+                     f"(oldest {older['oldest']}); read them with {older['command']}")
+    for change in context.get("changes", []):
+        pending = change["assessment"]["not_yet_reported_pass"]
+        if pending:
+            lines.append(f"- Open in change {change['id']} ({change['title']}): not yet reported pass: "
+                         + ", ".join(pending))
+    for item in state["corrections"]:
+        lines.append(f"- Correction: {item['id']} corrects {item['corrects']}")
+    return lines
 
 
 def get_context(workspace: str | Path, client_name: str, *, kind: str = "client",
-                shown_via: str | None = None) -> dict:
-    """The engagement's notes, lessons, changes and recent sessions. A stray or damaged
-    record is skipped and named in record_problems instead of hiding the rest. With
-    `shown_via` (the command printing the context), the lessons listed count as shown."""
+                shown_via: str | None = None, limit: int | None = SESSION_WINDOW,
+                since: datetime | None = None, max_chars: int | None = NOTES_BUDGET) -> dict:
+    """The engagement's notes, lessons, changes and recent sessions, with where things
+    stand first and what was left out counted. A stray or damaged record is skipped and
+    named in record_problems instead of hiding the rest. With `shown_via` (the command
+    printing the context), the lessons listed count as shown. `limit` None: every record."""
     client, firm, config = load_engagement(workspace, client_name, kind)
-    notes = _context_notes(client)
+    if limit is not None and limit < 1:
+        raise WorkspaceError("--limit must be 1 or more; use --all for every record")
+    if max_chars is not None and max_chars < 1:
+        raise WorkspaceError("--max-chars must be 1 or more")
+    notes, note_files = _context_notes(client, max_chars)
     problems: list[dict] = []
     changes = _change_context(workspace, client_name, client, kind, problems)
-    sessions = list_sessions(workspace, client_name, kind=kind, problems=problems)
+    _, records = read_sessions(workspace, client_name, kind=kind, problems=problems)
+    window = records if since is None else [e for e in records if datetime.fromisoformat(e["created_at"]) >= since]
+    sessions = with_evidence(client, window, limit, problems)
+    more = command_text(["torque", "context", "--workspace", str(workspace), "--" + kind, config["slug"], "--all"])
+    truncated = len(sessions) < len(records)
     return {"workspace": firm, "client": config, "client_root": str(client),
+            "where_things_stand": _standing(records, sessions, more),
             "lessons": lessons_context(workspace, client, kind, shown_via=shown_via),
-            "changes": changes, "notes": notes, "sessions": sessions, "record_problems": problems,
+            "changes": changes, "notes": notes, "notes_files": note_files, "notes_budget": max_chars,
+            "sessions": sessions, "sessions_total": len(records), "sessions_returned": len(sessions),
+            "sessions_truncated": truncated, "more_command": more if truncated else None,
+            "record_problems": problems,
             "evidence_note": "Journal statuses are user-reported, not independent verification."}
 
 
@@ -1672,7 +1788,7 @@ def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "clie
     """The engagement's handoff. A record that could not be read is named at the top,
     so the document says it is incomplete instead of leaving the record out silently."""
     client_root, firm, client = load_engagement(workspace, client_name, kind)
-    notes = _context_notes(client_root)
+    notes, _ = _context_notes(client_root, None)
     problems: list[dict] = []
     entries = list_sessions(workspace, client_name, limit=None, kind=kind, problems=problems)
     from .changes import list_changes, render_change

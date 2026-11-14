@@ -55,6 +55,19 @@ def _client_args(parser: argparse.ArgumentParser) -> None:
     scope.add_argument("--initiative", help="explicit internal initiative name or slug")
 
 
+def _window_args(parser: argparse.ArgumentParser) -> None:
+    """Which session records `context` and `handoff` show."""
+    parser.add_argument("--limit", type=int, default=ws.SESSION_WINDOW, metavar="N",
+                        help=f"at most N session records, newest first (default {ws.SESSION_WINDOW})")
+    parser.add_argument("--since", metavar="DATE", help="only records from this date (YYYY-MM-DD, local) or time on")
+    parser.add_argument("--all", action="store_true", dest="everything", help="every session record")
+
+
+def _window(parsed: argparse.Namespace) -> dict:
+    return {"limit": None if parsed.everything else parsed.limit,
+            "since": ws.parse_since(parsed.since) if parsed.since else None}
+
+
 def _scope(parsed: argparse.Namespace) -> tuple[str, str]:
     """(name, kind) for the engagement a command names."""
     if getattr(parsed, "initiative", None):
@@ -164,6 +177,10 @@ def build_parser() -> argparse.ArgumentParser:
     e_list.add_argument("--json", action="store_true")
     context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
     _client_args(context)
+    _window_args(context)
+    context.add_argument("--max-chars", type=int, default=ws.NOTES_BUDGET, metavar="N",
+                         help=f"total characters of notes shown (default {ws.NOTES_BUDGET:,}); every notes file is "
+                              "listed with its size, and the ones cut are marked")
     context.add_argument("--json", action="store_true")
     session = sub.add_parser("session", help="append or read user-reported session records")
     sessions = session.add_subparsers(dest="action", required=True)
@@ -1926,7 +1943,8 @@ def main(argv: list[str] | None = None) -> int:
             return _change(parsed)
         elif parsed.command == "context":
             name, kind = _scope(parsed)
-            context = ws.get_context(parsed.workspace, name, kind=kind, shown_via="context")
+            context = ws.get_context(parsed.workspace, name, kind=kind, shown_via="context",
+                                     max_chars=parsed.max_chars, **_window(parsed))
             if parsed.json:
                 _print_json(context)
             else:
@@ -1937,7 +1955,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(context["evidence_note"])
                 for line in ws.record_problem_lines(context["record_problems"]):
                     print(line)
+                print("\n" + "\n".join(ws.standing_lines(context)))
                 print("\n" + "\n".join(ws.lesson_lines(context["lessons"], kind)))
+                if context["notes_files"]:
+                    print("\n" + "\n".join(ws.note_file_lines(context["notes_files"], context["notes_budget"])))
                 for title, value in context.get("notes", {}).items():
                     print(f"\n{title}:\n{value}")
                 for change in context.get("changes", []):
@@ -1961,7 +1982,10 @@ def main(argv: list[str] | None = None) -> int:
                         counts = ", ".join(f"{name}: {count}" for name, count in change["history_counts"].items())
                         print(f"{change['history_note']} Total entries — {counts}.")
                     print("Full change: " + change["show_command"])
-                for entry in context["sessions"]:
+                print(f"\nHistory: {context['sessions_returned']} of {context['sessions_total']} session record(s), "
+                      "newest first, the latest one above"
+                      + (f"; the rest: {context['more_command']}" if context["sessions_truncated"] else "") + ".")
+                for entry in context["sessions"][1:]:
                     print(f"\n{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}")
                     for line in ws.session_link_lines(entry):
                         print(line)
