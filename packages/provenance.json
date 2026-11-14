@@ -737,7 +737,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "36f736a1ecaa74b506be9c51c007e64a0d13c164fb5bccb3cbfd829463547670",
+      "destination_sha256": "d02f5604cc4e290074de7679121798fedaf85362bb5cb81b563270a7f7fe8733",
       "adapted": true
     },
     {
@@ -800,7 +800,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
       "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
       "source_tracked": true,
-      "destination_sha256": "ab5fce92dbb51a47f923692f73dcc2ecea89d7711d58fd9e11d8a92559f336a7",
+      "destination_sha256": "9c9c67c25e1a4c18e50407968bf5788b58b44f2748c1cae9f0f64fc2d83d1a48",
       "adapted": true
     },
     {

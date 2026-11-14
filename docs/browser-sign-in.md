@@ -180,6 +180,19 @@ power. It keeps the address out of the session in normal use.
 The browser and the command must run on the same machine. For a browser on another machine,
 forward the port; never bind another interface.
 
+## Replay scripts
+
+`torque browser sanitize-replay SCRIPT` rejects a recorded replay that holds a sign-in
+address or a session value (`frontdoor.jsp?otp=`, `frontdoor.jsp?sid=`,
+`services/oauth2/singleaccess`, tokens, cookies, authorization headers). It scans the text as
+written and after each of up to four rounds of percent-decoding; text still encoded after that
+is rejected too. It never prints the matched value.
+
+It is a scan of the script's text for known shapes. It cannot prove that code which builds or
+decodes an address at run time (another encoding, a computed string, a value read from a file)
+holds none, so a CLEAN result is not a full secret audit. A replay signs in at run time instead:
+`torque browser login --storage-state PATH` and `browser.new_context(storage_state=PATH)`.
+
 ## Test users: the seed file
 
 `clients/NAME/config/test-users.json` names the users browser tests run as. It holds no

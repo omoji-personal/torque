@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import NamedTuple
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from .diagnostics import exception_detail
 
 
@@ -432,18 +432,43 @@ FORBIDDEN_REPLAY_PATTERNS = [
 ]
 
 
-def scan_replay_script(content: str) -> list[str]:
-    """Scan replay-script content for forbidden credential patterns.
+# A script can hold an address percent-encoded several times and decode it before it
+# navigates. The text is decoded up to this many times and every round is scanned.
+DECODE_ROUNDS = 4
+SCAN_LIMIT = ("This is a scan of the script's text for known credential shapes: it cannot prove that code "
+              "which builds or decodes an address at run time holds none.")
 
-    Returns list of human-readable violation descriptions (empty if clean).
+
+def _decoded_rounds(content: str) -> tuple[list[str], bool]:
+    """The text, then each percent-decoding of it that changes something, up to
+    DECODE_ROUNDS; and whether it would still change after the last round."""
+    rounds = [content]
+    for _ in range(DECODE_ROUNDS):
+        decoded = unquote(rounds[-1])
+        if decoded == rounds[-1]:
+            return rounds, False
+        rounds.append(decoded)
+    return rounds, unquote(rounds[-1]) != rounds[-1]
+
+
+def scan_replay_script(content: str) -> list[str]:
+    """Scan replay-script content for forbidden credential patterns, in the text as it
+    is and after each of up to DECODE_ROUNDS rounds of percent-decoding.
+
+    Returns list of human-readable violation descriptions (empty if clean). A
+    description never contains the matched value.
     """
     violations = []
+    rounds, deeper = _decoded_rounds(content)
     for pattern in FORBIDDEN_REPLAY_PATTERNS:
-        matches = pattern.findall(content)
-        if matches:
-            
-            violations.append(
-                f"forbidden pattern {pattern.pattern!r} found "
-                f"({len(matches)} occurrence(s); matched values redacted)"
-            )
+        for depth, text in enumerate(rounds):
+            matches = pattern.findall(text)
+            if matches:
+                found = "found" if depth == 0 else f"found after {depth} round(s) of percent-decoding"
+                violations.append(f"forbidden pattern {pattern.pattern!r} {found} "
+                                  f"({len(matches)} occurrence(s); matched values redacted)")
+                break
+    if deeper:
+        violations.append(f"text is still percent-encoded after {DECODE_ROUNDS} rounds of decoding, so what it "
+                          "holds cannot be scanned; decode it by hand and scan the result")
     return violations
