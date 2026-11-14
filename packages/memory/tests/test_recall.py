@@ -454,10 +454,38 @@ def test_the_function_other_packages_call_returns_text_or_nothing_and_never_rais
     assert [(row["event"], row["id"], row["via"]) for row in events] == [("shown", "L-20250303-0001", "deploy")]
     assert "torque deploy" not in storage.events_path(alpha.engagement).read_text(encoding="utf-8")
     assert recall.for_command("git status") == ""
-    # Other callers pass what they know (a task, types, paths); the catalogue's sign-in notes answer here.
-    assert recall.for_command("torque browser login", tasks=["sign-in"], scopes=alpha, limit=1).count("\n[") == 1
+    # Other callers pass what they know (a task, types, paths). A task alone earns no line before a step;
+    # a lesson whose command pattern names an option of this command does.
+    assert recall.for_command("torque browser login", tasks=["sign-in"], scopes=alpha, limit=1) == ""
+    assert recall.for_command("torque browser login --as-user staff@example.org", tasks=["sign-in"], scopes=alpha,
+                              limit=1).count("\n[") == 1
     monkeypatch.setattr(recall, "find", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     assert recall.for_command("torque deploy --metadata Flow:X") == ""
+
+
+def test_before_a_clean_step_only_a_touched_type_or_an_option_specific_pattern_earns_a_line(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "flow", types=["Flow"], tasks=["deploy"], when="you deploy a flow")
+    save(alpha, "client", "any", tasks=["deploy"], commands=["sf project deploy *"], when="you deploy anything")
+    save(alpha, "client", "err", types=["Flow"], errors=["FlowDefinition not found"], when="a flow deploy fails")
+    save(alpha, "client", "dest", tasks=["deploy"], commands=["*destructive*"], errors=["is referenced elsewhere"],
+         when="you delete a field")
+    save(alpha, "client", "apex", types=["ApexClass"], tasks=["apex"], when="you change a class")
+    printed = lambda command, **more: [line.split("]")[0].split("-")[-1] for line in recall.for_command(
+        command, scopes=alpha, limit=None, **more).splitlines() if line.startswith("[L-20250303")]
+    # A type the step touches: yes. A broad pattern or the deploy task alone: no. A lesson that answers an
+    # error waits for it, unless its own pattern names an option of this command.
+    assert printed("sf project deploy start --metadata Flow:Renewal --target-org dev") == ["flow"]
+    assert printed("sf project deploy start --source-dir force-app --target-org dev") == []
+    assert printed("sf project deploy start --manifest p.xml --post-destructive-changes d.xml") == ["dest"]
+    assert printed("sf project deploy start --metadata Flow:Renewal", error="FlowDefinition not found")[0] == "err"
+    # A type word in the command is not a component the step touches; a path or a given type is.
+    assert printed("sf apex run --file scripts/check.apex") == []
+    assert printed("sf project deploy start", paths=["classes/Gift.cls"]) == ["apex"]
+    assert printed("torque check metadata", types=["Flow"], tasks=["deploy"]) == ["flow"]
+    # `torque lesson for` is unchanged: an explicit question still gets the broad ones.
+    asked = recall.find(alpha, command="sf project deploy start --source-dir force-app", limit=None)
+    assert {"any", "flow"} <= {hit.lesson.id.split("-")[-1] for hit in asked.hits}
 
 
 def test_shown_events_stay_with_the_scope_that_owns_the_lesson(workspace, scopes):

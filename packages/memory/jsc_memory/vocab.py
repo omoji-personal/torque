@@ -252,6 +252,13 @@ def for_command(command: str) -> tuple[list[str], list[str]]:
     """(tasks, metadata types) a command line points to: its verbs, the `Type:Name`
     members it names, and the source files and folders it mentions."""
     tasks, types = infer(command)
+    return tasks, _unique(types + command_members(command))
+
+
+def command_members(command: str) -> list[str]:
+    """The metadata types a command names as such: `Type:Name` members, a bare type name
+    (`--metadata Layout`) and source files and folders. Not the words of the command."""
+    types: list[str] = []
     for token in re.split(r"[\s,]+", command or ""):
         token = token.strip("\"'")
         head = token.split(":", 1)[0]
@@ -259,7 +266,7 @@ def for_command(command: str) -> tuple[list[str], list[str]]:
             types.append(TYPES[head.lower()])
         elif "/" in token or "\\" in token or token.lower().endswith(tuple(SUFFIXES)):
             types += types_for_path(token)
-    return tasks, _unique(types)
+    return _unique(types)
 
 
 def topic_words(words) -> list[str]:

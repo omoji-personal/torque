@@ -148,6 +148,7 @@ class Query:
     error: str = ""                 # an error text, as given
     only_error: bool = False        # the error was the only thing asked about
     topic: list = field(default_factory=list)    # the topic's words in order, lower case, for phrases
+    touched: list = field(default_factory=list)  # types given, from paths or named by the command as members
 
     def __bool__(self) -> bool:
         return bool(self.words or self.tasks or self.types or self.command or self.error)
@@ -215,15 +216,17 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
         # only the types it implies are added (flow-build asks for Flow).
         all_tasks += [] if vocab.tag(task) in vocab.TASKS else more_tasks
         all_types += more_types
+    given = [vocab.canonical_type(kind) for kind in types or ()] + path_types(paths, scopes)
     command = vocab.without_org_names(" ".join(str(command or "").split()))
     if command:
         more_tasks, more_types = vocab.for_command(command)
         all_tasks += more_tasks
         all_types += more_types
     return Query(words=words, tasks=list(dict.fromkeys(all_tasks + found_tasks)),
-                 types=list(dict.fromkeys(all_types + found_types + path_types(paths, scopes))), command=command,
+                 types=list(dict.fromkeys(all_types + found_types + given)), command=command,
                  error=error, only_error=only_error,
-                 topic=re.findall(r"[a-z0-9_]+", " ".join(topic).lower()))
+                 topic=re.findall(r"[a-z0-9_]+", " ".join(topic).lower()),
+                 touched=list(dict.fromkeys(given + vocab.command_members(command))))
 
 
 def _command_forms(command: str) -> list[str]:
@@ -250,6 +253,27 @@ def _command_hits(item: Lesson, command: str) -> tuple[int, bool]:
             name = set(re.split(r"\s+-", " " + form, maxsplit=1)[0].split())     # the words before the first option
             specific |= bool(set(re.findall(r"[^\s*]+", glob)) - name)
     return hits, specific
+
+
+def _specific_trigger(item: Lesson, command: str) -> bool:
+    """A catalogue note's trigger matches the command beyond its name (into an option or a
+    value: `--hard-delete`, `project deploy.*manifest`), not only `project deploy`."""
+    for form in _command_forms(command):
+        name = len(re.split(r"\s+-", form, maxsplit=1)[0])
+        if any(found.end() > name or found.start() >= name
+               for pattern in item.command_patterns for found in pattern.finditer(form)):
+            return True
+    return False
+
+
+def _before_step(item: Lesson, query: "Query") -> bool:
+    """Whether a lesson earns a line before a step that has not failed (`for_command`): its
+    command pattern names an option or value of this command, or (unless it answers an
+    error) it is about a component type the step touches."""
+    if query.command and (_command_hits(item, query.command)[1] or _specific_trigger(item, query.command)):
+        return True
+    touched = {kind.lower() for kind in query.touched}
+    return not item.applies.get("errors") and bool({kind.lower() for kind in item.applies.get("types", [])} & touched)
 
 
 def _phrases(item: Lesson, topic: list[str]) -> list[str]:
@@ -564,11 +588,20 @@ def for_command(command_text: str, *, types=(), tasks=(), paths=(), error: str =
     scopes        default: the client or initiative the launcher selected (TORQUE_WORKSPACE)
     via           a short name of the calling surface, stored with the `shown` events
 
+    Before a step that has not failed (no `error`), only a lesson about a component type the
+    step touches, or one whose command pattern names an option or value of this command, earns
+    a line; a lesson that answers an error (it has `applies.errors`) waits for that error. A
+    task or a broad pattern such as "any deploy" alone is not enough: nothing is printed then.
+
     It never raises, never blocks and never fails the caller's command."""
     try:
         scopes = scopes or storage.scopes_from_env()
         result = find(scopes, tasks=tasks, types=types, command=command_text, paths=paths, error=error,
-                      limit=limit)
+                      limit=None)
+        if not error:
+            result.hits = [hit for hit in result.hits if _before_step(hit.lesson, result.query)]
+            result.matched = len(result.hits)
+        result.hits = _cut(result.hits, limit)
         if not result.hits:
             return ""
         mark_shown(scopes, [hit.lesson for hit in result.hits], via)

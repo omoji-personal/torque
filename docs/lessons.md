@@ -38,7 +38,13 @@ torque doctor --workspace . --client NAME
 ```
 
 `torque deploy` and `torque data` print the matching lessons on stderr before the step.
-They never block and never fail the command.
+They never block and never fail the command. What prints there is kept rare and
+specific: a lesson about a component type the step touches (from `--metadata` members,
+paths or the types the caller gives), or one whose command pattern names an option or
+value of this command (`*destructive*`, `--hard-delete`, `--manifest`). A task alone or a
+broad pattern ("any deploy") is not enough, and a lesson that answers an error
+(`applies.errors`) waits for that error unless its own pattern names an option of the
+command. When nothing qualifies, nothing is printed. `torque lesson for` is not narrowed.
 
 ## Where lessons live
 
