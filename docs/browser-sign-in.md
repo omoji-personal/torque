@@ -1,11 +1,26 @@
 # Browser sign-in
 
-`torque browser login` signs a browser in to an org the Salesforce CLI is already authorized
-for. It goes through the Salesforce front door: no password is typed, and the Salesforce
-sign-in address is never printed, logged, written to disk or put in an error message.
+`torque browser login` sends a browser to an org the Salesforce CLI is already authorized for,
+through the Salesforce front door: no password is typed, and the Salesforce sign-in address is
+never printed, logged, written to disk or put in an error message. It is not available in a
+connected workspace (exit 6) or a build-only one.
 
-Status: offline tests only. No live org or browser run is recorded for this command yet; the
-[checklist](#what-a-live-run-still-has-to-prove) at the end says what a first run must show.
+**What the redirect proves.** Exit 0 in host-tab mode means the browser tab was sent to the
+org's single-use sign-in address for the alias's user. It does not prove that the page loaded,
+that Lightning is usable, or what another user can see. Wait for the org's page and confirm
+the signed-in user in it before testing.
+
+**When the consultant is needed.** The command cannot fix these; it stops or the tab shows
+them, and the consultant acts outside the agent:
+
+- an expired password: the tab shows "Change Your Password" (the CLI and API keep working);
+- a revoked or expired CLI authorization: exit 3, `sf org login web --alias ALIAS`;
+- a user with no login access for `--as-user`: the org's Log in as policy, or the user's grant;
+- device verification or a second factor that the front door does not satisfy.
+
+Status: one live host-tab run (Claude Code with the Chrome extension, Windows) sent a tab into
+a practice org without printing an address; everything else is offline tests. The
+[checklist](#what-a-live-run-still-has-to-prove) at the end says what a live run must still show.
 
 ## Why a command for this
 
