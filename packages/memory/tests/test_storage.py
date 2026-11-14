@@ -109,6 +109,36 @@ def test_an_id_resolves_exactly_or_by_a_unique_start(scopes):
         storage.resolve(lessons, "L-20991231-ffff")
 
 
+@pytest.mark.parametrize("damage", [
+    {"via": ["malformed"]}, {"via": {"a": 1}}, {"reason": 7}, {"session": ["x"]}, {"superseded_by": 3},
+    {"note": {"x": 1}}, {"id": ""}, {"id": 5}, {"at": 20261114}, {"at": "yesterday"}, {"event": "deleted"},
+])
+def test_a_damaged_event_row_is_skipped_and_counted_and_no_command_breaks(scopes, damage):
+    from jsc_memory import recall, review
+    alpha = scopes("alpha")
+    item = intake_lesson(alpha)
+    good = {"event": "shown", "id": item.id, "at": "2026-11-14T10:00:00-05:00", "via": "for"}
+    path = storage.events_path(alpha.engagement)
+    with open(path, "a", encoding="utf-8") as stream:
+        stream.write(json.dumps({**good, **damage}) + "\n" + "not json\n" + json.dumps(good) + "\n")
+    damaged: list = []
+    rows = storage.read_events(alpha.engagement, damaged)
+    assert len(damaged) == 2 and all(row in rows for row in [good])
+    report = review.stats(alpha)
+    assert report["damaged_events"] == 2 and report["shown_by_surface"] == {"for": 1}
+    assert "Damaged event rows skipped: 2" in review.render_stats(report)
+    lines = review.health_lines(review.health(alpha))
+    assert "damaged event rows skipped 2" in lines[1]
+    assert storage.tally(storage.events_for(alpha))[item.id].shown == 1
+    recall.find(alpha, types=["Flow"])                 # recall reads the same log and does not break
+    review.build(alpha)
+
+
+def intake_lesson(alpha):
+    from jsc_memory import intake
+    return intake.add(alpha, text="When: you deploy a flow. Do: read it back.", source="consultant").lesson
+
+
 def test_events_go_to_the_scope_root_and_counters_come_from_them(workspace, scopes):
     alpha = scopes("alpha")
     assert alpha.event_root("client") == workspace / "clients" / "alpha"

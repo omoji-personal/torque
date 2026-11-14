@@ -289,7 +289,9 @@ consultant's word.
 ## Proving the wiring
 
 - `torque lesson stats [--since DATE]`: captured by source and scope, events by kind,
-  shown by surface, candidates waiting and the oldest one, active lessons never shown.
+  shown by surface, candidates waiting and the oldest one, active lessons never shown,
+  and how many damaged event rows (not JSON, or a field of the wrong type) were skipped;
+  `torque doctor` names that count too. A damaged row never stops a command.
 - `torque doctor`: lessons by state for the firm and the selected client, unreadable
   files, the last capture and the last time a lesson was shown, and one line that says
   whether the loop is live (a lesson was saved or shown in the last 30 days) or idle.

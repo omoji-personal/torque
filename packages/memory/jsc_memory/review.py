@@ -176,8 +176,9 @@ def stats(scopes: Scopes, since: str | None = None) -> dict:
     if since:
         since = record._day(since, "--since")
     problems: list = []
+    damaged: list = []
     own = storage.load(scopes, problems)
-    events = storage.events_for(scopes)
+    events = storage.events_for(scopes, damaged)
     tallies = storage.tally(events)
     recent = [row for row in events if not since or row["at"][:10] >= since]
     captured = [item for item in own if not since or (item.created or "") >= since]
@@ -197,7 +198,8 @@ def stats(scopes: Scopes, since: str | None = None) -> dict:
         "oldest_candidate": ({"id": oldest.id, "created": oldest.created, "days": record.age_days(oldest)}
                              if oldest else None),
         "never_shown": never, "marked_stale": sum(bool(tally.stale_mark) for tally in tallies.values()),
-        "platform_lessons": len(recall.platform_lessons()), "unreadable": problems}
+        "platform_lessons": len(recall.platform_lessons()), "unreadable": problems,
+        "damaged_events": len(damaged)}
 
 
 def render_stats(report: dict) -> str:
@@ -215,7 +217,9 @@ def render_stats(report: dict) -> str:
         f"Active and never shown: {len(report['never_shown'])}"
         + (f" ({', '.join(report['never_shown'][:5])}{' ...' if len(report['never_shown']) > 5 else ''})"
            if report["never_shown"] else ""),
-        f"Marked stale: {report['marked_stale']}", *recall.problem_lines(report["unreadable"])])
+        f"Marked stale: {report['marked_stale']}", *recall.problem_lines(report["unreadable"]),
+        *([f"Damaged event rows skipped: {report['damaged_events']} (not counted above; the events log holds "
+           "lines that are not valid events)"] if report["damaged_events"] else [])])
 
 
 LIVE_DAYS = 30
@@ -228,11 +232,12 @@ def health(scopes: Scopes) -> dict:
     30 days) or idle."""
     def of(scope: str, root) -> dict:
         problems: list = []
+        damaged: list = []
         lessons = storage.read_folder(scopes.folder(scope), scope, scopes, problems)
-        shown = [row["at"][:10] for row in storage.read_events(root) if row["event"] == "shown"]
+        shown = [row["at"][:10] for row in storage.read_events(root, damaged) if row["event"] == "shown"]
         return {"states": {state: sum(item.state == state for item in lessons) for state in record.STATES},
                 "unreadable": problems, "last_capture": max((item.created for item in lessons), default="") or None,
-                "last_shown": max(shown, default=None)}
+                "last_shown": max(shown, default=None), "damaged_events": len(damaged)}
     platform_problems: list = []
     platform = recall.platform_lessons(platform_problems)
     report: dict = {
@@ -257,7 +262,9 @@ def health_lines(report: dict) -> list[str]:
         if part:
             states = ", ".join(f"{number} {state}" for state, number in part["states"].items())
             lines.append(f"Lessons ({label}): {states}; unreadable files {len(part['unreadable'])}; last saved "
-                         f"{part['last_capture'] or 'never'}; last shown {part['last_shown'] or 'never'}")
+                         f"{part['last_capture'] or 'never'}; last shown {part['last_shown'] or 'never'}"
+                         + (f"; damaged event rows skipped {part['damaged_events']}" if part.get("damaged_events")
+                            else ""))
     platform = report["platform"]
     lines.append(f"Lessons (platform): {platform['shipped']} shipped, {platform['advisory']} catalogue notes")
     lines.append("Lessons loop: live (a lesson was saved or shown in the last 30 days)" if report["loop"] == "live"

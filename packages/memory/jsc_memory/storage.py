@@ -349,8 +349,26 @@ def log(root: Path | None, rows: list[dict], *, must: bool = False) -> bool:
         return False
 
 
-def read_events(root: Path | None) -> list[dict]:
-    """The events of one scope root, oldest first. A damaged line is skipped."""
+_EVENT_TEXTS = ("via", "session", "reason", "superseded_by", "note", "basis", "to")
+
+
+def _valid_event(row: object) -> bool:
+    """An event row every reader can use: a known event, a lesson id, a time that starts
+    with a date, and each optional field Torque writes a text (or absent)."""
+    if not isinstance(row, dict) or row.get("event") not in EVENTS:
+        return False
+    if not isinstance(row.get("id"), str) or not row["id"] or not isinstance(row.get("at"), str):
+        return False
+    try:
+        datetime.fromisoformat(row["at"][:10])
+    except ValueError:
+        return False
+    return all(row.get(name) is None or isinstance(row[name], str) for name in _EVENT_TEXTS)
+
+
+def read_events(root: Path | None, damaged: list | None = None) -> list[dict]:
+    """The events of one scope root, oldest first. A damaged row (not JSON, or a field of
+    the wrong type) is skipped and, when `damaged` is given, counted there."""
     if root is None:
         return []
     try:
@@ -358,20 +376,24 @@ def read_events(root: Path | None) -> list[dict]:
     except OSError:
         return []
     rows = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
         try:
             row = json.loads(line)
         except ValueError:
-            continue
-        if isinstance(row, dict) and row.get("event") in EVENTS and isinstance(row.get("id"), str) \
-                and isinstance(row.get("at"), str):
+            row = None
+        if _valid_event(row):
             rows.append(row)
+        elif damaged is not None:
+            damaged.append({"path": events_path(root).as_posix(), "line": number})
     return rows
 
 
-def events_for(scopes: Scopes) -> list[dict]:
+def events_for(scopes: Scopes, damaged: list | None = None) -> list[dict]:
     """The events this call may read: the workspace's and the selected engagement's."""
-    return sorted(read_events(scopes.workspace) + read_events(scopes.engagement), key=lambda row: row["at"])
+    return sorted(read_events(scopes.workspace, damaged) + read_events(scopes.engagement, damaged),
+                  key=lambda row: row["at"])
 
 
 @dataclass
