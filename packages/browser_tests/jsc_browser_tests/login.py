@@ -456,10 +456,36 @@ PLAYWRIGHT_MISSING = ("Playwright mode needs Torque's browser extra and a Playwr
                       "chromium`. Signing a host browser tab in (without --storage-state) needs neither.")
 
 
+def workspace_folder_problem(path: Path) -> str | None:
+    """Why `path` lies in a Torque workspace folder that is not the selected client's:
+    another client's folder (clients/OTHER/...) or an initiative's (initiatives/NAME/...).
+    A session file signs a browser in to this org, so it belongs with this client only."""
+    selected = _client_folder()
+    for parent in path.parents:
+        root = parent.parent
+        if parent.name not in ("clients", "initiatives") or root == parent \
+                or not ((root / "workspace.json").is_file() or (root / ".torque").is_dir()):
+            continue
+        owner = path.relative_to(parent).parts[0]
+        if parent.name == "clients" and selected is not None and selected == (parent / owner).resolve():
+            return None
+        whose = "an initiative's folder" if parent.name == "initiatives" else (
+            "a client folder, and no client is selected (pass --client)" if selected is None
+            else "another client's folder")
+        return (f"{path} is inside {whose} of the workspace ({parent.name}/{owner}). A session file signs a browser "
+                "in to this org, so it belongs in the selected client's folder, for example "
+                "clients/NAME/state/browser-auth/ALIAS.json, or outside any repository.")
+    return None
+
+
 def storage_path_problem(path: Path) -> str | None:
     """Why a session file may not be written at `path`, or None. The file signs a browser
-    in as the user, so it must not be able to reach a repository: a path inside a git
-    work tree is refused unless git ignores it."""
+    in as the user, so it must stay with the selected client and must not be able to reach
+    a repository: a path in another client's or an initiative's folder of the workspace is
+    refused, and a path inside a git work tree is refused unless git ignores it."""
+    elsewhere = workspace_folder_problem(path)
+    if elsewhere:
+        return elsewhere
     folder = next((parent for parent in path.parents if parent.is_dir()), None)
     if folder is None or not any((parent / ".git").exists() for parent in [folder, *folder.parents]):
         return None
@@ -557,14 +583,16 @@ def run_storage_state(args, output: Output) -> int:
     state, user_id, username = asyncio.run(capture_state(plan, args.api_version))
     write_private(path, json.dumps(state))
     kind = org_kind(plan.identity)
+    edition = org_edition(plan.identity)
     username, user_id = shown(username, _USERNAME), shown(user_id, _USER_ID)
     event = {"event": "saved", "session_verified": True, "storage_state": str(path),
-             "org_id": plan.identity["org_id"], "org_kind": kind,
+             "org_id": plan.identity["org_id"], "org_kind": kind, "org_edition": edition or None,
              "username": username, "user_id": user_id, "org_check": plan.org_check}
     if plan.alias != plan.target_alias:
         event["as_alias"] = plan.alias
-    output.result(f"Session file written: {path}\norg {plan.identity['org_id']} ({kind}), user {username}, User Id "
-                  f"{user_id}; {plan.org_check}.", **event)
+    output.result(f"Session file written: {path}\norg {plan.identity['org_id']} ({kind}"
+                  f"{', ' + edition if edition else ''}), user {username}, User Id {user_id}; {plan.org_check}.",
+                  **event)
     output.hint("The file signs a browser in as that user until the session ends. Keep it out of repositories and "
                 f"delete it when done: torque browser logout --storage-state {path}")
     return EXIT_OK

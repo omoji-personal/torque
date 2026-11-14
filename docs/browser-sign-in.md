@@ -148,7 +148,10 @@ in Playwright's storage-state format. A script then starts with
   its owner only (mode 600; on Windows an access list for the user, SYSTEM and Administrators).
 - A path inside a git work tree is refused unless git ignores it. A Torque workspace ignores
   `clients/`, so `clients/NAME/state/browser-auth/ALIAS.json` works.
-- The command prints the path, never the content.
+- A path in another client's folder (`clients/OTHER/...`) or an initiative's folder
+  (`initiatives/NAME/...`) of the workspace is refused, and so is any client folder when no
+  client is selected. A path outside any workspace and repository is allowed.
+- The command prints the path, the org (with its edition) and the user, never the content.
 - `logout` deletes the file, and only a file that is such a session file.
 - `--as-alias` works here too. `--as-user` does not: use an alias for the test user.
 - Playwright's debug settings `DEBUG`, `DEBUG_FILE` and `PWDEBUG` print the address the browser
