@@ -1,0 +1,154 @@
+# Flow gotchas, each with a check
+
+Read the section that matches what you are doing. State described: Winter '27 (API 68.0),
+checked 2026-11-14. Evidence is named on each item: "observed in a developer org" (carried
+from the earlier nonprofit skill), field-reported (real client work, usually one org),
+[ADV] (Torque advisory catalogue) or **verify** (not confirmed in a fetched primary source).
+None was re-tested for this release, so run the check before you rely on an item.
+`[check]` = testable in the flow file.
+
+## Faults and transactions
+
+1. **A handled fault on a collection Create can partially save.** With a fault connector,
+   the rows that succeeded stay saved and the fault path runs; Ids are not written back to
+   the collection. Only an unhandled fault rolls back the whole transaction. For
+   all-or-nothing, put a Roll Back Records element on the fault path before any logging (or
+   the log is rolled back too) where the flow type offers it, or move the work to Apex.
+   Observed in a developer org. Check: create three records where one fails a validation
+   rule, then count what was saved.
+2. **A fault path does not catch a governor-limit failure.** The transaction still rolls
+   back (**verify**). Check: run 200 records and read the limit usage in a debug log.
+3. **Subflow elements were seen to have no fault connector.** Handle faults inside the
+   subflow and return an error output the parent checks. Observed in a developer org; one
+   research source lists a fault connector on subflows, unconfirmed. Check: whether the
+   Subflow element in Flow Builder offers Add Fault Path in this org.
+
+## Formulas and values
+
+4. **Flow formula `DATEVALUE()` on a date/time uses GMT.** An evening value in a US time
+   zone dates to the next day, and a late December 31 value lands in the next year. Use a
+   date formula field on the object, which evaluates in the user's time zone, or adjust
+   explicitly. Observed in a developer org. Check: evaluate on a record stamped 11 PM local.
+5. **A formula sees a choice field's label, not its value.** For a radio, picklist, checkbox
+   group or record choice set on a screen, `{!field} = 'VALUE'` never matches and the flow
+   takes its default path (field-reported: it created stray records). Compare the field to
+   the choice resource in a decision or visibility rule. `[check]` a formula that compares a
+   choice screen field to a text literal. Check: run the screen once per choice and confirm
+   the non-default branch runs.
+6. **Flow Builder debug runs commit unless rollback mode is on.** A debug run of an
+   autolaunched or screen flow writes real records when the rollback option is cleared
+   (observed in a developer org). Record-triggered debug runs in rollback mode (**verify**).
+   Check: after any debug run, query for records it could have created and delete them by Id.
+7. **Three formula and filter traps** (field-reported): `CONTAINS(text, "")` is true; `"\n"`
+   is not a new line in a formula; a null inside a set of Ids used in an IN filter returns
+   rows you did not intend. Check: test the formula with an empty value; count the rows the
+   filter returns with a null in the set.
+
+## Screen flows
+
+8. **A screen action without its trigger deploys and never runs.** `<actions>` without
+   `<triggers>` shows as configured; the deploy also accepts a made-up `eventName`
+   (field-reported). `[check]` a screen with `<actions>` and no `<triggers>`. Check: the
+   action runs on screen load in a browser test. To get a working shape, retrieve a flow
+   where the action was set up in Flow Builder.
+9. **A screen flow on a record page needs Run Flows.** With profile flow access alone the
+   user got "Insufficient Privileges" and the page component was silently hidden
+   (field-reported). Grant Run Flows by permission set. Check: signed in as that user, the
+   component renders.
+10. **The flow access override persists.** Omitting `isAdditionalPermissionRequiredToRun` in
+    a new version kept the previous `true`; send an explicit `false` to clear it
+    (field-reported). `[check]` the element is present with the intended value. Check: read
+    the flow's access setting in Setup after the deploy.
+11. **Data Table behaviour** (field-reported): radio buttons appear only with maximum
+    selection 1 and minimum selection at least 1; ticks are lost when the source collection
+    changes; a default selection is not re-applied when the next search returns the same
+    rows. Check: search twice in a browser and read the selection each time.
+12. **A screen checkbox needed `isRequired` set to `true`** in the metadata before the flow
+    would activate (field-reported). Check: activate in a sandbox straight after the deploy.
+
+## Deploy and metadata
+
+13. **Resource names are case-insensitive.** Two names that differ only in case fail the
+    deploy with "Duplicate developer name" (field-reported). `[check]`.
+14. **Get Records with `storeOutputAutomatically` also needs `getFirstRecordOnly`**
+    (field-reported). `[check]`.
+15. **Decision outcome names must be unique** (field-reported). `[check]`.
+16. **A retrieve returns the latest version, not the active one** [ADV
+    `flow-retrieve-latest-only`]. Check: `torque advisory flow`, or `ActiveVersionId` against
+    `LatestVersionId` on `FlowDefinition`.
+17. **`FlowDefinitionView` is a standard object.** Queried with the Tooling flag it errors,
+    and some clients show zero rows [ADV `flowdefinitionview-is-standard-api`]. Check: query
+    it without `--use-tooling-api`.
+18. **Retrieves of the same flow differ in element positions** (field-reported: zeroed
+    locations). Check: a diff that is only positions is not a change.
+19. **A script that regenerates a flow drops its descriptions** unless they are kept as data
+    and re-applied (field-reported). Check: `[check]` descriptions present after each build.
+
+## Run order and side effects
+
+20. **A new flow changes the run order on the object.** A new before-save flow made
+    submissions skip approval (field-reported). Check: trigger order set; one existing path
+    rerun after the deploy.
+21. **Saving a child can save its parent again.** Saving an Opportunity Product re-saves its
+    Opportunity, so Opportunity flows run once per line item (field-reported: 100
+    Opportunity saves took 7 to 13 seconds of CPU in one org). Check: measure CPU in a debug
+    log first; run one-time updates in batches of 50 or fewer.
+22. **A save that changes nothing still fires flows** whose conditions do not test for a
+    change, and stamps the record as modified [ADV `no-op-update-is-not-free`]. Check: diff
+    before a mass update and write only the records that change.
+23. **"Only when a record is updated to meet the condition" does not fire again** while the
+    record stays in the condition [ADV `entry-condition-requirements`]. Check: save a record
+    that already meets it and read the result.
+24. **A duplicate rule can block the save after a before-save flow has run**
+    [ADV `duplicate-rules-block-the-save`]. Check:
+    `SELECT DeveloperName, IsActive, SobjectType FROM DuplicateRule WHERE IsActive = true`.
+25. **Email, asynchronous Apex and asynchronous paths run after commit.** A query straight
+    after the save shows none of their effects [ADV
+    `post-commit-work-is-invisible-to-the-caller`]. Check: poll the record they write to, or
+    `AsyncApexJob`.
+26. **Test records fire everything that fires on create.** A Process Builder process sent
+    marketing events for test contacts, and integrations in a sandbox fell back to production
+    endpoints (both field-reported). Check: the inventory in `build-checklist.md`, step 1,
+    before the first test record; see `salesforce-delivery/references/testing-and-uat.md`.
+
+## Scheduled and background work
+
+27. **Schedule start times end in Z but are org local time** (field-reported). Check: read
+    the next run time in Setup after the deploy.
+28. **Before you say when or whether automation runs, read it.** Active version, schedule,
+    weekday or entry conditions, and run-as user; for a rollup tool, its mode and any
+    scheduled full calculation. field-reported: a daily flow acted only on some weekdays, and
+    a "real time" rollup also had a weekly scheduled run; the wrong statement reached a
+    client page. Check: the `CronTrigger` rows and the last `AsyncApexJob` for that job.
+29. **Flow Orchestration background steps** (field-reported): steps run as Automated Process
+    failed on an industry object; `$User.Username` resolved to that user; a run-as setting
+    that needs a user name failed when given a user Id; and a production user name set there
+    survived a sandbox refresh and failed in the sandbox. Check: run background steps as a
+    named licensed user; reset per-org user names after every refresh.
+30. **A schedule moved for a test stays moved** (field-reported: for days). Check: no open
+    restore at the end of the session; verify by the real scheduled run and a count of
+    records created since the fix.
+
+## Diagnosis
+
+31. **"The release broke it" needs evidence.** Compare failing and succeeding runs by owner,
+    run-as user and flow version before you accept it; rule out a suspected cause with a
+    number (field-reported: the evidence pointed to configuration). Leave unrelated defects
+    you find alone and recommend their cleanup.
+
+Flows on NPSP and Nonprofit Cloud objects have their own items: skills `salesforce-npsp` and
+`salesforce-nonprofit-cloud`.
+
+## Sources
+
+- [ADV] Torque advisory catalogue (`torque advisory notes --command TEXT`). Entries
+  `flow-retrieve-latest-only`, `flowdefinitionview-is-standard-api` and
+  `duplicate-rules-block-the-save` are marked verified live there;
+  `post-commit-work-is-invisible-to-the-caller` documented; `no-op-update-is-not-free` and
+  `entry-condition-requirements` practitioner.
+- Observed in a developer org: items 1, 3, 4 and 6, carried from the earlier nonprofit skill
+  text.
+- **verify** items: flow fault paths (https://help.salesforce.com/s/articleView?id=platform.flow_build_logic_fault.htm&type=5),
+  flow debugging (https://help.salesforce.com/s/articleView?id=flow_considerations_troubleshooting.htm&type=5).
+- Record-triggered automation decision guide (transaction control in Flow): https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered
+- field-reported: lessons from real client work with Torque, not re-tested for this release.

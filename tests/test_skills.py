@@ -14,8 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / ".agents" / "skills"
 BUNDLED = ROOT / "src" / "torque" / "data" / "skills"
 NONPROFIT = ("salesforce-npsp", "salesforce-nonprofit-cloud")
-ALL = ("salesforce-architecture-review", "salesforce-code-analyzer-review",
-       "salesforce-soql-review", *NONPROFIT)
+# Practice skills: a short body that says what to do first, depth in references/.
+PRACTICE = ("salesforce-flow",)
+REVIEW = ("salesforce-architecture-review", "salesforce-code-analyzer-review", "salesforce-soql-review")
+ALL = (*REVIEW, *PRACTICE, *NONPROFIT)
+WITH_REFERENCES = (*PRACTICE, *NONPROFIT)
 
 
 def _frontmatter(path):
@@ -30,6 +33,10 @@ def _skill_files(base):
     return sorted(p.relative_to(base).as_posix() for p in base.rglob("*.md"))
 
 
+def _text(name):
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted((SOURCE / name).rglob("*.md")))
+
+
 def test_every_skill_has_well_formed_frontmatter():
     assert sorted(p.name for p in SOURCE.iterdir() if p.is_dir()) == sorted(ALL)
     for name in ALL:
@@ -40,8 +47,21 @@ def test_every_skill_has_well_formed_frontmatter():
         assert body.lstrip().startswith("# "), name
 
 
-@pytest.mark.parametrize("name", NONPROFIT)
-def test_nonprofit_skill_references_exist_and_are_linked(name):
+@pytest.mark.parametrize("name", PRACTICE)
+def test_practice_skill_says_when_to_use_it_and_stays_short(name):
+    fields, body = _frontmatter(SOURCE / name / "SKILL.md")
+    description = fields["description"]
+    # The description is what a host lists: it must say when to load the skill, and parse as plain YAML.
+    assert "Use it " in description and len(description) < 1000, name
+    assert ": " not in description and "`" not in description and " #" not in description, name
+    # The body is read in the middle of a task: one screen of next actions, depth in references.
+    assert len(body.strip("\n").splitlines()) <= 150, name
+    for path in (SOURCE / name / "references").glob("*.md"):
+        assert len(path.read_text(encoding="utf-8").strip("\n").splitlines()) <= 225, path
+
+
+@pytest.mark.parametrize("name", WITH_REFERENCES)
+def test_skill_references_exist_and_are_linked(name):
     skill = (SOURCE / name / "SKILL.md").read_text(encoding="utf-8")
     references = sorted((SOURCE / name / "references").glob("*.md"))
     assert references, name
@@ -49,6 +69,19 @@ def test_nonprofit_skill_references_exist_and_are_linked(name):
         assert f"`references/{path.name}`" in skill, path
     for mentioned in re.findall(r"`(references/[a-z0-9-]+\.md)`", skill):
         assert (SOURCE / name / mentioned).is_file(), mentioned
+
+
+@pytest.mark.parametrize("name", PRACTICE)
+def test_practice_skill_files_cite_sources_and_stay_plain(name):
+    for path in sorted((SOURCE / name).rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        assert "—" not in text and "–" not in text, path
+        sources = text.split("\n## Sources\n", 1)
+        assert len(sources) == 2 and "\n## " not in sources[1], path  # sources come last
+        assert "https://" in sources[1] or "field-reported" in sources[1], path
+        # Unconfirmed statements are marked, and the mark is explained where it is used.
+        if "**verify**" in sources[0]:
+            assert "not confirmed in a fetched primary source" in _text(name), path
 
 
 @pytest.mark.parametrize("name", NONPROFIT)
@@ -69,6 +102,24 @@ def test_npsp_skill_covers_the_required_topics():
                   "pmdm__ServiceParticipant__c", "feature gate", "outfunds",
                   "partially save", "DATEVALUE()", "no fault connector", "field-level security",
                   "subscriber copies of managed custom metadata", "rollback mode"):
+        assert topic in text, topic
+
+
+def test_flow_skill_covers_the_required_topics():
+    skill = (SOURCE / "salesforce-flow" / "SKILL.md").read_text(encoding="utf-8")
+    # The body carries the standard an agent applies to every flow, each rule with its check.
+    for topic in ("before save", "entry conditions", "trigger order", "inside a loop", "fault path",
+                  "Hard-code no", "running context", "Describe the flow", "200 records", "active version",
+                  "torque advisory flow", "torque advisory impact", "torque browser login", "[check]"):
+        assert topic in skill, topic
+    text = _text("salesforce-flow")
+    for topic in ("faultConnector", "triggerOrder", "runInMode", "FlowDefinitionView", "ActiveVersionId",
+                  "--rule-selector flow", "MissingFaultHandler", "DbInLoop", "$Permission",
+                  # general platform lessons that used to live only in the NPSP skill
+                  "partially save", "DATEVALUE()", "no fault connector", "rollback mode",
+                  # field lessons
+                  "choice field's label", "<triggers>", "isAdditionalPermissionRequiredToRun", "Run Flows",
+                  "storeOutputAutomatically", "Duplicate developer name", "by version"):
         assert topic in text, topic
 
 
@@ -100,24 +151,29 @@ def test_every_bundled_skill_file_is_packaged_in_the_wheel_and_sdist():
     assert "recursive-include .agents/skills *.md" in (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
 
 
-def test_workspace_init_and_upgrade_install_the_nonprofit_skills(tmp_path):
+def test_workspace_init_and_upgrade_install_every_skill_with_its_references(tmp_path):
     root = ws.init_workspace(tmp_path / "firm", "Acme consulting")
     for base in (".claude/skills", ".agents/skills"):
-        for name in NONPROFIT:
+        for name in ALL:
             for relative in _skill_files(SOURCE / name):
                 target = root / base / name / relative
                 assert target.read_bytes() == (SOURCE / name / relative).read_bytes(), target
     bundled = template_updates._bundled()
-    for name in NONPROFIT:
-        assert f".agents/skills/{name}/references/gotchas.md" in bundled
+    for name in ALL:
         assert f".claude/skills/{name}/SKILL.md" in bundled
+        assert f".agents/skills/{name}/SKILL.md" in bundled
+    for name in WITH_REFERENCES:
+        for reference in (SOURCE / name / "references").glob("*.md"):
+            assert f".agents/skills/{name}/references/{reference.name}" in bundled, reference
+            assert f".claude/skills/{name}/references/{reference.name}" in bundled, reference
 
 
 def test_packaged_resources_include_the_skill_references():
     data = resources.files("torque").joinpath("data", "skills")
-    for name in NONPROFIT:
+    for name in WITH_REFERENCES:
         assert data.joinpath(name, "SKILL.md").is_file()
-        assert data.joinpath(name, "references", "gotchas.md").is_file()
+        for reference in (SOURCE / name / "references").glob("*.md"):
+            assert data.joinpath(name, "references", reference.name).is_file(), reference
 
 
 def test_skills_are_listed_in_the_docs():
