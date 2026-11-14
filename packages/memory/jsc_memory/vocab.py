@@ -113,8 +113,29 @@ FOLDERS = {
 }
 TYPES = {name.lower(): name for name in
          [*SUFFIXES.values(), *FOLDERS.values(), *(t for _, _, types in VOCABULARY for t in types)]}
-_KEYWORD = re.compile(r"(?<![\w.])(?:[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+(?:\.[A-Za-z_]+)?"
+_KEYWORD = re.compile(r"(?<![\w.])(?:[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+(?:\.[A-Za-z_]+)?"
                       r"|[A-Za-z]\w*__(?:c|r|mdt|e|x|b))(?!\w)")
+# An error code as Salesforce prints it: capitals joined by underscores.
+_ERROR_CODE = re.compile(r"(?<![\w.])[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+(?!\w)")
+# Error messages worth recognising in a lesson's text, as (how the text may spell it, the matcher to store).
+ERROR_PHRASES = tuple((re.compile(spelling, re.I), matcher) for spelling, matcher in (
+    (r"no such column", "No such column"),
+    (r"didn'?t understand relationship", "Didn't understand relationship"),
+    (r"sobject type .{0,80}? is not supported", "sObject type * is not supported"),
+    (r"disjunctions? (?:are )?not supported", "Disjunctions not supported"),
+    (r"can ?not be grouped", "can*not be grouped"),
+    (r"can ?not be filtered", "can*not be filtered"),
+    (r"invalid operator on id field", "invalid operator on id field"),
+    (r"implementation restriction", "Implementation restriction"),
+    (r"too many soql queries", "Too many SOQL queries"),
+    (r"too many dml statements", "Too many DML statements"),
+    (r"does not support query", "does not support query"),
+    (r"data value too large", "data value too large"),
+    (r"insufficient access rights on cross-reference id", "insufficient access rights on cross-reference id"),
+    (r"duplicate value found", "duplicate value found"),
+    (r"required fields are missing", "Required fields are missing"),
+    (r"unexpected token", "Unexpected token"),
+))
 _STOP = {"the", "and", "for", "with", "you", "are", "about", "that", "this", "when", "from", "into", "not", "but",
          "was", "has", "have", "its", "all", "any", "can", "does", "then", "than", "how", "what", "why", "use",
          "using", "torque", "lesson", "lessons"}
@@ -138,9 +159,58 @@ def infer(text: str) -> tuple[list[str], list[str]]:
 
 
 def keywords(text: str, limit: int = 8) -> list[str]:
-    """Distinctive tokens of a text: error codes, API names, object.field references."""
+    """Distinctive tokens of a text: API names and object.field references."""
     found = _unique(match.group() for match in _KEYWORD.finditer(text or ""))
     return [word for word in found if word.lower() not in TYPES][:limit]
+
+
+def errors(text: str, limit: int = 6) -> list[str]:
+    """Error matchers a text quotes: error codes in capitals with underscores, and the
+    known error messages (ERROR_PHRASES)."""
+    found = [match.group() for match in _ERROR_CODE.finditer(text or "")]
+    found += [matcher for spelling, matcher in ERROR_PHRASES if spelling.search(text or "")]
+    return _unique(found)[:limit]
+
+
+def normal_error(text: str) -> str:
+    """An error text as matchers see it: lower case, one space between words."""
+    return " ".join(str(text or "").lower().split())
+
+
+def error_matches(matcher: str, error: str) -> bool:
+    """A lesson's error matcher against a normalised error text: the matcher is a piece of
+    the text, in any case, and `*` in it stands for any run of characters. Nothing else
+    is special: no regular expression is ever built from a lesson's text."""
+    parts = [part.strip() for part in normal_error(matcher).split("*")]
+    if sum(len(part) for part in parts) < 4:
+        return False
+    position = 0
+    for part in parts:
+        found = error.find(part, position)
+        if found < 0:
+            return False
+        position = found + len(part)
+    return True
+
+
+def error_codes(text: str) -> list[str]:
+    return _unique(match.group() for match in _ERROR_CODE.finditer(text or ""))
+
+
+def error_wording(text: str) -> list[str]:
+    """The words of an error message with quoted names and numbers taken out, to compare
+    two messages of the same class by their wording."""
+    text = re.sub(r"'[^'\s]{1,80}'|\"[^\"\s]{1,80}\"|`[^`\s]{1,80}`", " * ", str(text or ""))
+    return re.findall(r"[a-z_]+|\*", text.lower())
+
+
+def shares_wording(error: str, other: str, run: int = 4) -> bool:
+    """Two error texts name the same error code, or share `run` consecutive words."""
+    if any(code in other for code in error_codes(error)):
+        return True
+    first, second = error_wording(error), error_wording(other)
+    grams = {tuple(second[index:index + run]) for index in range(len(second) - run + 1)}
+    return any(tuple(first[index:index + run]) in grams for index in range(len(first) - run + 1))
 
 
 def tag(text: str) -> str:

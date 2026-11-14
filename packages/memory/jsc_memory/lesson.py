@@ -24,7 +24,9 @@ EVIDENCE_TYPES = ("reproduced", "official-doc", "second-occurrence", "session", 
 ADMITTING = frozenset({"reproduced", "official-doc", "second-occurrence"})
 # What a review (`torque lesson verify`) may give a candidate as its basis.
 REVIEW_ADMITTING = ADMITTING | {"consultant-said"}
-APPLIES = ("tasks", "types", "commands", "keywords")
+# What a lesson applies to: task words, metadata types, command patterns, keywords, and
+# error matchers (a piece of the error text; `*` stands for any run of characters).
+APPLIES = ("tasks", "types", "commands", "keywords", "errors")
 REVIEW_DAYS = 90
 BODY_LINES = 15
 ID = re.compile(r"[A-Z]-[A-Za-z0-9][A-Za-z0-9._-]{3,79}\Z")
@@ -60,6 +62,7 @@ class Lesson:
     path: Path | None = None
     origin: str = "file"                            # "file", or "advisory" for a catalogue note read as a lesson
     command_patterns: tuple = ()                    # regular expressions over a command (catalogue notes)
+    error_text: str = ""                            # the error wording a catalogue note describes
 
     @property
     def evidence_type(self) -> str:
@@ -194,7 +197,7 @@ def from_front_matter(data: object, body: str = "", *, path: Path | None = None)
         raise LessonError("title is missing")
     applies = data.get("applies") or {}
     if not isinstance(applies, dict):
-        raise LessonError("applies must hold tasks, types, commands and keywords")
+        raise LessonError("applies must hold tasks, types, commands, keywords and errors")
     evidence = []
     raw = data.get("evidence") or []
     if not isinstance(raw, list) or any(not isinstance(entry, dict) for entry in raw):

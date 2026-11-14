@@ -8,8 +8,9 @@ FLOW_DEPLOY = "sf project deploy start --metadata Flow:Gift_Entry --target-org e
 
 
 def save(scopes, scope, suffix, **fields):
-    applies = {"tasks": [], "types": [], "commands": [], "keywords": [],
-               **{key: fields.pop(key) for key in ("tasks", "types", "commands", "keywords") if key in fields}}
+    applies = {"tasks": [], "types": [], "commands": [], "keywords": [], "errors": [],
+               **{key: fields.pop(key) for key in ("tasks", "types", "commands", "keywords", "errors")
+                  if key in fields}}
     item = Lesson(id=f"L-20261114-{suffix}", title=fields.pop("title", f"Lesson {suffix}"), scope=scope,
                   state=fields.pop("state", "active"), created=fields.pop("created", "2026-11-14"),
                   last_verified=fields.pop("last_verified", "2026-11-14"), applies=applies, **fields)
@@ -223,3 +224,57 @@ def test_the_context_block_shows_the_engagements_best_and_counts_the_rest(scopes
     assert [row["via"] for row in storage.read_events(alpha.engagement) if row["event"] == "shown"] == ["context"] * 5
     other = recall.context_section(scopes("beta"))
     assert other["shown"] == [] and other["engagement_active"] == 0 and other["firm_active"] == 1
+
+
+NO_COLUMN = "ERROR at Row:1:Column:8\nNo such column 'Region_Code__c' on entity 'Account'. If you are attempting ..."
+
+
+def test_a_lesson_with_an_error_matcher_answers_that_error_and_no_other(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "e001", errors=["No such column", "Didn't understand relationship"],
+         when="a query fails on an unknown name", do="look the name up with a describe; do not guess again")
+    save(alpha, "client", "e002", errors=["sObject type * is not supported"], when="the API does not serve the entity",
+         do="run the query on the other API")
+    save(alpha, "client", "e003", tasks=["query"], when="you write a query", do="select only what you need")
+    result = recall.find(alpha, error=NO_COLUMN, limit=None)
+    assert own(result) == ["e001"] and result.hits[0].reasons == ["error"] and result.hits[0].score == 6
+    assert own(recall.find(alpha, error="sObject type 'FlowDefinitionView' is not supported.", limit=None)) == ["e002"]
+    unrelated = recall.find(alpha, error="FIELD_CUSTOM_VALIDATION_EXCEPTION: Amount must be positive", limit=None)
+    assert own(unrelated) == []
+    # Together with other selectors, the error match counts on top and ranks first.
+    both = recall.find(alpha, error=NO_COLUMN, tasks=["query"], limit=None)
+    assert own(both)[:2] == ["e001", "e003"]
+    assert recall.render(result).splitlines()[0].startswith("Lessons for this error (client alpha + firm + platform)")
+    assert recall.as_json(result)["query"]["error"] is True
+    assert "Region_Code__c" not in recall.render(result)            # the error text is matched, never echoed
+
+
+def test_the_catalogue_answers_an_error_through_a_notes_symptom_and_title(scopes):
+    locked = recall.find(storage.Scopes(), error="UNABLE_TO_LOCK_ROW: unable to obtain exclusive access", limit=None)
+    assert ids(locked)[0] == "A-unable-to-lock-row" and locked.hits[0].reasons == ["error"]
+    served = recall.find(storage.Scopes(), error="sObject type 'PermissionSetAssignment' is not supported.",
+                         limit=None)
+    assert "A-tooling-api-refuses-permission-objects" in ids(served)
+    assert ids(recall.find(storage.Scopes(), error="zsh: command not found: sf", limit=None)) == []
+
+
+def test_an_unknown_error_says_so_in_one_line_and_asks_for_what_fixed_it(scopes):
+    text = recall.render(recall.find(scopes("alpha"), error="Something nobody has seen: code 0x51"))
+    assert text == ("No lesson matches this error (client alpha + firm + platform). When you have fixed it, save "
+                    'what worked: torque session add ... --learned "When: <the error>. Do: <what fixed it>. '
+                    'Because: <why>"')
+    assert "\n" not in text
+
+
+def test_an_error_quoted_in_a_lesson_becomes_its_matcher_at_capture(scopes):
+    alpha = scopes("alpha")
+    added = intake.add(alpha, text="When: a query fails with No such column or MALFORMED_QUERY. Do: describe the "
+                                   "object first. Because: the name was a guess.", source="consultant")
+    assert added.lesson.applies["errors"] == ["MALFORMED_QUERY", "No such column"]
+    assert added.inferred["errors"] == ["MALFORMED_QUERY", "No such column"]
+    assert own(recall.find(alpha, error=NO_COLUMN, limit=None)) == [added.lesson.id[-4:]]
+    given = intake.add(alpha, when="the bulk job fails", do="retry the failed batches serially",
+                       errors=["unable to obtain exclusive access"], source="consultant")
+    assert given.lesson.applies["errors"] == ["unable to obtain exclusive access"] and "errors" not in given.inferred
+    assert own(recall.find(alpha, error="UNABLE_TO_LOCK_ROW: unable to obtain exclusive access to this record",
+                           limit=None)) == [given.lesson.id[-4:]]

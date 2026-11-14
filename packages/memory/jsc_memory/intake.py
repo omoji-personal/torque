@@ -106,7 +106,7 @@ def parse_evidence(values, day: str) -> list[dict]:
 
 def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: str = "", because: str = "",
         body: str = "", scope: str | None = None, kind: str = "pitfall", tasks=(), types=(), commands=(),
-        keywords=(), evidence=(), source: str = "agent", session: str | None = None) -> Added:
+        keywords=(), errors=(), evidence=(), source: str = "agent", session: str | None = None) -> Added:
     """Save one lesson. Raises LessonError when there is nothing to save or nowhere to
     keep it, and Refused when the scrub refuses the text; nothing is written then."""
     if kind not in record.KINDS:
@@ -133,7 +133,8 @@ def add(scopes: Scopes, *, text: str = "", title: str = "", when: str = "", do: 
     for name, given, found in (("tasks", [vocab.tag(value) for value in tasks or ()], found_tasks),
                                ("types", [vocab.canonical_type(value) for value in types or ()], found_types),
                                ("keywords", [record.one_line(value) for value in keywords or ()],
-                                vocab.keywords(whole))):
+                                vocab.keywords(whole)),
+                               ("errors", [record.one_line(value) for value in errors or ()], vocab.errors(whole))):
         item.applies[name] = list(dict.fromkeys(given)) or found
         if not given and found:
             inferred[name] = found

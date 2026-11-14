@@ -86,11 +86,12 @@ def _advisory() -> tuple:
         lessons.append(Lesson(
             id="A-" + note["id"], title=record.one_line(note["title"]), scope="platform", kind="pitfall",
             state="active", do=record.one_line(note["remedy"]), because=record.one_line(note["cause"]),
-            applies={"tasks": tasks, "types": types, "commands": [], "keywords": []},
+            applies={"tasks": tasks, "types": types, "commands": [], "keywords": [], "errors": []},
             evidence=[{"type": kind, "ref": source or f"advisory catalogue ({note.get('confidence')})",
                        "date": str(note["updated"])}],
             source="doc", created=str(note["updated"]), last_verified=str(note["updated"]), body=body,
-            origin="advisory", command_patterns=tuple(patterns)))
+            origin="advisory", command_patterns=tuple(patterns),
+            error_text=record.one_line(f"{note['title']} {note['symptom']}")))
     return tuple(lessons)
 
 
@@ -112,15 +113,21 @@ class Query:
     tasks: list = field(default_factory=list)
     types: list = field(default_factory=list)
     command: str = ""
+    error: str = ""                 # an error text, as given
+    only_error: bool = False        # the error was the only thing asked about
 
     def __bool__(self) -> bool:
-        return bool(self.words or self.tasks or self.types or self.command)
+        return bool(self.words or self.tasks or self.types or self.command or self.error)
 
     def label(self) -> str:
-        return ", ".join(dict.fromkeys([*self.tasks, *self.types, *self.words])) or ("the command" if self.command else "")
+        named = ", ".join(dict.fromkeys([*self.tasks, *self.types, *self.words]))
+        if self.error:
+            return "this error" + (f", {named}" if named and not self.only_error else "")
+        return named or ("the command" if self.command else "")
 
     def as_dict(self) -> dict:
-        return {"tasks": self.tasks, "types": self.types, "words": self.words, "command": bool(self.command)}
+        return {"tasks": self.tasks, "types": self.types, "words": self.words, "command": bool(self.command),
+                "error": bool(self.error)}
 
 
 def path_types(paths) -> list[str]:
@@ -144,8 +151,10 @@ def path_types(paths) -> list[str]:
     return list(dict.fromkeys(types))
 
 
-def build_query(topic=(), tasks=(), types=(), command: str = "", paths=()) -> Query:
+def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "") -> Query:
     topic = [str(word) for word in topic or ()]
+    error = record.one_line(error)
+    only_error = bool(error) and not (topic or tasks or types or command or paths)
     found_tasks, found_types = vocab.infer(" ".join(topic))
     all_tasks = [vocab.tag(task) for task in tasks or ()]
     all_types = [vocab.canonical_type(kind) for kind in types or ()]
@@ -159,7 +168,8 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=()) -> Qu
         all_tasks += more_tasks
         all_types += more_types
     return Query(words=vocab.topic_words(topic), tasks=list(dict.fromkeys(all_tasks + found_tasks)),
-                 types=list(dict.fromkeys(all_types + found_types + path_types(paths))), command=command)
+                 types=list(dict.fromkeys(all_types + found_types + path_types(paths))), command=command,
+                 error=error, only_error=only_error)
 
 
 def _command_forms(command: str) -> list[str]:
@@ -183,8 +193,17 @@ def _command_hits(item: Lesson, command: str) -> int:
 
 def _text_words(item: Lesson) -> set[str]:
     text = " ".join([item.title, item.when, item.do, item.because, *item.applies.get("keywords", []),
-                     *item.applies.get("tasks", []), *item.applies.get("types", [])])
+                     *item.applies.get("tasks", []), *item.applies.get("types", []),
+                     *item.applies.get("errors", [])])
     return record.words(text)
+
+
+def _error_hits(item: Lesson, error: str) -> int:
+    """How many of a lesson's error matchers the error text meets. A catalogue note has
+    no matchers: it answers when its title or symptom names the same error code or
+    shares the error's wording."""
+    hits = sum(vocab.error_matches(matcher, vocab.normal_error(error)) for matcher in item.applies.get("errors", []))
+    return hits or int(bool(item.error_text) and vocab.shares_wording(error, item.error_text))
 
 
 def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
@@ -192,6 +211,11 @@ def match(item: Lesson, query: Query) -> tuple[int, list[str]]:
     A lesson about other component types than the ones asked for (both name types and
     none is shared) does not match on its task or command alone."""
     score, reasons = 0, []
+    if query.error:
+        number = _error_hits(item, query.error)
+        if number:
+            score += min(8, 5 + number)
+            reasons.append("error")
     types = {kind.lower() for kind in item.applies.get("types", [])}
     hits = [kind for kind in query.types if kind.lower() in types]
     if hits:
@@ -248,13 +272,14 @@ def _recency(item: Lesson) -> int:
         return 0
 
 
-def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", paths=(), limit: int | None = 5,
-         include_candidates: bool = False, only: str | None = None, advisory: bool = True) -> Result:
+def find(scopes: Scopes, *, topic=(), tasks=(), types=(), command: str = "", paths=(), error: str = "",
+         limit: int | None = 5, include_candidates: bool = False, only: str | None = None,
+         advisory: bool = True) -> Result:
     """The lessons that match, best first. With selectors a lesson must match at least
-    one of them; with none, the lessons that matter most are returned. `only` narrows the
-    search to one scope."""
+    one of them; with none, the lessons that matter most are returned. `error` is the text
+    of an error just met. `only` narrows the search to one scope."""
     problems: list = []
-    query = build_query(topic, tasks, types, command, paths)
+    query = build_query(topic, tasks, types, command, paths, error)
     tallies = storage.tally(storage.events_for(scopes))
     hits, candidates = [], 0
     for item in everything(scopes, problems, advisory=advisory):
@@ -327,7 +352,10 @@ def problem_lines(problems: list, limit: int = 3) -> list[str]:
 def render(result: Result) -> str:
     what = result.query.label()
     scope = result.scopes.label()
-    if not result.hits:
+    if not result.hits and result.query.error:
+        text = [f"No lesson matches {what} ({scope}). When you have fixed it, save what worked: "
+                'torque session add ... --learned "When: <the error>. Do: <what fixed it>. Because: <why>"']
+    elif not result.hits:
         text = [f"No lesson matches {what} ({scope})." if result.query else f"No lessons yet ({scope})."]
     else:
         text = [f"Lessons{' for ' + what if what else ''} ({scope}): {len(result.hits)} of {result.matched}"]
@@ -359,7 +387,7 @@ def mark_shown(scopes: Scopes, lessons: list[Lesson], via: str, session: str | N
         storage.log(root, events)
 
 
-def for_command(command_text: str, *, types=(), tasks=(), paths=(), limit: int = 3,
+def for_command(command_text: str, *, types=(), tasks=(), paths=(), error: str = "", limit: int = 3,
                 scopes: Scopes | None = None, via: str = "command") -> str:
     """Notes from earlier work that match a command about to run: the text to print
     before the consequential step, or "" when nothing matches.
@@ -368,13 +396,15 @@ def for_command(command_text: str, *, types=(), tasks=(), paths=(), limit: int =
                   `sf project deploy start ...`, `torque browser login`); used for matching only
     types, tasks  metadata types (Flow, CustomField) and task words (deploy, sign-in) the caller knows
     paths         source files, folders or package.xml manifests the step touches; only names are read
+    error         the text of an error the command just gave, to find what fixed it before
     scopes        default: the client or initiative the launcher selected (TORQUE_WORKSPACE)
     via           a short name of the calling surface, stored with the `shown` events
 
     It never raises, never blocks and never fails the caller's command."""
     try:
         scopes = scopes or storage.scopes_from_env()
-        result = find(scopes, tasks=tasks, types=types, command=command_text, paths=paths, limit=limit)
+        result = find(scopes, tasks=tasks, types=types, command=command_text, paths=paths, error=error,
+                      limit=limit)
         if not result.hits:
             return ""
         mark_shown(scopes, [hit.lesson for hit in result.hits], via)

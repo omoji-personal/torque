@@ -82,8 +82,8 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
         source = source or "harvested"
     result = intake.add(scopes, text=text, title=title, when=args.when or "", do=args.do or "",
                         because=args.because or "", body=body, scope=args.scope, kind=args.kind, tasks=args.task,
-                        types=args.type, commands=args.command, keywords=args.keyword, evidence=args.evidence,
-                        source=source or "agent", session=args.session)
+                        types=args.type, commands=args.command, keywords=args.keyword, errors=args.error,
+                        evidence=args.evidence, source=source or "agent", session=args.session)
     item = result.lesson
     verb = {"saved": "Saved", "duplicate": "Already saved:", "second-occurrence": "Second occurrence of"}[result.status]
     lines = [f"{verb} {item.id} ({item.scope}, {item.state}): {item.title}"]
@@ -106,7 +106,8 @@ def cmd_add(args: argparse.Namespace, scopes: Scopes) -> int:
 
 def cmd_for(args: argparse.Namespace, scopes: Scopes) -> int:
     result = recall.find(scopes, topic=args.topic, tasks=args.task, types=args.type, command=args.command or "",
-                         paths=args.path, limit=max(1, args.limit), include_candidates=args.include_candidates)
+                         paths=args.path, error=args.error or "", limit=max(1, args.limit),
+                         include_candidates=args.include_candidates)
     recall.mark_shown(scopes, [hit.lesson for hit in result.hits], "for")
     _out(args, recall.as_json(result), recall.render(result))
     return EXIT_OK
@@ -227,7 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
     for flag, target, text in (("--task", "task", "a task word, e.g. deploy, flow-build, data-load"),
                                ("--type", "type", "a metadata type, e.g. Flow, CustomField"),
                                ("--command", "command", "a command pattern, e.g. \"sf project deploy *\""),
-                               ("--keyword", "keyword", "a word to find the lesson by")):
+                               ("--keyword", "keyword", "a word to find the lesson by"),
+                               ("--error", "error", "a piece of an error text this lesson answers, e.g. "
+                                                    "\"No such column\"; * stands for any characters")):
         add.add_argument(flag, dest=target, action="append", default=[], help=text + " (repeatable)")
     add.add_argument("--evidence", action="append", default=[], metavar="TYPE[:REF]",
                      help="one of " + ", ".join(record.EVIDENCE_TYPES) + "; reproduced, official-doc and "
@@ -243,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument("--task", action="append", default=[], help="a task word or recipe step (repeatable)")
     find.add_argument("--type", action="append", default=[], help="a metadata type (repeatable)")
     find.add_argument("--command", help="the command you are about to run")
+    find.add_argument("--error", metavar="TEXT", help="the first line of an error you just got: what fixed it before")
     find.add_argument("--path", action="append", default=[],
                       help="a source file, folder or package.xml you are about to change (repeatable)")
     find.add_argument("--limit", type=int, default=5)

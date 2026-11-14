@@ -33,11 +33,43 @@ def test_everyday_words_do_not_become_metadata_types(text):
     assert "Report" not in vocab.infer(text)[1] and "Flow" not in vocab.infer(text)[1]
 
 
-def test_distinctive_tokens_become_keywords():
+def test_distinctive_tokens_become_keywords_and_quoted_errors_become_error_matchers():
     text = ("FIELD_CUSTOM_VALIDATION_EXCEPTION on Gift_Batch__c: check FlowDefinitionView and "
             "CampaignMember.AccountId. Salesforce said so. PermissionSet too.")
-    assert vocab.keywords(text) == ["FIELD_CUSTOM_VALIDATION_EXCEPTION", "Gift_Batch__c", "FlowDefinitionView",
-                                    "CampaignMember.AccountId"]
+    assert vocab.keywords(text) == ["Gift_Batch__c", "FlowDefinitionView", "CampaignMember.AccountId"]
+    assert vocab.errors(text) == ["FIELD_CUSTOM_VALIDATION_EXCEPTION"]
+    assert vocab.errors("The query said: No such column 'Foo__c' on entity 'Account'; then MALFORMED_QUERY, and "
+                        "later sObject type 'FlowDefinitionView' is not supported; the field cannot be grouped.") == [
+        "MALFORMED_QUERY", "No such column", "sObject type * is not supported", "can*not be grouped"]
+    assert vocab.errors("Nothing failed here; the flow ran and the column was fine.") == []
+
+
+@pytest.mark.parametrize("matcher,error,expected", [
+    ("No such column", "ERROR at Row:1:Column:8\nNo such column 'Region__c' on entity 'Account'.", True),
+    ("no SUCH   column", "No such column 'X' on entity 'Y'", True),
+    ("sObject type * is not supported", "sObject type 'FlowDefinitionView' is not supported.", True),
+    ("sObject type * is not supported", "the sObject is not supported as a type", False),      # the order matters
+    ("can*not be grouped", "field 'Status__c' can not be grouped in a query call", True),
+    ("can*not be grouped", "Field cannot be grouped", True),
+    ("UNABLE_TO_LOCK_ROW", "unable_to_lock_row: unable to obtain exclusive access to this record", True),
+    ("Disjunctions not supported", "No such column 'X'", False),
+    ("a.c", "abc", False),                                    # nothing but * is special: no regular expressions
+    ("[a-z]+", "abc", False),
+    ("*", "anything at all", False),                          # a matcher needs some text of its own
+    ("ab*", "abc", False),
+])
+def test_an_error_matcher_is_a_piece_of_the_text_with_a_star_for_anything(matcher, error, expected):
+    assert vocab.error_matches(matcher, vocab.normal_error(error)) is expected
+
+
+def test_two_error_texts_of_one_class_share_a_code_or_their_wording():
+    symptom = "\"sObject type 'FieldPermissions' is not supported\" from a query that is valid SOQL"
+    assert vocab.shares_wording("sObject type 'FlowDefinitionView' is not supported.", symptom)
+    assert vocab.shares_wording("Error: UNABLE_TO_LOCK_ROW on 3 rows", "fails intermittently with UNABLE_TO_LOCK_ROW")
+    assert vocab.shares_wording("field 'Body' can not be filtered in a query call",
+                                "'field cannot be filtered in a query call' on a history field")
+    assert not vocab.shares_wording("No such column 'X' on entity 'Y'", symptom)
+    assert not vocab.shares_wording("", symptom) and not vocab.shares_wording("it is not supported", symptom)
 
 
 @pytest.mark.parametrize("path,kind", [

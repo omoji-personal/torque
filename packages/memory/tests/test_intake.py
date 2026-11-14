@@ -21,7 +21,7 @@ def test_a_structured_capture_writes_the_documented_file(scopes):
     assert added.status == "saved" and added.path == alpha.folder("client") / f"{item.id}.md"
     assert (item.scope, item.state, item.source, item.kind) == ("client", "active", "agent", "pitfall")
     assert item.applies == {"tasks": ["deploy", "field-build"], "types": ["CustomField", "PermissionSet"],
-                            "commands": ["sf project deploy *"], "keywords": ["FLS"]}
+                            "commands": ["sf project deploy *"], "keywords": ["FLS"], "errors": []}
     assert item.evidence == [{"type": "reproduced", "ref": "session 20261112T1015", "date": record.today()}]
     assert item.created == item.last_verified == record.today()
     assert item.review_by == record.later(record.today(), 90)

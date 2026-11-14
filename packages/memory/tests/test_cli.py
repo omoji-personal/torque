@@ -40,7 +40,8 @@ def test_add_then_find_show_list_and_search(run, workspace):
     found = json.loads(out)
     assert code == 0 and found["lessons"][0]["id"] == saved["id"]
     assert found["lessons"][0]["match"]["reasons"] == ["type CustomField"] and found["note"].startswith("Notes from")
-    assert found["query"] == {"tasks": [], "types": ["CustomField"], "words": [], "command": False}
+    assert found["query"] == {"tasks": [], "types": ["CustomField"], "words": [], "command": False,
+                              "error": False}
     code, out, _ = run("recall", "field", "access")
     assert code == 0 and f"[{saved['id']}] WHEN you are about to deploy a new custom field" in out
     code, out, _ = run("show", saved["id"][:12], "--json")
@@ -139,3 +140,24 @@ def test_a_command_that_is_not_understood_exits_2(run):
     assert run("for", "--limit", "many")[0] == 2
     assert run("add", "x", "--kind", "rant")[0] == 2
     assert run("for", "--typ", "Flow")[0] == 2            # option names are never abbreviated
+
+
+def test_for_error_finds_what_fixed_an_error_before(run):
+    code, out, _ = run("add", "--when", "a query fails on an unknown field name", "--do",
+                       "look the name up with sf sobject describe and do not guess again", "--because",
+                       "a second guess usually fails too", "--error", "No such column", "--from", "consultant",
+                       "--json")
+    saved = json.loads(out)
+    assert code == 0 and saved["applies"]["errors"] == ["No such column"]
+    error = "No such column 'Region_Code__c' on entity 'Account'"
+    code, out, _ = run("for", "--error", error, "--json")
+    found = json.loads(out)
+    assert code == 0 and found["lessons"][0]["id"] == saved["id"]
+    assert found["lessons"][0]["match"]["reasons"] == ["error"] and found["query"]["error"] is True
+    code, out, _ = run("for", "--error", error)
+    assert f"[{saved['id']}] WHEN a query fails on an unknown field name" in out and "Region_Code__c" not in out
+    code, out, err = run("for", "--error", "An error nobody has met: 0x51")
+    assert (code, err) == (0, "") and out.startswith("No lesson matches this error (client alpha + firm + platform).")
+    assert "--learned" in out and out.count("\n") == 1
+    code, out, _ = run("for", "--error", "UNABLE_TO_LOCK_ROW on 12 rows", "--limit", "1", client=None)
+    assert code == 0 and "[A-unable-to-lock-row]" in out

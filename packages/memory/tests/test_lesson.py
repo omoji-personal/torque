@@ -37,7 +37,7 @@ def test_the_documented_file_reads_and_writes_back_the_same_lesson():
         "L-20261114-a3f2", "client", "pitfall", "active", "consultant")
     assert item.applies == {"tasks": ["deploy", "field-build"], "types": ["CustomField", "PermissionSet"],
                             "commands": ["sf project deploy *", "torque deploy *"],
-                            "keywords": ["field access", "FLS"]}
+                            "keywords": ["field access", "FLS"], "errors": []}
     assert item.evidence == [{"type": "reproduced", "ref": "session 20261112T101500", "date": "2026-11-12"}]
     assert (item.created, item.last_verified, item.review_by) == ("2026-11-14", "2026-11-14", "2027-02-14")
     assert item.body.startswith("Optional body")
