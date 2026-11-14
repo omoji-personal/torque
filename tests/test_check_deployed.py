@@ -3,11 +3,12 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
 
-from check_fixtures import e10_project, Tree, NS
+from check_fixtures import DEFAULT, e10_project, live_pair, Tree, NS, xml
 from torque import cli
 from torque.checks import compare, components, deployed
 
@@ -137,7 +138,12 @@ def test_report_on_a_stubbed_org(world):
     assert by[("CustomField", "Shift__c.Stage__c")]["comparison"] == "same"
     assert by[("CustomObject", "Shift__c")]["comparison"] == "same"               # fields and list views ignored
     flow = by[("Flow", "Gift_Thank_You_Task")]
-    assert flow["comparison"] == "different" and flow["differences"] == ["status: source 'Active', org 'Draft'"]
+    # the org runs version 2 and the deploy made version 3: the retrieve's copy may be either, so no verdict
+    # (Gemini F-10); what it showed is kept
+    assert flow["comparison"] == "could-not-compare" and flow["differences"] == ["status: source 'Active', org 'Draft'"]
+    assert "a retrieve returns one version without saying which" in flow["reason"]
+    assert flow["reason"].endswith("(against that copy: different)")
+    assert flow["compared_version"] == "one of version 2 (active) and version 3 (latest)"
     pset = by[("PermissionSet", "Shift_Coordinator")]
     assert pset["comparison"] == "same"            # a grant-nothing entry for Hours__c equals no entry
     assert by[("ValidationRule", "Shift__c.Hours_In_Range")]["comparison"] == "not-in-org"
@@ -180,7 +186,25 @@ def test_active_latest_flow_is_reported_active(world):
     fake.flow_active_is_latest = True
     code, out, _ = run("check", "deployed", "--target-org", "sandbox", "--only", "Flow:Gift_Thank_You_Task",
                        "--source-dir", str(t.root), "--json")
-    assert json.loads(out)["flows"][0]["latest_is_active"] is True
+    rep = json.loads(out)
+    assert rep["flows"][0]["latest_is_active"] is True
+    [row] = rep["components"]
+    assert row["comparison"] == "different" and row["compared_version"] == "version 2, the latest and the active one"
+    queries = [a[a.index("--query") + 1] for a in fake.calls if a[1:3] == ["data", "query"]]
+    assert any("FROM FlowDefinition WHERE DeveloperName = 'Gift_Thank_You_Task' AND NamespacePrefix = null" in q
+               for q in queries)
+
+
+def test_a_permission_set_is_retrieved_with_the_components_its_entries_name(world):
+    """Gemini F-08: the org returns access entries only for components in the same retrieve."""
+    t, fake, result = world
+    t.permset("Shift_Coordinator", fields=["Shift__c.Stage__c", "Account.Region__c", "Task.Call__c"])
+    run("check", "deployed", "--target-org", "sandbox", "--only", "PermissionSet:Shift_Coordinator",
+        "--source-dir", str(t.root), "--json")
+    [argv] = [a for a in fake.calls if a[1:4] == ["project", "retrieve", "start"]]
+    members = [argv[i + 1] for i, a in enumerate(argv) if a == "--metadata"]
+    assert members == ["PermissionSet:Shift_Coordinator", "CustomField:Account.Region__c", "CustomField:Activity.Call__c",
+                       "CustomField:Shift__c.Stage__c"]
 
 
 def test_org_that_cannot_be_read_exits_3(world):
@@ -189,7 +213,7 @@ def test_org_that_cannot_be_read_exits_3(world):
     code, out, err = run("check", "deployed", "--target-org", "sandbox", "--changed-from", str(result),
                          "--source-dir", str(t.root))
     assert code == 3 and "No authorization information found" in err
-    assert "could-not-compare" in out and ": 0 as submitted (0 of them with more in the org)," in out
+    assert "could-not-compare" in out and ": 0 same, 0 as submitted plus content only the org has (look at it)," in out
 
 
 def test_input_errors(tmp_path):
@@ -223,34 +247,40 @@ def test_compare_keeps_order_inside_elements(tmp_path):
                                   "<value><fullName>Planned</fullName><default>false</default><label>Planned</label>"
                                   "</value><value><fullName>Worked</fullName><default>false</default>"
                                   "<label>Worked</label></value></valueSetDefinition></valueSet>"))
-    assert compare.compare(a, b, set())[0] == "different"      # display order of picklist values is meaningful
-    assert compare.compare(a, c, set())[0] == "same"           # the order of top-level elements is not
+    assert compare.compare(a, b, set()).status == "different"      # display order of picklist values is meaningful
+    assert compare.compare(a, c, set()).status == "same"           # the order of top-level elements is not
 
 
-def test_what_only_the_org_has_is_not_a_difference(tmp_path):
-    """From the first live run: a new object and its permission set read as "different" only because
-    Salesforce adds its own properties on save. The question is whether what was submitted is in the org."""
+def test_known_server_additions_on_a_new_object_read_same(tmp_path):
+    """From the first live run: a new object read "different" only because Salesforce adds its own properties on
+    save. Those seen there are accepted with the values seen; anything else stays visible."""
     source = comp(tmp_path, "a", mdapi("CustomObject", "<label>Shift</label><pluralLabel>Shifts</pluralLabel>"
                                        "<sharingModel>ReadWrite</sharingModel>"), ".object-meta.xml")
     org = comp(tmp_path, "b", mdapi("CustomObject", "<enableBulkApi>true</enableBulkApi><label>Shift</label>"
                                     "<pluralLabel>Shifts</pluralLabel><sharingModel>ReadWrite</sharingModel>"
                                     "<externalSharingModel>Private</externalSharingModel>"
                                     "<enableHistory>false</enableHistory>"), ".object-meta.xml")
-    status, diffs, _skipped, org_only = compare.compare(source, org, set())
-    assert (status, diffs) == ("same-org-has-more", [])
-    assert org_only == ["enableBulkApi", "externalSharingModel"]          # a default-valued extra is not listed
+    o = compare.compare(source, org, set())
+    assert (o.status, o.differences, o.unexplained) == ("same", [], [])
+    assert o.known_additions == ["enableBulkApi", "externalSharingModel"]     # a default-valued extra is not listed
+    unseen = comp(tmp_path, "e", mdapi("CustomObject", "<label>Shift</label><pluralLabel>Shifts</pluralLabel>"
+                                       "<sharingModel>ReadWrite</sharingModel>"
+                                       "<externalSharingModel>Public</externalSharingModel>"), ".object-meta.xml")
+    o = compare.compare(source, unseen, set())
+    assert (o.status, o.unexplained) == ("unexplained-additions", ["externalSharingModel"])
     changed = comp(tmp_path, "c", mdapi("CustomObject", "<enableBulkApi>true</enableBulkApi><label>Shifts!</label>"
                                         "<pluralLabel>Shifts</pluralLabel><sharingModel>ReadWrite</sharingModel>"),
                    ".object-meta.xml")
-    status, diffs, _skipped, _only = compare.compare(source, changed, set())
-    assert status == "different" and diffs == ["label: source 'Shift', org 'Shifts!'"]
+    o = compare.compare(source, changed, set())
+    assert o.status == "different" and o.differences == ["label: source 'Shift', org 'Shifts!'"]
     missing = comp(tmp_path, "d", mdapi("CustomObject", "<label>Shift</label><pluralLabel>Shifts</pluralLabel>"),
                    ".object-meta.xml")
-    status, diffs, _skipped, _only = compare.compare(source, missing, set())
-    assert status == "different" and diffs == ["sharingModel: only in source"]
+    o = compare.compare(source, missing, set())
+    assert o.status == "different" and o.differences == ["sharingModel: only in source"]
 
 
-def test_an_extra_leaf_inside_a_keyed_entry_is_not_a_difference(tmp_path):
+def test_a_grant_only_the_org_has_inside_a_named_entry_is_a_difference(tmp_path):
+    """The file names the entry, so the deploy sets its flags; a flag the org grants beyond the file differs."""
     grant = ("<objectPermissions><allowCreate>true</allowCreate><allowRead>true</allowRead>"
              "<object>Shift__c</object>{extra}</objectPermissions>")
     source = comp(tmp_path, "a", mdapi("PermissionSet", "<label>Access</label>" + grant.format(extra="")),
@@ -259,16 +289,174 @@ def test_an_extra_leaf_inside_a_keyed_entry_is_not_a_difference(tmp_path):
                                     + grant.format(extra="<viewAllFields>true</viewAllFields>")),
                ".permissionset-meta.xml")
     retrieved = {("CustomObject", "shift__c")}
-    status, diffs, _skipped, org_only = compare.compare(source, org, retrieved)
-    assert (status, diffs, org_only) == ("same-org-has-more", [], ["objectPermissions.viewAllFields"])
+    o = compare.compare(source, org, retrieved)
+    assert (o.status, o.differences) == ("different", ["objectPermissions Shift__c.viewAllFields: only in org ('true')"])
     lowered = comp(tmp_path, "c", mdapi("PermissionSet", "<label>Access</label>"
                                         + grant.replace("<allowCreate>true", "<allowCreate>false").format(extra="")),
                    ".permissionset-meta.xml")
-    status, diffs, _skipped, _only = compare.compare(source, lowered, retrieved)
-    assert status == "different" and diffs == ["objectPermissions.allowCreate: source 'true', org 'false'"]
+    o = compare.compare(source, lowered, retrieved)
+    assert o.status == "different" and o.differences == ["objectPermissions Shift__c.allowCreate: source 'true', org 'false'"]
+    default_leaf = comp(tmp_path, "d", mdapi("PermissionSet", "<label>Access</label>"
+                                             + grant.format(extra="<viewAllFields>false</viewAllFields>")),
+                        ".permissionset-meta.xml")
+    assert compare.compare(source, default_leaf, retrieved).status == "same"
 
 
 def test_compare_never_calls_unreadable_same(tmp_path):
     a = comp(tmp_path, "a", "<CustomField><label>X</CustomField>")
     b = comp(tmp_path, "b", mdapi("CustomField", "<label>X</label>"))
-    assert compare.compare(a, b, set())[0] == "could-not-compare"
+    assert compare.compare(a, b, set()).status == "could-not-compare"
+
+
+class CopyOrg:
+    """A retrieve that returns a prepared folder as the org's copy; every query returns no rows."""
+
+    def __init__(self, org: Path):
+        self.org, self.calls = Path(org), []
+
+    def __call__(self, argv, **kw):
+        argv = [str(a) for a in argv]
+        self.calls.append(argv)
+        if argv[1:4] == ["project", "retrieve", "start"]:
+            shutil.copytree(self.org, Path(argv[argv.index("--target-metadata-dir") + 1]) / "unpackaged",
+                            dirs_exist_ok=True)
+            body = {"done": True, "success": True, "status": "Succeeded", "messages": []}
+        elif argv[1:3] == ["data", "query"]:
+            body = {"records": [], "totalSize": 0, "done": True}
+        else:
+            raise AssertionError(f"unexpected sf call: {argv}")
+        return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"status": 0, "result": body}))
+
+
+def read_back(monkeypatch, project, org, *extra):
+    fake = CopyOrg(org)
+    monkeypatch.setattr(deployed, "run_tool", fake)
+    monkeypatch.setattr("jsc_advisory.sf.run_tool", fake)
+    code, out, err = run("check", "deployed", "--target-org", "practice", "--source-dir", str(project), *extra)
+    assert code == 0, err
+    return out
+
+
+def test_the_live_pair_reads_same(tmp_path, monkeypatch):
+    """The source deployed to a practice org and what that org returned, byte for byte: all same, nothing hidden."""
+    project, org = live_pair(tmp_path)
+    rep = json.loads(read_back(monkeypatch, project, org, "--json"))
+    assert {(r["type"], r["name"]): r["comparison"] for r in rep["components"]} == {
+        ("CustomObject", "Torque_Check__c"): "same", ("CustomField", "Torque_Check__c.Amount__c"): "same",
+        ("CustomField", "Torque_Check__c.Note__c"): "same",
+        ("ValidationRule", "Torque_Check__c.Amount_Not_Negative"): "same",
+        ("PermissionSet", "Torque_Check_Access"): "same", ("Flow", "Torque_Check_Set_Note"): "same"}
+    obj = next(r for r in rep["components"] if r["type"] == "CustomObject")
+    assert obj["known_server_additions"] == 36 and obj["unexplained_additions"] == []
+    assert rep["totals"]["same"] == 6 and rep["totals"]["unexplained-additions"] == 0
+    out = read_back(monkeypatch, project, org)
+    assert "CustomObject Torque_Check__c: same (the org copy also has 36 properties Salesforce is known to add on " \
+           "save)" in out
+    assert ": 6 same, 0 as submitted plus content only the org has (look at it), 0 partly compared, 0 different," in out
+
+
+def test_the_live_pair_with_an_unlisted_addition_is_not_same(tmp_path, monkeypatch):
+    project, org = live_pair(tmp_path)
+    path = org / "objects/Torque_Check__c.object"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "    <enableSearch>false</enableSearch>", "    <enableSearch>true</enableSearch>"), encoding="utf-8")
+    out = read_back(monkeypatch, project, org)
+    assert ("CustomObject Torque_Check__c: as submitted, plus content only the org has (look at it): enableSearch"
+            in out)
+    assert ": 5 same, 1 as submitted plus content only the org has (look at it), 0 partly compared, 0 different," in out
+
+
+def test_review_r2_c01_a_space_inside_an_apex_string(tmp_path, monkeypatch):
+    t = Tree(tmp_path / "p")
+    t.apex("Greeting", "public with sharing class Greeting { public static String text() { return 'Hello world'; } }")
+    org = tmp_path / "org"
+    (org / "classes").mkdir(parents=True)
+    (org / "classes/Greeting.cls").write_text(
+        "public with sharing class Greeting { public static String text() { return 'Helloworld'; } }", encoding="utf-8")
+    rep = json.loads(read_back(monkeypatch, t.root, org, "--json"))
+    [row] = rep["components"]
+    assert row["comparison"] == "different" and row["differences"] == ["code differs from line 1 (source 1 lines, "
+                                                                        "org 1)"]
+
+
+def test_review_r2_c02_a_revoke_the_org_still_grants(tmp_path, monkeypatch):
+    t = Tree(tmp_path / "p")
+    t.field("Task", "Flag__c", type="Checkbox")
+    t.add(f"{DEFAULT}/permissionsets/Staff.permissionset-meta.xml", xml("PermissionSet", (
+        "    <label>Staff</label>\n    <fieldPermissions>\n        <editable>false</editable>\n"
+        "        <field>Task.Flag__c</field>\n        <readable>false</readable>\n    </fieldPermissions>\n")))
+    org = tmp_path / "org"
+    (org / "objects").mkdir(parents=True)
+    (org / "permissionsets").mkdir()
+    field = components.read_file(str(t.root / DEFAULT / "objects/Task/fields/Flag__c.field-meta.xml"))[0]
+    body = "".join(f"<{c.tag}>{c.text}</{c.tag}>" for c in field.node.children)
+    (org / "objects/Task.object").write_text(mdapi("CustomObject", f"<fields>{body}</fields>"), encoding="utf-8")
+    (org / "permissionsets/Staff.permissionset").write_text(mdapi("PermissionSet", (
+        "<label>Staff</label><fieldPermissions><editable>false</editable><field>Task.Flag__c</field>"
+        "<readable>true</readable></fieldPermissions>")), encoding="utf-8")
+    rep = json.loads(read_back(monkeypatch, t.root, org, "--json"))
+    perm = next(r for r in rep["components"] if r["type"] == "PermissionSet")
+    assert perm["comparison"] == "different"
+    assert perm["differences"] == ["fieldPermissions Task.Flag__c: source revokes it; the org still grants readable"]
+
+
+def test_review_r2_c03_a_decision_outcome_the_org_keeps(tmp_path, monkeypatch):
+    def route(*names):
+        rules = "".join(f"<rules><name>{n}</name><conditionLogic>and</conditionLogic><conditions>"
+                        "<leftValueReference>$Record.Priority</leftValueReference><operator>EqualTo</operator>"
+                        "<rightValue><stringValue>High</stringValue></rightValue></conditions>"
+                        f"<connector><targetReference>{n}_Update</targetReference></connector><label>{n}</label>"
+                        "</rules>" for n in names)
+        return mdapi("Flow", "<apiVersion>62.0</apiVersion><decisions><name>Route</name><label>Route</label>"
+                             f"<defaultConnectorLabel>Otherwise</defaultConnectorLabel>{rules}</decisions>"
+                             "<label>Route Request</label><processType>AutoLaunchedFlow</processType>"
+                             "<status>Active</status>")
+    t = Tree(tmp_path / "p")
+    t.add(f"{DEFAULT}/flows/Route_Request.flow-meta.xml", route("Approve"))
+    org = tmp_path / "org"
+    (org / "flows").mkdir(parents=True)
+    (org / "flows/Route_Request.flow").write_text(route("Old_First_Outcome", "Approve"), encoding="utf-8")
+    rep = json.loads(read_back(monkeypatch, t.root, org, "--json"))
+    [row] = rep["components"]
+    assert row["comparison"] == "different"
+    assert row["differences"] == ["decisions Route.rules Old_First_Outcome: only in org"]
+    assert rep["totals"]["different"] == 1 and rep["totals"]["same"] == 0
+
+
+def test_a_standard_object_is_compared_not_dropped(tmp_path, monkeypatch):
+    """Gemini F-10: a retrieved standard object defines no label of its own and was dropped (could not compare)."""
+    t = Tree(tmp_path / "p")
+    t.add(f"{DEFAULT}/objects/Account/Account.object-meta.xml",
+          xml("CustomObject", "    <enableHistory>true</enableHistory>\n"))
+    org = tmp_path / "org"
+    (org / "objects").mkdir(parents=True)
+    (org / "objects/Account.object").write_text(mdapi("CustomObject", "<enableHistory>false</enableHistory>"),
+                                                encoding="utf-8")
+    rep = json.loads(read_back(monkeypatch, t.root, org, "--json"))
+    [row] = rep["components"]
+    assert row["comparison"] == "different" and row["differences"] == ["enableHistory: source 'true', org 'false'"]
+
+
+def test_an_activity_field_is_found_granted_on_task(tmp_path, monkeypatch):
+    """Gemini F-11: FieldPermissions rows for an Activity field name Task and Event."""
+    class Granted(CopyOrg):
+        def __call__(self, argv, **kw):
+            argv = [str(a) for a in argv]
+            if argv[1:3] == ["data", "query"] and "FROM FieldPermissions" in argv[argv.index("--query") + 1]:
+                self.calls.append(argv)
+                q = argv[argv.index("--query") + 1]
+                assert "'Task.Call__c'" in q and "'Event.Call__c'" in q and "'Activity.Call__c'" in q
+                body = {"records": [{"Field": "Task.Call__c", "PermissionsRead": True, "PermissionsEdit": True,
+                                     "Parent": {"Name": "Caller", "IsOwnedByProfile": False}}], "done": True}
+                return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"status": 0, "result": body}))
+            return super().__call__(argv, **kw)
+    t = Tree(tmp_path / "p")
+    t.field("Activity", "Call__c", type="Checkbox")
+    org = tmp_path / "org"
+    org.mkdir()
+    fake = Granted(org)
+    monkeypatch.setattr(deployed, "run_tool", fake)
+    monkeypatch.setattr("jsc_advisory.sf.run_tool", fake)
+    code, out, err = run("check", "deployed", "--target-org", "practice", "--source-dir", str(t.root), "--json")
+    [a] = json.loads(out)["fields"]
+    assert a["rows"] == 1 and a["message"] == "granted by Caller (read and edit)"

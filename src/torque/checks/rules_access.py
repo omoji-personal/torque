@@ -4,7 +4,11 @@ from __future__ import annotations
 from .components import Component, is_custom
 from .model import Context, Finding, namespace
 
-POWERFUL_USER = {"ModifyAllData": "Modify All Data", "ViewAllData": "View All Data", "ManageUsers": "Manage Users"}
+POWERFUL_USER = {"ModifyAllData": "Modify All Data", "ViewAllData": "View All Data", "ManageUsers": "Manage Users",
+                 "AuthorApex": "Author Apex", "CustomizeApplication": "Customize Application",
+                 "ModifyMetadata": "Modify Metadata Through Metadata API Functions",
+                 "ManageProfilesPermissionsets": "Manage Profiles and Permission Sets",
+                 "AssignPermissionSets": "Assign Permission Sets"}
 POWERFUL_OBJECT = {"modifyAllRecords": "Modify All", "viewAllRecords": "View All", "viewAllFields": "View All Fields"}
 GRANT_TYPES = ("PermissionSet", "Profile")
 
@@ -68,7 +72,12 @@ def field_without_grant(comp: Component, ctx: Context) -> list[Finding]:
                  if s not in in_scope]
     hint = (f" {elsewhere[0].type} {elsewhere[0].name} under the checked folder grants it but is not in this change; "
             "add it to the deploy." if elsewhere else "")
-    return [Finding("access.field-without-grant", "error", comp,
+    # An error only when the change is known (a deploy result or a baseline): then a grant outside it does not ship.
+    # With no scope the field may not be new; with --only or files the grant may be in a component not named,
+    # and when the project around them holds one, that is a note.
+    known = ctx.scope_mode in ("changed-from", "baseline", "")
+    severity = "error" if known else ("note" if elsewhere and ctx.scope_mode in ("only", "files") else "warning")
+    return [Finding("access.field-without-grant", severity, comp,
                     f"No permission set {ctx.scope_word} grants {comp.name}, so nobody but an admin can see it{maybe}.",
                     f"Add a fieldPermissions entry for {comp.name} (readable true; editable true only if users enter "
                     f"it) to the permission set its users get. Permission sets {ctx.scope_word}: {listed}.{hint}",
@@ -83,14 +92,20 @@ def formula_field_editable(comp: Component, ctx: Context) -> list[Finding]:
         if not fp.flag("editable"):
             continue
         name = fp.value("field")
-        definition = ctx.fields.get(name.lower())
+        if not fp.flag("readable"):
+            out.append(Finding("access.formula-field-editable", "error", comp,
+                               f"{name} is granted editable but not readable; the deploy fails on it (edit needs "
+                               "read).", f"Set readable to true for {name}, or editable to false.", line=fp.line,
+                               subject=f"edit-without-read:{name.lower()}"))
+        definition = next((ctx.fields[k] for k in sorted(_keys(name)) if k in ctx.fields), None)
         if definition is None or definition.node is None:
             continue
         kind = ("formula" if definition.node.value("formula") else
-                "roll-up summary" if definition.node.value("type") == "Summary" else None)
+                {"Summary": "roll-up summary", "AutoNumber": "auto-number"}.get(definition.node.value("type")))
         if kind:
+            article = "an" if kind[0] in "aeiou" else "a"
             out.append(Finding("access.formula-field-editable", "error", comp,
-                               f"{name} is a {kind} field granted as editable; the deploy fails on it.",
+                               f"{name} is {article} {kind} field granted as editable; the deploy fails on it.",
                                f"Set editable to false for {name} (keep readable true).", line=fp.line,
                                subject=f"editable:{name.lower()}"))
     return out
@@ -106,8 +121,20 @@ def profile_in_change(comp: Component, ctx: Context) -> list[Finding]:
 
 
 def powerful_permission(comp: Component, ctx: Context) -> list[Finding]:
-    if comp.type != "PermissionSet" or comp.node is None:
+    if comp.type not in GRANT_TYPES or comp.node is None:
         return []
+    if comp.type == "Profile":       # one finding per profile: an administrator profile enables many of these
+        named = [POWERFUL_USER[u.value("name")] for u in comp.node.all("userPermissions")
+                 if u.flag("enabled") and u.value("name") in POWERFUL_USER]
+        named += [f"{label} on {op.value('object')}" for op in comp.node.all("objectPermissions")
+                  for tag, label in POWERFUL_OBJECT.items() if op.flag(tag)]
+        if not named:
+            return []
+        shown = ", ".join(named[:6]) + (f" and {len(named) - 6} more" if len(named) > 6 else "")
+        return [Finding("access.powerful-permission", "warning", comp, f"The profile enables {shown}.",
+                        "A profile deploy gives these to everyone who has the profile; keep them only if the "
+                        "requirement names them, and grant the rest through permission sets.", line=comp.line,
+                        subject="profile-powerful")]
     out = []
     for up in comp.node.all("userPermissions"):
         name = up.value("name")

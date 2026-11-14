@@ -49,8 +49,14 @@ class DeployResult:
     tests_run: int | None = None
     cli_error: str = ""        # the envelope's error name and message, when it carries one
     read_notes: list[str] = field(default_factory=list)
+    declared: dict = field(default_factory=dict)   # total, deployed, failed as the result states them (None: not)
+    detail: bool = False       # the file has a per-component list (files or component details)
 
     def counts(self) -> dict:
+        """Components by state. Without a per-component list the states are unknown (None), never zero; failed
+        is then the count the result states, when it states one."""
+        if not self.detail and self.declared.get("total") != 0:
+            return {**{s.lower(): None for s in STATES}, "failed": self.declared.get("failed")}
         out = {s.lower(): 0 for s in STATES}
         for e in self.components:
             out[e.state.lower()] = out.get(e.state.lower(), 0) + 1
@@ -165,6 +171,10 @@ def _normalise(r: dict, path: str, notes: list[str], cli_error: str) -> DeployRe
             out.target_org = r[key]
             break
     details = r.get("details") if isinstance(r.get("details"), dict) else {}
+    out.declared = {"total": _int(r.get("numberComponentsTotal")), "deployed": _int(r.get("numberComponentsDeployed")),
+                    "failed": _int(r.get("numberComponentErrors"))}
+    out.detail = r.get("files") is not None or any(details.get(k) is not None
+                                                    for k in ("componentSuccesses", "componentFailures"))
     seen: dict[tuple[str, str], Entry] = {}
 
     def add(entry: Entry):

@@ -132,6 +132,20 @@ def test_explicit_files_are_the_scope_and_the_project_is_context(tmp_path):
     assert "Shift_User under the checked folder grants it but is not in this change" in grant["action"]
 
 
+def test_a_file_and_a_folder_are_both_in_scope(tmp_path):
+    """Review R2-C04: a field file and a flows folder given together; the folder was silently context only."""
+    t = Tree(tmp_path)
+    picked = t.field("Shift__c", "Hours__c")
+    flow = t.flow("Bare", "", desc=None)
+    t.field("Shift__c", "Other__c", desc=None)                    # around them: context, not scope
+    r = metadata.check([str(picked), str(flow.parent), str(picked)], analyzer_mode="off", lessons=False)
+    assert r["scope"]["mode"] == "files" and r["scope"]["in_scope"] == 2
+    assert {f["component"]["name"] for f in r["findings"]} == {"Shift__c.Hours__c", "Bare"}
+    assert hits(r, "doc.description-missing", "Bare")
+    assert r["scope"]["outside_the_change"] == 1
+    assert "in the files and folders given" in report.scope_line(r)
+
+
 def test_everything_says_so_first_and_names_the_options(tmp_path):
     t = Tree(tmp_path)
     t.field("Shift__c", "Hours__c")

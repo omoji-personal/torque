@@ -67,11 +67,36 @@ class Component:
         return self.node.line if self.node is not None else None
 
     def fingerprint(self):
+        """What "changed" means for `--baseline`: the same comparison `check deployed` uses for code."""
         if self.node is not None:
             return ("xml", self.node.fingerprint())
         if self.source is not None:
-            return ("text", re.sub(r"\s+", "", self.source))
+            return ("text", code_text(self.source))
+        if self.type in BUNDLE_TYPES.values() and os.path.isdir(self.path):
+            return ("bundle", bundle_files(self.path))
         return ("none", self.error or "")
+
+
+def code_text(text: str) -> str:
+    """Code as compared: line endings made one kind, whitespace at the end of each line and of the file removed.
+    Nothing else: a space inside a string, or the line break that ends a // comment, is content."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join(line.rstrip() for line in lines).rstrip()
+
+
+def bundle_files(folder: str) -> tuple:
+    """(relative path, compared text) for each file of a Lightning component bundle, tests left out."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        for f in sorted(filenames):
+            full = os.path.join(dirpath, f)
+            try:
+                text = code_text(_read_bytes(full).decode("utf-8", errors="replace"))
+            except OSError as exc:
+                text = f"unreadable: {exc.strerror or exc}"
+            out.append((Path(os.path.relpath(full, folder)).as_posix(), text))
+    return tuple(out)
 
 
 @dataclass
@@ -109,8 +134,10 @@ def _read_bytes(path: str) -> bytes:
         return fh.read()
 
 
-def read_file(path: str) -> list[Component]:
-    """The components one file holds. Unreadable files give one component with `error`."""
+def read_file(path: str, keep_objects: bool = False) -> list[Component]:
+    """The components one file holds. Unreadable files give one component with `error`. `keep_objects`: a
+    Metadata API object file is also its object, even a standard object that defines nothing of its own (a
+    retrieve of that object)."""
     hit = classify(path)
     if not hit:
         return []
@@ -135,14 +162,14 @@ def read_file(path: str) -> list[Component]:
     except OSError as exc:
         return [Component(typ, name, path, fmt=fmt, error=f"could not read the file ({exc.strerror or exc})")]
     if typ == "CustomObject" and fmt == "mdapi":
-        return _mdapi_object(node, stem, path)
+        return _mdapi_object(node, stem, path, keep_objects)
     return [Component(typ, name, path, node=node, fmt=fmt)]
 
 
-def _mdapi_object(node: Node, obj: str, path: str) -> list[Component]:
+def _mdapi_object(node: Node, obj: str, path: str, keep: bool = False) -> list[Component]:
     out = []
     defines = any(node.child(k) is not None for k in ("label", "nameField", "deploymentStatus", "customSettingsType"))
-    if defines or is_custom(obj):
+    if keep or defines or is_custom(obj):
         out.append(Component("CustomObject", obj, path, node=node, fmt="mdapi"))
     for tag, typ in MDAPI_CHILDREN.items():
         for c in node.all(tag):
@@ -173,7 +200,7 @@ def bundles(root: str) -> list[Component]:
     return out
 
 
-def read_tree(paths: list[str]) -> list[Component]:
+def read_tree(paths: list[str], keep_objects: bool = False) -> list[Component]:
     """Every component under the given folders and files, in a stable order."""
     out: list[Component] = []
     seen: set[str] = set()
@@ -184,7 +211,7 @@ def read_tree(paths: list[str]) -> list[Component]:
             if key in seen:
                 continue
             seen.add(key)
-            out.extend(read_file(f))
+            out.extend(read_file(f, keep_objects))
         for b in bundles(root):
             if os.path.normcase(b.path) not in seen:
                 seen.add(os.path.normcase(b.path))

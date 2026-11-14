@@ -45,6 +45,11 @@ def _tail(path: str, n: int = 4) -> tuple:
 
 def changed_from(paths: list[str], result_path: str) -> Scope:
     result = deploy_result.read(result_path)
+    if not result.detail and result.declared.get("total") != 0:
+        raise ScopeError(f"{result_path} has no per-component list (only totals, or nothing), so the change cannot be "
+                         "told from it and an empty scope would look like nothing to check. Save the full result "
+                         f"with `sf project deploy report --job-id {result.id or 'ID'} --target-org ALIAS --json` to "
+                         "a file and give that, or use --baseline DIR or --only Type:Name.")
     everything = read_tree(paths)
     by_key: dict[tuple, list[Component]] = {}
     by_tail: dict[tuple, list[Component]] = {}
