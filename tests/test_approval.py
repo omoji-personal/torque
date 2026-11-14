@@ -214,6 +214,15 @@ def test_windows_doctor_reports_a_grant_whose_access_list_cannot_be_read(setup):
     # OWNER RIGHTS denial removes the owner's implicit READ_CONTROL, and the Administrators denial the
     # READ_CONTROL an elevated administrator (a CI runner) keeps through BA; DELETE stays for the repair.
     winacl.protect(path, winacl.private_sddl().replace("D:P", "D:P(D;;RC;;;OW)(D;;RC;;;BA)"))
+    try:
+        winacl.read_security(path)
+    except OSError:
+        pass                          # the access list is now unreadable to this process, as the test needs
+    else:
+        # A GitHub Windows runner's elevated token still reads it (a privilege beyond the denied rights), so the
+        # condition this test reports on cannot be produced there; it is exercised on an ordinary account.
+        pytest.skip("this process can still read the file's access list after the denial (an elevated token "
+                    "with backup or security privilege)")
     found = [p for p in doctor_connected.report(root, "Acme")["problems"] if path.name in p]
     assert found and "cannot be read" in found[0] and "Remove-Item -LiteralPath" in found[0]
     # The consume path never accepts the unreadable grant: it uses the other valid one.
