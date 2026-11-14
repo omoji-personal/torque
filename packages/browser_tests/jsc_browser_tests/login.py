@@ -616,6 +616,7 @@ def run_storage_state(args, output: Output) -> int:
     plan = prepare(args)
     state, user_id, username = asyncio.run(capture_state(plan, args.api_version))
     write_private(path, json.dumps(state))
+    write_private(marker_path(path), json.dumps({"written_by": MARKER_TEXT, "file": path.name}))
     kind = org_kind(plan.identity)
     edition = org_edition(plan.identity)
     username, user_id = shown(username, _USERNAME), shown(user_id, _USER_ID)
@@ -649,24 +650,52 @@ def cmd_login(args, out=None, err=None) -> int:
                                                     "signed in"))
 
 
+MARKER_SUFFIX = ".torque-session"
+MARKER_TEXT = "written by torque browser login --storage-state"
+
+
+def marker_path(path: Path) -> Path:
+    """The small file `login --storage-state` writes beside a session file it wrote, so that
+    `logout` deletes only such a file. The session file itself stays exactly Playwright's
+    format; the marker holds no session value."""
+    return path.with_name(path.name + MARKER_SUFFIX)
+
+
+def written_by_torque(path: Path) -> bool:
+    try:
+        data = json.loads(marker_path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("written_by") == MARKER_TEXT and data.get("file") == path.name
+
+
 def cmd_logout(args, out=None, err=None) -> int:
-    """Delete a session file that `login --storage-state` wrote. Nothing else is deleted:
-    a file that is not a browser session file is left alone."""
+    """Delete a session file that `login --storage-state` wrote, and its marker. Nothing
+    else is deleted: a file without the marker, or that is not a browser session file,
+    is left alone."""
     output = Output(bool(getattr(args, "json", False)), out, err)
     path = Path(args.storage_state).expanduser().resolve()
+    by_hand = ("If it is a session file you no longer need, delete it yourself; the Salesforce session itself ends "
+               "at the org's own timeout.")
     try:
         if not path.exists():
+            if written_by_torque(path):
+                marker_path(path).unlink()
             output.result(f"No session file at {path}; nothing to delete.", event="absent", storage_state=str(path))
             return EXIT_OK
+        if not path.is_file() or not written_by_torque(path):
+            raise LoginError(EXIT_USAGE, f"{path} was not written by torque browser login --storage-state (no "
+                                         f"{marker_path(path).name} beside it); nothing was deleted. " + by_hand)
         try:
-            state = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+            state = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             state = None
         if not (isinstance(state, dict) and isinstance(state.get("cookies"), list)
                 and isinstance(state.get("origins"), list)):
-            raise LoginError(EXIT_USAGE, f"{path} is not a browser session file written by torque browser login; "
-                                         "nothing was deleted")
+            raise LoginError(EXIT_USAGE, f"{path} is not a browser session file any more (something replaced it); "
+                                         "nothing was deleted. " + by_hand)
         path.unlink()
+        marker_path(path).unlink()
         output.result(f"Session file deleted: {path}", event="deleted", storage_state=str(path))
         output.hint("The Salesforce session itself ends at the org's own timeout; no browser can reuse it from "
                     "this file any more.")

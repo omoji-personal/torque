@@ -158,7 +158,11 @@ in Playwright's storage-state format. A script then starts with
   (`initiatives/NAME/...`) of the workspace is refused, and so is any client folder when no
   client is selected. A path outside any workspace and repository is allowed.
 - The command prints the path, the org (with its edition) and the user, never the content.
-- `logout` deletes the file, and only a file that is such a session file.
+- Beside the file the command writes a small marker, `PATH.torque-session`, with the same
+  private permissions; it holds no session value, and the session file stays exactly
+  Playwright's format. `logout` deletes the file and its marker, and only a file that has that
+  marker and still has the shape of a session file. Any other file is left alone, with a message
+  to delete it by hand if it is a session file no longer needed.
 - `--as-alias` works here too. `--as-user` does not: use an alias for the test user.
 - Playwright's debug settings `DEBUG`, `DEBUG_FILE` and `PWDEBUG` print the address the browser
   is sent to, or show it in a visible inspector. While any of them is set, this mode and every
