@@ -472,3 +472,16 @@ def test_metadata_api_format_object_file(tmp_path):
     assert ("doc.description-missing", "Gizmo__c.Size__c") in rules
     assert ("rule.hard-coded-id", "Gizmo__c.Size_Positive") in rules
     assert ("doc.description-missing", "Gizmo__c") not in rules
+
+
+def test_hard_coded_id_shapes():
+    """Gemini F-20: an 18 character Id carries a case checksum; timestamps, hex and zeros are not Ids; custom
+    metadata record and knowledge article prefixes are."""
+    from torque.checks.model import checksum, find_ids
+    cmt = "m005g000000AbCd"
+    assert find_ids(f"x {cmt + checksum(cmt)} y") == [cmt + checksum(cmt)]
+    assert find_ids("x kA05g000000AbCd y") == ["kA05g000000AbCd"]
+    assert find_ids(f"x {USER_ID} {USER_ID_15} y") == [USER_ID, USER_ID_15]
+    for not_an_id in ("202600114T12000", "202600114T12000000", "a4f3b0c9e8d1a2b3c4", "000000000000000AAA",
+                      USER_ID_15 + "1AB", "Route_Request_2026"):
+        assert find_ids(f"x {not_an_id} y") == [], not_an_id

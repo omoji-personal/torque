@@ -7,8 +7,8 @@ from pathlib import Path
 from torque.checks import metadata
 
 NS = 'xmlns="http://soap.sforce.com/2006/04/metadata"'
-USER_ID = "005" + "0" * 12 + "1AB"          # a made-up 18 character User Id
-USER_ID_15 = "005" + "0" * 9 + "1AB"         # the same shape in 15 characters
+USER_ID_15 = "005" + "0" * 9 + "1AB"         # a made-up 15 character User Id
+USER_ID = USER_ID_15 + "AAY"                 # the same Id in 18 characters, with its case checksum
 DEFAULT = "force-app/main/default"
 
 
