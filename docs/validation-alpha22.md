@@ -53,6 +53,10 @@ Known limits:
   a lesson more widely is read by a person.
 - `torque check deployed` compares what was submitted with what the org holds; it does not show what a user sees,
   and a grant entry is not a user's effective access.
+- On Windows, older Python releases ignore the owner-only mode Torque asks for when it creates a folder, so the
+  folder inherits its parent's access (CI's Python 3.10.11 does; newer releases apply an owner-only list).
+  Records and evidence files are still created private by Torque itself; the folders around them are private
+  only where the Python release honours the mode. An explicit private-folder helper is planned.
 - The known limits listed for alpha 21 remain, except where the changelog says otherwise.
 
 No package-index release and no demo readiness is claimed.

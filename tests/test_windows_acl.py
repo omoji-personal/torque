@@ -153,7 +153,10 @@ def test_published_records_are_private_but_ordinary_files_are_not(tmp_path):
     paths; in a folder that hands Everyone read, they still come out private (as 0600 does on
     POSIX), and an ordinary workspace file keeps the folder's access."""
     from torque import changes
-    winacl.protect(tmp_path, winacl.private_sddl() + LOOSE_FOLDER)
+    # The parent's own entries are inheritable, as a user's folders are: older Python releases on Windows ignore
+    # mkdir's 0o700, so the folders init creates inherit from here (newer ones give them an owner-only list).
+    # With the parent's entries not inheritable, nothing would let the user create a file in them.
+    winacl.protect(tmp_path, winacl.private_sddl().replace("(A;;FA;;;", "(A;OICI;FA;;;") + LOOSE_FOLDER)
     root = ws.init_workspace(tmp_path / "w", "Synthetic")
     ws.add_client(root, "Sample")
     # Folders created later inherit the loose entry only if it is inheritable: make the client's so.
