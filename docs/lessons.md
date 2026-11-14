@@ -169,7 +169,14 @@ asks for a basis. The rule is one function, `lesson.unbacked_active`.
   Codex's as `~/.codex/memories_v2/` or `memories/`; other places need `--dir`. Where
   Codex keeps its memory in a database file (`~/.codex/memories_*.sqlite`) and no such
   folder exists, the output says so in one line: the database is not opened or read;
-  export it to a folder of notes, or name one with `--dir`.
+  export it to a folder of notes, or name one with `--dir`. For Antigravity, which keeps
+  what `/learn` writes as rules and skills, the places its documentation names are read:
+  `.agents/rules/*.md` and `.agents/skills/*/SKILL.md` in the workspace,
+  `~/.gemini/GEMINI.md` and `~/.gemini/config/skills/*/SKILL.md`; a file Torque wrote
+  there and nobody changed is left out, and the output names the places looked at.
+  Antigravity's knowledge items are not documented as files and are not looked for.
+  `MEMORY.md` is skipped on purpose in every host folder: it is an index of the other
+  notes, not a note.
 
 ### What is refused or masked
 

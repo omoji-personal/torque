@@ -333,8 +333,10 @@ def test_harvest_never_fails_when_the_folder_is_missing_or_the_host_is_not_docum
     code, out, _ = run("harvest", "--host", "claude", "--dir", str(tmp_path / "nowhere"), client=None)
     assert code == 0 and out.startswith("No memory folder at ") and "--dir PATH" in out
     assert not (workspace / ".torque" / "lessons" / "harvest.json").exists()
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(tmp_path / "home"))
     code, out, _ = run("harvest", "--host", "antigravity", client=None)
-    assert code == 0 and ".agents/rules/" in out and "--dir PATH" in out
+    assert code == 0 and "none of its documented places exists" in out and "--dir PATH" in out
     assert run("harvest", "--host", "notepad", client=None)[0] == 2
     assert run("harvest", "--host", "claude", "--dir", str(tmp_path), "--since", "yesterday", client=None)[0] == 2
     # The documented Claude Code layout: ~/.claude/projects/<workspace path with separators as dashes>/memory.
@@ -600,3 +602,41 @@ def test_v1_json_lessons_import_once_and_the_old_files_stay(run, workspace, scop
     assert run("migrate", client=None)[0] == 2
     code, out, _ = run("migrate", client="beta")
     assert code == 0 and len(storage.load(scopes("beta"), only="client")) == 5
+
+
+def test_harvest_for_antigravity_reads_its_documented_places_and_leaves_out_what_torque_wrote(run, workspace,
+                                                                                              tmp_path, monkeypatch):
+    from importlib.resources import files
+    from torque import antigravity
+    home = tmp_path / "home"
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    surface = antigravity.surface(files("torque").joinpath("data"))
+    ours, (derived, _) = next((name, value) for name, value in surface.items() if name.startswith(".agents/rules/"))
+    (workspace / ours).parent.mkdir(parents=True)
+    (workspace / ours).write_text(derived, encoding="utf-8")                  # Torque's copy, unchanged
+    rules = workspace / ".agents" / "rules"
+    (rules / "learned-flows.md").write_text("---\ntrigger: always_on\ndescription: Read flows back after a deploy\n"
+                                            "---\nRead the active version back.\n", encoding="utf-8")
+    skill = workspace / ".agents" / "skills" / "learned-retrieve" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: learned-retrieve\ndescription: Retrieve before changing\n---\nSteps.\n",
+                     encoding="utf-8")
+    (skill.parent / "notes.md").write_text("Not a skill file.\n", encoding="utf-8")
+    (home / ".gemini" / "config" / "skills" / "global-one").mkdir(parents=True)
+    (home / ".gemini" / "GEMINI.md").write_text("# Always count rows before a load\n", encoding="utf-8")
+    (home / ".gemini" / "config" / "skills" / "global-one" / "SKILL.md").write_text(
+        "---\nname: global-one\ndescription: A global skill\n---\n", encoding="utf-8")
+    code, out, _ = run("harvest", "--host", "antigravity", "--json", client=None)
+    report = json.loads(out)
+    assert code == 0 and report["found"] and report["copied"] == 0
+    assert sorted(row["name"] for row in report["files"]) == ["GEMINI", "global-one", "learned-flows",
+                                                              "learned-retrieve"]
+    assert report["skipped"]["written by Torque"] == 1
+    assert [os.path.basename(place) for place in report["looked_at"]] == ["rules", "skills", "GEMINI.md", "skills"]
+    text = run("harvest", "--host", "antigravity", "--since", "2020-01-01", client=None)[1]
+    assert "4 file(s) changed in " in text and "Left out: 1 file(s) Torque wrote there, unchanged." in text
+    # Torque's copy edited by /learn is something learned: it is listed.
+    (workspace / ours).write_text(derived + "\nOne learned line.\n", encoding="utf-8")
+    again = json.loads(run("harvest", "--host", "antigravity", "--since", "2020-01-01", "--json", client=None)[1])
+    assert len(again["files"]) == 5 and again["skipped"]["written by Torque"] == 0

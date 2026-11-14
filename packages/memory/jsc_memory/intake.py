@@ -252,8 +252,59 @@ def host_memory_dir(host: str, workspace: Path, given: str | None = None) -> tup
         base = Path(os.environ.get("CODEX_HOME") or home / ".codex")
         folders = [base / "memories_v2", base / "memories"]
         return next((folder for folder in folders if folder.is_dir()), folders[0]), ""
-    return None, ("Antigravity keeps what it learned as rules: in this workspace under .agents/rules/, and for the "
-                  "user under ~/.gemini/. Name the folder: --dir PATH")
+    return None, ""
+
+
+def antigravity_places(workspace: Path) -> list[Path]:
+    """Where Antigravity's `/learn` writes, as its documentation names them: rules and
+    skills in the workspace (`.agents/rules/*.md`, `.agents/skills/*/SKILL.md`) and for
+    the user (`~/.gemini/GEMINI.md`, `~/.gemini/config/skills/*/SKILL.md`). Knowledge
+    items are not documented as files and are not looked for."""
+    gemini = Path.home() / ".gemini"
+    return [workspace / ".agents" / "rules", workspace / ".agents" / "skills", gemini / "GEMINI.md",
+            gemini / "config" / "skills"]
+
+
+def _torque_wrote(workspace: Path) -> dict[str, str]:
+    """{path: text} of the files Torque itself derives into `.agents/` for this workspace.
+    A file there that still reads exactly so is Torque's and not something learned."""
+    try:
+        from importlib.resources import files
+        from torque import antigravity
+        surface = antigravity.surface(files("torque").joinpath("data"))
+    except Exception:  # Torque's own package is not importable: nothing is left out as Torque's.
+        return {}
+    return {os.path.normcase(str(workspace / name)): text for name, (text, _) in surface.items()}
+
+
+def _antigravity_files(scopes: Scopes) -> tuple[list[Path], dict, list[str]]:
+    """The learned rule and skill files of Antigravity's documented places, without the
+    ones Torque wrote and nobody changed; and the places looked at."""
+    places = antigravity_places(scopes.workspace)
+    ours = _torque_wrote(scopes.workspace)
+    found: list[Path] = []
+    skipped = {"other engagements": 0, "links": 0, "written by Torque": 0}
+    for place in places:
+        if place.is_file():
+            paths, more = [place], {}
+        elif place.is_dir():
+            paths, more = _walk(scopes, place)
+            if place.name == "skills":
+                paths = [path for path in paths if path.name == "SKILL.md"]
+        else:
+            continue
+        for name, number in more.items():
+            skipped[name] += number
+        for path in paths:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if ours.get(os.path.normcase(str(path))) == text:
+                skipped["written by Torque"] += 1
+            else:
+                found.append(path)
+    return sorted(found), skipped, [str(place) for place in places]
 
 
 def _harvest_state(workspace: Path) -> Path:
@@ -328,9 +379,15 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
     last, seen = earlier.get("at"), earlier.get("seen")
     report = {"host": host, "dir": str(folder) if folder else None, "since": since or (last or None),
               "files": [], "copied": 0, "found": False, "note": hint}
+    looked_at: list[str] = []
     if folder is None:
-        return report
-    if not folder.is_dir():
+        paths, skipped, looked_at = _antigravity_files(scopes)
+        report["looked_at"] = looked_at
+        if not any(Path(place).exists() for place in looked_at):
+            report["note"] = ("Antigravity keeps what /learn writes as rules and skills; none of its documented places "
+                              f"exists here ({', '.join(looked_at)}). Name another folder: --dir PATH")
+            return report
+    elif not folder.is_dir():
         # Names only: the database is never opened (its format is not documented).
         databases = sorted(path.name for path in folder.parent.glob("memories_*.sqlite")) \
             if host == "codex" and not given else []
@@ -345,7 +402,8 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
         cutoff = float(seen) if isinstance(seen, (int, float)) else 0.0
     started = time.time()
     files = []
-    paths, skipped = _walk(scopes, folder)
+    if folder is not None:
+        paths, skipped = _walk(scopes, folder)
     for path in paths:
         try:
             if path.name == "MEMORY.md" or not path.is_file():
@@ -358,14 +416,14 @@ def harvest(scopes: Scopes, host: str, given: str | None = None, since: str | No
         except OSError:
             continue
         first = next((line.strip(" #*-") for line in body.splitlines() if line.strip(" #*-")), "")
-        files.append({"name": _shown(meta.get("name") or path.stem),
+        files.append({"name": _shown(meta.get("name") or (path.parent.name if path.name == "SKILL.md" else path.stem)),
                       "type": meta.get("type") or (path.stem.split("_", 1)[0] if "_" in path.stem else ""),
                       "description": _shown(meta.get("description") or first)[:160],
                       "modified": datetime.fromtimestamp(modified, timezone.utc).date().isoformat(),
                       "path": str(path)})
     report.update(files=files, found=True, skipped=skipped)
     # `seen` is the moment this listing began: a file changed after it shows up next time.
-    state[host] = {"at": storage.now(), "seen": started, "dir": str(folder), "files": len(files)}
+    state[host] = {"at": storage.now(), "seen": started, "dir": str(folder) if folder else None, "files": len(files)}
     storage._private_dir(state_path.parent)
     storage._atomic_write(state_path, json.dumps(state, indent=2) + "\n")
     return report

@@ -315,16 +315,19 @@ def cmd_harvest(args: argparse.Namespace, scopes: Scopes) -> int:
     if not report["found"]:
         text = [report["note"]]
     else:
-        text = [f"{len(files)} file(s) changed in {report['dir']}"
+        where = report['dir'] or ', '.join(report.get('looked_at') or [])
+        text = [f"{len(files)} file(s) changed in {where}"
                 + (f" since {report['since']}" if report["since"] else "") + ". Nothing was copied."]
         text += [f"- {item['name']} [{item['type'] or 'note'}, {item['modified']}] {item['description']}\n"
                  f"  {item['path']}" for item in files[:args.limit]]
         if len(files) > args.limit:
             text.append(f"... and {len(files) - args.limit} more (--limit N, or --json for all)")
         skipped = report.get("skipped") or {}
-        if any(skipped.values()):
+        if skipped.get("other engagements") or skipped.get("links"):
             text.append(f"Not read: {skipped['other engagements']} folder(s) or file(s) of another client or "
                         f"initiative, and {skipped['links']} link(s), which a harvest does not follow.")
+        if skipped.get("written by Torque"):
+            text.append(f"Left out: {skipped['written by Torque']} file(s) Torque wrote there, unchanged.")
         if files:
             text.append("A host's memory mixes clients. To keep one as a lesson, choose its scope: "
                         "torque lesson add --from-file PATH --when ... --do ... --because ... [--scope firm]")
