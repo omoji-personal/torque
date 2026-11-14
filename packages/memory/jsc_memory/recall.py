@@ -38,8 +38,12 @@ _CONFIDENCE = {"verified-live": "reproduced", "documented": "official-doc", "pra
 _DOMAIN_TASKS = {"deploy": ("deploy",), "data": ("data-load",), "automation": ("flow-build",),
                  "security": ("access",), "auth": ("sign-in",), "packaging": ("packaging",), "orgs": ("sandbox",)}
 # The same operation under two names: Torque's wrapper and the command it runs.
-_SAME_COMMAND = (("torque deploy", "sf project deploy start"), ("torque data", "sf data"),
-                 ("torque org", "sf org"))
+_SAME_COMMAND = (("torque deploy", "sf project deploy start"), ("torque deploy-quick", "sf project deploy quick"),
+                 ("torque deploy-resume", "sf project deploy resume"), ("torque deploy-abort", "sf project deploy cancel"),
+                 ("torque apex run", "sf apex run"), ("torque package", "sf package"),
+                 ("torque data bulk update", "sf data update bulk"), ("torque data bulk upsert", "sf data upsert bulk"),
+                 ("torque data bulk delete", "sf data delete bulk"), ("torque data bulk import", "sf data import bulk"),
+                 ("torque data", "sf data"), ("torque org", "sf org"))
 _WALK_LIMIT = 2000
 
 
@@ -149,6 +153,7 @@ class Query:
     only_error: bool = False        # the error was the only thing asked about
     topic: list = field(default_factory=list)    # the topic's words in order, lower case, for phrases
     touched: list = field(default_factory=list)  # types given, from paths or named by the command as members
+    notes: list = field(default_factory=list)    # what the query could not see (a folder walk that stopped)
 
     def __bool__(self) -> bool:
         return bool(self.words or self.tasks or self.types or self.command or self.error)
@@ -167,23 +172,28 @@ class Query:
                 "error": bool(self.error)}
 
 
-def _names_under(folder: Path, scopes: Scopes | None):
+def _names_under(folder: Path, scopes: Scopes | None, capped: list | None = None):
     """Names of the files and folders under a folder, at most _WALK_LIMIT of them. Links to
-    folders are not followed, and the folders of other clients and initiatives are not entered."""
+    folders are not followed, and the folders of other clients and initiatives are not entered.
+    A folder whose walk stops at the limit is added to `capped`."""
     count = 0
     for top, folders, files in os.walk(folder):
         folders[:] = [name for name in folders if not (scopes and scopes.foreign(Path(top, name)))]
         for name in (*folders, *files):
             count += 1
             if count > _WALK_LIMIT:
+                if capped is not None:
+                    capped.append(folder.name)
                 return
             yield name
 
 
-def path_types(paths, scopes: Scopes | None = None) -> list[str]:
+def path_types(paths, scopes: Scopes | None = None, notes: list | None = None) -> list[str]:
     """Metadata types behind files, folders and package.xml manifests, from names only.
-    With `scopes`, a path inside another client's or initiative's folder is not looked into."""
+    With `scopes`, a path inside another client's or initiative's folder is not looked into.
+    A folder too large to walk whole is named in `notes`."""
     types: list[str] = []
+    capped: list[str] = []
     for raw in paths or ():
         types += vocab.types_for_path(str(raw))          # from the name as it was given; nothing is read
         try:
@@ -191,7 +201,7 @@ def path_types(paths, scopes: Scopes | None = None) -> list[str]:
             if scopes and scopes.foreign(path):
                 continue
             if path.is_dir():
-                for name in _names_under(path, scopes):
+                for name in _names_under(path, scopes, capped):
                     types += vocab.types_for_path(name)
             elif path.is_file() and path.suffix.lower() == ".xml" and not path.name.lower().endswith("-meta.xml"):
                 text = path.read_text(encoding="utf-8", errors="replace")[:200_000]
@@ -199,6 +209,9 @@ def path_types(paths, scopes: Scopes | None = None) -> list[str]:
                           if name.lower() in vocab.TYPES]
         except OSError:
             continue
+    if notes is not None and capped:
+        notes.append(f"Read the first {_WALK_LIMIT} names under {', '.join(capped)}; component types further down "
+                     "were not seen: name the folder or files of the change (--path).")
     return list(dict.fromkeys(types))
 
 
@@ -216,7 +229,8 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
         # only the types it implies are added (flow-build asks for Flow).
         all_tasks += [] if vocab.tag(task) in vocab.TASKS else more_tasks
         all_types += more_types
-    given = [vocab.canonical_type(kind) for kind in types or ()] + path_types(paths, scopes)
+    notes: list[str] = []
+    given = [vocab.canonical_type(kind) for kind in types or ()] + path_types(paths, scopes, notes)
     command = vocab.without_org_names(" ".join(str(command or "").split()))
     if command:
         more_tasks, more_types = vocab.for_command(command)
@@ -226,7 +240,7 @@ def build_query(topic=(), tasks=(), types=(), command: str = "", paths=(), error
                  types=list(dict.fromkeys(all_types + found_types + given)), command=command,
                  error=error, only_error=only_error,
                  topic=re.findall(r"[a-z0-9_]+", " ".join(topic).lower()),
-                 touched=list(dict.fromkeys(given + vocab.command_members(command))))
+                 touched=list(dict.fromkeys(given + vocab.command_members(command))), notes=notes)
 
 
 def _command_forms(command: str) -> list[str]:
@@ -551,7 +565,7 @@ def render(result: Result) -> str:
     if result.candidates:
         text.append(f"{result.candidates} matching candidate(s) wait for review and are not shown: "
                     "torque lesson list --state candidate")
-    return "\n".join(text + problem_lines(result.problems))
+    return "\n".join(text + result.query.notes + problem_lines(result.problems))
 
 
 def as_json(result: Result) -> dict:
@@ -560,7 +574,8 @@ def as_json(result: Result) -> dict:
                         for hit in result.hits],
             "candidate_hints": [{**summary(hit.lesson, hit.tally), "match": {"score": hit.score, "reasons": hit.reasons},
                                  "mark": CANDIDATE_MARK, "next": verify_line(hit.lesson)} for hit in result.hints],
-            "candidates_not_shown": result.candidates, "unreadable": result.problems, "note": FOOTER}
+            "candidates_not_shown": result.candidates, "unreadable": result.problems, "notes": result.query.notes,
+            "note": FOOTER}
 
 
 def mark_shown(scopes: Scopes, lessons: list[Lesson], via: str, session: str | None = None) -> None:

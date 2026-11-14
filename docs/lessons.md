@@ -118,8 +118,11 @@ Optional body, about 15 lines at most: the error text, a minimal reproduction, o
 - A person or an agent may edit the file. Keys Torque does not know are kept.
 - A file that cannot be read is skipped, named in the output and in `torque doctor`, and
   never stops a command. `README.md` in a lessons folder is not read as a lesson.
-- `applies.commands` are patterns with `*`. `torque deploy` and `sf project deploy start`
-  count as the same command, as do `torque data` and `sf data`.
+- `applies.commands` are patterns with `*`. A Torque wrapper and the command it runs count
+  as the same command: `torque deploy` and `sf project deploy start`, `torque deploy-quick`,
+  `-resume`, `-abort` and `sf project deploy quick`, `resume`, `cancel`, `torque apex run`,
+  `torque package`, `torque data` and `sf data` (`torque data bulk upsert` is `sf data
+  upsert bulk`).
 - `applies.errors` are pieces of an error text, in any case, with `*` for any run of
   characters. Nothing else is special: no regular expression is built from a lesson.
 - Evidence types: `reproduced`, `official-doc`, `second-occurrence`, `session`,
@@ -211,7 +214,9 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 - `--path` infers the metadata type from a file name, a folder or a `package.xml`
   (`*.flow-meta.xml` is Flow, `*.field-meta.xml` is CustomField, and so on). Only names
   are read, links to folders are not followed, and a path inside the folder of another
-  client or initiative of the workspace is not looked into.
+  client or initiative of the workspace is not looked into. A folder walk reads at most
+  2,000 names and says so in one line when it stops there. An underscore joins a name:
+  `Flow:Update_Layout_Flow` is a flow, not a layout.
 - `--error` takes the first line of an error. It matches the lessons' error matchers and,
   for the advisory catalogue, a note whose title or symptom names the same error code or
   shares the error's wording.

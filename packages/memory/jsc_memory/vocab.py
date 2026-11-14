@@ -79,7 +79,8 @@ VOCABULARY = (
     (r"debug logs?|fault emails?|error emails?|unhandled fault|stack traces?|troubleshoot\w*|diagnos\w+",
      ("diagnose",), ()),
 )
-_COMPILED = tuple((re.compile(r"(?<![A-Za-z0-9])(?:" + words + r")(?![A-Za-z0-9])", re.I), tasks, types)
+# An underscore joins a name (Update_Layout_Flow is one name, not the word layout).
+_COMPILED = tuple((re.compile(r"(?<![A-Za-z0-9_])(?:" + words + r")(?![A-Za-z0-9_])", re.I), tasks, types)
                   for words, tasks, types in VOCABULARY)
 
 # Source-format file endings (lower case) and folders, to their metadata type.

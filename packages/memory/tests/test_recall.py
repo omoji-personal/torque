@@ -377,6 +377,37 @@ def test_a_catalogue_notes_update_date_is_not_a_verification_and_its_confidence_
     assert found == ["A-y-doc", "A-z-live", "A-x-practice-new", "A-w-practice-old"]
 
 
+def test_torques_wrappers_and_the_commands_they_run_count_as_one_command(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "quik", commands=["sf project deploy quick*"])
+    save(alpha, "client", "upsr", commands=["sf data upsert bulk*"])
+    save(alpha, "client", "apex", commands=["torque apex run*"])
+    found = lambda command: own(recall.find(alpha, command=command, limit=None))
+    assert found("torque deploy-quick --job-id 0Af000000000001 --target-org x") == ["quik"]
+    assert found("torque data bulk upsert --sobject Contact --file c.csv --external-id Email") == ["upsr"]
+    assert found("sf apex run --file x.apex") == ["apex"]
+
+
+def test_a_flow_deployed_with_its_fields_still_gets_the_field_lessons_and_a_folder_walk_says_where_it_stopped(
+        scopes, tmp_path, monkeypatch):
+    alpha = scopes("alpha")
+    save(alpha, "client", "fls1", types=["CustomField", "PermissionSet"], when="you deploy a new field")
+    command = ("sf project deploy start --metadata Flow:Update_Layout_Flow --metadata CustomField:Account.Region__c "
+               "--metadata PermissionSet:Sales")
+    result = recall.find(alpha, command=command, limit=None)
+    assert "fls1" in own(result) and "Layout" not in result.query.types       # the flow's name is one name
+    monkeypatch.setattr(recall, "_WALK_LIMIT", 3)
+    folder = tmp_path / "force-app" / "flows"
+    folder.mkdir(parents=True)
+    for number in range(5):
+        (folder / f"F{number}.flow-meta.xml").write_text("<Flow/>", encoding="utf-8")
+    walked = recall.find(alpha, paths=[str(tmp_path / "force-app")], limit=None)
+    assert walked.query.notes == ["Read the first 3 names under force-app; component types further down were not "
+                                  "seen: name the folder or files of the change (--path)."]
+    assert recall.render(walked).splitlines()[-1] == walked.query.notes[0]
+    assert recall.as_json(walked)["notes"] == walked.query.notes
+
+
 def test_paths_tell_types_from_names_folders_and_manifests(tmp_path):
     source = tmp_path / "force-app" / "main" / "default"
     (source / "flows").mkdir(parents=True)
