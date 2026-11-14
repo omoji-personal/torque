@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -274,6 +275,87 @@ def test_after_exit_4_the_documented_retry_does_not_record_the_session_twice(fir
     assert len(sessions(firm)) == 1
     data = json.loads(add(firm, "--summary", "again", "--learned", f"The password: {secret}", "--json")[1])
     assert data["recorded"] is True and data["do_not_add_again"] is True and data["id"] in data["lesson_retry_command"]
+
+
+# ---- step 6: errors an agent can act on
+
+def error_object(out):
+    value = json.loads(out)
+    assert value["schema"] == "torque.error/1" and value["ok"] is False and value["exit_code"] != 0
+    assert isinstance(value["code"], str) and isinstance(value["message"], str) and "next_command" in value
+    return value
+
+
+def test_argument_errors_name_the_subcommand_and_its_usage_in_text_and_json(firm):
+    cases = [
+        (["client", "add", "--workspace", firm, "--name", "Acme Food Bank", "--org", "acme-sandbox"],
+         "torque client add", "unrecognized arguments: --name"),
+        (["change", "create", "--workspace", firm, "--client", "alpha", "--outcome", "o"],
+         "torque change create", "the following arguments are required: --title"),
+        (["context", "--workspace", firm, "--client", "alpha", "--bogus"], "torque context",
+         "unrecognized arguments: --bogus"),
+    ]
+    for args, prog, words in cases:
+        code, out, err = invoke(*args)
+        assert code == 2 and out == ""
+        assert f"usage: {prog} " in err and f"{prog}: error: {words}" in err
+        assert "{workspace,demo,client" not in err          # not the top-level usage
+        code, out, err = invoke(*args, "--json")
+        value = error_object(out)
+        assert code == 2 and value["code"] == "usage" and value["usage"].startswith(f"usage: {prog} ")
+        assert words in value["message"] and value["next_command"] == f"{prog} --help"
+    assert "usage: torque client add" in invoke("client", "add", "--workspace", firm)[2]
+
+
+def test_record_failures_come_back_as_one_json_object_and_as_plain_text_without_json(firm):
+    code, out, err = add(firm, "--summary", " ", "--json")
+    assert code == 2 and error_object(out)["code"] == "invalid_input" and "summary must be nonempty" in err
+    code, out, err = add(firm, "--summary", " ")
+    assert code == 2 and out == "" and err.startswith("torque: session summary must be nonempty")
+    code, out, _ = invoke("session", "show", "20991231T000000000000Z-000000000000", "--workspace", firm, "--client",
+                          "alpha", "--json")
+    assert code == 2 and "not found" in error_object(out)["message"]
+    code, out, _ = invoke("change", "check", "chg-000000000000", "--workspace", firm, "--client", "alpha",
+                          "--criterion", "AC1", "--result", "pass", "--summary", "x", "--json")
+    assert code == 2 and "no change" in error_object(out)["message"]
+
+
+def test_a_sub_folder_and_an_unknown_client_are_two_different_messages(firm, monkeypatch):
+    monkeypatch.chdir(firm / "clients")
+    code, out, err = add(".", "--summary", "x")
+    assert code == 2 and "this folder is not a Torque workspace" in err and f"the nearest one is {firm}" in err
+    code, out, _ = add(".", "--summary", "x", "--json")
+    value = error_object(out)
+    assert value["code"] == "not_a_workspace" and str(firm) in value["next_command"]
+    code, out, err = add(firm, "--summary", "x", client="alph")
+    assert code == 2 and 'no client "alph" in this workspace' in err and "clients: alpha, beta." in err
+    assert "cannot read valid local configuration" not in err
+    value = error_object(add(firm, "--summary", "x", "--json", client="alph")[1])
+    assert value["code"] == "unknown_client" and "client list" in value["next_command"]
+    # Build-only and connected mode: a session works for one client and is not told the others.
+    config = json.loads((firm / "workspace.json").read_text(encoding="utf-8"))
+    (firm / "workspace.json").write_text(json.dumps({**config, "ai_access": "build-only"}), encoding="utf-8")
+    err = add(firm, "--summary", "x", client="alph")[2]
+    assert 'no client "alph"' in err and "beta" not in err and "client list" in err
+
+
+def test_the_deploy_route_says_deploy_not_its_internal_name(firm):
+    code, out, err = invoke("deploy", "--workspace", firm, "--metadata", "Flow:X", "--target-org", "x")
+    assert code == 2 and err.startswith("torque: deploy needs a selected client") and "revert" not in err
+    value = error_object(invoke("deploy", "--workspace", firm, "--metadata", "Flow:X", "--target-org", "x",
+                                "--json")[1])
+    assert value["code"] == "no_client_selected" and value["next_command"].startswith("torque deploy ")
+
+
+def test_an_operating_system_error_is_said_in_words():
+    long_path = "C:\\" + "\\".join(["d" * 60] * 5)
+    error = OSError(2, "The system cannot find the path specified", long_path)
+    text = cli._os_error_text(error)
+    if os.name == "nt":
+        assert text.startswith("a path is too long for Windows") and "long paths" in text
+    else:
+        assert text.startswith("a file or folder on this path does not exist")
+    assert "does not exist: C:\\short" in cli._os_error_text(OSError(2, "x", "C:\\short"))
 
 
 # ---- step 3: context that says what it left out

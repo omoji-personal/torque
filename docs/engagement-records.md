@@ -192,6 +192,32 @@ system. Symlink escapes and evidence references across clients or initiatives ar
 refused. Initiative lifecycle updates serialize the complete read, history append and
 replacement, so concurrent updates retain both entries.
 
+## Errors
+
+Torque's own commands (everything except the packages reached through `deploy`, `data`,
+`org`, `recover`, `advisory`, `qa`, `logs`, `browser`, `meeting`, `lesson`, `probes`, which
+keep their own parsers) report a failure on stderr as `torque: MESSAGE` and exit non-zero:
+2 for an argument or input error, 3 for a refusal, 4 when `session add` saved the record but
+not a lesson. An argument error names the subcommand and prints its usage
+(`usage: torque client add ...`), not the top-level list.
+
+With `--json`, the same failure is also one JSON object on stdout:
+
+```json
+{"schema": "torque.error/1", "ok": false, "code": "unknown_client",
+ "message": "no client \"acm\" in this workspace (...); clients: acme, beta. ...",
+ "next_command": "torque client list --workspace ...", "exit_code": 2}
+```
+
+`code` is one of `usage` (with `usage`, the subcommand's usage line), `not_a_workspace`,
+`unknown_client`, `no_client_selected`, `outside_engagement`, `os_error`, `refused` (with
+`reason_class`) or `invalid_input`. A folder inside a workspace is named as such, with the
+nearest workspace (`this folder is not a Torque workspace ...; the nearest one is PATH`). An
+unknown client lists the workspace's own client slugs in full mode; in build-only and
+connected mode, where a session works for one client, it names none and gives the
+`client list` command. An operating-system error is said in words with its path; on Windows
+a path past the 260-character limit says so.
+
 ## Maintenance
 
 Creating `.torque/maintenance` refuses new core record/configuration writes and new

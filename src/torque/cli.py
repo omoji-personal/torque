@@ -48,6 +48,71 @@ def _print_json(value: object) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False))
 
 
+ERROR_SCHEMA = "torque.error/1"
+
+
+class UsageError(Exception):
+    """An argument error, with the parser of the command it belongs to."""
+
+    def __init__(self, parser: argparse.ArgumentParser, message: str):
+        super().__init__(message)
+        self.parser, self.message = parser, message
+
+
+class TorqueParser(argparse.ArgumentParser):
+    """argparse that reports an argument error to main() instead of exiting, so the
+    error can name the subcommand and, with --json, come back as JSON."""
+
+    def error(self, message: str):
+        raise UsageError(self, message)
+
+
+def _subparser_for(parser: argparse.ArgumentParser, args: list[str]) -> argparse.ArgumentParser:
+    """The parser of the deepest subcommand the words name (`torque client add`)."""
+    current = parser
+    for word in args:
+        action = next((a for a in current._actions if isinstance(a, argparse._SubParsersAction)), None)
+        if action is None:
+            break
+        if word in action.choices:
+            current = action.choices[word]
+    return current
+
+
+def _os_error_text(exc: OSError) -> str:
+    """An operating-system error in words, with the path it concerns."""
+    paths = [str(p) for p in (exc.filename, getattr(exc, "filename2", None)) if p]
+    path = max(paths, key=len, default="")
+    winerror = getattr(exc, "winerror", None)
+    if os.name == "nt" and len(path) >= 248 and (winerror in (3, 206) or exc.errno in (2, 36)):
+        return (f"a path is too long for Windows ({len(path)} characters; without long paths enabled the limit "
+                f"is 260): {path}. Choose a shorter workspace folder, or enable long paths (torque doctor shows "
+                "the setting)")
+    if winerror == 3 or exc.errno == 2:
+        what = "a file or folder on this path does not exist"
+    elif winerror == 5 or exc.errno == 13:
+        what = "access is denied (another program may hold the file, or the folder is read-only)"
+    else:
+        what = exc.strerror or type(exc).__name__
+    return f"{what}: {path}" if path else what
+
+
+def _failure(as_json: bool, code: str, message: str, *, next_command: str | None = None,
+             usage: str | None = None, exit_code: int = 2, **extra) -> int:
+    """Report a failure: the plain message on stderr, and with --json also one JSON
+    object (torque.error/1) on stdout."""
+    if as_json:
+        _print_json({"schema": ERROR_SCHEMA, "ok": False, "code": code, "message": message,
+                     **({"usage": usage} if usage else {}), "next_command": next_command,
+                     "exit_code": exit_code, **extra})
+    if usage:
+        print(usage, file=sys.stderr)
+    print(message if message.startswith("torque") else f"torque: {message}", file=sys.stderr)
+    if next_command and not as_json and next_command not in message:
+        print(f"Next: {next_command}", file=sys.stderr)
+    return exit_code
+
+
 def _client_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", required=True, help="private workspace directory")
     scope = parser.add_mutually_exclusive_group(required=True)
@@ -86,7 +151,7 @@ def _disable_abbreviations(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="torque", description="Salesforce consulting workflows and private client context.")
+    parser = TorqueParser(prog="torque", description="Salesforce consulting workflows and private client context.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
     work = sub.add_parser("workspace", help="initialize or update a private consulting workspace")
@@ -437,8 +502,12 @@ def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
     # Neither reads a client's state or an org: one scans a script, one deletes a session file.
     local_browser = route == "browser" and args[:1] in (["sanitize-replay"], ["logout"])
     if not help_only and stateful and not local_browser and scope is None:
-        raise ws.WorkspaceError(f"{route} needs a selected client for its private state; "
-                                "provide --workspace PATH --client NAME")
+        # Name the command the user typed (deploy, data, org, recover), not the internal route.
+        public = (args[0] if route == "revert" and args[:1] in (["deploy"], ["data"], ["org"])
+                  else display.split()[1] if display and len(display.split()) > 1 else route)
+        raise ws.WorkspaceError(f"{public} needs a selected client for its private state; "
+                                "provide --workspace PATH --client NAME", code="no_client_selected",
+                                next_command=f"torque {public} --workspace PATH --client NAME ...")
     if not help_only and lessons and scope is None and args[0] in LESSON_NEEDS_WORKSPACE:
         raise ws.WorkspaceError(f"lesson {args[0]} needs a workspace: provide --workspace PATH with --client NAME "
                                 "or --initiative NAME (a firm lesson needs only --workspace PATH --scope firm)")
@@ -1831,6 +1900,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     INVOCATION = ("torque", list(args))
     parsed = None
+    # --json anywhere before a `--` asks for JSON, failures included (torque.error/1).
+    as_json = "--json" in (args[:args.index("--")] if "--" in args else args)
     try:
         if args and args[0] in PUBLIC_ROUTES:
             delegate, prefix = PUBLIC_ROUTES[args[0]]
@@ -1849,7 +1920,10 @@ def main(argv: list[str] | None = None) -> int:
             return _dispatch(args[0], args[1:])
         args, tail = cli_approval.split_tail(args)
         parser = build_parser()
-        parsed = parser.parse_args(args)
+        parsed, extras = parser.parse_known_args(args)
+        if extras:
+            # Name the subcommand the words belong to, with its own usage (not the top level's).
+            raise UsageError(_subparser_for(parser, args), "unrecognized arguments: " + " ".join(extras))
         if parsed.command is None:
             parser.print_help()
             return 0
@@ -2065,14 +2139,23 @@ def main(argv: list[str] | None = None) -> int:
         # or sign-off) refuses the same way cli_approval's delegated grant/deny
         # will: exit 3, with --json a machine-readable reason_class and message,
         # instead of falling into the generic WorkspaceError exit 2 below.
-        if getattr(parsed, "json", False):
-            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc)})
+        if getattr(parsed, "json", False) or as_json:
+            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc),
+                         "schema": ERROR_SCHEMA, "ok": False, "code": "refused", "next_command": None,
+                         "exit_code": 3})
         else:
             print(f"torque: refused ({exc.reason_class}): {exc}", file=sys.stderr)
         return 3
-    except (ws.WorkspaceError, OSError, ValueError) as exc:
-        print(f"torque: {exc}", file=sys.stderr)
-        return 2
+    except UsageError as exc:
+        prog = exc.parser.prog
+        return _failure(as_json, "usage", f"{prog}: error: {exc.message}", usage=exc.parser.format_usage().strip(),
+                        next_command=f"{prog} --help")
+    except ws.WorkspaceError as exc:
+        return _failure(as_json, exc.code, str(exc), next_command=exc.next_command)
+    except OSError as exc:
+        return _failure(as_json, "os_error", _os_error_text(exc))
+    except ValueError as exc:
+        return _failure(as_json, "invalid_input", str(exc))
 
 
 if __name__ == "__main__":

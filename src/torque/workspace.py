@@ -40,13 +40,23 @@ _CHANGE_ID = re.compile(r"chg-[a-f0-9]{12}\Z")
 
 
 class WorkspaceError(ValueError):
-    """An actionable local configuration or input error."""
+    """An actionable local configuration or input error. `code` names the kind of
+    mistake for an agent (`torque.error/1`, docs/engagement-records.md, "Errors"); `next_command` is the
+    command that helps, when there is one."""
+
+    def __init__(self, message: str = "", *, code: str = "invalid_input", next_command: str | None = None):
+        super().__init__(message)
+        self.code = code
+        self.next_command = next_command
 
 
 class BoundaryError(WorkspaceError):
     """A path or record outside the selected engagement: a symlink, a path outside
     the workspace, or a record that names another client or initiative. Readers that
     skip a damaged record (`problems`) still stop on this."""
+
+    def __init__(self, message: str = "", *, code: str = "outside_engagement", next_command: str | None = None):
+        super().__init__(message, code=code, next_command=next_command)
 
 
 def _now() -> str:
@@ -111,12 +121,14 @@ def foreign_engagement(own: Path, path: Path) -> bool:
                for folder in ENGAGEMENT_FOLDERS)
 
 
-def _read_json(path: Path, missing: str | None = None) -> dict:
+def _read_json(path: Path, missing: str | WorkspaceError | None = None) -> dict:
     """The JSON object in `path`. With `missing`, a file that does not exist raises
-    that message, so a typo or a wrong folder does not read as damaged data."""
+    that message (or that error), so a typo or a wrong folder does not read as damaged data."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
+        if isinstance(missing, WorkspaceError):
+            raise missing from exc
         raise WorkspaceError(missing or f"cannot read valid local configuration: {path}") from exc
     except (OSError, ValueError) as exc:
         raise WorkspaceError(f"cannot read valid local configuration: {path}") from exc
@@ -567,11 +579,17 @@ def load_workspace(path: str | Path) -> tuple[Path, dict]:
     root = Path(path).expanduser().resolve()
     config_path = _inside(root, root / CONFIG)
     if not config_path.exists() and not config_path.is_symlink():
+        nearest = next((folder for folder in root.parents if (folder / CONFIG).is_file()), None)
+        if nearest is not None:
+            raise WorkspaceError(f"this folder is not a Torque workspace (no {CONFIG} here: {root}); the nearest "
+                                 f"one is {nearest}. Name it with --workspace", code="not_a_workspace",
+                                 next_command=command_text(["torque", "client", "list", "--workspace", str(nearest)]))
         hint = (" This is an engagement folder; select the workspace two folders up."
                 if (root / "client.json").is_file() or (root / "binding.json").is_file() else "")
         raise WorkspaceError(f"not a Torque workspace: {root} has no workspace configuration ({CONFIG}).{hint} "
                              "Select the workspace folder, or create a workspace with "
-                             "`torque workspace init PATH --name NAME`.")
+                             "`torque workspace init PATH --name NAME`.", code="not_a_workspace",
+                             next_command="torque workspace init PATH --name NAME")
     config = _validate_config(_read_json(config_path), config_path)
     _inside(root, root / "clients")
     return root, config
@@ -969,11 +987,23 @@ def load_client(workspace: str | Path, name: str) -> tuple[Path, dict, dict]:
     root, firm = load_workspace(workspace)
     slug = slug_for(name)
     client = _inside(root, root / "clients" / slug)
-    missing = (f'no client "{name.strip()}" in the workspace at {root} (no clients/{slug}/client.json). List the '
-               "clients with " + command_text(["torque", "client", "list", "--workspace", str(root)])
-               + ", or create this one with "
-               + command_text(["torque", "client", "add", name.strip(), "--workspace", str(root)]) + ".")
-    config = _read_json(_inside(root, client / "client.json"), missing)
+    path = _inside(root, client / "client.json")
+    if not path.is_file() and not path.is_symlink():
+        # Only this workspace's own client folders are named, by slug, and only in full mode:
+        # in build-only and connected mode a session works for one client and is not told the others.
+        parent = root / "clients"
+        listing = command_text(["torque", "client", "list", "--workspace", str(root)])
+        if access_mode(firm) == "full":
+            known = sorted(child.name for child in parent.iterdir()
+                           if child.is_dir() and (child / "client.json").is_file()) if parent.is_dir() else []
+            clients = "clients: " + (", ".join(known) if known else "none yet") + ". Name one by its slug, list them"
+        else:
+            clients = "list its clients"
+        raise WorkspaceError(f'no client "{name.strip()}" in this workspace ({root}); ' + clients
+                             + " with " + listing + ", or create this one with "
+                             + command_text(["torque", "client", "add", name.strip(), "--workspace", str(root)]) + ".",
+                             code="unknown_client", next_command=listing)
+    config = _read_json(path)
     if config.get("schema") != "torque.client/1" or config.get("slug") != slug:
         raise WorkspaceError(f"invalid client configuration: {client / 'client.json'}")
     if not isinstance(config.get("name"), str) or not config["name"].strip():
