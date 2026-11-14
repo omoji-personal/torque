@@ -277,6 +277,10 @@ CASES = [
     ("pset-entry-deleted-from-the-file-org-still-grants", "PermissionSet", pset(),
      pset(fp("Thing__c.Kind__c", "true", "true")), "different",
      "fieldPermissions Thing__c.Kind__c: only in org: a permission set deploy replaces the set"),
+    # a permission set retrieve returns all its entries (live 2026-11-14), retrieved with its field or not
+    ("pset-org-entry-about-a-component-not-in-the-retrieve", "PermissionSet", pset(),
+     pset(fp("Account.Region__c", "true", "false")), "different",
+     "fieldPermissions Account.Region__c: only in org: a permission set deploy replaces the set"),
     ("pset-org-has-an-all-false-entry-the-file-does-not-name", "PermissionSet", pset(),
      pset(fp("Thing__c.Kind__c", "false", "false"), up("false", "ApiEnabled")), "same", None),
     ("pset-grant-lowered-in-org", "PermissionSet", pset(fp("Thing__c.Kind__c", "true", "true")),
@@ -409,14 +413,25 @@ def test_known_server_additions_are_reported_as_such(tmp_path):
     assert (u.status, u.unexplained, u.differences) == ("unexplained-additions", ["enableEnhancedLookup"], [])
 
 
-def test_an_entry_about_a_component_not_retrieved_is_never_same(tmp_path):
-    """Gemini F-08: the org returns access entries only for components in the same retrieve, so an entry about
-    another component cannot be checked; the permission set is "partly-compared", never "same"."""
-    a = component(tmp_path, "source", "PermissionSet", pset(fp("Account.Region__c", "true", "false")))
-    b = component(tmp_path, "org", "PermissionSet", pset())
+def test_a_profile_entry_about_a_component_not_retrieved_is_never_same(tmp_path):
+    """Gemini F-08: a profile retrieve returns access entries only for components in the same request, so an
+    entry about another component cannot be checked; the profile is "partly-compared", never "same"."""
+    a = component(tmp_path, "source", "Profile", profile(fp("Account.Region__c", "true", "false")))
+    b = component(tmp_path, "org", "Profile", profile())
     o = compare.compare(a, b, RETRIEVED)
     assert (o.status, o.not_compared, o.differences) == ("partly-compared", 1, [])
     assert compare.compare(a, b, RETRIEVED | {("CustomField", "account.region__c")}).status == "different"
+
+
+def test_a_permission_set_entry_is_compared_whatever_was_retrieved(tmp_path):
+    """Live 2026-11-14: a permission set retrieve returns all its entries, so nothing is set aside."""
+    a = component(tmp_path, "source", "PermissionSet", pset(fp("Account.Region__c", "true", "false")))
+    b = component(tmp_path, "org", "PermissionSet", pset(fp("Account.Owner__c", "true", "true")))
+    o = compare.compare(a, b, set())
+    assert (o.status, o.not_compared) == ("different", 0)
+    assert o.differences == ["fieldPermissions Account.Region__c: only in source",
+                             "fieldPermissions Account.Owner__c: only in org: a permission set deploy replaces the "
+                             "set, so this entry was added after the deploy, or the file is not what was deployed"]
 
 
 def test_a_task_or_event_field_entry_is_checked_against_the_activity_field(tmp_path):

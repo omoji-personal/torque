@@ -197,8 +197,8 @@ CLI error instead of a result, JSON that is not a deploy result). No org call.
 
 Status: proven against a stubbed CLI and a mutation corpus. One live run on a Developer Edition org
 (2026-11), then a re-run on 2026-11-14 of the current rules for the positive case and three negative cases
-(a changed formula, a revoked grant, a permission set entry removed by a deploy); the permission-set rule
-(replace, not merge) changed after that run and has not been re-run;
+(a changed formula, a revoked grant, a permission set entry removed by a deploy); the permission-set
+comparison changed after the last live run and has not been re-run;
 not yet run against a sandbox or a production org.
 
 ```
@@ -230,10 +230,10 @@ CLI login). Not checked: permission set assignments and what a user really sees,
 
 | Status | Establishes | Does not establish |
 |---|---|---|
-| `same` | everything the file specifies is in the org unchanged, and the org copy has nothing else except default values, the properties Salesforce is known to add on save, or, for a profile, access entries the file does not name | byte equality; that the component works; who can use it; a permission set's entries about components outside the retrieve |
+| `same` | everything the file specifies is in the org unchanged, and the org copy has nothing else except default values, the properties Salesforce is known to add on save, or, for a profile, access entries the file does not name | byte equality; that the component works; who can use it; a profile's entries about components outside the retrieve |
 | `unexplained-additions` | everything the file specifies is in the org unchanged; the org copy also has top-level properties Torque cannot explain (listed: look at them) | whether those properties are harmless server defaults or someone's change |
 | `different` | something submitted is missing or changed; or the org has content where a deploy replaces the definition; or the file revokes access the org still grants | which side is right |
-| `partly-compared` | what could be compared is as submitted, but some access entries of a permission set or profile could not be (their components were not in the retrieve; the count is shown) | that those entries are in the org |
+| `partly-compared` | what could be compared is as submitted, but some access entries of a profile could not be (their components were not in the retrieve; the count is shown) | that those entries are in the org |
 | `could-not-compare`, `not-in-org` | the pair could not be read, or the org reports no such component; for a flow whose latest version is not the active one, the retrieve's copy may be either version, so no verdict is given (what that copy showed is in the reason) | anything about its content |
 
 The text summary counts `unexplained-additions` apart, never with `same`; so does `--json`
@@ -261,11 +261,14 @@ Rules:
    names, so for a profile such entries are expected (counted, shown as information). An entry the file names with every
    flag false (or a tab set to None or Hidden) is a revoke: met when the org has no such entry or an all-false
    one; `different` ("source revokes it; the org still grants ...") when the org entry grants anything. This
-   covers field, object, class, tab, record type, custom permission and user permission entries. The org
-   returns an access entry only for a component in the same retrieve, so the components a permission set or
-   profile names are retrieved with it (a Task or Event field as the Activity field). An entry that still
-   could not be compared is counted ("N entries not compared: their components were not in this retrieve")
-   and the component is `partly-compared`, never `same`.
+   covers field, object, class, tab, record type, custom permission and user permission entries. A
+   permission set retrieve returns all the set's entries, whatever else is in the request (API 40.0 and
+   later; seen live on 2026-11-14 with the set alone in the request), so every entry of a permission set is
+   compared. When the project's `sourceApiVersion` is below 40.0 the output says that entries only the org
+   has may not be seen. A profile retrieve returns an entry only for a component in the same request, so the
+   components a profile names are retrieved with it (a Task or Event field as the Activity field); a profile
+   entry that still could not be compared is counted ("N entries not compared: their components were not in
+   this retrieve") and the profile is `partly-compared`, never `same`.
 4. Code (classes, triggers): exact, after making line endings one kind and removing whitespace at the end of
    lines and of the file. A space inside a string or the line break after a `//` comment is content. The
    same function decides what changed for `torque check metadata --baseline` (also for the files of a

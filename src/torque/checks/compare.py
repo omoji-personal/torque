@@ -23,7 +23,10 @@ Rules:
    something and that the file does not name is a difference. A profile deploy changes only the entries the file
    names, so for a profile such entries are expected (counted as information). For both, an entry in the source
    that grants nothing is an expectation: met by an absent or all-false org entry, a difference when the org
-   entry grants anything. Only entries about components in the same retrieve can be seen.
+   entry grants anything. A permission set retrieve returns all the set's entries (API 40.0 and later; seen
+   live on 2026-11-14 with the set alone in the request), so every entry is compared. A profile retrieve
+   returns only entries about components in the same request, so a profile entry about another component is
+   counted as not compared.
 4. Code: exact after `code_text` (line endings, whitespace at the end of lines and of the file), the same
    function the baseline fingerprint uses.
 5. Order: the Metadata API writes top-level elements in its own order, so that order is not compared; below the
@@ -31,9 +34,8 @@ Rules:
 
 Other normalisations: a leaf present on one side only with a default value (false, 0, empty); leading and
 trailing whitespace of an XML value; for a source-format object file, the fields, rules and other parts the org
-returns inside the object (source format keeps them in their own files); for permission sets and profiles,
-entries about components not retrieved in the same request (the Metadata API returns only those), counted as
-not compared.
+returns inside the object (source format keeps them in their own files); for profiles, entries about
+components not retrieved in the same request (the Metadata API returns only those), counted as not compared.
 
 "same" is containment plus the rules above, not byte equality, and a grant entry is not a user's access.
 """
@@ -344,7 +346,7 @@ def compare(source: Component, org: Component, retrieved: set[tuple[str, str]]) 
         for c in node.children:
             if source.type == "CustomObject" and source.fmt == "source" and c.tag in OBJECT_PARTS:
                 continue
-            if c.tag in ACCESS_SECTIONS:
+            if c.tag in ACCESS_SECTIONS and source.type in MERGE_TYPES:     # a profile; see rule 3
                 key_tag, typ = ACCESS_SECTIONS[c.tag]
                 if typ is not None and not any(k in retrieved for k in retrieved_key(typ, c.value(key_tag))):
                     if not is_org:

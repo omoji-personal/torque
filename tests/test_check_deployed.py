@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from check_fixtures import DEFAULT, e10_project, live_pair, Tree, NS, xml
+from check_fixtures import DEFAULT, e10_project, live_pair, LIVE_PAIR, Tree, NS, xml
 from torque import cli
 from torque.checks import compare, components, deployed
 
@@ -195,16 +195,18 @@ def test_active_latest_flow_is_reported_active(world):
                for q in queries)
 
 
-def test_a_permission_set_is_retrieved_with_the_components_its_entries_name(world):
-    """Gemini F-08: the org returns access entries only for components in the same retrieve."""
+def test_a_profile_is_retrieved_with_the_components_its_entries_name(world):
+    """Gemini F-08: a profile retrieve returns access entries only for components in the same request. A
+    permission set retrieve returns all its entries (seen live 2026-11-14), so it is retrieved alone."""
     t, fake, result = world
-    t.permset("Shift_Coordinator", fields=["Shift__c.Stage__c", "Account.Region__c", "Task.Call__c"])
-    run("check", "deployed", "--target-org", "sandbox", "--only", "PermissionSet:Shift_Coordinator",
-        "--source-dir", str(t.root), "--json")
+    t.profile("Shift_Profile", fields=["Shift__c.Stage__c", "Account.Region__c", "Task.Call__c"])
+    t.permset("Shift_Coordinator", fields=["Shift__c.Stage__c", "Account.Region__c"])
+    run("check", "deployed", "--target-org", "sandbox", "--only", "Profile:Shift_Profile", "--only",
+        "PermissionSet:Shift_Coordinator", "--source-dir", str(t.root), "--json")
     [argv] = [a for a in fake.calls if a[1:4] == ["project", "retrieve", "start"]]
     members = [argv[i + 1] for i, a in enumerate(argv) if a == "--metadata"]
-    assert members == ["PermissionSet:Shift_Coordinator", "CustomField:Account.Region__c", "CustomField:Activity.Call__c",
-                       "CustomField:Shift__c.Stage__c"]
+    assert members == ["PermissionSet:Shift_Coordinator", "Profile:Shift_Profile", "CustomField:Account.Region__c",
+                       "CustomField:Activity.Call__c", "CustomField:Shift__c.Stage__c"]
 
 
 def test_org_that_cannot_be_read_exits_3(world):
@@ -226,7 +228,8 @@ def test_help_states_the_proof_level(capsys):
         cli.main(["check", "deployed", "--help"])
     text = " ".join(capsys.readouterr().out.split())
     assert "stubbed CLI" in text
-    assert "re-run live on 2026-11-14" in text and "the permission-set rule changed after that run" in text
+    assert "re-run live on 2026-11-14" in text
+    assert "the permission-set comparison changed after the last live run" in text
 
 
 def comp(tmp_path, name, text, suffix=".field-meta.xml"):
@@ -462,3 +465,43 @@ def test_an_activity_field_is_found_granted_on_task(tmp_path, monkeypatch):
     code, out, err = run("check", "deployed", "--target-org", "practice", "--source-dir", str(t.root), "--json")
     [a] = json.loads(out)["fields"]
     assert a["rows"] == 1 and a["message"] == "granted by Caller (read and edit)"
+
+
+ALONE = "org/unpackaged/permissionsets/Torque_Check_Access.permissionset"
+
+
+@pytest.mark.parametrize("names_the_field,expected", [(False, "different"), (True, "same")])
+def test_a_permission_set_retrieved_alone_returns_all_its_entries(tmp_path, monkeypatch, names_the_field, expected):
+    """Live 2026-11-14: `sf project retrieve start --metadata PermissionSet:Torque_Check_Access`, nothing else in
+    the request, returned the set with its fieldPermissions and objectPermissions entries; that file is byte for
+    byte the live pair's copy. So an entry only the org has is a difference even when its field was not
+    retrieved."""
+    project, _org = live_pair(tmp_path)
+    org = tmp_path / "alone"
+    (org / "permissionsets").mkdir(parents=True)
+    (org / "permissionsets/Torque_Check_Access.permissionset").write_text(LIVE_PAIR[ALONE], encoding="utf-8",
+                                                                          newline="")
+    path = project / "force-app/main/default/permissionsets/Torque_Check_Access.permissionset-meta.xml"
+    if not names_the_field:
+        text = path.read_text(encoding="utf-8")
+        start, end = text.index("    <fieldPermissions>"), text.index("</fieldPermissions>\n") + 20
+        path.write_text(text[:start] + text[end:], encoding="utf-8")
+    rep = json.loads(read_back(monkeypatch, project, org, "--only", "PermissionSet:Torque_Check_Access", "--json"))
+    [row] = rep["components"]
+    assert (row["comparison"], row["not_compared_entries"]) == (expected, 0)
+    if expected == "different":
+        assert row["differences"] == ["fieldPermissions Torque_Check__c.Note__c: only in org: a permission set deploy "
+                                      "replaces the set, so this entry was added after the deploy, or the file is "
+                                      "not what was deployed"]
+    assert rep["api_version_note"] is None             # the live project is at 62.0
+
+
+def test_a_project_below_api_40_says_so(tmp_path, monkeypatch):
+    t = Tree(tmp_path / "p", api="39.0")
+    t.permset("Old_Set")
+    org = tmp_path / "org"
+    (org / "permissionsets").mkdir(parents=True)
+    (org / "permissionsets/Old_Set.permissionset").write_text(mdapi("PermissionSet", "<label>Old_Set</label>"),
+                                                              encoding="utf-8")
+    out = read_back(monkeypatch, t.root, org)
+    assert "Note: the project's sourceApiVersion 39.0 is below 40.0: a permission set retrieve may then return" in out
