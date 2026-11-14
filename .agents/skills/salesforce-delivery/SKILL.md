@@ -45,11 +45,15 @@ one org. `[HUMAN]` = a person decides or acts; the agent prepares.
    deck: take the current state, compare, change only what is yours.
 5. **Proportion.** The native way and its effort first. No stage, document, safeguard or
    review round that nobody asked for.
-6. **A question is not a go-ahead, and a go covers the named item.** "Can we fix it" asks for
-   an outline. Approval of one change does not carry to the next or to a new session.
-7. **Client-facing text: restate the request and get a yes, outline to the reader before
-   you draft, vet once and post once.** A review loop that converges is not the reader
-   accepting. A revision after review is a change list against the existing document.
+6. **Investigate when asked to investigate; carry through what you were asked to do.**
+   "Check whether we can fix it" gets findings and a proposal, not changes. A request to do
+   work is carried through to a checked result, and its authorization holds until its scope
+   changes or it is withdrawn. Ask at an unresolved consequential choice and before an
+   outward or irreversible step, with the concrete result prepared.
+7. **Client-facing text: vet once and post once.** Restate the request first when its
+   purpose or reader is unclear; outline to the reader first when the document is long or
+   costly. A review loop that converges is not the reader accepting. A revision after
+   review is a change list against the existing document.
 
 Detail and the incidents behind these: `references/working-practice.md`. The 26 failure
 modes that cost consultancies most, each with its prevention: `references/failure-modes.md`.

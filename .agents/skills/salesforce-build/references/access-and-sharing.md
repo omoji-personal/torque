@@ -163,10 +163,12 @@ separate checks. A query as an administrator proves none of the last three.
 | Logic and access together | Apex with `WITH USER_MODE` inside `System.runAs` as a minimum-access user for the negative case (outside it, user mode checks the user running the test); `System.runAs` needs an active user (field-reported) |
 | The page shows it | In a browser as that user, one person per user group, on a record someone else owns (field-reported: a user-mode code check "proved" a list that one profile could not see) |
 
-To act as the user in a browser: sign in with `torque browser login`, then use Setup "Log in
-as" (needs Modify All Data and the org's login-access policy, **verify**), or a dedicated
-test user that mirrors the real user's permission sets. Record which user and which method.
-"Log in as" skips login flows, so it is not the user's real sign-in (**verify**).
+To act as the user in a browser: `torque browser login --as-alias ALIAS-OF-USER` for a test
+user with its own CLI alias (no banner: confirm the user in the profile menu), or
+`--as-user` and Setup "Log in as" (needs Modify All Data and the org's login-access policy,
+**verify**; wait for the "Logged in as" banner). Record which user and which method. "Log in
+as" skips login flows, so it is not the user's real sign-in (**verify**). The steps and the
+persona checklist: `salesforce-delivery/references/testing-and-uat.md`, section 3.
 
 field-reported findings that only a test as real staff exposed: one field's access, a tester
 who lacked the feature, users outside the test group's access tier, and a managed action

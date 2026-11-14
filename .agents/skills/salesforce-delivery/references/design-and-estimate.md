@@ -8,11 +8,12 @@ work, usually one org. `[HUMAN]` = a person decides or acts.
 
 ### A1. Checklist
 
-1. Before any design work or review round, write an options table in this order: standard
-   feature, feature of an installed package, declarative, code. Put hours beside each and
-   what the client was told beside the total
+1. Before design work or a review round, write an options table in this order: standard
+   feature, feature of an installed package, declarative, code, with rough hours and what
+   the client was told beside the total
    (`salesforce-build/references/choosing-the-tool.md`, section 1). Take the first option
-   that meets the criteria and say in one line why the earlier ones fail.
+   that meets the criteria and say in one line why the earlier ones fail. For a small
+   ticket the table is optional: one line on the option taken is enough.
 2. For each significant requirement keep at least two options with their trade-offs in
    front of the client. "Going beyond what works to what's best is the real mark of an
    advocate" [TH-ADV].
@@ -26,8 +27,8 @@ work, usually one org. `[HUMAN]` = a person decides or acts.
 6. Draft access closed first: private where data is sensitive, permission sets and groups by
    persona, field access by classification, one identity per integration
    (`salesforce-build/references/access-and-sharing.md`).
-7. Check limit headroom and bulk behaviour against a stated target. Salesforce gives two:
-   within 70% of a limit [WA-R], and "well under half" [WA-RC]. Record which.
+7. Check limit headroom and bulk behaviour against a stated target. Default: "well under
+   half" [WA-RC]; 70% of a limit [WA-R] is the outer bound, with the reason recorded.
 8. Plan the bypass for loads and integrations now: a custom permission [DG-RT].
 9. Test maintainability: can the client's admin open it, understand it from its descriptions
    and change its settings without a developer?

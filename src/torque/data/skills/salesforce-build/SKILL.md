@@ -29,6 +29,8 @@ Marks used in this skill:
 | Write Apex or a Lightning web component | Record why configuration and flow do not fit | `references/apex-and-lwc.md` |
 | Connect another system or build on a connector | Read the connector's mapping and settings in the org, and the vendor's documentation | `references/integration.md` |
 | Build or change a flow | Read skill `salesforce-flow` | (that skill) |
+| Joiner, mover or leaver access; external or site users | List what the person holds today, by permission set and group | `references/access-and-sharing.md`, sections 3 to 5 (the skills have no full user-lifecycle procedure) |
+| Duplicate records | Read the active duplicate and matching rules | `references/data-model.md`, section 6; merging existing duplicates is not covered: plan it as a data migration (skill `salesforce-delivery`) |
 | Something behaves oddly | Look for it in the gotchas | `references/gotchas.md` |
 
 ## The standard for every build
@@ -67,7 +69,8 @@ and the date:
 
 These are the client's decisions or cannot be undone [WA]:
 
-- Choosing code where configuration or a flow could do the job.
+- Choosing code where configuration or a flow could do the job, unless the approved design
+  already chose it.
 - A new object that overlaps a standard or package object.
 - Enabling Person Accounts or any org feature that cannot be turned off.
 - Changing a field's type, deleting a field, converting lookup to master-detail or back,

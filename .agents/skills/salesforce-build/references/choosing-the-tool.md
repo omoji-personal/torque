@@ -16,8 +16,8 @@ Before any design, write three lines:
 3. Its effort next to what the client was told.
 
 Then list the options in order (standard feature, feature of an installed package,
-declarative, code) with hours beside each, before any design or review round, and take the
-first that meets the criteria. Read what the platform and existing automation already write
+declarative, code) with rough hours, before any design or review round, and take the first
+that meets the criteria. For a small ticket, one line is enough. Read what the platform and existing automation already write
 on the rows: two automation designs and an accounting fix were replaced by one rule that
 used a value the platform already wrote (field-reported).
 
@@ -170,7 +170,8 @@ The recorded reason says:
 5. The tests that prove it: bulk, negative and as the intended user.
 
 Put it in the class header comment and in the decision record. Choosing code where
-configuration could do the job is a stop-and-ask point. Then follow `apex-and-lwc.md`.
+configuration could do the job is a stop-and-ask point unless the approved design already
+chose it. Then follow `apex-and-lwc.md`.
 
 ## Sources
 
