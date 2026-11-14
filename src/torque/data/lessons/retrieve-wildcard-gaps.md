@@ -14,7 +14,7 @@ applies:
   keywords: [wildcard, manifest, namespace, baseline]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 3 notes", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 3 notes", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

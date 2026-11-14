@@ -15,7 +15,7 @@ applies:
   errors: ["You can*t create a connected app"]
 evidence:
   - {type: official-doc, ref: "https://architect.salesforce.com/docs/architect/well-architected/guide/trust.html", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 1 failed deploy", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 1 failed deploy", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

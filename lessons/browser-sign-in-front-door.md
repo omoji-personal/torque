@@ -15,8 +15,8 @@ applies:
   errors: []
 evidence:
   - {type: official-doc, ref: "https://github.com/forcedotcom/cli/blob/main/releasenotes/README.md", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 9 notes in which the consultant asked for front-door sign-in", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 10 of 36 browser sequences in an org began at a login page", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 9 notes in which the consultant asked for front-door sign-in", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 10 of 36 browser sequences in an org began at a login page", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

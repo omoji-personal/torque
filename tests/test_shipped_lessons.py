@@ -135,6 +135,19 @@ def test_no_two_shipped_lessons_say_the_same_thing():
     assert close == []
 
 
+RELAXES = re.compile(r"\b(?:false|turn(?:s|ed)? (?:it |them )?off|disabl\w*|deactivat\w*|remove the restriction"
+                     r"|to all users|view all|modify all|without sharing)\b", re.I)
+ACCESS = re.compile(r"access|restrict|permission|override|sharing|security|field-level|\bFLS\b", re.I)
+CONDITION = re.compile(r"\b(?:if|unless|only when|only where)\b", re.I)
+
+
+def test_no_shipped_lesson_tells_the_agent_to_relax_access_without_a_condition():
+    """A `do` that sets an access restriction off (false, disable, view all, ...) must say when."""
+    unconditional = [name for name, item in SHIPPED.items()
+                     if RELAXES.search(item.do) and ACCESS.search(item.do) and not CONDITION.search(item.do)]
+    assert unconditional == []
+
+
 def test_the_shipped_lessons_carry_no_credential_personal_data_private_path_or_private_link():
     for path in FILES:
         text = path.read_text(encoding="utf-8")

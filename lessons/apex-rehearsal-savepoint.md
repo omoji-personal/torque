@@ -14,8 +14,8 @@ applies:
   keywords: [setSavepoint, Database.rollback, rollback, rehearsal]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 15 runs that threw on purpose to roll back and 1 script whose rollback did nothing", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 4 notes on rolled-back probes", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 15 runs that threw on purpose to roll back and 1 script whose rollback did nothing", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 4 notes on rolled-back probes", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

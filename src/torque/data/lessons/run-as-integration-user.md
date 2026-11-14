@@ -14,8 +14,8 @@ applies:
   keywords: [integration user, guest user, Automated Process, External Credential]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, an after-action review of 166 rework episodes over seven weeks: 3 episodes holding 6 gaps", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 2 notes (an API-only profile failed on a missing record type; a guest user needed read on user external credentials)", date: 2026-11-14}
+  - {type: session, ref: "field-reported, a review of 166 rework episodes in 10 engagements, orgs per lesson not counted: 3 episodes holding 6 gaps", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 2 notes (an API-only profile failed on a missing record type; a guest user needed read on user external credentials)", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

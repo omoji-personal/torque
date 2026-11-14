@@ -14,7 +14,7 @@ applies:
   keywords: [compileProblem, exceptionMessage, anonymous Apex]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 8 failures with the reason hidden and 12 unexplained exits in 311 runs", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 8 failures with the reason hidden and 12 unexplained exits in 311 runs", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

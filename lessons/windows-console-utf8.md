@@ -14,7 +14,7 @@ applies:
   keywords: [UnicodeEncodeError, cp1252, PYTHONUTF8, code page]
   errors: ["'charmap' codec can't encode"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 18 encoding errors in 9 sessions, although 295 commands set the variable for themselves", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 18 encoding errors in 9 sessions, although 295 commands set the variable for themselves", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

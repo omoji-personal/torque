@@ -14,8 +14,8 @@ applies:
   keywords: [triggerOrder, Flow Trigger Explorer, record-triggered, run order]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, an after-action review of 166 rework episodes over seven weeks: 1 escaped defect: a new before-save flow stopped approvals for seven hours", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 3 notes on automation found late on the object", date: 2026-11-14}
+  - {type: session, ref: "field-reported, a review of 166 rework episodes in 10 engagements, orgs per lesson not counted: 1 escaped defect: a new before-save flow stopped approvals for seven hours", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 3 notes on automation found late on the object", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

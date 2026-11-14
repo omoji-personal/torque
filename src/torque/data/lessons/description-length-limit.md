@@ -14,8 +14,8 @@ applies:
   keywords: [description, length limit]
   errors: ["cannot be longer than 255", "data value too large"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 3 failed deploys in 2 sessions; the limit as the error text states it", date: 2026-11-14}
-  - {type: session, ref: "field-reported, an after-action review of 166 rework episodes over seven weeks: 4 failed deploys in 3 engagements", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 3 failed deploys in 2 sessions; the limit as the error text states it", date: 2026-11-14}
+  - {type: session, ref: "field-reported, a review of 166 rework episodes in 10 engagements, orgs per lesson not counted: 4 failed deploys in 3 engagements", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

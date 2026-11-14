@@ -14,7 +14,7 @@ applies:
   keywords: [managed package, governor limit, test script]
   errors: ["Too many SOQL queries: 101"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 7 failed runs in 5 agent contexts of 3 sessions", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 7 failed runs in 5 agent contexts of 3 sessions", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

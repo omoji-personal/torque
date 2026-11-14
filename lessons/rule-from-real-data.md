@@ -14,8 +14,8 @@ applies:
   keywords: [GROUP BY, entry condition, filter, real data]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, an after-action review of 166 rework episodes over seven weeks: 14 episodes", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 4 notes (a first rule missed about a hundred real cases)", date: 2026-11-14}
+  - {type: session, ref: "field-reported, a review of 166 rework episodes in 10 engagements, orgs per lesson not counted: 14 episodes", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 4 notes (a first rule missed about a hundred real cases)", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

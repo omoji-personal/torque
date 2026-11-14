@@ -14,7 +14,7 @@ applies:
   keywords: [Log in as, Login As, impersonate, banner]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 6 notes on Log in as under automation", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 6 notes on Log in as under automation", date: 2026-11-14}
   - {type: session, ref: "field-reported, the predecessor toolkit's dated notes: the banner check, and a headless session that could not switch users", date: 2026-11-14}
 source: harvested
 created: 2026-11-14

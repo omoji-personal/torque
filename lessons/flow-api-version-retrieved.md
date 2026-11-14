@@ -14,7 +14,7 @@ applies:
   keywords: [apiVersion, sourceApiVersion]
   errors: ["not valid in version"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 2 failed deploys", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 2 failed deploys", date: 2026-11-14}
   - {type: session, ref: "field-reported, a scan of 34 flows built in real work: five API versions from 62.0 to 68.0", date: 2026-11-14}
 source: harvested
 created: 2026-11-14

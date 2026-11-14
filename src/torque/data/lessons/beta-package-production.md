@@ -14,7 +14,7 @@ applies:
   keywords: [IsBeta, beta, SubscriberPackageVersion]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 2 notes (a specification named a beta version for production)", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 2 notes (a specification named a beta version for production)", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

@@ -14,7 +14,7 @@ applies:
   keywords: ["--json", "2>&1", utf-8-sig, update warning]
   errors: ["Expecting value: line 1 column 1", "Unexpected UTF-8 BOM"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 12 failed parses of saved CLI output and 4 failed reads of deploy results in 5 sessions", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 12 failed parses of saved CLI output and 4 failed reads of deploy results in 5 sessions", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

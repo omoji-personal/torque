@@ -14,11 +14,10 @@ applies:
   keywords: [description, help text, inlineHelpText]
   errors: []
 evidence:
-  - {type: official-doc, ref: "https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one org", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's work: 6 notes on descriptions added in a later deploy or lost when flows were regenerated; a scan of 257 built components in 7 client folders (help text on 14 of 78 new fields)", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
-last_verified: 2026-11-14
+last_verified:
 review_by: 2027-02-14
 supersedes: []
 promoted_to: []

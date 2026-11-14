@@ -14,7 +14,7 @@ applies:
   keywords: [cache, hard reload, new session]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 6 notes on browser automation in Lightning", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 6 notes on browser automation in Lightning", date: 2026-11-14}
   - {type: session, ref: "field-reported, the predecessor toolkit's dated notes: pages cache per session", date: 2026-11-14}
 source: harvested
 created: 2026-11-14

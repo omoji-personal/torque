@@ -14,8 +14,8 @@ applies:
   keywords: [Flow XML, API name, hand edit]
   errors: ["is duplicated at this location in type Flow", "Duplicate developer name"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 2 failed flow deploys", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 6 notes on flow deploy traps", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 2 failed flow deploys", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 6 notes on flow deploy traps", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

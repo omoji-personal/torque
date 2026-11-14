@@ -14,7 +14,7 @@ applies:
   keywords: [sfdx-project.json, target-metadata-dir, package directory]
   errors: ["specified in sfdx-project.json*does not exist", "must be inside the current project", "does not contain a valid Salesforce DX project"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 23 failed deploy and retrieve commands in 6 sessions", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 23 failed deploy and retrieve commands in 6 sessions", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

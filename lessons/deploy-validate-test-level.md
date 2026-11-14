@@ -15,7 +15,7 @@ applies:
   errors: ["Expected --test-level=NoTestRun to be one of", "NoTestRun cannot be used in production"]
 evidence:
   - {type: official-doc, ref: "https://github.com/salesforcecli/plugin-deploy-retrieve/blob/main/README.md", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 4 failed deploy commands in 3 agent contexts", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 4 failed deploy commands in 3 agent contexts", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

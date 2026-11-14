@@ -14,7 +14,7 @@ applies:
   keywords: [revoke, refresh token, OAuth]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 5 notes (a deactivated user's tokens kept an integration signing in nightly until revoked)", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 5 notes (a deactivated user's tokens kept an integration signing in nightly until revoked)", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

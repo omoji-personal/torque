@@ -14,7 +14,7 @@ applies:
   keywords: [FieldPermissions, SobjectType, LIKE]
   errors: ["invalid operator on id field"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 4 failed queries in 2 sessions", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 4 failed queries in 2 sessions", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

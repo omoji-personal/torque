@@ -14,8 +14,8 @@ applies:
   keywords: [custom settings, sample request, secret, credential]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 5 notes", date: 2026-11-14}
-  - {type: session, ref: "field-reported, an after-action review of 166 rework episodes over seven weeks: 6 privacy slips, one a credential fragment printed from integration metadata", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 5 notes", date: 2026-11-14}
+  - {type: session, ref: "field-reported, a review of 166 rework episodes in 10 engagements, orgs per lesson not counted: 6 privacy slips, one a credential fragment printed from integration metadata", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

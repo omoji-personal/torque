@@ -15,7 +15,7 @@ applies:
   errors: []
 evidence:
   - {type: official-doc, ref: "https://trailhead.salesforce.com/content/learn/projects/import-your-data-using-npsp-data-importer/prepare-your-data-for-import", date: 2026-11-14}
-  - {type: session, ref: "field-reported, an after-action review of 166 rework episodes over seven weeks: 10 episodes in which test or loaded records had side effects", date: 2026-11-14}
+  - {type: session, ref: "field-reported, a review of 166 rework episodes in 10 engagements, orgs per lesson not counted: 10 episodes in which test or loaded records had side effects", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

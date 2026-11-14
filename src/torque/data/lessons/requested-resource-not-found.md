@@ -14,8 +14,8 @@ applies:
   keywords: [api-version, NOT_FOUND, REST]
   errors: ["The requested resource does not exist"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 16 failed REST requests in 5 sessions, half never resolved", date: 2026-11-14}
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 2 notes on every CLI call failing this way after a refresh", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 16 failed REST requests in 5 sessions, half never resolved", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 2 notes on every CLI call failing this way after a refresh", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

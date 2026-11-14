@@ -14,7 +14,7 @@ applies:
   keywords: [Opportunity Product, OpportunityLineItem, Opportunity, CPU time]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 2 notes (100 Opportunity saves took 7 to 13 seconds of CPU in one org)", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 2 notes (100 Opportunity saves took 7 to 13 seconds of CPU in one org)", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

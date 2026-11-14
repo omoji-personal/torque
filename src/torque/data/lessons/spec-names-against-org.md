@@ -14,7 +14,7 @@ applies:
   keywords: [spec, story, API name, picklist value, stage]
   errors: []
 evidence:
-  - {type: session, ref: "field-reported, one consultant's working notes over eight weeks: 6 notes", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one org (one consultant's working notes): 6 notes", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:

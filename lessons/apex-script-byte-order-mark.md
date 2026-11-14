@@ -14,7 +14,7 @@ applies:
   keywords: [byte-order mark, BOM, PowerShell, Out-File]
   errors: ["Invalid identifier"]
 evidence:
-  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks: 5 failed Apex runs in 2 sessions; 7 and 28 tool calls to recover", date: 2026-11-14}
+  - {type: session, ref: "field-reported, one consultant's CLI transcripts over 2.5 weeks, orgs not counted: 5 failed Apex runs in 2 sessions; 7 and 28 tool calls to recover", date: 2026-11-14}
 source: harvested
 created: 2026-11-14
 last_verified:
