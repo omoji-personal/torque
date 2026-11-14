@@ -244,3 +244,11 @@ Code Analyzer is started as `sf code-analyzer run --output-file TMP/code-analyze
 --workspace ROOT --rule-selector Recommended --rule-selector flow --target FILE ...` in ROOT, with no org
 option. `torque check deployed` reaches an org and stays blocked; run it in full or connected mode, or
 yourself. `--help` passes for every form.
+
+## Connected mode
+
+`check metadata` and `check result` are local work. `check deployed --target-org ORG` is a read of that org,
+bound to the client's consent like every other read: it retrieves (a metadata read) and runs `sf data query`
+on FieldPermissions, FlowDefinition, FlowDefinitionView and ValidationRule, which connected mode reads as
+record reads, so the consent must cover record data for that org, as it would for those queries run on
+their own. It never asks for a write approval.
