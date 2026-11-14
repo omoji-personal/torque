@@ -23,7 +23,7 @@ import argparse
 import json
 import sys
 
-from . import intake, recall, storage
+from . import feedback, intake, recall, review, storage
 from . import lesson as record
 from .lesson import Lesson, LessonError
 from .storage import Scopes, Tally
@@ -201,6 +201,68 @@ def cmd_show(args: argparse.Namespace, scopes: Scopes) -> int:
     return EXIT_OK
 
 
+def _counted(scopes: Scopes, item: Lesson) -> tuple[dict, str]:
+    tally = feedback.tally_of(scopes, item)
+    return tally.counters(), ", ".join(f"{name} {count}" for name, count in tally.counters().items())
+
+
+def cmd_helpful(args: argparse.Namespace, scopes: Scopes) -> int:
+    item = feedback.helpful(scopes, args.id, args.note or "", args.session)
+    counters, text = _counted(scopes, item)
+    _out(args, {"id": item.id, "event": "helpful", "counters": counters},
+         f"Marked helpful: {item.id} ({item.title}); {text}")
+    return EXIT_OK
+
+
+def cmd_stale(args: argparse.Namespace, scopes: Scopes) -> int:
+    item, newer = feedback.stale(scopes, args.id, args.reason, args.superseded_by)
+    counters, text = _counted(scopes, item)
+    _out(args, {"id": item.id, "event": "stale", "counters": counters, "superseded_by": newer.id if newer else None},
+         f"Marked stale: {item.id} ({item.title}); it is out of recall from now on"
+         + (f", superseded by {newer.id}" if newer else "") + f". {text}\n"
+         f"Fixed it? torque lesson verify {item.id}. Marked by mistake? torque lesson restore {item.id}. "
+         f"Gone for good? torque lesson retire {item.id} --reason \"...\"")
+    return EXIT_OK
+
+
+def cmd_verify(args: argparse.Namespace, scopes: Scopes) -> int:
+    item, outcome = feedback.verify(scopes, args.id, args.evidence)
+    _out(args, {"id": item.id, "event": "verified", "state": item.state, "outcome": outcome,
+                "last_verified": item.last_verified, "review_by": item.review_by},
+         f"Verified {item.id} ({item.title}): {outcome}"
+         + (f"; review by {item.review_by}" if item.scope != "platform" else ""))
+    return EXIT_OK
+
+
+def cmd_retire(args: argparse.Namespace, scopes: Scopes) -> int:
+    item = feedback.retire(scopes, args.id, args.reason)
+    _out(args, {"id": item.id, "event": "retired", "state": item.state},
+         f"Retired {item.id} ({item.title}). Its file stays; bring it back with: torque lesson restore {item.id}")
+    return EXIT_OK
+
+
+def cmd_restore(args: argparse.Namespace, scopes: Scopes) -> int:
+    item, outcome = feedback.restore(scopes, args.id)
+    _out(args, {"id": item.id, "state": item.state, "outcome": outcome}, f"{item.id} ({item.title}): {outcome}")
+    return EXIT_OK
+
+
+def cmd_edit(args: argparse.Namespace, scopes: Scopes) -> int:
+    item, changed = feedback.edit(scopes, args.id, args.set)
+    _out(args, {"id": item.id, "changed": changed, "path": str(item.path), **recall.summary(item)},
+         f"Changed {', '.join(changed)} of {item.id} ({item.title}).\n"
+         f"For the body or anything else, edit the file: {item.path}")
+    return EXIT_OK
+
+
+def cmd_review(args: argparse.Namespace, scopes: Scopes) -> int:
+    report = review.build(scopes)
+    path = review.write(scopes, report)
+    _out(args, {**report, "report": str(path) if path else None},
+         review.render(report) + (f"\nSaved as {path}\n" if path else ""))
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Lessons: capture what was learned, find it again at the point of use, judge it.",
@@ -263,6 +325,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     search = command("search", cmd_search, "lessons whose text holds every term, in any state")
     search.add_argument("terms", nargs="+")
+
+    helpful = command("helpful", cmd_helpful, "a lesson helped: count it")
+    helpful.add_argument("id")
+    helpful.add_argument("--note", help="what it saved, in a few words")
+    helpful.add_argument("--session", metavar="ID", help="the session record it helped in")
+
+    stale = command("stale", cmd_stale, "a lesson is wrong or out of date: take it out of recall at once")
+    stale.add_argument("id")
+    stale.add_argument("--reason", required=True, help="what changed, or what is wrong with it")
+    stale.add_argument("--superseded-by", metavar="ID", help="the lesson that replaces it")
+
+    verify = command("verify", cmd_verify, "a lesson was checked and holds: date it, clear a stale mark, "
+                                           "admit a candidate")
+    verify.add_argument("id")
+    verify.add_argument("--evidence", action="append", default=[], metavar="TYPE[:REF]",
+                        help="the basis: reproduced, official-doc, second-occurrence or consultant-said "
+                             "(a candidate needs one to become active)")
+
+    retire = command("retire", cmd_retire, "a lesson no longer applies: keep its file, never show it")
+    retire.add_argument("id")
+    retire.add_argument("--reason", required=True)
+
+    restore = command("restore", cmd_restore, "bring back a retired lesson, or clear a stale mark")
+    restore.add_argument("id")
+
+    edit = command("edit", cmd_edit, "change fields of a lesson (or edit its file)")
+    edit.add_argument("id")
+    edit.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                      help="one of " + ", ".join(feedback.EDITABLE) + "; lists as comma-separated words (repeatable)")
+
+    command("review", cmd_review, "what waits, what repeats, what to re-check and what to promote; changes nothing")
     return parser
 
 
@@ -285,6 +378,8 @@ def main(argv: list[str] | None = None) -> int:
                      candidates=_candidates(exc.candidates))
     except storage.Busy as exc:
         return _fail(args, EXIT_BUSY, str(exc))
+    except feedback.ReadOnly as exc:
+        return _fail(args, EXIT_READ_ONLY, str(exc))
     except LessonError as exc:
         return _fail(args, EXIT_USAGE, str(exc))
 
