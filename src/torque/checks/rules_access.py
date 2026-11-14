@@ -154,4 +154,44 @@ def powerful_permission(comp: Component, ctx: Context) -> list[Finding]:
     return out
 
 
-RULES = (field_without_grant, formula_field_editable, profile_in_change, powerful_permission)
+def _granting(comp: Component) -> dict[tuple[str, str], str]:
+    """(section, key) -> label of each access entry in a permission set that grants something."""
+    from .compare import ACCESS_SECTIONS, _grants
+    out = {}
+    if comp is None or comp.node is None:
+        return out
+    for e in comp.node.children:
+        key_tag, _typ = ACCESS_SECTIONS.get(e.tag, ("", None))
+        key = e.value(key_tag) if key_tag else ""
+        if key and _grants(e):
+            out[(e.tag, key.lower())] = f"{e.tag} {key}"
+    return out
+
+
+def permission_set_removes_grants(comp: Component, ctx: Context) -> list[Finding]:
+    """A permission set deploy replaces the set: what the file does not list is removed from the org."""
+    if comp.type != "PermissionSet" or comp.node is None or comp.status != "changed":
+        return []
+    if comp.baseline is not None:
+        before, now = _granting(comp.baseline), _granting(comp)
+        gone = [label for k, label in sorted(before.items()) if k not in now]
+        if not gone:
+            return []
+        shown = ", ".join(gone[:5]) + (f" and {len(gone) - 5} more" if len(gone) > 5 else "")
+        return [Finding("access.permission-set-removes-grants", "error" if len(gone) * 2 > len(before) else "warning",
+                        comp, f"This deploy removes {len(gone)} of the {len(before)} grants the baseline has: {shown}. "
+                        "A permission set deploy replaces the set, so what the file does not list is disabled.",
+                        "If the grants should stay, add them back to the file (retrieve the set and merge your change "
+                        "into it); if they should go, say so in the change record.", line=comp.line,
+                        subject="removes-grants")]
+    if ctx.scope_mode == "changed-from":
+        return [Finding("access.permission-set-removes-grants", "note", comp,
+                        "The deploy result says this permission set already exists in the org. A permission set "
+                        "deploy replaces the set: any grant the org has that this file does not list is removed.",
+                        "Retrieve the set from the org and compare before deploying (`torque check metadata "
+                        "--baseline DIR` names what would be removed).", line=comp.line, subject="removes-grants")]
+    return []
+
+
+RULES = (field_without_grant, formula_field_editable, profile_in_change, powerful_permission,
+         permission_set_removes_grants)

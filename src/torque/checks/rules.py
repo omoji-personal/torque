@@ -13,6 +13,9 @@ RULES = {
     "access.grant-only-in-profile": ("warning", "a new custom field granted only by a profile in the change"),
     "access.formula-field-editable": ("error", "an editable fieldPermissions entry for a formula or roll-up field"),
     "access.profile-in-change": ("warning", "a profile file in the change"),
+    "access.permission-set-removes-grants": ("warning", "a changed permission set whose file lists fewer grants than "
+                                                        "its baseline (error past half; a note with --changed-from "
+                                                        "and no baseline)"),
     "access.powerful-permission": ("warning", "Modify All Data, View All Data, Manage Users, View All, Modify All or "
                                               "View All Fields in a permission set"),
     "doc.description-missing": ("warning", "no description on a custom field, custom object, flow, validation rule, "
