@@ -240,9 +240,11 @@ best, then the firm's (consultant-sourced first, each marked firm), because most
 corrections hold for every client. The firm keeps up to two of the five places when it has
 lessons and takes any the client leaves free. Then the counts for the firm and the
 platform with the command to ask for more, and the candidates waiting. `torque handoff` carries the same
-block. `torque advisory notes --command ... --workspace W --client C` returns matching
-scoped lessons under `scoped_lessons`, next to `platform_notes`; without a client the
-answer keeps its earlier shape.
+block. `torque advisory notes --command ... --json` is always the list of catalogue
+notes; with `--with-lessons` it is an object with `platform_notes` and `scoped_lessons`
+(the selected client's, the firm's and the shipped lessons; empty when no workspace is
+selected). The shape depends on the option only, never on the launcher's environment.
+The text output adds the scoped lessons when a client is selected.
 
 Other packages call one function before a consequential step:
 `jsc_memory.recall.for_command(command_text, *, types=(), tasks=(), paths=(), error="",

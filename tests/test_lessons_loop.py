@@ -264,7 +264,7 @@ def test_advisory_notes_add_scoped_lessons_under_their_own_key(torque, root):
     torque("lesson", "add", "--when", "you deploy a flow for this client", "--do", "read the active version back",
            "--source", "consultant")
     command = "sf project deploy start --metadata Flow:Gift_Entry"
-    code, out, _ = torque("advisory", "notes", "--command", command, "--limit", "4", "--json")
+    code, out, _ = torque("advisory", "notes", "--command", command, "--limit", "4", "--json", "--with-lessons")
     answer = json.loads(out)
     assert code == 0 and set(answer) == {"platform_notes", "scoped_lessons"}
     assert answer["platform_notes"] and all("remedy" in note for note in answer["platform_notes"])
@@ -275,11 +275,15 @@ def test_advisory_notes_add_scoped_lessons_under_their_own_key(torque, root):
     assert not any(item["id"].startswith("A-") for item in scoped)          # the catalogue is the other key
     text = torque("advisory", "notes", "--command", command)[1]
     assert "remedy :" in text and "WHEN you deploy a flow for this client" in text
-    # Without a selected client the answer keeps its earlier shape: the list of notes.
-    code, out, _ = torque("advisory", "notes", "--command", command, "--json", client=None)
-    assert code == 0 and isinstance(json.loads(out), list)
+    # Without the option the JSON is the list of notes, with a client selected or not; with it, always the object.
+    for client in ("alpha-nonprofit", None):
+        code, out, _ = torque("advisory", "notes", "--command", command, "--json", client=client)
+        assert code == 0 and isinstance(json.loads(out), list)
+    code, out, _ = torque("advisory", "notes", "--command", command, "--json", "--with-lessons", client=None)
+    assert set(json.loads(out)) == {"platform_notes", "scoped_lessons"}
     # Another client gets its own answer, never this client's lesson.
-    other = json.loads(torque("advisory", "notes", "--command", command, "--json", client="beta-land-trust")[1])
+    other = json.loads(torque("advisory", "notes", "--command", command, "--json", "--with-lessons",
+                              client="beta-land-trust")[1])
     assert "you deploy a flow for this client" not in json.dumps(other)
 
 

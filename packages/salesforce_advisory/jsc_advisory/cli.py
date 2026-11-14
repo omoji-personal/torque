@@ -84,6 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
     notes.add_argument("--limit", type=int, default=3,
                        help="notes to show (default 3, as many as Torque prints before a deploy)")
     notes.add_argument("--json", action="store_true")
+    notes.add_argument("--with-lessons", action="store_true",
+                       help="JSON as an object: platform_notes and scoped_lessons (the selected client's, the "
+                            "firm's and the shipped lessons; empty without a selected workspace). Without it the "
+                            "JSON is the list of notes, whatever the environment selects")
 
     needs = sub.add_parser("needs", help="show known direct requirements for a command")
     needs.add_argument("--command", required=True)
@@ -142,11 +146,13 @@ def main(argv: list[str] | None = None) -> int:
                 for item in found
             ) or "No catalogue note matched. That is a knowledge gap, not proof there is no risk."
             scoped = _scoped_lessons(args.command, args.limit)
-            if scoped is None:
-                _emit(found, human, args.json)
+            if scoped is not None:
+                human += "\n\n" + scoped[1]
+            # The JSON shape depends on the option only, never on the launcher's environment.
+            if args.with_lessons:
+                _emit({"platform_notes": found, "scoped_lessons": scoped[0] if scoped else []}, human, args.json)
             else:
-                # With a selected client the answer has two parts, each labelled by where it comes from.
-                _emit({"platform_notes": found, "scoped_lessons": scoped[0]}, human + "\n\n" + scoped[1], args.json)
+                _emit(found, human, args.json)
             return 0
 
         if args.subcommand == "needs":
