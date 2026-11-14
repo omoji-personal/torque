@@ -145,6 +145,8 @@ def test_help_text_only_where_a_user_fills_in(tmp_path):
     t.field("Shift__c", "Number__c", type="AutoNumber", help=None)
     t.field("Switch__mdt", "On__c", type="Checkbox", help=None)
     t.field("Shift__c", "Helped__c")
+    t.field("Shift__c", "Legacy_Key__c", help=None, extra="    <externalId>true</externalId>\n")   # Gemini F-12/22
+    t.field("Reading__b", "Value__c", type="Number", help=None)                                  # a big object
     r = t.check()
     assert {f["component"]["name"] for f in hits(r, "doc.help-text-missing")} == {"Shift__c.Hours__c"}
 

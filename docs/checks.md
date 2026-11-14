@@ -84,7 +84,7 @@ inherited; 2 unusable input (missing path, unreadable result, bad `--only`, unkn
 | `doc.description-missing` | warning | an empty or missing description on a custom field, custom object, flow, validation rule, permission set or group, record type or custom permission | presence only, not whether the text is right; standard and managed components are skipped |
 | `doc.description-placeholder` | note | a description that repeats the label or API name, or is TODO, TBD, test, ... | |
 | `doc.too-long` | error | field description over 1,000 or help text over 510 characters; permission set or validation rule description over 255 | other types' limits are not checked |
-| `doc.help-text-missing` | note | a custom field a user fills in (not formula, roll-up, auto-number, custom metadata, platform event or custom setting) without help text | a field on no page layout is still reported |
+| `doc.help-text-missing` | note | a custom field a user fills in (not formula, roll-up, auto-number, external Id, custom metadata, platform event, big object or custom setting) without help text | a field on no page layout is still reported |
 | `doc.flow-elements-undescribed` | note | one finding per flow: elements without a description; with a baseline, only elements new in this change | resources (variables, formulas) are not counted; Code Analyzer's MissingDescription covers them |
 | `doc.description-names-version` | note | a flow description that names a version number ("v2", "version 3"; not "API version 62.0") | |
 | `doc.apex-header-missing` | note | a non-test Apex class or a trigger with no comment above its declaration | method-level ApexDoc is Code Analyzer's (pmd ApexDoc) |

@@ -50,7 +50,9 @@ def user_fills_in(comp: Component, ctx: Context) -> bool:
     obj = comp.name.split(".", 1)[0]
     if n.value("formula") or n.value("type") in ("Summary", "AutoNumber"):
         return False
-    if obj.lower().endswith(("__mdt", "__e")):
+    if n.flag("externalId"):          # a key an integration writes, not something a person types
+        return False
+    if obj.lower().endswith(("__mdt", "__e", "__b")):
         return False
     o = _field_object(comp, ctx)
     return not (o is not None and o.node is not None and o.node.value("customSettingsType"))
