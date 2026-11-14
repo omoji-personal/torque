@@ -1268,7 +1268,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
       "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
       "source_tracked": true,
-      "destination_sha256": "92f435439971cb440311ec2bc8269080a2610c8b60ef04e1a14447faeed39d7b",
+      "destination_sha256": "e5e3f56704af5cc9f1db57187a0febc1212c02e93e80a9980f94468274807be0",
       "adapted": true
     },
     {

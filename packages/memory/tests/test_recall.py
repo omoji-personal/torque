@@ -68,19 +68,38 @@ def days_ago(days):
     return (date.today() - timedelta(days=days)).isoformat()
 
 
-def test_ranking_is_scope_then_match_strength_then_feedback_then_recency(scopes):
+def test_ranking_is_match_strength_with_a_bonus_for_nearness_then_feedback_then_recency(scopes):
     alpha = scopes("alpha")
-    save(alpha, "firm", "f001", types=["Flow"], tasks=["deploy"])
-    save(alpha, "client", "c001", tasks=["deploy"])                                  # weaker match, nearer scope
-    save(alpha, "client", "c002", types=["Flow"], tasks=["deploy"])                  # strongest client match
+    save(alpha, "firm", "f001", types=["Flow"], tasks=["deploy"])                    # strong firm match: 7 + 1
+    save(alpha, "client", "c001", tasks=["deploy"])                                  # weak client match: 3 + 2
+    save(alpha, "client", "c002", types=["Flow"], tasks=["deploy"])                  # strongest client match: 7 + 2
     save(alpha, "client", "c003", types=["Flow"], last_verified=days_ago(400))       # same strength as c004, older
     save(alpha, "client", "c004", types=["Flow"], last_verified=days_ago(100))
     save(alpha, "client", "c005", types=["Flow"], last_verified=days_ago(700))       # oldest, but marked helpful
     storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c005"}])
     result = recall.find(alpha, types=["Flow"], tasks=["deploy"], limit=None)
-    assert own(result) == ["c002", "c005", "c004", "c003", "c001", "f001"]
-    assert result.hits[0].score == 7 and result.hits[0].reasons == ["type Flow", "task deploy"]
-    assert all(hit.lesson.scope == "platform" for hit in result.hits[6:])
+    assert own(result) == ["c002", "f001", "c005", "c004", "c003", "c001"]
+    first = {hit.lesson.id[-4:]: hit for hit in result.hits}
+    assert first["c002"].score == 7 and first["c002"].reasons == ["type Flow", "task deploy"]
+    # A weak client match does not jump ahead of stronger platform matches.
+    order = [hit.lesson.id[-4:] for hit in result.hits]
+    assert any(hit.lesson.scope == "platform" for hit in result.hits[:order.index("c001")])
+
+
+def test_an_exact_platform_error_match_outranks_a_weak_client_match_and_is_never_cut(scopes):
+    alpha = scopes("alpha")
+    for suffix in ("w001", "w002", "w003"):
+        save(alpha, "client", suffix, tasks=["query"], when=f"you write a query ({suffix})")
+    result = recall.find(alpha, error="No such column 'Gift_Total__c' on entity 'Contact'", tasks=["query"], limit=3)
+    assert result.hits[0].lesson.scope == "platform" and "error" in result.hits[0].reasons
+    # Even when nearer lessons are stronger on other selectors, an exact error match keeps a place.
+    for suffix in ("s001", "s002", "s003"):
+        save(alpha, "client", suffix, tasks=["query", "data-load"], types=["Contact", "Account"],
+             when=f"strong ({suffix})")
+    crowded = recall.find(alpha, error="No such column 'X__c' on entity 'Contact'", tasks=["query", "data-load"],
+                          types=["Contact", "Account"], limit=3)
+    assert [hit.lesson.id[-4:] for hit in crowded.hits[:2]] == ["s001", "s002"]
+    assert recall._exact_error(crowded.hits[2]) and crowded.hits[2].lesson.scope == "platform"
 
 
 def test_equal_matches_are_ordered_by_evidence_then_by_recency_in_coarse_steps_never_by_a_few_days(scopes):
@@ -205,6 +224,41 @@ def test_a_task_torque_knows_is_asked_as_itself_and_brings_only_the_types_it_imp
     assert own(recall.find(alpha, tasks=["sandbox"], limit=None)) == ["rfsh", "sbox"]
 
 
+def test_an_org_alias_is_a_name_and_not_a_topic(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "sbox", tasks=["sandbox"], when="you work in a sandbox")
+    query = recall.build_query(command="sf data query --query \"SELECT Id FROM Account\" --target-org dev-sandbox")
+    assert query.tasks == ["query"] and "dev-sandbox" not in query.command
+    assert recall.build_query(command="sf org display -o my-sandbox").tasks == []
+    assert own(recall.find(alpha, command="sf data query -o=dev-sandbox --query x", limit=None)) == []
+
+
+def test_a_keyword_phrase_spelled_out_in_the_topic_counts_like_a_type(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "sett", tasks=["retrieve"], types=["CustomMetadata"], keywords=["custom settings", "secret"],
+         title="Scan what you retrieve for secrets")
+    save(alpha, "client", "objt", types=["CustomObject"], title="Name a new object well")
+    # "custom settings" is the CustomObject type to the vocabulary; the lesson names other types, but its
+    # keyword phrase is spelled out, so it is about what was asked.
+    found = recall.find(alpha, topic=["read", "the", "custom", "settings", "retrieved"], limit=None)
+    assert own(found)[0] == "sett" and found.hits[0].reasons[0] == "keyword custom settings"
+    assert own(recall.find(alpha, topic=["custom", "objects"], limit=None)) == ["objt"]       # no phrase: excluded
+    one = recall.find(alpha, topic=["settings"], limit=None)                              # one word is not a phrase
+    assert one.hits[0].reasons == ["word settings"] and one.hits[0].score == 1
+
+
+def test_a_command_pattern_that_names_an_option_or_value_outweighs_a_broad_one(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "broa", tasks=["deploy"], commands=["sf project deploy *", "torque deploy *"],
+         evidence=[{"type": "reproduced"}])
+    save(alpha, "client", "dest", tasks=["deploy"], commands=["*destructive*"])
+    command = "sf project deploy start --manifest package.xml --post-destructive-changes destructiveChanges.xml"
+    scores = lambda result: [(hit.lesson.id[-4:], hit.score) for hit in result.hits if hit.lesson.scope == "client"]
+    assert scores(recall.find(alpha, command=command, limit=None)) == [("dest", 9), ("broa", 7)]
+    plain = recall.find(alpha, command="sf project deploy start --source-dir force-app", limit=None)
+    assert scores(plain) == [("broa", 7), ("dest", 3)]                                    # on its task only
+
+
 def test_the_heading_names_each_thing_asked_for_once_whatever_its_spelling():
     assert recall.build_query(topic=["report", "dashboard"]).label() == "report, Dashboard"
     assert recall.build_query(tasks=["Flow"], types=["flow"]).label() == "flow, flow-build"
@@ -323,6 +377,37 @@ def test_a_catalogue_notes_update_date_is_not_a_verification_and_its_confidence_
     assert found == ["A-y-doc", "A-z-live", "A-x-practice-new", "A-w-practice-old"]
 
 
+def test_torques_wrappers_and_the_commands_they_run_count_as_one_command(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "quik", commands=["sf project deploy quick*"])
+    save(alpha, "client", "upsr", commands=["sf data upsert bulk*"])
+    save(alpha, "client", "apex", commands=["torque apex run*"])
+    found = lambda command: own(recall.find(alpha, command=command, limit=None))
+    assert found("torque deploy-quick --job-id 0Af000000000001 --target-org x") == ["quik"]
+    assert found("torque data bulk upsert --sobject Contact --file c.csv --external-id Email") == ["upsr"]
+    assert found("sf apex run --file x.apex") == ["apex"]
+
+
+def test_a_flow_deployed_with_its_fields_still_gets_the_field_lessons_and_a_folder_walk_says_where_it_stopped(
+        scopes, tmp_path, monkeypatch):
+    alpha = scopes("alpha")
+    save(alpha, "client", "fls1", types=["CustomField", "PermissionSet"], when="you deploy a new field")
+    command = ("sf project deploy start --metadata Flow:Update_Layout_Flow --metadata CustomField:Account.Region__c "
+               "--metadata PermissionSet:Sales")
+    result = recall.find(alpha, command=command, limit=None)
+    assert "fls1" in own(result) and "Layout" not in result.query.types       # the flow's name is one name
+    monkeypatch.setattr(recall, "_WALK_LIMIT", 3)
+    folder = tmp_path / "force-app" / "flows"
+    folder.mkdir(parents=True)
+    for number in range(5):
+        (folder / f"F{number}.flow-meta.xml").write_text("<Flow/>", encoding="utf-8")
+    walked = recall.find(alpha, paths=[str(tmp_path / "force-app")], limit=None)
+    assert walked.query.notes == ["Read the first 3 names under force-app; component types further down were not "
+                                  "seen: name the folder or files of the change (--path)."]
+    assert recall.render(walked).splitlines()[-1] == walked.query.notes[0]
+    assert recall.as_json(walked)["notes"] == walked.query.notes
+
+
 def test_paths_tell_types_from_names_folders_and_manifests(tmp_path):
     source = tmp_path / "force-app" / "main" / "default"
     (source / "flows").mkdir(parents=True)
@@ -390,20 +475,48 @@ def test_a_lesson_prints_in_three_short_lines_and_the_block_ends_with_the_standi
 
 def test_the_function_other_packages_call_returns_text_or_nothing_and_never_raises(scopes, monkeypatch):
     alpha = scopes("alpha")
-    save(alpha, "client", "0001", types=["Flow"], tasks=["deploy"], when="you deploy a flow",
-         do="read the active version back")
+    save(alpha, "client", "0001", types=["Flow"], tasks=["deploy", "flow-build"], commands=["torque deploy *"],
+         when="you deploy a flow", do="read the active version back")
     monkeypatch.setenv("TORQUE_WORKSPACE", str(alpha.engagement))
     text = recall.for_command("torque deploy --metadata Flow:Gift_Entry --target-org example-dev", via="deploy")
-    assert text.splitlines()[1] == "[L-20250303-0001] WHEN you deploy a flow" and text.endswith(recall.FOOTER)
+    assert "[L-20250303-0001] WHEN you deploy a flow" in text.splitlines() and text.endswith(recall.FOOTER)
     assert len([line for line in text.splitlines() if line.startswith("[")]) <= 3
     events = storage.read_events(alpha.engagement)
     assert [(row["event"], row["id"], row["via"]) for row in events] == [("shown", "L-20250303-0001", "deploy")]
     assert "torque deploy" not in storage.events_path(alpha.engagement).read_text(encoding="utf-8")
     assert recall.for_command("git status") == ""
-    # Other callers pass what they know (a task, types, paths); the catalogue's sign-in notes answer here.
-    assert recall.for_command("torque browser login", tasks=["sign-in"], scopes=alpha, limit=1).count("\n[") == 1
+    # Other callers pass what they know (a task, types, paths). A task alone earns no line before a step;
+    # a lesson whose command pattern names an option of this command does.
+    assert recall.for_command("torque browser login", tasks=["sign-in"], scopes=alpha, limit=1) == ""
+    assert recall.for_command("torque browser login --as-user staff@example.org", tasks=["sign-in"], scopes=alpha,
+                              limit=1).count("\n[") == 1
     monkeypatch.setattr(recall, "find", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     assert recall.for_command("torque deploy --metadata Flow:X") == ""
+
+
+def test_before_a_clean_step_only_a_touched_type_or_an_option_specific_pattern_earns_a_line(scopes):
+    alpha = scopes("alpha")
+    save(alpha, "client", "flow", types=["Flow"], tasks=["deploy"], when="you deploy a flow")
+    save(alpha, "client", "any", tasks=["deploy"], commands=["sf project deploy *"], when="you deploy anything")
+    save(alpha, "client", "err", types=["Flow"], errors=["FlowDefinition not found"], when="a flow deploy fails")
+    save(alpha, "client", "dest", tasks=["deploy"], commands=["*destructive*"], errors=["is referenced elsewhere"],
+         when="you delete a field")
+    save(alpha, "client", "apex", types=["ApexClass"], tasks=["apex"], when="you change a class")
+    printed = lambda command, **more: [line.split("]")[0].split("-")[-1] for line in recall.for_command(
+        command, scopes=alpha, limit=None, **more).splitlines() if line.startswith("[L-20250303")]
+    # A type the step touches: yes. A broad pattern or the deploy task alone: no. A lesson that answers an
+    # error waits for it, unless its own pattern names an option of this command.
+    assert printed("sf project deploy start --metadata Flow:Renewal --target-org dev") == ["flow"]
+    assert printed("sf project deploy start --source-dir force-app --target-org dev") == []
+    assert printed("sf project deploy start --manifest p.xml --post-destructive-changes d.xml") == ["dest"]
+    assert printed("sf project deploy start --metadata Flow:Renewal", error="FlowDefinition not found")[0] == "err"
+    # A type word in the command is not a component the step touches; a path or a given type is.
+    assert printed("sf apex run --file scripts/check.apex") == []
+    assert printed("sf project deploy start", paths=["classes/Gift.cls"]) == ["apex"]
+    assert printed("torque check metadata", types=["Flow"], tasks=["deploy"]) == ["flow"]
+    # `torque lesson for` is unchanged: an explicit question still gets the broad ones.
+    asked = recall.find(alpha, command="sf project deploy start --source-dir force-app", limit=None)
+    assert {"any", "flow"} <= {hit.lesson.id.split("-")[-1] for hit in asked.hits}
 
 
 def test_shown_events_stay_with_the_scope_that_owns_the_lesson(workspace, scopes):
@@ -429,16 +542,25 @@ def test_the_context_block_shows_the_engagements_best_and_counts_the_rest(scopes
     storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c000"}])
     (alpha.folder("client") / "broken.md").write_text("not a lesson", encoding="utf-8")
     section = recall.context_section(alpha)
-    assert [item["id"][-4:] for item in section["shown"]] == ["c000", "c006", "c005", "c004", "c003"]
+    # Five in all: the client's best four, then the firm's one (the firm keeps up to two places).
+    assert [item["id"][-4:] for item in section["shown"]] == ["c000", "c006", "c005", "c004", "f001"]
+    assert (section["engagement_shown"], section["firm_shown"]) == (4, 1)
     assert (section["engagement_active"], section["firm_active"], section["candidates_waiting"]) == (7, 1, 1)
     assert section["platform_active"] >= 40 and section["note"] == recall.FOOTER
     assert section["lines"][0] == "[L-20250303-c000] WHEN case 0"
+    assert section["lines"][-1].startswith("  (firm, ")
     assert [problem["path"] for problem in section["unreadable"]] == ["clients/alpha/lessons/broken.md"]
     assert storage.read_events(alpha.engagement)[-1]["event"] == "helpful"     # reading logs nothing
     recall.context_section(alpha, via="context")
-    assert [row["via"] for row in storage.read_events(alpha.engagement) if row["event"] == "shown"] == ["context"] * 5
+    assert [row["via"] for row in storage.read_events(alpha.engagement) if row["event"] == "shown"] == ["context"] * 4
+    # Another client sees the firm's lessons, never alpha's; consultant-sourced firm lessons come first,
+    # and with no lessons of its own the firm takes every place up to the limit.
+    for number in range(6):
+        save(alpha, "firm", f"g{number:03d}", source="consultant" if number == 5 else "agent")
     other = recall.context_section(scopes("beta"))
-    assert other["shown"] == [] and other["engagement_active"] == 0 and other["firm_active"] == 1
+    assert other["engagement_active"] == 0 and other["firm_active"] == 7
+    assert [item["id"][-4:] for item in other["shown"]][:1] == ["g005"] and len(other["shown"]) == 5
+    assert all(item["scope"] == "firm" for item in other["shown"])
 
 
 NO_COLUMN = "ERROR at Row:1:Column:8\nNo such column 'Region_Code__c' on entity 'Account'. If you are attempting ..."

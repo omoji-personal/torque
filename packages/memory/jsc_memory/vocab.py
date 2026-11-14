@@ -79,7 +79,8 @@ VOCABULARY = (
     (r"debug logs?|fault emails?|error emails?|unhandled fault|stack traces?|troubleshoot\w*|diagnos\w+",
      ("diagnose",), ()),
 )
-_COMPILED = tuple((re.compile(r"(?<![A-Za-z0-9])(?:" + words + r")(?![A-Za-z0-9])", re.I), tasks, types)
+# An underscore joins a name (Update_Layout_Flow is one name, not the word layout).
+_COMPILED = tuple((re.compile(r"(?<![A-Za-z0-9_])(?:" + words + r")(?![A-Za-z0-9_])", re.I), tasks, types)
                   for words, tasks, types in VOCABULARY)
 
 # Source-format file endings (lower case) and folders, to their metadata type.
@@ -239,10 +240,26 @@ def types_for_path(path: str) -> list[str]:
     return []
 
 
+_ORG_VALUE = re.compile(r"(?<!\S)(--target-org|--target-dev-hub|-o)(?:=|\s+)(?:\"[^\"]*\"|'[^']*'|\S+)")
+
+
+def without_org_names(command: str) -> str:
+    """A command with the org alias it names left out: `--target-org dev-sandbox` is a name,
+    not a sandbox task. Used for matching only."""
+    return _ORG_VALUE.sub(r"\1", command or "")
+
+
 def for_command(command: str) -> tuple[list[str], list[str]]:
     """(tasks, metadata types) a command line points to: its verbs, the `Type:Name`
     members it names, and the source files and folders it mentions."""
     tasks, types = infer(command)
+    return tasks, _unique(types + command_members(command))
+
+
+def command_members(command: str) -> list[str]:
+    """The metadata types a command names as such: `Type:Name` members, a bare type name
+    (`--metadata Layout`) and source files and folders. Not the words of the command."""
+    types: list[str] = []
     for token in re.split(r"[\s,]+", command or ""):
         token = token.strip("\"'")
         head = token.split(":", 1)[0]
@@ -250,7 +267,7 @@ def for_command(command: str) -> tuple[list[str], list[str]]:
             types.append(TYPES[head.lower()])
         elif "/" in token or "\\" in token or token.lower().endswith(tuple(SUFFIXES)):
             types += types_for_path(token)
-    return tasks, _unique(types)
+    return _unique(types)
 
 
 def topic_words(words) -> list[str]:

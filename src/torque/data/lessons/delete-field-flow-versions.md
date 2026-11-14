@@ -8,7 +8,7 @@ when: you are about to delete a custom field by a destructive deploy, or the del
 do: remove the field from the flows first, delete the old flow versions that still read it (inactive ones too), then delete the field in a deploy of its own
 because: a flow keeps all its versions, and a reference in any version, active or not, blocks the delete
 applies:
-  tasks: []
+  tasks: [deploy]
   types: []
   commands: ["*destructive*"]
   keywords: [destructiveChanges, flow version]

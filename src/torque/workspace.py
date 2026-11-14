@@ -1103,8 +1103,10 @@ def lesson_lines(section: dict, kind: str = "client") -> list[str]:
         return [f"Lessons: {section['problem']}. Check with torque doctor."]
     counts = f"firm {section['firm_active']}, platform {section['platform_active']}"
     if section["lines"]:
-        lines = [f"Lessons from earlier work: {len(section['shown'])} of {section['engagement_active']} for this "
-                 f"{kind} ({counts})", *section["lines"], section["note"]]
+        own = section.get("engagement_shown", len(section["shown"]))
+        firm = f"; {section['firm_shown']} of the firm's, marked firm" if section.get("firm_shown") else ""
+        lines = [f"Lessons from earlier work: {own} of {section['engagement_active']} for this {kind}{firm} "
+                 f"({counts})", *section["lines"], section["note"]]
     else:
         lines = [f"Lessons: none active for this {kind} yet ({counts})."]
     lines.append(f"For the ones that fit the task: {section['commands']['query']} "

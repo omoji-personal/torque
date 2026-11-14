@@ -105,6 +105,13 @@ def test_a_command_points_to_tasks_and_types(command, tasks, types):
     assert tasks <= set(found_tasks) and types == set(found_types)
 
 
+def test_an_underscore_joins_a_name_and_its_parts_are_not_words():
+    assert vocab.infer("Update_Layout_Flow") == ([], [])
+    assert vocab.for_command("sf project deploy start --metadata Flow:Update_Layout_Flow") == (
+        ["flow-build", "deploy"], ["Flow"])
+    assert "Layout" in vocab.infer("the page layout")[1]
+
+
 def test_types_are_spelled_as_salesforce_spells_them():
     assert [vocab.canonical_type(word) for word in ("flow", "Flows", "customfield", "permission set", "Bot")] == [
         "Flow", "Flow", "CustomField", "PermissionSet", "Bot"]
