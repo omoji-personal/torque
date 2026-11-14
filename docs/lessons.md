@@ -248,7 +248,8 @@ firm lesson, and every promotion proposal, is read by a person before it is appl
 - Not shown by default: candidates, retired lessons, lessons marked stale, and lessons
   with `promoted_to` set (they live on in their promoted form).
 - Each lesson prints in three lines: id and WHEN, DO and WHY, then scope, evidence type,
-  age and counters. Every print appends `shown` events.
+  age and counters. Every print appends a `shown` event; when the session id is known, a
+  lesson counts once per session and surface. `shown` counts prints, not use or value.
 
 `torque context` (and `--json`, key `lessons`) shows the selected client's or
 initiative's five best active lessons, the counts for the firm and the platform with the

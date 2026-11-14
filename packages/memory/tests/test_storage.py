@@ -109,6 +109,25 @@ def test_an_id_resolves_exactly_or_by_a_unique_start(scopes):
         storage.resolve(lessons, "L-20991231-ffff")
 
 
+def test_a_lesson_shown_again_in_one_session_on_one_surface_counts_once(scopes):
+    from jsc_memory import review
+    alpha = scopes("alpha")
+    root = alpha.engagement
+    for _ in range(3):
+        storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s1"}])
+    storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s1"},
+                       {"event": "shown", "id": "L-20261114-c0de1234", "via": "context", "session": "s1"},
+                       {"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s2"},
+                       {"event": "helpful", "id": "L-20261114-c0de1234", "session": "s1"},
+                       {"event": "helpful", "id": "L-20261114-c0de1234", "session": "s1"}])
+    for _ in range(2):                                  # no session id: every print counts
+        storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "deploy"}])
+    rows = storage.read_events(root)
+    assert sum(row["event"] == "shown" for row in rows) == 5 and sum(row["event"] == "helpful" for row in rows) == 2
+    assert storage.tally(rows)["L-20261114-c0de1234"].shown == 5
+    assert "shown counts prints of a lesson" in review.render_stats(review.stats(alpha))
+
+
 def test_the_part_of_an_id_after_its_date_is_enough(scopes):
     folder = scopes("alpha").folder("client")
     for identifier in ("L-20261114-c0de1234", "L-20261114-c0ffee99", "L-20261115-beef5678", "L-20250303-a3f2"):

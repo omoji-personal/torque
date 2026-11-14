@@ -342,6 +342,22 @@ def log(root: Path | None, rows: list[dict], *, must: bool = False) -> bool:
         return False
     try:
         with transaction(root):
+            # One "shown" per lesson, session and surface: a session that prints a lesson again and again
+            # counts once. Without a session id every print counts (a print is what "shown" means).
+            once = lambda row: row.get("event") == "shown" and bool(row.get("session"))
+            if any(once(row) for row in rows):
+                key = lambda row: (row.get("id"), row.get("session"), row.get("via"))
+                seen = {key(row) for row in read_events(root) if once(row)}
+                kept = []
+                for row in rows:
+                    if once(row):
+                        if key(row) in seen:
+                            continue
+                        seen.add(key(row))
+                    kept.append(row)
+                rows = kept
+                if not rows:
+                    return True
             with open(events_path(root), "a", encoding="utf-8", newline="\n") as stream:
                 for row in rows:
                     stream.write(json.dumps({"at": now(), **row}, ensure_ascii=False) + "\n")

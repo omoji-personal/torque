@@ -242,7 +242,8 @@ def render_stats(report: dict) -> str:
         + f": {report['lessons']} in the workspace ({listed(report['states'])}), {report['platform_lessons']} platform",
         f"Captured: {report['captured']['total']} (by source: {listed(report['captured']['by_source'])}; by scope: "
         f"{listed(report['captured']['by_scope'])})",
-        f"Events: {listed(report['events'])}",
+        f"Events: {listed(report['events'])} (shown counts prints of a lesson, once per session and surface "
+        "when the session is known; it is not a judgement)",
         f"Shown by surface: {listed(report['shown_by_surface'])}",
         f"Candidates waiting: {report['candidates_waiting']}"
         + (f"; the oldest is {oldest['id']} ({oldest['days']} days): torque lesson review" if oldest else ""),
