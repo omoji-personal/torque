@@ -93,7 +93,9 @@ later release narrows the check.
   `torque` command rejects abbreviated options, and the gate also blocks abbreviations of
   `--client` (`--clie`), which an older install would accept. One more form passes:
   `torque lesson for [WORDS] --workspace .` (or `recall`), with only `--task`, `--type`,
-  `--command`, `--error`, `--limit`, `--json` and `--include-candidates`. It reads the firm's
+  `--command`, `--error`, `--limit` and `--json` (not `--include-candidates`: the firm's
+  lessons nobody has reviewed yet stay out), and `torque lesson --help` or `torque lesson
+  for --help`, which print help only. It reads the firm's
   [lessons](lessons.md) (the workspace's own `lessons/` folder) and those shipped with Torque,
   never a client's: the workspace must be named, so that no client selected in the
   environment applies, and be the workspace itself (Torque reads a folder that holds a

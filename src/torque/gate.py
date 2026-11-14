@@ -1979,8 +1979,8 @@ def _python_module(rest: list[str]) -> tuple[str | None, int]:
 # tools may read in this mode) and the lessons shipped with Torque, and writes only its
 # own events log: no client context. Build-only mode allows that one form.
 LESSON_VERBS = {"for", "recall"}
-LESSON_OPTIONS = {"--workspace", "--task", "--type", "--command", "--error", "--limit", "--json",
-                  "--include-candidates"}
+# Not --include-candidates: it would show the firm's lessons that nobody has reviewed yet.
+LESSON_OPTIONS = {"--workspace", "--task", "--type", "--command", "--error", "--limit", "--json"}
 LESSON_REASON = ("torque lesson can read client context; only `torque lesson for [WORDS] --workspace .` is allowed "
                  "here (with --task, --type, --command, --error, --limit, --json): it reads the firm's lessons "
                  "and those shipped with Torque, never a client's.")
@@ -1992,7 +1992,10 @@ def _lesson_reason(args: list[str], workspace: Path | None, cwd: Path | None, co
     environment applies, and be this workspace itself: Torque reads a folder that holds a
     client.json as that client, so no other folder is accepted, inside the workspace or
     outside it. A client or an initiative is never named, not even inside another word;
-    no other option is accepted."""
+    no other option is accepted. `torque lesson --help` and `torque lesson for --help`
+    (or recall, or -h) exactly print help and read no lesson."""
+    if args[-1:] in (["-h"], ["--help"]) and (len(args) == 2 or (len(args) == 3 and args[1] in LESSON_VERBS)):
+        return ""
     if len(args) < 3 or args[1] not in LESSON_VERBS or workspace is None or cwd is None:
         return LESSON_REASON
     words = args[2:]

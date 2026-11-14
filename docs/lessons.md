@@ -252,8 +252,9 @@ consultant's word.
   the output of `torque deploy` and `torque data`.
 - Build-only mode allows `torque lesson for [WORDS] --workspace .` with `--task`,
   `--type`, `--command`, `--error`, `--limit` and `--json`: the firm's lessons and the
-  shipped ones, never a client's. The folder named must be the workspace itself. Every
-  other lesson command stays blocked there. The firm's lesson files are ordinary workspace
+  shipped ones, never a client's, and never candidates (`--include-candidates` is
+  blocked there). The folder named must be the workspace itself. `torque lesson --help`
+  and `torque lesson for --help` pass. Every other lesson command stays blocked there. The firm's lesson files are ordinary workspace
   files outside `clients/`.
 - In maintenance (`.torque/maintenance`) lesson commands pause like the other packages;
   `torque context` still shows lessons and records nothing.
