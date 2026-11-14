@@ -1013,27 +1013,14 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
         raise WorkspaceError(f"unknown session status: {status}")
     if learned_scope not in ("client", "firm") or learned_from not in ("consultant", "agent"):
         raise WorkspaceError("a learned lesson's scope is client or firm, and it comes from the consultant or the agent")
-    evidence_ref = None
-    if evidence is not None:
-        path = Path(evidence).expanduser().resolve()
-        if not path.is_file():
-            raise WorkspaceError(f"evidence is not a readable file: {path}")
-        if foreign_engagement(client, path):
-            raise WorkspaceError("evidence belongs to a different client or initiative")
-        try:
-            digest = _file_hash(path)
-        except OSError as exc:
-            raise WorkspaceError(f"cannot read evidence: {path}") from exc
-        evidence_ref = {"path": str(path), "sha256": digest, "basis": EVIDENCE_BASIS}
-        try:
-            # Inside the workspace the reference is also kept relative to it, so it still
-            # resolves after the workspace moves or is copied to another machine. The
-            # absolute path stays for versions that read only that.
-            evidence_ref["workspace_path"] = path.relative_to(client.parent.parent).as_posix()
-        except ValueError:
-            # Outside the workspace the absolute path is the reference, and it is read
-            # only there: never matched with a copy inside the workspace.
-            evidence_ref["scope"] = "external"
+    references = []
+    for item in _evidence_arguments(evidence):
+        reference = _evidence_reference(client, item)
+        if all(reference["path"] != earlier["path"] for earlier in references):
+            references.append(reference)
+    # One file is stored as before, an object, so every version reads it; several are an
+    # ordered list of the same objects (docs/engagement-records.md, "Session record").
+    evidence_ref = None if not references else references[0] if len(references) == 1 else references
     at = _now()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid4().hex[:12]
     entry = {"schema": "torque.session/1", "id": entry_id, "created_at": at,
@@ -1052,6 +1039,39 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
             saved, problems = [], [{"learned": 0, "reason": f"lessons are unavailable ({type(exc).__name__})"}]
         entry = {**entry, "lessons": saved, "lesson_problems": problems}
     return entry
+
+
+def _evidence_arguments(evidence) -> list:
+    """The evidence files a caller named: none, one path, or several in order."""
+    if evidence is None:
+        return []
+    if isinstance(evidence, (str, os.PathLike)):
+        return [evidence]
+    return list(evidence)
+
+
+def _evidence_reference(client: Path, evidence) -> dict:
+    """The reference to one evidence file: its path and SHA-256 when recorded."""
+    path = Path(evidence).expanduser().resolve()
+    if not path.is_file():
+        raise WorkspaceError(f"evidence is not a readable file: {path}")
+    if foreign_engagement(client, path):
+        raise WorkspaceError("evidence belongs to a different client or initiative")
+    try:
+        digest = _file_hash(path)
+    except OSError as exc:
+        raise WorkspaceError(f"cannot read evidence: {path}") from exc
+    reference = {"path": str(path), "sha256": digest, "basis": EVIDENCE_BASIS}
+    try:
+        # Inside the workspace the reference is also kept relative to it, so it still
+        # resolves after the workspace moves or is copied to another machine. The
+        # absolute path stays for versions that read only that.
+        reference["workspace_path"] = path.relative_to(client.parent.parent).as_posix()
+    except ValueError:
+        # Outside the workspace the absolute path is the reference, and it is read
+        # only there: never matched with a copy inside the workspace.
+        reference["scope"] = "external"
+    return reference
 
 
 def _lesson_scopes(engagement: Path, kind: str):
@@ -1247,6 +1267,36 @@ def _session_evidence(client: Path, evidence: object) -> tuple[str, str | None]:
     return "missing", evidence["path"]
 
 
+def _evidence_items(evidence: object) -> list:
+    """The references in a session's `evidence`: none (null), one (an object, as every
+    version writes one file) or several (a nonempty list of such objects, in order)."""
+    if evidence is None:
+        return []
+    if isinstance(evidence, list):
+        if not evidence or any(not isinstance(item, dict) for item in evidence):
+            raise WorkspaceError("invalid session evidence reference")
+        return evidence
+    return [evidence]
+
+
+def _session_evidence_all(client: Path, evidence: object) -> tuple[str, str | None, list[dict]]:
+    """(integrity, location, items) of every evidence reference of a session. The
+    integrity and location are the first file's when it is the only one; with several,
+    the integrity is the first that does not match (missing, changed, unavailable) or
+    matches_reference when all do. `items` holds each file: where it is now, its
+    recorded SHA-256 and its integrity, in the order recorded."""
+    items = []
+    for reference in _evidence_items(evidence):
+        integrity, location = _session_evidence(client, reference)
+        items.append({"location": location, "sha256": reference["sha256"], "integrity": integrity,
+                      "where": "outside this workspace" if _absolute_reference(location) else "in this workspace"})
+    if not items:
+        return "not_supplied", None, []
+    overall = next((item["integrity"] for item in items if item["integrity"] != "matches_reference"),
+                   "matches_reference")
+    return overall, items[0]["location"], items
+
+
 def _session_timestamp(value: object) -> bool:
     try:
         return isinstance(value, str) and datetime.fromisoformat(value).utcoffset() is not None
@@ -1307,14 +1357,15 @@ def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 2
             if foreign_owner(value, kind, config["slug"]):
                 raise BoundaryError(f"session record belongs to a different client or initiative: {path}")
             evidence = value.get("evidence")
-            if isinstance(evidence, dict) and "workspace_path" in evidence:
-                # A reference that leaves the workspace stops the read, however damaged the rest is.
-                try:
-                    _workspace_reference(evidence["workspace_path"])
-                except BoundaryError as exc:
-                    raise BoundaryError(f"{exc}: {path}") from exc
-                except WorkspaceError:
-                    pass  # Malformed: named below, with the record.
+            for reference in evidence if isinstance(evidence, list) else [evidence]:
+                if isinstance(reference, dict) and "workspace_path" in reference:
+                    # A reference that leaves the workspace stops the read, however damaged the rest is.
+                    try:
+                        _workspace_reference(reference["workspace_path"])
+                    except BoundaryError as exc:
+                        raise BoundaryError(f"{exc}: {path}") from exc
+                    except WorkspaceError:
+                        pass  # Malformed: named below, with the record.
             reason = _session_problem(path, value, kind, config["slug"])
         if reason:
             if problems is None:
@@ -1322,7 +1373,8 @@ def list_sessions(workspace: str | Path, client_name: str, limit: int | None = 2
             problems.append(record_problem(client, path, reason))
             continue
         try:
-            value["evidence_integrity"], value["evidence_location"] = _session_evidence(client, value.get("evidence"))
+            (value["evidence_integrity"], value["evidence_location"],
+             value["evidence_items"]) = _session_evidence_all(client, value.get("evidence"))
         except BoundaryError as exc:
             raise BoundaryError(f"{exc}: {path}") from exc
         except WorkspaceError as exc:
@@ -1453,15 +1505,14 @@ def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "clie
     for entry in reversed(entries):
         lines += [f"## {entry['created_at']} — {entry['status']} (user-reported)", "",
                   entry["summary"], "", f"Entry: {entry['id']}"]
-        evidence = entry.get("evidence")
-        if evidence:
-            # Where the file is now: relative to the workspace inside it, so the handoff
-            # does not carry the author's own folder names.
-            location = entry.get("evidence_location") or evidence["path"]
-            where = "outside this workspace" if _absolute_reference(location) else "in this workspace"
-            lines += [f"Evidence reference: {location} ({where})", f"Recorded SHA-256: {evidence['sha256']}",
-                      f"Evidence integrity: {entry['evidence_integrity'].replace('_', ' ')}",
-                      "The reference was hashed when recorded; its content was not assessed."]
+        # Where each file is now: relative to the workspace inside it, so the handoff
+        # does not carry the author's own folder names.
+        for item in entry.get("evidence_items", []):
+            lines += [f"Evidence reference: {item['location']} ({item['where']})",
+                      f"Recorded SHA-256: {item['sha256']}",
+                      f"Evidence integrity: {item['integrity'].replace('_', ' ')}"]
+        if entry.get("evidence_items"):
+            lines.append("The reference was hashed when recorded; its content was not assessed.")
         else:
             lines.append("Evidence reference: none supplied.")
         lines.append("")

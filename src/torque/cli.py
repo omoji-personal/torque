@@ -169,16 +169,21 @@ def build_parser() -> argparse.ArgumentParser:
     sessions = session.add_subparsers(dest="action", required=True)
     entry = sessions.add_parser("add")
     _client_args(entry)
-    entry.add_argument("--summary", required=True)
-    entry.add_argument("--status", choices=ws.STATUSES, default="prepared")
-    entry.add_argument("--evidence", help="reference and hash a file; does not assess its contents")
-    entry.add_argument("--learned", action="append", default=[], metavar="TEXT",
+    entry.add_argument("--summary", help="what was done and what it rests on (required here or in --input)")
+    entry.add_argument("--status", choices=ws.STATUSES, help="default: prepared")
+    entry.add_argument("--evidence", action="append", metavar="FILE",
+                       help="reference and hash a file; does not assess its contents (repeatable; all are kept, in order)")
+    entry.add_argument("--input", metavar="FILE",
+                       help="read the record's fields from a JSON or YAML file, or - for standard input "
+                            "(keys: the option names, such as summary, status, evidence); an option given "
+                            "on the command line wins over the file")
+    entry.add_argument("--learned", action="append", metavar="TEXT",
                        help="a lesson this session taught, saved with the record and linked to it (repeatable). "
                             "Write it as `When: ... Do: ... Because: ...`")
-    entry.add_argument("--learned-scope", choices=("client", "firm"), default="client",
+    entry.add_argument("--learned-scope", choices=("client", "firm"),
                        help="client: the selected client or initiative (default); firm: every client, so the "
                             "text must not identify one")
-    entry.add_argument("--learned-from", choices=("consultant", "agent"), default="agent",
+    entry.add_argument("--learned-from", choices=("consultant", "agent"),
                        help="consultant: their correction or instruction, saved as an active lesson; agent "
                             "(default): saved as a candidate until it is reviewed")
     entry.add_argument("--json", action="store_true")
@@ -488,6 +493,75 @@ def _workflows(args: argparse.Namespace) -> int:
             print(f"{entry['name']:22} [{entry.get('kind', 'guided')}] {entry.get('description', '')}")
         print("\nRead a workflow: torque workflows show NAME")
     return 0
+
+
+# `session add` fields that `--input FILE|-` can also give: field -> (kind, default).
+# The keys of the document are the option names, with - or _ (`learned-from`, `learned_from`).
+SESSION_FIELDS = {"summary": ("text", None), "status": ("text", "prepared"), "evidence": ("list", []),
+                  "learned": ("list", []), "learned_scope": ("text", "client"), "learned_from": ("text", "agent")}
+INPUT_LIMIT = 1_000_000
+
+
+def _read_input(source: str) -> dict:
+    """The fields of a `--input` document: a JSON or YAML mapping, from a file or `-`."""
+    where = "standard input" if source == "-" else source
+    try:
+        if source == "-":
+            stream = getattr(sys.stdin, "buffer", None)
+            raw = stream.read(INPUT_LIMIT + 1) if stream is not None else sys.stdin.read(INPUT_LIMIT + 1)
+            text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw
+        else:
+            with open(source, encoding="utf-8-sig") as handle:
+                text = handle.read(INPUT_LIMIT + 1)
+    except FileNotFoundError as exc:
+        raise ws.WorkspaceError(f"--input file does not exist: {source}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise ws.WorkspaceError(f"cannot read --input {where} as UTF-8 text ({type(exc).__name__})") from exc
+    if len(text) > INPUT_LIMIT:
+        raise ws.WorkspaceError(f"--input {where} is longer than {INPUT_LIMIT:,} characters")
+    try:
+        value = json.loads(text)
+    except ValueError:
+        import yaml
+        try:
+            value = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ws.WorkspaceError(f"--input {where} is neither JSON nor YAML: "
+                                    f"{str(exc).splitlines()[0] if str(exc) else type(exc).__name__}") from exc
+    if not isinstance(value, dict):
+        raise ws.WorkspaceError(f"--input {where} must hold one mapping of fields, such as "
+                                '{"summary": "...", "status": "executed"}')
+    fields = {}
+    for key, item in value.items():
+        name = str(key).strip().replace("-", "_")
+        if name not in SESSION_FIELDS:
+            raise ws.WorkspaceError(f"unknown field in --input {where}: {key}; the fields are "
+                                    + ", ".join(sorted(SESSION_FIELDS)))
+        kind = SESSION_FIELDS[name][0]
+        if item is None:
+            continue
+        if kind == "list":
+            item = [item] if isinstance(item, str) else item
+            if not isinstance(item, list) or any(not isinstance(part, str) for part in item):
+                raise ws.WorkspaceError(f"--input field {key} must be text or a list of texts")
+        elif not isinstance(item, str):
+            raise ws.WorkspaceError(f"--input field {key} must be text (put it in quotes)")
+        fields[name] = item
+    return fields
+
+
+def _session_fields(parsed: argparse.Namespace) -> dict:
+    """The `session add` fields: each option given on the command line, else the
+    `--input` document's value, else the default."""
+    document = _read_input(parsed.input) if parsed.input else {}
+    fields = {}
+    for name, (_, default) in SESSION_FIELDS.items():
+        given = getattr(parsed, name, None)
+        fields[name] = given if given is not None else document.get(name, default)
+    if not isinstance(fields["summary"], str) or not fields["summary"].strip():
+        raise ws.WorkspaceError("session summary must be nonempty: give --summary TEXT, or a summary field in "
+                                "--input FILE")
+    return fields
 
 
 def _change(args: argparse.Namespace) -> int:
@@ -1876,9 +1950,10 @@ def main(argv: list[str] | None = None) -> int:
         elif parsed.command == "session":
             name, kind = _scope(parsed)
             if parsed.action == "add":
-                entry = ws.add_session(parsed.workspace, name, parsed.summary, parsed.status, parsed.evidence,
-                                       kind=kind, learned=parsed.learned, learned_scope=parsed.learned_scope,
-                                       learned_from=parsed.learned_from)
+                fields = _session_fields(parsed)
+                entry = ws.add_session(parsed.workspace, name, fields["summary"], fields["status"],
+                                       fields["evidence"], kind=kind, learned=fields["learned"],
+                                       learned_scope=fields["learned_scope"], learned_from=fields["learned_from"])
                 if parsed.json:
                     _print_json(entry)
                 else:
