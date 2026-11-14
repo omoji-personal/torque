@@ -129,6 +129,6 @@ torque handoff --workspace . --client sample
 
 The next consultant, or the next session, starts from the context command of step 2 and this
 hand-off.
-For every command: `torque --help` and `torque COMMAND --help`. For the recipes and the eight
+For every command: `torque --help`, then that command's own help, such as `torque session add --help`. For the recipes and the eight
 practice skills: `torque workflows list --workspace .`; read a skill with
 `torque workflows show salesforce-build --workspace .`.
