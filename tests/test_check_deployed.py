@@ -435,3 +435,28 @@ def test_a_standard_object_is_compared_not_dropped(tmp_path, monkeypatch):
     rep = json.loads(read_back(monkeypatch, t.root, org, "--json"))
     [row] = rep["components"]
     assert row["comparison"] == "different" and row["differences"] == ["enableHistory: source 'true', org 'false'"]
+
+
+def test_an_activity_field_is_found_granted_on_task(tmp_path, monkeypatch):
+    """Gemini F-11: FieldPermissions rows for an Activity field name Task and Event."""
+    class Granted(CopyOrg):
+        def __call__(self, argv, **kw):
+            argv = [str(a) for a in argv]
+            if argv[1:3] == ["data", "query"] and "FROM FieldPermissions" in argv[argv.index("--query") + 1]:
+                self.calls.append(argv)
+                q = argv[argv.index("--query") + 1]
+                assert "'Task.Call__c'" in q and "'Event.Call__c'" in q and "'Activity.Call__c'" in q
+                body = {"records": [{"Field": "Task.Call__c", "PermissionsRead": True, "PermissionsEdit": True,
+                                     "Parent": {"Name": "Caller", "IsOwnedByProfile": False}}], "done": True}
+                return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"status": 0, "result": body}))
+            return super().__call__(argv, **kw)
+    t = Tree(tmp_path / "p")
+    t.field("Activity", "Call__c", type="Checkbox")
+    org = tmp_path / "org"
+    org.mkdir()
+    fake = Granted(org)
+    monkeypatch.setattr(deployed, "run_tool", fake)
+    monkeypatch.setattr("jsc_advisory.sf.run_tool", fake)
+    code, out, err = run("check", "deployed", "--target-org", "practice", "--source-dir", str(t.root), "--json")
+    [a] = json.loads(out)["fields"]
+    assert a["rows"] == 1 and a["message"] == "granted by Caller (read and edit)"

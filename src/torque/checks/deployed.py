@@ -162,12 +162,18 @@ def flow_state(client, alias: str, comp, namespace: str = "") -> dict:
     return out
 
 
+def _field_names(name: str) -> list[str]:
+    obj, _, fld = name.partition(".")
+    return [name, f"Task.{fld}", f"Event.{fld}"] if obj.lower() == "activity" else [name]
+
+
 def field_access(client, alias: str, fields: list, as_sets: list[str]) -> list[dict]:
     from jsc_advisory.sf import Unknown, records, soql_literal
     out = []
     for i in range(0, len(fields), 50):
         chunk = fields[i:i + 50]
-        names = ", ".join(f"'{soql_literal(c.name)}'" for c in chunk)
+        # an Activity field is granted on Task and Event (FieldPermissions rows name those)
+        names = ", ".join(sorted({f"'{soql_literal(k)}'" for c in chunk for k in _field_names(c.name)}))
         try:
             rows = records(client.query(alias, "SELECT Field, Parent.Name, Parent.IsOwnedByProfile, "
                                         "Parent.Profile.Name, PermissionsRead, PermissionsEdit FROM FieldPermissions "
@@ -176,7 +182,8 @@ def field_access(client, alias: str, fields: list, as_sets: list[str]) -> list[d
             out += [{"name": c.name, "rows": None, "message": f"could not read FieldPermissions: {exc}"} for c in chunk]
             continue
         for c in chunk:
-            mine = [r for r in rows if str(r.get("Field") or "").lower() == c.name.lower()
+            keys = {k.lower() for k in _field_names(c.name)}
+            mine = [r for r in rows if str(r.get("Field") or "").lower() in keys
                     and (r.get("PermissionsRead") or r.get("PermissionsEdit"))]
             sets, profiles = [], []
             for r in mine:
@@ -288,7 +295,7 @@ def check(target_org: str, *, changed_from: str | None = None, source_dir: str |
             if caveat:
                 row["reason"] = f"{caveat} (against that copy: {row['comparison']})"
                 row["comparison"] = "could-not-compare"
-    fields = [c for c in comps if c.type == "CustomField" and c.status in ("new", "unknown") and needs_grant(c, ctx)]
+    fields = [c for c in comps if c.type == "CustomField" and c.status in ("new", "changed", "unknown") and needs_grant(c, ctx)]
     access = field_access(client, target_org, fields, list(as_permission_sets or []))
     vrules = rule_states(client, target_org, [c for c in comps if c.type == "ValidationRule"], project.namespace)
     attempted = bool(members or flows or access or vrules)
