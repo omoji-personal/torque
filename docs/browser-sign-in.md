@@ -144,7 +144,7 @@ in Playwright's storage-state format. A script then starts with
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | The redirect was sent, or the session file was written | Confirm the user in the page |
-| 1 | Nobody opened the local address in time | Run it again and navigate the tab sooner |
+| 1 | No browser navigation reached the local address before its expiry, or the CLI answered after it | Run it again and navigate the tab sooner |
 | 2 | Options that cannot be used | Read the message |
 | 3 | The alias has no CLI authorization, or it expired | The consultant runs `sf org login web --alias ALIAS` in their own terminal |
 | 4 | The Salesforce CLI is not installed | Install it |
@@ -163,7 +163,13 @@ in Playwright's storage-state format. A script then starts with
 - Only a top-level browser navigation is answered. A fetch, a prefetch, an image request,
   curl or a script gets a refusal and no Salesforce address is asked for.
 - The `Host` header must be the loopback address.
-- One valid request, then the listener closes. It also closes at the timeout.
+- One valid request, then the listener closes.
+- The printed expiry (`expires_at`, `--timeout` seconds after the address is printed) is one
+  absolute deadline. After it no Salesforce address is asked for and none is sent, also for a
+  request that began before it. A connection is read for at most five seconds in all and never
+  past the deadline, however slowly its bytes arrive, so a client that connects and waits cannot
+  hold the listener. When the CLI answers only after the deadline, its address is dropped unsent
+  (it is single-use and expires by itself) and the command exits 1 saying so.
 - Nothing about a request is logged.
 
 Any process on the machine can reach a loopback port, whoever runs it, so the code is the

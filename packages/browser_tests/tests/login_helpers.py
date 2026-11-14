@@ -22,7 +22,8 @@ NAVIGATION = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-F
 
 class FakeCli:
     """Stands in for SfClient. `orgs` maps an alias to what the CLI would answer:
-    org_id, is_sandbox, username, url, and optional identity_error / mint_error."""
+    org_id, is_sandbox, username, url, and optional identity_error / mint_error /
+    mint_seconds (how long the sign-in request takes)."""
     orgs: dict = {}
     calls: list = []
 
@@ -53,6 +54,7 @@ class FakeCli:
         org = self._org()
         if org.get("mint_error"):
             raise org["mint_error"]
+        time.sleep(org.get("mint_seconds", 0))
         return {"url": org["url"], "org_id": org.get("mint_org_id", org["org_id"]), "username": org["username"]}
 
     def user_by_username(self, username):

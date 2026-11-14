@@ -44,8 +44,8 @@ EXIT_PLAYWRIGHT = 8       # Playwright or its browser is not installed (--storag
 EXIT_SIGN_IN = 9          # the sign-in itself failed
 
 EXIT_CODES_HELP = (
-    "exit codes: 0 signed in (the redirect was sent, or the session file was written); 1 nobody opened "
-    "the address in time; 2 options; 3 the alias is not authorized in the Salesforce CLI or its "
+    "exit codes: 0 signed in (the redirect was sent, or the session file was written); 1 the address "
+    "expired before a browser opened it (nothing was signed in); 2 options; 3 the alias is not authorized in the Salesforce CLI or its "
     "authorization expired; 4 the Salesforce CLI is not installed; 5 another org or user than recorded; 6 refused by this "
     "workspace's mode; 7 no local port; 8 Playwright or its browser is missing; 9 the sign-in failed.")
 API_ONLY_NOTE = ("A user with the API Only User permission cannot be signed in to a browser; "
@@ -363,16 +363,19 @@ def run_host_tab(args, plan: Plan, output: Output) -> int:
     except OSError as error:
         raise LoginError(EXIT_BIND, f"no local port could be opened on 127.0.0.1 ({type(error).__name__}). "
                                     "Close programs that hold many local ports, then run this again.") from None
-    expires = time.time() + args.timeout
+    # One deadline: the printed expiry is the moment the relay stops asking for, and sending, an address.
+    deadline, expires = time.monotonic() + args.timeout, time.time() + args.timeout
     output.result(listener.address, event="waiting", address=listener.address, timeout_seconds=args.timeout,
-                  expires_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires)))
+                  expires_at=time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(expires))
+                  + f".{int(expires % 1 * 1000):03d}Z")
     output.hint(f"Open the address above in the browser tab within {args.timeout} seconds. It works once, on this "
                 "machine only. Navigate the tab to it; do not fetch it with curl or a web fetch tool.")
     outcome = listener.serve(minter(plan.client, plan.alias, plan.identity, plan.path, args.api_version,
                                     plan.expect_username),
-                             timeout=args.timeout, navigation_only=not args.any_client)
+                             timeout=args.timeout, deadline=deadline, navigation_only=not args.any_client)
     if outcome.status == "timeout":
-        raise LoginError(EXIT_TIMEOUT, outcome.reason + "; the listener closed and nothing was signed in")
+        raise LoginError(EXIT_TIMEOUT, outcome.reason + "; the listener closed"
+                         + ("" if "nothing was signed in" in outcome.reason else " and nothing was signed in"))
     if outcome.status != "redirected":
         code = int(outcome.status) if outcome.status.isdigit() else EXIT_SIGN_IN
         raise LoginError(code, outcome.reason)
