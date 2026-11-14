@@ -15,7 +15,7 @@ SOURCE = ROOT / ".agents" / "skills"
 BUNDLED = ROOT / "src" / "torque" / "data" / "skills"
 NONPROFIT = ("salesforce-npsp", "salesforce-nonprofit-cloud")
 # Practice skills: a short body that says what to do first, depth in references/.
-PRACTICE = ("salesforce-flow",)
+PRACTICE = ("salesforce-flow", "salesforce-build")
 REVIEW = ("salesforce-architecture-review", "salesforce-code-analyzer-review", "salesforce-soql-review")
 ALL = (*REVIEW, *PRACTICE, *NONPROFIT)
 WITH_REFERENCES = (*PRACTICE, *NONPROFIT)
@@ -120,6 +120,30 @@ def test_flow_skill_covers_the_required_topics():
                   # field lessons
                   "choice field's label", "<triggers>", "isAdditionalPermissionRequiredToRun", "Run Flows",
                   "storeOutputAutomatically", "Duplicate developer name", "by version"):
+        assert topic in text, topic
+
+
+def test_build_skill_covers_the_required_topics():
+    skill = (SOURCE / "salesforce-build" / "SKILL.md").read_text(encoding="utf-8")
+    # The body is the standard for every build: the owner's examples must be unmistakable in it.
+    for topic in ("Reuse what exists", "Simplest option first", "Document what you build", "naming convention",
+                  "Ship access with every new field", "Configuration instead of hard-coded values",
+                  "client's admin can open and change", "managed-package components",
+                  "Retrieve before you change", "as the intended user", "torque browser login", "[check]",
+                  "Stop and ask first"):
+        assert topic in skill, topic
+    text = _text("salesforce-build")
+    for topic in (
+            # documentation and naming: what to write, where, limits, what never to write
+            "inlineHelpText", "1,000 characters", "510 characters", "version number", "house standard",
+            # access: the field-level security lesson that used to live only in the NPSP skill
+            "field-level security", "fieldPermissions", "FieldPermissions", "PermissionSetGroupComponent",
+            "UserRecordAccess", "torque advisory evidence",
+            # configuration, data model, pages and reports
+            "custom metadata", "custom permission", "named credential", "restricted picklist",
+            "Dynamic Forms", "list view", "dashboard", "running user",
+            # code and integration
+            "with sharing", "API 67.0", "Assert", "upsert on an external Id", "Deliverability"):
         assert topic in text, topic
 
 

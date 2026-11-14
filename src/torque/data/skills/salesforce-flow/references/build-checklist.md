@@ -210,7 +210,7 @@ Check: the result names the org, the user, the flow version and what was not tes
 - [WA-RC] https://architect.salesforce.com/docs/architect/well-architected/guide/resource-and-cost-optimization.html
 - [P-AUTO] https://architect.salesforce.com/docs/architect/well-architected/guide/operational-excellence-automation-patterns
 - [REL-W27] https://www.salesforce.com/blog/winter-27-release-architect-highlights/
-- [PLUGIN-APEX] https://github.com/salesforcecli/plugin-apex/blob/main/README.md
+- [PLUGIN-APEX] https://raw.githubusercontent.com/salesforcecli/plugin-apex/main/README.md
 - [LFS] Lightning Flow Scanner (community): https://github.com/Flow-Scanner/lightning-flow-scanner
 - [ADV] Torque advisory catalogue (`torque advisory notes --command TEXT`); entry ids inline.
 - **verify** items come from pages read only as search extracts: flow best practices

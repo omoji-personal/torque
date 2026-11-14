@@ -150,7 +150,7 @@ Check: a validate-only run of each removal step passes before the real one.
 
 - [ADV] Torque advisory catalogue: `torque advisory notes --command "sf project deploy start --metadata Flow:Name --target-org ALIAS"`; entry ids inline.
 - [DR-README] Salesforce CLI deploy and retrieve plugin: https://github.com/salesforcecli/plugin-deploy-retrieve/blob/main/README.md
-- [PLUGIN-ORG] Salesforce CLI org plugin (source tracking by org type): https://github.com/salesforcecli/plugin-org/blob/main/README.md
+- [PLUGIN-ORG] Salesforce CLI org plugin (source tracking by org type): https://raw.githubusercontent.com/salesforcecli/plugin-org/main/README.md
 - [ORG-TS] Salesforce CLI core library, flow version lookup: https://github.com/forcedotcom/sfdx-core/blob/main/src/org/org.ts
 - [SK-DEPLOY] Salesforce deploy skill: https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-metadata-deploy/SKILL.md
 - [SK-FLOW] Salesforce flow skill: https://github.com/forcedotcom/sf-skills/blob/main/skills/automation-flow-generate/SKILL.md

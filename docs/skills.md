@@ -13,6 +13,7 @@ Skills are guidance, not workflows: they do not appear in `torque workflows list
 | `salesforce-code-analyzer-review` | Scoping and interpreting Salesforce Code Analyzer results for Apex, Lightning, Flow and metadata |
 | `salesforce-soql-review` | Drafting, explaining, optimizing or reviewing SELECT SOQL |
 | `salesforce-flow` | Building, changing, reviewing or debugging any flow: timing, entry conditions and order, loops, fault paths, running context, descriptions, screen flows, testing, activation and versions, with gotchas and their checks |
+| `salesforce-build` | Creating or changing configuration: reuse first, the simplest option first, descriptions and naming, data model, access shipped with every field, pages, list views, reports and dashboards, configuration instead of hard-coded values, the minimum for Apex and components, connectors |
 | `salesforce-npsp` | NPSP orgs with the Program Management Module and Outbound Funds: data model, households, TDTM, customizable rollups, enhanced recurring donations, payments, allocations, soft credits, gift entry, PMM attendance and rollup gates, flows on NPSP objects, and gotchas with org checks |
 | `salesforce-nonprofit-cloud` | Nonprofit Cloud: Fundraising, Program and Case Management, Grantmaking, Volunteer and Outcome Management, Person Accounts and households, Data Processing Engine rollups, licenses, metadata versus UI setup, gotchas, and NPSP to Nonprofit Cloud migration |
 
