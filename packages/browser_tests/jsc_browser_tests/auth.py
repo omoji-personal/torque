@@ -262,8 +262,25 @@ async def observe_username(page, user_id: str, api_version: str | None = None) -
     return username
 
 
+def login_as_path(org_id: str, user_id: str) -> str:
+    """The Login As servlet's path inside the org, for an admin's session. It holds no
+    credential (an org ID and a User Id). The address is not a documented Salesforce
+    interface; the user's Setup page (user_setup_path) is the documented way in."""
+    return f"/servlet/servlet.su?oid={org_id}&suorgadminid={user_id[:15]}&retURL=%2F&targetURL=%2F"
+
+
+def user_setup_path(user_id: str) -> str:
+    """The user's page in Setup, where an admin finds the Login button."""
+    return f"/lightning/setup/ManageUsers/page?address=%2F{user_id}%3Fnoredirect%3D1"
+
+
 def same_user(observed: str, expected: str) -> bool:
     return bool(observed and expected and observed[:15] == expected[:15])
+
+
+LOGIN_AS_CHECKS = ("Check in Setup that Login Access Policies has \"Administrators Can Log in as Any User\" on "
+                   "(or that the user granted login access), that the signed-in admin has Modify All Data, and "
+                   "that the test user is active and not an API-only user.")
 
 
 async def login_as_user(page, instance_url: str, target_user_id: str,
@@ -289,10 +306,23 @@ async def login_as_user(page, instance_url: str, target_user_id: str,
         raise AuthError("Login As requires a valid 15- or 18-character User Id")
     if org_id_18:
         uid15 = target_user_id[:15]
-        su = (f"{instance_url}/servlet/servlet.su?oid={org_id_18}"
-              f"&suorgadminid={uid15}&retURL=%2F&targetURL=%2F")
-        await page.goto(su, wait_until="domcontentloaded", timeout=30000)
+        su = instance_url + login_as_path(org_id_18, uid15)
+        try:
+            response = await page.goto(su, wait_until="domcontentloaded", timeout=30000)
+        except Exception as exc:
+            # The address holds no credential, but the error text is not needed: its type is.
+            raise AuthError(f"Login As could not be opened ({type(exc).__name__}). " + LOGIN_AS_CHECKS) from None
         await page.wait_for_timeout(2500)  # impersonation handshake
+        status = getattr(response, "status", None)
+        if isinstance(status, int) and status >= 400:
+            raise AuthError(f"Login As was refused by the org (HTTP {status}); the user was not switched. "
+                            + LOGIN_AS_CHECKS)
+        if "/servlet/servlet.su" in str(getattr(page, "url", "") or ""):
+            # With the org's Log in as policy off the servlet answers nothing: the browser
+            # simply stays there, still as the admin. Say so, instead of going on to a
+            # Lightning page that would render as the admin.
+            raise AuthError("Login As did not switch user: the browser stayed on the Login As address. "
+                            + LOGIN_AS_CHECKS)
         await page.goto(f"{instance_url}/lightning/page/home",
                         wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_load_state("domcontentloaded", timeout=30000)
@@ -319,14 +349,21 @@ async def logout_as_user(page, instance_url: str) -> None:
     # Navigate home; Logout As link is typically in the global header
     await page.goto(f"{instance_url}/lightning/page/home",
                     wait_until="domcontentloaded", timeout=30000)
-    try:
-        await page.get_by_role("link", name="Log out as").click(timeout=10000)
-    except Exception:
-        # Try alternative selector
+    # Three lookups, each waiting for its element (the banner renders later than the
+    # Lightning shell): the banner's link by its accessible name; the banner's text, for a
+    # Lightning page that does not expose it as a named link; and the Classic link by its
+    # address, which Lightning pages do not have.
+    lookups = (lambda: page.get_by_role("link", name="Log out as"),
+               lambda: page.get_by_text("Log out as", exact=False).first,
+               lambda: page.locator("a[href*='servlet.sulogout']"))
+    for lookup in lookups:
         try:
-            await page.locator("a[href*='servlet.sulogout']").click(timeout=10000)
+            await lookup().click(timeout=10000)
+            break
         except Exception:
-            raise AuthError("Could not return from Login As; stop this browser run and restore the admin session.")
+            continue
+    else:
+        raise AuthError("Could not return from Login As; stop this browser run and restore the admin session.")
     await page.wait_for_load_state("domcontentloaded", timeout=15000)
     # Logout As can land on a Classic Setup page. The active-user observer reads
     # Lightning's Aura value provider, so return to Lightning before observing.
@@ -382,6 +419,10 @@ import re
 FORBIDDEN_REPLAY_PATTERNS = [
     re.compile(r"frontdoor\.jsp\?sid="),
     re.compile(r"\bsid=[\w!.\-]+", re.IGNORECASE),
+    # The single-use sign-in address the CLI issues today (frontdoor.jsp?otp=...), also
+    # URL-encoded, and the endpoint that issues it.
+    re.compile(r"frontdoor\.jsp(?:\?|%3f)[^\s\"'<>]*?otp(?:=|%3d)", re.IGNORECASE),
+    re.compile(r"services(?:/|%2f)oauth2(?:/|%2f)singleaccess", re.IGNORECASE),
     re.compile(r"access_?token", re.IGNORECASE),
     re.compile(r"Bearer\s+[\w.\-]+"),
     re.compile(r"Authorization:\s*\w+"),

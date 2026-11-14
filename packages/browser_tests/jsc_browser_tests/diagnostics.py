@@ -8,7 +8,9 @@ from pathlib import Path
 
 _CREDENTIAL_KEYS = {"sid", "sessionid", "frontdoorurl", "accesstoken", "refreshtoken",
                     "oauthtoken", "authorization", "cookie", "password", "confirmationtoken",
-                    "csrftoken", "csrf", "nonce", "sfdxauthurl", "authcode"}
+                    "csrftoken", "csrf", "nonce", "sfdxauthurl", "authcode",
+                    # the one-time value of a single-use sign-in address, when it turns up without its URL
+                    "otp"}
 # One definition covers case and separator variants in objects and text.
 _KEY_PATTERN = "(?:" + "|".join("[_-]*".join(key) for key in sorted(_CREDENTIAL_KEYS)) + ")"
 _SECRET_KEY = re.compile(r"[_-]*" + _KEY_PATTERN, re.I)

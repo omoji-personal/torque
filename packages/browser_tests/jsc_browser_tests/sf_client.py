@@ -182,13 +182,20 @@ class SfClient:
         return {"org_id": org_id, "is_sandbox": sandbox if isinstance(sandbox, bool) else None,
                 "organization_type": row.get("OrganizationType") if isinstance(row.get("OrganizationType"), str) else ""}
 
-    def user_by_username(self, username: str) -> dict | None:
-        """{"user_id", "is_active"} for a username in this org, or None when there is none."""
-        rows = self.query(f"SELECT Id, IsActive FROM User WHERE Username = '{soql_literal(username)}'")
+    def find_user(self, username_or_id: str) -> dict | None:
+        """{"user_id", "username", "is_active"} for a username or a User Id in this org,
+        or None when there is no such user."""
+        field = "Id" if re.fullmatch(r"005[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?", username_or_id) else "Username"
+        rows = self.query(f"SELECT Id, Username, IsActive FROM User WHERE {field} = '{soql_literal(username_or_id)}'")
         row = rows[0] if rows and isinstance(rows[0], dict) else None
         if not row or not isinstance(row.get("Id"), str):
             return None
-        return {"user_id": row["Id"], "is_active": row.get("IsActive") is not False}
+        return {"user_id": row["Id"], "username": row.get("Username") if isinstance(row.get("Username"), str) else "",
+                "is_active": row.get("IsActive") is not False}
+
+    def user_by_username(self, username: str) -> dict | None:
+        """{"user_id", "username", "is_active"} for a username in this org, or None."""
+        return self.find_user(username) if "@" in username else None
 
     def package_namespaces(self, target_org: str | None = None) -> list[str]:
         """Installed package namespaces via the sanctioned `sf package installed list`.
@@ -242,5 +249,10 @@ class FakeSfClient:
     def org_identity(self) -> dict:
         return {"org_id": self._org_id, "is_sandbox": self._is_sandbox, "organization_type": "Developer Edition"}
 
+    def find_user(self, username_or_id: str) -> dict | None:
+        if username_or_id in (self._username, "005fake00000000AAA"):
+            return {"user_id": "005fake00000000AAA", "username": self._username, "is_active": True}
+        return None
+
     def user_by_username(self, username: str) -> dict | None:
-        return {"user_id": "005fake00000000AAA", "is_active": True} if username == self._username else None
+        return self.find_user(username) if "@" in username else None

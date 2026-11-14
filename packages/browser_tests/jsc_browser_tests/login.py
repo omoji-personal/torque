@@ -6,14 +6,23 @@ Host-tab mode (the default) is for an agent that drives a browser tab with its h
 browser tool. The command prints a local address; the tab opens it; the relay asks the
 CLI for the single-use Salesforce address at that moment and redirects the tab to it.
 
+Playwright mode (--storage-state PATH) is for a scripted browser. Torque's own
+headless browser signs in through the package's existing path, the page's user is
+checked, and the session is written to a file only its owner can read.
+`torque browser logout --storage-state PATH` deletes that file.
+
 The Salesforce address is valid once and for about a minute. It is never printed,
 logged, written to disk or put in an exception: not here and not in relay.py.
 """
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import json
 import os
 import re
+import secrets
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -197,9 +206,12 @@ def user_id_of(client: SfClient, username: str) -> str | None:
     return found["user_id"] if found else None
 
 
+
+
 def _checked_options(args) -> None:
-    if not _ALIAS.fullmatch(args.target_org or ""):
-        raise LoginError(EXIT_USAGE, "--target-org must be one org alias or username, without spaces")
+    for option, value in (("--target-org", args.target_org), ("--as-alias", args.as_alias)):
+        if value is not None and not _ALIAS.fullmatch(value):
+            raise LoginError(EXIT_USAGE, f"{option} must be one org alias or username, without spaces")
     path = args.path
     if path is not None and (not path.startswith("/") or path.startswith("//") or "\\" in path
                              or any(ord(char) < 32 for char in path) or len(path) > 2000):
@@ -209,13 +221,89 @@ def _checked_options(args) -> None:
         raise LoginError(EXIT_USAGE, "--timeout must be between 1 and 900 seconds")
     if args.api_version is not None and not re.fullmatch(r"\d{2,3}\.0", args.api_version):
         raise LoginError(EXIT_USAGE, "--api-version looks like 62.0")
+    if args.as_alias and args.as_user:
+        raise LoginError(EXIT_USAGE, "use --as-alias or --as-user, not both")
+    if args.as_user is not None and (not args.as_user.strip() or any(ord(char) < 32 for char in args.as_user)):
+        raise LoginError(EXIT_USAGE, "--as-user takes a username or a User Id")
+    if args.direct and not args.as_user:
+        raise LoginError(EXIT_USAGE, "--direct belongs to --as-user")
+    if args.as_user and args.path:
+        raise LoginError(EXIT_USAGE, "--as-user lands on that user's page in Setup; leave --path out")
+    if args.as_user and args.storage_state:
+        raise LoginError(EXIT_USAGE, "--storage-state signs in as an alias's own user: authorize the test user "
+                                     "in the Salesforce CLI and use --as-alias instead of --as-user")
 
 
-def run_host_tab(args, output: Output) -> int:
-    alias = args.target_org
-    client = SfClient(alias)
-    identity = identify(client, alias)
-    org_check = check_against_client_record(alias, identity["org_id"])
+@dataclass
+class Plan:
+    """What the command will do, settled before anything is printed or signed in."""
+    target_alias: str
+    alias: str                # the alias the session is asked for: --target-org, or --as-alias
+    client: SfClient          # the CLI client for `alias`
+    identity: dict            # --target-org's org, from the Organization query
+    org_check: str
+    path: str | None
+    login_as: dict | None = None   # --as-user: {"user_id", "username", "route"}
+
+
+def prepare(args) -> Plan:
+    target = args.target_org
+    admin = SfClient(target)
+    identity = identify(admin, target)
+    org_check = check_against_client_record(target, identity["org_id"])
+    plan = Plan(target, target, admin, identity, org_check, args.path)
+    if args.as_alias:
+        user_client = SfClient(args.as_alias)
+        other = identify(user_client, args.as_alias)
+        if not same_org(other["org_id"], identity["org_id"]):
+            raise LoginError(EXIT_ORG_MISMATCH,
+                             f"--as-alias {args.as_alias} is authorized for org {other['org_id']}, but --target-org "
+                             f"{target} is org {identity['org_id']}. Nothing was signed in. Authorize the test user "
+                             "in the same org first (the consultant runs `sf org login web --alias "
+                             f"{args.as_alias}` against that org, outside the agent).")
+        plan.alias, plan.client = args.as_alias, user_client
+    if args.as_user:
+        try:
+            found = admin.find_user(args.as_user.strip())
+        except SfError as error:
+            raise from_sf_error(error, target, "the user lookup") from None
+        if not found:
+            raise LoginError(EXIT_SIGN_IN, f"no user {args.as_user!r} in org {identity['org_id']}; give the full "
+                                           "username or the User Id")
+        if not found["is_active"]:
+            raise LoginError(EXIT_SIGN_IN, f"user {found['username'] or found['user_id']} is inactive; an inactive "
+                                           "user cannot be logged in as")
+        route = "direct" if args.direct else "setup-page"
+        plan.login_as = {"user_id": found["user_id"], "username": found["username"], "route": route}
+        plan.path = (auth.login_as_path(identity["org_id"], found["user_id"]) if args.direct
+                     else auth.user_setup_path(found["user_id"]))
+    return plan
+
+
+def login_as_steps(plan: Plan) -> list[str]:
+    """Plain next steps for the agent after the admin's tab was redirected (--as-user)."""
+    user = plan.login_as["username"] or plan.login_as["user_id"]
+    setup = auth.user_setup_path(plan.login_as["user_id"])
+    needs = ("Log in as needs the org's \"Administrators Can Log in as Any User\" policy (Setup, Login Access "
+             "Policies) or login access granted by the user, and Modify All Data for the signed-in admin. "
+             + API_ONLY_NOTE)
+    done = ("When done, do not click \"Log out as\" (it can end the whole session): close the tab, or run "
+            "torque browser login again to be the admin.")
+    if plan.login_as["route"] == "direct":
+        return [f"The tab was sent straight to Salesforce's Login As address for {user}. This route is unproven "
+                "until a live run confirms it.",
+                f"Confirm the \"Logged in as {user}\" banner at the top of the page. Without it the tab is still "
+                f"the admin: go to {setup} in the org and click Login there.",
+                done, needs]
+    return [f"The tab opens the page of {user} in Setup, signed in as the admin. If it shows another page, "
+            f"navigate to {setup} in the org.",
+            "Click Login on that page.",
+            f"Confirm the \"Logged in as {user}\" banner at the top of the page before testing. Without it the tab "
+            "is still the admin and every check would pass as the admin.",
+            done, needs]
+
+
+def run_host_tab(args, plan: Plan, output: Output) -> int:
     try:
         listener = relay.Relay()
     except OSError as error:
@@ -226,23 +314,148 @@ def run_host_tab(args, output: Output) -> int:
                   expires_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires)))
     output.hint(f"Open the address above in the browser tab within {args.timeout} seconds. It works once, on this "
                 "machine only. Navigate the tab to it; do not fetch it with curl or a web fetch tool.")
-    outcome = listener.serve(minter(client, alias, identity, args.path, args.api_version), timeout=args.timeout,
-                             navigation_only=not args.any_client)
+    outcome = listener.serve(minter(plan.client, plan.alias, plan.identity, plan.path, args.api_version),
+                             timeout=args.timeout, navigation_only=not args.any_client)
     if outcome.status == "timeout":
         raise LoginError(EXIT_TIMEOUT, outcome.reason + "; the listener closed and nothing was signed in")
     if outcome.status != "redirected":
         code = int(outcome.status) if outcome.status.isdigit() else EXIT_SIGN_IN
         raise LoginError(code, outcome.reason)
     username = outcome.minted.username
-    user_id = user_id_of(client, username)
-    kind = org_kind(identity)
-    output.result(f"Redirect sent: org {identity['org_id']} ({kind}), user {username or 'unknown'}"
-                  f"{', User Id ' + user_id if user_id else ''}; {org_check}.",
-                  event="redirected", org_id=identity["org_id"], org_kind=kind, username=username or None,
-                  user_id=user_id, org_check=org_check)
+    user_id = user_id_of(plan.client, username)
+    kind = org_kind(plan.identity)
+    event = {"event": "redirected", "org_id": plan.identity["org_id"], "org_kind": kind,
+             "username": username or None, "user_id": user_id, "org_check": plan.org_check}
+    text = (f"Redirect sent: org {plan.identity['org_id']} ({kind}), user {username or 'unknown'}"
+            f"{', User Id ' + user_id if user_id else ''}; {plan.org_check}.")
+    if plan.alias != plan.target_alias:
+        event["as_alias"] = plan.alias
+        text += f" Signed in through alias {plan.alias}."
+    if plan.login_as:
+        steps = login_as_steps(plan)
+        event.update(login_as=plan.login_as, next_steps=steps)
+        text += "\nNext steps:\n" + "\n".join(f"{number}. {step}" for number, step in enumerate(steps, 1))
+    output.result(text, **event)
     output.hint("Wait until the tab shows the org (an action sent while it still redirects can fail), then confirm "
                 "the signed-in user in the page before testing. A login page means the sign-in failed: retry once, "
                 "then stop and report; never type or ask for a password.")
+    return EXIT_OK
+
+
+# Playwright mode: a session file for a scripted browser (--storage-state).
+
+PLAYWRIGHT_MISSING = ("Playwright mode needs Torque's browser extra and a Playwright browser: "
+                      "`python -m pip install \"torque-salesforce[browser]\"`, then `python -m playwright install "
+                      "chromium`. Signing a host browser tab in (without --storage-state) needs neither.")
+
+
+def storage_path_problem(path: Path) -> str | None:
+    """Why a session file may not be written at `path`, or None. The file signs a browser
+    in as the user, so it must not be able to reach a repository: a path inside a git
+    work tree is refused unless git ignores it."""
+    folder = next((parent for parent in path.parents if parent.is_dir()), None)
+    if folder is None or not any((parent / ".git").exists() for parent in [folder, *folder.parents]):
+        return None
+    advice = ("Choose a path that git ignores (a Torque workspace ignores its clients/ folder, for example "
+              "clients/NAME/state/browser-auth/ALIAS.json) or one outside any repository.")
+    try:
+        done = subprocess.run(["git", "-C", str(folder), "check-ignore", "-q", "--", str(path)],
+                              capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return f"{path} is inside a git work tree and git could not say whether it is ignored. " + advice
+    if done.returncode == 0:
+        return None
+    return (f"{path} is inside a git work tree and is not ignored, so the session file could be committed. "
+            + advice)
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write a file only its owner can read: created private from its first byte under a
+    temporary name, then moved into place."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+    if os.name == "nt":
+        from jsc_common import winacl
+        descriptor = winacl.create_private(temporary)
+    else:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+async def capture_state(plan: Plan, api_version: str | None) -> tuple[dict, str, str]:
+    """Sign Torque's own headless browser in through the package's existing path
+    (auth.open_session, with its guard), confirm the page's user is the alias's user,
+    and return (storage state, User Id, username). The address is asked for only after
+    the browser is known to exist, and is navigated to at once."""
+    from playwright.async_api import async_playwright
+    from .library.lightning_page import LIGHTNING_SHELL_SELECTORS
+    async with async_playwright() as playwright:
+        executable = getattr(playwright.chromium, "executable_path", "") or ""
+        if not os.path.exists(executable):
+            raise LoginError(EXIT_PLAYWRIGHT, "no Playwright browser is installed. " + PLAYWRIGHT_MISSING)
+        try:
+            admin = auth.get_admin_auth(plan.client, plan.alias, path=plan.path, api_version=api_version)
+        except SfError as error:
+            raise from_sf_error(error, plan.alias, "the sign-in request") from None
+        if not same_org(admin.org_id_18, plan.identity["org_id"]):
+            raise LoginError(EXIT_ORG_MISMATCH, f"{plan.alias} no longer points to org {plan.identity['org_id']}; "
+                                                "nothing was signed in")
+        session = None
+        try:
+            session = await auth.open_session(playwright, admin, cdp_endpoint=None, headed=False)
+            page = session.page
+            await page.wait_for_selector(LIGHTNING_SHELL_SELECTORS, state="visible", timeout=30000)
+            user_id = await auth.observe_user_id(page)
+            username = await auth.observe_username(page, user_id, api_version)
+            if not admin.username or username.casefold() != admin.username.casefold():
+                raise LoginError(EXIT_SIGN_IN, "the browser's signed-in user is not the alias's user; no session "
+                                               "file was written")
+            return await session.context.storage_state(), user_id, username
+        except LoginError:
+            raise
+        except auth.AuthError as error:
+            raise LoginError(EXIT_SIGN_IN, f"the sign-in could not be confirmed: {redact(str(error))[:300]}") from None
+        except Exception as error:  # Playwright errors repeat the navigated address: keep the type only
+            raise LoginError(EXIT_SIGN_IN, f"the sign-in could not be confirmed ({type(error).__name__}); no session "
+                                           "file was written") from None
+        finally:
+            await auth.close_session(session)
+
+
+def run_storage_state(args, output: Output) -> int:
+    path = Path(args.storage_state).expanduser().resolve()
+    if path.is_dir():
+        raise LoginError(EXIT_USAGE, f"--storage-state names a folder: {path}")
+    problem = storage_path_problem(path)
+    if problem:
+        raise LoginError(EXIT_USAGE, problem)
+    debug = auth.debug_env_problem()
+    if debug:
+        raise LoginError(EXIT_USAGE, debug.replace("a connected run does not start with it", "the sign-in does "
+                                                                                           "not start with it"))
+    if importlib.util.find_spec("playwright") is None:
+        raise LoginError(EXIT_PLAYWRIGHT, "Playwright is not installed. " + PLAYWRIGHT_MISSING)
+    plan = prepare(args)
+    state, user_id, username = asyncio.run(capture_state(plan, args.api_version))
+    write_private(path, json.dumps(state))
+    kind = org_kind(plan.identity)
+    event = {"event": "saved", "storage_state": str(path), "org_id": plan.identity["org_id"], "org_kind": kind,
+             "username": username, "user_id": user_id, "org_check": plan.org_check}
+    if plan.alias != plan.target_alias:
+        event["as_alias"] = plan.alias
+    output.result(f"Session file written: {path}\norg {plan.identity['org_id']} ({kind}), user {username}, User Id "
+                  f"{user_id}; {plan.org_check}.", **event)
+    output.hint("The file signs a browser in as that user until the session ends. Keep it out of repositories and "
+                f"delete it when done: torque browser logout --storage-state {path}")
     return EXIT_OK
 
 
@@ -253,7 +466,9 @@ def cmd_login(args, out=None, err=None) -> int:
         refusal = policy_refusal()
         if refusal:
             raise LoginError(EXIT_POLICY, refusal)
-        return run_host_tab(args, output)
+        if args.storage_state:
+            return run_storage_state(args, output)
+        return run_host_tab(args, prepare(args), output)
     except LoginError as error:
         return output.fail(error)
     except Exception as error:  # no traceback: only the error's type is safe to show
@@ -261,14 +476,43 @@ def cmd_login(args, out=None, err=None) -> int:
                                                     "signed in"))
 
 
+def cmd_logout(args, out=None, err=None) -> int:
+    """Delete a session file that `login --storage-state` wrote. Nothing else is deleted:
+    a file that is not a browser session file is left alone."""
+    output = Output(bool(getattr(args, "json", False)), out, err)
+    path = Path(args.storage_state).expanduser().resolve()
+    try:
+        if not path.exists():
+            output.result(f"No session file at {path}; nothing to delete.", event="absent", storage_state=str(path))
+            return EXIT_OK
+        try:
+            state = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+        except (OSError, ValueError):
+            state = None
+        if not (isinstance(state, dict) and isinstance(state.get("cookies"), list)
+                and isinstance(state.get("origins"), list)):
+            raise LoginError(EXIT_USAGE, f"{path} is not a browser session file written by torque browser login; "
+                                         "nothing was deleted")
+        path.unlink()
+        output.result(f"Session file deleted: {path}", event="deleted", storage_state=str(path))
+        output.hint("The Salesforce session itself ends at the org's own timeout; no browser can reuse it from "
+                    "this file any more.")
+        return EXIT_OK
+    except LoginError as error:
+        return output.fail(error)
+    except OSError as error:
+        return output.fail(LoginError(EXIT_SIGN_IN, f"the session file could not be deleted ({type(error).__name__})"))
+
+
 def add_parsers(sub) -> None:
-    """Add `login` to the browser command's subparsers."""
+    """Add `login` and `logout` to the browser command's subparsers."""
     login = sub.add_parser(
-        "login", help="sign a browser tab in through the Salesforce front door; prints only a local address",
+        "login", help="sign a browser in through the Salesforce front door; prints only a local address",
         description="Sign a browser in to an org the Salesforce CLI is already authorized for. No password is "
                     "used and the Salesforce sign-in address is never printed. By default the command prints a "
                     "local address and waits: navigate the browser tab to it and the tab is redirected into the "
-                    "org. " + API_ONLY_NOTE,
+                    "org. With --storage-state it signs Torque's own headless browser in and writes a session "
+                    "file for a scripted browser instead. " + API_ONLY_NOTE,
         epilog=EXIT_CODES_HELP)
     login.add_argument("--target-org", required=True, help="org alias the Salesforce CLI is authorized for")
     login.add_argument("--path", help="page to land on, for example /lightning/page/home (default: the org's own "
@@ -276,8 +520,29 @@ def add_parsers(sub) -> None:
     login.add_argument("--timeout", type=int, default=180, help="seconds to wait for the browser (default 180)")
     login.add_argument("--api-version", help="API version for the CLI call, for example 62.0, when its cached "
                                              "version is wrong after a sandbox refresh")
+    login.add_argument("--as-alias", metavar="USER_ALIAS",
+                       help="sign in as the user of this other alias, which the Salesforce CLI is separately "
+                            "authorized for as the test user; it must be the same org as --target-org")
+    login.add_argument("--as-user", metavar="USERNAME_OR_ID",
+                       help="open that user's page in Setup in the admin's tab, where the Login button is, and "
+                            "print the next steps (needs the org's Log in as policy; not for API-only or "
+                            "inactive users)")
+    login.add_argument("--direct", action="store_true",
+                       help="with --as-user: send the tab straight to Salesforce's Login As address instead of "
+                            "the Setup page; unproven until a live run confirms it")
+    login.add_argument("--storage-state", metavar="PATH",
+                       help="Playwright mode: sign Torque's own headless browser in, check the org and user, and "
+                            "write a session file only its owner can read; the path is refused inside a git "
+                            "work tree unless git ignores it")
     login.add_argument("--any-client", action="store_true",
                        help="also answer a client that does not say it is a browser navigation (a browser "
                             "without fetch metadata); off by default so that a fetch tool cannot receive the address")
     login.add_argument("--json", action="store_true", help="one JSON object per line instead of text")
     login.set_defaults(func=cmd_login)
+
+    logout = sub.add_parser("logout", help="delete a session file that login --storage-state wrote",
+                            description="Delete a browser session file written by `login --storage-state`. A file "
+                                        "that is not such a session file is left alone.")
+    logout.add_argument("--storage-state", required=True, metavar="PATH")
+    logout.add_argument("--json", action="store_true", help="one JSON object instead of text")
+    logout.set_defaults(func=cmd_logout)

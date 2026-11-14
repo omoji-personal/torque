@@ -188,7 +188,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true")
     doctor.add_argument("--live", action="store_true",
                         help="connected mode: resolve each approved org and compare its ID with the consent")
-    doctor.add_argument("--for", dest="capability", choices=("workspace", "salesforce", "browser", "meeting"), default="workspace")
+    doctor.add_argument("--for", dest="capability",
+                        choices=("workspace", "salesforce", "browser-login", "browser", "meeting"), default="workspace",
+                        help="browser-login: signing a host browser tab in (needs the Salesforce CLI); "
+                             "browser: Torque's own Playwright browser (also needs Playwright and its browser)")
     change = sub.add_parser("change", help="connect requirements, decisions, checks and handoff")
     actions = change.add_subparsers(dest="action", required=True)
     for action in ("create", "list", "show", "note", "check", "verify-deploy", "handoff"):
@@ -341,7 +344,8 @@ def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
             ws.load_workspace(root_arg)
     stateful = route in {"qa", "revert", "lesson", "browser"}
     stateful = stateful or (route == "ai-regression" and args[:1] in (["replay"], ["replay-all"]))
-    local_browser = route == "browser" and args[:1] == ["sanitize-replay"]
+    # Neither reads a client's state or an org: one scans a script, one deletes a session file.
+    local_browser = route == "browser" and args[:1] in (["sanitize-replay"], ["logout"])
     if not help_only and stateful and not local_browser and scope is None:
         raise ws.WorkspaceError(f"{route} needs a selected client for its private state; "
                                 "provide --workspace PATH --client NAME")
@@ -1112,6 +1116,33 @@ def _links_out(root: Path) -> dict:
     return {"found": sorted(dict.fromkeys(found)), "complete": True}
 
 
+def _playwright_browser() -> str | None:
+    """The folder of a Chromium build that Playwright downloaded, or None. Read from the
+    file system only: no driver and no browser is started. Playwright keeps its browsers
+    in PLAYWRIGHT_BROWSERS_PATH (0 means inside its own package) or in a per-user cache
+    folder named ms-playwright."""
+    configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if configured == "0":
+        spec = importlib.util.find_spec("playwright")
+        if spec is None or not spec.origin:
+            return None
+        root = Path(spec.origin).parent / "driver" / "package" / ".local-browsers"
+    elif configured:
+        root = Path(configured).expanduser()
+    elif sys.platform == "win32":
+        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "ms-playwright"
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Caches" / "ms-playwright"
+    else:
+        root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
+    try:
+        found = sorted(entry for entry in root.iterdir()
+                       if entry.is_dir() and entry.name.startswith(("chromium-", "chromium_headless_shell-")))
+    except OSError:
+        return None
+    return str(found[-1]) if found else None
+
+
 def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
@@ -1145,13 +1176,29 @@ def _doctor(args: argparse.Namespace) -> int:
                                 "changes_checked": len(changes), "evidence_problems": evidence_problems,
                                 "record_problems": len(skipped), "skipped_records": skipped}
         report["synced_folders"] = {"workspace": _synced_folder(root), "interpreter": _synced_folder(sys.executable)}
-    requirements = {"workspace": (), "salesforce": ("sf",), "browser": ("sf", "playwright"),
-                    "meeting": ("ffmpeg", "PIL")}
-    available = {**{name: bool(path) for name, path in report["executables"].items()}, **report["optional_modules"]}
+    # Browser work has two modes with different needs, reported separately: signing a host
+    # browser tab in (`torque browser login`) needs only the Salesforce CLI; Torque's own
+    # Playwright browser needs the playwright module and a browser Playwright downloaded.
+    # The module alone is not a browser, so it no longer counts as browser-ready.
+    report["playwright_browser"] = _playwright_browser() if report["optional_modules"]["playwright"] else None
+    requirements = {"workspace": (), "salesforce": ("sf",), "browser-login": ("sf",),
+                    "browser": ("sf", "playwright", "playwright browser"), "meeting": ("ffmpeg", "PIL")}
+    available = {**{name: bool(path) for name, path in report["executables"].items()}, **report["optional_modules"],
+                 "playwright browser": bool(report["playwright_browser"])}
+
+    def missing(deps):
+        # A browser cannot be looked for without the module; name the module only.
+        return [dep for dep in deps if not available.get(dep, False)
+                and not (dep == "playwright browser" and not available["playwright"])]
     report["capabilities"] = {name: {"local_dependencies_ready": all(available.get(dep, False) for dep in deps),
-                                            "missing": [dep for dep in deps if not available.get(dep, False)],
+                                            "missing": missing(deps),
                                             "live_verified": False}
                               for name, deps in requirements.items()}
+    report["capabilities"]["browser-login"]["covers"] = \
+        "torque browser login in a host browser tab; needs only the Salesforce CLI"
+    report["capabilities"]["browser"]["covers"] = \
+        ("Torque's own Playwright browser (torque browser browser, multiprofile, login --storage-state); needs the "
+         "Salesforce CLI, the playwright module and a Playwright browser")
     selected = getattr(args, "capability", "workspace")
     report["requested_capability"] = selected
     report["ready"] = report["capabilities"][selected]["local_dependencies_ready"]
@@ -1409,7 +1456,12 @@ def _doctor(args: argparse.Namespace) -> int:
     if not available["sf"]:
         report["next_actions"].append("Install the official Salesforce CLI before live org work; context and the offline demo remain usable.")
     if not available["playwright"]:
-        report["next_actions"].append("Browser testing needs Torque's browser extra and a configured browser runtime. See docs/installation.md.")
+        report["next_actions"].append("Browser testing needs Torque's browser extra and a configured browser runtime. See docs/installation.md."
+                                      " Signing a host browser tab in with `torque browser login` needs only the Salesforce CLI.")
+    elif not available["playwright browser"]:
+        report["next_actions"].append("The playwright module is installed but no Playwright browser was found, so Torque's own "
+                                      "browser cannot start: run `python -m playwright install chromium`. Signing a host "
+                                      "browser tab in with `torque browser login` works without it.")
     if args.workspace:
         private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients",
                          "initiatives"]
@@ -1491,6 +1543,11 @@ def _doctor(args: argparse.Namespace) -> int:
                           ".agents/hooks.json)")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
+        for name, label in (("browser-login", "Browser sign-in in a host tab (torque browser login)"),
+                            ("browser", "Torque's own Playwright browser")):
+            mode = report["capabilities"][name]
+            print(f"{label}: " + ("local dependencies ready" if mode["local_dependencies_ready"]
+                                  else "missing " + ", ".join(mode["missing"])))
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")
         for action in report["next_actions"]:
             print(f"Next: {action}")

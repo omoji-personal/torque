@@ -112,10 +112,15 @@ async def _live_preflight(config):
             await auth.close_session(sess)
 
 
+# Keys of a preflight result that are text about the run, not a role's PASS or FAIL.
+# A warning is kept in the manifest and does not stop the run; an error does.
+PREFLIGHT_NOTES = ("preflight_error", "preflight_warning")
+
+
 def _not_executed(preflight_results: dict) -> str:
     """Why no cell ran, with the preflight's own (redacted) reason and each role's result,
     so --json and the console show the cause, not only that the preflight failed."""
-    roles = ", ".join(f"{k}={v}" for k, v in preflight_results.items() if k != "preflight_error")
+    roles = ", ".join(f"{k}={v}" for k, v in preflight_results.items() if k not in PREFLIGHT_NOTES)
     reason = preflight_results.get("preflight_error") or "a role did not pass"
     return redact("Not executed: browser preflight failed: " + str(reason) + (f" ({roles})" if roles else ""))
 
@@ -174,7 +179,7 @@ async def run_suite(config) -> int:
         except Exception as e:
             preflight_results = {"preflight_error": exception_detail(e)}
         preflight_failed = bool(preflight_results.get("preflight_error")) or any(
-            value != "PASS" for key, value in preflight_results.items() if key != "preflight_error")
+            value != "PASS" for key, value in preflight_results.items() if key not in PREFLIGHT_NOTES)
         stopped = preflight_failed
         if preflight_failed:
             cleanup_status = "NOT_APPLICABLE"

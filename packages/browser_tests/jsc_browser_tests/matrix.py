@@ -58,6 +58,7 @@ async def login_as_preflight(page, seed, admin_auth) -> dict:
     display = {"id": getattr(admin_auth, "org_id_18", "") or ""}
     baseline = await observe_user_id(page)
     results: dict[str, str] = {}
+    notes: list[str] = []
     for role, user in (seed.get("users") or {}).items():
         if role == "admin":
             continue
@@ -74,12 +75,17 @@ async def login_as_preflight(page, seed, admin_auth) -> dict:
             try:
                 restoration = await restore_original_user(page, instance_url, baseline)
                 if restoration.get("action_warning"):
-                    detail = "Logout As action reported an error, but the original browser user is now observed: " + restoration["action_warning"]
-                    failure = (failure + "; " if failure else "") + detail
+                    # The original user was observed again, so the session is restored and
+                    # the role passes. What the Logout As action reported is kept as a
+                    # note; it is not a reason to stop the run.
+                    notes.append(f"{role}: Logout As action reported an error, but the original browser user "
+                                 "is now observed: " + restoration["action_warning"])
             except Exception as exc:
                 failure = (failure + "; " if failure else "") + "Session restoration failed: " + exception_detail(exc)
         if failure:
             results[role] = "FAIL"
             results["preflight_error"] = failure
             break
+    if notes:
+        results["preflight_warning"] = "; ".join(notes)
     return results
