@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "torque check metadata --json",
+  "type": "object",
+  "required": ["schema_version", "command", "base", "scope", "analyzer", "findings", "totals", "ignored",
+               "not_checked", "lessons"],
+  "properties": {
+    "schema_version": {"type": "integer", "enum": [1]},
+    "command": {"type": "string", "enum": ["torque check metadata"]},
+    "base": {"type": "string", "description": "folder that finding file paths are relative to"},
+    "scope": {
+      "type": "object",
+      "required": ["mode", "source", "paths", "components_read", "files_read", "in_scope", "by_status",
+                   "unchanged_not_checked", "outside_the_change", "ignored_by_config", "not_found", "deleted",
+                   "types_without_rules", "unreadable_files", "deploy_result"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["changed-from", "baseline", "only", "files", "all"]},
+        "source": {"type": ["string", "null"]},
+        "paths": {"type": "array", "items": {"type": "string"}},
+        "components_read": {"type": "integer"},
+        "files_read": {"type": "integer"},
+        "in_scope": {"type": "integer"},
+        "by_status": {"type": "object"},
+        "unchanged_not_checked": {"type": "integer"},
+        "outside_the_change": {"type": "integer"},
+        "ignored_by_config": {"type": "integer"},
+        "not_found": {"type": "array", "items": {"type": "object", "required": ["type", "name", "state"]}},
+        "deleted": {"type": "array", "items": {"type": "object", "required": ["type", "name"]}},
+        "types_without_rules": {"type": "object"},
+        "unreadable_files": {"type": "integer"},
+        "deploy_result": {"type": ["object", "null"]}
+      }
+    },
+    "analyzer": {
+      "type": "object",
+      "required": ["mode", "status", "detail", "rule_selectors", "targets", "findings", "reported_once_with_torque",
+                   "versions", "summary"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["auto", "off", "required"]},
+        "status": {"type": "string", "enum": ["ran", "not-installed", "failed", "off", "not-applicable"]},
+        "detail": {"type": "string"},
+        "rule_selectors": {"type": "array", "items": {"type": "string"}},
+        "targets": {"type": "integer"},
+        "findings": {"type": "integer"},
+        "reported_once_with_torque": {"type": "integer"},
+        "versions": {"type": "object"},
+        "summary": {"type": "string"}
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule", "severity", "source", "component", "file", "line", "message", "action", "inherited",
+                     "confirmed_by"],
+        "properties": {
+          "rule": {"type": "string"},
+          "severity": {"type": "string", "enum": ["error", "warning", "note"]},
+          "source": {"type": "string", "enum": ["torque", "code-analyzer"]},
+          "component": {
+            "type": "object",
+            "required": ["type", "name", "status"],
+            "properties": {
+              "type": {"type": "string"},
+              "name": {"type": "string"},
+              "status": {"type": "string", "enum": ["new", "changed", "unchanged", "failed", "unknown"]},
+              "state": {"type": "string"}
+            }
+          },
+          "file": {"type": "string"},
+          "line": {"type": ["integer", "null"]},
+          "message": {"type": "string"},
+          "action": {"type": "string"},
+          "inherited": {"type": ["boolean", "null"]},
+          "confirmed_by": {"type": "array", "items": {"type": "string"}},
+          "docs": {"type": "string"}
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": ["error", "warning", "note", "inherited", "components"],
+      "properties": {
+        "error": {"type": "integer"}, "warning": {"type": "integer"}, "note": {"type": "integer"},
+        "inherited": {"type": "integer"}, "components": {"type": "integer"}
+      }
+    },
+    "ignored": {
+      "type": "object",
+      "required": ["config", "rules", "components", "findings_dropped"],
+      "properties": {
+        "config": {"type": ["string", "null"]},
+        "rules": {"type": "array", "items": {"type": "string"}},
+        "components": {"type": "integer"},
+        "findings_dropped": {"type": "object"}
+      }
+    },
+    "not_checked": {"type": "array", "items": {"type": "string"}},
+    "lessons": {"type": ["string", "null"]}
+  }
+}
