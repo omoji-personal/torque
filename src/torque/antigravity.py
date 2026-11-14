@@ -116,18 +116,41 @@ def _paths(text: str) -> list[str]:
     return []
 
 
+def _expand(glob: str) -> list[str]:
+    """One glob as globs without braces: `*.{cls,trigger}` -> `*.cls`, `*.trigger`.
+    Antigravity's `globs:` is one comma-separated value, so a comma inside braces
+    would split the pattern in two."""
+    match = re.search(r"\{([^{}]*)\}", glob)
+    if not match:
+        return [glob]
+    return [expanded for choice in match.group(1).split(",")
+            for expanded in _expand(glob[:match.start()] + choice + glob[match.end():])]
+
+
+# Glob syntax Claude Code reads in `paths:` that a `glob` trigger cannot say: an
+# exclusion. Such a rule stays always on, with a note in its copy, rather than vanishing.
+UNSUPPORTED_GLOB = re.compile(r"^!")
+
+
 def rule(name: str, text: str) -> str | None:
     """A rule. One scoped with `paths:` becomes a `trigger: glob` rule with those
-    globs, so it loads when a matching file is in play, as in Claude Code; every other
-    rule is `trigger: always_on`. A `paths:` field with no glob in it is read as no
-    scope (always on), so no rule is dropped."""
+    globs (braces expanded), so it loads when a matching file is in play, as in
+    Claude Code; every other rule is `trigger: always_on`. A `paths:` field with no glob,
+    or with a pattern a glob trigger cannot express, keeps the rule always on, the second
+    with a note at the top of the copy saying why: no rule is dropped."""
     fields, body = _split(text)
     globs = _paths(text) if "paths" in fields else []
     body = _commands(body)
     title = re.search(r"^#\s+(.+?)\s*$", body, re.M)
     description = fields.get("description") or _scalar(title.group(1) if title else name)
+    unsupported = [glob for glob in globs if UNSUPPORTED_GLOB.search(glob)]
+    if unsupported:
+        note = ("<!-- torque: paths " + ", ".join(unsupported) + " cannot be written as an Antigravity glob "
+                "(an exclusion), so this copy is always on. -->\n\n")
+        return _page(["trigger: always_on", "description: " + description], note + body.lstrip("\n"))
     if globs:
-        return _page(["trigger: glob", "globs: " + json.dumps(", ".join(globs), ensure_ascii=False),
+        expanded = list(dict.fromkeys(part for glob in globs for part in _expand(glob)))
+        return _page(["trigger: glob", "globs: " + json.dumps(", ".join(expanded), ensure_ascii=False),
                       "description: " + description], body)
     return _page(["trigger: always_on", "description: " + description], body)
 

@@ -20,6 +20,11 @@ from torque import template_updates as updates
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "floor" / "AGENTS-floor.md"
 MAX_LINES = 60
+# Characters, markers included. Measured 6,671 for version 1 (about 1,700 tokens at four characters
+# each). 7,500 keeps the init AGENTS.md under 8 KB, a quarter of the 32 KiB Codex adds, and leaves
+# room for the record-basis options still to come; past it, a line has to go before one is added.
+MAX_CHARS = 7_500
+MAX_LINE = 200
 # Files whose `torque ...` lines must parse as written (the floor and the newcomer's page).
 COMMAND_FILES = ("floor/AGENTS-floor.md", "docs/getting-started.md")
 # Placeholder words in those lines and a value that parses in their place.
@@ -47,12 +52,14 @@ def firm(tmp_path):
 
 # --- the block itself ---------------------------------------------------------------------
 
-def test_the_block_fits_in_sixty_lines():
-    version, body = between_markers(SOURCE.read_text(encoding="utf-8"))
+def test_the_block_fits_its_budget():
+    text = SOURCE.read_text(encoding="utf-8")
+    version, body = between_markers(text)
     lines = body.splitlines()
     assert version >= 1
     assert len(lines) <= MAX_LINES, f"the floor block is {len(lines)} lines; the limit is {MAX_LINES}"
-    assert all(len(line) <= 300 for line in lines), [line for line in lines if len(line) > 300]
+    assert len(text) <= MAX_CHARS, f"the floor block is {len(text)} characters; the limit is {MAX_CHARS}"
+    assert all(len(line) <= MAX_LINE for line in lines), [line[:60] for line in lines if len(line) > MAX_LINE]
 
 
 def test_the_packaged_block_is_the_source():
@@ -182,9 +189,10 @@ def test_upgrade_appends_to_a_file_without_markers_and_keeps_its_bytes(firm):
     assert (firm / "AGENTS.md").read_bytes() == own.encode("utf-8"), "--check wrote"
     code, out, _ = invoke("workspace", "upgrade", str(firm))
     assert code == 0
+    # One line for what was done, one that the file's own instructions now sit beside the block.
     assert [line for line in out.splitlines() if "AGENTS.md" in line] == [
         "Appended: the Torque block (version 1) at the end of AGENTS.md, which had none; your text above it "
-        "is unchanged."]
+        "is unchanged.", cli.OWN_TEXT_NOTE]
     raw = (firm / "AGENTS.md").read_bytes()
     assert raw.startswith(own.encode("utf-8") + b"\r\n\r\n<!-- torque:floor:begin ")
     assert b"\n" not in raw.replace(b"\r\n", b""), "the block takes the file's line endings"
@@ -213,14 +221,48 @@ def test_upgrade_replaces_edits_inside_the_block_and_says_so(firm):
     assert (firm / "AGENTS.md").read_text(encoding="utf-8") == text
 
 
-def test_upgrade_leaves_damaged_markers_alone(firm):
-    damaged = "# Firm\n\n<!-- torque:floor:begin 1 -->\nhalf a block\n"
-    (firm / "AGENTS.md").write_text(damaged, encoding="utf-8")
-    code, out, _ = invoke("workspace", "upgrade", str(firm))
-    assert code == 0 and "Not changed: AGENTS.md has a Torque begin or end marker without its pair" in out
-    assert (firm / "AGENTS.md").read_text(encoding="utf-8") == damaged
+BEGIN, END = "<!-- torque:floor:begin 1 -->", "<!-- torque:floor:end -->"
+DAMAGED = {
+    "begin without end": (f"# Firm\n\n{BEGIN}\nhalf a block\n", "a begin marker without an end marker"),
+    "end without begin": (f"# Firm\n\nhalf a block\n{END}\n", "an end marker without a begin marker"),
+    "wrong order": (f"# Firm\n{END}\nmiddle\n{BEGIN}\n", "the end marker comes before the begin marker"),
+    "two blocks": (f"{BEGIN}\none\n{END}\n\n# Firm\n\n{BEGIN}\ntwo\n{END}\n", "2 begin and 2 end markers"),
+    "nested": (f"{BEGIN}\nouter\n{BEGIN}\ninner\n{END}\n{END}\n", "2 begin and 2 end markers"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(DAMAGED))
+def test_upgrade_leaves_damaged_markers_alone_and_says_what_is_wrong(firm, case):
+    damaged, problem = DAMAGED[case]
+    (firm / "AGENTS.md").write_bytes(damaged.encode("utf-8"))
+    for check in (["--check"], []):
+        code, out, _ = invoke("workspace", "upgrade", str(firm), *check)
+        line = next(line for line in out.splitlines() if "AGENTS.md" in line)
+        assert code == 0 and line.startswith(f"Not changed: AGENTS.md has {problem}"), (check, out)
+        assert "<!-- torque:floor:begin N -->" in line, "the line says what to do"
+        assert (firm / "AGENTS.md").read_bytes() == damaged.encode("utf-8")
     code, out, _ = invoke("doctor", "--workspace", str(firm))
-    assert "Torque block in AGENTS.md: DAMAGED markers" in out
+    assert f"Torque block in AGENTS.md: DAMAGED markers ({problem}" in out
+
+
+def test_upgrade_replaces_an_older_block_in_a_crlf_file_and_keeps_its_endings(firm):
+    before, after = "# Firm\r\n\r\nOwn rule.\r\n\r\n", "\r\n\r\nOwn appendix.\r\n"
+    old = f"<!-- torque:floor:begin 0 -->\r\nOld.\r\n{END}"
+    (firm / "AGENTS.md").write_bytes((before + old + after).encode("utf-8"))
+    report = updates.update_templates(firm)
+    assert report["floor"]["status"] == "replaced" and report["floor"]["own_text"]
+    raw = (firm / "AGENTS.md").read_bytes()
+    block = ws.floor_block()[0].rstrip("\n").replace("\n", "\r\n")
+    assert raw == (before + block + after).encode("utf-8")
+
+
+def test_doctor_says_once_when_the_file_has_its_own_instructions(firm):
+    code, out, _ = invoke("doctor", "--workspace", str(firm))
+    assert "instructions of its own" not in out, "init's own heading is not the consultant's text"
+    with (firm / "AGENTS.md").open("a", encoding="utf-8") as stream:
+        stream.write("\n## Firm\n\nAlways use the firm's naming scheme.\n")
+    code, out, _ = invoke("doctor", "--workspace", str(firm))
+    assert sum("instructions of its own beside the Torque block" in line for line in out.splitlines()) == 1
 
 
 def test_upgrade_replaces_the_unchanged_text_an_earlier_init_wrote(firm, monkeypatch):

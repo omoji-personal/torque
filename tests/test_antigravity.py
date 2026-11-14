@@ -68,11 +68,21 @@ def test_a_path_scoped_rule_becomes_a_glob_rule_with_its_paths():
     block = antigravity.rule("flow", '---\npaths:\n  - "**/*.flow-meta.xml"\n  - "**/flows/**"\n---\n# Flow rule\n')
     assert header(block) == ["trigger: glob", 'globs: "**/*.flow-meta.xml, **/flows/**"', "description: Flow rule"]
     assert block.endswith("# Flow rule\n")
+    # Braces are expanded: the globs field is one comma-separated value, so `{cls,trigger}` would split.
     inline = antigravity.rule("apex", "---\npaths: ['**/*.{cls,trigger}', \"lwc/**\"]\n---\n# Apex\n")
-    assert header(inline)[:2] == ["trigger: glob", 'globs: "**/*.{cls,trigger}, lwc/**"']
+    assert header(inline)[:2] == ["trigger: glob", 'globs: "**/*.cls, **/*.trigger, lwc/**"']
     assert header(antigravity.rule("one", "---\npaths: src/**\n---\n# One\n"))[1] == 'globs: "src/**"'
+    nested = antigravity.rule("deep", '---\npaths:\n  - "force-app/main/default/flows/**/*.flow-meta.xml"\n'
+                                      '  - "src/{a,b}/{x,y}.md"\n---\n# Deep\n')
+    assert header(nested)[1] == ('globs: "force-app/main/default/flows/**/*.flow-meta.xml, src/a/x.md, src/a/y.md, '
+                                 'src/b/x.md, src/b/y.md"')
     # An empty `paths:` scopes nothing: the rule stays, always on, rather than vanishing.
     assert header(antigravity.rule("empty", "---\npaths:\n---\n# Empty\n"))[0] == "trigger: always_on"
+    # An exclusion cannot be a glob trigger: the copy stays always on and says why at its top.
+    excluded = antigravity.rule("not-tests", '---\npaths:\n  - "src/**"\n  - "!src/tests/**"\n---\n# Not tests\n')
+    assert header(excluded)[0] == "trigger: always_on"
+    assert "<!-- torque: paths !src/tests/** cannot be written as an Antigravity glob" in excluded
+    assert excluded.endswith("# Not tests\n")
 
 
 def test_a_packaged_path_scoped_rule_gets_its_copy(tmp_path):

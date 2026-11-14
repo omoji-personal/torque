@@ -629,9 +629,7 @@ def _upgrade_summary(report: dict, path: str, mode: str) -> str:
             lines.append(f"Retired: {name}: {row['suggestion']}")
     if counts.get("customized"):
         lines.append("Customized files are kept as they are and are not listed; --json lists every file.")
-    floor = _floor_line(report.get("floor"), check)
-    if floor:
-        lines.append(floor)
+    lines += _floor_lines(report.get("floor"), check)
     for key in ("connected_rule", "claude_md"):
         if key in report:
             lines.append("Note: " + report[key])
@@ -639,10 +637,20 @@ def _upgrade_summary(report: dict, path: str, mode: str) -> str:
     return "\n".join(lines)
 
 
-def _floor_line(row: dict | None, check: bool) -> str | None:
-    """One line on what the upgrade did, or would do, to the Torque block in AGENTS.md; none when current."""
+OWN_TEXT_NOTE = ("Note: AGENTS.md holds instructions of its own beside the Torque block. Read the two together "
+                 "once and settle anything in yours that contradicts the block; the upgrade never changes your text.")
+
+
+def _floor_lines(row: dict | None, check: bool) -> list[str]:
+    """What the upgrade did, or would do, to the Torque block in AGENTS.md, in one line, and
+    one more when the file also holds its own instructions; nothing when the block is current."""
     if not row or row["status"] == "current":
-        return None
+        return []
+    line = _floor_line(row, check)
+    return [line] + ([OWN_TEXT_NOTE] if row.get("own_text") and row["status"] != "damaged" else [])
+
+
+def _floor_line(row: dict, check: bool) -> str:
     version, previous = row["version"], row.get("previous_version")
     verb = (lambda now, later: later if check else now)
     lines = {
@@ -655,13 +663,14 @@ def _floor_line(row: dict | None, check: bool) -> str | None:
                     f"{version}; text outside its markers is unchanged.",
         "edited": verb("Replaced", "Replace") + f": edits inside the Torque block in AGENTS.md with the packaged "
                   f"text (version {version}). Keep firm text outside the markers; the upgrade never changes it.",
-        "damaged": "Not changed: AGENTS.md has a Torque begin or end marker without its pair, or more than one "
-                   "block. Repair or remove the markers, then run the upgrade again.",
+        "damaged": f"Not changed: AGENTS.md has {row.get('problem') or 'damaged Torque markers'}. Leave one "
+                   "<!-- torque:floor:begin N --> line and one <!-- torque:floor:end --> line after it, or remove "
+                   "both, then run the upgrade again.",
         "unreadable": "Not changed: AGENTS.md is not UTF-8 text, so the Torque block was not added. Save it as "
                       "UTF-8, then run the upgrade again.",
         "changed_during_update": "Not changed: AGENTS.md changed while the upgrade ran; run it again.",
     }
-    return lines.get(row["status"])
+    return lines.get(row["status"], f"AGENTS.md: {row['status']}.")
 
 
 def _hook_lines(rows: list[dict], mode: str, path: str = ".") -> list[str]:
@@ -1655,10 +1664,14 @@ def _doctor(args: argparse.Namespace) -> int:
             state = {"present": f"version {floor['version']}" + ("" if floor["current"] else
                                                                  f", not the packaged version {floor['packaged_version']}"),
                      "absent": "MISSING (AGENTS.md has none)", "missing": "MISSING (no AGENTS.md)",
-                     "damaged": "DAMAGED markers", "unreadable": "AGENTS.md is not readable UTF-8"}[floor["state"]]
-            print(f"Torque block in AGENTS.md: {state}. Loaded by "
+                     "damaged": f"DAMAGED markers ({floor.get('problem')})",
+                     "unreadable": "AGENTS.md is not readable UTF-8"}[floor["state"]]
+            print(f"Torque block in AGENTS.md: {state}. In the files, loaded by "
                   + "; ".join(f"{host}: {'yes' if row['loads'] else 'NO'} ({row['how']})"
                               for host, row in floor["hosts"].items()))
+            if floor.get("own_text") and floor["state"] == "present":
+                print("AGENTS.md also holds instructions of its own beside the Torque block; read the two "
+                      "together once and settle anything that contradicts the block.")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
         for name, label in (("browser-login", "Browser sign-in in a host tab (torque browser login)"),

@@ -486,14 +486,28 @@ def agent_notes() -> str:
 
 def floor_state(text: str) -> dict:
     """Where the floor block is in an AGENTS.md text: {"state": "absent" | "present" |
-    "damaged", "version", "span": (start, end) of the block without its last newline}."""
+    "damaged", "version", "span": (start, end) of the block without its last newline,
+    "problem": what is wrong when damaged, "own_text": whether the file holds text of
+    its own outside the block (beyond the heading init writes)}."""
     begins, ends = list(FLOOR_BEGIN.finditer(text)), list(FLOOR_END.finditer(text))
+    found = {"state": "damaged", "version": None, "span": None, "problem": None, "own_text": False}
     if not begins and not ends:
-        return {"state": "absent", "version": None, "span": None}
-    if len(begins) != 1 or len(ends) != 1 or ends[0].start() < begins[0].end():
-        return {"state": "damaged", "version": None, "span": None}
-    end = ends[0].end() - (1 if text[ends[0].end() - 1:ends[0].end()] == "\r" else 0)
-    return {"state": "present", "version": int(begins[0].group(1)), "span": (begins[0].start(), end)}
+        return {**found, "state": "absent", "own_text": bool(text.strip())}
+    if len(begins) > 1 or len(ends) > 1:
+        problem = f"{len(begins)} begin and {len(ends)} end markers; there must be one block"
+    elif not ends:
+        problem = "a begin marker without an end marker"
+    elif not begins:
+        problem = "an end marker without a begin marker"
+    elif ends[0].start() < begins[0].end():
+        problem = "the end marker comes before the begin marker"
+    else:
+        end = ends[0].end() - (1 if text[ends[0].end() - 1:ends[0].end()] == "\r" else 0)
+        outside = (text[:begins[0].start()] + text[end:]).replace("\r\n", "\n")
+        own = bool(outside.strip()) and outside.strip() != AGENT_NOTES_HEAD.strip()
+        return {**found, "state": "present", "version": int(begins[0].group(1)),
+                "span": (begins[0].start(), end), "own_text": own}
+    return {**found, "problem": problem}
 
 
 def floor_splice(text: str | None) -> dict:
@@ -501,10 +515,11 @@ def floor_splice(text: str | None) -> dict:
     {"status", "version", "previous_version", "text"}. Status: added (no file), legacy
     (unchanged text of an earlier init, replaced whole), appended (no markers: the block
     goes at the end), current, replaced (another version), edited (same version, other
-    text: replaced), damaged (markers that do not pair; text is None). Every character
-    outside the markers is kept; the block takes the file's line endings."""
+    text: replaced), damaged (markers that do not pair; text is None, `problem` says
+    what is wrong). `own_text`: the file holds instructions of its own beside the block.
+    Every character outside the markers is kept; the block takes the file's line endings."""
     block, version = floor_block()
-    result = {"version": version, "previous_version": None}
+    result = {"version": version, "previous_version": None, "own_text": False}
     if text is None:
         return {**result, "status": "added", "text": agent_notes()}
     if hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest() in LEGACY_AGENT_NOTES_SHA256:
@@ -515,8 +530,9 @@ def floor_splice(text: str | None) -> dict:
         body = body.replace("\n", "\r\n")
     newline = "\r\n" if crlf else "\n"
     found = floor_state(text)
+    result["own_text"] = found["own_text"]
     if found["state"] == "damaged":
-        return {**result, "status": "damaged", "text": None}
+        return {**result, "status": "damaged", "problem": found["problem"], "text": None}
     if found["state"] == "absent":
         lead = text if not text or text.endswith(("\n", "\r")) else text + newline
         return {**result, "status": "appended", "text": lead + (newline if lead.strip() else "") + body + newline}
@@ -548,16 +564,20 @@ def floor_report(root: Path) -> dict:
     except (OSError, UnicodeDecodeError):
         raw, text = b"", None
         report["state"] = "unreadable"
+    report["own_text"], report["problem"] = False, None
     if text is not None:
         found = floor_state(text)
         report["state"], report["version"] = found["state"], found["version"]
+        report["own_text"], report["problem"] = found["own_text"], found["problem"]
         report["current"] = (found["state"] == "present" and floor_splice(text)["status"] == "current")
     if report["state"] in ("missing", "absent"):
         report["next_actions"].append(f"AGENTS.md has no Torque block, so no host reads Torque's working rules. "
                                       f"Add it with {upgrade}.")
-    elif report["state"] in ("damaged", "unreadable"):
-        report["next_actions"].append("AGENTS.md has a damaged Torque block (markers without their pair) or is not "
-                                      f"UTF-8 text. Repair or remove the markers, then run {upgrade}.")
+    elif report["state"] == "damaged":
+        report["next_actions"].append(f"AGENTS.md has {report['problem']}, so the upgrade leaves it alone. Leave one "
+                                      "begin and one end marker, or remove both, then run " + upgrade + ".")
+    elif report["state"] == "unreadable":
+        report["next_actions"].append(f"AGENTS.md is not readable UTF-8 text. Save it as UTF-8, then run {upgrade}.")
     elif not report["current"]:
         report["next_actions"].append(f"The Torque block in AGENTS.md is version {report['version']} or edited; "
                                       f"this Torque ships version {packaged}. Replace it with {upgrade}.")
