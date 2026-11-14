@@ -132,6 +132,13 @@ in Playwright's storage-state format. A script then starts with
 - The command prints the path, never the content.
 - `logout` deletes the file, and only a file that is such a session file.
 - `--as-alias` works here too. `--as-user` does not: use an alias for the test user.
+- Playwright's debug settings `DEBUG`, `DEBUG_FILE` and `PWDEBUG` print the address the browser
+  is sent to, or show it in a visible inspector. While any of them is set, this mode and every
+  Torque browser run that signs in through the front door (`torque browser browser`,
+  `multiprofile`) refuse to start, in every workspace mode, and name the variable to unset.
+  Only a run attached to a browser you signed in yourself (`TORQUE_BROWSER_CDP`, outside
+  connected mode) keeps them: it is sent to the org's own address, never to a sign-in address.
+  To debug a journey, write a session file first and debug a script that loads it.
 - Without Playwright or its browser the mode stops with exit 8 and says what to install.
   Host-tab mode needs neither.
 

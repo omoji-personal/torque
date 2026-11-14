@@ -89,8 +89,11 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
             guard = connected_guard(admin_auth.target_org)
         except GuardRefused as exc:
             raise AuthError(f"connected mode: {exc}") from None
-    if guard is not None and debug_env_problem():
-        raise AuthError("connected mode: " + debug_env_problem())
+    # The last check before a navigation to the sign-in address, in every mode (an attached
+    # browser is sent to the org's own address instead, and is refused in connected mode).
+    problem = debug_env_problem()
+    if problem and (guard is not None or not cdp_endpoint):
+        raise AuthError(("connected mode: " if guard is not None else "") + problem)
     if guard is not None and getattr(guard, "delegated", True) and headed:
         raise AuthError("connected mode: a browser window granted by a delegated approver runs headless "
                         "only; run without --headed")
@@ -159,15 +162,31 @@ async def close_session(sess) -> None:
 
 def debug_env_problem(env=None) -> str | None:
     """Playwright settings that would print the navigated frontdoor URL (DEBUG, DEBUG_FILE)
-    or force a visible browser (PWDEBUG), else None. Any non-empty DEBUG counts: Node's
-    debug module turns Playwright's pw:* logs on for *, pw*, p* and other patterns."""
+    or show it in a visible inspector (PWDEBUG), else None. Any non-empty DEBUG counts:
+    Node's debug module turns Playwright's pw:* logs on for *, pw*, p* and other patterns."""
     import os
     env = os.environ if env is None else env
     found = [name for name in ("DEBUG", "PWDEBUG", "DEBUG_FILE") if env.get(name)]
     if not found:
         return None
-    return (f"{', '.join(found)} is set; Playwright debugging prints the session URL or opens a visible "
-            "browser, so a connected run does not start with it. Unset it and run again")
+    return (f"{', '.join(found)} is set; Playwright debugging prints the sign-in address the browser is sent "
+            "to, or shows it in a visible inspector, so a browser run that signs in does not start with it. "
+            "Unset it and run again. To debug a journey, sign in with `torque browser login --storage-state "
+            "PATH` first and debug a script that loads that file")
+
+
+def refuse_debug_env_before_sign_in(cdp_endpoint: str | None = None) -> None:
+    """Call before Playwright starts (its driver reads these variables when it starts), in
+    every mode. Refused whenever the run will navigate to a sign-in address: always in
+    connected mode, and otherwise unless the run attaches to a browser (cdp_endpoint) that
+    is sent to the org's own address instead."""
+    problem = debug_env_problem()
+    if not problem:
+        return
+    if in_connected_mode():
+        raise AuthError("connected mode: " + problem)
+    if not cdp_endpoint:
+        raise AuthError(problem)
 
 
 def in_connected_mode() -> bool:
@@ -180,13 +199,6 @@ def in_connected_mode() -> bool:
         return _common._connected_scope() is not None
     except _common.IndeterminateScope:
         return True
-
-
-def refuse_debug_env_when_connected() -> None:
-    """Call before Playwright starts: its driver reads these variables when it starts."""
-    problem = debug_env_problem()
-    if problem and in_connected_mode():
-        raise AuthError("connected mode: " + problem)
 
 
 def cdp_endpoint_from_env() -> str | None:

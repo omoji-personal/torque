@@ -737,7 +737,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "d02f5604cc4e290074de7679121798fedaf85362bb5cb81b563270a7f7fe8733",
+      "destination_sha256": "1eadf30d6035e3f29a4ddb060e4f95e6cba68283c1c89feaaa00ac7c9a983111",
       "adapted": true
     },
     {
@@ -746,7 +746,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/runner.py",
       "source_sha256": "2dd2825125d554bd79dc5d0d623445d98ddac520bf3a7ba10327d55b0392c769",
       "source_tracked": true,
-      "destination_sha256": "49e2720703bcd8843dc6e5aa8f6000e8f3bd6437f0396a52af4d5ec12aed4682",
+      "destination_sha256": "7b9c3e700be5d4f81eebec7f341c580c42118e20b57ca10a20627604a21644eb",
       "adapted": true
     },
     {
@@ -755,7 +755,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/suite.py",
       "source_sha256": "40e81f606e0e88b7862ca72367b2662a192ec9be8a0af567979f1c41893de125",
       "source_tracked": true,
-      "destination_sha256": "75e81b239e2f887db9a7660c128e9655a5306be18f19e149e57d6927e6740482",
+      "destination_sha256": "4a20ea0ad07bbbc05d965c47b6829b2ace847afc9f477984d9feadaed457f875",
       "adapted": true
     },
     {

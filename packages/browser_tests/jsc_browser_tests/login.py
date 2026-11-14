@@ -539,8 +539,7 @@ def run_storage_state(args, output: Output) -> int:
         raise LoginError(EXIT_USAGE, problem)
     debug = auth.debug_env_problem()
     if debug:
-        raise LoginError(EXIT_USAGE, debug.replace("a connected run does not start with it", "the sign-in does "
-                                                                                           "not start with it"))
+        raise LoginError(EXIT_USAGE, debug)
     if importlib.util.find_spec("playwright") is None:
         raise LoginError(EXIT_PLAYWRIGHT, "Playwright is not installed. " + PLAYWRIGHT_MISSING)
     plan = prepare(args)

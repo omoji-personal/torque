@@ -236,7 +236,7 @@ async def run_flow_variation(
         return result
 
     try:
-        auth.refuse_debug_env_when_connected()
+        auth.refuse_debug_env_before_sign_in(auth.cdp_endpoint_from_env())
     except auth.AuthError as exc:
         result.error = exception_detail(exc)
         result.side_effects["identity_status"] = "NOT_CHECKED"
