@@ -90,7 +90,15 @@ later release narrows the check.
 - Any `torque` subcommand, including via `python -m torque`, `python -mtorque`, or `py -m torque`,
   other than `demo`, `workflows`, `doctor` (without `--client`), `--version`, or `--help`. The
   `torque` command rejects abbreviated options, and the gate also blocks abbreviations of
-  `--client` (`--clie`), which an older install would accept.
+  `--client` (`--clie`), which an older install would accept. One more form passes:
+  `torque lesson for [WORDS] --workspace .` (or `recall`), with only `--task`, `--type`,
+  `--command`, `--error`, `--limit`, `--json` and `--include-candidates`. It reads the firm's
+  [lessons](lessons.md) (the workspace's own `lessons/` folder) and those shipped with Torque,
+  never a client's: the workspace must be named, so that no client selected in the
+  environment applies, and be the workspace itself (Torque reads a folder that holds a
+  `client.json` as that client, so no other folder passes, inside the workspace or outside
+  it); no word may hold `--client` or `--initiative`. Every other lesson command stays
+  blocked.
 - Torque's other installed scripts (`jsc`, `jsc-qa`, `jsc-advisory`, `jsc-memory`,
   `jsc-loganalyzer`, `jsc-probes`, `jsc-browser-tests`, `meeting-processor`,
   `jsc-ai-prompt-regression`) and `python -m` on their modules (`jsc_*`, `meeting_processor`):
