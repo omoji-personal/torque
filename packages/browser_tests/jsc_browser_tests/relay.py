@@ -212,12 +212,19 @@ class Relay:
             def _expired(self) -> bool:
                 return time.monotonic() >= relay._state["deadline"]
 
+            def end_headers(self):
+                # Every answer, the redirect and each refusal (http.server's own errors
+                # included): never cached, no Referer sent on from it, no type sniffing.
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                super().end_headers()
+
             def _plain(self, status: int, text: str) -> None:
                 body = text.encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -227,6 +234,9 @@ class Relay:
 
             def do_GET(self):
                 state = relay._state
+                # A rebound name is refused. localhost stays accepted: browsers resolve it to
+                # the loopback themselves (never through DNS), and one that tries ::1 first normally
+                # falls back to 127.0.0.1. The address printed uses 127.0.0.1 and is the one to open.
                 if self.headers.get("Host", "").casefold() not in (f"127.0.0.1:{relay.port}", f"localhost:{relay.port}"):
                     return self._plain(421, "This address is answered on 127.0.0.1 only.")
                 if state["outcome"] is not None:
@@ -268,7 +278,6 @@ class Relay:
                 try:
                     self.send_response(302)
                     self.send_header("Location", minted.url)
-                    self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                 except OSError:

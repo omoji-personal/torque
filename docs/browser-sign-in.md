@@ -192,7 +192,12 @@ in Playwright's storage-state format. A script then starts with
   nothing else; twenty wrong requests close the listener.
 - Only a top-level browser navigation is answered. A fetch, a prefetch, an image request,
   curl or a script gets a refusal and no Salesforce address is asked for.
-- The `Host` header must be the loopback address.
+- The `Host` header must be the loopback address (`127.0.0.1:PORT`, or `localhost:PORT`,
+  which browsers resolve to the loopback themselves), so a rebound name is refused. Open the
+  address as printed: the listener is on `127.0.0.1` only, and a browser that tries the IPv6
+  loopback first for `localhost` has to fall back to it.
+- Every answer, the redirect and each refusal, carries `Cache-Control: no-store`,
+  `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
 - One valid request, then the listener closes.
 - The printed expiry (`expires_at`, `--timeout` seconds after the address is printed) is one
   absolute deadline. After it no Salesforce address is asked for and none is sent, also for a
