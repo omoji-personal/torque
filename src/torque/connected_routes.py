@@ -1837,6 +1837,14 @@ def _torque(rest: list[str], detail: str, paren: bool = False) -> Route:
         return Route("browser_write" if org else "local", org, detail, client, headed=headed)
     if head in TORQUE_WRITE_ELSE:
         return Route("org_write" if org else "local", org, detail, client)
+    if head == "check" and sub == "deployed":
+        # torque check deployed (src/torque/checks/deployed.py) only reads the org it names: `sf project
+        # retrieve start` into a temporary folder, and `sf data query` on FieldPermissions, FlowDefinition,
+        # FlowDefinitionView and ValidationRule, which this module reads as record reads. So it is a read held
+        # to record-data consent, as strict as the strictest of those calls, never a write.
+        if not org and any(tok in ("-h", "--help") for tok in rest):
+            return Route("local", None, detail, client)
+        return Route("read" if org else "no_org", org, detail, client, data="records")
     if org:
         return Route("org_write", org, detail, client)
     return Route("local", None, detail, client)

@@ -14,7 +14,13 @@ ALLOWED = [
     "torque lesson for --type Flow --task deploy --workspace . --json",
     "torque lesson recall --workspace=. --limit 3",
     'torque lesson for --command "sf project deploy start --metadata Flow:Gift_Entry" --workspace .',
-    "torque lesson for --error \"No such column 'X__c' on entity 'Account'\" --workspace . --include-candidates",
+    "torque lesson for --error \"No such column 'X__c' on entity 'Account'\" --workspace .",
+    # Help prints the options and reads no lesson.
+    "torque lesson --help",
+    "torque lesson -h",
+    "torque lesson for --help",
+    "torque lesson recall -h",
+    "python -m torque lesson for --help",
     "python -m torque lesson for field access --workspace .",
     "cd project && torque lesson for --type Flow --workspace ..",
     "torque lesson for flow --workspace ./",
@@ -22,6 +28,14 @@ ALLOWED = [
 ]
 BLOCKED = [
     "torque lesson for flow",                                              # no workspace named: a selection could be inherited
+    # Candidates are the firm's lessons nobody has reviewed yet; they are not shown in build-only mode.
+    "torque lesson for flow --workspace . --include-candidates",
+    "torque lesson for --error x --include-candidates --workspace .",
+    # Help only in exactly these forms.
+    "torque lesson list --help",
+    "torque lesson add --help",
+    "torque lesson for --help --client acme",
+    "torque lesson --client acme --help",
     "torque lesson for flow --workspace . --client acme",
     "torque lesson for flow --workspace . --client=acme",
     "torque lesson for flow --workspace . --initiative playbook",

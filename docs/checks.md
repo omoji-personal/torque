@@ -305,8 +305,41 @@ not show that the change does what the requirement asks.
 
 ## Build-only mode
 
-In a build-only workspace the gate refuses every `torque` subcommand outside a short allowlist (`demo`,
-`workflows`, `doctor`), so it refuses `torque check metadata` and `torque check result` too, although they
-read only local files and the same mode allows `sf code-analyzer run` on paths outside `clients/`. Run the
-check from your own terminal there, or in full or connected mode. `torque check deployed` reaches an org, so
-build-only mode refusing it is intended.
+In a build-only workspace the gate allows `torque check metadata` and `torque check result`, which read
+local files only, when:
+
+- the check is the whole command (nothing chained, piped, redirected or wrapped);
+- it uses only its own options (no `--client`, `--initiative`, `--workspace` or org option, no option cut
+  short, no `--`);
+- every path is written out (no variable, glob or `~`) and stays out of `clients/`: each PATH (at least one named,
+  such as `project/force-app`; the default, the current folder, is not accepted there), `--changed-from`,
+  `--baseline`; none of them may be or hold a whole initiative folder;
+- it runs from a folder outside `clients/`;
+- for `check metadata`, the project folder around the paths (the nearest `sfdx-project.json` at or above the
+  first PATH), which it reads when given files and where it runs Code Analyzer, does not hold `clients/`;
+  with the analyzer on, that project folder holds every PATH (otherwise the analyzer runs in whatever folder
+  the files share), and its `code-analyzer.yml` or `.yaml`, which the analyzer reads on its own, is readable
+  YAML whose strings name no absolute path, `..`, `~` or variable and nothing that reaches `clients/`; with
+  `--analyzer off` and folders as paths none of this is read (`torque-check.yml` is looked for from the first
+  PATH up to the project folder, never below it);
+- for `check metadata`, `TORQUE_WORKSPACE` is unset or names the workspace itself (the lessons it shows come
+  from the engagement that variable selects).
+
+Code Analyzer is started as `sf code-analyzer run --output-file TMP/code-analyzer.json --view detail
+--workspace ROOT --rule-selector Recommended --rule-selector flow --target FILE ...` in ROOT, with no org
+option. `torque check deployed` reaches an org and stays blocked; run it in full or connected mode, or
+yourself. `--help` passes for every form.
+
+## Connected mode
+
+`check metadata` and `check result` are local work. `check deployed --target-org ORG` is a read of that org,
+bound to the client's consent like every other read: it retrieves (a metadata read) and runs `sf data query`
+on FieldPermissions, FlowDefinition, FlowDefinitionView and ValidationRule, which connected mode reads as
+record reads, so the consent must cover record data for that org, as it would for those queries run on
+their own. It never asks for a write approval. Its retrieve goes to a fresh temporary folder outside the
+workspace, removed afterwards; a component it cannot read or compare is reported as such, never as the same.
+
+What the three read on disk is checked as for `sf code-analyzer run`: a path, `--baseline`, `--changed-from`,
+`--source-dir` (default: the current folder), the working folder, the Salesforce project folder and Code
+Analyzer's folder (and its `code-analyzer.yml`) must not reach another client's folder or an initiative.
+From the workspace root, name a path inside the bound client's folder.
