@@ -20,7 +20,7 @@ from torque import template_updates as updates
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "floor" / "AGENTS-floor.md"
 MAX_LINES = 60
-# Characters, markers included. Measured 6,671 for version 1 (about 1,700 tokens at four characters
+# Characters, markers included. Measured 7,226 for version 1 (about 1,800 tokens at four characters
 # each). 7,500 keeps the init AGENTS.md under 8 KB, a quarter of the 32 KiB Codex adds, and leaves
 # room for the record-basis options still to come; past it, a line has to go before one is added.
 MAX_CHARS = 7_500

@@ -14,20 +14,21 @@ Torque writes this block and `torque workspace upgrade .` replaces it; put firm 
 - Mark one that helped: `torque lesson helpful ID --workspace . --client NAME`; one that is wrong: `torque lesson stale ID --reason TEXT --workspace . --client NAME`.
 
 ### Standing rules
-- Use only the org the consultant named. Before a deploy, data change or org fact: `sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" --target-org ALIAS --json`.
+- Use only the named org; before consequential work resolve its alias once per session and reuse it: `sf data query --query "SELECT Id, Name, IsSandbox FROM Organization" --target-org ALIAS --json`.
 - Never print, paste or save a credential, access token, session id or sign-in address. Do not run `sf org display`, `sf org open --url-only` or `sf org auth show-*`.
-- Retrieve the current metadata before you change an existing component, keep that copy as the baseline, and change only what the task needs.
+- Retrieve current metadata before you change a component and keep it as the baseline. Deploy only what you changed; in an org others also change, retrieve and compare again just before deploying.
 - Run a check-only deploy (`--dry-run --json`, saved to a file) before every real deploy. Never pipe a Salesforce command through a filter: the pipe hides its exit code.
 - Describe an object before the first query on it. After an unknown-name error, look the name up; never guess it a second time.
 - State an org fact (a setting, a field, which flow version is active) only after reading it in that org, with the org and date beside it. What you did not find is unverified.
 - Call something verified only with what the check rested on: as which user, in which org, by what kind of check, what it did not cover. Acceptance is the other person's word.
 - Test as the intended user: a non-admin user of each persona, on a record someone else owns, looking at the page itself; an admin query is not that test.
 - Before the first test record, find what the object's automation sends outside the org. Note each test record's Id, and delete exactly those records when you are done.
+- Client-facing text: revise only what was asked and show what changed, not a rewrite; trace each org fact to a check made that day; show the consultant the exact text before it is sent or posted.
 - Ask the consultant only what they alone decide: scope, anything sent to the client, production changes, deleting data. Carry the rest through; a yes holds until the scope changes.
 
 ### Building in Salesforce
-- Ship access with every new field: a permission set in the same change, readable wherever it is editable, never a profile file. Then query `FieldPermissions`; your own admin view is not evidence.
-- Write the native baseline first: options in order (standard feature, installed package, declarative, code) with effort each. Take the first that fits; record why when stepping up to code.
+- Grant each new field (not required or master-detail) in a permission set in the same change, readable where editable, not a profile file; `check deployed` reads it back, your admin view does not.
+- Before designing, name what the org and its packages already do; try a standard feature, a package, declarative, then code; take the first that fits; for code, record what simpler options lacked.
 - Reuse what the org and its packages already have: look for an existing field, object, flow or permission set with that purpose before you propose new schema.
 - Give every component you create or change a description, every field a user fills in help text, and every flow element a description, written when you build it.
 - In a flow, give every element that reads or writes data, or calls an action, a fault path where the flow type allows one; never query or write inside a loop.
@@ -51,5 +52,7 @@ Torque writes this block and `torque workspace upgrade .` replaces it; put firm 
 - After a failed Salesforce command, before retrying: `torque lesson for --error "FIRST LINE" --workspace . --client NAME`. Once fixed, save the fix with `--learned`.
 - Between the check-only deploy and the real one: `torque check result dry-run.json`, then `torque check metadata PROJECT --changed-from dry-run.json`. Fix or explain each error and warning.
 - After the real deploy: `torque check deployed --target-org ALIAS --changed-from deploy.json`. It shows what is in the org, not what a user sees.
-- Sign a browser in with `torque browser login --target-org ALIAS --workspace . --client NAME` and open the address it prints in the tab; never use a password or ask the consultant to sign in.
+- Sign a browser in with `torque browser login --target-org ALIAS --workspace . --client NAME` and open the address it prints. Never type or ask for a password.
+- If the page asks for a password (an expired password, a device check), stop and tell the consultant: only they can do that.
+- Another user: `torque browser login --target-org ALIAS --as-alias USER_ALIAS --workspace . --client NAME` (their CLI login), or `--as-user USERNAME` (Log in as: wait for the "Logged in as" banner).
 <!-- torque:floor:end -->
