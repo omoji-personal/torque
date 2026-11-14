@@ -79,6 +79,39 @@ def test_profile_in_change_and_powerful_permission(tmp_path):
                                                       "The permission set grants Modify All on Shift__c."]
 
 
+def test_powerful_permissions_in_a_profile_and_the_wider_list(tmp_path):
+    """Gemini F-14: profiles were not inspected; Author Apex and permission management were not listed."""
+    t = Tree(tmp_path)
+    up = "    <userPermissions>\n        <enabled>{on}</enabled>\n        <name>{name}</name>\n    </userPermissions>\n"
+    t.add("force-app/main/default/profiles/Ops.profile-meta.xml", xml("Profile", up.format(on="true", name="ModifyAllData")
+          + up.format(on="true", name="AssignPermissionSets") + up.format(on="true", name="ApiEnabled")
+          + "    <custom>true</custom>\n"))
+    t.profile("Quiet")
+    t.permset("Coder", extra=up.format(on="true", name="AuthorApex"))
+    r = t.check()
+    powerful = {f["component"]["name"]: f["message"] for f in hits(r, "access.powerful-permission")}
+    assert powerful == {"Ops": "The profile enables Modify All Data, Assign Permission Sets.",
+                        "Coder": "The permission set enables Author Apex."}
+
+
+def test_grants_the_deploy_rejects(tmp_path):
+    """Gemini F-13: an editable auto-number field, edit without read, and a formula field on Activity."""
+    t = Tree(tmp_path)
+    t.field("Shift__c", "Ref__c", type="AutoNumber", help=None)
+    t.field("Activity", "Age__c", type="Number", formula="TODAY() - DATEVALUE(CreatedDate)", help=None)
+    t.field("Shift__c", "Hours__c", type="Number")
+    t.add("force-app/main/default/permissionsets/Bad.permissionset-meta.xml", xml("PermissionSet", "".join(
+        f"    <fieldPermissions>\n        <editable>true</editable>\n        <field>{f}</field>\n"
+        f"        <readable>{r}</readable>\n    </fieldPermissions>\n"
+        for f, r in (("Shift__c.Ref__c", "true"), ("Task.Age__c", "true"), ("Shift__c.Hours__c", "false")))
+        + "    <label>Bad</label>\n"))
+    r = t.check()
+    got = sorted(f["message"] for f in hits(r, "access.formula-field-editable"))
+    assert got == ["Shift__c.Hours__c is granted editable but not readable; the deploy fails on it (edit needs read).",
+                   "Shift__c.Ref__c is an auto-number field granted as editable; the deploy fails on it.",
+                   "Task.Age__c is a formula field granted as editable; the deploy fails on it."]
+
+
 def test_descriptions_missing_and_placeholder(tmp_path):
     t = Tree(tmp_path)
     t.obj("Shift__c", desc=None)
