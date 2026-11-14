@@ -2,7 +2,8 @@
 
 Use this whenever a change adds a field or component, grants or reduces access, touches
 sharing, or involves an integration user. State described: Winter '27 (API 68.0), checked
-2026-11-14. `[check]` = testable in the source files. **verify** = not confirmed in a
+2026-11-14. A tag such as `[check: access.field-without-grant]` names the `torque check
+metadata` rule that tests the statement. **verify** = not confirmed in a
 fetched primary source: verify in the org or the current documentation. field-reported =
 seen in client work, usually one org. Queries marked "lead" were not run for this release.
 
@@ -13,12 +14,19 @@ unless the same deployment grants it [ADV `fls-not-automatic`]. The deploy is gr
 field is invisible in pages, list views, reports and queries. In the field record this was
 the most frequent build miss, with hours lost to wrong theories (field-reported).
 
-Do this for every new field:
+Which fields: a new custom field that takes field-level security. Not required fields and
+not master-detail fields: they carry no field permissions, and an entry fails the deploy
+[SK-PS] [ADV]. `torque check metadata` also skips fields on custom metadata types,
+platform events and custom settings, and fields of a managed package (rule
+`access.field-without-grant`); give those types the access their own model uses.
+
+Do this for every such field:
 
 1. Add a `fieldPermissions` entry (`field` as `Object__c.Field__c`, `readable`, `editable`)
    to a permission set in the same deployment. Create the permission set if none fits.
-2. Leave these out, or the deploy fails: required fields and master-detail fields carry no
-   field permissions; a formula field's entry must have `editable` false [SK-PS] [ADV].
+2. `editable` true only for fields users enter, and then `readable` true as well
+   (**verify**: edit without read is refused); a formula or roll-up summary field's entry
+   has `editable` false, or the whole deploy fails [SK-PS] [ADV].
 3. Never invent a field name by pattern: grant only fields that exist in the change or in
    the org [SK-PS].
 4. Assign the permission set to the people who need the field, or say who must.
@@ -34,8 +42,7 @@ flag the query fails [ADV `tooling-api-refuses-permission-objects`]. To filter p
 rows by field, use `=` or `IN` with the full `Object.Field` name: `LIKE` on `Field` is
 refused (field-reported). A required field has no rows and needs none.
 
-`[check]` each new `*.field-meta.xml` that is not required or master-detail has a matching
-`fieldPermissions` entry with `readable` true in a permission set in the change.
+`[check: access.field-without-grant, access.formula-field-editable]`.
 
 In Setup, the same habit: enable "Field-Level Security for Permission Sets during Field
 Creation" in User Management Settings so the new-field wizard grants through permission
@@ -48,9 +55,11 @@ this rule unless the client asked for that breadth.
   profiles." Profiles remain for page layout assignment, record type defaults, login hours,
   IP ranges and app visibility [WA-T]. The planned retirement of permissions on profiles was
   cancelled; Salesforce still recommends the permission-set-led model (**verify**).
-- `[check]` no `*.profile-meta.xml` in the change. If the org forces a profile change, deploy
-  the narrowest file: a profile deploy applies what the file says, explicit `false` values
-  included, and leaves the rest alone [ADV `full-profile-deploy`].
+- `[check: access.profile-in-change]`. A profile belongs in a change only for what still
+  lives there (the list above), never for object, field or system permissions. Deploy the
+  narrowest file: a profile deploy applies what the file says, explicit `false` values
+  included, and leaves the rest alone [ADV `full-profile-deploy`]. Check: `git diff` of the
+  profile file shows only the layout, record type or app entries you meant.
 - Name a permission set for the task, bundle sets into a group per persona, and use a muting
   permission set for exceptions [TH-PSG] [P-IAM].
 - A new component needs its own grant too: object permissions, tab, Apex class access,
@@ -92,11 +101,11 @@ general; only restriction rules and muting inside a group take away [WA-T] [P-IA
 | --- | --- |
 | Baseline for an object | Org-wide default, the most restrictive that works |
 | Managers see their reports' records | Role hierarchy (it models data access, not the org chart) |
-| One group needs another group's records | Owner-based sharing rule (300 per object) |
+| One group needs another group's records | Owner-based sharing rule (300 sharing rules per object in total) |
 | Access depends on a field value | Criteria-based sharing rule (50 per object, shared with guest rules) |
 | A few named people on one record | Account, opportunity or case team |
 | One-off share by the owner | Manual share (lost on owner change unless the Winter '27 setting keeps it [REL-W27]) |
-| Hide some records a user could otherwise see | Restriction rule (few per object, **verify** the number) |
+| Hide some records a user could otherwise see | Restriction rule: up to 2 active per object in Enterprise and Developer editions, 5 in Performance and Unlimited [F-SHARE]; it applies to list views, lookups, related lists, reports, search and queries |
 | Narrow the default view without removing access | Scoping rule: not a security control |
 | Signed-in site users at volume | Sharing set or share group |
 | Site visitors who are not signed in | Guest user sharing rule: read only, as narrow as possible |
@@ -151,13 +160,15 @@ separate checks. A query as an administrator proves none of the last three.
 | The permission set contains the grant | The file, or `FieldPermissions` and `ObjectPermissions` |
 | The user holds it | `PermissionSetAssignment`, directly and through groups |
 | The user can open this record | `SELECT RecordId, HasReadAccess, HasEditAccess, MaxAccessLevel FROM UserRecordAccess WHERE UserId = 'USER_ID' AND RecordId = 'RECORD_ID'` (**verify**; it ignores restriction rules) |
-| Logic and access together | Apex with `WITH USER_MODE` as a minimum-access user for the negative case; `System.runAs` needs an active user (field-reported) |
+| Logic and access together | Apex with `WITH USER_MODE` inside `System.runAs` as a minimum-access user for the negative case (outside it, user mode checks the user running the test); `System.runAs` needs an active user (field-reported) |
 | The page shows it | In a browser as that user, one person per user group, on a record someone else owns (field-reported: a user-mode code check "proved" a list that one profile could not see) |
 
-To act as the user in a browser: sign in with `torque browser login`, then use Setup "Log in
-as" (needs Modify All Data and the org's login-access policy, **verify**), or a dedicated
-test user that mirrors the real user's permission sets. Record which user and which method.
-"Log in as" skips login flows, so it is not the user's real sign-in (**verify**).
+To act as the user in a browser: `torque browser login --as-alias ALIAS-OF-USER` for a test
+user with its own CLI alias (no banner: confirm the user in the profile menu), or
+`--as-user` and Setup "Log in as" (needs Modify All Data and the org's login-access policy,
+**verify**; wait for the "Logged in as" banner). Record which user and which method. "Log in
+as" skips login flows, so it is not the user's real sign-in (**verify**). The steps and the
+persona checklist: `salesforce-delivery/references/testing-and-uat.md`, section 3.
 
 field-reported findings that only a test as real staff exposed: one field's access, a tester
 who lacked the feature, users outside the test group's access tier, and a managed action

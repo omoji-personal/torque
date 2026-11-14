@@ -17,7 +17,7 @@ treat an error as "not checked". "J" = judgement only.
 | A06 | Username-password sign-in flows or SOAP login in integrations | Setup > Connected Apps OAuth Usage; login history | JWT bearer or client credentials through an external client app | [WA-T] [REL-W27] |
 | A07 | Apex with no sharing keyword, or data access in system mode by default | Search classes; Code Analyzer | Explicit sharing and access mode | [P-IAM] [REL-S26] |
 | A08 | SOQL built by joining input into a string | Code Analyzer; search `Database.query(` | Bind variables | [P-SDEV] [WA-T] |
-| A09 | Guest users with create, update or delete; broad guest sharing rules; system-context flows on public pages | Guest profile; guest sharing rules; flow run mode | Minimal read or create, narrow rules, user context | [P-SDEV] [DG-FORMS] |
+| A09 | Guest access beyond what the public use case needs (update or delete, create on objects the site does not take in, broad guest sharing rules); system-context flows on public pages | Guest profile against the site's use cases; guest sharing rules; flow run mode | Only the read or create each use case needs, narrow rules, user context | [P-SDEV] [DG-FORMS] |
 | A10 | Sandboxes with unmasked production data or production endpoints, or left stale and shared | Sandbox list; credential addresses | Masked or synthetic data, test endpoints, an owner per sandbox | [P-DATA] [P-DEVOPS] |
 | A11 | Health Check findings ignored, score under 80% | Tooling `SecurityHealthCheck` | Quarterly review, each exception written down | [P-COMP] |
 | A12 | Several triggers on one object, or business logic in the trigger body | `ApexTrigger` grouped by object; trigger length | One thin trigger, a handler, a service layer | [P-AUTO] [P-CODE] |

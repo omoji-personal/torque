@@ -69,16 +69,27 @@ Run the journey once per intended persona as a non-admin, on a record someone el
 a small window, from an empty state. Admin tests and user-mode code checks passed while real
 users were blocked (field-reported, 13 episodes).
 
+The persona, written down before the run: its permission sets and groups, its licence, a
+row it owns and one it does not, the app and record type it works in, how the automation
+under test is started (page, button, save, schedule, integration), and what this run does
+not cover. Guest, integration and automated-process users cannot be covered by a browser
+session as a test user: test them through their real entry point, or say so. A mirror user
+is an approximation of the real one: list what differs.
+
 1. Sign the browser in with `torque browser login` (see `torque browser login --help`). It
    uses the CLI's authorization and a single-use address. Do not type a password, and do not
-   ask the consultant to sign in where the CLI is authorized.
-2. Become the user: Setup "Log in as" (needs Modify All Data and the org's login-access
-   policy; not for inactive users; login flows are skipped; **verify**), or a test user that
-   mirrors the real user's profile and permission sets.
-3. Confirm whose session it is before each test: the "Logged in as" banner. It can render
-   late: wait for it [ADV `login-as-servlet-beats-the-setup-link`]. Without it you are
-   testing as the admin and everything passes (field-reported).
-4. Look at the screen. Record the user, the method, the org and the window size.
+   ask the consultant to sign in where the CLI is authorized. In a connected workspace it is
+   refused: use `torque browser browser FLOW --target-org ALIAS` under a granted window.
+2. Become the user, by one of two methods, and confirm whose session it is before each test:
+   - **The test user's own CLI alias** (preferred): `torque browser login --target-org ALIAS
+     --as-alias ALIAS-OF-USER`. It checks both aliases are the same org and reports the
+     username. There is no banner: confirm the user shown in the page's profile menu.
+   - **Setup "Log in as"** (`--as-user USERNAME`; needs Modify All Data and the org's
+     login-access policy; not for inactive users; login flows are skipped; **verify**).
+     Wait for the "Logged in as" banner: it can render late
+     [ADV `login-as-servlet-beats-the-setup-link`]. Without it you are testing as the admin
+     and everything passes (field-reported).
+3. Look at the screen. Record the user, the method, the org and the window size.
 
 The agent cannot do some sign-ins alone: a shared login whose code goes to someone's mailbox,
 a passkey, a production org with no CLI authorization. Say so; a person signs in. Never

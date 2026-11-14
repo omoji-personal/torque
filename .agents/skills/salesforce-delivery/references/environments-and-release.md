@@ -129,15 +129,17 @@ later, and a register kept from memory misses components).
 
 | Test level | Meaning [PLUGIN-DR] |
 | --- | --- |
-| `NoTestRun` | Development environments only |
-| `RunSpecifiedTests` | Each class and trigger in the deployment needs at least 75% coverage |
-| `RunLocalTests` | Default for a production deployment that contains Apex; excludes package tests |
+| `NoTestRun` | Development environments only; the default there. `deploy validate` does not offer it |
+| `RunSpecifiedTests` | Only the tests named with `--tests`; each class and trigger in the deployment needs at least 75% coverage, counted per class, not across the org |
+| `RunLocalTests` | Default for a production deployment that contains Apex classes or triggers, and for `deploy validate`; excludes package tests |
 | `RunAllTestsInOrg` | Everything, package tests included |
-| `RunRelevantTests` | Beta: the platform picks tests from the payload |
+| `RunRelevantTests` | Beta: the platform picks tests from the payload; the same 75% per class and trigger |
 
+Without `--test-level`, the default depends on the payload and the target org [PLUGIN-DR].
 For a sandbox use `sf project deploy start --dry-run`; `deploy validate` is meant for
 production [PLUGIN-DR]. Treat these flags as approvals, not conveniences: `--ignore-errors`
-(never on production), `--ignore-conflicts`, `--ignore-warnings`, `--purge-on-delete`.
+(never on production), `--ignore-conflicts`, `--ignore-warnings`, `--purge-on-delete`
+(sandboxes and Developer Edition only, **verify**).
 
 ### C3. The way back
 
@@ -153,8 +155,10 @@ production [PLUGIN-DR]. Treat these flags as approvals, not conveniences: `--ign
 - Write the production runbook before the go: the gate (open questions answered, tested as a
   real staff user, the consultant's go), a read-only drift check, the exact manifest, the
   activation order, the checks and the rollback.
-- A new validation rule deploys active to the sandbox and inactive to production; its
-  activation is its own approved step.
+- A validation rule deploys with the `active` value in its file, in production too
+  (**verify**: read the rule's Active flag after the deploy). Where it
+  could block live users or integrations, deploy it to production with
+  `<active>false</active>` and activate it as its own approved step.
 - For a production setting changed by hand: record the prior value, change one thing at a
   time, read the form back before Save, re-read from the org after, keep the revert.
 - Exit code 0 is not proof of effect: an invalid flag printed help and exited 0, and nothing
@@ -170,8 +174,10 @@ Field-reported, from 273 failed Salesforce CLI calls in one consultant's work:
   an `sfdx-project.json` whose package directory exists, with the output inside it. Outside
   a project, retrieve with `--target-metadata-dir DIR --unzip` and deploy with
   `--metadata-dir DIR` (23 failures in 6 sessions).
-- **Keep the project's API version at the version the metadata was retrieved at.** A flow
-  retrieved at a newer version failed with "Property X not valid in version N".
+- **A flow retrieved at a newer API version than the project's failed** with "Property X
+  not valid in version N". Pass `--api-version` for that retrieve or deploy; change
+  `sourceApiVersion` in `sfdx-project.json` only as its own tested change, never down for
+  one file (`salesforce-flow/references/gotchas.md`).
 - **Write `--json` output to a file and read the file.** Do not pipe a Salesforce command
   through a filter or merge its error stream into the file: a pipe hid the failure of 44% of
   failed calls, and a warning line in front of the JSON broke the read.

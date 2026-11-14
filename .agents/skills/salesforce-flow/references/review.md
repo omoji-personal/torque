@@ -14,8 +14,9 @@ commit unless that was asked for. State described: Winter '27 (API 68.0), checke
    another flow, trigger, process or package handler that writes the same fields.
 4. Find where it is launched (record save, schedule, button, page, another flow, Apex) and
    who runs it.
-5. Run the analyzer on the file, flow rules included:
-   `sf code-analyzer run --rule-selector flow --target PATH_TO_FLOW --output-file flow-review.json`.
+5. Run the checks on the file: `torque check metadata PATH_TO_FLOW` runs Torque's flow rules
+   and Code Analyzer with the flow rules included. Without Torque: skill
+   `salesforce-code-analyzer-review`.
    If the community Lightning Flow Scanner is already installed, `sf flow:scan` adds checks
    such as trigger order, null handling and API version [LFS]. Do not install tools only for
    a review.
@@ -61,8 +62,10 @@ what it does; for a builder, give exact elements and a diff.
 
 Apply the rows the change needs. Do not ask for a bypass in every flow: ask for one only
 where a load or an integration has to skip the logic. The analyzer rule names are those of
-Salesforce Code Analyzer v5 (**verify** with `sf code-analyzer rules --rule-selector flow
---view detail`; each rule's description says what it tests).
+Salesforce Code Analyzer v5 (list them with `sf code-analyzer rules --rule-selector flow
+--view detail`; each rule's description says what it tests). A row is a finding when its
+effect is real: before you call a design defective, show the functional equivalent, the
+order of execution it needs, or what a failure there actually leaves behind.
 
 ## 4. Write the findings
 

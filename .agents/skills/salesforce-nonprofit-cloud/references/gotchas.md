@@ -85,7 +85,9 @@
     Unpaid transaction.
 37. **Upgrades create a new schedule.** Check: reports use `CurrentGiftCmtScheduleId`.
 38. **Commitment processing errors are silent.** Check:
-    `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null`.
+    `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null`; describe
+    the field first, and if it is not `filterable`, select it with `Id` and count the
+    non-empty rows instead.
 39. **No twice-monthly schedule.** Check: list source recurring gifts with day 29 to 31
     or a 1st and 15th period before mapping.
 
@@ -98,8 +100,8 @@
     names carry the release.
 42. **Three identities must be right** (admin, writeback user, Analytics integration
     user). Check: Monitor Workflow Services for Failed or Completed With Failures.
-43. **DPE budget is finite** (30 hours, 10 million rows a month, 50 definitions). Check:
-    DPE usage against an 80 percent alert.
+43. **DPE budget is finite** (runtime, rows and active definitions are capped; the
+    figures are **verify**). Check: the org's DPE usage against an 80 percent alert.
 44. **Overlapping DPE runs fail.** Check: schedule table of DPE flows, 15 minutes apart.
 45. **Donor summaries are calendar year.** Check: `GiftsThisYearAmount` against a
     fiscal-year transaction report.
