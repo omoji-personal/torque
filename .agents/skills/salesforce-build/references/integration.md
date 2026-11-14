@@ -70,8 +70,20 @@ as the base of an integration; PushTopic and generic streaming; Salesforce to Sa
   an org, reduce them to key names and hosts: masking by field name alone leaked a
   credential fragment from a "sample request" field (field-reported).
 
+The three files that deploy together [MD-TYPES]: an `*.externalCredential-meta.xml` with
+`authenticationProtocol` and `externalCredentialParameters` (principals are parameters of
+type `NamedPrincipal` or `PerUserPrincipal`); a `*.namedCredential-meta.xml` of
+`namedCredentialType` `SecuredEndpoint` whose `namedCredentialParameters` give the `Url`
+and the `externalCredential`, with `allowMergeFieldsInHeader` and `allowMergeFieldsInBody`
+false unless a header or body needs them; and a permission set with
+`externalCredentialPrincipalAccesses` (`externalCredentialPrincipal`, `enabled`). Secret
+values are entered in Setup, not in the files. A `Legacy` named credential with a
+`username` and `password` is not for new work. To learn the exact shape, set one up in a
+sandbox and retrieve it.
+
 Check: `namedCredentials/` and `externalCredentials/` hold the endpoint and the
-authentication; a search of the change finds no `Authorization` literal or secret.
+authentication; a search of the change finds no `Authorization` literal or secret;
+`[check: secret.looks-like-secret]`.
 
 ## 4. Writes that can be repeated
 
@@ -170,6 +182,9 @@ connector.
 ## Sources
 
 - [F-INT] https://architect.salesforce.com/docs/architect/fundamentals/guide/integration-patterns
+- [MD-TYPES] Salesforce's Metadata API type definitions as shipped with the Salesforce CLI
+  (`@salesforce/types` 1.8.0, `ExternalCredential`, `NamedCredential`,
+  `PermissionSetExternalCredentialPrincipalAccess`), read 2026-11-14.
 - [F-AGINT] https://architect.salesforce.com/docs/architect/fundamentals/guide/agentic-integration-patterns
 - [DG-INT] https://architect.salesforce.com/docs/architect/decision-guides/guide/data-integration
 - [DG-EDA] https://architect.salesforce.com/docs/architect/decision-guides/guide/event-driven

@@ -72,6 +72,8 @@ Read these from describe before the load, not from the result after it:
   undone [PLUGIN-DATA] [ADV `recycle-bin-retention`].
 - A save that changes nothing is still a write: it fires automation and restamps the record.
   Diff first and send only rows that change [ADV `no-op-update-is-not-free`].
+- For a bulk ownership or sharing change, Salesforce Customer Support can enable deferred
+  sharing calculation, so sharing is calculated once afterwards [F-SHARE]. Ask early.
 
 ## 4. Automation during the load
 
@@ -145,6 +147,7 @@ left in spreadsheets or sandboxes.
 - [BULK-DATE] Bulk API date format, read as a search extract (**verify**): https://developer.salesforce.com/docs/atlas.en-us.api_asynch.meta/api_asynch/datafiles_date_format.htm
 - [PLUGIN-LIMITS] https://raw.githubusercontent.com/salesforcecli/plugin-limits/main/README.md
 - [DG-RT] https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered
+- [F-SHARE] https://architect.salesforce.com/docs/architect/fundamentals/guide/platform-sharing-architecture (fetched 2026-11-14)
 - [WA-R] https://architect.salesforce.com/docs/architect/well-architected/guide/reliability.html
 - [WA-T] https://architect.salesforce.com/docs/architect/well-architected/guide/trust.html
 - [GDPR-5] https://gdpr-info.eu/art-5-gdpr/

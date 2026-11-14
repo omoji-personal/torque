@@ -66,6 +66,7 @@ execution it needs can outweigh them, with the reason recorded.
 | Savepoints, rollback, partial success, field-specific errors | Apex |
 | Action at a time relative to a date on the record | Flow scheduled path |
 | Email alerts and simple notifications | Flow |
+| A person approves a record before it moves on | An approval process (a standard feature) before custom status logic; Flow Orchestration for a long sequence across several people [P-AUTO] |
 | After undelete | Apex trigger |
 | Heavy follow-on work after save | Change Data Capture subscriber, or a pending flag swept by a scheduled job |
 | A fixed path proposed as an AI agent | Flow or Apex: an agent for a path with no reasoning is an anti-pattern [DG-AGENT] |

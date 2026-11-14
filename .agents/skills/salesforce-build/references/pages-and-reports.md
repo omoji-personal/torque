@@ -52,8 +52,12 @@ and can be edited or not as designed.
   file; they are not removed by a destructive manifest and must be added to change sets by
   hand (**verify**). To learn the shape for this org, activate in a sandbox and retrieve the
   app and the object.
-- **Performance**: use Analyze in Lightning App Builder; keep the first view light and move
-  secondary components to tabs that are not the default (**verify**).
+- **Performance**: use Analyze in Lightning App Builder; it scores only what shows on first
+  load, not other tabs or closed accordion sections. Measure Experienced Page Time with
+  `?eptVisible=1` on the page address. Keep the first view light and move secondary
+  components to tabs that are not the default (**verify** all three).
+- **A new object or key field** also goes on the compact layout (highlights panel) and the
+  search layout, so users can tell records apart in lookups and search results.
 - **Rich text** entered on a form: sanitise it on the server for every source, not only in
   the form [DG-FORMS].
 - **Inclusive forms**: visible labels (placeholder text alone fails), keyboard-only

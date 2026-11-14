@@ -101,11 +101,11 @@ general; only restriction rules and muting inside a group take away [WA-T] [P-IA
 | --- | --- |
 | Baseline for an object | Org-wide default, the most restrictive that works |
 | Managers see their reports' records | Role hierarchy (it models data access, not the org chart) |
-| One group needs another group's records | Owner-based sharing rule (300 per object) |
+| One group needs another group's records | Owner-based sharing rule (300 sharing rules per object in total) |
 | Access depends on a field value | Criteria-based sharing rule (50 per object, shared with guest rules) |
 | A few named people on one record | Account, opportunity or case team |
 | One-off share by the owner | Manual share (lost on owner change unless the Winter '27 setting keeps it [REL-W27]) |
-| Hide some records a user could otherwise see | Restriction rule (few per object, **verify** the number) |
+| Hide some records a user could otherwise see | Restriction rule: up to 2 active per object in Enterprise and Developer editions, 5 in Performance and Unlimited [F-SHARE]; it applies to list views, lookups, related lists, reports, search and queries |
 | Narrow the default view without removing access | Scoping rule: not a security control |
 | Signed-in site users at volume | Sharing set or share group |
 | Site visitors who are not signed in | Guest user sharing rule: read only, as narrow as possible |
