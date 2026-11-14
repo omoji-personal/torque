@@ -6,7 +6,7 @@ non-admin profiles. NEVER stores passwords/tokens in test-user seed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import NamedTuple
 from urllib.parse import unquote, urlsplit
 from .diagnostics import exception_detail
@@ -23,6 +23,15 @@ class AdminAuth(NamedTuple):
     frontdoor_url: str  # CONTAINS access token; do NOT log or commit
     username: str = ""  # the username sf resolves for the alias
     api_version: str = ""
+
+    def __repr__(self) -> str:
+        # The sign-in address is kept out, so that an accidental print, log line or
+        # traceback of this object cannot show it (as relay.Minted does).
+        return (f"AdminAuth(target_org={self.target_org!r}, org_id_18={self.org_id_18!r}, "
+                f"instance_url={self.instance_url!r}, frontdoor_url='[hidden]', username={self.username!r}, "
+                f"api_version={self.api_version!r})")
+
+    __str__ = __repr__
 
 
 def get_admin_auth(sf_client, target_org: str, *, path: str | None = None,
@@ -63,10 +72,12 @@ class BrowserSession:
       passkey orgs: automation-launched Chrome disables extensions, so a password manager holding
       the passkey is unreachable by construction. See docs/browser-sign-in.md.
     """
-    page: object
+    # Playwright's objects name the page's address in their repr, which can be the sign-in
+    # address while it loads: kept out of this object's repr.
+    page: object = field(repr=False)
     channel: str          # "frontdoor" | "cdp"
-    browser: object
-    context: object
+    browser: object = field(repr=False)
+    context: object = field(repr=False)
     owns_browser: bool    # False when attached — never close the operator's browser
     guarded: bool = False  # connected mode: the page's username must match the alias's
 
