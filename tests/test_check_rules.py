@@ -208,16 +208,37 @@ def test_entry_conditions_reruns_and_same_record(tmp_path):
     t.flow("Reruns", start(target="Do_It") + create_task(fault="Do_It"))
     t.flow("Once", start(target="Do_It", extra="        <doesRequireRecordChangedToMeetCriteria>true"
                                                "</doesRequireRecordChangedToMeetCriteria>\n") + create_task(fault="Do_It"))
-    t.flow("Prior_Checked", start(target="Do_It") + create_task(fault="Do_It")
-           + "    <formulas><name>Was</name><dataType>Boolean</dataType><expression>{!$Record__Prior.IsClosed}"
-             "</expression></formulas>\n")
+    was = ("    <formulas><name>Was</name><dataType>Boolean</dataType><expression>{!$Record__Prior.IsClosed}"
+           "</expression></formulas>\n")
+
+    def decide(left, operator="EqualTo", right="<booleanValue>false</booleanValue>"):
+        return element("decisions", "Check", "        <rules><name>Go</name><conditionLogic>and</conditionLogic>"
+                       f"<conditions><leftValueReference>{left}</leftValueReference><operator>{operator}</operator>"
+                       f"<rightValue>{right}</rightValue></conditions><connector><targetReference>Do_It"
+                       "</targetReference></connector><label>Go</label></rules>\n")
+    t.flow("Prior_Through_Formula", start(target="Check") + decide("Was") + create_task(fault="Do_It") + was)
+    t.flow("Prior_In_Decision", start(target="Check") + decide("$Record__Prior.StageName", "NotEqualTo",
+                                                                "<elementReference>$Record.StageName</elementReference>")
+           + create_task(fault="Do_It"))
+    t.flow("Prior_On_The_Right", start(target="Check") + decide("$Record.StageName", "NotEqualTo",
+                                                                 "<elementReference>$Record__Prior.StageName"
+                                                                 "</elementReference>") + create_task(fault="Do_It"))
+    t.flow("Is_Changed_Filter", start(target="Do_It", extra="        <filters><field>Amount</field><operator>IsChanged"
+                                                            "</operator><value><booleanValue>true</booleanValue>"
+                                                            "</value></filters>\n") + create_task(fault="Do_It"))
+    t.flow("Prior_Unused", start(target="Do_It") + create_task(fault="Do_It") + was)       # a resource no one reads
+    t.flow("Prior_In_Words", start(target="Do_It") + create_task(fault="Do_It"),
+           desc="Creates a task on every qualifying save; consider $Record__Prior.")    # review R2-C05
+    t.flow("Prior_In_A_Label", start(target="Check") + decide("$Record.StageName").replace(
+        "<label>Go</label>", "<label>Unlike $Record__Prior</label>") + create_task(fault="Do_It"))
     t.flow("Create_Only", start(target="Do_It", when="Create") + create_task(fault="Do_It"))
     same = element("recordUpdates", "Touch", "        <inputReference>$Record</inputReference>\n", fault="Touch_Log")
     t.flow("Same_Record", start(target="Touch") + same + element("assignments", "Touch_Log"))
     t.flow("Same_And_Task", start(target="Touch") + same.replace("Touch_Log", "Do_It") + create_task(fault="Do_It"))
     r = t.check()
     assert [f["component"]["name"] for f in hits(r, "flow.no-entry-conditions")] == ["No_Entry"]
-    assert [f["component"]["name"] for f in hits(r, "flow.reruns-on-every-update")] == ["Reruns", "Same_And_Task"]
+    assert sorted(f["component"]["name"] for f in hits(r, "flow.reruns-on-every-update")) == [
+        "Prior_In_A_Label", "Prior_In_Words", "Prior_Unused", "Reruns", "Same_And_Task"]
     assert [f["component"]["name"] for f in hits(r, "flow.after-save-same-record")] == ["Same_Record"]
 
 

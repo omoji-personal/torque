@@ -158,7 +158,7 @@ def entry_conditions(comp, flow, ctx):
                         line=start.line, subject="entry", match_lines={start.line, flow.line})]
     if when not in ("Update", "CreateAndUpdate") or start.flag("doesRequireRecordChangedToMeetCriteria"):
         return []
-    if CHANGE_AWARE.search(start.value("filterFormula")) or "$Record__Prior" in _all_text(flow):
+    if _change_guard(flow, start):
         return []
     effects = [e for e in flow_elements(flow) if e.tag in ("recordCreates", "actionCalls", "subflows",
                                                            "apexPluginCalls")]
@@ -177,8 +177,27 @@ def _a(word: str) -> str:
     return ("an " if word[:1].lower() in "aeiou" else "a ") + word
 
 
-def _all_text(flow) -> str:
-    return " ".join(n.text for n in flow.iter() if n.text.strip())
+def _reads_prior(ref: str, formulas: dict) -> bool:
+    return ref.startswith("$Record__Prior") or bool(CHANGE_AWARE.search(formulas.get(ref, "")))
+
+
+def _change_guard(flow, start) -> bool:
+    """Whether an element that decides if the side effect runs looks at the change: the Start element's filter
+    formula or an Is Changed filter, or a decision condition that reads $Record__Prior, directly or through a
+    formula. Descriptions, labels and resources no decision uses are not evidence."""
+    if CHANGE_AWARE.search(start.value("filterFormula")):
+        return True
+    if any(f.value("operator") == "IsChanged" for f in start.all("filters")):
+        return True
+    formulas = {f.value("name"): f.value("expression") for f in flow.all("formulas")}
+    for decision in flow.all("decisions"):
+        for rule in decision.all("rules"):
+            for cond in rule.all("conditions"):
+                right = cond.child("rightValue")
+                refs = [cond.value("leftValueReference"), right.value("elementReference") if right is not None else ""]
+                if cond.value("operator") == "IsChanged" or any(_reads_prior(r, formulas) for r in refs if r):
+                    return True
+    return False
 
 
 def _updates_trigger_record(e, obj: str) -> bool:
