@@ -35,7 +35,7 @@
       "source_path": "packages/qa_orchestrator/qa-router.yaml",
       "source_sha256": "d9f1c7a56817580d7692405aaf4d64bf79b94576bf0d2d88a6abf402688119bd",
       "source_tracked": true,
-      "destination_sha256": "9e9e6c2877c9e42d559e1656fc229ef22f24ecdc55a3cb43c97e39d008e651bb",
+      "destination_sha256": "cbda6710edeb91b21dc4f102292c8c4297e03915a96078a8875bcb89ae6c1540",
       "adapted": true
     },
     {
@@ -98,7 +98,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
       "source_sha256": "d37863fc4bb6f32935244976631e9a0fe509c3660d67df4968f5b13e87e8c20d",
       "source_tracked": true,
-      "destination_sha256": "9a41bf09d5c9860ab5eb0f4f95e0f7bf60f4383f7be4e3b9cc50ea8ac5998f6c",
+      "destination_sha256": "4e588bca82b48cfd7ec57ac005324815cd13c155272906761fafc21382fe3479",
       "adapted": true
     },
     {
@@ -107,7 +107,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/seed_validator.py",
       "source_sha256": "fa556cd4affb85af87c63837a4305ce9574574c17761fa0491af7ea245ecf292",
       "source_tracked": true,
-      "destination_sha256": "dd309d491105b8b032da7445c1135da3d26a7607e947da5e96d605a338c36125",
+      "destination_sha256": "063b2fb46027f9b8e75fabb2d03b2ee3a5e28b89fe172267628eeae6a5f90d7e",
       "adapted": true
     },
     {
@@ -134,7 +134,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/cli.py",
       "source_sha256": "96bb6753ada72ab93a4cd4dc94a466dc86735269f6edc09d22ca396e42917438",
       "source_tracked": true,
-      "destination_sha256": "fcada85023aafad424899c6982a4240140516a79446b3eada6989f6ec6dc55a9",
+      "destination_sha256": "fcf2be32c440dd6993b8ef6a52802c99aefc146bf1d5bd077a44a86565d53ba0",
       "adapted": true
     },
     {
@@ -827,7 +827,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/matrix.py",
       "source_sha256": "5ee5e491f99e98316ac492800e8225cbb3e9ef45bd1ddd886efa5604a24360d4",
       "source_tracked": true,
-      "destination_sha256": "d41e521903af2aadde8c0991e13b099f08a3fa719daa9149575c0a09e3143126",
+      "destination_sha256": "c1887e9bf275789df97f7da0b038e510a5bf4745ffc45dae70d390ca573af8c7",
       "adapted": true
     },
     {
@@ -836,7 +836,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "0d04bfcde63fe3a7c5e1fd7f6814fca40978a61c3dd9ade462c89798e0a0309c",
+      "destination_sha256": "5e4d254244e76bc454469091ca07b57a3277066630909ac3a073169104a86705",
       "adapted": true
     },
     {
@@ -845,7 +845,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/runner.py",
       "source_sha256": "2dd2825125d554bd79dc5d0d623445d98ddac520bf3a7ba10327d55b0392c769",
       "source_tracked": true,
-      "destination_sha256": "0f2a91c34c051426cf6d68943847c958487c407d019d5228c27e95a2e6f4387f",
+      "destination_sha256": "49e2720703bcd8843dc6e5aa8f6000e8f3bd6437f0396a52af4d5ec12aed4682",
       "adapted": true
     },
     {
@@ -854,7 +854,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/suite.py",
       "source_sha256": "40e81f606e0e88b7862ca72367b2662a192ec9be8a0af567979f1c41893de125",
       "source_tracked": true,
-      "destination_sha256": "cf2a5fadf19753e62b6296a2aa4cb1bc62524b721b2b35e4f25d7c87188ab054",
+      "destination_sha256": "75e81b239e2f887db9a7660c128e9655a5306be18f19e149e57d6927e6740482",
       "adapted": true
     },
     {
@@ -863,7 +863,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/vision.py",
       "source_sha256": "60fa4ccb2379b4827eaaa92ea8e6b41ca01e2abbdf2a5f7925c278f31dbfb394",
       "source_tracked": true,
-      "destination_sha256": "3073bf018f390ec3210c886ede03b93c75e0502e2337e8b5f76d8833aff10a3d",
+      "destination_sha256": "de8756a0eb632cab6a57cc5adbcb231bb4fbe39cd15e6d979a29854fc2613ce4",
       "adapted": true
     },
     {
@@ -872,7 +872,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/manifest.py",
       "source_sha256": "5d52ad56d5acbf075b8cf8f96b28694253edee4dc33b3867ce048ac0b224fc25",
       "source_tracked": true,
-      "destination_sha256": "7b5e78b908903f57bc7a8b717bfd064c58bba72ccd816793be2e126a10c83a0d",
+      "destination_sha256": "457c548de00274a7d4b1c573687de2983fb04a2db087b57a72b52eac159299a0",
       "adapted": true
     },
     {
@@ -899,7 +899,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
       "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
       "source_tracked": true,
-      "destination_sha256": "24626c451009b32751a2d51fb1e4d54b274fa13f484665db29dc8ffecf1692f8",
+      "destination_sha256": "ab5fce92dbb51a47f923692f73dcc2ecea89d7711d58fd9e11d8a92559f336a7",
       "adapted": true
     },
     {
@@ -926,7 +926,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
       "source_sha256": "8e6979337830478d413126b80272eb2ed0ae4a4669952475fa51dfd3d05c48c9",
       "source_tracked": true,
-      "destination_sha256": "bd5fdce5135084cde11c3023fb644605b4cfe1049354d49ff7dfc64f0fefa661",
+      "destination_sha256": "21aed154047e9bcefb504cf7f45134213569b6c8544ead101db5730248407e41",
       "adapted": true
     },
     {
@@ -935,7 +935,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/report.py",
       "source_sha256": "32ddc229bdc0e9eb2c7012f734cafe23f8ea10bdcf7da2c3a225f2c5df5511e2",
       "source_tracked": true,
-      "destination_sha256": "3347cbfc5ad938e1ec10d3adb0b78de47435303a864ad76848122305fd4d9eb8",
+      "destination_sha256": "1e0afe1038e9d33edfbc3db7219c56b1e4e7c201d15d1246159276d71fc67d17",
       "adapted": true
     },
     {
@@ -962,8 +962,8 @@
       "source_path": "packages/browser_tests/tests/test_sf_client.py",
       "source_sha256": "8a2b0d03026aad7b8f20b09707c821d0d72923c561b55b4c9154f599fe137585",
       "source_tracked": true,
-      "destination_sha256": "8a2b0d03026aad7b8f20b09707c821d0d72923c561b55b4c9154f599fe137585",
-      "adapted": false
+      "destination_sha256": "fe264454097c38c534ad90e45f140929a982bc69bcbf43885f6e36f60b871bb4",
+      "adapted": true
     },
     {
       "path": "packages/browser_tests/tests/__init__.py",
@@ -980,7 +980,7 @@
       "source_path": "packages/browser_tests/tests/test_matrix.py",
       "source_sha256": "9244ab6248e134e0b63631e98b0bd872b1e06938412b0c41e3ee920fb2f64c5b",
       "source_tracked": true,
-      "destination_sha256": "86932f938bfb226513824156549aa9a1ed40b38c1e5e6c429d9084c8c314dcce",
+      "destination_sha256": "b14a6e02fc69882b967dd47cff9bdad0a4c1a2cf58c1724d6893d331bc3955fd",
       "adapted": true
     },
     {
@@ -989,7 +989,7 @@
       "source_path": "packages/browser_tests/tests/test_report_scorer.py",
       "source_sha256": "df3452cea2535fe79e9fe50539b6045e37362262f693cd487ac2e72eb4364812",
       "source_tracked": true,
-      "destination_sha256": "f1b89e9c5c66d357183b9c43c581021ecefffb01e614643dec64e982f1bc1134",
+      "destination_sha256": "24df866a5cfc7227043ce365125066b44e8ab1c59749e1658ff73380a1f8cd04",
       "adapted": true
     },
     {
@@ -1142,8 +1142,8 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/toast.py",
       "source_sha256": "8e6bfd0c7f5caf0df69c1c1af18176e85b8b3178e82292f7aa125b1e62680034",
       "source_tracked": true,
-      "destination_sha256": "8e6bfd0c7f5caf0df69c1c1af18176e85b8b3178e82292f7aa125b1e62680034",
-      "adapted": false
+      "destination_sha256": "006497d6fed79a30b09c7de1e7ac40a6006614e648b0cf3d4a610970606a05eb",
+      "adapted": true
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/modal.py",
@@ -1160,8 +1160,8 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/record_form.py",
       "source_sha256": "4226897103d24165a4f740baeed177513d0c672c8eac0f40995a41bb3e9cf1f8",
       "source_tracked": true,
-      "destination_sha256": "4226897103d24165a4f740baeed177513d0c672c8eac0f40995a41bb3e9cf1f8",
-      "adapted": false
+      "destination_sha256": "b087533dca8298cb0fd6cf523ebcb596ee3d74f4674f24588e837834f11649f3",
+      "adapted": true
     },
     {
       "path": "packages/meeting_processor/tests/test_meeting_processor.py",
@@ -1456,7 +1456,7 @@
     {
       "path": "packages/browser_tests/jsc_browser_tests/diagnostics.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "4856bf3eaad9a751a4722cb0ad47dbb27a4f21b78e4d8df048cad2d834a781ee"
+      "destination_sha256": "527b6a703c96d40adedb0b965203655df82bc1c7dcc0075456fef100b75a5269"
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/provisioning/fixtures.py",

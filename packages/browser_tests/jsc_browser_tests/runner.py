@@ -40,6 +40,11 @@ class FlowResult:
     duration_seconds: float = 0.0
     side_effects: dict = field(default_factory=dict)
     error: str | None = None
+    # Which cell of the matrix this is, set by the suite: a flow can run several
+    # variations for the same profile, and each keeps its own evidence folder.
+    variation: str = ""
+    cell_id: str = ""
+    artifact_dir: str = ""
 
 
 @dataclass

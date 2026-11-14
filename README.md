@@ -176,6 +176,7 @@ removing the flag resumes admission. The workflow updater remains available. See
 | Platform knowledge | Five [skills](docs/skills.md): architecture, Code Analyzer and SOQL review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
 | Deploy, data operations and scoped recovery | `torque deploy`, `torque data`, `torque org`, `torque recover` |
 | QA, debug logs, browser flows, lessons and probes | `torque qa`, `logs`, `browser`, `lesson`, `probes`; coverage and limits depend on the configured adapter |
+| Sign a browser in without a password | `torque browser login` signs a browser tab (or a scripted browser) in through the Salesforce front door with the CLI's existing authorization; the sign-in address never reaches the session. Offline tests only so far: see [browser sign-in](docs/browser-sign-in.md) |
 | Meeting preparation and prompt contracts | Optional `torque meeting` and `ai-regression`; live model-provider behavior remains experimental |
 
 ## Optional workspace controls

@@ -894,6 +894,25 @@ def dispatch_parity(target_org: str, change_description: str) -> DispatchResult:
     return DispatchResult("Parity", "PASS" if proc.returncode == 0 else "FAIL", "Configured parity adapter completed; scope is defined by that adapter.", duration_seconds=time.monotonic()-started, invocation_command=" ".join(cmd), raw_output=proc.stdout[-1500:])
 
 
+# The client scope every `torque browser` command takes, as the recipes write it.
+SCOPE_WORDS = "--workspace <workspace> --client <client>"
+
+
+def host_tab_steps(target_org: str, change_description: str) -> str:
+    """How an agent walks a change in the host's browser tab, whatever the host and its
+    browser tool are. The tab is signed in through `torque browser login`: no password,
+    and the Salesforce sign-in address never reaches the session."""
+    return (
+        "For a journey without a flow, drive the host's browser tab turn by turn:\n"
+        f"  1. Run `torque browser login --target-org {target_org} {SCOPE_WORDS}`; it prints a local "
+        "address and waits\n"
+        "  2. Navigate the tab to that address with the host's browser tool (do not fetch it), wait for the "
+        "org to load and confirm the signed-in user\n"
+        f"  3. Walk through: {change_description[:200]}\n"
+        "  4. Take screenshots at key steps; read back side effects with a query."
+    )
+
+
 def _discover_available_flows(browser_tests_dir, library_dir) -> list[str]:
     """Authoritative flow-name discovery for the browser-test library (A3).
 
@@ -1000,9 +1019,8 @@ def dispatch_funct_pl(target_org: str, change_description: str) -> DispatchResul
             detail=(
                 f"No unique library flow matched description "
                 f"(matched={matched!r}). Available: {available_flows}.\n"
-                f"To run: PYTHONPATH=packages/browser_tests python3 -m "
-                f"jsc_browser_tests.cli browser <flow> --target-org {target_org}\n"
-                f"Or use Chrome DevTools MCP turn-by-turn for ad-hoc."
+                f"To run a flow: torque browser browser <flow> --target-org {target_org} {SCOPE_WORDS}\n"
+                + host_tab_steps(target_org, change_description)
             ),
             duration_seconds=time.monotonic() - t0,
             invocation_command="(manual)",
@@ -1043,17 +1061,12 @@ def dispatch_funct_pl(target_org: str, change_description: str) -> DispatchResul
 
 
 def dispatch_funct_mcp(target_org: str, change_description: str) -> DispatchResult:
-    """Funct-MCP surface: operator/Claude drives via mcp__plugin_chrome-devtools-mcp_*."""
+    """Funct-MCP surface: the agent drives the host's browser tab turn by turn, with
+    whatever browser tool the host provides. The steps name no host and no tool family."""
     return DispatchResult(
         surface="Funct-MCP", status="MANUAL_REQUIRED",
-        detail=(
-            "Drive via Chrome DevTools MCP turn-by-turn. Per feedback_browser_testing_tool.md:\n"
-            f"  1. mcp__plugin_chrome-devtools-mcp_chrome-devtools__list_pages\n"
-            f"  2. mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page → {target_org} login URL\n"
-            f"  3. Walk through: {change_description[:200]}\n"
-            f"  4. Take screenshots at key steps; verify side effects via SOQL."
-        ),
-        invocation_command="(Claude turn-by-turn via DevTools MCP)",
+        detail=host_tab_steps(target_org, change_description),
+        invocation_command="(agent-driven host browser tab; sign-in: torque browser login)",
     )
 
 
@@ -1072,9 +1085,9 @@ def dispatch_multi_prof(target_org: str, change_description: str) -> DispatchRes
             detail=(
                 "packages/browser_tests/ not found. Manual checklist:\n"
                 f"  1. Verify test-users.json seed exists: <selected-client>/config/test-users.json\n"
-                f"  2. As Standard User: walk feature, verify FLS\n"
-                f"  3. As Platform User: same walk\n"
-                f"  4. Logout As back to admin"
+                f"  2. As each intended user: walk the feature, verify field and record access\n"
+                f"  3. Confirm the signed-in user in the page before each walk; an unconfirmed user is not coverage\n"
+                f"  4. To change user, sign in again; do not click \"Log out as\" (it can end the whole session)"
             ),
             invocation_command="(manual)",
         )
@@ -1088,8 +1101,11 @@ def dispatch_multi_prof(target_org: str, change_description: str) -> DispatchRes
             detail=(
                 f"No unique library flow matched (matched={matched!r}). "
                 f"Available: {available_flows}.\n"
-                f"To run: PYTHONPATH=packages/browser_tests python3 -m "
-                f"jsc_browser_tests.cli multiprofile <flow> --target-org {target_org}"
+                f"To run a flow as every user in the test-user seed: torque browser multiprofile <flow> "
+                f"--target-org {target_org} {SCOPE_WORDS}\n"
+                f"For one user in the host's browser tab: torque browser login --target-org {target_org} "
+                f"--as-alias <alias authorized as that user> {SCOPE_WORDS} (or --as-user <username> for Log in as); "
+                "confirm the signed-in user in the page before the walk."
             ),
             duration_seconds=time.monotonic() - t0,
             invocation_command="(manual)",
@@ -1561,6 +1577,8 @@ def _vision_manifest_inventory(target_org: str):
             raise ValueError("Browser manifest mixes target orgs")
         flow = cell.get("flow", cell.get("flow_name"))
         profile = cell.get("profile")
+        # A flow can run several variations for one profile; each is its own cell.
+        variation = cell.get("variation") if isinstance(cell.get("variation"), str) else ""
         steps = cell.get("steps", [])
         if not isinstance(steps, list):
             raise ValueError("Browser manifest contains invalid steps")
@@ -1585,13 +1603,16 @@ def _vision_manifest_inventory(target_org: str):
                     or not resolved.is_relative_to(qa_base)
                     or not resolved.is_file() or resolved.suffix.lower() != ".png"):
                 raise ValueError("Browser screenshot is missing or outside its selected run")
-            context = (flow, profile, step_name)
+            context = (flow, profile, step_name, variation)
             if resolved in seen:
                 if seen[resolved] != context:
-                    raise ValueError("Browser screenshot has conflicting manifest flow/profile/step context")
+                    # One file claimed by two cells is one cell's evidence overwritten by
+                    # the other's: report it, do not review it as either.
+                    raise ValueError("Browser screenshot has conflicting manifest flow/variation/profile/step "
+                                     "context: the same file is listed for two cells")
                 continue
             seen[resolved] = context
-            screenshots.append({"path": str(resolved), "flow": flow,
+            screenshots.append({"path": str(resolved), "flow": flow, "variation": variation,
                                 "profile": profile, "step_name": step_name})
     metadata = {
         "target_org": target_org,
@@ -1602,6 +1623,7 @@ def _vision_manifest_inventory(target_org: str):
         "screenshot_count": len(screenshots),
         "screenshots": screenshots,
         "browser_cells": [{"flow": cell.get("flow", cell.get("flow_name")),
+                           "variation": cell.get("variation"),
                            "profile": cell.get("profile"),
                            "status": cell.get("status", cell.get("overall_status"))}
                           for cell in cells],

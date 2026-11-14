@@ -257,7 +257,9 @@ def _is_production_alias(alias: str) -> bool:
 
 
 def _get_org_id_18(target_org: str) -> str | None:
-    """Best-effort org_id_18 resolution via sf CLI."""
+    """Best-effort org_id_18 resolution via sf CLI, through the Organization query.
+    It prints no credential; the CLI's org display command is not used because
+    Salesforce CLI releases before 2.136.8 print the access token there."""
     import json
     import subprocess
     try:  # the shared launcher finds sf where Windows installs it as a batch file
@@ -266,15 +268,17 @@ def _get_org_id_18(target_org: str) -> str | None:
         run_tool = subprocess.run
     try:
         proc = run_tool(
-            ["sf", "org", "display", "--target-org", target_org, "--json"],
-            capture_output=True, text=True, timeout=10,
+            ["sf", "data", "query", "--query", "SELECT Id FROM Organization",
+             "--target-org", target_org, "--json"],
+            capture_output=True, text=True, timeout=30,
         )
         if proc.returncode != 0:
             return None
         data = json.loads(proc.stdout)
-        org_id = data.get("result", {}).get("id", "")
-        return org_id if len(org_id) == 18 else None
-    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+        records = (data.get("result") or {}).get("records") or []
+        org_id = records[0].get("Id", "") if records and isinstance(records[0], dict) else ""
+        return org_id if isinstance(org_id, str) and len(org_id) == 18 and org_id.startswith("00D") else None
+    except (subprocess.TimeoutExpired, OSError, ValueError, AttributeError):
         return None
 
 
