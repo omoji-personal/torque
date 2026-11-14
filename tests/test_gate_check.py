@@ -304,3 +304,62 @@ def test_the_allowed_forms_run_and_leave_clients_alone(root, monkeypatch, capsys
     assert cli.main(["check", "metadata", "force-app", "--analyzer", "off", "--json"]) == 0
     assert '"command": "torque check metadata"' in capsys.readouterr().out
     assert sorted(p.relative_to(root).as_posix() for p in (root / "clients").rglob("*")) == before
+
+
+# Connected mode reads torque check as local work (connected_routes), but the folders it
+# reads must not reach another client's folder or an initiative, as for sf code-analyzer.
+def _connected(tmp_path, monkeypatch):
+    from torque import consent
+    from torque.presence import Presence
+    yes = lambda: Presence(True, "")
+    for name in ("TORQUE_WORKSPACE", "JSC_ROOT", "TORQUE_CLIENT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    base = ws.init_workspace(tmp_path / "firm", "Firm")
+    ws.add_client(base, "Acme")
+    ws.add_client(base, "Beta")
+    base = Path(os.path.realpath(base))
+    for slug in ("acme", "beta"):
+        (base / "clients" / slug / "project" / "force-app").mkdir(parents=True)
+        (base / "clients" / slug / "project" / "sfdx-project.json").write_text("{}", encoding="utf-8")
+        (base / "clients" / slug / "project" / "result.json").write_text("{}", encoding="utf-8")
+    ws.set_ai_access(base, "connected", approval="required", presence=yes)
+    letter = tmp_path / "a.pdf"
+    letter.write_bytes(b"agreement")
+    orgs = {"acme-sbx": type("O", (), {"org_id_18": "00D000000000003AAA", "detected_org_type": "sandbox",
+                                       "is_production": False, "instance_url": "https://acme.example.invalid"})()}
+    consent.record_consent(base, "Acme", "2026-09-30", letter, ["metadata", "records"], ["acme-sbx"], ["Contact"],
+                           presence=yes, resolve=orgs.get)
+    consent.sign_off(base, "Acme", "Reviewer", presence=yes)
+    return base
+
+
+def _connected_action(base, command, cwd):
+    from torque import gate_connected as gc
+    return gc.decide_connected("Bash", {"command": command}, base, cwd, env={"TORQUE_CLIENT": "acme"},
+                               permission_mode="default", session_id="s", tool_use_id="t").action
+
+
+def test_connected_check_reads_only_the_bound_clients_folders(tmp_path, monkeypatch):
+    base = _connected(tmp_path, monkeypatch)
+    own = base / "clients" / "acme" / "project"
+    for command in ("torque check metadata force-app --changed-from result.json",
+                    "torque check result result.json",
+                    "torque check metadata force-app --analyzer off && echo done",
+                    "torque check deployed --target-org acme-sbx --changed-from result.json --source-dir force-app"):
+        assert _connected_action(base, command, own) == "allow", command
+    for command in ("torque check metadata ../../beta/project/force-app --analyzer off",
+                    "torque check result ../../beta/project/result.json",
+                    "torque check metadata force-app --baseline ../../beta/project/force-app",
+                    "torque check metadata ../../..",
+                    "python -m torque check metadata ../../beta/project --analyzer off",
+                    "torque check deployed --target-org acme-sbx --changed-from result.json --source-dir ../../beta"):
+        assert _connected_action(base, command, own) == "deny", command
+    # From the workspace root: the default path, and the default source folder, hold every client.
+    assert _connected_action(base, "torque check metadata --analyzer off", base) == "deny"
+    assert _connected_action(base, "torque check deployed --target-org acme-sbx --changed-from "
+                                   "clients/acme/project/result.json", base) == "deny"
+    assert _connected_action(base, "torque check deployed --help", base) == "allow"
+    assert _connected_action(base, "torque check metadata force-app --analyzer off",
+                             base / "clients" / "beta" / "project") == "deny"

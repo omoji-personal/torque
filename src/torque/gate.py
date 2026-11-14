@@ -2215,6 +2215,64 @@ def _check_reason(args: list[str], clients: Path | None, workspace: Path | None,
     return ""
 
 
+CHECK_CONNECTED_REASON = ("torque check would read a folder that is kept from this session (another client's "
+                          "folder or an internal initiative): a path, the baseline, the result, the source folder, "
+                          "the Salesforce project folder or Code Analyzer's folder reaches it." + NARROW_PATH_HINT)
+_CHECK_VALUE_WORDS = {"--changed-from", "--baseline", "--only", "--ignore", "--analyzer", "--fail-on", "--source-dir",
+                      "--target-org", "--as-permission-set", "--workspace", "--client", "--initiative"}
+
+
+def _check_connected_reason(args: list[str], guarded: Path, cwd: Path, workspace: Path) -> str:
+    """Connected mode reads Torque's own commands itself (connected_routes), but not the
+    folders `torque check` reads: here they must not reach `guarded` (another client's
+    folder or an initiative), as for sf code-analyzer and sf project convert. Options and
+    words the shell builds are connected_routes' to judge; help reads nothing."""
+    action = args[1] if len(args) > 1 else ""
+    words = args[2:]
+    if action not in ("metadata", "result", "deployed") or any(word in ("-h", "--help") for word in words):
+        return ""
+    positionals, values, i = [], {}, 0
+    while i < len(words):
+        word = words[i]
+        i += 1
+        if not word.startswith("-"):
+            positionals.append(word)
+            continue
+        name, attached, value = word.partition("=")
+        if name in _CHECK_VALUE_WORDS and not attached:
+            value, i = (words[i] if i < len(words) else ""), i + 1
+        values.setdefault(name, []).append(value)
+    if action == "deployed":
+        roots = values.get("--source-dir") or ["."]
+    else:
+        roots = positionals or (["."] if action == "metadata" else [])
+    paths = roots + values.get("--changed-from", []) + values.get("--baseline", [])
+    if _is_within(cwd, guarded):
+        return CHECK_CONNECTED_REASON
+    for raw in paths:
+        if raw and (_root_reaches(raw, guarded, cwd, workspace) or _reaches(_check_lexical(cwd, raw), guarded)):
+            return CHECK_CONNECTED_REASON
+    if action != "metadata":
+        return ""
+    lexical = [Path(os.path.abspath(os.path.join(str(cwd), _native_path(raw)))) for raw in roots]
+    analyzer = (values.get("--analyzer") or ["auto"])[-1] != "off"
+    project = _check_project_root(roots[0], cwd)
+    if project is not None and _reaches(_check_lexical(cwd, str(project)), guarded) and (
+            analyzer or not all(path.is_dir() for path in lexical)):
+        return CHECK_CONNECTED_REASON
+    if analyzer:
+        if project is None or not all(_is_within(path, project) for path in lexical):
+            try:
+                shared = os.path.commonpath([str(path if path.is_dir() else path.parent) for path in lexical])
+            except ValueError:
+                return CHECK_CONNECTED_REASON
+            if _reaches(_check_lexical(cwd, shared), guarded):
+                return CHECK_CONNECTED_REASON
+        elif _check_analyzer_config(_check_lexical(cwd, str(project)), guarded):
+            return CHECK_CONNECTED_REASON
+    return ""
+
+
 def _torque_reason(args: list[str], workspace: Path | None = None, cwd: Path | None = None,
                    copy: bool = False, clients: Path | None = None, alone: bool = False) -> str:
     """The torque allowlist, shared by the console script and `python -m torque`. `alone`:
@@ -2340,6 +2398,10 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
             if reason:
                 return reason
         elif _basename(tok) in CONSOLE_SCRIPTS and not org_rules:
+            if CONSOLE_SCRIPTS[_basename(tok)] == "torque" and rest[:1] == ["check"]:
+                reason = _check_connected_reason(rest, clients, cwd, workspace)
+                if reason:
+                    return reason
             continue
         elif _basename(tok) in CONSOLE_SCRIPTS:
             name = _basename(tok)
@@ -2353,6 +2415,10 @@ def _block_command(toks: list[str], clients: Path, claude_dir: Path, workspace: 
         elif PY_LAUNCHER_RE.match(_basename(tok)) and _python_module(rest)[0]:
             module, after = _python_module(rest)
             if not org_rules and (module in TORQUE_MAIN_MODULES or DELEGATE_MODULE_RE.match(module)):
+                reason = (_check_connected_reason(rest[after:], clients, cwd, workspace)
+                          if module in TORQUE_MAIN_MODULES and rest[after:after + 1] == ["check"] else "")
+                if reason:
+                    return reason
                 continue
             args = rest[after:]
             reason = ""

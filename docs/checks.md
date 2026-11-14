@@ -255,4 +255,10 @@ yourself. `--help` passes for every form.
 bound to the client's consent like every other read: it retrieves (a metadata read) and runs `sf data query`
 on FieldPermissions, FlowDefinition, FlowDefinitionView and ValidationRule, which connected mode reads as
 record reads, so the consent must cover record data for that org, as it would for those queries run on
-their own. It never asks for a write approval.
+their own. It never asks for a write approval. Its retrieve goes to a fresh temporary folder outside the
+workspace, removed afterwards; a component it cannot read or compare is reported as such, never as the same.
+
+What the three read on disk is checked as for `sf code-analyzer run`: a path, `--baseline`, `--changed-from`,
+`--source-dir` (default: the current folder), the working folder, the Salesforce project folder and Code
+Analyzer's folder (and its `code-analyzer.yml`) must not reach another client's folder or an initiative.
+From the workspace root, name a path inside the bound client's folder.
