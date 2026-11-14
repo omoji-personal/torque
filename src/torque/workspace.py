@@ -999,13 +999,20 @@ def require_engagement_writable(folder: Path) -> None:
 
 def add_session(workspace: str | Path, client_name: str, summary: str,
                 status: str = "prepared", evidence: str | Path | None = None, *,
-                kind: str = "client") -> dict:
+                kind: str = "client", learned=(), learned_scope: str = "client",
+                learned_from: str = "agent") -> dict:
+    """Append a session record. Each text in `learned` is also saved as a lesson linked
+    to the record (scope: the engagement, or the firm). The record is written first and
+    stands whatever happens to a lesson: the returned entry then names the lessons saved
+    (`lessons`) and those that were not, with the reason (`lesson_problems`)."""
     client, _, config = load_engagement(workspace, client_name, kind)
     require_engagement_writable(client)
     if not summary.strip():
         raise WorkspaceError("session summary must be nonempty")
     if status not in STATUSES:
         raise WorkspaceError(f"unknown session status: {status}")
+    if learned_scope not in ("client", "firm") or learned_from not in ("consultant", "agent"):
+        raise WorkspaceError("a learned lesson's scope is client or firm, and it comes from the consultant or the agent")
     evidence_ref = None
     if evidence is not None:
         path = Path(evidence).expanduser().resolve()
@@ -1036,7 +1043,81 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
     sessions = _inside(client, client / "sessions")
     sessions.mkdir(mode=0o700, exist_ok=True)
     _write_json(_inside(client, sessions / f"{entry_id}.json"), entry, private=True)
+    if learned:
+        try:
+            from jsc_memory import intake
+            saved, problems = intake.learned(_lesson_scopes(client, kind), learned, source=learned_from,
+                                             scope="firm" if learned_scope == "firm" else None, session=entry_id)
+        except Exception as exc:  # The record above is written; a lesson never undoes it.
+            saved, problems = [], [{"learned": 0, "reason": f"lessons are unavailable ({type(exc).__name__})"}]
+        entry = {**entry, "lessons": saved, "lesson_problems": problems}
     return entry
+
+
+def _lesson_scopes(engagement: Path, kind: str):
+    """What the lessons commands may read and write for this engagement: its own
+    lessons, the firm's and the platform's; never another engagement's folder."""
+    from jsc_memory.storage import Scopes
+    return Scopes(workspace=engagement.parent.parent, engagement=engagement, kind=kind)
+
+
+def learned_lines(entry: dict) -> list[str]:
+    """What `session add --learned` did with each lesson, for the terminal."""
+    lines = []
+    for item in entry.get("lessons", []):
+        verb = {"saved": "saved", "duplicate": "already saved", "second-occurrence": "seen again"}[item["status"]]
+        lines.append(f"Lesson {item['id']} {verb} ({item['scope']}, {item['state']}): {item['title']}")
+        inferred = "; ".join(f"{name} {', '.join(values)}" for name, values in item.get("inferred", {}).items())
+        if inferred:
+            lines.append(f"  applies, inferred from the text: {inferred}. Correct with: torque lesson edit "
+                         f"{item['id']} --set applies.types=...")
+        if item["status"] == "saved" and item["state"] == "candidate":
+            lines.append("  A candidate waits for review and is not shown at the point of use until then: "
+                         "torque lesson review")
+        lines += [f"  {note}" for note in item.get("notes", [])]
+    lines += [f"Lesson {problem['learned']} not saved. {problem['reason']}" for problem in entry.get("lesson_problems", [])]
+    return lines
+
+
+def lessons_context(workspace: str | Path, engagement: Path, kind: str = "client", *,
+                    shown_via: str | None = None) -> dict:
+    """The lessons block of context and handoff: the engagement's active lessons that
+    matter most, how many the firm and the platform hold, and the candidates waiting for
+    review. With `shown_via`, the lessons listed are recorded as shown. A problem with
+    the lessons is reported in the block and never stops the caller."""
+    scope = ["--workspace", str(workspace), "--" + kind, engagement.name]
+    commands = {"query": command_text(["torque", "lesson", "for", "TOPIC", *scope]),
+                "review": command_text(["torque", "lesson", "review", *scope])}
+    try:
+        from jsc_memory import recall
+        paused = (engagement.parent.parent / MAINTENANCE_FLAG).exists()
+        section = recall.context_section(_lesson_scopes(engagement, kind), via=None if paused else shown_via)
+    except Exception as exc:  # Lessons are an aid: context and handoff work without them.
+        section = {"shown": [], "lines": [], "problem": f"lessons could not be read ({type(exc).__name__})"}
+    return {**section, "commands": commands}
+
+
+def lesson_lines(section: dict, kind: str = "client") -> list[str]:
+    """The lessons block as text, for `torque context` and `torque handoff`."""
+    if section.get("problem"):
+        return [f"Lessons: {section['problem']}. Check with torque doctor."]
+    counts = f"firm {section['firm_active']}, platform {section['platform_active']}"
+    if section["lines"]:
+        lines = [f"Lessons from earlier work: {len(section['shown'])} of {section['engagement_active']} for this "
+                 f"{kind} ({counts})", *section["lines"], section["note"]]
+    else:
+        lines = [f"Lessons: none active for this {kind} yet ({counts})."]
+    lines.append(f"For the ones that fit the task: {section['commands']['query']} "
+                 "(or --task, --type, --command, --path)")
+    if section["candidates_waiting"]:
+        lines.append(f"{section['candidates_waiting']} candidate lesson(s) wait for review: "
+                     + section["commands"]["review"])
+    unreadable = section.get("unreadable") or []
+    if unreadable:
+        lines.append(f"Skipped {len(unreadable)} lesson file(s) that could not be read: "
+                     + "; ".join(f"{problem['path']} ({problem['reason']})" for problem in unreadable[:3])
+                     + (" ..." if len(unreadable) > 3 else "") + ". Fix or remove them.")
+    return lines
 
 
 def _file_hash(path: Path) -> str:
@@ -1325,15 +1406,18 @@ def _context_notes(client: Path) -> dict[str, str]:
     return notes
 
 
-def get_context(workspace: str | Path, client_name: str, *, kind: str = "client") -> dict:
-    """The engagement's notes, changes and recent sessions. A stray or damaged record is
-    skipped and named in record_problems instead of hiding the rest."""
+def get_context(workspace: str | Path, client_name: str, *, kind: str = "client",
+                shown_via: str | None = None) -> dict:
+    """The engagement's notes, lessons, changes and recent sessions. A stray or damaged
+    record is skipped and named in record_problems instead of hiding the rest. With
+    `shown_via` (the command printing the context), the lessons listed count as shown."""
     client, firm, config = load_engagement(workspace, client_name, kind)
     notes = _context_notes(client)
     problems: list[dict] = []
     changes = _change_context(workspace, client_name, client, kind, problems)
     sessions = list_sessions(workspace, client_name, kind=kind, problems=problems)
     return {"workspace": firm, "client": config, "client_root": str(client),
+            "lessons": lessons_context(workspace, client, kind, shown_via=shown_via),
             "changes": changes, "notes": notes, "sessions": sessions, "record_problems": problems,
             "evidence_note": "Journal statuses are user-reported, not independent verification."}
 
@@ -1356,6 +1440,8 @@ def render_handoff(workspace: str | Path, client_name: str, *, kind: str = "clie
              "verify execution or outcomes.", ""]
     if problems:
         lines += ["## Records not shown", "", *record_problem_lines(problems), ""]
+    # The commands name the workspace as `.`: a handoff does not carry the author's folder names.
+    lines += ["## Lessons", "", "```text", *lesson_lines(lessons_context(".", client_root, kind), kind), "```", ""]
     if notes:
         lines += ["## Working context", ""]
         for title, contents in notes.items():

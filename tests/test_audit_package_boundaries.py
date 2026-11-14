@@ -217,12 +217,25 @@ def test_direct_revert_wrapper_pauses_before_snapshots_or_org_writes(root, monke
 
 def test_lesson_capture_pauses_without_writing_then_resumes(root, capsys):
     args = ["lesson", "--workspace", str(root), "--client", "Alpha", "capture", "Synthetic lesson"]
-    state = root / "clients" / "alpha" / "state"
+    client = root / "clients" / "alpha"
     (root / ws.MAINTENANCE_FLAG).write_text("migration", encoding="utf-8")
     assert cli.main(args) == 2
     assert "maintenance" in capsys.readouterr().err
-    assert not state.exists()
+    assert not (client / "lessons").exists() and not (client / ".torque").exists()
     (root / ws.MAINTENANCE_FLAG).unlink()
     assert cli.main(args) == 0
-    assert any(json.loads(p.read_text()).get("full_text") == "Synthetic lesson"
-               for p in state.rglob("*.json"))
+    assert any("Synthetic lesson" in p.read_text(encoding="utf-8") for p in (client / "lessons").glob("L-*.md"))
+
+
+def test_context_in_maintenance_shows_lessons_and_records_nothing(root, capsys):
+    assert cli.main(["lesson", "--workspace", str(root), "--client", "Alpha", "add", "Synthetic lesson",
+                     "--from", "consultant"]) == 0
+    log = root / "clients" / "alpha" / ".torque" / "lessons" / "events.jsonl"
+    assert not log.exists()
+    (root / ws.MAINTENANCE_FLAG).write_text("migration", encoding="utf-8")
+    capsys.readouterr()
+    assert cli.main(["context", "--workspace", str(root), "--client", "Alpha"]) == 0
+    assert "Synthetic lesson" in capsys.readouterr().out and not log.exists()
+    (root / ws.MAINTENANCE_FLAG).unlink()
+    assert cli.main(["context", "--workspace", str(root), "--client", "Alpha"]) == 0
+    assert '"event": "shown"' in log.read_text(encoding="utf-8")
