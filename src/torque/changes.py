@@ -240,6 +240,50 @@ def add_note(workspace: str | Path, client: str, identifier: str,
     return _append(root, record, {"kind": kind, "summary": text, "basis": "operator_reported"})
 
 
+_CRITERION_ID = re.compile(r"AC[1-9][0-9]{0,3}\Z")
+
+
+def criteria_of(record: dict, events: list[dict]) -> list[dict]:
+    """Every criterion of a change in order: the ones it was created with, then each
+    added later (`criterion_added`), each with `retired` and, when retired, the reason.
+    IDs are stable: a criterion keeps its ID, and a retired one is never reused."""
+    criteria = [{**c, "retired": False} for c in record["criteria"]]
+    for event in events:
+        if event["kind"] == "criterion_added":
+            criteria.append({"id": event["criterion"], "text": event["summary"], "retired": False,
+                             "added": event["id"]})
+        elif event["kind"] == "criterion_retired":
+            for criterion in criteria:
+                if criterion["id"] == event["criterion"]:
+                    criterion.update(retired=True, retired_reason=event["summary"], retired_event=event["id"])
+    return criteria
+
+
+def add_criterion(workspace: str | Path, client: str, identifier: str, text: str, *,
+                  engagement_kind: str = "client") -> dict:
+    """Add an acceptance criterion to an existing change; it gets the next AC number."""
+    text = _text(text, "acceptance criterion")
+    root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
+    known = criteria_of(record, _events(root, record))
+    return _append(root, record, {"kind": "criterion_added", "criterion": f"AC{len(known) + 1}", "summary": text,
+                                  "basis": "operator_reported"})
+
+
+def retire_criterion(workspace: str | Path, client: str, identifier: str, criterion: str, reason: str, *,
+                     engagement_kind: str = "client") -> dict:
+    """Retire a criterion; its ID and its earlier checks stay in the history."""
+    reason = _text(reason, "reason")
+    root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
+    known = {c["id"]: c for c in criteria_of(record, _events(root, record))}
+    if criterion not in known:
+        raise ws.WorkspaceError(f"no criterion {criterion} in this change; its criteria: "
+                                + (", ".join(known) or "none yet"))
+    if known[criterion]["retired"]:
+        raise ws.WorkspaceError(f"{criterion} is already retired")
+    return _append(root, record, {"kind": "criterion_retired", "criterion": criterion, "summary": reason,
+                                  "basis": "operator_reported"})
+
+
 def add_check(workspace: str | Path, client: str, identifier: str, criterion: str,
               result: str, summary: str, evidence: str | Path | None = None, *,
               engagement_kind: str = "client") -> dict:
@@ -247,8 +291,12 @@ def add_check(workspace: str | Path, client: str, identifier: str, criterion: st
         raise ws.WorkspaceError(f"check result must be one of {', '.join(_RESULTS)}")
     summary = _text(summary, "check summary")
     root, record = load_change(workspace, client, identifier, engagement_kind=engagement_kind)
-    if criterion not in {c["id"] for c in record["criteria"]}:
-        raise ws.WorkspaceError("criterion must identify an acceptance criterion in this change")
+    known = {c["id"]: c for c in criteria_of(record, _events(root, record))}
+    if criterion not in known or known[criterion]["retired"]:
+        active = [c for c, item in known.items() if not item["retired"]]
+        raise ws.WorkspaceError(f"criterion must identify an acceptance criterion in this change that is not "
+                                f"retired; its active criteria: {', '.join(active) or 'none yet'} (add one with "
+                                f"torque change criterion add {identifier} --text TEXT)")
     captured = _capture_file(root, evidence) if evidence is not None else None
     return _append(root, record, {"kind": "check", "criterion": criterion, "result": result,
                                  "summary": summary, "basis": "operator_reported", "evidence": captured})
@@ -303,7 +351,15 @@ def _events(root: Path, record: dict, problems: list | None = None) -> list[dict
         return events
     for path in sorted(directory.glob("*.json")):
         try:
-            events.append(_event(root, record, path))
+            event = _event(root, record, path)
+            # A check or a criterion event names a criterion the change has by then.
+            known = {c["id"] for c in criteria_of(record, events)}
+            if event["kind"] == "criterion_added":
+                if event["criterion"] != f"AC{len(known) + 1}":
+                    raise ws.WorkspaceError(f"invalid criterion event (not the next ID): {path.name}")
+            elif event["kind"] in ("check", "criterion_retired") and event["criterion"] not in known:
+                raise ws.WorkspaceError(f"invalid reported acceptance check: {path.name}")
+            events.append(event)
         except ws.BoundaryError:
             raise
         except ws.WorkspaceError as exc:
@@ -334,12 +390,16 @@ def _event(root: Path, record: dict, path: Path) -> dict:
             or event.get(_owner_key(record)) != record[_owner_key(record)] or not isinstance(event.get("summary"), str)
             or not event["summary"].strip() or not _timestamp(event.get("created_at"))
             or event.get("kind") not in ("note", "decision", "next_step", "check", "metadata_observation",
-                                         *_TORQUE_BASIS)):
+                                         "criterion_added", "criterion_retired", *_TORQUE_BASIS)):
         raise ws.WorkspaceError(f"invalid change event: {path.name}")
+    if event["kind"] in ("criterion_added", "criterion_retired"):
+        if not isinstance(event.get("criterion"), str) or not _CRITERION_ID.fullmatch(event["criterion"]):
+            raise ws.WorkspaceError(f"invalid criterion event: {path.name}")
     if event["kind"] == "check":
+        # A check names a criterion the change was created with or one added later (_events checks that).
         if (event.get("result") not in _RESULTS or event.get("basis") != "operator_reported"
                 or not isinstance(event.get("criterion"), str)
-                or event["criterion"] not in {c["id"] for c in record["criteria"]}):
+                or not _CRITERION_ID.fullmatch(event["criterion"])):
             raise ws.WorkspaceError(f"invalid reported acceptance check: {path.name}")
     if event["kind"] == "metadata_observation":
         if (event.get("basis") != "salesforce_metadata_api" or event.get("business_acceptance_proven") is not False
@@ -445,17 +505,18 @@ def get_change(workspace: str | Path, client: str, identifier: str, *, engagemen
             continue
         events.append(event)
     criteria = []
-    for criterion in record["criteria"]:
+    for criterion in criteria_of(record, events):
         checks = [e for e in events if e["kind"] == "check" and e["criterion"] == criterion["id"]]
         latest = checks[-1] if checks else None
         criteria.append({**criterion, "reported_result": latest["result"] if latest else "not_run",
-                         "latest_check": latest["id"] if latest else None,
+                         "latest_check": latest["id"] if latest else None, "checks": len(checks),
                          "evidence_integrity": latest.get("evidence_integrity") if latest else "not_supplied"})
+    active = [c for c in criteria if not c["retired"]]
     return {**record, "change_root": str(root), "events": events, "criteria": criteria,
-            "assessment": {"criteria": len(criteria),
-                           "reported_pass": sum(c["reported_result"] == "pass" for c in criteria),
-                           "reported_fail": sum(c["reported_result"] == "fail" for c in criteria),
-                           "not_yet_reported_pass": [c["id"] for c in criteria if c["reported_result"] != "pass"],
+            "assessment": {"criteria": len(active), "retired_criteria": len(criteria) - len(active),
+                           "reported_pass": sum(c["reported_result"] == "pass" for c in active),
+                           "reported_fail": sum(c["reported_result"] == "fail" for c in active),
+                           "not_yet_reported_pass": [c["id"] for c in active if c["reported_result"] != "pass"],
                            "evidence_problems": sum(e.get(key) in ("missing", "changed", "unavailable")
                                                     for e in events for key in ("evidence_integrity", "manifest_integrity")),
                            "business_acceptance_independently_verified": False},
@@ -472,6 +533,10 @@ def render_change(workspace: str | Path, client: str, identifier: str, *, engage
     if not item["criteria"]:
         lines.append("No acceptance criteria recorded yet.")
     for criterion in item["criteria"]:
+        if criterion["retired"]:
+            lines.append(f"- {criterion['id']}: ~~{criterion['text']}~~ — retired: {criterion['retired_reason']} "
+                         f"({criterion['checks']} earlier check(s) kept below)")
+            continue
         lines.append(f"- {criterion['id']}: {criterion['text']} — **{criterion['reported_result'].replace('_', ' ')}** (reported)")
         if criterion["evidence_integrity"] in ("missing", "changed", "unavailable"):
             lines.append(f"  Evidence: {criterion['evidence_integrity']} since capture.")

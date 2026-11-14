@@ -1038,7 +1038,7 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
                 kind: str = "client", learned=(), learned_scope: str = "client",
                 learned_from: str = "agent", check=None, as_user: str | None = None,
                 org: str | None = None, not_covered: str | None = None, accepted_by: str | None = None,
-                corrects: str | None = None) -> dict:
+                corrects: str | None = None, change: str | None = None) -> dict:
     """Append a session record. Each text in `learned` is also saved as a lesson linked
     to the record (scope: the engagement, or the firm). The record is written first and
     stands whatever happens to a lesson: the returned entry then names the lessons saved
@@ -1079,6 +1079,9 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
                              "the client, by role or name); an agent never accepts work alone")
     if corrects is not None:
         _require_session(client, config, kind, corrects)
+    if change is not None:
+        from .changes import load_change
+        load_change(workspace, client_name, change, engagement_kind=kind)
     references = []
     for item in _evidence_arguments(evidence):
         reference = _evidence_reference(client, item)
@@ -1099,6 +1102,8 @@ def add_session(workspace: str | Path, client_name: str, summary: str,
         entry["accepted_by"] = accepted
     if corrects is not None:
         entry["corrects"] = corrects
+    if change is not None:
+        entry["change"] = change
     sessions = _inside(client, client / "sessions")
     sessions.mkdir(mode=0o700, exist_ok=True)
     _write_json(_inside(client, sessions / f"{entry_id}.json"), entry, private=True)
@@ -1818,7 +1823,7 @@ CONTEXT_BUDGET = 40_000
 def _change_lines(change: dict) -> list[str]:
     lines = [f"Change {change['id']}: {change['title']} — {change['outcome']}"]
     unresolved = [f"{c['id']} ({c['reported_result'].replace('_', ' ')})"
-                  for c in change["criteria"] if c["reported_result"] != "pass"]
+                  for c in change["criteria"] if c["reported_result"] != "pass" and not c.get("retired")]
     lines.append("Acceptance results are operator-reported; independent business acceptance is not established.")
     if unresolved:
         lines.append("Not yet reported pass: " + ", ".join(unresolved))

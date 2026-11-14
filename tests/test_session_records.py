@@ -277,6 +277,49 @@ def test_after_exit_4_the_documented_retry_does_not_record_the_session_twice(fir
     assert data["recorded"] is True and data["do_not_add_again"] is True and data["id"] in data["lesson_retry_command"]
 
 
+# ---- step 5: change records that can grow
+
+def test_a_criterion_added_later_can_be_checked_and_a_retired_one_keeps_its_checks(firm):
+    scope = ["--workspace", firm, "--client", "alpha"]
+    created = json.loads(invoke("change", "create", *scope, "--title", "Draft", "--outcome", "Staff save a preference",
+                                "--json")[1])
+    cid = created["id"]
+    assert invoke("change", "check", cid, *scope, "--criterion", "AC1", "--result", "pass", "--summary", "x")[0] == 2
+    added = json.loads(invoke("change", "criterion", "add", cid, *scope, "--text", "Staff can save it", "--json")[1])
+    assert added["criterion"] == "AC1"
+    assert invoke("change", "criterion", "add", cid, *scope, "--text", "Others cannot edit it")[1].startswith(
+        f"Added AC2 in {cid}")
+    assert invoke("change", "check", cid, *scope, "--criterion", "AC1", "--result", "pass", "--summary", "ok")[0] == 0
+    assert invoke("change", "check", cid, *scope, "--criterion", "AC2", "--result", "fail", "--summary", "no")[0] == 0
+    assert invoke("change", "criterion", "retire", cid, "AC2", *scope, "--reason", "out of scope")[0] == 0
+    code, _, err = invoke("change", "check", cid, *scope, "--criterion", "AC2", "--result", "pass", "--summary", "x")
+    assert code == 2 and "active criteria: AC1" in err
+    shown = json.loads(invoke("change", "show", cid, *scope, "--json")[1])
+    by_id = {c["id"]: c for c in shown["criteria"]}
+    assert by_id["AC1"]["reported_result"] == "pass" and by_id["AC2"]["retired"] is True
+    assert by_id["AC2"]["checks"] == 1 and shown["assessment"]["not_yet_reported_pass"] == []
+    assert sum(e["kind"] == "check" for e in shown["events"]) == 2
+    third = json.loads(invoke("change", "criterion", "add", cid, *scope, "--text", "Third", "--json")[1])
+    assert third["criterion"] == "AC3"                         # a retired ID is never reused
+    assert "retired: out of scope" in invoke("change", "show", cid, *scope)[1]
+
+
+def test_a_session_linked_to_a_change_appears_in_the_change_handoff_and_others_do_not(firm):
+    scope = ["--workspace", firm, "--client", "alpha"]
+    cid = json.loads(invoke("change", "create", *scope, "--title", "T", "--outcome", "O", "--json")[1])["id"]
+    linked = json.loads(add(firm, "--summary", "Built the field", "--change", cid, "--check", "scripted", "--json")[1])
+    add(firm, "--summary", "Unrelated work")
+    assert linked["change"] == cid
+    text = invoke("change", "handoff", cid, *scope)[1]
+    assert "## Linked session records" in text and "Built the field" in text and "Unrelated work" not in text
+    data = json.loads(invoke("change", "handoff", cid, *scope, "--json")[1])
+    assert [s["id"] for s in data["linked_sessions"]] == [linked["id"]]
+    focused = invoke("handoff", *scope, "--change", cid)[1]
+    assert "Built the field" in focused and "Unrelated work" not in focused
+    code, out, _ = add(firm, "--summary", "x", "--change", "chg-000000000000", "--json")
+    assert code == 2 and "no change" in json.loads(out)["message"] and len(sessions(firm)) == 2
+
+
 # ---- step 6: errors an agent can act on
 
 def error_object(out):

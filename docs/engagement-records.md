@@ -102,6 +102,16 @@ scope or supply `--manifest package.xml`. It retains the technical observation,
 requested scope and private raw report. A validation job is distinguished from a
 deployment. Metadata success never marks the business criteria passed.
 
+A change can grow. `torque change criterion add CHANGE_ID --text TEXT` adds a criterion
+with the next ID (`AC3` after `AC2`), so a draft created without criteria can mature;
+`torque change criterion retire CHANGE_ID AC2 --reason TEXT` retires one. IDs are stable:
+a retired criterion keeps its ID (never reused) and its earlier checks, is no longer counted
+as open, and cannot be checked again. `torque session add ... --change CHANGE_ID` links a
+session record to a change (the change must exist in the same engagement); `change show`
+and `change handoff` list the linked records (`linked_sessions` in JSON), and
+`torque handoff --change CHANGE_ID` keeps only that change and its linked records. A session
+without `--change` works as before.
+
 A failed check remains in history when a later check passes. The criterion table
 shows the latest reported check; the evidence history retains both. Decisions and
 next steps are append-only notes, so supersede stale instructions with a clear new

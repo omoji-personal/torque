@@ -287,6 +287,8 @@ def build_parser() -> argparse.ArgumentParser:
     basis.add_argument("--corrects", metavar="SESSION_ID",
                        help="an earlier record of this client or initiative that this one corrects; the earlier "
                             "file is not changed, and context and handoff show it as corrected")
+    entry.add_argument("--change", metavar="ID",
+                       help="link the record to a change record (torque change list); change handoff lists it")
     entry.add_argument("--json", action="store_true")
     for action in ("list", "show"):
         p = sessions.add_parser(action)
@@ -348,6 +350,19 @@ def build_parser() -> argparse.ArgumentParser:
                                              "(keeping FILE.bak), and leaves an edited one as it is (writing FILE.new)")
             cp.add_argument("--force", action="store_true",
                             help="with --output: replace the file even when it was edited since Torque wrote it")
+    criterion = actions.add_parser("criterion", help="add or retire an acceptance criterion of an existing change")
+    criterion_actions = criterion.add_subparsers(dest="criterion_action", required=True)
+    c_add = criterion_actions.add_parser("add", help="add a criterion; it gets the next ID (AC3, ...)")
+    _client_args(c_add)
+    c_add.add_argument("change_id")
+    c_add.add_argument("--text", required=True, help="the criterion, as the client would check it")
+    c_add.add_argument("--json", action="store_true")
+    c_retire = criterion_actions.add_parser("retire", help="retire a criterion; its ID and earlier checks are kept")
+    _client_args(c_retire)
+    c_retire.add_argument("change_id")
+    c_retire.add_argument("criterion_id", metavar="CRITERION", help="AC1, AC2, ...")
+    c_retire.add_argument("--reason", required=True, help="why it no longer applies")
+    c_retire.add_argument("--json", action="store_true")
     workflows = sub.add_parser("workflows", help="discover bundled conversational and native workflows")
     workflows.add_argument("action", nargs="?", choices=("list", "show"), default="list")
     workflows.add_argument("name", nargs="?")
@@ -618,7 +633,8 @@ def _workflows(args: argparse.Namespace) -> int:
 SESSION_FIELDS = {"summary": ("text", None), "status": ("text", "prepared"), "evidence": ("list", []),
                   "learned": ("list", []), "learned_scope": ("text", "client"), "learned_from": ("text", "agent"),
                   "check": ("list", None), "as_user": ("text", None), "in_org": ("text", None),
-                  "not_covered": ("text", None), "accepted_by": ("text", None), "corrects": ("text", None)}
+                  "not_covered": ("text", None), "accepted_by": ("text", None), "corrects": ("text", None),
+                  "change": ("text", None)}
 INPUT_LIMIT = 1_000_000
 
 
@@ -696,11 +712,32 @@ def _change(args: argparse.Namespace) -> int:
                                        engagement_kind=kind)
     elif action == "list":
         result = changes.list_changes(*common, engagement_kind=kind, problems=problems)
+    elif action == "criterion":
+        if args.criterion_action == "add":
+            result = changes.add_criterion(*common, args.change_id, args.text, engagement_kind=kind)
+        else:
+            result = changes.retire_criterion(*common, args.change_id, args.criterion_id, args.reason,
+                                              engagement_kind=kind)
+        if args.json:
+            _print_json(result)
+        else:
+            verb = "Added" if args.criterion_action == "add" else "Retired"
+            print(f"{verb} {result['criterion']} in {args.change_id}: {result['summary']}")
+        return 0
     elif action in ("show", "handoff"):
         result = changes.get_change(*common, args.change_id, engagement_kind=kind, problems=problems)
+        _, records = ws.read_sessions(*common, kind=kind, problems=problems)
+        linked = [{key: entry[key] for key in ("id", "created_at", "status", "summary")}
+                  | ({"basis": ws.basis_text(entry)} if ws.basis_text(entry) else {})
+                  for entry in records if entry.get("change") == args.change_id]
+        result["linked_sessions"] = linked
         result["record_problems"] = problems
         if not args.json:
             text = changes.render_change(*common, args.change_id, engagement_kind=kind, problems=[])
+            text += "\n## Linked session records\n\n" + ("\n".join(
+                f"- {item['created_at']} [{item['status']}, user-reported] {item['id']}: {item['summary']}"
+                + (f" ({item['basis']})" if item.get("basis") else "") for item in linked)
+                or f"None yet. Link one with torque session add ... --change {args.change_id}") + "\n"
             if problems:
                 text += "\n" + "\n".join(["## Records not shown", "", *ws.record_problem_lines(problems)]) + "\n"
             if action == "handoff" and args.output:
@@ -2055,7 +2092,7 @@ def main(argv: list[str] | None = None) -> int:
                                        learned_scope=fields["learned_scope"], learned_from=fields["learned_from"],
                                        check=fields["check"], as_user=fields["as_user"], org=fields["in_org"],
                                        not_covered=fields["not_covered"], accepted_by=fields["accepted_by"],
-                                       corrects=fields["corrects"])
+                                       corrects=fields["corrects"], change=fields["change"])
                 hints = ws.session_hints(entry)
                 retry = None
                 if entry.get("lesson_problems"):
