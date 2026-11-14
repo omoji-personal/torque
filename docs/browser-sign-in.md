@@ -209,6 +209,12 @@ in Playwright's storage-state format. A script then starts with
   hold the listener. When the CLI answers only after the deadline, its address is dropped unsent
   (it is single-use and expires by itself) and the command exits 1 saying so.
 - Nothing about a request is logged.
+- Error text the package shows passes its redaction, which removes a sign-in address whole in
+  every form the CLI and its endpoint return: `frontdoor.jsp` with `otp`, `cshc` or `sid`,
+  `services/oauth2/singleaccess`, each also percent-encoded, and the `otp`, `cshc` and
+  `frontdoor_uri` fields by name.
+- Torque's scripted runners (`torque browser browser`, `multiprofile`) ask for the address only
+  once Playwright runs, just before the browser is launched and sent to it.
 
 Any process on the machine can reach a loopback port, whoever runs it, so the code is the
 secret. A process of the same account can read it from the session's output, but such a

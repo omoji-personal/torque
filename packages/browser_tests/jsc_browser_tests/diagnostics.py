@@ -9,8 +9,9 @@ from pathlib import Path
 _CREDENTIAL_KEYS = {"sid", "sessionid", "frontdoorurl", "accesstoken", "refreshtoken",
                     "oauthtoken", "authorization", "cookie", "password", "confirmationtoken",
                     "csrftoken", "csrf", "nonce", "sfdxauthurl", "authcode",
-                    # the one-time value of a single-use sign-in address, when it turns up without its URL
-                    "otp"}
+                    # the one-time value of a single-use sign-in address, when it turns up without its URL,
+                    # its companion parameter, and the field the single-access endpoint returns it in
+                    "otp", "cshc", "frontdooruri"}
 # One definition covers case and separator variants in objects and text.
 _KEY_PATTERN = "(?:" + "|".join("[_-]*".join(key) for key in sorted(_CREDENTIAL_KEYS)) + ")"
 _SECRET_KEY = re.compile(r"[_-]*" + _KEY_PATTERN, re.I)
@@ -29,13 +30,17 @@ _BEARER = re.compile(r"(?i)\bBearer\s+[^\s\"'<>]+")
 _AUTH_URL = re.compile(r"(?i)force(?::|%(?:25)*3a)(?://|%(?:25)*2f%(?:25)*2f)[^\s\"'<>]+")
 # A session URL is removed whole, never left as a live-looking URL with one value masked:
 # any http(s) or ws(s) URL (its scheme written plainly or URL-encoded) that goes through
-# frontdoor or secur/, or carries a sid parameter anywhere, a URL-encoded one inside
-# retURL included; and any frontdoor.jsp reference without a scheme.
+# frontdoor, secur/ or the single-access endpoint (services/oauth2/singleaccess), or
+# carries a sid parameter anywhere, a URL-encoded one inside retURL included; and any
+# frontdoor.jsp or singleaccess reference without a scheme.
 _URL_CHARS = r"[^\s\"'<>]"
 _SID_PARAM = r"(?:[?&;#]|%(?:25)*(?:3f|26|3b|23))sid(?:=|%(?:25)*3d)"
+_SLASH = r"(?:/|%(?:25)*2f)"
+_SINGLE_ACCESS = rf"services{_SLASH}oauth2{_SLASH}singleaccess"
 _SESSION_URL = re.compile(
     rf"(?i)(?:https?|wss?)(?::|%(?:25)*3a)(?://|%(?:25)*2f%(?:25)*2f){_URL_CHARS}*?"
-    rf"(?:frontdoor\.jsp|secur(?:/|%(?:25)*2f)|{_SID_PARAM}){_URL_CHARS}*")
+    rf"(?:frontdoor\.jsp|secur{_SLASH}|{_SINGLE_ACCESS}|{_SID_PARAM}){_URL_CHARS}*")
+_BARE_SIGN_IN = re.compile(rf"(?i)frontdoor\.jsp|{_SINGLE_ACCESS}")
 _TOKEN = re.compile(rf"{_URL_CHARS}+")
 SESSION_URL_MARK = "[redacted session URL]"
 
@@ -59,8 +64,8 @@ def redact(value):
                 return json.dumps(redact(structured), ensure_ascii=False)
     value = _AUTH_URL.sub("[REDACTED]", value)
     value = _SESSION_URL.sub(SESSION_URL_MARK, value)
-    if "frontdoor.jsp" in value.casefold():
-        value = _TOKEN.sub(lambda m: SESSION_URL_MARK if "frontdoor.jsp" in m.group().casefold() else m.group(), value)
+    if _BARE_SIGN_IN.search(value):
+        value = _TOKEN.sub(lambda m: SESSION_URL_MARK if _BARE_SIGN_IN.search(m.group()) else m.group(), value)
     value = _JSON_SECRET.sub(lambda m: m.group(1) + m.group(3) + "[REDACTED]" + m.group(3), value)
     value = _SF_TOKEN.sub("[REDACTED]", value)
     value = _HEADER_SECRET.sub(lambda m: m.group(1) + ": [REDACTED]", value)

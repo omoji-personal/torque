@@ -249,14 +249,15 @@ async def run_flow_variation(
     from .library.lightning_page import LIGHTNING_SHELL_SELECTORS
 
     sf = sf_client or SfClient(target_org)
-    try:
-        admin_auth = auth.get_admin_auth(sf, target_org)
-    except Exception as exc:
-        result.overall_status = "FAIL"
-        result.error = "Authentication failed: " + exception_detail(exc)
-        return result
-
     async with async_playwright() as pw:
+        # The single-use address is asked for once Playwright runs, just before the browser
+        # is launched and sent to it (it is valid once, for about a minute).
+        try:
+            admin_auth = auth.get_admin_auth(sf, target_org)
+        except Exception as exc:
+            result.overall_status = "FAIL"
+            result.error = "Authentication failed: " + exception_detail(exc)
+            return result
         sess = None
         login_attempted = False
         baseline_user = None
