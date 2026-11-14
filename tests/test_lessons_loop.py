@@ -59,11 +59,14 @@ def test_a_lesson_saved_with_a_session_comes_back_for_its_client_and_never_for_a
 
     # 1. torque context for the client shows it, in text and in JSON.
     code, out, _ = torque("context")
-    assert code == 0 and "Lessons from earlier work: 1 of 1 for this client (firm 1, platform " in out
+    assert code == 0 and ("Lessons from earlier work: 1 of 1 for this client; 1 of the firm's, marked firm "
+                          "(firm 1, platform ") in out
     assert f"[{lesson['id']}] WHEN you are about to compare a choice-based screen field in a flow formula" in out
+    assert "WHEN you deploy a new custom field" in out                   # the firm's standing correction
     assert "torque lesson for TOPIC --workspace" in out and "--client alpha-nonprofit" in out
     context = json.loads(torque("context", "--json")[1])["lessons"]
-    assert [item["id"] for item in context["shown"]] == [lesson["id"]]
+    assert [item["id"] for item in context["shown"]][0] == lesson["id"]
+    assert [item["scope"] for item in context["shown"]] == ["client", "firm"]
     assert (context["engagement_active"], context["firm_active"], context["candidates_waiting"]) == (1, 1, 0)
     # 2. It is found by metadata type.
     code, out, _ = torque("lesson", "for", "--type", "Flow", "--json")
@@ -72,7 +75,8 @@ def test_a_lesson_saved_with_a_session_comes_back_for_its_client_and_never_for_a
     # 3. Never for the other client: not in context, not in recall, not by id, not in the listing.
     other = torque("context", client="beta-land-trust")[1]
     assert lesson["id"] not in other and "choice" not in other
-    assert "Lessons: none active for this client yet (firm 1, platform " in other
+    assert ("Lessons from earlier work: 0 of 0 for this client; 1 of the firm's, marked firm (firm 1, platform "
+            in other) and "WHEN you deploy a new custom field" in other
     listed = json.loads(torque("lesson", "for", "--type", "Flow", "--limit", "50", "--json", client="beta-land-trust")[1])
     assert lesson["id"] not in [item["id"] for item in listed["lessons"]]
     code, out, err = torque("lesson", "show", lesson["id"], client="beta-land-trust")

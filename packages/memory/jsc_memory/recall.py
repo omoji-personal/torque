@@ -626,10 +626,18 @@ def for_command(command_text: str, *, types=(), tasks=(), paths=(), error: str =
         return ""
 
 
+FIRM_IN_CONTEXT = 2     # places kept for the firm's lessons in the context block when the firm has some
+
+
 def context_section(scopes: Scopes, limit: int = 5, *, via: str | None = None) -> dict:
-    """The lessons block of `torque context` and `torque handoff`: the engagement's
-    active lessons that matter most, and how many more there are to ask for. With `via`,
-    the lessons listed are recorded as shown."""
+    """The lessons block of `torque context` and `torque handoff`: the engagement's own
+    active lessons that matter most, then the firm's (a consultant's standing corrections
+    usually hold for every client), and how many more there are to ask for.
+
+    At most `limit` lessons in all (five: about fifteen lines, read at the start of every
+    session; more is skimmed). The firm keeps up to FIRM_IN_CONTEXT places when it has
+    lessons and takes any the engagement leaves free; the firm's come consultant-sourced
+    first. With `via`, the lessons listed are recorded as shown."""
     problems: list = []
     tallies = storage.tally(storage.events_for(scopes))
     lessons = everything(scopes, problems)
@@ -637,10 +645,16 @@ def context_section(scopes: Scopes, limit: int = 5, *, via: str | None = None) -
     own = [Hit(item, 0, [], tallies.get(item.id) or Tally()) for item in live
            if item.scope in record.ENGAGEMENT_SCOPES]
     own.sort(key=lambda hit: (-hit.tally.score, -_recency(hit.lesson), hit.lesson.id))
+    firm = [Hit(item, 0, [], tallies.get(item.id) or Tally()) for item in live if item.scope == "firm"]
+    firm.sort(key=lambda hit: (hit.lesson.source != "consultant", -hit.tally.score,
+                               _EVIDENCE_RANK.get(hit.lesson.evidence_type, 3), -_recency(hit.lesson), hit.lesson.id))
+    mine = own[:limit - min(FIRM_IN_CONTEXT, len(firm))]
+    listed = mine + firm[:limit - len(mine)]
     if via:
-        mark_shown(scopes, [hit.lesson for hit in own[:limit]], via)
-    return {"shown": [summary(hit.lesson, hit.tally) for hit in own[:limit]],
-            "lines": [line for hit in own[:limit] for line in lines(hit.lesson, hit.tally)],
+        mark_shown(scopes, [hit.lesson for hit in listed], via)
+    return {"shown": [summary(hit.lesson, hit.tally) for hit in listed],
+            "lines": [line for hit in listed for line in lines(hit.lesson, hit.tally)],
+            "engagement_shown": len(mine), "firm_shown": len(listed) - len(mine),
             "engagement_active": len(own),
             "firm_active": sum(item.scope == "firm" for item in live),
             "platform_active": sum(item.scope == "platform" for item in live),

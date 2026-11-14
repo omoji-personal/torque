@@ -234,9 +234,12 @@ is an aid, and a firm lesson is still read by a person before it is shared.
 - Each lesson prints in three lines: id and WHEN, DO and WHY, then scope, evidence type,
   age and counters. Every print appends `shown` events.
 
-`torque context` (and `--json`, key `lessons`) shows the selected client's or
-initiative's five best active lessons, the counts for the firm and the platform with the
-command to ask for them, and the candidates waiting. `torque handoff` carries the same
+`torque context` (and `--json`, key `lessons`) shows at most five active lessons (about
+fifteen lines, read at the start of every session): the selected client's or initiative's
+best, then the firm's (consultant-sourced first, each marked firm), because most standing
+corrections hold for every client. The firm keeps up to two of the five places when it has
+lessons and takes any the client leaves free. Then the counts for the firm and the
+platform with the command to ask for more, and the candidates waiting. `torque handoff` carries the same
 block. `torque advisory notes --command ... --workspace W --client C` returns matching
 scoped lessons under `scoped_lessons`, next to `platform_notes`; without a client the
 answer keeps its earlier shape.

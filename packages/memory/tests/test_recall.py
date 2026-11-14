@@ -542,16 +542,25 @@ def test_the_context_block_shows_the_engagements_best_and_counts_the_rest(scopes
     storage.log(alpha.engagement, [{"event": "helpful", "id": "L-20250303-c000"}])
     (alpha.folder("client") / "broken.md").write_text("not a lesson", encoding="utf-8")
     section = recall.context_section(alpha)
-    assert [item["id"][-4:] for item in section["shown"]] == ["c000", "c006", "c005", "c004", "c003"]
+    # Five in all: the client's best four, then the firm's one (the firm keeps up to two places).
+    assert [item["id"][-4:] for item in section["shown"]] == ["c000", "c006", "c005", "c004", "f001"]
+    assert (section["engagement_shown"], section["firm_shown"]) == (4, 1)
     assert (section["engagement_active"], section["firm_active"], section["candidates_waiting"]) == (7, 1, 1)
     assert section["platform_active"] >= 40 and section["note"] == recall.FOOTER
     assert section["lines"][0] == "[L-20250303-c000] WHEN case 0"
+    assert section["lines"][-1].startswith("  (firm, ")
     assert [problem["path"] for problem in section["unreadable"]] == ["clients/alpha/lessons/broken.md"]
     assert storage.read_events(alpha.engagement)[-1]["event"] == "helpful"     # reading logs nothing
     recall.context_section(alpha, via="context")
-    assert [row["via"] for row in storage.read_events(alpha.engagement) if row["event"] == "shown"] == ["context"] * 5
+    assert [row["via"] for row in storage.read_events(alpha.engagement) if row["event"] == "shown"] == ["context"] * 4
+    # Another client sees the firm's lessons, never alpha's; consultant-sourced firm lessons come first,
+    # and with no lessons of its own the firm takes every place up to the limit.
+    for number in range(6):
+        save(alpha, "firm", f"g{number:03d}", source="consultant" if number == 5 else "agent")
     other = recall.context_section(scopes("beta"))
-    assert other["shown"] == [] and other["engagement_active"] == 0 and other["firm_active"] == 1
+    assert other["engagement_active"] == 0 and other["firm_active"] == 7
+    assert [item["id"][-4:] for item in other["shown"]][:1] == ["g005"] and len(other["shown"]) == 5
+    assert all(item["scope"] == "firm" for item in other["shown"])
 
 
 NO_COLUMN = "ERROR at Row:1:Column:8\nNo such column 'Region_Code__c' on entity 'Account'. If you are attempting ..."
