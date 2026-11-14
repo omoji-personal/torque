@@ -2027,10 +2027,12 @@ def _lesson_reason(args: list[str], workspace: Path | None, cwd: Path | None, co
 # baseline folder, and `torque-check.yml` above the first PATH. `check metadata` also reads
 # the whole project folder (the nearest folder with sfdx-project.json at or above the first
 # PATH) when it is given only files, and starts Salesforce Code Analyzer with no org on the
-# in-scope files with that folder as its workspace (or, without one, the folder the files
-# share). Its lessons come from the engagement TORQUE_WORKSPACE selects. Build-only mode
-# allows the two forms on their own, with their own parser's options, when none of those
-# folders reaches clients/. `torque check deployed` reads an org and stays blocked.
+# in-scope files, in that folder as its workspace (or, without one, the folder the files
+# share), where the analyzer reads its own code-analyzer.yml. It writes only temporary files
+# and stdout. Its lessons come from the engagement TORQUE_WORKSPACE selects. Build-only
+# mode allows the two forms on their own, with their own parser's options, from a folder
+# outside clients/, when none of those folders and files reaches clients/. `torque check
+# deployed` reads an org and stays blocked.
 CHECK_OPTIONS = {
     # option: False (a flag), None (any value) or the values the parser accepts
     "metadata": {"--changed-from": None, "--baseline": None, "--only": None, "--ignore": None,
@@ -2053,12 +2055,64 @@ CHECK_LITERAL_REASON = ("torque check's paths must be written out here: no varia
                         "character the shell expands, so that the gate reads the paths the command reads")
 CHECK_PATH_REASON = "torque check would read client context." + NARROW_PATH_HINT
 CHECK_PROJECT_REASON = ("torque check metadata would read the whole Salesforce project folder around its paths "
-                        "(the nearest folder with sfdx-project.json at or above the first PATH, or the folder its "
-                        "paths share), where it runs Code Analyzer, and that folder reaches clients/. Keep the "
-                        "Salesforce project under project/, or pass --analyzer off with folders as paths")
+                        "(the nearest folder with sfdx-project.json at or above the first PATH), where it runs "
+                        "Code Analyzer, and that folder reaches clients/. Keep the Salesforce project under "
+                        "project/, or pass --analyzer off with folders as paths")
+CHECK_ANALYZER_FOLDER_REASON = ("torque check metadata runs Code Analyzer here only inside a Salesforce project "
+                                "folder (sfdx-project.json at or above the first PATH) that holds every PATH: "
+                                "elsewhere it runs in whatever folder the files share, and reads the analyzer "
+                                "configuration there. Name paths inside one project, such as project/force-app, "
+                                "or pass --analyzer off")
 CHECK_SELECTED_REASON = ("this session's TORQUE_WORKSPACE selects a folder other than this workspace, so torque "
                          "check metadata would read and mark the lessons of the engagement it selects. Start the "
                          "session without TORQUE_WORKSPACE (or with it set to this workspace)")
+
+
+CHECK_CWD_REASON = ("torque check runs here only from a folder outside clients/." + NARROW_PATH_HINT)
+CHECK_ANALYZER_CONFIG_REASON = ("Code Analyzer would read {name} in the folder it runs in, and that file names a "
+                                "path outside that folder (an absolute path, `..`, `~` or a variable), a path "
+                                "that reaches clients/, or could not be read. Pass --analyzer off, or keep the "
+                                "analyzer's configuration to paths inside the project")
+# The files Code Analyzer reads on its own from the folder it runs in (`sf code-analyzer run --help`).
+CHECK_ANALYZER_CONFIGS = ("code-analyzer.yml", "code-analyzer.yaml")
+CHECK_ANALYZER_CONFIG_BYTES = 256 * 1024
+
+
+def _check_analyzer_config(folder: Path, clients: Path) -> str:
+    """"" when Code Analyzer's own configuration in `folder` (the folder it runs in)
+    names only paths inside that folder; else the reason. Every string in the file
+    counts (a key such as config_root or log_folder, a ruleset or ESLint file)."""
+    for name in CHECK_ANALYZER_CONFIGS:
+        path = folder / name
+        _spend()
+        if not os.path.lexists(str(path)):
+            continue
+        reason = CHECK_ANALYZER_CONFIG_REASON.format(name=name)
+        try:
+            import yaml
+            if path.stat().st_size > CHECK_ANALYZER_CONFIG_BYTES:
+                return reason
+            data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+        except Exception:  # noqa: BLE001 - unreadable, not YAML, PyYAML missing: fail closed
+            return reason
+        strings, stack = [], [data]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, dict):
+                stack.extend(item.keys())
+                stack.extend(item.values())
+            elif isinstance(item, (list, tuple)):
+                stack.extend(item)
+            elif isinstance(item, str):
+                strings.append(item)
+        for text in strings:
+            if (os.path.isabs(text) or text.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", text)
+                    or re.search(r"(^|[/\\])\.\.([/\\]|$)", text) or set("~$%`") & set(text)):
+                return reason
+            _spend()
+            if _reaches(Path(os.path.realpath(str(folder / text))), clients):
+                return reason
+    return ""
 
 
 def _check_lexical(cwd: Path, raw: str) -> Path:
@@ -2070,7 +2124,8 @@ def _check_lexical(cwd: Path, raw: str) -> Path:
 
 def _check_project_root(first: str, cwd: Path) -> Path | None:
     """checks.components.find_project from the gate: the nearest folder holding
-    sfdx-project.json at or above the first PATH (its folder when it is a file)."""
+    sfdx-project.json at or above the first PATH (its folder when it is a file), as the
+    command names it (made absolute as text, links not resolved)."""
     here = Path(os.path.abspath(os.path.join(str(cwd), _native_path(first))))
     _spend()
     if here.is_file():
@@ -2078,7 +2133,7 @@ def _check_project_root(first: str, cwd: Path) -> Path | None:
     for folder in (here, *here.parents):
         _spend()
         if (folder / "sfdx-project.json").is_file():
-            return Path(os.path.realpath(str(folder)))
+            return folder
     return None
 
 
@@ -2100,6 +2155,8 @@ def _check_reason(args: list[str], clients: Path | None, workspace: Path | None,
         return CHECK_REASON
     if not alone:
         return CHECK_ALONE_REASON
+    if _is_within(cwd, clients):
+        return CHECK_CWD_REASON
     words, positionals, values, i = args[2:], [], {}, 0
     while i < len(words):
         word = words[i]
@@ -2135,19 +2192,21 @@ def _check_reason(args: list[str], clients: Path | None, workspace: Path | None,
         return ""
     analyzer = values.get("--analyzer", ["auto"])[-1] != "off"
     lexical = [Path(os.path.abspath(os.path.join(str(cwd), _native_path(raw)))) for raw in roots]
+    project = None
     if analyzer or not all(path.is_dir() for path in lexical):
         project = _check_project_root(roots[0], cwd)
-        if project is not None and _reaches(project, clients):
+        if project is not None and _reaches(_check_lexical(cwd, str(project)), clients):
             return CHECK_PROJECT_REASON
     if analyzer:
-        # Without a project folder that holds every file, Code Analyzer's workspace is the
-        # folder the in-scope files share, which lies at or below the one the paths share.
-        try:
-            shared = os.path.commonpath([str(path if path.is_dir() else path.parent) for path in lexical])
-        except ValueError:
-            return CHECK_PROJECT_REASON
-        if _reaches(_check_lexical(cwd, shared), clients):
-            return CHECK_PROJECT_REASON
+        # Code Analyzer runs in, and takes as its workspace, the project folder when it holds
+        # every file in scope (checks.analyzer._workspace), so every PATH must lie inside it
+        # as text; otherwise it runs in the folder the files share, which the gate cannot
+        # know without walking the tree (and its code-analyzer.yml with it).
+        if project is None or not all(_is_within(path, project) for path in lexical):
+            return CHECK_ANALYZER_FOLDER_REASON
+        reason = _check_analyzer_config(_check_lexical(cwd, str(project)), clients)
+        if reason:
+            return reason
     if not copy:
         # A worktree copy's pass has nothing to add: the variable names the real workspace.
         selected = os.environ.get("TORQUE_WORKSPACE")

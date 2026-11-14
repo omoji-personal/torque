@@ -233,10 +233,14 @@ local files only, when:
   short, no `--`);
 - every path is written out (no variable, glob or `~`) and stays out of `clients/`: each PATH (default: the
   current folder, so from the workspace root name `project/force-app`), `--changed-from`, `--baseline`;
+- it runs from a folder outside `clients/`;
 - for `check metadata`, the project folder around the paths (the nearest `sfdx-project.json` at or above the
-  first PATH), which it reads when given files and where it runs Code Analyzer, does not hold `clients/`,
-  and nor does the folder the paths share (Code Analyzer's workspace without a project folder); with
-  `--analyzer off` and folders as paths neither is read;
+  first PATH), which it reads when given files and where it runs Code Analyzer, does not hold `clients/`;
+  with the analyzer on, that project folder holds every PATH (otherwise the analyzer runs in whatever folder
+  the files share), and its `code-analyzer.yml` or `.yaml`, which the analyzer reads on its own, is readable
+  YAML whose strings name no absolute path, `..`, `~` or variable and nothing that reaches `clients/`; with
+  `--analyzer off` and folders as paths none of this is read (`torque-check.yml` is looked for from the first
+  PATH up to the project folder, never below it);
 - for `check metadata`, `TORQUE_WORKSPACE` is unset or names the workspace itself (the lessons it shows come
   from the engagement that variable selects).
 

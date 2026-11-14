@@ -207,12 +207,58 @@ def test_a_project_folder_that_holds_clients_is_not_read(root):
     assert decide(root, "torque check metadata project/force-app --analyzer off", cwd=root)[0]
 
 
-def test_code_analyzers_shared_folder_must_not_hold_clients(root):
-    (root / "project" / "sfdx-project.json").unlink()
+def test_code_analyzer_runs_only_inside_a_project_folder_that_holds_every_path(root):
+    # Outside such a folder it runs in whatever folder the files share, and reads the
+    # code-analyzer.yml there, which the gate cannot know without walking the tree.
     (root / "docs").mkdir()
-    assert not decide(root, "torque check metadata force-app ../docs")[0]
+    allowed, reason = decide(root, "torque check metadata force-app ../docs")
+    assert not allowed and "--analyzer off" in reason
     assert decide(root, "torque check metadata force-app ../docs --analyzer off")[0]
-    assert decide(root, "torque check metadata force-app")[0]
+    (root / "project" / "sfdx-project.json").unlink()
+    assert not decide(root, "torque check metadata force-app")[0]
+    assert decide(root, "torque check metadata force-app --analyzer off")[0]
+
+
+def test_a_client_folder_as_the_working_folder_is_refused(root):
+    acme = root / "clients" / "acme"
+    (acme / "torque-check.yml").write_text("ignore: []\n", encoding="utf-8")
+    (acme / "code-analyzer.yml").write_text("log_folder: logs\n", encoding="utf-8")
+    for command in ("torque check metadata force-app --analyzer off", "torque check metadata . --analyzer off",
+                    "torque check metadata ../../project/force-app --analyzer off",
+                    "torque check result ../../project/result.json", "torque check metadata"):
+        allowed, reason = decide(root, command, cwd=acme)
+        assert not allowed and reason, command
+
+
+@pytest.mark.parametrize("config", [
+    "config_root: ../clients/acme\n",
+    "log_folder: ../clients/acme/logs\n",
+    "engines:\n  pmd:\n    custom_rulesets:\n      - /etc/rules.xml\n",
+    "engines:\n  eslint:\n    eslint_config_file: ~/eslint.config.js\n",
+    "engines:\n  eslint:\n    eslint_config_file: ${HOME}/eslint.config.js\n",
+    "engines:\n  pmd:\n    custom_rulesets:\n      - C:/rules/x.xml\n",
+    "rules: [unclosed\n",                                   # not YAML: not read, so not trusted
+])
+def test_an_analyzer_configuration_that_points_elsewhere_is_refused(root, config):
+    (root / "project" / "code-analyzer.yml").write_text(config, encoding="utf-8")
+    allowed, reason = decide(root, "torque check metadata force-app --changed-from result.json")
+    assert not allowed and "code-analyzer.yml" in reason, config
+    # With the analyzer off its configuration is not read.
+    assert decide(root, "torque check metadata force-app --changed-from result.json --analyzer off")[0]
+
+
+def test_an_analyzer_configuration_inside_the_project_is_fine(root):
+    (root / "project" / "code-analyzer.yaml").write_text(
+        "log_folder: logs\nengines:\n  pmd:\n    custom_rulesets:\n      - rules/apex.xml\n"
+        "rules:\n  pmd:\n    ApexDoc:\n      severity: 4\n", encoding="utf-8")
+    assert decide(root, "torque check metadata force-app --changed-from result.json") == (True, "")
+
+
+def test_a_link_into_clients_in_the_analyzer_configuration_is_read_where_it_leads(root):
+    _link(root / "clients" / "acme", root / "project" / "shared-rules")
+    (root / "project" / "code-analyzer.yml").write_text(
+        "engines:\n  pmd:\n    custom_rulesets:\n      - shared-rules/x.xml\n", encoding="utf-8")
+    assert not decide(root, "torque check metadata force-app")[0]
 
 
 def test_a_client_selected_in_the_environment_keeps_check_metadata_out(root, monkeypatch):

@@ -109,9 +109,11 @@ later release narrows the check.
   resolves it and as the command does (`abspath` first, so `link/..` is the current
   folder); the default PATH is the current folder. `check metadata` also reads the project
   folder around its paths (the nearest folder with `sfdx-project.json` at or above the
-  first PATH) when it is given files, and runs Code Analyzer with that folder (or the one
-  its paths share) as its workspace unless `--analyzer off`: that folder must not reach
-  `clients/` either. It shows the lessons of the engagement `TORQUE_WORKSPACE` selects, so
+  first PATH) when it is given files, and runs Code Analyzer there unless `--analyzer off`:
+  that folder must not reach `clients/` either, must hold every PATH (elsewhere the analyzer
+  runs in a folder the gate cannot know), and its `code-analyzer.yml` or `.yaml`, if any,
+  must be readable YAML naming no absolute path, `..`, `~` or variable and no path that
+  reaches `clients/`. The working folder must be outside `clients/`. It shows the lessons of the engagement `TORQUE_WORKSPACE` selects, so
   it is blocked while that variable, as the hook sees it, names anything but this
   workspace. `--help` after `torque check` or one of its actions passes. `torque check
   deployed` reaches an org and stays blocked, with a message that names the two forms.
