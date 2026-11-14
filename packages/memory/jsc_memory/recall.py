@@ -61,7 +61,8 @@ def _shipped() -> tuple[tuple, tuple]:
 @lru_cache(maxsize=1)
 def _advisory() -> tuple:
     """The advisory catalogue's notes as read-only platform lessons: the title, the remedy
-    as what to do, the cause as the reason, and its command patterns as matchers."""
+    as what to do, the cause as the reason, and its command patterns as matchers. What a
+    note applies to is its `applies` object (tasks, types, errors) when it has one."""
     try:
         from jsc_advisory.catalogue import entries
         notes = entries()
@@ -75,11 +76,13 @@ def _advisory() -> tuple:
                 patterns.append(re.compile(trigger, re.I))
             except re.error:
                 continue
-        # What a note applies to comes from what its author gave: the triggers name the
-        # component types, the domain and the title name the task.
-        triggers = " ".join(note.get("triggers") or [])
-        tasks = list(dict.fromkeys([*_DOMAIN_TASKS.get(note.get("domain"), ()), *vocab.infer(note["title"])[0]]))
-        types = vocab.infer(triggers)[1]
+        given = _applies(note)
+        if given is not None:            # the note says what it applies to
+            tasks, types, errors = given
+        else:                            # inferred: the triggers name the types, the domain and title the task
+            triggers = " ".join(note.get("triggers") or [])
+            tasks = list(dict.fromkeys([*_DOMAIN_TASKS.get(note.get("domain"), ()), *vocab.infer(note["title"])[0]]))
+            types, errors = vocab.infer(triggers)[1], []
         kind = _CONFIDENCE.get(note.get("confidence"), "session")
         source = note.get("source") if isinstance(note.get("source"), str) else ""
         body = "\n".join(f"{label}: {record.one_line(note[key])}" for label, key in
@@ -88,13 +91,30 @@ def _advisory() -> tuple:
         lessons.append(Lesson(
             id="A-" + note["id"], title=record.one_line(note["title"]), scope="platform", kind="pitfall",
             state="active", do=record.one_line(note["remedy"]), because=record.one_line(note["cause"]),
-            applies={"tasks": tasks, "types": types, "commands": [], "keywords": [], "errors": []},
+            applies={"tasks": tasks, "types": types, "commands": [], "keywords": [], "errors": errors},
             evidence=[{"type": kind, "ref": source or f"advisory catalogue ({note.get('confidence')})",
                        "date": str(note["updated"])}],
             source="doc", created=str(note["updated"]), last_verified=str(note["updated"]), body=body,
             origin="advisory", command_patterns=tuple(patterns),
-            error_text=record.one_line(f"{note['title']} {note['symptom']}")))
+            # Given error matchers replace the comparison with the note's own wording.
+            error_text="" if errors else record.one_line(f"{note['title']} {note['symptom']}")))
     return tuple(lessons)
+
+
+def _applies(note: dict) -> tuple[list, list, list] | None:
+    """(tasks, types, errors) a catalogue note gives in its `applies` object, or None when
+    it gives none (or not as lists of words), so that they are inferred as before."""
+    given = note.get("applies")
+    if not isinstance(given, dict):
+        return None
+    values = {}
+    for key in ("tasks", "types", "errors"):
+        value = given.get(key) or []
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            return None
+        values[key] = [record.one_line(item) for item in value if record.one_line(item)]
+    return ([vocab.tag(task) for task in values["tasks"]], [vocab.canonical_type(kind) for kind in values["types"]],
+            values["errors"])
 
 
 def platform_lessons(problems: list | None = None, *, advisory: bool = True) -> list[Lesson]:

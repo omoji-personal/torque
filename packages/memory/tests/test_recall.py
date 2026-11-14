@@ -172,6 +172,47 @@ def test_the_advisory_catalogue_is_read_as_platform_lessons_without_a_copy(scope
                                                       if item.origin != "advisory"]
 
 
+@pytest.fixture
+def catalogue(monkeypatch):
+    """Made-up catalogue notes in place of the shipped ones, for one test."""
+    from jsc_advisory import catalogue as module
+
+    def use(*notes):
+        monkeypatch.setattr(module, "entries", lambda: tuple(notes))
+        recall._advisory.cache_clear()
+    yield use
+    recall._advisory.cache_clear()
+
+
+def _note(name, **more):
+    return {"id": name, "title": "Field labels are hidden from text selectors", "domain": "auth",
+            "confidence": "practitioner", "triggers": ["field label", "shadowRoot"], "updated": "2026-08-04",
+            "symptom": "the selector finds no element for a field label", "cause": "labels sit in shadow roots",
+            "remedy": "walk the shadow roots", **more}
+
+
+def test_a_catalogue_note_that_says_what_it_applies_to_is_taken_at_its_word(catalogue):
+    given = {"tasks": ["browser-test"], "types": [], "errors": ["no element * field label"]}
+    catalogue(_note("given", applies=given), _note("guessed"))
+    notes = {item.id: item for item in recall.platform_lessons() if item.origin == "advisory"}
+    assert (notes["A-given"].applies["tasks"], notes["A-given"].applies["types"],
+            notes["A-given"].applies["errors"]) == (["browser-test"], [], ["no element * field label"])
+    # Without `applies`, the note's tasks and types are inferred as before (the title says "field labels").
+    assert notes["A-guessed"].applies["tasks"] == ["sign-in", "field-build"]
+    assert notes["A-guessed"].applies["types"] == ["CustomField"] and notes["A-guessed"].applies["errors"] == []
+    found = lambda **query: [hit.lesson.id for hit in recall.find(storage.Scopes(), limit=None, **query).hits
+                             if hit.lesson.origin == "advisory"]
+    assert found(tasks=["field-build"], types=["CustomField"]) == ["A-guessed"]
+    assert found(tasks=["browser-test"]) == ["A-given"]
+    # Given error matchers answer the error; the guessed note still answers through its symptom's wording.
+    assert found(error="Timeout: no element matched the field label 'Amount'") == ["A-given"]
+    assert found(error="the selector finds no element for the label") == ["A-guessed"]
+    # An `applies` that is not lists of words is ignored, and the note is inferred.
+    catalogue(_note("odd", applies={"tasks": "browser-test"}))
+    assert [item.applies["tasks"] for item in recall.platform_lessons() if item.origin == "advisory"] == [
+        ["sign-in", "field-build"]]
+
+
 def test_paths_tell_types_from_names_folders_and_manifests(tmp_path):
     source = tmp_path / "force-app" / "main" / "default"
     (source / "flows").mkdir(parents=True)

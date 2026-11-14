@@ -60,7 +60,10 @@ go to the selected client or initiative; `--scope firm` is explicit; nothing wri
 the package.
 
 The platform scope also holds the advisory catalogue's notes (`torque advisory`), read
-through an adapter: one recall, two sources, no copy. Their ids start with `A-`.
+through an adapter: one recall, two sources, no copy. Their ids start with `A-`. A note's
+`applies` object (`tasks`, `types`, optional `errors`, as in a lesson) says what it applies
+to; a note without one has its types guessed from its triggers and its tasks from its
+domain and title, and answers an error through its symptom's wording.
 
 Events (shown, helpful, stale, verified, promoted, retired, restored) are appended to
 `.torque/lessons/events.jsonl` under the scope's folder: a client's events stay in the
