@@ -2,9 +2,9 @@
 
 Work top to bottom; each step ends with its check. State: Winter '27 (API 68.0), checked
 2026-11-14. A tag such as `[check: flow.no-fault-path]` names the `torque check metadata`
-rule that tests the step; "by hand" says what to read. **verify** = not confirmed in a fetched
-primary source: verify in the org (an element name: in a retrieved flow) or the current
-documentation. field-reported = seen in client work, usually one org.
+rule that tests the step. **verify** = not confirmed in a fetched primary source: verify in
+the org (an element name: in a retrieved flow) or the current documentation.
+field-reported = seen in client work, usually one org.
 
 ## 1. See what already runs on the object
 
@@ -18,8 +18,9 @@ documentation. field-reported = seen in client work, usually one org.
    support on 2025-12-31 [WA-RC] and existing processes keep running, **verify**). Scheduled
    work: `SELECT CronJobDetail.Name, State, NextFireTime FROM CronTrigger`. Package triggers:
    `sf package installed list --target-org ALIAS`, then that package's skill or documentation.
-4. Count the object's automations. Under 15 suits a record-triggered flow; 15 to 30 a flow
-   that calls invocable Apex; over 30, or thousands of records per load, Apex [DG-RT].
+4. Count the object's automations. The guide's default, not a verdict: under 15 suits a
+   record-triggered flow; 15 to 30 a flow calling invocable Apex; over 30, or thousands of
+   records per load, Apex [DG-RT].
 5. If Apex triggers are the object's entry point, stop and ask before you add a flow, and the
    reverse: "Use one entry point per Salesforce Object" [DG-RT]. Where a managed package owns
    the trigger, the mix is a given: learn the order instead.
@@ -69,17 +70,20 @@ after-save or for Apex is recorded.
    conditions (`$Permission`) and grant it by permission set, never by naming a profile or
    user [DG-RT]. Add this only when a load or integration needs it; record who holds it.
 5. Set the trigger order. Values run from 1 to 2,000; flows with no value run between 1,000
-   and 1,001 by activation date; ties break on API name; order never moves an after-save flow
-   ahead of a before-save flow or an Apex trigger (**verify** all four on the help page).
+   and 1,001 by activation date (the Winter '22 release note said created date: do not rely
+   on it, set a value); ties break on API name; order never moves an after-save flow ahead
+   of a before-save flow or an Apex trigger (**verify** all four on the help page).
 6. Place the flow in the save order before you rely on a value. Before-save flows run before
    Apex before-triggers and validation rules; duplicate rules can still block the save
    afterwards; after-save flows run after triggers and assignment and workflow rules; email,
    asynchronous Apex and asynchronous paths run after commit, so a read straight after the
    save does not show them [ADV `order-of-execution`, `duplicate-rules-block-the-save`,
-   `post-commit-work-is-invisible-to-the-caller`].
+   `post-commit-work-is-invisible-to-the-caller`]. On create a before-save flow has no
+   record Id yet; a parent roll-up summary is recalculated after the child's after-save
+   flows, which read the old total (both **verify** on the order of execution page).
 
 Check: `[check: flow.no-entry-conditions, flow.reruns-on-every-update]`; by hand,
-`triggerOrder` in the file. Then rerun one existing path on the object, for example an approval
+`triggerOrder`. Rerun one existing path on the object, for example an approval
 (field-reported: a new before-save flow changed the run order and submissions skipped it).
 
 ## 4. Structure and bulk
@@ -91,8 +95,7 @@ Check: `[check: flow.no-entry-conditions, flow.reruns-on-every-update]`; by hand
 - A flow shares the limits of the transaction that started it: 100 queries, 150 DML
   statements, 10,000 records written, 10 seconds of CPU [TH-FLOW]. Records arrive up to 200
   at a time; 200 should cost the same number of queries and statements as one [WA-R].
-- Winter '27 adds collection filtering without a loop and retry on record locks [REL-W27]:
-  check whether the loop is still needed.
+- Winter '27 adds loop-free collection filtering and record-lock retry [REL-W27].
 - Decide what happens when a Get finds nothing. Reuse through subflows, and never let two
   flows call each other (analyzer `CyclicSubflow`).
 - Give compute-heavy steps to invocable Apex and keep entry conditions and orchestration in
@@ -104,15 +107,14 @@ Check: `[check: flow.work-in-loop]` (analyzer `DbInLoop`); a 200-record test pas
 
 ## 5. Fault paths
 
-- Add a fault connector to every `recordLookups`, `recordCreates`, `recordUpdates`,
-  `recordDeletes` and `actionCalls` element. For a subflow see `gotchas.md`, item 3.
+- Add a fault connector to every data element, `actionCalls` and `subflows` element. For a
+  subflow see `gotchas.md`, "A Subflow element can fault".
 - Make the path do its three jobs: a plain message for the user; enough for an admin to act
   (flow, element, record, user, error text) at a monitored address or in a log record; no
   half-done work.
-- Do not add a catch-all handler that hides the cause, and do not widen access or relax a
-  validation rule to make a fault go away. Fix the cause.
-- Find where fault email goes today (Setup > Process Automation Settings) and read past
-  failures (Setup > Paused and Failed Flow Interviews). **verify** both page names in Setup.
+- Fix the cause: no catch-all handler that hides it, no wider access or relaxed rule.
+- Find where fault email goes (Setup > Process Automation Settings) and read past failures
+  (Paused and Failed Flow Interviews). **verify** both page names in Setup.
 
 Check: `[check: flow.no-fault-path]` (analyzer `MissingFaultHandler`, outside the
 `Recommended` set). Then force the fault in a sandbox: a plain user
@@ -181,7 +183,7 @@ Check: `[check: doc.description-missing, doc.flow-elements-undescribed]` (analyz
   They do not cover delete-triggered flows or asynchronous paths and do not count toward
   Apex coverage (**verify**): pair them with an Apex test that saves 200 records.
 - Debug as another user: sandboxes only, after "Let admins debug flows as other users" is
-  on in Process Automation Settings (**verify**). Then clean up: `gotchas.md`, item 6.
+  on in Process Automation Settings (**verify**). Then clean up: `gotchas.md`, "Flow Builder debug runs commit".
 - Verify a scheduled flow by its real scheduled run, and log any schedule you moved for a
   test as an open restore (field-reported: one stayed on the test time for days).
 - Check: the result names the org, the user, the flow version and what was not tested.
@@ -212,7 +214,8 @@ Check: `[check: doc.description-missing, doc.flow-elements-undescribed]` (analyz
 - [ADV] Torque advisory catalogue (`torque advisory notes --command TEXT`); entry ids inline.
 - **verify** items come from pages read only as search extracts: flow best practices
   (https://help.salesforce.com/s/articleView?id=sf.flow_prep_bestpractices.htm&type=5), trigger order
-  (https://help.salesforce.com/s/articleView?id=sf.flow_task_trigger_run_order.htm&type=5), flow tests
+  (https://help.salesforce.com/s/articleView?id=sf.flow_task_trigger_run_order.htm&type=5), order of execution
+  (https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_order_of_execution.htm), flow tests
   (https://help.salesforce.com/s/articleView?id=sf.flow_concepts_testing.htm&type=5), running context
   (https://developer.salesforce.com/docs/platform/secure-coding/guide/secure-coding-considerations-flow-design.html),
   naming (https://admin.salesforce.com/blog/2025/planning-for-flow-success-building-automation-that-scales).

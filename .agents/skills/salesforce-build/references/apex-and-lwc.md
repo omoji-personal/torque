@@ -101,7 +101,7 @@ Field-tested ways to prove behaviour without leaving data (field-reported):
 - `System.runAs` needs an active user. For the negative case use `WITH USER_MODE` as a
   minimum-access user.
 - Anonymous Apex traps (error text hidden by a filter, a rollback that rolls back nothing,
-  query limits in package-heavy orgs, reserved words): `gotchas.md`, items 44 to 47.
+  query limits in package-heavy orgs, reserved words): `gotchas.md`, "Command-line failures from the field record".
 - A check in user mode is not the page: one profile could not see a list that such a check
   had "proven". Finish with a sign-in as a real user of each profile.
 

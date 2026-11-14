@@ -87,9 +87,9 @@ case: `references/gotchas.md`.
 - Ask only for data the org does not already hold [P-AUTO].
 - A screen ends the transaction [TH-FLOW]. After a database change, decide whether the user
   may go back, or the change is made twice (**verify**).
-- A screen flow on a record page needs Run Flows for its users, and a formula that compares
-  a choice field to text sees the label, not the value (both field-reported, with checks in
-  `references/gotchas.md`).
+- A screen flow on a record page can need more access than the profile's flow access, and a
+  formula that compares a choice field to text sees the label, not the value (both
+  field-reported, with checks in `references/gotchas.md`).
 - Do not run a system-context flow for guest users on a public site [DG-FORMS].
 - Test it in a browser as the user. Sign the browser in with `torque browser login`
   (see `torque browser login --help`); do not type a password or paste a sign-in address.

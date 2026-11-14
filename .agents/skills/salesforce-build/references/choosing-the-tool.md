@@ -53,11 +53,13 @@ could not do.
 
 ## 3. Automation for a record change
 
-Source: [DG-RT]. Count the automations on the object first (flows, triggers, processes).
+Source: [DG-RT]. Count the automations on the object first (flows, triggers, processes). The
+rows are the guide's defaults: the design that already owns the object and the order of
+execution it needs can outweigh them, with the reason recorded.
 
 | Situation | Use |
 | --- | --- |
-| Set fields on the record being saved, any volume | Before-save record-triggered flow (or an Apex before trigger where one already owns the object) |
+| Set fields on the record being saved | Before-save record-triggered flow (or an Apex before trigger where one already owns the object) |
 | Low density: under 15 automations, 1 to 200 records, 0 to 1 downstream writes | Record-triggered flow |
 | Medium density: 15 to 30 automations, 2 to 4 downstream writes, recursion risk | Flow for entry conditions and orchestration, plus invocable Apex |
 | High density: over 30 automations, 2,000 to 10,000 or more records, 5 or more downstream writes | Apex trigger framework driven by custom metadata |

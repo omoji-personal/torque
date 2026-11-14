@@ -71,8 +71,8 @@ and can be edited or not as designed.
   deployed first (field-reported).
 - A managed package's layouts retrieve only when the namespace is inside the layout name
   (field-reported). Do not edit a package's layout; assign your own.
-- A screen flow placed on a page is hidden from users who lack Run Flows
-  (`salesforce-flow/references/gotchas.md`, item 9).
+- A screen flow placed on a page was hidden from a user who lacked Run Flows (field-reported)
+  (`salesforce-flow/references/gotchas.md`, "A screen flow on a record page").
 
 ## 4. List views
 

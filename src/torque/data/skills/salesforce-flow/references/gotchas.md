@@ -18,10 +18,12 @@ such as `[check: name.case-collision]` names the `torque check metadata` rule th
    rule, then count what was saved.
 2. **A fault path does not catch a governor-limit failure.** The transaction still rolls
    back (**verify**). Check: run 200 records and read the limit usage in a debug log.
-3. **Subflow elements were seen to have no fault connector.** Handle faults inside the
-   subflow and return an error output the parent checks. Observed in a developer org; one
-   research source lists a fault connector on subflows, unconfirmed. Check: whether the
-   Subflow element in Flow Builder offers Add Fault Path in this org.
+3. **A Subflow element can fault, and may not offer a fault connector.** Code Analyzer's
+   `MissingFaultHandler` counts subflows among the elements that need a fault handler
+   [CA-LOCAL]; an earlier developer-org test found no fault connector on a Subflow element.
+   Check: whether the Subflow element in Flow Builder offers Add Fault Path in this org. If
+   it does, add one; if not, handle faults inside the subflow and return an error output
+   the parent checks.
 
 ## Formulas and values
 
@@ -29,10 +31,11 @@ such as `[check: name.case-collision]` names the `torque check metadata` rule th
    zone dates to the next day, and a late December 31 value lands in the next year. Use a
    date formula field on the object, which evaluates in the user's time zone, or adjust
    explicitly. Observed in a developer org. Check: evaluate on a record stamped 11 PM local.
-5. **A formula sees a choice field's label, not its value.** For a radio, picklist, checkbox
-   group or record choice set on a screen, `{!field} = 'VALUE'` never matches and the flow
-   takes its default path (field-reported: it created stray records). Compare the field to
-   the choice resource in a decision or visibility rule.
+5. **A formula sees a choice field's label, not its value.** In one org, a formula
+   `{!field} = 'VALUE'` on a choice screen field never matched where the label differed
+   from the value, and the flow took its default path (field-reported: it created stray
+   records). Where label and value differ, compare the field to the choice resource in a
+   decision or visibility rule.
    `[check: flow.choice-compared-to-literal]`. Check: run the screen once per choice and confirm
    the non-default branch runs.
 6. **Flow Builder debug runs commit unless rollback mode is on.** A debug run of an
@@ -51,27 +54,35 @@ such as `[check: name.case-collision]` names the `torque check metadata` rule th
    (field-reported). `[check: flow.screen-action-without-trigger]`. Check: the
    action runs on screen load in a browser test. To get a working shape, retrieve a flow
    where the action was set up in Flow Builder.
-9. **A screen flow on a record page needs Run Flows.** With profile flow access alone the
-   user got "Insufficient Privileges" and the page component was silently hidden
-   (field-reported). Grant Run Flows by permission set. Check: signed in as that user, the
-   component renders.
+9. **A screen flow on a record page can need more than profile flow access.** In one org,
+   with profile flow access alone the user got "Insufficient Privileges", the page
+   component was silently hidden, and Run Flows granted by permission set fixed it
+   (field-reported). Read how the flow's access is set (item 10) and grant the narrowest
+   access that works, by permission set. Check: signed in as that user, the component
+   renders.
 10. **The flow access override persists.** Omitting `isAdditionalPermissionRequiredToRun` in
-    a new version kept the previous `true`; send an explicit `false` to clear it
-    (field-reported). By hand: the element is present with the intended value. Check: read
-    the flow's access setting in Setup after the deploy.
+    a new version kept the previous `true` (field-reported). Decide the value on purpose:
+    where the flow is restricted to some users on purpose, keep `true` and grant the flow
+    in their permission set; send an explicit `false` only when the restriction should go.
+    By hand: the element is present with the intended value. Check: read the flow's access
+    setting in Setup after the deploy, and run it as a user who should not have it.
 11. **Data Table behaviour** (field-reported): radio buttons appear only with maximum
     selection 1 and minimum selection at least 1; ticks are lost when the source collection
     changes; a default selection is not re-applied when the next search returns the same
     rows. Check: search twice in a browser and read the selection each time.
-12. **A screen checkbox needed `isRequired` set to `true`** in the metadata before the flow
-    would activate (field-reported). Check: activate in a sandbox straight after the deploy.
+12. **A screen checkbox without `isRequired` in the file did not activate;** with
+    `<isRequired>true</isRequired>` it did (field-reported, one flow). Whether that value
+    also forces the user to tick the box was not recorded. Check: retrieve a checkbox
+    Flow Builder saved in this org and copy its value, then activate in a sandbox and
+    submit the screen once without ticking it.
 
 ## Deploy and metadata
 
 13. **Resource names are case-insensitive.** Two names that differ only in case fail the
     deploy with "Duplicate developer name" (field-reported). `[check: name.case-collision]`.
 14. **Get Records with `storeOutputAutomatically` also needs `getFirstRecordOnly`**
-    (field-reported). `[check: flow.lookup-missing-first-record-only]`.
+    (field-reported). Set `true` when the flow uses one record, `false` when it uses the
+    collection: `true` keeps only the first row. `[check: flow.lookup-missing-first-record-only]`.
 15. **Decision outcome names must be unique** (field-reported; one deploy reported it as
     "duplicate value found: FlowRecordVersionId"). `[check: name.case-collision]`.
 16. **A retrieve returns the latest version, not the active one** [ADV
@@ -184,6 +195,8 @@ Flows on NPSP and Nonprofit Cloud objects have their own items: skills `salesfor
   `entry-condition-requirements` practitioner.
 - Observed in a developer org: items 1, 3, 4 and 6, carried from the earlier nonprofit skill
   text.
+- [CA-LOCAL] Code Analyzer flow engine 0.40.0 rule catalogue as installed (plugin 5.15.0),
+  read 2026-11-14: `sf code-analyzer rules --rule-selector flow --view detail`.
 - **verify** items: flow fault paths (https://help.salesforce.com/s/articleView?id=platform.flow_build_logic_fault.htm&type=5),
   flow debugging (https://help.salesforce.com/s/articleView?id=flow_considerations_troubleshooting.htm&type=5).
 - Record-triggered automation decision guide (transaction control in Flow): https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered
