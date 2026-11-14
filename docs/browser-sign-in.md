@@ -1,11 +1,26 @@
 # Browser sign-in
 
-`torque browser login` signs a browser in to an org the Salesforce CLI is already authorized
-for. It goes through the Salesforce front door: no password is typed, and the Salesforce
-sign-in address is never printed, logged, written to disk or put in an error message.
+`torque browser login` sends a browser to an org the Salesforce CLI is already authorized for,
+through the Salesforce front door: no password is typed, and the Salesforce sign-in address is
+never printed, logged, written to disk or put in an error message. It is not available in a
+connected workspace (exit 6) or a build-only one.
 
-Status: offline tests only. No live org or browser run is recorded for this command yet; the
-[checklist](#what-a-live-run-still-has-to-prove) at the end says what a first run must show.
+**What the redirect proves.** Exit 0 in host-tab mode means the browser tab was sent to the
+org's single-use sign-in address for the alias's user. It does not prove that the page loaded,
+that Lightning is usable, or what another user can see. Wait for the org's page and confirm
+the signed-in user in it before testing.
+
+**When the consultant is needed.** The command cannot fix these; it stops or the tab shows
+them, and the consultant acts outside the agent:
+
+- an expired password: the tab shows "Change Your Password" (the CLI and API keep working);
+- a revoked or expired CLI authorization: exit 3, `sf org login web --alias ALIAS`;
+- a user with no login access for `--as-user`: the org's Log in as policy, or the user's grant;
+- device verification or a second factor that the front door does not satisfy.
+
+Status: one live host-tab run (Claude Code with the Chrome extension, Windows) sent a tab into
+a practice org without printing an address; everything else is offline tests. The
+[checklist](#what-a-live-run-still-has-to-prove) at the end says what a live run must still show.
 
 ## Why a command for this
 
@@ -36,11 +51,14 @@ torque browser login --target-org ALIAS --workspace W --client NAME
 2. Navigate the browser tab to that address with the host's browser tool. Do not fetch it
    with curl or a web fetch tool: only a browser navigation is answered.
 3. At that moment the command asks the CLI for the single-use address and answers the tab
-   with a redirect to it. The tab lands in the org. The command prints the org ID, whether the
-   org is a sandbox or production, the username and the User Id, and exits.
-4. Wait until the tab shows the org, then confirm the signed-in user in the page before
-   testing. In Lightning, `$A.get('$SObjectType.CurrentUser.Id')` in the tab's JavaScript tool
-   returns the User Id to compare.
+   with a redirect to it. The command prints that the tab was sent (event `sent`,
+   `session_verified: false`), the org ID, whether the org is a sandbox or production, its
+   edition, the username and the User Id, and exits 0. It cannot see the tab.
+4. Wait until the tab shows the org's page, then check which user it shows before testing. In
+   Lightning, `$A.get('$SObjectType.CurrentUser.Id')` in the tab's JavaScript tool returns the
+   User Id to compare. A login page means the sign-in failed (retry once, then stop and
+   report); "Change Your Password" means the user's password expired, and device verification
+   means the same: the consultant acts.
 
 Options: `--path /lightning/...` lands on a page (the default is the org's own landing page;
 going to a record after the sign-in is the reliable order), `--timeout SECONDS` (default 180),
@@ -50,8 +68,13 @@ metadata.
 
 With `--json` the first line is
 `{"event": "waiting", "address": "...", "timeout_seconds": 180, "expires_at": "..."}` and the
-second `{"event": "redirected", "org_id": "...", "org_kind": "sandbox", "username": "...",
-"user_id": "...", "org_check": "..."}`, or `{"event": "failed", "exit_code": N, "reason": "..."}`.
+second `{"event": "sent", "session_verified": false, "org_id": "...", "org_kind": "sandbox",
+"org_edition": "...", "username": "...", "user_id": "...", "org_check": "...", "check_in_page": "..."}`
+(`check_in_page` is the next step above), or `{"event": "failed", "exit_code": N, "reason": "..."}`.
+The org ID, username, User Id and edition are the CLI's; one that does not look like what it
+should be (an Id of 15 or 18 characters, a username, an edition name) is printed as
+`(unreadable)`, in the JSON and in the text. Everything printed also passes the package's
+redaction; the local address comes through unchanged.
 
 A login page after the redirect means the sign-in failed. Retry once, then stop and report.
 Never type or ask for a password.
@@ -106,8 +129,14 @@ run confirms it, and its output says so.
 
 **Who cannot be signed in.** A user with the API Only User permission cannot have a browser
 session: Salesforce refuses the sign-in address for such a user. Use a separate user for
-browser tests. Inactive users cannot be logged in as. Experience Cloud site users are outside
-both routes.
+browser tests. Experience Cloud site users are outside both routes.
+
+Before anything is sent, `--as-user` refuses (exit 9), saying what is wrong and what to do, a
+user who is inactive, frozen (`UserLogin.IsFrozen`), API only (from the profile or a permission
+set), an Experience Cloud or portal user (by `UserType`: an admin reaches them from their
+contact, "Log in to Experience as User"), or the site guest user. A fact the org does not
+answer is not a refusal. The org's Log in as policy cannot be read by the command: no Login
+button on the user's page means it is off.
 
 ## Session file for a scripted browser
 
@@ -125,9 +154,19 @@ in Playwright's storage-state format. A script then starts with
   its owner only (mode 600; on Windows an access list for the user, SYSTEM and Administrators).
 - A path inside a git work tree is refused unless git ignores it. A Torque workspace ignores
   `clients/`, so `clients/NAME/state/browser-auth/ALIAS.json` works.
-- The command prints the path, never the content.
+- A path in another client's folder (`clients/OTHER/...`) or an initiative's folder
+  (`initiatives/NAME/...`) of the workspace is refused, and so is any client folder when no
+  client is selected. A path outside any workspace and repository is allowed.
+- The command prints the path, the org (with its edition) and the user, never the content.
 - `logout` deletes the file, and only a file that is such a session file.
 - `--as-alias` works here too. `--as-user` does not: use an alias for the test user.
+- Playwright's debug settings `DEBUG`, `DEBUG_FILE` and `PWDEBUG` print the address the browser
+  is sent to, or show it in a visible inspector. While any of them is set, this mode and every
+  Torque browser run that signs in through the front door (`torque browser browser`,
+  `multiprofile`) refuse to start, in every workspace mode, and name the variable to unset.
+  Only a run attached to a browser you signed in yourself (`TORQUE_BROWSER_CDP`, outside
+  connected mode) keeps them: it is sent to the org's own address, never to a sign-in address.
+  To debug a journey, write a session file first and debug a script that loads it.
 - Without Playwright or its browser the mode stops with exit 8 and says what to install.
   Host-tab mode needs neither.
 
@@ -136,15 +175,15 @@ in Playwright's storage-state format. A script then starts with
 | Mode | Behaviour |
 | --- | --- |
 | `full` (default) | Works. The gate does not block it. |
-| build-only | The gate blocks every `torque browser` call, this one included, with its usual message. |
+| build-only | The gate blocks every `torque browser` call, this one included, with its usual message. The command also refuses itself (exit 6), read the way the gate reads the mode, so a host with no gate hook wired is stopped too. Run it yourself outside the AI session. |
 | connected | Refused (exit 6). Connected mode allows one browser, Torque's own guarded one, and refuses host browser tabs because their org cannot be checked. A sign-in for a host tab, or a session file for another browser, would step outside that guard. Use `torque browser browser FLOW --target-org ALIAS` under a granted browser window. |
 
 ## Exit codes
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| 0 | The redirect was sent, or the session file was written | Confirm the user in the page |
-| 1 | Nobody opened the local address in time | Run it again and navigate the tab sooner |
+| 0 | Host tab: the tab was sent to the org's sign-in address, not yet confirmed. Session file: written after the page's user was checked | Check the page and its user |
+| 1 | No browser navigation reached the local address before its expiry, or the CLI answered after it | Run it again and navigate the tab sooner |
 | 2 | Options that cannot be used | Read the message |
 | 3 | The alias has no CLI authorization, or it expired | The consultant runs `sf org login web --alias ALIAS` in their own terminal |
 | 4 | The Salesforce CLI is not installed | Install it |
@@ -162,9 +201,26 @@ in Playwright's storage-state format. A script then starts with
   nothing else; twenty wrong requests close the listener.
 - Only a top-level browser navigation is answered. A fetch, a prefetch, an image request,
   curl or a script gets a refusal and no Salesforce address is asked for.
-- The `Host` header must be the loopback address.
-- One valid request, then the listener closes. It also closes at the timeout.
+- The `Host` header must be the loopback address (`127.0.0.1:PORT`, or `localhost:PORT`,
+  which browsers resolve to the loopback themselves), so a rebound name is refused. Open the
+  address as printed: the listener is on `127.0.0.1` only, and a browser that tries the IPv6
+  loopback first for `localhost` has to fall back to it.
+- Every answer, the redirect and each refusal, carries `Cache-Control: no-store`,
+  `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
+- One valid request, then the listener closes.
+- The printed expiry (`expires_at`, `--timeout` seconds after the address is printed) is one
+  absolute deadline. After it no Salesforce address is asked for and none is sent, also for a
+  request that began before it. A connection is read for at most five seconds in all and never
+  past the deadline, however slowly its bytes arrive, so a client that connects and waits cannot
+  hold the listener. When the CLI answers only after the deadline, its address is dropped unsent
+  (it is single-use and expires by itself) and the command exits 1 saying so.
 - Nothing about a request is logged.
+- Error text the package shows passes its redaction, which removes a sign-in address whole in
+  every form the CLI and its endpoint return: `frontdoor.jsp` with `otp`, `cshc` or `sid`,
+  `services/oauth2/singleaccess`, each also percent-encoded, and the `otp`, `cshc` and
+  `frontdoor_uri` fields by name.
+- Torque's scripted runners (`torque browser browser`, `multiprofile`) ask for the address only
+  once Playwright runs, just before the browser is launched and sent to it.
 
 Any process on the machine can reach a loopback port, whoever runs it, so the code is the
 secret. A process of the same account can read it from the session's output, but such a
@@ -173,6 +229,19 @@ power. It keeps the address out of the session in normal use.
 
 The browser and the command must run on the same machine. For a browser on another machine,
 forward the port; never bind another interface.
+
+## Replay scripts
+
+`torque browser sanitize-replay SCRIPT` rejects a recorded replay that holds a sign-in
+address or a session value (`frontdoor.jsp?otp=`, `frontdoor.jsp?sid=`,
+`services/oauth2/singleaccess`, tokens, cookies, authorization headers). It scans the text as
+written and after each of up to four rounds of percent-decoding; text still encoded after that
+is rejected too. It never prints the matched value.
+
+It is a scan of the script's text for known shapes. It cannot prove that code which builds or
+decodes an address at run time (another encoding, a computed string, a value read from a file)
+holds none, so a CLEAN result is not a full secret audit. A replay signs in at run time instead:
+`torque browser login --storage-state PATH` and `browser.new_context(storage_state=PATH)`.
 
 ## Test users: the seed file
 

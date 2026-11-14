@@ -49,7 +49,7 @@ def test_as_alias_names_the_user_in_plain_text():
     run.get()
     run.done()
     line = run.out.getvalue().splitlines()[1]
-    assert f"user {STD['username']}" in line and "Signed in through alias acme-sbx-std." in line
+    assert f"user {STD['username']}" in line and "Sent through alias acme-sbx-std." in line
 
 
 def test_as_alias_for_another_org_is_refused_before_any_address():
@@ -89,7 +89,7 @@ def test_as_user_steps_are_printed_as_numbered_lines():
     run.get()
     run.done()
     text = run.out.getvalue()
-    assert "Next steps:\n1. The tab opens the page of" in text and "\n2. Click Login on that page." in text
+    assert "Next steps:\n1. The tab was sent, as the admin, to the page of" in text and "\n2. Click Login on that page." in text
 
 
 def test_as_user_direct_uses_the_existing_login_as_address_and_is_labelled_unproven():
@@ -143,13 +143,13 @@ def test_find_user_queries_by_id_or_username_with_the_value_escaped(monkeypatch)
 
     def query(self, soql, all_rows=False):
         asked.append(soql)
-        return [{"Id": STD["user_id"], "Username": STD["username"], "IsActive": True}]
+        return [{"Id": STD["user_id"], "Username": STD["username"], "IsActive": True, "UserType": "Standard"}]
     monkeypatch.setattr(SfClient, "query", query)
     client = SfClient("acme-sbx")
-    assert client.find_user(STD["user_id"]) == STD
+    assert client.find_user(STD["user_id"]) == {**STD, "user_type": "Standard"}
     assert client.find_user("o'brien@acme.example")["user_id"] == STD["user_id"]
-    assert asked == [f"SELECT Id, Username, IsActive FROM User WHERE Id = '{STD['user_id']}'",
-                     "SELECT Id, Username, IsActive FROM User WHERE Username = 'o\\'brien@acme.example'"]
+    assert asked == [f"SELECT Id, Username, IsActive, UserType FROM User WHERE Id = '{STD['user_id']}'",
+                     "SELECT Id, Username, IsActive, UserType FROM User WHERE Username = 'o\\'brien@acme.example'"]
     assert FakeSfClient().find_user("nobody@acme.example") is None
 
 

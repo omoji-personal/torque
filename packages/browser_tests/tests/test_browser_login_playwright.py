@@ -128,7 +128,8 @@ def test_writes_an_owner_only_session_file_and_prints_the_path_not_the_content(w
     assert world["closed"] == ["context", "browser"], "Torque's own browser is closed afterwards"
     assert json.loads(path.read_text(encoding="utf-8"))["cookies"][0]["value"] == COOKIE
     event, = command.events()
-    assert event == {"event": "saved", "storage_state": str(path.resolve()), "org_id": ORG, "org_kind": "sandbox",
+    assert event == {"event": "saved", "session_verified": True, "storage_state": str(path.resolve()),
+                     "org_id": ORG, "org_kind": "sandbox", "org_edition": "Enterprise Edition",
                      "username": "admin@acme.example", "user_id": USER_ID, "org_check": login.NOT_CHECKED}
     assert COOKIE not in command.everything() and MARKER not in command.everything()
     if os.name == "nt":

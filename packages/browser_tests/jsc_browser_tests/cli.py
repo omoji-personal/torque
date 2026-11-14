@@ -109,8 +109,10 @@ def cmd_sanitize_replay(args: argparse.Namespace) -> int:
         print(f"REJECTED: {p} contains {len(violations)} forbidden pattern(s):")
         for v in violations:
             print(f"  - {v}")
+        print(auth.SCAN_LIMIT)
         return 2
-    print(f"CLEAN: {p} — no forbidden patterns detected.")
+    print(f"CLEAN: {p}: no known credential shape found in its text, as written or after up to "
+          f"{auth.DECODE_ROUNDS} rounds of percent-decoding. {auth.SCAN_LIMIT}")
     return 0
 
 
@@ -303,7 +305,8 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--allow-production-writes", action="store_true", help="Run test-record mutations on an explicitly selected production org")
     m.set_defaults(func=cmd_multiprofile)
 
-    s = sub.add_parser("sanitize-replay", help="scan a replay script for forbidden patterns")
+    s = sub.add_parser("sanitize-replay", help="scan a replay script's text for known credential shapes "
+                                               "(also percent-encoded, up to four times)")
     s.add_argument("script_path")
     s.set_defaults(func=cmd_sanitize_replay)
 

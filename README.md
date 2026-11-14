@@ -178,7 +178,7 @@ removing the flag resumes admission. The workflow updater remains available. See
 | Salesforce practice | Eight [skills](docs/skills.md): the build standard (descriptions, simplest option first, access with every field), flows, the delivery lifecycle, architecture, SOQL and Code Analyzer review, plus NPSP (with PMM and Outbound Funds) and Nonprofit Cloud, including NPSP to Nonprofit Cloud migration |
 | Deploy, data operations and scoped recovery | `torque deploy`, `torque data`, `torque org`, `torque recover` |
 | QA, debug logs, browser flows and probes | `torque qa`, `logs`, `browser`, `probes`; coverage and limits depend on the configured adapter |
-| Sign a browser in without a password | `torque browser login` signs a browser tab (or a scripted browser) in through the Salesforce front door with the CLI's existing authorization; the sign-in address never reaches the session. Offline tests only so far: see [browser sign-in](docs/browser-sign-in.md) |
+| Sign a browser in without a password | `torque browser login` sends a browser tab (or a scripted browser) through the Salesforce front door with the CLI's existing authorization; the sign-in address never reaches the session, and the agent then checks the page's user. One live host-tab run so far: see [browser sign-in](docs/browser-sign-in.md) |
 | Lessons from earlier work | `torque session add --learned`, `torque lesson for`, a lessons block in `torque context` and before `torque deploy` and `torque data`; `torque lesson review` and `promote`; see [lessons](docs/lessons.md) |
 | Meeting preparation and prompt contracts | Optional `torque meeting` and `ai-regression`; live model-provider behavior remains experimental |
 

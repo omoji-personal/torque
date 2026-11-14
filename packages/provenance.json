@@ -737,7 +737,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "36f736a1ecaa74b506be9c51c007e64a0d13c164fb5bccb3cbfd829463547670",
+      "destination_sha256": "22453d63dc8bd4a1c2b3b30618ea66814d1e7652c50af35768fe590c6ad79eb3",
       "adapted": true
     },
     {
@@ -746,7 +746,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/runner.py",
       "source_sha256": "2dd2825125d554bd79dc5d0d623445d98ddac520bf3a7ba10327d55b0392c769",
       "source_tracked": true,
-      "destination_sha256": "49e2720703bcd8843dc6e5aa8f6000e8f3bd6437f0396a52af4d5ec12aed4682",
+      "destination_sha256": "af8b3e1c11123d4d013cf31d0871e73484d3b49506ddfda2612f93a6ed2d201c",
       "adapted": true
     },
     {
@@ -755,7 +755,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/suite.py",
       "source_sha256": "40e81f606e0e88b7862ca72367b2662a192ec9be8a0af567979f1c41893de125",
       "source_tracked": true,
-      "destination_sha256": "75e81b239e2f887db9a7660c128e9655a5306be18f19e149e57d6927e6740482",
+      "destination_sha256": "e5db1e101414bb6236915e93f8482775f56493fcb63f093f974b7886f4596314",
       "adapted": true
     },
     {
@@ -800,7 +800,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
       "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
       "source_tracked": true,
-      "destination_sha256": "ab5fce92dbb51a47f923692f73dcc2ecea89d7711d58fd9e11d8a92559f336a7",
+      "destination_sha256": "9c9c67c25e1a4c18e50407968bf5788b58b44f2748c1cae9f0f64fc2d83d1a48",
       "adapted": true
     },
     {
@@ -827,7 +827,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
       "source_sha256": "8e6979337830478d413126b80272eb2ed0ae4a4669952475fa51dfd3d05c48c9",
       "source_tracked": true,
-      "destination_sha256": "21aed154047e9bcefb504cf7f45134213569b6c8544ead101db5730248407e41",
+      "destination_sha256": "9186ce32768f710f8aa2c39372a45eb2749a6b73e51993a0d42f3cbcb0dabb18",
       "adapted": true
     },
     {
@@ -1357,7 +1357,7 @@
     {
       "path": "packages/browser_tests/jsc_browser_tests/diagnostics.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "527b6a703c96d40adedb0b965203655df82bc1c7dcc0075456fef100b75a5269"
+      "destination_sha256": "ddda6c08bb1c4eef91d0466cee1b484770d8102ea23904a2abc1e5146c04522b"
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/provisioning/fixtures.py",
