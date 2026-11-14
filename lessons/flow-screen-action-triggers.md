@@ -8,9 +8,9 @@ when: you are about to deploy a screen flow whose screen runs an action, written
 do: include the action's `<triggers>` element, with real event names, in the screen's metadata
 because: a screen action saved without its triggers deploys cleanly and never runs
 applies:
-  tasks: [flow-build, deploy]
+  tasks: [flow-build]
   types: [Flow]
-  commands: ["sf project deploy *", "torque deploy *"]
+  commands: []
   keywords: [screen action, triggers, screen flow]
   errors: []
 evidence:

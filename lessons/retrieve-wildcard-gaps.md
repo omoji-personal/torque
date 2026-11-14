@@ -6,7 +6,7 @@ kind: pitfall
 state: active
 when: you are about to retrieve with a wildcard manifest for a baseline or a study
 do: name standard and managed objects explicitly, put the namespace inside the names of managed layouts, and compare the number of files with a metadata listing
-because: a manifest wildcard returns only unmanaged custom objects, a wildcard Apex retrieve skips unlocked-package code, and a managed layout named without its namespace returns almost nothing, all without an error
+because: a manifest wildcard returns only unmanaged custom objects, and in the record a wildcard Apex retrieve skipped unlocked-package code and a managed layout named without its namespace returned almost nothing, all without an error
 applies:
   tasks: [retrieve]
   types: [CustomObject, Layout, ApexClass]

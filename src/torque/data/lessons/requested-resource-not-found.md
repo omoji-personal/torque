@@ -6,7 +6,7 @@ kind: pitfall
 state: active
 when: a CLI or REST call fails with "The requested resource does not exist", above all just after a sandbox refresh
 do: after a refresh pass the API version explicitly (`--api-version`); for a REST request by Id, query the record first to confirm the running user can see it and that the path fits the API version
-because: the CLI caches an org's API version for up to a day and a refreshed sandbox may not serve it, and a REST read of a record the user cannot see gives the same answer
+because: the message does not say which cause it is; in the record it was the CLI's cached API version after a refresh, a REST read of a record the running user could not see, or a path wrong for the version
 applies:
   tasks: [sandbox-refresh]
   types: []

@@ -6,7 +6,7 @@ kind: pitfall
 state: active
 when: "anonymous Apex or a test fails with \"Too many SOQL queries: 101\" while it saves only a few records in an org with managed packages"
 do: "run one case, or at most three, per transaction: separate runs, or separate test methods with Test.startTest"
-because: each save also runs the packages' own triggers, which spend queries of the same transaction, and a rollback gives none back
+because: in the record each save also ran the packages' own triggers, which spent queries of the same transaction, and a rollback gives none back
 applies:
   tasks: [apex, testing]
   types: []

@@ -5,8 +5,8 @@ scope: platform
 kind: pitfall
 state: active
 when: you are about to rely on automation or an integration that runs as an integration user, a site guest user or the automated process user
-do: replay its steps as that user in a sandbox before handing it over; expect a default record type, a duplicate-rule exemption, connected app pre-authorization and access to the external credential to be missing
-because: these users differ from an admin in exactly those places, so an admin test passes where the real run fails
+do: "replay its steps as that user in a sandbox before handing it over, and check for the gaps the record met: a default record type, a duplicate-rule exemption, connected app pre-authorization, access to the external credential"
+because: in the record these users lacked exactly those in the configurations met, and an admin test passed where the real run failed
 applies:
   tasks: [integration, access]
   types: []
@@ -23,4 +23,4 @@ review_by: 2027-02-14
 supersedes: []
 promoted_to: []
 ---
-Check: one end-to-end run as that user creates the expected records without an error.
+Check: one end-to-end run as that user creates the expected records without an error. Not covered: the list is what the record met, not every gap a licence or profile can have.

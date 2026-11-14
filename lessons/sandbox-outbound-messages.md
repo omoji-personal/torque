@@ -23,3 +23,4 @@ supersedes: []
 promoted_to: []
 ---
 Check: the Deliverability setting; after the first test record, the day's background jobs show nothing outbound.
+Not covered: Deliverability set to system email only does not stop a vendor's own email, text messages or outbound connectors; check each integration on its own side.

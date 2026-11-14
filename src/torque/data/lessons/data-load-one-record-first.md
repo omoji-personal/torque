@@ -23,4 +23,4 @@ review_by: 2027-02-14
 supersedes: []
 promoted_to: []
 ---
-Check: the first record's jobs, emails and changed fields are read and noted before the next batch.
+Check: the first record's jobs, emails and changed fields are read and noted before the next batch. Not covered: queued and scheduled work runs after the save; read the jobs again once it has run.
