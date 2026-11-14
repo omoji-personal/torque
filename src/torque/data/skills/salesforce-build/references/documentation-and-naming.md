@@ -47,6 +47,7 @@ and their rationale" [WA-OE].
 | --- | --- | --- |
 | Field description | 1,000 characters | [BLOG-DOC] |
 | Field help text | 510 characters | **verify** |
+| Description on a permission set, a profile or a validation rule | Deploys failed above 255 characters ("cannot be longer than 255", "data value too large"); other types allow more | field-reported, 4 failures in 3 engagements; **verify** the limit per type with a dry run |
 | Validation rule error message | 255 characters | [SK-VR] |
 | Validation rule name | 40 characters; starts with a letter; letters, digits and underscores; no trailing or double underscore | [SK-VR] |
 

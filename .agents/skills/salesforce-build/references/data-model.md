@@ -18,7 +18,9 @@ checked", not as "none".
    object (`sf package installed list --target-org ALIAS`), an existing custom field. Custom
    objects are for what is specific to the organisation [TH-DM].
 3. Keep the change small: prefer a field to an object and an existing object to a new one
-   (field-reported preference: "perhaps only one new object").
+   (field-reported preference: "perhaps only one new object"). Trace every new field to a
+   requirement line, or ask (field-reported: a field built from an analysis column,
+   questioned on day one, was removed in UAT with four deploys).
 4. Check the object's headroom: Setup > Object Manager > the object > Object Limits.
 
 Check: the plan lists what is reused, and gives the named gap for each new object or field.
@@ -94,7 +96,10 @@ Rules on the platform run for every way in: page, API, loads and integrations [P
    rule built from two traced examples missed about a hundred real cases and wrongly caught
    three).
 3. Protect legacy data: scope a stricter rule to records created after a cut-off date so old
-   records stay editable (field-reported).
+   records stay editable (field-reported). Before you write a filter or a rule on a field,
+   profile its real values by frequency and count the blanks (field-reported: a data-quality
+   report missed the org's most common placeholder value, and a filter read a field that was
+   empty in real data).
 4. Check what else writes the object: integrations, packages and tests fail on a new rule.
    In an NPSP org a rule can make package batches fail silently (skill `salesforce-npsp`).
 5. If a load or integration must skip the rule, bypass through a custom permission:

@@ -61,6 +61,9 @@ as the base of an integration; PushTopic and generic streaming; Salesforce to Sa
   endpoint, token included, into the session (field-reported). Send it in a header or the
   body, and confirm the host is allowed first. `[check]` no `token=` or `access_token=`
   inside an endpoint string in Apex or scripts.
+- A callout to a new host needs a remote site setting or a named credential, and an external
+  credential needs principal access for the user who runs it (field-reported: an
+  "Unauthorized endpoint" error and three "not accessible" results).
 - Before you print custom metadata, custom settings or sample request bodies retrieved from
   an org, reduce them to key names and hosts: masking by field name alone leaked a
   credential fragment from a "sample request" field (field-reported).
@@ -136,6 +139,8 @@ defect:
 | A change that originates from the integration's own write | An echo loop |
 | The reject path as well as the approve path | Reject failed while approve passed |
 | Read the result in the other system, not the sync status | "Synced" shown for edits the other system rejected |
+| Read the vendor's own run log after each test | Failed connector steps on 26 of 35 runs that nobody had counted as failures |
+| Match an existing person or record, then read its old values | A redesign that would have overwritten details already there |
 
 Record a stand-in trigger (for example queue rows created by hand while webhooks were down)
 as synthetic, not as a live test.

@@ -45,7 +45,7 @@ Marks used in this skill:
 | 8 | Configuration instead of hard-coded values: custom metadata, custom labels, custom permissions, named credentials. No Ids, org URLs, user names, profile names or secrets in formulas, flows or code. | `[check]` no 15 or 18 character Id, no `my.salesforce.com` host, no `$Profile.Name` or `$User.` literal in a validation rule. |
 | 9 | Leave something the client's admin can open and change. If a threshold, a recipient or a switch may change, the admin changes it in Setup without a deployment. | Judgement. The hand-over note says where each setting lives and how to change it. |
 | 10 | Do not change managed-package components. Extend beside them with the client's own components and use the package's own settings. | `[check]` no component with a namespace prefix in the change. |
-| 11 | Retrieve before you change; deploy only what you changed; validate first. | The change was built on a retrieve of the target org; the deploy names an org and an explicit scope; a dry run or validation passed. |
+| 11 | Retrieve before you change; deploy only what you changed; run a check-only deploy before every real one. | The change was built on a retrieve of the target org; the deploy names an org and an explicit scope; a dry run from the manifest alone passed just before (field-reported: check-only runs caught 28 of 36 deploy failures). The `--json` result is in a file, not behind a pipe that hides a failure. |
 | 12 | Prove it as the intended user, on test records, and say which user and how. | A person with the target permission sets, not the deploying admin, did the task. Test record Ids are saved and cleaned up by Id. |
 
 ## After the deploy: what "done" needs
@@ -104,4 +104,7 @@ skill.
 - [ADV] Torque advisory catalogue, entry `fls-not-automatic` (verified live): `torque advisory needs --command "sf project deploy start --metadata CustomField:Object__c.Field__c --target-org ALIAS"`
 - Record-triggered automation decision guide (simplest tool, descriptions): https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered
 - Salesforce agent skills for fields, objects and permission sets: https://github.com/forcedotcom/sf-skills
-- field-reported: lessons from real client work with Torque and its predecessor, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes), including a classification of 273
+  failed Salesforce CLI calls and an after-action review of 166 rework and defect episodes.
+  Not re-tested for this release.

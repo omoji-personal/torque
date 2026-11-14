@@ -61,6 +61,9 @@ and can be edited or not as designed.
 
 - Profiles still carry page layout assignment [WA-T]. A layout change reaches users by
   profile and record type: confirm which layout the intended users get.
+- A layout shared by several record types shows a new button or field on all of them
+  (field-reported: a button appeared on a record type it was not meant for). Check: open
+  one record of every record type that uses the layout.
 - Required on the layout is not required to the API [ADV `layout-required-is-not-api-required`].
 - A quick action stays on a layout after its removal unless an empty `platformActionList` is
   deployed first (field-reported).
@@ -109,6 +112,14 @@ House standard except where a source is given.
 - Reports and dashboards are edited by users in production. Retrieve before you change one,
   and do not overwrite from an older copy. A community pipeline deploys them only when they
   are missing for this reason [HARDIS].
+- Deploying a report type or a report from metadata failed in four ways (field-reported, one
+  chain of five failed deploys): a field that exists in one org and not in the target;
+  system fields that are not valid in a report type, found one per attempt; a report folder
+  that did not exist in the target; a row-level formula written with API names where the
+  report's own column tokens were needed. Check before deploying: the field list against
+  every target org, the folder in the target, and a dry run.
+- A REST request for a report by Id that answers "not found" can mean the running user
+  cannot see its folder: check with a query before you conclude it is gone (field-reported).
 
 ## 6. Dashboards
 

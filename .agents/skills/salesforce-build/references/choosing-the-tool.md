@@ -15,6 +15,12 @@ Before any design, write three lines:
 2. The simplest design that uses only those plus configuration, and what it cannot do.
 3. Its effort next to what the client was told.
 
+Then list the options in order (standard feature, feature of an installed package,
+declarative, code) with hours beside each, before any design or review round, and take the
+first that meets the criteria. Read what the platform and existing automation already write
+on the rows: two automation designs and an accounting fix were replaced by one rule that
+used a value the platform already wrote (field-reported).
+
 Add an object, code or a staging layer only for a gap you can name, and ask first
 (field-reported: a design with a staging object, Apex and platform events was rejected as
 over-engineered, and the native redesign cut the effort by about two thirds). Building

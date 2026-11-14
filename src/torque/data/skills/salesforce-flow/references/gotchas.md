@@ -72,7 +72,9 @@ None was re-tested for this release, so run the check before you rely on an item
     deploy with "Duplicate developer name" (field-reported). `[check]`.
 14. **Get Records with `storeOutputAutomatically` also needs `getFirstRecordOnly`**
     (field-reported). `[check]`.
-15. **Decision outcome names must be unique** (field-reported). `[check]`.
+15. **Decision outcome names must be unique** (field-reported; one deploy reported it as
+    "duplicate value found: FlowRecordVersionId"). `[check]` every element and outcome has
+    its own API name.
 16. **A retrieve returns the latest version, not the active one** [ADV
     `flow-retrieve-latest-only`]. Check: `torque advisory flow`, or `ActiveVersionId` against
     `LatestVersionId` on `FlowDefinition`.
@@ -136,6 +138,38 @@ None was re-tested for this release, so run the check before you rely on an item
     number (field-reported: the evidence pointed to configuration). Leave unrelated defects
     you find alone and recommend their cleanup.
 
+## Deploy failures and escaped defects from the field record
+
+Field-reported: the error text was observed; the cause is the reading of whoever fixed it.
+Each fix is the one that worked.
+
+32. **A flow formula cannot read a long text area field,** and only some functions accept a
+    multi-select picklist: the deploy fails with "The formula expression is invalid". Fix:
+    copy the value into a text field or variable first, or drop the reference. `[check]` the
+    field types a formula reads, from describe.
+33. **"Property X not valid in version N."** A flow retrieved at a newer API version than the
+    project declares does not deploy. Fix: set `sourceApiVersion` in `sfdx-project.json` to
+    the version the flow was retrieved at. `[check]` the flow's `apiVersion` against the
+    project's.
+34. **"Element X is duplicated at this location in type Flow."** Elements with the same tag
+    must sit together in the file. Fix: move a hand-added element next to its siblings of
+    the same tag. `[check]` same-tag elements are contiguous.
+35. **A constant cannot be a DateTime** ("The data type of X can't be DateTime"). Fix: use a
+    formula in its place. `[check]` constant data types.
+36. **A field that any flow version reads cannot be deleted.** The destructive change fails
+    with "This custom field is referenced elsewhere: Flow Version", for inactive versions
+    too. Fix: remove the reference and delete the old versions first. Check: search every
+    version before a field delete.
+37. **Installing or reinstalling a package can re-activate a flow** (seen after a sandbox
+    restore). Check: compare the list of active flows before and after any install.
+38. **A step added to someone else's flow shares its transaction.** A failure in an added
+    step would have rolled back the owner's own steps, and its first run would have re-dated
+    rows already exported (caught in review). Check: inject a fault into the new step and
+    read the original steps' results; ask what the first run does to existing rows.
+39. **A first run writes more than later runs.** A first full recalculation wrote to every
+    record and was noticed three days later. Check: count the rows a first run will write
+    and what those writes fire; limit the first run.
+
 Flows on NPSP and Nonprofit Cloud objects have their own items: skills `salesforce-npsp` and
 `salesforce-nonprofit-cloud`.
 
@@ -151,4 +185,7 @@ Flows on NPSP and Nonprofit Cloud objects have their own items: skills `salesfor
 - **verify** items: flow fault paths (https://help.salesforce.com/s/articleView?id=platform.flow_build_logic_fault.htm&type=5),
   flow debugging (https://help.salesforce.com/s/articleView?id=flow_considerations_troubleshooting.htm&type=5).
 - Record-triggered automation decision guide (transaction control in Flow): https://architect.salesforce.com/docs/architect/decision-guides/guide/record-triggered
-- field-reported: lessons from real client work with Torque, not re-tested for this release.
+- field-reported: lessons from real client work with Torque (one consultant, about a dozen
+  clients, mostly sandboxes), including a classification of 273 failed Salesforce CLI calls
+  and an after-action review of 166 rework and defect episodes. Not re-tested for this
+  release.

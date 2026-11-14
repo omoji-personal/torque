@@ -29,8 +29,10 @@ sf data query --target-org ALIAS --query "SELECT Field, Parent.Name FROM FieldPe
 torque advisory evidence --target-org ALIAS --field Object__c.Field__c --permset Permission_Set_Name
 ```
 
-`FieldPermissions` is not served by the Tooling API; `FieldDefinition` is served only by it
-[ADV `tooling-api-refuses-permission-objects`]. A required field has no rows and needs none.
+`FieldPermissions` and `PermissionSetAssignment` are standard-API objects: with the Tooling
+flag the query fails [ADV `tooling-api-refuses-permission-objects`]. To filter permission
+rows by field, use `=` or `IN` with the full `Object.Field` name: `LIKE` on `Field` is
+refused (field-reported). A required field has no rows and needs none.
 
 `[check]` each new `*.field-meta.xml` that is not required or master-detail has a matching
 `fieldPermissions` entry with `readable` true in a permission set in the change.
@@ -59,6 +61,9 @@ this rule unless the client asked for that breadth.
   security review", and "Do not add unrequested user permissions to work around a dependency
   error" [SK-PS].
 - View All Data opens records, not fields [ADV `view-all-data-vs-fls`].
+- Take user permission names for a permission set file from a describe of `PermissionSet`
+  in the target org (its `Permissions...` fields), not from memory: a deploy failed on
+  "Unknown user permission" (field-reported). Some exist only where a feature is enabled.
 
 Check, lead: `SELECT COUNT() FROM PermissionSetAssignment WHERE
 PermissionSet.PermissionsModifyAllData = true AND Assignee.IsActive = true`, then account for
@@ -147,7 +152,7 @@ separate checks. A query as an administrator proves none of the last three.
 | The user holds it | `PermissionSetAssignment`, directly and through groups |
 | The user can open this record | `SELECT RecordId, HasReadAccess, HasEditAccess, MaxAccessLevel FROM UserRecordAccess WHERE UserId = 'USER_ID' AND RecordId = 'RECORD_ID'` (**verify**; it ignores restriction rules) |
 | Logic and access together | Apex with `WITH USER_MODE` as a minimum-access user for the negative case; `System.runAs` needs an active user (field-reported) |
-| The page shows it | In a browser as that user |
+| The page shows it | In a browser as that user, one person per user group, on a record someone else owns (field-reported: a user-mode code check "proved" a list that one profile could not see) |
 
 To act as the user in a browser: sign in with `torque browser login`, then use Setup "Log in
 as" (needs Modify All Data and the org's login-access policy, **verify**), or a dedicated

@@ -140,6 +140,40 @@ confirmed in a fetched primary source). None was re-tested for this release: run
     on debug logging for that user (field-reported). Check: use `COUNT(field)` per column;
     reading result grids through page tools dropped short cells.
 
+## Command-line failures from the field record
+
+Field-reported, from 273 failed Salesforce CLI calls in one consultant's work. The error
+text was observed; each fix is the one that worked.
+
+37. **Check-only before every real deploy.** Check-only runs caught 28 of 36 deploy
+    failures; 7 of the 8 real deploys that failed had no check-only run just before. A
+    package that was "ready" twice lacked a field and a permission set. Check: a dry run
+    from the manifest alone passes.
+38. **A pipe hides a failure.** 44% of failed CLI calls looked successful because a filter,
+    a redirect or a chained command swallowed the exit code. Check: write `--json` output to
+    a file and read the file; do not merge the error stream into it.
+39. **Deploy and retrieve need a project folder, or the metadata-format flags.** Outside a
+    project: `--target-metadata-dir DIR --unzip` to retrieve, `--metadata-dir DIR` to
+    deploy. Check: `sfdx-project.json` and its package directory exist before the command.
+40. **`sf project deploy validate` rejects `--test-level NoTestRun`,** and production rejects
+    NoTestRun on any deploy. Check: in a sandbox use `deploy start --dry-run`.
+41. **A connected app would not deploy** ("You can't create a connected app"). Check whether
+    the org still allows new connected apps; an external client app is the replacement.
+42. **A broad retrieve cannot always be redeployed.** It held members the platform created
+    that fail on deploy. Check: prune to what you changed.
+43. **A script file written by Windows PowerShell can start with a byte-order mark,** and
+    anonymous Apex then fails with "Invalid identifier at Line 1 column 1". Check: write
+    files with the editor tool; look at the first bytes when line 1 column 1 is blamed.
+44. **A narrow filter on `sf apex run` output hides the reason.** Check: use `--json` and
+    read the compile problem or the exception message with its line and column.
+45. **`Database.rollback(Database.setSavepoint())` at the end of a script rolls back
+    nothing.** Check: set the savepoint first, do the work, roll back to it.
+46. **Several test cases in one anonymous script ran out of queries in a package-heavy
+    org** (each save fired many package queries). Check: one to three cases per transaction;
+    a rollback does not refund limits [ADV `savepoint-rollback-does-not-refund-limits`].
+47. **Reserved words fail as Apex variable names,** sometimes with a misleading "Unexpected
+    token" on the next word (seen with `any` and `bulk`). Check: rename the variable first.
+
 ## Sources
 
 - [ADV] Torque advisory catalogue (`torque advisory notes --command TEXT`). Each entry carries
@@ -147,4 +181,7 @@ confirmed in a fetched primary source). None was re-tested for this release: run
 - [SK-PS] https://github.com/forcedotcom/sf-skills/blob/main/skills/platform-permission-set-generate/SKILL.md
 - [TH-NPSP] https://trailhead.salesforce.com/content/learn/modules/nonprofit-success-pack-maintenance/prepare-for-npsp-and-salesforce-releases
 - Observed in a developer org: item 26, carried from the earlier nonprofit skill text.
-- field-reported: lessons from real client work with Torque and its predecessor, not re-tested for this release.
+- field-reported: lessons from real client work with Torque and its predecessor (one
+  consultant, about a dozen clients, mostly sandboxes), including a classification of 273
+  failed Salesforce CLI calls and an after-action review of 166 rework and defect episodes.
+  Not re-tested for this release.
