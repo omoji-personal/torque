@@ -109,8 +109,9 @@ Sources: [F-BASICS] [DG-RT] [P-DATA]. The row choices are judgement.
 - A bypass for loads or integrations is a custom permission, not a profile name: "The modern,
   scalable standard for implementing bypass logic is custom permissions" [DG-RT].
 
-Check: `[check]` no Id literal, host name, user name or profile name in the change; each new
-custom metadata record has its description filled.
+Check: `[check: flow.hard-coded-id, rule.hard-coded-id, rule.profile-or-user-literal,
+secret.looks-like-secret]`; by hand, host names in the change, and the description on each
+new custom metadata record.
 
 ## 6. Relationship type
 

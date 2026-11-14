@@ -1,7 +1,8 @@
 # Data model: objects, fields, picklists, validation and duplicate rules
 
 Use this before you add or change an object, a field or a rule on data. State described:
-Winter '27 (API 68.0), checked 2026-11-14. `[check]` = testable in the source files.
+Winter '27 (API 68.0), checked 2026-11-14. A tag such as `[check: doc.description-missing]`
+names the `torque check metadata` rule that tests the statement.
 **verify** = not confirmed in a fetched primary source: verify in the org or the current
 documentation. field-reported = seen in client work, usually one org. Queries marked "lead"
 were not run for this release: confirm names with describe and treat an error as "not
@@ -36,8 +37,8 @@ Check: the plan lists what is reused, and gives the named gap for each new objec
 | Where users reach it | Tab, page, related list on the parent | `pages-and-reports.md` |
 | Keys for loads and integrations | An external Id field, unique, so writes can be upserts | [DG-INT] |
 
-Check: `[check]` `description` and `sharingModel` in the object file; the permission set in
-the change grants the object.
+Check: `[check: doc.description-missing]`; by hand, `sharingModel` in the object file and the
+object's grant in a permission set in the change.
 
 ## 3. Fields
 
@@ -65,14 +66,14 @@ the change grants the object.
   against the object's field limit [ADV `deleted-field-rename`]. A delete is a stop-and-ask
   change: find what references the field first, old flow versions included.
 
-Check: `[check]` each new field has `description`; user-entered fields have
-`inlineHelpText`; `required` is true only with a recorded reason.
+Check: `[check: doc.description-missing, doc.help-text-missing]`; by hand, `required` is
+true only with a recorded reason.
 
 ## 4. Picklists
 
 - A restricted picklist rejects values outside its set; an unrestricted one accepts any text
   from the API, which no report can then group [ADV `restricted-picklist-rejects-new-values`].
-  Restrict new picklists unless free text is intended. `[check]` `restricted` in `valueSet`
+  Restrict new picklists unless free text is intended. By hand: `restricted` in `valueSet`
   (lead).
 - A restricted picklist also rejects a value that is merely inactive, even on a record that
   already holds it [ADV `restricted-picklist-rejects-inactive`].
@@ -108,8 +109,8 @@ Rules on the platform run for every way in: page, API, loads and integrations [P
 6. Deploy a new rule active to the sandbox and inactive to production. Activation is its own
    approved step, with the runbook written first (field-reported).
 
-Check: `[check]` `errorMessage` present; `errorConditionFormula` has no `$Profile.Name`,
-`$User.Id` or `$User.Username` literal; `description` present. After deploy, save one record
+Check: `[check: rule.no-error-message, rule.hard-coded-id, rule.profile-or-user-literal,
+doc.description-missing]`. After deploy, save one record
 that must fail and one that must pass, as the intended user.
 
 ## 6. Duplicate rules

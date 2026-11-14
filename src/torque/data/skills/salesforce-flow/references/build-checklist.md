@@ -1,7 +1,8 @@
 # Flow build checklist
 
 Work top to bottom; each step ends with its check. State: Winter '27 (API 68.0), checked
-2026-11-14. `[check]` = testable in the flow file. **verify** = not confirmed in a fetched
+2026-11-14. A tag such as `[check: flow.no-fault-path]` names the `torque check metadata`
+rule that tests the step; "by hand" says what to read. **verify** = not confirmed in a fetched
 primary source: verify in the org (an element name: in a retrieved flow) or the current
 documentation. field-reported = seen in client work, usually one org.
 
@@ -47,10 +48,11 @@ existing flow already did the job a new one was designed for).
 - Prefer one flow that sets the value when the record is created over a second automation
   that corrects it later (field-reported: one before-save flow with three entry conditions
   replaced a four-part design).
-- Build nothing new in Workflow Rules or Process Builder. `[check]` no new `rules` in a
-  `*.workflow-meta.xml` file and no new process-type flow file.
+- Build nothing new in Workflow Rules or Process Builder. By hand: no new `rules` in a
+  `*.workflow-meta.xml` file and no new process-type flow file (LFS `process-builder-usage`).
 
-Check: `[check]` `start.triggerType`; the reason for after-save or for Apex is recorded.
+Check: `start.triggerType`, and `[check: flow.after-save-same-record]`; the reason for
+after-save or for Apex is recorded.
 
 ## 3. Entry conditions and order
 
@@ -76,9 +78,8 @@ Check: `[check]` `start.triggerType`; the reason for after-save or for Apex is r
    save does not show them [ADV `order-of-execution`, `duplicate-rules-block-the-save`,
    `post-commit-work-is-invisible-to-the-caller`].
 
-Check: `[check]` `start.filters` or `start.filterFormula`, and
-`start.doesRequireRecordChangedToMeetCriteria` where used (**verify** names); `[check]`
-`triggerOrder`. Then rerun one existing path on the object, for example an approval
+Check: `[check: flow.no-entry-conditions, flow.reruns-on-every-update]`; by hand,
+`triggerOrder` in the file. Then rerun one existing path on the object, for example an approval
 (field-reported: a new before-save flow changed the run order and submissions skipped it).
 
 ## 4. Structure and bulk
@@ -99,8 +100,7 @@ Check: `[check]` `start.filters` or `start.filterFormula`, and
 - Do not chain your own flows with platform events: "Don't use events to orchestrate
   automation; use subflows or Flow Orchestrator" [DG-EDA].
 
-Check: `[check]` no data element or `actionCalls` on a loop's for-each path (analyzer
-`DbInLoop`); a 200-record test passes (step 9).
+Check: `[check: flow.work-in-loop]` (analyzer `DbInLoop`); a 200-record test passes (step 9).
 
 ## 5. Fault paths
 
@@ -114,8 +114,8 @@ Check: `[check]` no data element or `actionCalls` on a loop's for-each path (ana
 - Find where fault email goes today (Setup > Process Automation Settings) and read past
   failures (Setup > Paused and Failed Flow Interviews). **verify** both page names in Setup.
 
-Check: `[check]` `faultConnector` on each data element and action (analyzer
-`MissingFaultHandler`, selector `flow`). Then force the fault in a sandbox: a plain user
+Check: `[check: flow.no-fault-path]` (analyzer `MissingFaultHandler`, outside the
+`Recommended` set). Then force the fault in a sandbox: a plain user
 message, one log row or notice, no partial records.
 
 ## 6. Nothing hard-coded
@@ -128,8 +128,8 @@ message, one log row or notice, no partial records.
 | Who may use or skip the logic | A custom permission in a permission set | Assigned and removed per person |
 | An endpoint or secret | A named credential | Never in a flow, a label or custom metadata |
 
-Check: `[check]` no 15 or 18 character Id literal, no `my.salesforce.com` host, no user or
-profile name in values, filters or formulas (analyzer `HardcodedId`). field-reported: a user
+Check: `[check: flow.hard-coded-id]` (analyzer `HardcodedId`); by hand, search the file for
+`my.salesforce.com` and for user and profile names. field-reported: a user
 name in a run-as setting survived a sandbox refresh and failed there.
 
 ## 7. Running context and access
@@ -144,8 +144,8 @@ name in a run-as setting survived a sandbox refresh and failed there.
 - Do not run system-context flows for guest users on a public site: a system-context Get with
   unrestricted fields can expose data in the browser [DG-FORMS].
 
-Check: `[check]` `runInMode`; the reason is in the description when it is
-`SystemModeWithoutSharing` [LFS]. The tag can be absent when the default applies (**verify**).
+Check: `[check: flow.system-mode-without-sharing]` `runInMode`; the reason is in the
+description when it is `SystemModeWithoutSharing` [LFS]. The tag can be absent when the default applies (**verify**).
 
 ## 8. Describe and name
 
@@ -161,8 +161,8 @@ Check: `[check]` `runInMode`; the reason is in the description when it is
 - If a script generates the flow, keep the descriptions as data and re-apply them on every
   regeneration, or the next build removes them (field-reported).
 
-Check: `[check]` `description` on the flow and on every element and resource (analyzer
-`MissingDescription`, selector `flow`); after deploy, `Description` on `FlowDefinitionView`
+Check: `[check: doc.description-missing, doc.flow-elements-undescribed]` (analyzer
+`MissingDescription`, outside the `Recommended` set); by hand, each variable and formula; after deploy, `Description` on `FlowDefinitionView`
 (field-reported). Examples: `salesforce-build/references/documentation-and-naming.md`.
 
 ## 9. Test

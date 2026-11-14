@@ -103,6 +103,24 @@ def test_skill_files_cite_sources_and_stay_plain(name):
             assert "not confirmed in a fetched primary source" in _text(name), path
 
 
+CHECK_TAG = re.compile(r"\[check\b([^\]]*)\]")
+
+
+def test_check_tags_name_rules_that_torque_check_metadata_has():
+    # `[check: rule.id, ...]` promises that `torque check metadata` tests the statement. A bare `[check]`, or
+    # an id the check code does not have, sends an agent to rely on a check that does not exist.
+    from torque.checks.rules import RULES
+    tags = 0
+    for path in sorted(SOURCE.rglob("*.md")):
+        for match in CHECK_TAG.finditer(path.read_text(encoding="utf-8")):
+            tags += 1
+            body = match.group(1)
+            assert body.startswith(": "), (path, match.group(0))
+            for rule in (part.strip() for part in body[2:].split(",")):
+                assert rule in RULES, (path, rule)
+    assert tags >= 20
+
+
 @pytest.mark.parametrize("name", NONPROFIT)
 def test_nonprofit_skill_text_is_plain_and_cites_official_docs(name):
     texts = [p.read_text(encoding="utf-8") for p in (SOURCE / name).rglob("*.md")]
@@ -138,7 +156,7 @@ def test_flow_skill_covers_the_required_topics():
     # The body carries the standard an agent applies to every flow, each rule with its check.
     for topic in ("before save", "entry conditions", "trigger order", "inside a loop", "fault path",
                   "Hard-code no", "running context", "Describe the flow", "200 records", "active version",
-                  "torque advisory flow", "torque advisory impact", "torque browser login", "[check]"):
+                  "torque advisory flow", "torque advisory impact", "torque browser login", "[check: "):
         assert topic in skill, topic
     text = _text("salesforce-flow")
     for topic in ("faultConnector", "triggerOrder", "runInMode", "FlowDefinitionView", "ActiveVersionId",
@@ -157,7 +175,7 @@ def test_build_skill_covers_the_required_topics():
     for topic in ("Reuse what exists", "Simplest option first", "Document what you build", "naming convention",
                   "Ship access with every new field", "Configuration instead of hard-coded values",
                   "client's admin can open and change", "managed-package components",
-                  "Retrieve before you change", "as the intended user", "torque browser login", "[check]",
+                  "Retrieve before you change", "as the intended user", "torque browser login", "[check: ",
                   "Stop and ask first"):
         assert topic in skill, topic
     text = _text("salesforce-build")

@@ -2,7 +2,8 @@
 
 Use this whenever a change adds a field or component, grants or reduces access, touches
 sharing, or involves an integration user. State described: Winter '27 (API 68.0), checked
-2026-11-14. `[check]` = testable in the source files. **verify** = not confirmed in a
+2026-11-14. A tag such as `[check: access.field-without-grant]` names the `torque check
+metadata` rule that tests the statement. **verify** = not confirmed in a
 fetched primary source: verify in the org or the current documentation. field-reported =
 seen in client work, usually one org. Queries marked "lead" were not run for this release.
 
@@ -34,8 +35,7 @@ flag the query fails [ADV `tooling-api-refuses-permission-objects`]. To filter p
 rows by field, use `=` or `IN` with the full `Object.Field` name: `LIKE` on `Field` is
 refused (field-reported). A required field has no rows and needs none.
 
-`[check]` each new `*.field-meta.xml` that is not required or master-detail has a matching
-`fieldPermissions` entry with `readable` true in a permission set in the change.
+`[check: access.field-without-grant, access.formula-field-editable]`.
 
 In Setup, the same habit: enable "Field-Level Security for Permission Sets during Field
 Creation" in User Management Settings so the new-field wizard grants through permission
@@ -48,7 +48,7 @@ this rule unless the client asked for that breadth.
   profiles." Profiles remain for page layout assignment, record type defaults, login hours,
   IP ranges and app visibility [WA-T]. The planned retirement of permissions on profiles was
   cancelled; Salesforce still recommends the permission-set-led model (**verify**).
-- `[check]` no `*.profile-meta.xml` in the change. If the org forces a profile change, deploy
+- `[check: access.profile-in-change]`. If the org forces a profile change, deploy
   the narrowest file: a profile deploy applies what the file says, explicit `false` values
   included, and leaves the rest alone [ADV `full-profile-deploy`].
 - Name a permission set for the task, bundle sets into a group per persona, and use a muting

@@ -2,7 +2,8 @@
 
 Write the description when you build the component, in the one current source, not in a
 later clean-up deploy. State described: Winter '27 (API 68.0), checked 2026-11-14.
-`[check]` = testable in the source files. **verify** = not confirmed in a fetched primary
+A tag such as `[check: doc.too-long]` names the `torque check metadata` rule that tests the
+statement. **verify** = not confirmed in a fetched primary
 source: verify in the org (an element name: in a retrieved file) or the current
 documentation. field-reported = seen in client work, usually one org.
 
@@ -106,11 +107,12 @@ for all elements and variables" [DG-RT].
 
 ## 7. Check it
 
-- `[check]` every changed object, field, validation rule, permission set and flow file has a
-  non-empty `description`; every field a user fills in has `inlineHelpText`; no description
-  equals the label; validation rule names and messages are within the limits.
-- Flows and their elements: `sf code-analyzer run --rule-selector flow --target PATH` (rule
-  `MissingDescription`, **verify**).
+- `torque check metadata PATH`: `[check: doc.description-missing, doc.help-text-missing,
+  doc.description-placeholder, doc.too-long]` (field, help text, permission set and
+  validation rule description lengths). Validation rule names and error messages within
+  their limits: by hand, and a dry-run deploy.
+- Flows and their elements: the same command, which runs Code Analyzer's
+  `MissingDescription` too (skill `salesforce-code-analyzer-review` without Torque).
 - Custom fields without a description across a project: `sf hardis:lint:missingattributes`
   if the community sfdx-hardis plugin is already installed (run it as an external command)
   [HARDIS].

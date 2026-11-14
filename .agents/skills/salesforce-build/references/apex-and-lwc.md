@@ -1,8 +1,10 @@
 # Apex and Lightning web components: the minimum
 
 Use this once code is the chosen tool (`choosing-the-tool.md`, section 8). It is the floor,
-not a style guide. State described: Winter '27 (API 68.0), checked 2026-11-14. `[check]` =
-testable in the source files. **verify** = not confirmed in a fetched primary source: verify
+not a style guide. State described: Winter '27 (API 68.0), checked 2026-11-14. A tag such as
+`[check: code.see-all-data]` names the `torque check metadata` rule that tests the
+statement; "Code Analyzer" names a rule of the installed analyzer (PMD engine).
+**verify** = not confirmed in a fetched primary source: verify
 in the org or the current documentation. field-reported = seen in client work, usually one
 org.
 
@@ -41,8 +43,8 @@ file as the review list [SK-APEX].
 - "Always handle exceptions (log, rethrow, or recover)" [SK-APEX]. Never an empty catch, never
   a stack trace shown to a user, no passwords or personal data in debug logs [P-SDEV].
 
-`[check]` no query or DML inside a loop (Code Analyzer); no 15 or 18 character Id literal;
-more than one trigger on an object.
+Check: Code Analyzer `OperationWithLimitsInLoop` (query or DML in a loop) and
+`AvoidHardcodingId`; by hand, one `*.trigger` file per object.
 
 ## 3. Sharing, access mode and the API version
 
@@ -67,9 +69,9 @@ The class's API version now decides its security behaviour [REL-S26]:
 - Apex called from a component, above all `without sharing`, is a way around the access
   model: re-check object, field and record access in every such method [WA-T].
 
-`[check]` every class declares `with sharing`, `without sharing` or `inherited sharing`; a
-changed `apiVersion` in a `*.cls-meta.xml` is called out; no `WITH SECURITY_ENFORCED` in a
-class at 67.0 or higher.
+Check: `[check: code.no-sharing-declaration]` (Code Analyzer `ApexSharingViolations`); by
+hand, `git diff` of every `*.cls-meta.xml` for a changed `apiVersion`, and a search for
+`WITH SECURITY_ENFORCED` in classes at 67.0 or higher.
 
 ## 4. Tests that prove behaviour
 
@@ -86,7 +88,7 @@ class at 67.0 or higher.
 - Review generated tests for meaningful assertions before you count them. A generated draft
   from `torque probes` fails at its draft assertion until you replace it, on purpose.
 
-`[check]` no test class without an `Assert.` or `System.assert` call; no `SeeAllData=true`.
+Check: `[check: code.test-without-assert, code.see-all-data]`.
 
 Field-tested ways to prove behaviour without leaving data (field-reported):
 
@@ -141,9 +143,10 @@ what it does: that description is where an admin, or an agent, learns the logic 
 
 1. A `/** */` block on the class and on each public or global method: what it does, why it
    is code, what calls it [SK-APEX].
-2. Run Salesforce Code Analyzer on the changed files and clear the high severities:
-   "Remediate all sev0, sev1, and sev2 violations; re-run until clean" [SK-APEX]. Commands
-   and reading results: skill `salesforce-code-analyzer-review`.
+2. Run `torque check metadata` on the changed files (it runs Code Analyzer too) and fix
+   every severity 1 (Critical) and 2 (High) finding, then re-run until clean. Salesforce's
+   Apex skill says the same in older terms ("sev0, sev1, and sev2") [SK-APEX]. Without
+   Torque, and for reading results: skill `salesforce-code-analyzer-review`.
 3. Run the org's tests for the change and keep the result with the change record.
 4. A production deployment that contains Apex runs local tests by default and can take far
    longer than the sandbox validation; validate ahead of the window and quick-deploy the

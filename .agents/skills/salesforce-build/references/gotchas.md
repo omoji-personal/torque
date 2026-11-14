@@ -93,8 +93,8 @@ confirmed in a fetched primary source). None was re-tested for this release: run
 ## Managed packages
 
 25. **Managed components are locked.** "Cannot modify managed object" came from changing a
-    field set's description [ADV `managed-fields-immutable`]. Check: `[check]` no namespaced
-    component in the change.
+    field set's description [ADV `managed-fields-immutable`]. Check:
+    `[check: managed.component-in-change]`.
 26. **Never deploy your own copies of a package's custom metadata records.** A copy without
     the namespace created a duplicate developer name that made the package's trigger fail on
     every insert (observed in a developer org; skill `salesforce-npsp`). Check: query the

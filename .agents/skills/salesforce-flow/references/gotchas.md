@@ -4,8 +4,8 @@ Read the section that matches what you are doing. State described: Winter '27 (A
 checked 2026-11-14. Evidence is named on each item: "observed in a developer org" (carried
 from the earlier nonprofit skill), field-reported (real client work, usually one org),
 [ADV] (Torque advisory catalogue) or **verify** (not confirmed in a fetched primary source).
-None was re-tested for this release, so run the check before you rely on an item.
-`[check]` = testable in the flow file.
+None was re-tested for this release, so run the check before you rely on an item. A tag
+such as `[check: name.case-collision]` names the `torque check metadata` rule that tests it.
 
 ## Faults and transactions
 
@@ -32,8 +32,8 @@ None was re-tested for this release, so run the check before you rely on an item
 5. **A formula sees a choice field's label, not its value.** For a radio, picklist, checkbox
    group or record choice set on a screen, `{!field} = 'VALUE'` never matches and the flow
    takes its default path (field-reported: it created stray records). Compare the field to
-   the choice resource in a decision or visibility rule. `[check]` a formula that compares a
-   choice screen field to a text literal. Check: run the screen once per choice and confirm
+   the choice resource in a decision or visibility rule.
+   `[check: flow.choice-compared-to-literal]`. Check: run the screen once per choice and confirm
    the non-default branch runs.
 6. **Flow Builder debug runs commit unless rollback mode is on.** A debug run of an
    autolaunched or screen flow writes real records when the rollback option is cleared
@@ -48,7 +48,7 @@ None was re-tested for this release, so run the check before you rely on an item
 
 8. **A screen action without its trigger deploys and never runs.** `<actions>` without
    `<triggers>` shows as configured; the deploy also accepts a made-up `eventName`
-   (field-reported). `[check]` a screen with `<actions>` and no `<triggers>`. Check: the
+   (field-reported). `[check: flow.screen-action-without-trigger]`. Check: the
    action runs on screen load in a browser test. To get a working shape, retrieve a flow
    where the action was set up in Flow Builder.
 9. **A screen flow on a record page needs Run Flows.** With profile flow access alone the
@@ -57,7 +57,7 @@ None was re-tested for this release, so run the check before you rely on an item
    component renders.
 10. **The flow access override persists.** Omitting `isAdditionalPermissionRequiredToRun` in
     a new version kept the previous `true`; send an explicit `false` to clear it
-    (field-reported). `[check]` the element is present with the intended value. Check: read
+    (field-reported). By hand: the element is present with the intended value. Check: read
     the flow's access setting in Setup after the deploy.
 11. **Data Table behaviour** (field-reported): radio buttons appear only with maximum
     selection 1 and minimum selection at least 1; ticks are lost when the source collection
@@ -69,12 +69,11 @@ None was re-tested for this release, so run the check before you rely on an item
 ## Deploy and metadata
 
 13. **Resource names are case-insensitive.** Two names that differ only in case fail the
-    deploy with "Duplicate developer name" (field-reported). `[check]`.
+    deploy with "Duplicate developer name" (field-reported). `[check: name.case-collision]`.
 14. **Get Records with `storeOutputAutomatically` also needs `getFirstRecordOnly`**
-    (field-reported). `[check]`.
+    (field-reported). `[check: flow.lookup-missing-first-record-only]`.
 15. **Decision outcome names must be unique** (field-reported; one deploy reported it as
-    "duplicate value found: FlowRecordVersionId"). `[check]` every element and outcome has
-    its own API name.
+    "duplicate value found: FlowRecordVersionId"). `[check: name.case-collision]`.
 16. **A retrieve returns the latest version, not the active one** [ADV
     `flow-retrieve-latest-only`]. Check: `torque advisory flow`, or `ActiveVersionId` against
     `LatestVersionId` on `FlowDefinition`.
@@ -84,7 +83,8 @@ None was re-tested for this release, so run the check before you rely on an item
 18. **Retrieves of the same flow differ in element positions** (field-reported: zeroed
     locations). Check: a diff that is only positions is not a change.
 19. **A script that regenerates a flow drops its descriptions** unless they are kept as data
-    and re-applied (field-reported). Check: `[check]` descriptions present after each build.
+    and re-applied (field-reported). Check: `[check: doc.flow-elements-undescribed]` after
+    each build.
 
 ## Run order and side effects
 
@@ -145,17 +145,19 @@ Each fix is the one that worked.
 
 32. **A flow formula cannot read a long text area field,** and only some functions accept a
     multi-select picklist: the deploy fails with "The formula expression is invalid". Fix:
-    copy the value into a text field or variable first, or drop the reference. `[check]` the
+    copy the value into a text field or variable first, or drop the reference. By hand: the
     field types a formula reads, from describe.
 33. **"Property X not valid in version N."** A flow retrieved at a newer API version than the
-    project declares does not deploy. Fix: set `sourceApiVersion` in `sfdx-project.json` to
-    the version the flow was retrieved at. `[check]` the flow's `apiVersion` against the
-    project's.
+    project declares did not deploy. Fix it for that operation (pass `--api-version` on the
+    retrieve or deploy), not by lowering `sourceApiVersion` in `sfdx-project.json` for one
+    file: it is the project-wide version for every deploy and retrieve, so newer elements in
+    other files can then fail. Change it only as its own tested change.
+    `[check: flow.api-version-behind]`; by hand, `git diff sfdx-project.json` before a deploy.
 34. **"Element X is duplicated at this location in type Flow."** Elements with the same tag
     must sit together in the file. Fix: move a hand-added element next to its siblings of
-    the same tag. `[check]` same-tag elements are contiguous.
+    the same tag. By hand: same-tag elements are contiguous.
 35. **A constant cannot be a DateTime** ("The data type of X can't be DateTime"). Fix: use a
-    formula in its place. `[check]` constant data types.
+    formula in its place. By hand: constant data types.
 36. **A field that any flow version reads cannot be deleted.** The destructive change fails
     with "This custom field is referenced elsewhere: Flow Version", for inactive versions
     too. Fix: remove the reference and delete the old versions first. Check: search every

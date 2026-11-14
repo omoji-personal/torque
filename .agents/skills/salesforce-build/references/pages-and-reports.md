@@ -2,7 +2,8 @@
 
 Use this when a change must be seen or used by people: a field on a page, a new page, a list
 view, a report or a dashboard. State described: Winter '27 (API 68.0), checked 2026-11-14.
-`[check]` = testable in the source files. **verify** = not confirmed in a fetched primary
+A tag such as `[check: page.sections-lost]` names the `torque check metadata` rule that tests
+the statement. **verify** = not confirmed in a fetched primary
 source: verify in the org or the current documentation. field-reported = seen in client
 work, usually one org. "House standard" = this playbook's convention where no Salesforce
 rule was found. Where this file gives no element name, retrieve an existing component of the
@@ -44,8 +45,9 @@ and can be edited or not as designed.
 - **Edit the file surgically** (field-reported: a broad clean-up of `label` properties,
   meant to remove one tab label that blocked deploys, wiped every field-section header on a
   live page during user testing). Start from a fresh retrieve, change only the exact property
-  and value, and after deploying retrieve again. `[check]` the count of section labels equals
-  the baseline.
+  and value, and after deploying retrieve again. `[check: page.sections-lost]` (with
+  `--baseline`) counts section labels; it does not see a label changed in place, so also
+  read the `git diff` of the page file: only the property you meant changed.
 - **Assignment in metadata**: app-level assignments are `profileActionOverrides` in the app
   file; they are not removed by a destructive manifest and must be added to change sets by
   hand (**verify**). To learn the shape for this org, activate in a sandbox and retrieve the

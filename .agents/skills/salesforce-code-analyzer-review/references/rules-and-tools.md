@@ -1,8 +1,8 @@
 # Analyzer rules and other tools
 
-State described: Code Analyzer v5.16.0 and the tools as published on 2026-11-14. Rule lists
-change with releases: **verify** every name here against the installed tool
-(`sf code-analyzer rules --rule-selector flow --view detail`). Community tools are named as
+State described: Code Analyzer v5 as installed (plugin 5.15.0, read 2026-11-14) and the
+other tools as published on 2026-11-14. Rule lists change with releases: check every name
+here against the installed tool (`sf code-analyzer rules --rule-selector flow --view detail`). Community tools are named as
 such; none is a supported Salesforce product unless stated.
 
 ## 1. Code Analyzer engines
@@ -21,27 +21,27 @@ Source: the analyzer's repository and documentation (**verify**). Commands:
 
 ## 2. The flow engine's rules
 
-Fifteen rules at v5.16.0 (**verify**; list read from a community page that prints the rule
-table):
+Fifteen rules in the installed flow engine 0.40.0 (plugin 5.15.0), with their default
+severity (1 Critical to 5 Info), read from the engine's own catalogue [CA-LOCAL]:
 
-| Rule | In a default run | Related build rule |
-| --- | --- | --- |
-| `DbInLoop` | Yes | Nothing that queries or writes inside a loop |
-| `HardcodedId` | Yes | No hard-coded Ids |
-| `TriggerEntryCriteria` | Yes | Entry conditions on record-triggered flows |
-| `SameRecordUpdate` | Yes | Same-record changes belong before save |
-| `CyclicSubflow` | Yes | No circular subflow calls |
-| `DefaultCopy` | Yes | No default or copied names |
-| `TriggerCallout`, `TriggerWaitEvent` | Yes | Callouts and waits in record-triggered flows |
-| `MissingNextValueConnector` | Yes | Loop wiring |
-| `PreventPassingUserDataIntoElementWithoutSharing`, `PreventPassingUserDataIntoElementWithSharing` | Yes | Running context |
-| `MissingFaultHandler` (severity 2) | No | A fault path on every data element and action |
-| `MissingDescription` (severity 4) | No | A description on the flow and its elements |
-| `UnreachableElement`, `UnusedResource` | No | No leftovers |
+| Rule | Severity | In a default run | Related build rule |
+| --- | --- | --- | --- |
+| `CyclicSubflow` | 1 | Yes | No circular subflow calls |
+| `MissingNextValueConnector` | 1 | Yes | Loop wiring |
+| `DbInLoop` | 2 | Yes | Nothing that queries or writes inside a loop (it does not follow subflows) |
+| `TriggerEntryCriteria`, `TriggerCallout`, `TriggerWaitEvent` | 2 | Yes | Entry conditions; no synchronous callout or wait in a record-triggered flow |
+| `PreventPassingUserDataIntoElementWithoutSharing` | 2 | Yes | User input reaching an element that runs without sharing |
+| `HardcodedId`, `DefaultCopy`, `SameRecordUpdate` | 3 | Yes | No hard-coded Ids; no default names; same-record changes before save |
+| `PreventPassingUserDataIntoElementWithSharing` | 4 | Yes | User input reaching an element that runs with sharing |
+| `MissingFaultHandler` | 2 | No | A fault path on Create, Update, Delete, actions and subflows |
+| `UnusedResource` | 3 | No | No leftovers |
+| `MissingDescription`, `UnreachableElement` | 4 | No | Descriptions on labelled elements; no leftovers |
 
 The four marked "No" are not tagged `Recommended`: a default run skips them. Use
-`--rule-selector flow`. Read each rule's own description before you rely on what it tests:
-the "related build rule" column is a guide, not the rule's definition.
+`--rule-selector Recommended --rule-selector flow`, or `torque check metadata`, which does.
+A gate on severities 1 and 2 alone misses `MissingDescription`. Read each rule's own
+description before you rely on what it tests: the "related build rule" column is a guide,
+not the rule's definition.
 
 ## 3. Which tool checks what
 
@@ -50,10 +50,11 @@ the "related build rule" column is a guide, not the rule's definition.
 | Flow or element description missing | `MissingDescription` (not in a default run) | `missing-flow-description`, `missing-metadata-description` | No |
 | Fault path missing | `MissingFaultHandler` (not in a default run) | `missing-fault-path` | No |
 | DML, query or action in a loop | `DbInLoop` | `dml-in-loop`, `soql-in-loop`, `action-call-in-loop` | No |
-| Hard-coded Id, URL, secret | `HardcodedId` | `hardcoded-id`, `hardcoded-url`, `hardcoded-secret` | No |
+| Hard-coded Id | `HardcodedId` (Ids only) | `hardcoded-id` | No |
+| Hard-coded URL or secret | No | `hardcoded-url`, `hardcoded-secret` | No |
 | Entry conditions missing | `TriggerEntryCriteria` | `missing-record-trigger-filter` | No |
 | Trigger order unset | No | `unspecified-trigger-order` | No |
-| System context without sharing | `PreventPassingUserDataIntoElementWithoutSharing` | `unsafe-running-context` | No |
+| System context without sharing | No (`PreventPassingUserDataIntoElementWithoutSharing` tests only user input reaching such an element) | `unsafe-running-context` | No |
 | Old API version | No | `invalid-api-version` | `hardis:project:audit:apiversion` |
 | Naming, default copy names | `DefaultCopy` | `invalid-naming-convention`, `unclear-api-naming` | No |
 | Unused or unreachable parts | `UnusedResource`, `UnreachableElement` | `unused-variable`, `unreachable-element` | `hardis:lint:unusedmetadatas` |
@@ -63,10 +64,12 @@ the "related build rule" column is a guide, not the rule's definition.
 | Custom field description missing | No | No | `hardis:lint:missingattributes` |
 | Flow documentation output | No | `sf flow doc` | `hardis:doc:flow2markdown` |
 
-No public tool was found for: descriptions on objects, permission sets, validation rules and
-custom metadata types; the field-access check for new fields; Lightning page activation; a
-namespace guard; profile edits in a change. Those are the `[check]` rules in skills
-`salesforce-build` and `salesforce-flow`.
+No public tool was found for: descriptions on objects, permission sets and validation
+rules; the field-access check for new fields; a namespace guard; profile edits in a change.
+`torque check metadata` has rules for these (`docs/checks.md` in Torque lists them), and the
+skills tag each statement it tests, for example `[check: access.field-without-grant]`.
+Lightning page activation and descriptions on custom metadata records have no rule: check
+them in the org.
 
 ## 4. The tools
 
@@ -103,7 +106,8 @@ renamed, restructured, or removed between releases" [SF-SKILLS]: read the instal
 ## Sources
 
 - Code Analyzer repository and releases: https://github.com/forcedotcom/code-analyzer
-- Flow rule table as printed by a community linter page for 5.16.0: https://megalinter.io/latest/descriptors/salesforce_code_analyzer_flow/
+- [CA-LOCAL] The installed plugin's rule catalogue (plugin 5.15.0, flow engine 0.40.0), read
+  2026-11-14: `sf code-analyzer rules --rule-selector flow --view detail` prints it.
 - **verify** items: flow rules (https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/guide/rules-flow.html),
   flow engine (https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/guide/engine-flow.html),
   regex engine (https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/guide/engine-regex.html).
