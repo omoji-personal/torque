@@ -244,12 +244,14 @@ def _decide(root, command):
 
 
 def test_connected_check_deployed_needs_the_consent_its_queries_need(tmp_path, monkeypatch):
-    deployed = "torque check deployed --target-org acme-sbx --changed-from r.json"
+    # Run from the workspace root, so the source folder is named (the default, the root, holds every client).
+    deployed = "torque check deployed --target-org acme-sbx --changed-from r.json --source-dir clients/acme"
     query = CHECK_DEPLOYED_CALLS[3]
     root = _connected(tmp_path, monkeypatch, ["metadata", "records"])
     assert _decide(root, deployed) == _decide(root, query) == "allow"
-    assert _decide(root, "torque check deployed --target-org other-org --changed-from r.json") == "deny"
-    assert _decide(root, "torque check metadata force-app") == "allow"
+    assert _decide(root, "torque check deployed --target-org other-org --changed-from r.json "
+                         "--source-dir clients/acme") == "deny"
+    assert _decide(root, "torque check metadata clients/acme/force-app --analyzer off") == "allow"
     assert _decide(root, "torque check result r.json") == "allow"
 
 
