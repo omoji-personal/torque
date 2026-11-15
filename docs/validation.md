@@ -14,6 +14,7 @@ Alpha 19 adds internal initiatives and the maintenance flag: [validation for alp
 Alpha 20 adds Windows support and Antigravity as a second host: [validation for alpha 20](validation-alpha20.md).
 Alpha 21 reads connected-mode commands as the shells run them and adds consent per org and guarded reads: [validation for alpha 21](validation-alpha21.md).
 Alpha 22 adds browser sign-in without a password, checks before and after a deploy, practice skills, a working lessons loop and an always-loaded block: [validation for alpha 22](validation-alpha22.md).
+Alpha 23 fixes how the gate reads an unknown variable in a path and records the first live Antigravity 1.5.9 hook call: [validation for alpha 23](validation-alpha23.md).
 
 Alpha 9 is a development build with no package-index release. It improves session continuity,
 local diagnostics, source/private separation and the offline verification runner.
