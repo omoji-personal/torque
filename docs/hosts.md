@@ -100,8 +100,35 @@ The probe runs the hook command by itself. It does not show that the host calls 
 
 ## What was checked, and how
 
-Torque's own hook has not yet been called by a live Antigravity session, and no live
-session has loaded the files Torque writes under `.agents/`. What was seen live is how
+Seen live on 2026-11-14 with Antigravity CLI 1.5.9 on Windows (Gemini, the CLI's default
+model), in made-up workspaces made by `torque workspace init` and wired as `init` and
+`ai-access` wire them, with a recorder in front of Torque's hook that logged each call's tool
+name, argument names and Torque's answer. Three headless runs (`agy -p`, prompts skipped):
+
+- The session called Torque's hook before each tool call (`PreToolUse`), and Antigravity
+  honoured each answer: `deny` stopped the call with the reason shown to the model.
+- Build-only: reading a client file, writing one and `sf data query` were refused by the
+  hook; reading `AGENTS.md` and a skill was allowed; `torque check metadata project` and
+  `git --version` were handed to Antigravity's own flow (`ask`) and ran.
+- Full: reading a client file was allowed; writing that client's `consent.json` was refused
+  by the hook; `torque context` ran.
+- The session loaded the mode rule (`build-only.md`, quoted back) and the other rules under
+  `.agents/rules/`, and opened a skill the always-loaded block routes to (it quoted the
+  build skill's rule 5 correctly).
+- When a rule says a call will be refused, Gemini declined the call itself; the hook was
+  reached only when the prompt asked for the call to be made.
+- 1.5.9's shapes: `read_file` {`Path`, and `StartLine` and `EndLine`}, `write_file` {`Path`,
+  `Content`, `Overwrite`}, `run_command` {`CommandLine`, `WaitMsBeforeAsync`, `toolSummary`},
+  no `Cwd`. The hook input adds `cwd`, `hookEventName`, `lastUserInput`, `modelName`,
+  `transcriptPath` and `artifactDirectoryPath`. `tests/test_gate_antigravity.py` replays them.
+- Command output with non-ASCII characters reached the model garbled (a long dash in a lesson
+  became a replacement character), although Torque writes UTF-8: Antigravity decodes a
+  command's output in its own way. Torque's shipped lesson text is ASCII.
+
+Not seen live: connected mode and `torque launch --host antigravity` (it needs the owner at a
+terminal), `edit_file`, connector and browser tools, worker roles, and macOS or Linux.
+
+Earlier, before any live session called Torque's hook, what was seen live was how
 Antigravity treats a hook and those file formats in general. Torque's hook was then run as
 a command on that input: 35 made-up calls across build-only, full and connected workspaces.
 
@@ -118,12 +145,12 @@ Checked only in tests, with no Antigravity session:
 - Everything about connected mode under Antigravity: the launch, the host in the launch
   record, the binding, the call ID, approvals and the browser tools.
 - The delegated launch list for `agy`. It is not known that `agy` reads each option as written.
-- That Antigravity loads the two mode rules. They use the format of the other rules.
+- That Antigravity loads the connected-mode rule (the build-only rule was seen loaded, above).
 - The three hook fixes in this version (typed input without text, an MCP call without a
   server or tool name, and the scan of `browser_subagent`, `schedule` and `read_url_content`).
-- Antigravity 1.4.9's tool shapes: `read_file`, `write_file` and `edit_file` with `Path`,
-  `run_command` without `Cwd`, and a connector tool sent as `mcp_SERVER_TOOL`. They were seen
-  with another hook on 2026-10-28 and replayed into Torque's hook.
+- Antigravity 1.4.9's `edit_file` with `Path`, and a connector tool sent as
+  `mcp_SERVER_TOOL`. They were seen with another hook on 2026-10-28 and replayed into Torque's
+  hook (1.4.9's `read_file`, `write_file` and `run_command` were then seen live in 1.5.9).
 - Doctor's readiness by host.
 - That an `agy` or `antigravity` process counts as an AI session on macOS and Linux. It is not
   known that a running session shows under either name.
