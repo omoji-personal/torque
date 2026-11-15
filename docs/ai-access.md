@@ -165,7 +165,12 @@ later release narrows the check.
   (`/c/...`, `/cygdrive/c/...`); a path or search root holding an unresolved `$` expansion
   (`$R`, `"${R}"`, `${PWD%/project}`, `$1`, also one set earlier in the same command), which is
   read as each folder from the current directory up to the workspace root, so it counts as
-  reaching the workspace root, as a `cd "$DIR"` does; paths relative to a `cd`, `pushd` or `popd`
+  reaching the workspace root, as a `cd "$DIR"` does, and also as nothing, `.` and `..`, all
+  expansions alike and each in turn with the others empty, so an unset variable in front of a
+  client path (`${A}clients/...`, `"$A"clients/...`) or values that differ (`$A/${B}clients`)
+  do not hide it; a path that only an empty value makes absolute is compared as text, never
+  resolved or listed; a word with more than 64 expansions is refused with its own reason;
+  paths relative to a `cd`, `pushd` or `popd`
   earlier in the same command, also behind `builtin`, `command` or `time`, inside an `if`,
   `then`, `else`, `elif`, `while`, `until` or `for ... do` body or in an `if` condition, and
   `env -C DIR`/`--chdir` (after one whose
@@ -535,9 +540,11 @@ What it does with each call:
 
 Limits:
 
-- Torque's hook has not yet been called by a live Antigravity session. The hook input, the
-  answers and the failure behaviour were seen with another hook; Torque's hook was then run
-  as a command on that input. Confirm it once in a real session before relying on it.
+- Torque's hook was called by a live Antigravity session for the first time on 2026-11-14
+  (CLI 1.5.9, Windows, made-up workspaces): build-only refused a client read, a client write
+  and an org query, and full mode refused a write to a client's consent record (see
+  [hosts](hosts.md)). The failure behaviour (a crash, a timeout, no decision) was seen with
+  another hook only.
 - Connected mode under Antigravity is written and tested offline only. `torque launch --host
   antigravity` binds a session to one client; see [hosts](hosts.md). An Antigravity session
   that was not started that way is not bound: org calls, browser tools and every client's
@@ -577,8 +584,9 @@ Limits:
 It is pattern matching on recognized tool calls, not a sandbox. Not covered:
 
 - A command built at run time: a variable whose value spells part of a name rather than a
-  folder (`X=cli; cat ../${X}ents/...`; a variable is read as a folder from the current
-  directory up to the workspace root, not as any text), a path from command output such as
+  folder (`X=cli; cat ../${X}ents/...`, a loop variable, `set --`, `${X#x}` and the other
+  operators, arrays, `read`, `printf -v`; a variable is read as a folder from the current
+  directory up to the workspace root, nothing, `.` or `..`, not as any text), a path from command output such as
   `$(... | base64 -d)`, or from `eval`, a path that `python -c` code builds (a literal
   path in that code is read, as `node -e`, `perl -e`, `ruby -e` and `php -r` code is), any script
   file the assistant writes and runs, and a heredoc fed to an interpreter.
