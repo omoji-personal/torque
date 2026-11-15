@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import string
 import subprocess
 import sys
 import threading
@@ -208,6 +209,7 @@ _SHELL_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
 # left where the splitter cut $(...) apart.
 _PARAM_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-]|$)")
 _BRACED_PARAM_RE = re.compile(r"\$\{[^{}]*\}")
+_UNBRACED_PARAM_RE = re.compile(r"\$(?!PWD(?![A-Za-z0-9_]))[A-Za-z_][A-Za-z0-9_]*")
 _MAX_CWDS = 32
 # Commands that write, create or replace files, for the checks that only apply
 # to a write (a planted torque package, the hook interpreter's binaries).
@@ -751,34 +753,99 @@ def _expand_glob(pattern: str, prefix: Path) -> tuple[list[Path], list[Path]]:
     return out, []
 
 
-def _dollar_variants(operand: str, cwd: Path, workspace: Path | None) -> list[str]:
+# A word holding more parameter expansions than this is not read: the command reader refuses it with its own
+# reason (_read_commands), and _token_paths reads it as reaching the workspace root. Below it, each expansion is
+# tried in turn (_dollar_variants), so the work grows with the count, and no variant holds more than one folder
+# path per expansion: thousands of them made strings of 170,000 characters whose resolution on macOS ran past
+# the gate's budget.
+_MAX_TOKEN_PARAMS = 64
+# Values an unknown expansion takes besides a folder: unset or empty, and the relative folders. An unset
+# variable in ${A}clients/acme expands to nothing, so the word names clients/acme.
+_RELATIVE_VALUES = ("", ".", "..")
+# A leading run of two or more separators: //host/share or \\host\share is a network path on Windows.
+_LEADING_SEPS_RE = re.compile(r"^[/\\]{2,}")
+_ROOTED_RE = re.compile(r"^(?:[/\\]|[A-Za-z]:)")
+
+
+def _dollar_variants(operand: str, cwd: Path, workspace: Path | None) -> list[tuple[str, bool]] | None:
     """operand with every parameter expansion the gate cannot know ($R, ${R%x},
-    $1) replaced by each directory it could stand for: the current directory,
-    the folders between it and the workspace root, and the root itself. So a
-    path or search root built from a variable counts as reaching the workspace
-    root, as a cd to one already does. Without a workspace, operand as it is."""
+    $1) replaced by the values it could stand for, as (text, lexical) pairs: every
+    expansion the same value (the current directory, each folder up to the
+    workspace root, the root itself, nothing, `.` and `..`), and, for more than
+    one expansion, each in turn a folder, `.` or `..` while the others are empty
+    ($A/${B}clients with A the root and B unset). So a path or search root built
+    from a variable counts as reaching the workspace root, as a cd to one already
+    does, and an unset variable in front of a client path does not hide it.
+
+    `lexical` marks a text that is absolute only because an expansion in front of
+    it was empty: it is compared as text and never resolved or listed, so the gate
+    touches no other drive, network share or drive root for it. A leading run of
+    separators becomes one /, never a network path. Without a workspace, operand
+    as it is. None when the word holds more than _MAX_TOKEN_PARAMS expansions."""
     if workspace is None:
-        return [operand]
+        return [(operand, False)]
     expanded = _PWD_TOKEN_RE.sub(lambda _m: str(cwd), _expand_home(operand))
-    if not _PARAM_RE.search(expanded):
-        return [operand]
+    matches = list(_PARAM_RE.finditer(expanded))
+    if not matches:
+        return [(operand, False)]
+    if len(matches) > _MAX_TOKEN_PARAMS:
+        return None
     anchors = [cwd]
     if _is_within(cwd, workspace):
         anchors += [p for p in cwd.parents if _is_within(p, workspace)]
     anchors.append(workspace)
-    return [_PARAM_RE.sub(lambda _m, a=a: a.as_posix(), expanded) for a in dict.fromkeys(anchors)]
+    folders = [a.as_posix() for a in dict.fromkeys(anchors)]
+    rooted = bool(_ROOTED_RE.match(expanded))
+    out: dict[str, bool] = {}
+
+    def add(text: str, from_folder: bool) -> None:
+        text = _LEADING_SEPS_RE.sub("/", text)
+        out.setdefault(text, not rooted and not from_folder and bool(_ROOTED_RE.match(text)))
+
+    for value in folders:
+        add(_PARAM_RE.sub(lambda _m, v=value: v, expanded), True)
+    for value in _RELATIVE_VALUES:
+        add(_PARAM_RE.sub(lambda _m, v=value: v, expanded), False)
+    if len(matches) > 1:
+        for m in matches:
+            head = _PARAM_RE.sub("", expanded[:m.start()])
+            tail = _PARAM_RE.sub("", expanded[m.end():])
+            for value in folders:
+                add(head + value + tail, True)
+            for value in (".", ".."):
+                add(head + value + tail, False)
+    return list(out.items())
+
+
+def _lexical_path(cwd: Path, text: str) -> Path:
+    """text as a path, by its spelling only: a Git Bash drive path mapped to its
+    drive without asking whether the drive exists, `..` and `.` folded, nothing
+    resolved, listed or opened."""
+    native = _native_path(text, drives=string.ascii_uppercase)
+    return Path(os.path.normpath(os.path.join(str(cwd), native)))
 
 
 def _token_paths(tok: str, cwd: Path, workspace: Path | None = None) -> tuple[list[Path], list[Path]]:
     """Every path a raw Bash token can name from cwd, as (paths, recursive roots).
-    With a workspace, an unknown parameter expansion is read as each directory
-    from cwd up to the workspace root (_dollar_variants)."""
+    With a workspace, an unknown parameter expansion is read as the values it
+    could stand for (_dollar_variants)."""
     operand = _token_operand(tok)
     if not operand or operand.startswith("-"):
         return [], []
     paths: list[Path] = []
     roots: list[Path] = []
-    for variant in _dollar_variants(operand, cwd, workspace):
+    variants = _dollar_variants(operand, cwd, workspace)
+    if variants is None:
+        # Too many expansions to try in turn: the same-value relative readings, which do not lengthen the
+        # word (the full-mode record check reads only paths), and anything below the workspace root.
+        expanded = _PWD_TOKEN_RE.sub(lambda _m: str(cwd), _expand_home(operand))
+        variants = [(_LEADING_SEPS_RE.sub("/", _PARAM_RE.sub(lambda _m, v=value: v, expanded)), True)
+                    for value in _RELATIVE_VALUES]
+        roots.append(workspace)
+    for variant, lexical in variants:
+        if lexical:
+            paths.append(_lexical_path(cwd, variant))
+            continue
         try:
             paths.append(_resolve(cwd, variant))
         except (OSError, ValueError):
@@ -2862,6 +2929,16 @@ def _read_commands(command: str, workspace: Path, cwd: Path | list[Path], _depth
     # Any other ${...} (${R}, ${PWD%/project}) is unknown here. Keep it one word,
     # $0, so the splitter below does not cut it at its braces.
     command = _BRACED_PARAM_RE.sub("$0", command)
+    # So is an unbraced $NAME other than $PWD (filled in above; what assignments in the command could set
+    # is read separately, `values`). As $0 a quote or backslash after it cannot join it to the next word when
+    # the words are split: "$A"clients would otherwise become the one variable $Aclients.
+    command = _UNBRACED_PARAM_RE.sub("$0", command)
+    crowded = max((len(_PARAM_RE.findall(word)) for word in command.split()), default=0)
+    if crowded > _MAX_TOKEN_PARAMS:
+        yield "error", (f"a word in this command holds {crowded} variable expansions, more than the "
+                        f"{_MAX_TOKEN_PARAMS} the gate checks; put the text in a file (awk -f FILE, a script) "
+                        "or split the word")
+        return
     try:
         command = _expand_braces(command)
     except ValueError as exc:
@@ -4163,9 +4240,11 @@ def _text_names_record(tool_input: dict) -> bool:
     for raw in itertools.islice(_string_values(tool_input), 256):
         if not isinstance(raw, str) or len(raw) > MAX_INPUT_CHARS:
             continue
-        if (_targets_guarded_file(raw) or _RECORD_FOLDER_RE.search(raw)
-                or APPROVAL_KEY_RE.search(raw)):
-            return True
+        # Also with its expansions taken out, as unset ones are: ${A}clients/acme/consent.json names the record.
+        for text in dict.fromkeys((raw, _PARAM_RE.sub("", raw))):
+            if (_targets_guarded_file(text) or _RECORD_FOLDER_RE.search(text)
+                    or APPROVAL_KEY_RE.search(text)):
+                return True
     return False
 
 
@@ -4728,7 +4807,11 @@ def _command_targets_records(command: str, cwd: Path, strict: bool) -> bool:
                         named = paths + _token_paths(tok, here, workspaces()[-1])[0]
                     if any(APPROVAL_KEY_RE.search(t.as_posix()) or _protected_record(t) for t in named):
                         return True
-                    if removes and any(_holds_records(t) for t in paths):
+                    # A removal whose word has literal text besides its expansions (rm -rf ${D}clients,
+                    # $D/clients) is checked on what the expansions could stand for too. A bare variable
+                    # (rm -f "$f" in a loop over files) is not: every word would then reach the workspace root.
+                    literal = _PARAM_RE.sub("", _token_operand(tok)).strip("/\\.")
+                    if removes and any(_holds_records(t) for t in (named if literal else paths)):
                         return True
     return False
 
