@@ -219,6 +219,14 @@ _WRITE_VERBS = DESTRUCTIVE_VERBS | {"ln", "tee", "install", "chmod", "chown", "t
 _STARTUP_NAMES = {"sitecustomize.py", "usercustomize.py", "torque.py"}
 # Git Bash (MSYS) and Cygwin drive paths: /c/Users/..., /cygdrive/c/Users/...
 _MSYS_DRIVE_RE = re.compile(r"^/(?:cygdrive/)?([A-Za-z])(?=/|$)")
+# Windows forms that name a file on this machine without its drive path (_drive_form): a device path
+# (\\?\C:\x, \\.\C:\x, \\?\UNC\host\share\x), an administrative share (\\host\C$\x) and a named share.
+_DEVICE_DRIVE_RE = re.compile(r"^[/\\]{2}[?.][/\\]([A-Za-z]:)(?=[/\\]|$)")
+_DEVICE_UNC_RE = re.compile(r"^[/\\]{2}[?.][/\\]UNC[/\\]", re.I)
+_ADMIN_SHARE_RE = re.compile(r"^[/\\]{2}[^/\\]+[/\\]([A-Za-z])\$(?=[/\\]|$)")
+# A network path, \\host\share\rest (not a device path).
+_UNC_RE = re.compile(r"^[/\\]{2}(?![?.][/\\])[^/\\]+[/\\]([^/\\]+)")
+_SHARES_KEY = r"SYSTEM\CurrentControlSet\Services\LanmanServer\Shares"
 # ANSI-C quoting ($'\x63') and locale quoting ($"...").
 _ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
 # A zsh glob group or qualifier inside a word, c(l)ients or notes(.), and a brace
@@ -319,6 +327,7 @@ def _native_path(raw: str, windows: bool | None = None, drives: str | None = Non
         windows = os.name == "nt"
     if not windows:
         return raw
+    raw = _drive_form(raw)
     m = _MSYS_DRIVE_RE.match(raw)
     if not m:
         return raw
@@ -327,6 +336,51 @@ def _native_path(raw: str, windows: bool | None = None, drives: str | None = Non
     if not exists:
         return raw
     return f"{letter}:" + (raw[m.end():] or "/")
+
+
+@lru_cache(maxsize=None)
+def _local_shares() -> dict[str, str]:
+    """This machine's named file shares, casefolded name to folder, read from the registry (readable without
+    elevation); empty off Windows or when the key cannot be read. Administrative shares (C$) are not listed
+    there; _drive_form reads them by their name."""
+    if os.name != "nt":
+        return {}
+    try:
+        import winreg
+        shares: dict[str, str] = {}
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _SHARES_KEY) as key:
+            for i in range(winreg.QueryInfoKey(key)[1]):
+                name, value, _kind = winreg.EnumValue(key, i)
+                for line in value if isinstance(value, list) else str(value).splitlines():
+                    if isinstance(line, str) and line.startswith("Path="):
+                        shares[name.casefold()] = line[len("Path="):]
+        return shares
+    except OSError:
+        return {}
+
+
+def _drive_form(raw: str) -> str:
+    r"""raw with a Windows form that names a file on this machine without its drive path written as that drive
+    path. A device path names what follows its prefix (\\?\C:\x and \\.\C:\x are C:\x; \\?\UNC\h\s\x is
+    \\h\s\x). An administrative share (\\h\C$\x) is C:\x and a share this machine offers (\\h\NAME\x) is its
+    folder joined with x, whichever host h names: localhost, 127.0.0.1 and the machine's own name and
+    addresses all reach this machine, and the same path on another machine is only refused, never let
+    through. Any other text is returned as it is."""
+    m = _DEVICE_DRIVE_RE.match(raw)
+    if m:
+        return m.group(1).upper() + (raw[m.end():] or "/")
+    m = _DEVICE_UNC_RE.match(raw)
+    if m:
+        raw = "//" + raw[m.end():]
+    m = _ADMIN_SHARE_RE.match(raw)
+    if m:
+        return m.group(1).upper() + ":" + (raw[m.end():] or "/")
+    m = _UNC_RE.match(raw)
+    if m:
+        folder = _local_shares().get(m.group(1).casefold())
+        if folder:
+            return folder.replace("\\", "/").rstrip("/") + (raw[m.end():] or "/")
+    return raw
 
 
 def _expand_home(raw: str) -> str:
@@ -359,6 +413,13 @@ def _expand_home_in_command(command: str) -> str:
     return _HOME_TOKEN_RE.sub(lambda _m: home, command)
 
 
+def _network_path(path: str | Path) -> bool:
+    """A Windows network path that names no share of this machine (_drive_form): it cannot name a file here,
+    so it is read by its spelling and never looked up, resolved or listed. A host that does not answer would
+    hold the gate for seconds."""
+    return os.name == "nt" and bool(_UNC_RE.match(str(path)))
+
+
 def _resolve(base: Path, raw: str) -> Path:
     """Join a possibly relative tool path to the hook's cwd, then resolve symlinks
     and '..' the same way the filesystem would, so a symlinked, relative, or
@@ -368,8 +429,12 @@ def _resolve(base: Path, raw: str) -> Path:
     target = Path(raw)
     if not target.is_absolute():
         target = base / target
+    if _network_path(target):
+        return Path(os.path.normpath(str(target)))
     _spend()
-    return Path(os.path.realpath(str(target)))
+    resolved = os.path.realpath(str(target))
+    # A device path that realpath reads to its volume (\\?\Volume{...}\x) comes back as \\?\C:\x.
+    return Path(_drive_form(resolved) if os.name == "nt" else resolved)
 
 
 def _cf(text: str) -> str:
@@ -725,6 +790,8 @@ def _glob_paths(operand: str, cwd: Path) -> tuple[list[Path], list[Path]]:
         # search rooted at the fixed prefix.
         return [], [prefix]
     pattern = expanded if os.path.isabs(expanded) else os.path.join(str(cwd), expanded)
+    if _network_path(pattern):
+        return [], []
     if pattern in _glob_cache:
         cached_paths, cached_roots = _glob_cache[pattern]
         return list(cached_paths), list(cached_roots)
@@ -1271,7 +1338,8 @@ def _ln_reaches(rest: list[str], clients: Path, cwd: Path, workspace: Path) -> b
     elif len(operands) >= 2:
         targets, last = operands[:-1], operands[-1]
         try:
-            link_dir = last if os.path.isdir(_resolve(cwd, last)) else (os.path.dirname(last) or ".")
+            folder = _resolve(cwd, last)
+            link_dir = last if not _network_path(folder) and os.path.isdir(folder) else (os.path.dirname(last) or ".")
         except (OSError, ValueError):
             return True
     else:
@@ -2192,7 +2260,8 @@ def _check_lexical(cwd: Path, raw: str) -> Path:
     """A path the way torque check reads it: made absolute and normalized as text first
     (os.path.abspath, so `link/..` is the current folder), then resolved by the system."""
     _spend()
-    return Path(os.path.realpath(os.path.abspath(os.path.join(str(cwd), _native_path(raw)))))
+    lexical = os.path.abspath(os.path.join(str(cwd), _native_path(raw)))
+    return Path(lexical if _network_path(lexical) else os.path.realpath(lexical))
 
 
 def _check_project_root(first: str, cwd: Path) -> Path | None:
@@ -4651,7 +4720,7 @@ def _inline_code_calls(text: str, start: list[Path]) -> list[tuple[str, list[Pat
             else:
                 try:
                     state = [_resolve(here, target) for here in state][:64]
-                    if not all(os.path.isdir(path) for path in state):
+                    if not all(not _network_path(path) and os.path.isdir(path) for path in state):
                         state = None          # the cd may fail, and the shell stays where it was
                 except (OSError, ValueError):
                     state = None

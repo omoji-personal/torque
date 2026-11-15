@@ -162,7 +162,10 @@ later release narrows the check.
   first, so a shell or process server cannot run what Bash may not.
 - Reading, writing, editing, or recursively searching into `clients/`, through: absolute,
   relative, `..`, `~`, `$HOME`, `$PWD` and symlinked paths, and on Windows Git Bash drive paths
-  (`/c/...`, `/cygdrive/c/...`); a path or search root holding an unresolved `$` expansion
+  (`/c/...`, `/cygdrive/c/...`), device paths (`\\?\C:\...`, `\\.\C:\...`, `\\?\UNC\...`, a volume
+  name), administrative shares (`\\localhost\C$\...`, read as that drive whichever host they name)
+  and a share this machine offers (read as its folder, from the registry); a network path that
+  names no share here is compared as text and never looked up, listed or opened; a path or search root holding an unresolved `$` expansion
   (`$R`, `"${R}"`, `${PWD%/project}`, `$1`, also one set earlier in the same command), which is
   read as each folder from the current directory up to the workspace root, so it counts as
   reaching the workspace root, as a `cd "$DIR"` does, and also as nothing, `.` and `..`, all
@@ -606,6 +609,9 @@ It is pattern matching on recognized tool calls, not a sandbox. Not covered:
   ready, or says the scan stopped at its limit.
 - A network tool (`curl`, a language HTTP client) reaching an org or a client system directly
   with credentials the user holds.
+- On Windows, a share on another machine that reaches this one, and a share or host name built
+  from a variable (`//localhost/$S/...`). A drive mapped with `net use` or `subst` and a DFS
+  namespace were not tested.
 - A Salesforce MCP server under a neutral name whose calls carry no Salesforce host. The gate
   recognises a Salesforce MCP server in two ways only: by its server or tool name (the words
   listed under "What build-only blocks"), and by a string argument that names a Salesforce
