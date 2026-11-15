@@ -1,10 +1,10 @@
 ---
-description: "Update the actual Torque installation while preserving private context and local source work."
+description: "Update the Torque installation, then carry its new recipes, rules and skills into the private workspace while keeping local edits. Use it when a new Torque release is out or the consultant asks to update."
 ---
 
 # /update-torque
 
-Update the actual Torque installation while preserving private context and local source work.
+Update the Torque installation, then carry its new recipes, rules and skills into the private workspace while keeping local edits. Use it when a new Torque release is out or the consultant asks to update.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
@@ -36,7 +36,8 @@ files with the installed defaults. Do not overwrite employer/client edits to mak
 every file match. Root instructions and client content are outside this updater's
 scope. Verify the actually used installed copy afterwards with local help
 and a relevant offline smoke check, then explain what changed and any remaining action.
-This recipe does not imply an executable `torque update` command exists.
+Torque has no update command of its own: the package installer or git updates the
+installation, and `torque workspace upgrade` updates the workspace.
 
 **Conversation input:** $ARGUMENTS
 Use supplied context and existing authorization. Ask only for consequential missing information. Keep work and evidence in the selected private client workspace.

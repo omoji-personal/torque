@@ -10,7 +10,7 @@ import inspect
 import json
 import os
 import re
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePath, PureWindowsPath
 import shutil
 import sys
 import subprocess
@@ -48,11 +48,120 @@ def _print_json(value: object) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False))
 
 
+ERROR_SCHEMA = "torque.error/1"
+
+
+class UsageError(Exception):
+    """An argument error, with the parser of the command it belongs to."""
+
+    def __init__(self, parser: argparse.ArgumentParser, message: str):
+        super().__init__(message)
+        self.parser, self.message = parser, message
+
+
+class TorqueParser(argparse.ArgumentParser):
+    """argparse that reports an argument error to main() instead of exiting, so the
+    error can name the subcommand and, with --json, come back as JSON."""
+
+    def error(self, message: str):
+        raise UsageError(self, message)
+
+    def format_help(self) -> str:
+        if self.prog != "torque":
+            return super().format_help()
+        # The top level: commands under headings, in the order a consultant meets them.
+        action = next(a for a in self._actions if isinstance(a, argparse._SubParsersAction))
+        helps = {choice.dest: choice.help or "" for choice in action._choices_actions}
+        lines = [self.format_usage().rstrip(), "", self.description or ""]
+        listed = set()
+        for heading, names in HELP_GROUPS:
+            lines += ["", heading + ":"]
+            for name in names:
+                if name in action.choices:
+                    listed.add(name)
+                    lines.append(f"  {name:<14} {helps.get(name, '')}")
+        rest = [name for name in action.choices if name not in listed]
+        if rest:
+            lines += ["", "Other:", *(f"  {name:<14} {helps.get(name, '')}" for name in rest)]
+        lines += ["", "Options:", "  -h, --help     show this help and exit", "  --version      show the version",
+                  "", self.epilog or "", "Each command has its own help: torque COMMAND --help."]
+        return "\n".join(lines) + "\n"
+
+
+HELP_GROUPS = (
+    ("Start here", ("workspace", "demo", "doctor", "workflows")),
+    ("Daily records", ("context", "session", "handoff", "change", "client", "initiative", "engagement")),
+    ("Salesforce work", ("check", "deploy", "data", "org", "recover", "browser", "qa", "logs", "advisory",
+                         "guarded")),
+    ("Lessons and other tools", ("lesson", "meeting", "probes", "ai-regression")),
+    ("Controls the owner runs", ("approval", "launch", "revert")),
+)
+
+
+def _subparser_for(parser: argparse.ArgumentParser, args: list[str]) -> argparse.ArgumentParser:
+    """The parser of the deepest subcommand the words name (`torque client add`)."""
+    current = parser
+    for word in args:
+        action = next((a for a in current._actions if isinstance(a, argparse._SubParsersAction)), None)
+        if action is None:
+            break
+        if word in action.choices:
+            current = action.choices[word]
+    return current
+
+
+def _os_error_text(exc: OSError) -> str:
+    """An operating-system error in words, with the path it concerns."""
+    paths = [str(p) for p in (exc.filename, getattr(exc, "filename2", None)) if p]
+    path = max(paths, key=len, default="")
+    winerror = getattr(exc, "winerror", None)
+    if os.name == "nt" and len(path) >= 248 and (winerror in (3, 206) or exc.errno in (2, 36)):
+        return (f"a path is too long for Windows ({len(path)} characters; without long paths enabled the limit "
+                f"is 260): {path}. Choose a shorter workspace folder, or enable long paths (torque doctor shows "
+                "the setting)")
+    if winerror == 3 or exc.errno == 2:
+        what = "a file or folder on this path does not exist"
+    elif winerror == 5 or exc.errno == 13:
+        what = "access is denied (another program may hold the file, or the folder is read-only)"
+    else:
+        what = exc.strerror or type(exc).__name__
+    return f"{what}: {path}" if path else what
+
+
+def _failure(as_json: bool, code: str, message: str, *, next_command: str | None = None,
+             usage: str | None = None, exit_code: int = 2, **extra) -> int:
+    """Report a failure: the plain message on stderr, and with --json also one JSON
+    object (torque.error/1) on stdout."""
+    if as_json:
+        _print_json({"schema": ERROR_SCHEMA, "ok": False, "code": code, "message": message,
+                     **({"usage": usage} if usage else {}), "next_command": next_command,
+                     "exit_code": exit_code, **extra})
+    if usage:
+        print(usage, file=sys.stderr)
+    print(message if message.startswith("torque") else f"torque: {message}", file=sys.stderr)
+    if next_command and not as_json and next_command not in message:
+        print(f"Next: {next_command}", file=sys.stderr)
+    return exit_code
+
+
 def _client_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", required=True, help="private workspace directory")
     scope = parser.add_mutually_exclusive_group(required=True)
     scope.add_argument("--client", help="explicit client name or slug")
     scope.add_argument("--initiative", help="explicit internal initiative name or slug")
+
+
+def _window_args(parser: argparse.ArgumentParser) -> None:
+    """Which session records `context` and `handoff` show."""
+    parser.add_argument("--limit", type=int, default=ws.SESSION_WINDOW, metavar="N",
+                        help=f"at most N session records, newest first (default {ws.SESSION_WINDOW})")
+    parser.add_argument("--since", metavar="DATE", help="only records from this date (YYYY-MM-DD, local) or time on")
+    parser.add_argument("--all", action="store_true", dest="everything", help="every session record")
+
+
+def _window(parsed: argparse.Namespace) -> dict:
+    return {"limit": None if parsed.everything else parsed.limit,
+            "since": ws.parse_since(parsed.since) if parsed.since else None}
 
 
 def _scope(parsed: argparse.Namespace) -> tuple[str, str]:
@@ -73,19 +182,30 @@ def _disable_abbreviations(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="torque", description="Salesforce consulting workflows and private client context.")
+    parser = TorqueParser(prog="torque", description="Salesforce consulting workflows and private client context.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     work = sub.add_parser("workspace", help="initialize or update a private consulting workspace")
     work_sub = work.add_subparsers(dest="action", required=True)
     init = work_sub.add_parser("init", help="create local files; does not connect an org")
     init.add_argument("path")
     init.add_argument("--name", required=True)
     init.add_argument("--profile", choices=ws.PROFILES, default="generic")
+    init.add_argument("--no-hook", action="store_true",
+                      help="do not wire the gate hook in .claude/settings.json (docs/ai-access.md)")
+    init.add_argument("--force", action="store_true",
+                      help="set up the workspace in a folder that already holds other files (they are kept; an "
+                           "existing AGENTS.md or CLAUDE.md is not replaced)")
     init.add_argument("--json", action="store_true")
     upgrade = work_sub.add_parser("upgrade", help="update packaged recipes while preserving local edits")
     upgrade.add_argument("path")
     upgrade.add_argument("--check", action="store_true", help="show available updates without writing")
+    upgrade.add_argument("--diff", metavar="FILE", help="compare one managed file with its packaged text; writes nothing")
+    upgrade.add_argument("--accept", metavar="FILE", action="append",
+                         help="keep this local file, or every managed file in this folder, as your version: "
+                              "records the packaged text it was compared with; writes only the manifest")
+    upgrade.add_argument("--no-hook", action="store_true",
+                         help="in a build-only workspace, do not add a missing gate hook")
     upgrade.add_argument("--json", action="store_true")
     ai_access = work_sub.add_parser("ai-access", help="set build-only or connected mode; the owner runs this, "
                                                       "not an AI session")
@@ -99,6 +219,9 @@ def build_parser() -> argparse.ArgumentParser:
     ai_access.add_argument("--delegated", action="store_true",
                            help="the workspace's setup delegate is running this, not the owner")
     ai_access.add_argument("--model-id", help="delegated only: the AI reviewer's model identifier")
+    ai_access.add_argument("--no-hook", action="store_true",
+                           help="full and build-only: add no gate hook (one Torque added for build-only mode "
+                                "is still taken out when the workspace leaves it for full mode)")
     ai_access.add_argument("--json", action="store_true")
     guarded_reads = work_sub.add_parser("guarded-reads", help="switch guarded reads on or off for a connected "
                                                                "workspace; the owner runs this, not an AI session")
@@ -126,6 +249,11 @@ def build_parser() -> argparse.ArgumentParser:
     clients = client_sub.add_parser("list")
     clients.add_argument("--workspace", required=True)
     clients.add_argument("--json", action="store_true")
+    set_org = client_sub.add_parser("set-org", help="change the org alias a client names; no login or org call")
+    set_org.add_argument("--workspace", required=True)
+    set_org.add_argument("--client", required=True)
+    set_org.add_argument("--target-org", required=True, metavar="ALIAS")
+    set_org.add_argument("--json", action="store_true")
     cli_approval.register_consent(client_sub)
     initiative = sub.add_parser("initiative", help="manage an internal initiative's private context")
     initiative_sub = initiative.add_subparsers(dest="action", required=True)
@@ -153,14 +281,53 @@ def build_parser() -> argparse.ArgumentParser:
     e_list.add_argument("--json", action="store_true")
     context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
     _client_args(context)
+    _window_args(context)
+    context.add_argument("--max-chars", type=int, metavar="N",
+                         help=f"the most characters the text prints (default {ws.CONTEXT_BUDGET:,}): where things "
+                              "stand, lessons, changes, history and notes together; whatever is cut is named with "
+                              "the command that shows it. With --json it bounds the notes, which are otherwise complete")
     context.add_argument("--json", action="store_true")
     session = sub.add_parser("session", help="append or read user-reported session records")
     sessions = session.add_subparsers(dest="action", required=True)
     entry = sessions.add_parser("add")
     _client_args(entry)
-    entry.add_argument("--summary", required=True)
-    entry.add_argument("--status", choices=ws.STATUSES, default="prepared")
-    entry.add_argument("--evidence", help="reference and hash a file; does not assess its contents")
+    entry.add_argument("--summary", help="what was done and what it rests on (required here or in --input)")
+    entry.add_argument("--status", choices=ws.STATUSES, help="default: prepared")
+    entry.add_argument("--evidence", action="append", metavar="FILE",
+                       help="reference and hash a file; does not assess its contents (repeatable; all are kept, in order)")
+    entry.add_argument("--input", metavar="FILE",
+                       help="read the record's fields from a JSON or YAML file, or - for standard input "
+                            "(keys: the option names, such as summary, status, evidence); an option given "
+                            "on the command line wins over the file")
+    entry.add_argument("--learned", action="append", metavar="TEXT",
+                       help="a lesson this session taught, saved with the record and linked to it (repeatable). "
+                            "Write it as `When: ... Do: ... Because: ...`")
+    entry.add_argument("--learned-scope", choices=("client", "firm"),
+                       help="client: the selected client or initiative (default); firm: every client, so the "
+                            "text must not identify one")
+    entry.add_argument("--learned-from", choices=("consultant", "agent"),
+                       help="consultant: their correction or instruction, saved as an active lesson; agent "
+                            "(default): saved as a candidate until it is reviewed")
+    basis = entry.add_argument_group("what a check rested on (each optional; see docs/engagement-records.md)")
+    basis.add_argument("--check", choices=ws.CHECK_KINDS, action="append",
+                       help="the kind of check (repeatable): read-back (what was sent, read back), scripted (a script "
+                            "or test), rendered (a page rendered and looked at), live (the real entry point used), "
+                            "reviewed")
+    basis.add_argument("--as-user", metavar="TEXT",
+                       help="as whom it was checked: admin, a named persona, a guest, an integration user (a role "
+                            "is enough; no personal data needed)")
+    basis.add_argument("--in-org", metavar="ALIAS",
+                       help="the org it was checked in; Torque adds sandbox or production when the client's consent "
+                            "record names the org (no org call)")
+    basis.add_argument("--not-covered", metavar="TEXT", help="what the check did not cover")
+    basis.add_argument("--accepted-by", metavar="TEXT",
+                       help="who you report accepted the work (a lead, a tester, the client); required with "
+                            "--status accepted; shown as reported, never as Torque's confirmation")
+    basis.add_argument("--corrects", metavar="SESSION_ID",
+                       help="an earlier record of this client or initiative that this one corrects; the earlier "
+                            "file is not changed, and context and handoff show it as corrected")
+    entry.add_argument("--change", metavar="ID",
+                       help="link the record to a change record (torque change list); change handoff lists it")
     entry.add_argument("--json", action="store_true")
     for action in ("list", "show"):
         p = sessions.add_parser(action)
@@ -170,14 +337,27 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("entry_id")
     handoff = sub.add_parser("handoff", help="render a handoff from the actual selected-client journal")
     _client_args(handoff)
-    handoff.add_argument("--output", help="write a new file; otherwise print Markdown")
+    _window_args(handoff)
+    handoff.add_argument("--change", metavar="ID", help="only this change and the session records linked to it")
+    handoff.add_argument("--format", choices=("markdown", "json"), default="markdown",
+                         help="the document's format (default markdown)")
+    handoff.add_argument("--output", metavar="FILE",
+                         help="write the document to FILE; run again, it replaces the file and keeps the previous "
+                              "one as FILE.bak. Otherwise print it")
+    handoff.add_argument("--force", action="store_true",
+                         help="with --output: replace the file even when it was edited since Torque wrote it")
+    handoff.add_argument("--json", action="store_true",
+                         help="report as JSON: with --output, where it was written; without, the document as JSON")
     doctor = sub.add_parser("doctor", help="inspect local dependencies and config; makes no org calls")
     doctor.add_argument("--workspace")
     doctor.add_argument("--client")
     doctor.add_argument("--json", action="store_true")
     doctor.add_argument("--live", action="store_true",
                         help="connected mode: resolve each approved org and compare its ID with the consent")
-    doctor.add_argument("--for", dest="capability", choices=("workspace", "salesforce", "browser", "meeting"), default="workspace")
+    doctor.add_argument("--for", dest="capability",
+                        choices=("workspace", "salesforce", "browser-login", "browser", "meeting"), default="workspace",
+                        help="browser-login: signing a host browser tab in (needs the Salesforce CLI); "
+                             "browser: Torque's own Playwright browser (also needs Playwright and its browser)")
     change = sub.add_parser("change", help="connect requirements, decisions, checks and handoff")
     actions = change.add_subparsers(dest="action", required=True)
     for action in ("create", "list", "show", "note", "check", "verify-deploy", "handoff"):
@@ -205,7 +385,23 @@ def build_parser() -> argparse.ArgumentParser:
             cp.add_argument("--component", action="append", default=[])
             cp.add_argument("--manifest")
         elif action == "handoff":
-            cp.add_argument("--output", help="write a new report file")
+            cp.add_argument("--output", help="write the report to a file; run again, it replaces the file it wrote "
+                                             "(keeping FILE.bak), and leaves an edited one as it is (writing FILE.new)")
+            cp.add_argument("--force", action="store_true",
+                            help="with --output: replace the file even when it was edited since Torque wrote it")
+    criterion = actions.add_parser("criterion", help="add or retire an acceptance criterion of an existing change")
+    criterion_actions = criterion.add_subparsers(dest="criterion_action", required=True)
+    c_add = criterion_actions.add_parser("add", help="add a criterion; it gets the next ID (AC3, ...)")
+    _client_args(c_add)
+    c_add.add_argument("change_id")
+    c_add.add_argument("--text", required=True, help="the criterion, as the client would check it")
+    c_add.add_argument("--json", action="store_true")
+    c_retire = criterion_actions.add_parser("retire", help="retire a criterion; its ID and earlier checks are kept")
+    _client_args(c_retire)
+    c_retire.add_argument("change_id")
+    c_retire.add_argument("criterion_id", metavar="CRITERION", help="AC1, AC2, ...")
+    c_retire.add_argument("--reason", required=True, help="why it no longer applies")
+    c_retire.add_argument("--json", action="store_true")
     workflows = sub.add_parser("workflows", help="discover bundled conversational and native workflows")
     workflows.add_argument("action", nargs="?", choices=("list", "show"), default="list")
     workflows.add_argument("name", nargs="?")
@@ -214,6 +410,8 @@ def build_parser() -> argparse.ArgumentParser:
     cli_approval.register(sub)
     from . import guarded
     guarded.register(sub)
+    from .checks import command as check_command
+    check_command.register(sub)
     for route in PUBLIC_ROUTES:
         sub.add_parser(route, add_help=False, help=f"{route} operations with selected-client evidence; use {route} --help")
     for route in DELEGATES:
@@ -224,7 +422,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None]:
+def _scope_options(argv: list[str], names: tuple[str, ...] = ("--workspace", "--client")) -> tuple[list[str], dict]:
+    """Split a delegated command's words into its own arguments and the scope options
+    it names (their values by option name)."""
     remaining: list[str] = []
     values: dict[str, str] = {}
     i = 0
@@ -234,7 +434,7 @@ def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None
             remaining.extend(argv[i:])
             break
         option = arg.split("=", 1)[0]
-        if option not in ("--workspace", "--client"):
+        if option not in names:
             remaining.append(arg)
             i += 1
             continue
@@ -251,6 +451,13 @@ def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None
             raise ws.WorkspaceError(f"conflicting {option} values")
         values[option] = value
         i += 1
+    if "--client" in values and "--initiative" in values:
+        raise ws.WorkspaceError("name a client or an initiative, not both")
+    return remaining, values
+
+
+def _context_options(argv: list[str]) -> tuple[list[str], str | None, str | None]:
+    remaining, values = _scope_options(argv)
     return remaining, values.get("--workspace"), values.get("--client")
 
 
@@ -307,33 +514,57 @@ def delegated_context(path: Path | None, route: str, argv: list[str], display: s
                 os.environ[key] = value
 
 
+# `torque lesson` commands that write, or read a workspace's own state: they need a
+# workspace. The others (for, recall, list, show, search, stats, selfcheck) also work
+# without one, on the lessons shipped with Torque.
+LESSON_NEEDS_WORKSPACE = frozenset({"add", "capture", "helpful", "stale", "verify", "retire", "restore", "edit",
+                                    "review", "promote", "harvest", "migrate"})
+
+
 def _dispatch(route: str, argv: list[str], display: str | None = None) -> int:
-    args, root_arg, client_name = _context_options(argv)
+    # Lessons work for an internal initiative as for a client; the other routes are for clients.
+    lessons = route == "lesson"
+    args, selected = _scope_options(argv, ("--workspace", "--client", "--initiative") if lessons
+                                    else ("--workspace", "--client"))
+    root_arg, client_name, initiative = (selected.get(name) for name in ("--workspace", "--client", "--initiative"))
     flags = args[:args.index("--")] if "--" in args else args
     help_only = not args or any(x in ("-h", "--help", "--version") for x in flags)
     scope = None
     # Legacy JSC_ROOT may still name the old employer checkout. It is an output compatibility
     # variable, never an implicit client selection for this entry point.
     root_arg = root_arg or os.environ.get("TORQUE_WORKSPACE")
-    if client_name and not root_arg and not help_only:
-        raise ws.WorkspaceError("--client requires --workspace PATH")
+    if (client_name or initiative) and not root_arg and not help_only:
+        raise ws.WorkspaceError(f"--{'client' if client_name else 'initiative'} requires --workspace PATH")
     if not help_only:
         ws.require_package_writable(root_arg)
     if root_arg and not help_only:
         if client_name:
             scope, _, _ = ws.load_client(root_arg, client_name)
+        elif initiative:
+            scope, _, _ = ws.load_engagement(root_arg, initiative, "initiative")
         elif (Path(root_arg).expanduser() / "client.json").is_file():
             # An inherited context is already client-scoped; validate it through its firm root.
             candidate = Path(root_arg).expanduser().resolve()
             scope, _, _ = ws.load_client(candidate.parent.parent, candidate.name)
+        elif lessons:
+            # No client or initiative: the firm's lessons (the workspace root) and the platform's.
+            scope, _ = ws.load_workspace(root_arg)
         else:
             ws.load_workspace(root_arg)
-    stateful = route in {"qa", "revert", "lesson", "browser"}
+    stateful = route in {"qa", "revert", "browser"}
     stateful = stateful or (route == "ai-regression" and args[:1] in (["replay"], ["replay-all"]))
-    local_browser = route == "browser" and args[:1] == ["sanitize-replay"]
+    # Neither reads a client's state or an org: one scans a script, one deletes a session file.
+    local_browser = route == "browser" and args[:1] in (["sanitize-replay"], ["logout"])
     if not help_only and stateful and not local_browser and scope is None:
-        raise ws.WorkspaceError(f"{route} needs a selected client for its private state; "
-                                "provide --workspace PATH --client NAME")
+        # Name the command the user typed (deploy, data, org, recover), not the internal route.
+        public = (args[0] if route == "revert" and args[:1] in (["deploy"], ["data"], ["org"])
+                  else display.split()[1] if display and len(display.split()) > 1 else route)
+        raise ws.WorkspaceError(f"{public} needs a selected client for its private state; "
+                                "provide --workspace PATH --client NAME", code="no_client_selected",
+                                next_command=f"torque {public} --workspace PATH --client NAME ...")
+    if not help_only and lessons and scope is None and args[0] in LESSON_NEEDS_WORKSPACE:
+        raise ws.WorkspaceError(f"lesson {args[0]} needs a workspace: provide --workspace PATH with --client NAME "
+                                "or --initiative NAME (a firm lesson needs only --workspace PATH --scope firm)")
     if not help_only and route == "meeting" and not any(a == "--output" or a.startswith("--output=") for a in args):
         if scope is None:
             raise ws.WorkspaceError("meeting needs --output PATH or --workspace PATH --client NAME")
@@ -367,6 +598,87 @@ def _data_text(relative: str) -> str | None:
     return candidate.read_text(encoding="utf-8") if candidate.is_file() else None
 
 
+def _workflow_text(workspace: Path | None, slug: str) -> str | None:
+    """The recipe `slug` as the selected workspace's host runs it. Claude Code's copy is
+    .claude/commands/NAME.md and Antigravity's .agents/skills/NAME/SKILL.md, each under
+    the name that host gives it (torque-NAME for one named like its own commands), then
+    under the catalogue name a workspace not yet upgraded still has; a local copy is
+    shown as it is, customizations included. Without one, the packaged recipe written
+    for that host. Without a workspace, the packaged recipe with its catalogue names."""
+    packaged = _data_text(f"{slug}.md")
+    if workspace is None:
+        return packaged
+    host = hosts.for_workspace(ws.load_workspace(workspace)[1])
+    for name in dict.fromkeys((hosts.recipe_name(host, slug), slug)):
+        relative = (f".agents/skills/{name}/SKILL.md" if host is hosts.ANTIGRAVITY
+                    else f".claude/commands/{name}.md")
+        local = ws._inside(workspace, workspace.joinpath(*relative.split("/")))
+        if local.exists():
+            if not local.is_file():
+                raise ws.WorkspaceError("selected local workflow must be a regular Markdown file")
+            return local.read_text(encoding="utf-8")
+    if packaged is None:
+        return None
+    if host is hosts.ANTIGRAVITY:
+        from . import antigravity
+        return antigravity.skill(slug, packaged) or hosts.rename_mentions(host, packaged)
+    return ws.claude_copy("commands", f"{slug}.md", packaged)[1]
+
+
+_SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
+_REFERENCE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
+
+
+def _packaged_skills() -> dict[str, str]:
+    """{name: one-line description} of the practice skills shipped in the package."""
+    found = {}
+    try:
+        folder = resources.files("torque").joinpath("data", "skills")
+        items = sorted(folder.iterdir(), key=lambda item: item.name) if folder.is_dir() else []
+    except (OSError, TypeError, ModuleNotFoundError):
+        items = []
+    for item in items:
+        page = item.joinpath("SKILL.md")
+        if not (_SKILL_NAME.match(item.name) and page.is_file()):
+            continue
+        meta = re.match(r"\A---\n(.*?)\n---\n", page.read_text(encoding="utf-8"), re.S)
+        line = next((row.partition(":")[2].strip().strip("\"'") for row in (meta.group(1).splitlines() if meta else [])
+                     if row.startswith("description:")), "")
+        first = re.split(r"(?<=[.;:])\s", line, maxsplit=1)[0]
+        found[item.name] = first if len(first) <= 110 else first[:107].rsplit(" ", 1)[0].rstrip(",;") + " ..."
+    return found
+
+
+def _skill_text(workspace: Path | None, spec: str) -> tuple[str, str] | None:
+    """The text of a practice skill (`NAME`) or one of its references (`NAME/REF`,
+    `NAME/references/REF`, with or without `.md`), and where it was read: the selected
+    workspace's `.agents/skills/` copy when there is one, else the packaged skill.
+    None when `spec` names no skill."""
+    parts = spec.strip().replace("\\", "/").strip("/").split("/")
+    if parts[1:2] == ["references"]:
+        parts = [parts[0], *parts[2:]]
+    if len(parts) > 2 or not _SKILL_NAME.match(parts[0]):
+        return None
+    if len(parts) == 2:
+        reference = parts[1] if parts[1].endswith(".md") else parts[1] + ".md"
+        if not _REFERENCE_NAME.match(reference):
+            return None
+        relative = ["references", reference]
+    else:
+        relative = ["SKILL.md"]
+    if workspace is not None:
+        local = ws._inside(workspace, workspace.joinpath(".agents", "skills", parts[0], *relative))
+        if local.is_file():
+            return local.read_text(encoding="utf-8"), "/".join([".agents/skills", parts[0], *relative])
+    try:
+        item = resources.files("torque").joinpath("data", "skills", parts[0], *relative)
+        if item.is_file():
+            return item.read_text(encoding="utf-8"), "/".join(["torque/data/skills", parts[0], *relative])
+    except (OSError, TypeError, ModuleNotFoundError):
+        pass
+    return None
+
+
 def _workflows(args: argparse.Namespace) -> int:
     raw = _data_text("catalogue.json")
     if raw is None:
@@ -383,8 +695,6 @@ def _workflows(args: argparse.Namespace) -> int:
         if not args.name:
             raise ws.WorkspaceError("workflows show needs a workflow name")
         entry = next((e for e in entries if e["name"] == args.name), None)
-        if entry is None:
-            raise ws.WorkspaceError(f"unknown workflow: {args.name}; run torque workflows")
         selected = getattr(args, "workspace", None) or os.environ.get("TORQUE_WORKSPACE")
         workspace = None
         if selected:
@@ -394,19 +704,21 @@ def _workflows(args: argparse.Namespace) -> int:
                 workspace = client.parent.parent
             else:
                 workspace, _ = ws.load_workspace(candidate)
+        if entry is None:
+            # A practice skill, or one of its references, read the same way on every host.
+            skill = _skill_text(workspace, args.name)
+            if skill is None:
+                raise ws.WorkspaceError(f"unknown workflow or skill: {args.name}; run torque workflows")
+            if args.json:
+                _print_json({"name": args.name, "kind": "skill", "source": skill[1], "text": skill[0]})
+            else:
+                print(skill[0], end="" if skill[0].endswith("\n") else "\n")
+            return 0
         if args.json:
             # Catalogue JSON remains stable; workspace precedence selects text.
             _print_json(entry)
         else:
-            recipe = None
-            if workspace is not None:
-                local = ws._inside(workspace, workspace / ".claude" / "commands" / f"{ws.slug_for(args.name)}.md")
-                if local.exists():
-                    if not local.is_file():
-                        raise ws.WorkspaceError("selected local workflow must be a regular Markdown file")
-                    recipe = local.read_text(encoding="utf-8")
-            if recipe is None:
-                recipe = _data_text(f"{ws.slug_for(args.name)}.md")
+            recipe = _workflow_text(workspace, ws.slug_for(args.name))
             print(recipe if recipe is not None else json.dumps(entry, indent=2), end="\n")
     elif args.json:
         _print_json(entries)
@@ -414,7 +726,116 @@ def _workflows(args: argparse.Namespace) -> int:
         for entry in entries:
             print(f"{entry['name']:22} [{entry.get('kind', 'guided')}] {entry.get('description', '')}")
         print("\nRead a workflow: torque workflows show NAME")
+        skills = _packaged_skills()
+        if skills:
+            # Skills are not recipes: the catalogue and its --json stay as they are.
+            print("\nPractice skills (read one before that kind of work; every workspace also has them in "
+                  ".agents/skills/NAME/SKILL.md):")
+            for name, description in skills.items():
+                print(f"  {name:32} {description}")
+            print("Read a skill: torque workflows show NAME; one of its references: "
+                  "torque workflows show NAME/REFERENCE")
     return 0
+
+
+# `session add` fields that `--input FILE|-` can also give: field -> (kind, default).
+# The keys of the document are the option names, with - or _ (`learned-from`, `learned_from`).
+SESSION_FIELDS = {"summary": ("text", None), "status": ("text", "prepared"), "evidence": ("list", []),
+                  "learned": ("list", []), "learned_scope": ("text", "client"), "learned_from": ("text", "agent"),
+                  "check": ("list", None), "as_user": ("text", None), "in_org": ("text", None),
+                  "not_covered": ("text", None), "accepted_by": ("text", None), "corrects": ("text", None),
+                  "change": ("text", None)}
+INPUT_LIMIT = 1_000_000
+
+
+def _read_input(source: str) -> dict:
+    """The fields of a `--input` document: a JSON or YAML mapping, from a file or `-`."""
+    where = "standard input" if source == "-" else source
+    try:
+        if source == "-":
+            stream = getattr(sys.stdin, "buffer", None)
+            raw = stream.read(INPUT_LIMIT + 1) if stream is not None else sys.stdin.read(INPUT_LIMIT + 1)
+            text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw
+        else:
+            with open(source, encoding="utf-8-sig") as handle:
+                text = handle.read(INPUT_LIMIT + 1)
+    except FileNotFoundError as exc:
+        raise ws.WorkspaceError(f"--input file does not exist: {source}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise ws.WorkspaceError(f"cannot read --input {where} as UTF-8 text ({type(exc).__name__})") from exc
+    if len(text) > INPUT_LIMIT:
+        raise ws.WorkspaceError(f"--input {where} is longer than {INPUT_LIMIT:,} characters")
+    try:
+        value = json.loads(text)
+    except ValueError:
+        import yaml
+        try:
+            value = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ws.WorkspaceError(f"--input {where} is neither JSON nor YAML: "
+                                    f"{str(exc).splitlines()[0] if str(exc) else type(exc).__name__}") from exc
+    if not isinstance(value, dict):
+        raise ws.WorkspaceError(f"--input {where} must hold one mapping of fields, such as "
+                                '{"summary": "...", "status": "executed"}')
+    fields = {}
+    for key, item in value.items():
+        name = str(key).strip().replace("-", "_")
+        if name not in SESSION_FIELDS:
+            raise ws.WorkspaceError(f"unknown field in --input {where}: {key}; the fields are "
+                                    + ", ".join(sorted(SESSION_FIELDS)))
+        kind = SESSION_FIELDS[name][0]
+        if item is None:
+            continue
+        if kind == "list":
+            item = [item] if isinstance(item, str) else item
+            if not isinstance(item, list) or any(not isinstance(part, str) for part in item):
+                raise ws.WorkspaceError(f"--input field {key} must be text or a list of texts")
+        elif not isinstance(item, str):
+            raise ws.WorkspaceError(f"--input field {key} must be text (put it in quotes)")
+        fields[name] = item
+    return fields
+
+
+def _session_fields(parsed: argparse.Namespace) -> dict:
+    """The `session add` fields: each option given on the command line, else the
+    `--input` document's value, else the default."""
+    document = _read_input(parsed.input) if parsed.input else {}
+    fields = {}
+    for name, (_, default) in SESSION_FIELDS.items():
+        given = getattr(parsed, name, None)
+        fields[name] = given if given is not None else document.get(name, default)
+    if not isinstance(fields["summary"], str) or not fields["summary"].strip():
+        raise ws.WorkspaceError("session summary must be nonempty: give --summary TEXT, or a summary field in "
+                                "--input FILE")
+    return fields
+
+
+def _init_target_check(target: Path, force: bool) -> None:
+    """`workspace init` into a folder that already holds other files would add Torque's
+    files beside them and, without a .gitignore there, one that ignores everything; it
+    does so only with --force. A new folder, an empty one, and one holding only .git and
+    .gitignore are fine."""
+    target = target.expanduser()
+    if force or not target.is_dir() or (target / ws.CONFIG).exists():
+        return
+    others = sorted(child.name for child in target.iterdir() if child.name not in (".git", ".gitignore"))
+    if others:
+        shown = ", ".join(others[:5]) + (f" and {len(others) - 5} more" if len(others) > 5 else "")
+        raise ws.WorkspaceError(
+            f"{target} already holds other files ({shown}). A workspace there adds Torque's folders and files beside "
+            "them and, where there is no .gitignore, one that keeps everything in the folder out of git. Choose a new "
+            "or empty folder, or run this again with --force to set up the workspace here anyway (your files are "
+            "kept; an existing AGENTS.md or CLAUDE.md is not replaced, so add Torque's instructions to it yourself)",
+            code="folder_not_empty", next_command=ws.command_text(["torque", "workspace", "init", str(target),
+                                                                   "--name", "NAME", "--force"]))
+
+
+def _init_next_steps(path: Path) -> list[str]:
+    where = str(path)
+    return [ws.command_text(["torque", "client", "add", "CLIENT", "--workspace", where])
+            + " (add --org ALIAS when the client has a Salesforce org)",
+            ws.command_text(["torque", "doctor", "--workspace", where]) + " (what is ready and what is not)",
+            f"start your agent in {where} and ask it to resume a client: torque context --workspace . --client CLIENT"]
 
 
 def _change(args: argparse.Namespace) -> int:
@@ -422,24 +843,55 @@ def _change(args: argparse.Namespace) -> int:
     name, kind = _scope(args)
     common = (args.workspace, name)
     action = args.action
+    # Reading skips a stray or damaged record and names it (ws.record_problem_lines).
+    problems: list[dict] = []
     if action == "create":
         result = changes.create_change(*common, args.title, args.outcome, args.criterion, args.org,
                                        engagement_kind=kind)
     elif action == "list":
-        result = changes.list_changes(*common, engagement_kind=kind)
+        result = changes.list_changes(*common, engagement_kind=kind, problems=problems)
+    elif action == "criterion":
+        if args.criterion_action == "add":
+            result = changes.add_criterion(*common, args.change_id, args.text, engagement_kind=kind)
+        else:
+            result = changes.retire_criterion(*common, args.change_id, args.criterion_id, args.reason,
+                                              engagement_kind=kind)
+        if args.json:
+            _print_json(result)
+        else:
+            verb = "Added" if args.criterion_action == "add" else "Retired"
+            print(f"{verb} {result['criterion']} in {args.change_id}: {result['summary']}")
+        return 0
     elif action in ("show", "handoff"):
-        result = changes.get_change(*common, args.change_id, engagement_kind=kind)
+        result = changes.get_change(*common, args.change_id, engagement_kind=kind, problems=problems)
+        _, records = ws.read_sessions(*common, kind=kind, problems=problems)
+        linked = [{key: entry[key] for key in ("id", "created_at", "status", "summary")}
+                  | ({"basis": ws.basis_text(entry)} if ws.basis_text(entry) else {})
+                  for entry in records if entry.get("change") == args.change_id]
+        result["linked_sessions"] = linked
+        result["record_problems"] = problems
         if not args.json:
-            text = changes.render_change(*common, args.change_id, engagement_kind=kind)
+            text = changes.render_change(*common, args.change_id, engagement_kind=kind, problems=[])
+            text += "\n## Linked session records\n\n" + ("\n".join(
+                f"- {item['created_at']} [{item['status']}, user-reported] {item['id']}: {item['summary']}"
+                + (f" ({item['basis']})" if item.get("basis") else "") for item in linked)
+                or f"None yet. Link one with torque session add ... --change {args.change_id}") + "\n"
+            if problems:
+                text += "\n" + "\n".join(["## Records not shown", "", *ws.record_problem_lines(problems)]) + "\n"
             if action == "handoff" and args.output:
-                ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind), text)
-                print(args.output)
+                written = ws.replace_output(ws.client_output_path(*common, args.output, kind=kind), text,
+                                            ws.load_engagement(*common, kind)[0], force=args.force)
+                print("\n".join(ws.output_lines(written)))
             else:
                 print(text, end="")
             return 0
         if action == "handoff" and args.output:
-            ws.atomic_write_new(ws.client_output_path(*common, args.output, kind=kind),
-                                json.dumps(result, indent=2) + "\n")
+            written = ws.replace_output(ws.client_output_path(*common, args.output, kind=kind),
+                                        json.dumps(result, indent=2) + "\n", ws.load_engagement(*common, kind)[0],
+                                        force=args.force)
+            if written["kept"]:
+                # stdout equals the file written, except when an edited file was kept: then it says so.
+                result = {**result, "export": {**ws.output_report(written), "message": ws.output_lines(written)[1]}}
     elif action == "note":
         result = changes.add_note(*common, args.change_id, args.text, args.kind, engagement_kind=kind)
     elif action == "check":
@@ -450,14 +902,189 @@ def _change(args: argparse.Namespace) -> int:
                                        args.manifest, engagement_kind=kind)
     if args.json:
         _print_json(result)
+        if action == "list" and problems:
+            print("\n".join(ws.record_problem_lines(problems)), file=sys.stderr)
     elif action == "list":
         for item in result:
             print(f"{item['id']}: {item['title']}")
         if not result:
             print("No changes yet. Use torque change create --help.")
+        for line in ws.record_problem_lines(problems):
+            print(line)
     else:
         print(f"Recorded {result['id']}: {result.get('summary', result.get('title', ''))}")
     return 3 if action == "verify-deploy" and result.get("result") != "pass" else 0
+
+
+def _upgrade(args: argparse.Namespace) -> int:
+    """`torque workspace upgrade`: a short summary by default, the whole report with --json."""
+    from . import permissions
+    from . import template_updates as updates
+    if args.diff:
+        print(updates.template_diff(Path(args.path), args.diff), end="")
+        return 0
+    if args.accept:
+        if args.check:
+            raise ws.WorkspaceError("--accept records your choice in the workspace manifest; run it without --check")
+        report = updates.accept_templates(Path(args.path), args.accept)
+        if args.json:
+            _print_json(report)
+            return 0
+        accepted = [row["path"] for row in report["actions"] if row["action"] == "accepted"]
+        for path in accepted:
+            print(f"Accepted: {path} is kept as your version. It is a conflict again only when its packaged "
+                  "text changes.")
+        if len(report["actions"]) > len(accepted):
+            print(f"{len(report['actions']) - len(accepted)} other file(s) named there needed nothing.")
+        return 0
+    report = updates.update_templates(Path(args.path), check=args.check)
+    if ws.connected_rule_stale(args.path):
+        report["connected_rule"] = (
+            "`.claude/rules/production-approval.md` is from another version of Torque, and this "
+            "command does not update it. The owner rewrites it with `torque workspace ai-access "
+            "connected --approval required --path W` (with the --verify the workspace uses).")
+    root, config = ws.load_workspace(args.path)
+    mode = ws.access_mode(config)
+    if mode == "build-only" and not args.no_hook:
+        # Build-only mode is enforced by the hook, so a missing one is added, for both hosts.
+        report["hooks"] = permissions.wire_gate_hooks(root, antigravity=True, check=args.check)
+    elif mode == "full" and not args.no_hook:
+        # In full mode the hook is the owner's choice (init and `ai-access full` add it): a missing one is
+        # reported, and Torque's own shell-form entry is converted to exec form.
+        report["hooks"] = permissions.wire_gate_hooks(root, check=args.check, add=False)
+    if args.json:
+        _print_json(report)
+    else:
+        print(_upgrade_summary(report, args.path, mode))
+    return 3 if any(row["status"] == "failed" for row in report.get("hooks", [])) else 0
+
+
+def _upgrade_summary(report: dict, path: str, mode: str) -> str:
+    """One line of counts, then only the files that need something, each with its next command."""
+    check = report["check"]
+    actions = report["actions"]
+
+    def command(*words: str) -> str:
+        return ws.command_text(["torque", "workspace", "upgrade", path, *words])
+    labels = {"current": "current", "adopt": "recorded as current", "customized": "customized and kept",
+              "update": "to update" if check else "updated", "add": "to add" if check else "added",
+              "renamed": "to rename" if check else "renamed", "accepted": "accepted",
+              "preserve": "conflicts", "retired": "retired"}
+    counts = report["counts"]
+    lines = [f"{'Checked' if check else 'Upgraded'} {report['workspace']} against Torque {report['package_version']}"
+             + ("; nothing was written." if check else "."),
+             f"{len(actions)} files: " + ", ".join(f"{counts[key]} {label}" for key, label in labels.items()
+                                                    if counts.get(key)) + "."]
+    why = {"modified_local": "edited here, and the packaged text changed since it was recorded",
+           "unmanaged_local": "a local file at a path Torque installs, which Torque never recorded",
+           "changed_during_update": "it changed while the upgrade ran; rerun it"}
+    for row in actions:
+        name, action = row["path"], row["action"]
+        if action == "update":
+            lines.append(f"{'Update' if check else 'Updated'}: {name}"
+                         + (" (now imports AGENTS.md)" if name == "CLAUDE.md" else
+                            " (unchanged here; the packaged text changed)"))
+        elif action == "add":
+            lines.append(f"{'Add' if check else 'Added'}: {name}")
+        elif action == "renamed":
+            command_name = name.rsplit("/", 1)[-1][:-len(".md")]
+            lines.append(f"{'Rename' if check else 'Renamed'}: {name} -> {row['renamed_to']} (Claude Code answers "
+                         f"/{command_name} itself)" + ("; your edits move with it" if row["reason"] == "local_edit" else ""))
+        elif action == "preserve" and row.get("reason") != "missing":
+            if row.get("reason") == "renamed_both_present":
+                lines.append(f"Conflict: {name}: {row['suggestion']} Compare: "
+                             + command("--diff", row["renamed_to"]))
+                continue
+            line = f"Conflict: {name}: {why.get(row.get('reason'), row.get('suggestion', ''))}."
+            if row.get("reason") in ("modified_local", "unmanaged_local"):
+                line += f" Compare: {command('--diff', name)}; keep yours: {command('--accept', name)}"
+            lines.append(line)
+        elif action == "retired":
+            lines.append(f"Retired: {name}: {row['suggestion']}")
+    if counts.get("customized"):
+        lines.append("Customized files are kept as they are and are not listed; --json lists every file.")
+    lines += _floor_lines(report.get("floor"), check)
+    for key in ("connected_rule", "claude_md"):
+        if key in report:
+            lines.append("Note: " + report[key])
+    lines += _hook_lines(report.get("hooks", []), mode, path)
+    return "\n".join(lines)
+
+
+OWN_TEXT_NOTE = ("Note: AGENTS.md holds instructions of its own beside the Torque block. Read the two together "
+                 "once and settle anything in yours that contradicts the block; the upgrade never changes your text.")
+
+
+def _floor_lines(row: dict | None, check: bool) -> list[str]:
+    """What the upgrade did, or would do, to the Torque block in AGENTS.md, in one line, and
+    one more when the file also holds its own instructions; nothing when the block is current."""
+    if not row or row["status"] == "current":
+        return []
+    line = _floor_line(row, check)
+    return [line] + ([OWN_TEXT_NOTE] if row.get("own_text") and row["status"] != "damaged" else [])
+
+
+def _floor_line(row: dict, check: bool) -> str:
+    version, previous = row["version"], row.get("previous_version")
+    verb = (lambda now, later: later if check else now)
+    lines = {
+        "added": verb("Added", "Add") + f": AGENTS.md with the Torque block (version {version}).",
+        "legacy": verb("Replaced", "Replace") + f": AGENTS.md, which held the unchanged text an earlier Torque "
+                  f"wrote, with the current text and the Torque block (version {version}).",
+        "appended": verb("Appended", "Append") + f": the Torque block (version {version}) at the end of AGENTS.md, "
+                    "which had none; your text above it is unchanged.",
+        "replaced": verb("Updated", "Update") + f": the Torque block in AGENTS.md from version {previous} to "
+                    f"{version}; text outside its markers is unchanged.",
+        "edited": verb("Replaced", "Replace") + f": edits inside the Torque block in AGENTS.md with the packaged "
+                  f"text (version {version}). Keep firm text outside the markers; the upgrade never changes it.",
+        "damaged": f"Not changed: AGENTS.md has {row.get('problem') or 'damaged Torque markers'}. Leave one "
+                   "<!-- torque:floor:begin N --> line and one <!-- torque:floor:end --> line after it, or remove "
+                   "both, then run the upgrade again.",
+        "unreadable": "Not changed: AGENTS.md is not UTF-8 text, so the Torque block was not added. Save it as "
+                      "UTF-8, then run the upgrade again.",
+        "changed_during_update": "Not changed: AGENTS.md changed while the upgrade ran; run it again.",
+    }
+    return lines.get(row["status"], f"AGENTS.md: {row['status']}.")
+
+
+def _hook_lines(rows: list[dict], mode: str, path: str = ".") -> list[str]:
+    """What wire_gate_hooks did, in plain lines; a hook already in place says nothing."""
+    lines = []
+    for row in rows:
+        host, where = row["host"], row["path"]
+        if row["status"] == "added":
+            lines.append(f"Gate hook for {host}: added to {where}.")
+        elif row["status"] == "converted":
+            lines.append(f"Gate hook for {host}: Torque's entry in {where} now runs in exec form, with no shell.")
+        elif row["status"] == "to_convert":
+            lines.append(f"Gate hook for {host}: Torque's entry in {where} is in shell form; without --check it "
+                         "is converted to exec form, which needs no shell.")
+        elif row["status"] == "missing" and mode == "full":
+            lines.append(f"Record protection: NOT IN FORCE; no gate hook for {host} in {where}. Wire it with "
+                         + ws.command_text(["torque", "workspace", "ai-access", "full", "--path", str(path)]) + ".")
+        elif row["status"] == "missing":
+            lines.append(f"Gate hook for {host}: missing from {where}; the upgrade without --check adds it.")
+        elif row["status"] == "failed":
+            lines += [f"Gate hook for {host}: NOT ADDED ({row['reason']}). Add this entry to {where} yourself:",
+                      json.dumps(row["entry"], ensure_ascii=False)]
+    if mode == "full" and any(row["status"] == "added" for row in rows):
+        lines.append("In full mode the hook only keeps tools from changing a client's consent, approval and "
+                     "control records. --no-hook leaves it out.")
+    return lines
+
+
+def _hook_verification(root: Path, rows: list[dict]) -> list[str]:
+    """Whether the hooks just wired pass doctor's standalone probes."""
+    if not any(row["status"] in ("added", "present", "converted") for row in rows):
+        return []
+    access = _gate_hook_report(Path(root))
+    doctor = ws.command_text(["torque", "doctor", "--workspace", str(root)])
+    lines = []
+    for host, report in (("Claude Code", access["hook"]), ("Antigravity", access["antigravity_hook"])):
+        if any(row["host"] == host for row in rows) and report["configured"]:
+            lines.append(f"{host} hook: " + ("blocked a standalone probe; host enforcement not tested."
+                                             if report["verified"] else f"did not pass its standalone probe; run {doctor}."))
+    return lines
 
 
 # The gate blocks tools it does not recognise, so the hook must see every tool
@@ -467,10 +1094,11 @@ def _change(args: argparse.Namespace) -> int:
 _HOOK_COVERAGE_PROBES = ("Bash", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "NotebookRead", "LS",
                          "Grep", "Glob", "Monitor", "PowerShell", "WebFetch", "Task", "mcp__server__tool",
                          "FutureTool")
-# The same for Antigravity's hook, in its tool names.
+# The same for Antigravity's hook, in its tool names (1.3.1's, and 1.4.9's file and connector tools).
 _AGY_COVERAGE_PROBES = ("run_command", "manage_task", "send_command_input", "view_file", "list_dir", "grep_search",
                         "find_by_name", "write_to_file", "replace_file_content", "multi_replace_file_content",
-                        "call_mcp_tool", "open_browser_url", "invoke_subagent", "future_tool")
+                        "read_file", "write_file", "edit_file", "call_mcp_tool", "mcp_server_tool",
+                        "open_browser_url", "invoke_subagent", "future_tool")
 
 
 def _matcher_covers(matchers: list[str], probes: tuple[str, ...] = _HOOK_COVERAGE_PROBES) -> bool:
@@ -485,35 +1113,121 @@ def _matcher_covers(matchers: list[str], probes: tuple[str, ...] = _HOOK_COVERAG
     return bool(matchers) and all(any(matches(m, name) for m in matchers) for name in probes)
 
 
-def _hook_settings_layers(root: Path) -> list[Path]:
-    """Claude Code settings files that can switch the workspace's hooks off:
-    the workspace's own, the user's, and the managed (administrator) file."""
-    layers = [root / ".claude" / "settings.json", root / ".claude" / "settings.local.json",
-              Path.home() / ".claude" / "settings.json"]
-    if sys.platform == "darwin":
-        layers.append(Path("/Library/Application Support/ClaudeCode/managed-settings.json"))
-    elif os.name == "nt":
-        layers.append(Path(os.environ.get("ProgramData") or "C:/ProgramData") / "ClaudeCode" / "managed-settings.json")
-    else:
-        layers.append(Path("/etc/claude-code/managed-settings.json"))
-    return layers
+def _managed_settings_dir(platform: str | None = None, environ=None) -> Path:
+    """Where Claude Code reads its file-based managed settings: managed-settings.json
+    and a managed-settings.d folder beside it (code.claude.com/docs/en/managed-settings)."""
+    platform = sys.platform if platform is None else platform
+    environ = os.environ if environ is None else environ
+    if platform == "darwin":
+        return Path("/Library/Application Support/ClaudeCode")
+    if platform.startswith("win"):
+        return Path(environ.get("ProgramW6432") or environ.get("ProgramFiles") or "C:\\Program Files") / "ClaudeCode"
+    return Path("/etc/claude-code")
+
+
+def _legacy_managed_settings(environ=None) -> Path | None:
+    """The Windows managed-settings file of older Claude Code versions, which current
+    versions do not read; None elsewhere."""
+    environ = os.environ if environ is None else environ
+    if os.name != "nt":
+        return None
+    return Path(environ.get("ProgramData") or "C:\\ProgramData") / "ClaudeCode" / "managed-settings.json"
+
+
+def _registry_policy() -> dict | None:
+    """Claude Code's policy in the Windows registry (the Settings value under
+    HKLM\\SOFTWARE\\Policies\\ClaudeCode), an admin source above the managed files;
+    None when there is none or it cannot be read."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\ClaudeCode") as key:
+            value, _kind = winreg.QueryValueEx(key, "Settings")
+        data = json.loads(value)
+    except (OSError, ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+# The two settings that keep Claude Code from running the workspace's hook.
+_HOOK_SWITCHES = ("disableAllHooks", "allowManagedHooksOnly")
+# Keys that do not make a managed source the one Claude Code applies.
+_CONTROL_KEYS = ("wslInheritsWindowsSettings", "managedSourcesBehavior")
+
+
+def _settings_file(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _managed_policy() -> tuple[dict, dict, list[str]]:
+    """The managed values of the hook switches doctor can see, with the source of
+    each, and the managed files it read. Claude Code applies the highest admin source
+    that sets a policy key: server-managed settings (not visible to doctor), then the
+    registry or a macOS configuration profile (the registry is read here, a profile is
+    not), then managed-settings.json merged with managed-settings.d/*.json in name
+    order, a later file's value replacing an earlier one. Only true or false counts."""
+    registry = _registry_policy()
+    if registry and any(key not in _CONTROL_KEYS for key in registry):
+        label = r"HKLM\SOFTWARE\Policies\ClaudeCode (Settings)"
+        values = {key: registry[key] for key in _HOOK_SWITCHES if isinstance(registry.get(key), bool)}
+        return values, {key: label for key in values}, []
+    folder = _managed_settings_dir()
+    files = [folder / "managed-settings.json"]
+    drop_ins = folder / "managed-settings.d"
+    if drop_ins.is_dir():
+        files += sorted((path for path in drop_ins.iterdir()
+                         if path.suffix == ".json" and not path.name.startswith(".") and path.is_file()),
+                        key=lambda path: path.name)
+    values, sources, read = {}, {}, []
+    for path in files:
+        data = _settings_file(path)
+        if data is None:
+            continue
+        read.append(str(path))
+        for key in _HOOK_SWITCHES:
+            if isinstance(data.get(key), bool):
+                values[key], sources[key] = data[key], str(path)
+    return values, sources, read
+
+
+def _user_settings() -> Path:
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (Path(configured) if configured else Path.home() / ".claude") / "settings.json"
 
 
 def _hooks_disabled_by(root: Path) -> list[str]:
+    """The settings that keep Claude Code from running this workspace's hook, by the
+    documented precedence: a managed allowManagedHooksOnly, and the disableAllHooks
+    of the highest level that sets it (managed, then the workspace's local and
+    shared settings, then the user's)."""
+    values, sources, _ = _managed_policy()
     found = []
-    layers = _hook_settings_layers(root)
-    for path in layers:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        if data.get("disableAllHooks") is True:
-            found.append(f"{path} (disableAllHooks)")
-        if path == layers[-1] and data.get("allowManagedHooksOnly") is True:
-            found.append(f"{path} (allowManagedHooksOnly)")
+    if values.get("allowManagedHooksOnly"):
+        found.append(f"{sources['allowManagedHooksOnly']} (allowManagedHooksOnly)")
+    if "disableAllHooks" in values:
+        if values["disableAllHooks"]:
+            found.append(f"{sources['disableAllHooks']} (disableAllHooks)")
+        return found
+    for path in (root / ".claude" / "settings.local.json", root / ".claude" / "settings.json", _user_settings()):
+        value = (_settings_file(path) or {}).get("disableAllHooks")
+        if isinstance(value, bool):
+            if value:
+                found.append(f"{path} (disableAllHooks)")
+            break
     return found
+
+
+def _managed_settings_report(root: Path) -> dict:
+    """What doctor read of the managed policy, and what it cannot see."""
+    _, _, read = _managed_policy()
+    legacy = _legacy_managed_settings()
+    return {"files_read": read, "ignored": [str(legacy)] if legacy is not None and legacy.is_file() else [],
+            "not_checked": "server-managed settings and macOS configuration profiles"}
 # The interpreter path, then an option group containing I (isolated mode).
 _HOOK_ISOLATED_RE = re.compile(r'^\s*(?:"[^"]*"|\S+)\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*I[A-Za-z]*\s')
 
@@ -537,9 +1251,15 @@ def _hook_shell() -> str | None:
     return next((str(c) for c in candidates if c.is_file()), None)
 
 
-def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, str]:
-    shell = _hook_shell()
+def _run_hook_probe(command, root: Path, event: str) -> tuple[int | None, str]:
+    """Run one hook the way Claude Code runs it: an exec-form argument vector (a tuple)
+    directly, with no shell; a shell-form command line through Git Bash on Windows and
+    the default shell elsewhere. (exit code or None, stderr)."""
     try:
+        if isinstance(command, tuple):
+            run = subprocess.run(list(command), cwd=root, input=event, capture_output=True, text=True, timeout=60)
+            return run.returncode, run.stderr
+        shell = _hook_shell()
         if shell:
             run = subprocess.run([shell, "-c", command], cwd=root, input=event, capture_output=True,
                                  text=True, timeout=60)
@@ -547,24 +1267,115 @@ def _run_hook_probe(command: str, root: Path, event: str) -> tuple[int | None, s
             run = subprocess.run(command, shell=True, cwd=root, input=event, capture_output=True,
                                  text=True, timeout=60)
         return run.returncode, run.stderr
-    except (OSError, subprocess.TimeoutExpired):
-        return None, ""
+    except subprocess.TimeoutExpired:
+        return None, "the hook did not finish within 60 seconds"
+    except OSError as exc:
+        return None, f"the hook could not start: {exc}"
 
 
+def _isolated_call(call) -> bool:
+    """The hook's Python runs isolated: -I, alone or in an option group, before -c or -m."""
+    if isinstance(call, str):
+        return bool(_HOOK_ISOLATED_RE.match(call))
+    for word in call[1:]:
+        if word in ("-c", "-m") or not word.startswith("-"):
+            return False
+        if re.fullmatch(r"-[A-Za-z]*I[A-Za-z]*", word):
+            return True
+    return False
+
+
+# The first Claude Code version that honours "onFailure" on a hook entry.
+ON_FAILURE_VERSION = (2, 1, 295)
+
+
+_CLAUDE_VERSIONS: dict[str, tuple[int, ...] | None] = {}
+
+
+def _claude_code_version(environ=None) -> tuple[int, ...] | None:
+    """The installed Claude Code's version, from `claude --version`, or None when it is
+    not on PATH or does not say. Only PATH's absolute folders are searched: Windows
+    would also look in the current folder, which can be the workspace. Asked once per
+    process for each program found."""
+    from jsc_common import tools
+    names = ("claude.exe", "claude.cmd", "claude.bat") if os.name == "nt" else ("claude",)
+    folders = [folder for folder in ((os.environ if environ is None else environ).get("PATH") or "").split(os.pathsep)
+               if folder and os.path.isabs(folder)]
+    path = next((candidate for folder in folders for candidate in (os.path.join(folder, name) for name in names)
+                 if os.path.isfile(candidate) and os.access(candidate, os.X_OK)), None)
+    if path is None:
+        return None
+    if path not in _CLAUDE_VERSIONS:
+        try:
+            run = tools.run([path, "--version"], capture_output=True, text=True, timeout=10)
+            match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", run.stdout or "") if run.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired):
+            match = None
+        _CLAUDE_VERSIONS[path] = tuple(int(part) for part in match.groups()) if match else None
+    return _CLAUDE_VERSIONS[path]
+
+
+_ON_FAILURE_ADVICE = ('Set "onFailure": "block" on the torque.gate hook entry (Claude Code 2.1.295 and later). '
+                      "Without it, a hook that cannot start, for example because its interpreter moved, lets "
+                      "every call run ungated.")
+
+
+def _hook_problem(hook: dict, consequence: str, probe: str = "client-path") -> str:
+    """Why a wired Claude Code hook is not in force; the caller appends the entry that fixes it."""
+    error = hook["probe_error"]
+    if hook["blocks_every_call"]:
+        return ("The torque.gate hook could not run the gate (" + (error or "it did not start") + "), so Claude "
+                "Code blocks every tool call, ordinary work included. Point the hook at an interpreter with Torque "
+                "installed, using this entry: ")
+    if hook["allow_probe_exit"] not in (0, 2, None):
+        return ("The torque.gate hook could not start (" + (error or f"exit {hook['allow_probe_exit']}") + "), and "
+                'without "onFailure": "block" Claude Code then runs each call ungated, ' + consequence + ". Point "
+                "the hook at an interpreter with Torque installed, using this entry: ")
+    return (f"The torque.gate hook did not block a {probe} probe (exit {hook['probe_exit']}), {consequence}. Point "
+            "the hook at an interpreter with Torque installed, using this entry: ")
+
+
+def _synced_folder(path, environ=None) -> str | None:
+    """The file-sync service whose folder holds `path`, judged by folder names and
+    Windows' OneDrive variables; None when none is recognised. A sync service can
+    evict a file to save space, and an evicted interpreter cannot start a hook."""
+    environ = os.environ if environ is None else environ
+    folded = os.path.normcase(str(path))
+    for variable in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
+        base = environ.get(variable)
+        if base and folded.startswith(os.path.normcase(base.rstrip("\\/")) + os.sep):
+            return "OneDrive"
+    for part in (path if isinstance(path, PurePath) else PurePath(path)).parts:
+        name = part.casefold()
+        if name.startswith("onedrive"):
+            return "OneDrive"
+        if name.startswith("dropbox"):
+            return "Dropbox"
+        if name in ("google drive", "my drive") or name.startswith("googledrive"):
+            return "Google Drive"
+        if name in ("icloud drive", "mobile documents", "com~apple~clouddocs") or name.startswith("icloud"):
+            return "iCloud Drive"
+    return None
 
 
 def _gate_hook_report(root: Path) -> dict:
-    """Inspect the workspace's own Claude Code hook for build-only mode and,
-    in build-only mode, run it once on a synthetic client-path Read to prove it
-    blocks. Makes no org call and reads no client file."""
-    from . import gate
+    """Inspect the workspace's own Claude Code hook and, in full and build-only mode,
+    run it on two synthetic calls: one it must block (a client-path Read in build-only
+    mode, a write to a client's consent record in full mode) and an ordinary Read it
+    must allow, so a hook that cannot start or blocks everything is told apart from
+    one in force. Makes no org call and reads no client file."""
+    from . import gate, permissions
     mode_root, mode, known = gate._workspace_mode(root)
     python = sys.executable.replace("\\", "/")
-    hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False,
-                  "fail_closed_shim": False, "isolated": False, "disabled_by": [], "verified": None,
-                  "probe_exit": None, "timeouts": [],
-                  "probe_error": "", "recommended_command": gate.hook_command(python)}
+    hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False, "exec_form": False,
+                  "convertible": False,
+                  "fail_closed_shim": False, "fails_closed_on_start": False, "isolated": False, "disabled_by": [],
+                  "verified": None, "probe_exit": None, "allow_probe_exit": None, "blocks_every_call": False,
+                  "timeouts": [], "probe_error": "", "recommended_command": gate.hook_command(python),
+                  "recommended_entry": {"hooks": {"PreToolUse": [{"matcher": ".*", "hooks": [
+                      permissions.gate_hook_item(python)]}]}}}
     matchers: list[str] = []
+    on_failure: list = []
     for name in ("settings.json", "settings.local.json"):
         path = root / ".claude" / name
         try:
@@ -578,27 +1389,45 @@ def _gate_hook_report(root: Path) -> dict:
                 continue
             matcher = str(entry.get("matcher") or "")
             for item in entry.get("hooks") or []:
-                command = str(item.get("command") or "") if isinstance(item, dict) else ""
-                if "torque.gate" in command:
-                    hook["commands"].append(command)
+                # Exec form (an argument vector) or shell form (a command line); both run the gate.
+                call = permissions.gate_hook_call(item)
+                if call is not None:
+                    hook["commands"].append(call)
                     hook["timeouts"].append(item.get("timeout"))
+                    on_failure.append(item.get("onFailure"))
                     hook["configured"] = True
                     matchers.append(matcher)
+                    if isinstance(call, str) and permissions.torque_hook_python(item) is not None:
+                        hook["convertible"] = True
     hook["matcher_covers_tools"] = _matcher_covers(matchers)
     hook["disabled_by"] = _hooks_disabled_by(root)
-    hook["fail_closed_shim"] = bool(hook["commands"]) and all("sys.excepthook" in c for c in hook["commands"])
-    hook["isolated"] = bool(hook["commands"]) and all(_HOOK_ISOLATED_RE.match(c) for c in hook["commands"])
+    hook["managed_settings"] = _managed_settings_report(root)
+    hook["fail_closed_shim"] = bool(hook["commands"]) and all(
+        "sys.excepthook" in (c if isinstance(c, str) else " ".join(c)) for c in hook["commands"])
+    # Claude Code 2.1.295 and later: a hook that cannot start blocks the call instead of letting it run.
+    hook["fails_closed_on_start"] = bool(on_failure) and all(value == "block" for value in on_failure)
+    hook["isolated"] = bool(hook["commands"]) and all(_isolated_call(c) for c in hook["commands"])
+    hook["exec_form"] = bool(hook["commands"]) and all(isinstance(c, tuple) for c in hook["commands"])
     if mode == "build-only":
         hook["verified"] = False
-        if hook["commands"]:
-            event = json.dumps({"tool_name": "Read", "cwd": str(root),
-                                "tool_input": {"file_path": "clients/.torque-doctor-probe/probe.md"}})
-            results = [_run_hook_probe(command, root, event) for command in hook["commands"]]
-            hook["probe_exit"] = results[0][0]
-            hook["verified"] = all(code == 2 and "could not" not in err for code, err in results)
-            failed = [err for code, err in results if code == 2 and "could not" in err]
-            if failed:
-                hook["probe_error"] = (failed[0].strip().splitlines() or [""])[-1][:300]
+    if mode in ("build-only", "full") and hook["commands"]:
+        target = {"file_path": "clients/.torque-doctor-probe/probe.md"} if mode == "build-only" else {
+            "file_path": "clients/.torque-doctor-probe/consent.json", "content": "{}"}
+        blocked = json.dumps({"tool_name": "Read" if mode == "build-only" else "Write", "cwd": str(root),
+                              "tool_input": target})
+        ordinary = json.dumps({"tool_name": "Read", "cwd": str(root), "tool_input": {"file_path": "AGENTS.md"}})
+        results = [_run_hook_probe(command, root, blocked) for command in hook["commands"]]
+        allowed = [_run_hook_probe(command, root, ordinary) for command in hook["commands"]]
+        hook["probe_exit"], hook["allow_probe_exit"] = results[0][0], allowed[0][0]
+        hook["verified"] = (all(code == 2 and "could not" not in err for code, err in results)
+                            and all(code == 0 for code, _ in allowed))
+        # Exit 2 blocks the call; a hook that cannot start blocks it only with onFailure "block".
+        hook["blocks_every_call"] = any(code == 2 or (code != 0 and hook["fails_closed_on_start"])
+                                        for code, _ in allowed)
+        failed = ([err for code, err in results if code == 2 and "could not" in err]
+                  + [err for code, err in allowed if code != 0])
+        if failed:
+            hook["probe_error"] = (failed[0].strip().splitlines() or [""])[-1][:300]
     return {"mode": mode, "mode_known": known, "governing_workspace": str(mode_root), "hook": hook,
             "antigravity_hook": _antigravity_hook_report(root, mode)}
 
@@ -611,7 +1440,7 @@ def _antigravity_hook_report(root: Path, mode: str) -> dict:
     from . import gate_antigravity as agy
     hook: dict = {"configured": False, "commands": [], "matcher_covers_tools": False, "isolated": False,
                   "disabled": False, "verified": None, "probe_decision": None, "probe_error": "",
-                  "recommended_command": agy.hook_command(sys.executable),
+                  "blocks_every_call": False, "recommended_command": agy.hook_command(sys.executable),
                   "recommended_entry": agy.hook_entry(sys.executable)}
     matchers: list[str] = []
     try:
@@ -624,29 +1453,54 @@ def _antigravity_hook_report(root: Path, mode: str) -> dict:
             for item in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
                 command = str(item.get("command") or "") if isinstance(item, dict) else ""
                 if agy.HOOK_MODULE in command:
-                    hook["commands"].append(command)
                     hook["configured"] = True
-                    hook["disabled"] = hook["disabled"] or spec.get("enabled") is False
-                    matchers.append(str(entry.get("matcher") or ""))
+                    # Entries are judged one by one: a disabled one is not run, here or by Antigravity,
+                    # and hides no enabled one. Commands, coverage and isolation are the enabled entries'.
+                    if spec.get("enabled") is not False:
+                        hook["commands"].append(command)
+                        matchers.append(str(entry.get("matcher") or ""))
     hook["matcher_covers_tools"] = _matcher_covers(matchers, _AGY_COVERAGE_PROBES)
     hook["isolated"] = bool(hook["commands"]) and all(_HOOK_ISOLATED_RE.match(c) for c in hook["commands"])
-    if mode == "build-only" and hook["commands"]:
-        probe = json.dumps({"toolCall": {"name": "view_file", "args": {
-            "AbsolutePath": str(root / "clients" / ".torque-doctor-probe" / "probe.md")}},
-            "workspacePaths": [str(root)], "conversationId": "torque-doctor"})
-        answers = []
-        for command in hook["commands"]:
-            try:
-                run = subprocess.run(command, shell=True, cwd=root / ".agents", input=probe, capture_output=True,
-                                     text=True, timeout=60)
-                answers.append(json.loads(run.stdout))
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                answers.append({})
-        decisions = [answer.get("decision") if isinstance(answer, dict) else None for answer in answers]
-        reasons = [str(answer.get("reason") or "") if isinstance(answer, dict) else "" for answer in answers]
-        hook["probe_decision"] = decisions[0]
-        hook["verified"] = all(d == "deny" and "could not" not in r for d, r in zip(decisions, reasons))
-        failed = [r for d, r in zip(decisions, reasons) if d == "deny" and "could not" in r]
+    # Disabled: registered, and no enabled entry remains.
+    hook["disabled"] = hook["configured"] and not hook["commands"]
+    active = hook["commands"]
+    if mode in ("build-only", "full") and active:
+        # The same two probes as Claude Code's: a client-path read in build-only mode, a write to a
+        # client's consent record in full mode, each under the tool names of 1.3.1 and of 1.4.9, and an
+        # ordinary read inside the session that must not be refused (a hook that blocks it blocks all work).
+        folder = root / "clients" / ".torque-doctor-probe"
+        if mode == "build-only":
+            blocked = [{"name": "view_file", "args": {"AbsolutePath": str(folder / "probe.md")}},
+                       {"name": "read_file", "args": {"Path": str(folder / "probe.md")}}]
+        else:
+            blocked = [{"name": "write_to_file", "args": {"TargetFile": str(folder / "consent.json"),
+                                                          "CodeContent": "{}"}},
+                       {"name": "write_file", "args": {"Path": str(folder / "consent.json"), "Content": "{}"}}]
+        ordinary = [{"name": "view_file", "args": {"AbsolutePath": str(root / "AGENTS.md")}},
+                    {"name": "read_file", "args": {"Path": str(root / "AGENTS.md")}}]
+
+        def ask(call):
+            probe = json.dumps({"toolCall": call, "workspacePaths": [str(root)], "conversationId": "torque-doctor"})
+            rows = []
+            for command in active:
+                try:
+                    run = subprocess.run(command, shell=True, cwd=root / ".agents", input=probe, capture_output=True,
+                                         text=True, timeout=60)
+                    answer = json.loads(run.stdout)
+                    answer = answer if isinstance(answer, dict) else {}
+                    # Antigravity blocks a call whose hook exits non-zero, whatever it printed.
+                    rows.append((answer.get("decision") if run.returncode == 0 else None,
+                                 str(answer.get("reason") or "")))
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    rows.append((None, ""))
+            return rows
+        stopped = [row for call in blocked for row in ask(call)]
+        let_through = [row for call in ordinary for row in ask(call)]
+        hook["probe_decision"] = stopped[0][0]
+        hook["verified"] = (all(d == "deny" and "could not" not in r for d, r in stopped)
+                            and all(d in ("allow", "ask") for d, _ in let_through))
+        hook["blocks_every_call"] = any(d != "allow" and d != "ask" for d, _ in let_through)
+        failed = [r for d, r in stopped + let_through if d == "deny" and "could not" in r]
         if failed:
             hook["probe_error"] = failed[0][:300]
     return hook
@@ -712,6 +1566,65 @@ def _links_out(root: Path) -> dict:
     return {"found": sorted(dict.fromkeys(found)), "complete": True}
 
 
+def _playwright_browser() -> str | None:
+    """The folder of a Chromium build that Playwright downloaded, or None. Read from the
+    file system only: no driver and no browser is started. Playwright keeps its browsers
+    in PLAYWRIGHT_BROWSERS_PATH (0 means inside its own package) or in a per-user cache
+    folder named ms-playwright."""
+    configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if configured == "0":
+        spec = importlib.util.find_spec("playwright")
+        if spec is None or not spec.origin:
+            return None
+        root = Path(spec.origin).parent / "driver" / "package" / ".local-browsers"
+    elif configured:
+        root = Path(configured).expanduser()
+    elif sys.platform == "win32":
+        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "ms-playwright"
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Caches" / "ms-playwright"
+    else:
+        root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
+    try:
+        found = sorted(entry for entry in root.iterdir()
+                       if entry.is_dir() and entry.name.startswith(("chromium-", "chromium_headless_shell-")))
+    except OSError:
+        return None
+    return str(found[-1]) if found else None
+
+
+def _lessons_doctor(folder: Path | None) -> dict:
+    """What doctor says about lessons, for the firm and the selected client: counts by
+    state, unreadable files, the last capture and the last time a lesson was shown,
+    whether the loop is live or idle, and a self-check that writes a lesson in a temporary
+    folder and finds it again. Reads lesson files only; never stops doctor."""
+    try:
+        from jsc_memory import review, storage
+        report = review.health(storage.scopes_for(folder))
+        check = report["selfcheck"] = review.selfcheck()
+        failed = [step["step"] for step in check["steps"] if not step["passed"]]
+        report["lines"] = [*review.health_lines(report),
+                           "Lessons self-check: " + ("passed (wrote a lesson and found it again by type, by "
+                                                     "command and through the context block)" if check["passed"]
+                                                     else "FAILED at: " + ", ".join(failed))]
+        unreadable = [problem for part in (report["firm"], report["engagement"], report["platform"]) if part
+                      for problem in part["unreadable"]]
+        report["next_actions"] = []
+        if unreadable:
+            shown = "; ".join(f"{problem['path']} ({problem['reason']})" for problem in unreadable[:5])
+            report["next_actions"].append(
+                f"{len(unreadable)} lesson file(s) could not be read and are skipped everywhere: {shown}"
+                + (" ..." if len(unreadable) > 5 else "") + ". Fix the file or move it out of the lessons folder.")
+        if failed:
+            report["next_actions"].append(
+                "The lessons self-check failed (" + ", ".join(failed) + "), so lessons may not be saved or shown. "
+                "Run `torque lesson selfcheck` for the detail and reinstall Torque if it keeps failing.")
+        return report
+    except Exception as exc:  # Lessons are an aid: doctor reports the rest whatever happens here.
+        return {"problem": f"lessons could not be checked ({type(exc).__name__})",
+                "lines": [f"Lessons: could not be checked ({type(exc).__name__})"], "next_actions": []}
+
+
 def _doctor(args: argparse.Namespace) -> int:
     if args.client and not args.workspace:
         raise ws.WorkspaceError("doctor --client requires --workspace")
@@ -732,23 +1645,50 @@ def _doctor(args: argparse.Namespace) -> int:
         if args.client:
             client, _, data = ws.load_client(root, args.client)
             # Reading the selected journal also checks its local format, without evaluating claims.
-            entries = ws.list_sessions(root, args.client, limit=None)
+            skipped: list[dict] = []
+            entries = ws.list_sessions(root, args.client, limit=None, problems=skipped)
             from .changes import get_change, list_changes
-            changes = [get_change(root, args.client, change["id"])
-                       for change in list_changes(root, args.client)]
+            changes = [get_change(root, args.client, change["id"], problems=skipped)
+                       for change in list_changes(root, args.client, problems=skipped)]
             evidence_problems = sum(entry["evidence_integrity"] in ("missing", "changed", "unavailable")
                                     for entry in entries)
             evidence_problems += sum(change["assessment"]["evidence_problems"] for change in changes)
             report["client"] = {"path": str(client), "name": data["name"],
                                 "recent_sessions": min(len(entries), 20), "sessions_checked": len(entries),
-                                "changes_checked": len(changes), "evidence_problems": evidence_problems}
-    requirements = {"workspace": (), "salesforce": ("sf",), "browser": ("sf", "playwright"),
-                    "meeting": ("ffmpeg", "PIL")}
-    available = {**{name: bool(path) for name, path in report["executables"].items()}, **report["optional_modules"]}
+                                "changes_checked": len(changes), "evidence_problems": evidence_problems,
+                                "record_problems": len(skipped), "skipped_records": skipped}
+        report["synced_folders"] = {"workspace": _synced_folder(root), "interpreter": _synced_folder(sys.executable)}
+        # The always-loaded instructions (the Torque block in AGENTS.md) and which hosts load them.
+        report["instructions"] = ws.floor_report(Path(root))
+    report["lessons"] = _lessons_doctor(Path(report["client"]["path"]) if report["client"] else
+                                        Path(report["workspace"]["path"]) if report["workspace"] else None)
+    # Browser work has two modes with different needs, reported separately: signing a host
+    # browser tab in (`torque browser login`) needs only the Salesforce CLI; Torque's own
+    # Playwright browser needs the playwright module and a browser Playwright downloaded.
+    # The module alone is not a browser, so it no longer counts as browser-ready.
+    report["playwright_browser"] = _playwright_browser() if report["optional_modules"]["playwright"] else None
+    if report["optional_modules"]["playwright"] and not report["playwright_browser"] and (
+            os.environ.get("TORQUE_BROWSER_CDP") or os.environ.get("JSC_BROWSER_CDP")):
+        # An attached browser the operator started stands in for a downloaded one.
+        report["playwright_browser"] = "attached browser (TORQUE_BROWSER_CDP)"
+    requirements = {"workspace": (), "salesforce": ("sf",), "browser-login": ("sf",),
+                    "browser": ("sf", "playwright", "playwright browser"), "meeting": ("ffmpeg", "PIL")}
+    available = {**{name: bool(path) for name, path in report["executables"].items()}, **report["optional_modules"],
+                 "playwright browser": bool(report["playwright_browser"])}
+
+    def missing(deps):
+        # A browser cannot be looked for without the module; name the module only.
+        return [dep for dep in deps if not available.get(dep, False)
+                and not (dep == "playwright browser" and not available["playwright"])]
     report["capabilities"] = {name: {"local_dependencies_ready": all(available.get(dep, False) for dep in deps),
-                                            "missing": [dep for dep in deps if not available.get(dep, False)],
+                                            "missing": missing(deps),
                                             "live_verified": False}
                               for name, deps in requirements.items()}
+    report["capabilities"]["browser-login"]["covers"] = \
+        "torque browser login in a host browser tab; needs only the Salesforce CLI"
+    report["capabilities"]["browser"]["covers"] = \
+        ("Torque's own Playwright browser (torque browser browser, multiprofile, login --storage-state); needs the "
+         "Salesforce CLI, the playwright module and a Playwright browser")
     selected = getattr(args, "capability", "workspace")
     report["requested_capability"] = selected
     report["ready"] = report["capabilities"][selected]["local_dependencies_ready"]
@@ -766,6 +1706,9 @@ def _doctor(args: argparse.Namespace) -> int:
         else:
             report["next_actions"].append("Claude Code (not this workspace's host): " + text)
 
+    wire = ws.command_text(["torque", "workspace", "ai-access", access["mode"] if access else "full",
+                            "--path", str(args.workspace or ".")])
+    claude_entry = json.dumps(access["hook"]["recommended_entry"], ensure_ascii=False) if access else ""
     if access and access["mode"] == "build-only":
         hook = access["hook"]
         if not hook["verified"]:
@@ -773,34 +1716,27 @@ def _doctor(args: argparse.Namespace) -> int:
                 if claude_in_use:
                     claude_finding(
                         "Build-only mode is set but no torque.gate hook is wired in this workspace's "
-                        ".claude/settings.json, so nothing is blocked. Add the hook from docs/ai-access.md "
-                        "with this command: " + hook["recommended_command"])
+                        ".claude/settings.json, so nothing is blocked. Wire it with " + wire + ", or add this "
+                        "entry to .claude/settings.json (docs/ai-access.md): " + claude_entry)
                 else:
                     report["next_actions"].append(
                         "Claude Code reads .claude/settings.json, never .agents/hooks.json, and no torque.gate "
                         "hook is wired there, so a session started with Claude Code in this workspace is not "
-                        "gated. If Claude Code is used here, add the hook from docs/ai-access.md with this "
-                        "command: " + hook["recommended_command"])
-            elif hook["probe_error"]:
-                claude_finding(
-                    "The torque.gate hook could not run the gate (" + hook["probe_error"] + "), so it "
-                    "blocks every tool call, ordinary work included. Point the hook at an interpreter "
-                    "with Torque installed, using: " + hook["recommended_command"])
+                        "gated. If Claude Code is used here, wire it with " + wire + ", or add this entry to "
+                        ".claude/settings.json: " + claude_entry)
             else:
-                claude_finding(
-                    f"The torque.gate hook did not block a client-path probe (exit {hook['probe_exit']}), "
-                    "so build-only mode is not in force. Point the hook at an interpreter with Torque "
-                    "installed, using: " + hook["recommended_command"])
+                claude_finding(_hook_problem(hook, "so build-only mode is not in force") + claude_entry)
         else:
             if not hook["fail_closed_shim"]:
                 claude_finding(
                     "The torque.gate hook works, but fails open if its interpreter later loses Torque. "
-                    "Switch to the fail-closed hook command: " + hook["recommended_command"], blocks=False)
+                    "Switch to the fail-closed hook entry: " + claude_entry, blocks=False)
             if not hook["isolated"]:
                 claude_finding(
                     "The torque.gate hook runs Python without -I (isolated mode), so a torque/ folder or "
-                    "sitecustomize.py written into the workspace can replace the gate. Switch to: "
-                    + hook["recommended_command"])
+                    "sitecustomize.py written into the workspace can replace the gate. Switch to: " + claude_entry)
+            if not hook["fails_closed_on_start"]:
+                claude_finding(_ON_FAILURE_ADVICE, blocks=False)
         slow = [t for t in hook["timeouts"] if not isinstance(t, (int, float)) or isinstance(t, bool)
                 or t > HOOK_TIMEOUT]
         if hook["configured"] and slow:
@@ -825,9 +1761,15 @@ def _doctor(args: argparse.Namespace) -> int:
                     "torque.gate_antigravity hook is registered there, so a session started with Antigravity "
                     "in this workspace is not gated. If Antigravity is used here, add to .agents/hooks.json "
                     + entry)
+        elif agy["disabled"]:
+            # A disabled entry is not run, here or by Antigravity.
+            report["ready"] = False
+            report["next_actions"].append(
+                "The Antigravity hook is disabled, so Antigravity does not run it and some calls are not gated. "
+                "Use " + entry)
         elif not agy["verified"]:
             report["ready"] = False
-            if agy["probe_error"] or agy["probe_decision"] is None:
+            if agy["probe_error"] or agy["probe_decision"] is None or agy["blocks_every_call"]:
                 report["next_actions"].append(
                     "The Antigravity hook could not run the gate ("
                     + (agy["probe_error"] or "it printed no decision") + "), so Antigravity blocks every tool "
@@ -839,10 +1781,10 @@ def _doctor(args: argparse.Namespace) -> int:
                     "so build-only mode is not in force in Antigravity. Point it at an interpreter with Torque "
                     "installed. Use " + entry)
         else:
-            if agy["disabled"] or not agy["matcher_covers_tools"]:
+            if not agy["matcher_covers_tools"]:
                 report["ready"] = False
                 report["next_actions"].append(
-                    "The Antigravity hook works but does not see every tool call (it is disabled, or its matcher "
+                    "The Antigravity hook works but does not see every tool call (its matcher "
                     "is narrower than \"*\"), so some calls are not gated. Use " + entry)
             if not agy["isolated"]:
                 report["ready"] = False
@@ -888,6 +1830,92 @@ def _doctor(args: argparse.Namespace) -> int:
                 'The hook matcher does not cover every tool call. Set it to ".*": the gate checks '
                 "command-running tools such as Monitor and blocks tools it does not recognise, but only "
                 "for the calls the matcher sends it.")
+    if access and access["mode"] == "full":
+        # In full mode the hook only keeps tools from changing a client's consent, approval
+        # and control records; a missing one is advice, one that blocks every call is not.
+        hook = access["hook"]
+        if not hook["configured"]:
+            report["next_actions"].append(
+                "Record protection: NOT IN FORCE. No torque.gate hook is wired in .claude/settings.json, so "
+                "nothing stops a Claude Code tool from changing a client's consent, approval or control "
+                "records. Wire it with " + wire + ".")
+        elif not hook["verified"]:
+            claude_finding(_hook_problem(hook, "so record protection is not in force", "record")
+                           + claude_entry, blocks=hook["blocks_every_call"])
+        elif not hook["fails_closed_on_start"]:
+            claude_finding(_ON_FAILURE_ADVICE, blocks=False)
+        if hook["configured"] and hook["disabled_by"]:
+            claude_finding("Claude Code will not run this workspace's hook: " + "; ".join(hook["disabled_by"])
+                           + ", so record protection is not in force.", blocks=False)
+        agy = access["antigravity_hook"]
+        if not agy["configured"]:
+            if not claude_in_use:
+                report["next_actions"].append(
+                    "Record protection under Antigravity: NOT IN FORCE. No torque.gate_antigravity hook is "
+                    "registered in .agents/hooks.json. Wire it with " + wire + ".")
+        elif agy["disabled"]:
+            # Antigravity does not run a disabled entry, and neither does doctor: the owner's choice, advice only.
+            report["next_actions"].append(
+                "Record protection under Antigravity: NOT IN FORCE. The torque.gate_antigravity hook in "
+                ".agents/hooks.json is disabled. Enable it, or leave it off if that is intended.")
+        elif not agy["verified"]:
+            # An active hook that cannot run the gate, or refuses ordinary work, blocks every Antigravity tool call.
+            report["ready"] = False
+            startup = agy["probe_error"] or agy["probe_decision"] is None or agy["blocks_every_call"]
+            report["next_actions"].append(
+                "Record protection under Antigravity: NOT IN FORCE. The torque.gate_antigravity hook in "
+                ".agents/hooks.json did not block a probe write to a client's consent record"
+                + (" (the hook could not run the gate, exited non-zero or refused an ordinary read"
+                   + (": " + agy["probe_error"] if agy["probe_error"] else "") + "), so Antigravity blocks every "
+                   "tool call, ordinary work included" if startup else "")
+                + ". Point it at an interpreter with this Torque version installed. Use the torque-gate entry "
+                "docs/ai-access.md shows, with this command: " + agy["recommended_command"])
+        elif not agy["matcher_covers_tools"] or not agy["isolated"]:
+            # Chosen on purpose or still working: advice only in full mode.
+            report["next_actions"].append(
+                "Record protection under Antigravity: NOT IN FORCE for some calls. The torque.gate_antigravity "
+                "hook in .agents/hooks.json covers fewer tools than \"*\" or runs Python without -I. Use "
+                "the torque-gate entry docs/ai-access.md shows, with this command: " + agy["recommended_command"])
+    if access and access["mode"] in ("full", "build-only") and access["hook"]["configured"] \
+            and not access["hook"]["exec_form"] and os.name == "nt":
+        fix = ("convert Torque's own entry with "
+               + ws.command_text(["torque", "workspace", "upgrade", str(args.workspace)])
+               if access["hook"]["convertible"] else "use this exec-form entry instead: " + claude_entry)
+        claude_finding("The torque.gate hook is in shell form, which Claude Code runs through Git Bash on Windows, "
+                       "and through PowerShell, which cannot run it, when Git Bash is not installed. Exec form "
+                       "(command and args) needs no shell: " + fix + ".", blocks=False)
+    if access and access["hook"]["configured"] and access["hook"]["fails_closed_on_start"]:
+        # The entries rely on "onFailure", which older versions ignore.
+        version = _claude_code_version()
+        report["claude_code"] = {"version": ".".join(map(str, version)) if version else None}
+        if version and version < ON_FAILURE_VERSION:
+            claude_finding(f"Claude Code {'.'.join(map(str, version))} is older than 2.1.295 and ignores "
+                           '"onFailure": "block", so a gate hook that cannot start lets every call run. Update '
+                           "Claude Code.", blocks=False)
+    if access:
+        for path in access["hook"]["managed_settings"]["ignored"]:
+            report["next_actions"].append(
+                f"{path} is the managed-settings location of older Claude Code versions; current versions do not "
+                f"read it, so nothing in it applies. An administrator moves it to {_managed_settings_dir()}.")
+    synced = report.get("synced_folders") or {}
+    if synced.get("workspace"):
+        report["next_actions"].append(
+            f"The workspace is in a {synced['workspace']} folder. A sync service can evict files to save space, "
+            "and an evicted record or recipe then reads as missing. Keep the folder downloaded on this device, or "
+            "move the workspace to a folder that is not synced.")
+    if synced.get("interpreter") and access and (access["hook"]["configured"] or access["antigravity_hook"]["configured"]):
+        report["next_actions"].append(
+            f"Torque's interpreter ({sys.executable}) is in a {synced['interpreter']} folder. When the sync service "
+            "evicts it, the gate hook cannot start, and Claude Code then blocks every call (with onFailure "
+            "\"block\") or runs every call ungated. Install Torque in a folder that is not synced.")
+    if report["client"] and report["client"]["record_problems"]:
+        report["ready"] = False
+        skipped = report["client"]["skipped_records"]
+        shown = ", ".join(problem["path"] for problem in skipped[:5]) + (" ..." if len(skipped) > 5 else "")
+        report["next_actions"].append(
+            f"{len(skipped)} record(s) in this client's folder could not be read, so context and handoff skip them "
+            f"and say so: {shown}. Torque never rewrites a record: check each file, then move it out of the "
+            "folder or delete it.")
     if access and access["mode"] == "connected":
         from . import doctor_connected
         connected = doctor_connected.report(Path(root), args.client, live=getattr(args, "live", False))
@@ -915,10 +1943,17 @@ def _doctor(args: argparse.Namespace) -> int:
         report["next_actions"].append(
             f"Review {report['client']['evidence_problems']} missing, changed or unavailable evidence references "
             "in this client's handoff before relying on the recorded checks.")
+    report["next_actions"] += report["lessons"].get("next_actions", [])
+    report["next_actions"] += (report.get("instructions") or {}).get("next_actions", [])
     if not available["sf"]:
         report["next_actions"].append("Install the official Salesforce CLI before live org work; context and the offline demo remain usable.")
     if not available["playwright"]:
-        report["next_actions"].append("Browser testing needs Torque's browser extra and a configured browser runtime. See docs/installation.md.")
+        report["next_actions"].append("Browser testing needs Torque's browser extra and a configured browser runtime. See docs/installation.md."
+                                      " Signing a host browser tab in with `torque browser login` needs only the Salesforce CLI.")
+    elif not available["playwright browser"]:
+        report["next_actions"].append("The playwright module is installed but no Playwright browser was found, so Torque's own "
+                                      "browser cannot start: run `python -m playwright install chromium`. Signing a host "
+                                      "browser tab in with `torque browser login` works without it.")
     if args.workspace:
         private_paths = ["workspace.json", "profile.md", ".torque", f"clients/{ws.slug_for(args.client)}" if args.client else "clients",
                          "initiatives"]
@@ -931,6 +1966,8 @@ def _doctor(args: argparse.Namespace) -> int:
                 report["next_actions"].append("Some private paths are already tracked by Git. Ignore rules do not untrack existing files; review their repository visibility.")
         except (FileNotFoundError, subprocess.TimeoutExpired):
             report["git_tracking"] = {"checked": False, "tracked_private_paths": []}
+    from . import host_checks
+    report["host"] = host_checks.report()      # report only; never decides readiness or changes a setting
     if args.json:
         _print_json(report)
     else:
@@ -979,8 +2016,49 @@ def _doctor(args: argparse.Namespace) -> int:
                 doctor_connected.print_report(connected)
             else:
                 print("AI access: full (build-only mode off)")
+                h = access["hook"]
+                if not h["configured"]:
+                    print("Record protection: NOT IN FORCE (no torque.gate hook in .claude/settings.json)")
+                elif h["verified"] and not h["disabled_by"]:
+                    print("Record protection: hook command blocked a standalone record probe; host enforcement "
+                          "not tested")
+                else:
+                    print("Record protection: NOT IN FORCE ("
+                          + ("the hook blocks every call" if h["blocks_every_call"] else "see the next actions") + ")")
+                a = access["antigravity_hook"]
+                if a["configured"]:
+                    if a["verified"] and a["isolated"] and a["matcher_covers_tools"] and not a["disabled"]:
+                        print("Record protection (Antigravity): hook command blocked a standalone record probe; "
+                              "host enforcement not tested")
+                    else:
+                        print("Record protection (Antigravity): NOT IN FORCE (see the next actions)")
+                elif not claude_in_use:
+                    print("Record protection (Antigravity): NOT IN FORCE (no torque.gate_antigravity hook in "
+                          ".agents/hooks.json)")
+        if report.get("instructions"):
+            floor = report["instructions"]
+            state = {"present": f"version {floor['version']}" + ("" if floor["current"] else
+                                                                 f", not the packaged version {floor['packaged_version']}"),
+                     "absent": "MISSING (AGENTS.md has none)", "missing": "MISSING (no AGENTS.md)",
+                     "damaged": f"DAMAGED markers ({floor.get('problem')})",
+                     "unreadable": "AGENTS.md is not readable UTF-8"}[floor["state"]]
+            print(f"Torque block in AGENTS.md: {state}. In the files, loaded by "
+                  + "; ".join(f"{host}: {'yes' if row['loads'] else 'NO'} ({row['how']})"
+                              for host, row in floor["hosts"].items()))
+            if floor.get("own_text") and floor["state"] == "present":
+                print("AGENTS.md also holds instructions of its own beside the Torque block; read the two "
+                      "together once and settle anything that contradicts the block.")
         if report["client"]:
             print(f"Client: {report['client']['name']}")
+        for name, label in (("browser-login", "Browser sign-in in a host tab (torque browser login)"),
+                            ("browser", "Torque's own Playwright browser")):
+            mode = report["capabilities"][name]
+            print(f"{label}: " + ("local dependencies ready" if mode["local_dependencies_ready"]
+                                  else "missing " + ", ".join(mode["missing"])))
+        for line in report["lessons"].get("lines", []):
+            print(line)
+        for line in host_checks.lines(report["host"]):
+            print("Host: " + line)
         print(f"{selected}: {'local dependencies ready' if report['ready'] else 'missing local dependencies'}")
         for action in report["next_actions"]:
             print(f"Next: {action}")
@@ -1054,6 +2132,8 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     INVOCATION = ("torque", list(args))
     parsed = None
+    # --json anywhere before a `--` asks for JSON, failures included (torque.error/1).
+    as_json = "--json" in (args[:args.index("--")] if "--" in args else args)
     try:
         if args and args[0] in PUBLIC_ROUTES:
             delegate, prefix = PUBLIC_ROUTES[args[0]]
@@ -1072,24 +2152,51 @@ def main(argv: list[str] | None = None) -> int:
             return _dispatch(args[0], args[1:])
         args, tail = cli_approval.split_tail(args)
         parser = build_parser()
-        parsed = parser.parse_args(args)
+        parsed, extras = parser.parse_known_args(args)
+        if extras:
+            # Name the subcommand the words belong to, with its own usage (not the top level's).
+            raise UsageError(_subparser_for(parser, args), "unrecognized arguments: " + " ".join(extras))
         if parsed.command is None:
             parser.print_help()
             return 0
         if parsed.command == "workspace":
             if parsed.action == "init":
+                _init_target_check(Path(parsed.path), parsed.force)
                 path = ws.init_workspace(parsed.path, parsed.name, parsed.profile)
-                _print_json({"workspace": str(path), "org_calls": False}) if parsed.json else print(path)
+                from . import permissions
+                # Full mode: the hook keeps tools from changing consent, approval and control records.
+                hooks = [] if parsed.no_hook else permissions.wire_gate_hooks(path, antigravity=True)
+                steps = _init_next_steps(path)
+                if parsed.json:
+                    _print_json({"workspace": str(path), "org_calls": False, "hooks": hooks, "next_steps": steps})
+                else:
+                    print(path)
+                    for line in _hook_lines(hooks, "full"):
+                        print(line)
+                    print("Next:")
+                    for number, step in enumerate(steps, 1):
+                        print(f"  {number}. {step}")
+                return 3 if any(row["status"] == "failed" for row in hooks) else 0
             elif parsed.action == "ai-access":
                 root = ws.set_ai_access(parsed.path, parsed.mode, parsed.approval, parsed.verify,
                                         parsed.approver_uid, delegated=parsed.delegated,
                                         model_id=parsed.model_id)
+                from . import permissions
+                hooks, verified = [], []
+                if parsed.mode != "connected" and not parsed.no_hook:
+                    # Connected mode wires its hooks with `torque approval permissions --write --with-hooks`.
+                    wired = permissions.wire_gate_hooks(root, antigravity=True)
+                    hooks += wired
+                    verified = _hook_verification(root, wired)
                 shown = "connected (approval required)" if parsed.mode == "connected" else parsed.mode
                 if parsed.json:
                     _print_json({"workspace": str(root), "ai_access": parsed.mode,
-                                 **({"approval": parsed.approval} if parsed.approval else {})})
+                                 **({"approval": parsed.approval} if parsed.approval else {}), "hooks": hooks})
                 else:
                     print(shown)
+                    for line in [*_hook_lines(hooks, parsed.mode), *verified]:
+                        print(line)
+                return 3 if any(row["status"] == "failed" for row in hooks) else 0
             elif parsed.action == "guarded-reads":
                 ws.set_guarded_reads(parsed.path, parsed.value)
                 print(f"guarded reads: {parsed.value}")
@@ -1101,17 +2208,7 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     print(f"{parsed.role} delegate: {parsed.account} (uid {parsed.uid}, {parsed.kind})")
             else:
-                from .template_updates import update_templates
-                report = update_templates(Path(parsed.path), check=parsed.check)
-                if ws.connected_rule_stale(parsed.path):
-                    report["connected_rule"] = (
-                        "`.claude/rules/production-approval.md` is from another version of Torque, and this "
-                        "command does not update it. The owner rewrites it with `torque workspace ai-access "
-                        "connected --approval required --path W` (with the --verify the workspace uses).")
-                if parsed.json:
-                    _print_json(report)
-                else:
-                    print(json.dumps(report, indent=2))
+                return _upgrade(parsed)
         elif parsed.command == "demo":
             from .demo import create_demo
             result = create_demo(Path(parsed.path))
@@ -1126,10 +2223,22 @@ def main(argv: list[str] | None = None) -> int:
         elif parsed.command == "guarded":
             from . import guarded
             return guarded.run(parsed)
+        elif parsed.command == "check":
+            from .checks import command as check_command
+            return check_command.run(parsed)
         elif parsed.command == "client":
             if parsed.action == "consent":
                 return cli_approval.run_consent(parsed)
-            if parsed.action == "add":
+            if parsed.action == "set-org":
+                result = ws.set_client_org(parsed.workspace, parsed.client, parsed.target_org)
+                if parsed.json:
+                    _print_json(result)
+                else:
+                    print(f"{result['client']}: org alias {result['from'] or 'none'} -> {result['to']} "
+                          f"(recorded as session {result['session']}; no org call)")
+                    for note in result["notes"]:
+                        print("Note: " + note)
+            elif parsed.action == "add":
                 path = ws.add_client(parsed.workspace, parsed.name, parsed.org)
                 _print_json({"client_root": str(path), "org_calls": False}) if parsed.json else print(path)
             else:
@@ -1175,74 +2284,95 @@ def main(argv: list[str] | None = None) -> int:
             return _change(parsed)
         elif parsed.command == "context":
             name, kind = _scope(parsed)
-            context = ws.get_context(parsed.workspace, name, kind=kind)
+            # JSON is complete unless --max-chars is given; the text fits its budget and says what it cut.
+            context = ws.get_context(parsed.workspace, name, kind=kind, shown_via="context",
+                                     max_chars=parsed.max_chars if parsed.json else None, **_window(parsed))
             if parsed.json:
                 _print_json(context)
             else:
-                print(f"{context['workspace']['name']} / {context['client']['name']}")
-                print(f"{'Initiative' if kind == 'initiative' else 'Client'} directory: {context['client_root']}")
-                if kind == "client":
-                    print(f"Configured org: {context['client'].get('org') or 'not specified'}")
-                print(context["evidence_note"])
-                for title, value in context.get("notes", {}).items():
-                    print(f"\n{title}:\n{value}")
-                for change in context.get("changes", []):
-                    print(f"\nChange {change['id']}: {change['title']} — {change['outcome']}")
-                    unresolved = [f"{criterion['id']} ({criterion['reported_result'].replace('_', ' ')})"
-                                  for criterion in change["criteria"] if criterion["reported_result"] != "pass"]
-                    print("Acceptance results are operator-reported; independent business acceptance is not established.")
-                    if unresolved:
-                        print("Not yet reported pass: " + ", ".join(unresolved))
-                    elif not change["criteria"]:
-                        print("No acceptance criteria recorded.")
-                    if change["assessment"]["evidence_problems"]:
-                        print(f"Evidence problems: {change['assessment']['evidence_problems']} missing, changed or unavailable captures.")
-                    for decision in change["decisions"]:
-                        print(f"Decision (reported): {decision['summary']}")
-                    for observation in change["metadata_observations"]:
-                        print(f"Metadata {observation['result']} · Org {observation['target_org']} · Job {observation['job_id']}: {observation['summary']}")
-                    for step in change["next_steps"]:
-                        print(f"Next step (reported): {step['summary']}")
-                    if any(change["history_truncated"].values()):
-                        counts = ", ".join(f"{name}: {count}" for name, count in change["history_counts"].items())
-                        print(f"{change['history_note']} Total entries — {counts}.")
-                    print("Full change: " + change["show_command"])
-                for entry in context["sessions"]:
-                    print(f"\n{entry['created_at']} [{entry['status']}, user-reported] {entry['summary']}")
-                    if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
-                        print(f"Evidence: {entry['evidence_integrity']} since recording.")
+                print(ws.context_text(context, kind, parsed.max_chars or ws.CONTEXT_BUDGET,
+                                      workspace=parsed.workspace), end="")
         elif parsed.command == "session":
             name, kind = _scope(parsed)
             if parsed.action == "add":
-                entry = ws.add_session(parsed.workspace, name, parsed.summary, parsed.status, parsed.evidence,
-                                       kind=kind)
+                fields = _session_fields(parsed)
+                entry = ws.add_session(parsed.workspace, name, fields["summary"], fields["status"],
+                                       fields["evidence"], kind=kind, learned=fields["learned"],
+                                       learned_scope=fields["learned_scope"], learned_from=fields["learned_from"],
+                                       check=fields["check"], as_user=fields["as_user"], org=fields["in_org"],
+                                       not_covered=fields["not_covered"], accepted_by=fields["accepted_by"],
+                                       corrects=fields["corrects"], change=fields["change"])
+                hints = ws.session_hints(entry)
+                retry = None
+                if entry.get("lesson_problems"):
+                    retry = ws.command_text(["torque", "lesson", "add", "--workspace", str(parsed.workspace),
+                                             "--" + kind, name, "--session", entry["id"],
+                                             *(["--source", "consultant"] if fields["learned_from"] == "consultant"
+                                               else []),
+                                             *(["--scope", "firm"] if fields["learned_scope"] == "firm" else []),
+                                             "When: ... Do: ... Because: ..."])
                 if parsed.json:
-                    _print_json(entry)
+                    _print_json({**entry, "hints": hints,
+                                 **({"recorded": True, "do_not_add_again": True, "lesson_retry_command": retry}
+                                    if retry else {})})
                 else:
                     print(f"Recorded {entry['id']} [{entry['status']}, user-reported]")
+                    if ws.basis_text(entry):
+                        print("Basis: " + ws.basis_text(entry))
+                    if entry.get("corrects"):
+                        print(f"Corrects {entry['corrects']} (that record is kept as it is and shown as corrected)")
+                    for hint in hints:
+                        print("Hint: " + hint)
+                    for line in ws.learned_lines(entry):
+                        print(line)
+                if entry.get("lesson_problems"):
+                    # The session record stands; only the lesson was not saved.
+                    print(f"torque: session {entry['id']} is recorded; do not add it again (the record IS saved; "
+                          "running this session add again would record the same session twice). "
+                          f"{len(entry['lesson_problems'])} lesson(s) were not saved; fix the text and save each "
+                          f"with: {retry}", file=sys.stderr)
+                    return 4
             else:
-                entries = ws.list_sessions(parsed.workspace, name, limit=None, kind=kind)
+                problems: list[dict] = []
+                entries = ws.list_sessions(parsed.workspace, name, limit=None, kind=kind, problems=problems)
                 if parsed.action == "show":
                     entry = next((e for e in entries if e["id"] == parsed.entry_id), None)
                     if entry is None:
-                        raise ws.WorkspaceError("session entry was not found for the selected client")
+                        raise ws.WorkspaceError("session entry was not found for the selected client"
+                                                + ("; some records could not be read: "
+                                                   + ", ".join(p["path"] for p in problems) if problems else ""))
                     entries = [entry]
                 if parsed.json:
                     _print_json(entries[0] if parsed.action == "show" else entries)
+                    if problems and parsed.action == "list":
+                        print("\n".join(ws.record_problem_lines(problems)), file=sys.stderr)
                 else:
                     for entry in entries:
                         print(f"{entry['id']} [{entry['status']}, user-reported] {entry['summary']}")
+                        for line in ws.session_link_lines(entry):
+                            print("  " + line)
                         if entry["evidence_integrity"] in ("missing", "changed", "unavailable"):
                             print(f"Evidence: {entry['evidence_integrity']} since recording.")
                     if not entries:
                         print(f"No session entries for this {'initiative' if kind == 'initiative' else 'client'}.")
+                    if parsed.action == "list":
+                        for line in ws.record_problem_lines(problems):
+                            print(line)
         elif parsed.command == "handoff":
             name, kind = _scope(parsed)
-            body = ws.render_handoff(parsed.workspace, name, kind=kind)
+            data = ws.handoff_data(parsed.workspace, name, kind=kind, change=parsed.change,
+                                   everything=parsed.everything, **_window(parsed))
+            as_json = parsed.format == "json" or (parsed.json and not parsed.output)
+            body = (json.dumps(data, indent=2, ensure_ascii=False) + "\n" if as_json
+                    else ws.render_handoff_markdown(data, parsed.workspace, name, kind=kind))
             if parsed.output:
                 output = ws.client_output_path(parsed.workspace, name, parsed.output, kind=kind)
-                ws.atomic_write_new(output, body)
-                print(output)
+                engagement = ws.load_engagement(parsed.workspace, name, kind)[0]
+                result = ws.replace_output(output, body, engagement, force=parsed.force)
+                if parsed.json:
+                    _print_json({**ws.output_report(result), "format": "json" if as_json else "markdown"})
+                else:
+                    print("\n".join(ws.output_lines(result)))
             else:
                 print(body, end="")
         elif parsed.command == "doctor":
@@ -1255,14 +2385,23 @@ def main(argv: list[str] | None = None) -> int:
         # or sign-off) refuses the same way cli_approval's delegated grant/deny
         # will: exit 3, with --json a machine-readable reason_class and message,
         # instead of falling into the generic WorkspaceError exit 2 below.
-        if getattr(parsed, "json", False):
-            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc)})
+        if getattr(parsed, "json", False) or as_json:
+            _print_json({"refused": True, "reason_class": exc.reason_class, "message": str(exc),
+                         "schema": ERROR_SCHEMA, "ok": False, "code": "refused", "next_command": None,
+                         "exit_code": 3})
         else:
             print(f"torque: refused ({exc.reason_class}): {exc}", file=sys.stderr)
         return 3
-    except (ws.WorkspaceError, OSError, ValueError) as exc:
-        print(f"torque: {exc}", file=sys.stderr)
-        return 2
+    except UsageError as exc:
+        prog = exc.parser.prog
+        return _failure(as_json, "usage", f"{prog}: error: {exc.message}", usage=exc.parser.format_usage().strip(),
+                        next_command=f"{prog} --help")
+    except ws.WorkspaceError as exc:
+        return _failure(as_json, exc.code, str(exc), next_command=exc.next_command)
+    except OSError as exc:
+        return _failure(as_json, "os_error", _os_error_text(exc))
+    except ValueError as exc:
+        return _failure(as_json, "invalid_input", str(exc))
 
 
 if __name__ == "__main__":

@@ -74,13 +74,37 @@ def test_a_session_launched_for_antigravity_is_bound_to_its_client(w, monkeypatc
     write = call("run_command", {"CommandLine": WRITE})
     assert write["decision"] == "deny" and write["reason"].startswith("Connected mode") and "approval" in write["reason"]
     unknown = call("run_command", {"CommandLine": "python3 x.py"})
-    assert unknown["decision"] == "ask" and "cannot check" in unknown["reason"]
+    # The gate's own ask is a refusal here: a session run with --dangerously-skip-permissions would run it.
+    assert unknown["decision"] == "deny" and "cannot check" in unknown["reason"]
+    assert "`python3 x.py`" in unknown["reason"] and "own terminal" in unknown["reason"]
+    assert "unattended" not in unknown["reason"]
     admin = call("run_command", {"CommandLine": "torque approval grant req-000000000001 --workspace . --client acme"})
     assert admin["decision"] == "deny"
     unreadable = call("send_command_input", {})
     assert unreadable["decision"] == "deny" and hosts.ANTIGRAVITY.tool_hint in unreadable["reason"]
     # The binding is still in place after every call.
     assert os.environ["TORQUE_CLIENT"] == "acme" and os.environ[hosts.HOOK_HOST_ENV] == "antigravity"
+
+
+def test_a_bound_session_gets_the_same_decisions_for_antigravity_14s_tools(w, monkeypatch, capsys):
+    launched(monkeypatch, w)
+
+    def call(name, args):
+        return answer(monkeypatch, capsys, payload(w, name, args))
+    acme, beta = w / "clients" / "acme", w / "clients" / "beta"
+    assert call("read_file", {"Path": str(acme / "context.md")})["decision"] == "allow"
+    other = call("read_file", {"Path": str(beta / "context.md")})
+    assert other["decision"] == "deny" and "bound to acme" in other["reason"]
+    assert call("write_file", {"Path": str(acme / "notes.md"), "Content": "x"})["decision"] == "ask"
+    assert call("run_command", {"CommandLine": READ, "WaitMsBeforeAsync": 500, "toolSummary": "x"})["decision"] == "ask"
+    # The bound client's own consent and approval records stay out of reach, as does a tool
+    # this module cannot read that names one.
+    for name, args in (("edit_file", {"Path": str(acme / "consent.json"), "Target": "{", "Replacement": "{"}),
+                       ("write_file", {"Path": str(acme / "approvals" / "x.json"), "Content": "{}"}),
+                       ("a_tool_added_later", {"Path": str(acme / "consent.json")}),
+                       ("mcp_files_write_file", {"path": str(acme / "control" / "x.json")})):
+        assert call(name, args)["decision"] == "deny", name
+    assert call("mcp_notes_add_note", {"text": "x"})["decision"] == "deny"
 
 
 def test_the_call_id_reaches_the_activity_log(w, monkeypatch, capsys):
@@ -121,6 +145,8 @@ def test_a_session_that_was_not_launched_is_unbound(w, monkeypatch, capsys):
     assert reply["decision"] == "deny" and "no client is bound" in reply["reason"]
     notes = {"AbsolutePath": str(w / "clients" / "acme" / "context.md")}
     assert answer(monkeypatch, capsys, payload(w, "view_file", notes))["decision"] == "deny"
+    notes = {"Path": str(w / "clients" / "acme" / "context.md")}
+    assert answer(monkeypatch, capsys, payload(w, "read_file", notes))["decision"] == "deny"
     # Naming a client by hand binds nothing.
     monkeypatch.setenv("TORQUE_CLIENT", "acme")
     reply = answer(monkeypatch, capsys, payload(w, "run_command", {"CommandLine": READ}))
@@ -178,11 +204,12 @@ def test_a_session_whose_record_says_binding_is_refused_where_the_gate_would_ask
     path.write_text(json.dumps({**record, "via": "binding"}), encoding="utf-8")
     reply = answer(monkeypatch, capsys, payload(w, "run_command", {"CommandLine": "python3 x.py"}))
     assert reply["decision"] == "deny" and "cannot check" in reply["reason"]
-    assert reply["reason"].endswith("there is no one to ask and the call is refused.")
-    # In a presence launch a person is there to answer, so the ask stands.
+    assert "launched unattended" in reply["reason"] and "`python3 x.py`" in reply["reason"]
+    # A presence launch is refused too, with the reason that fits it.
     launched(monkeypatch, w)
     reply = answer(monkeypatch, capsys, payload(w, "run_command", {"CommandLine": "python3 x.py"}))
-    assert reply["decision"] == "ask" and "no one to ask" not in reply["reason"]
+    assert reply["decision"] == "deny" and "unattended" not in reply["reason"]
+    assert "--dangerously-skip-permissions" in reply["reason"] and "own terminal" in reply["reason"]
 
 
 def test_antigravitys_browser_tools_are_refused_like_a_browser_server(w, monkeypatch, capsys):

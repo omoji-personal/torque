@@ -1,21 +1,21 @@
 """jsc data upsert bulk wrapper — sf data upsert bulk with external-id-keyed pre-snapshot.
 
 Phase I.4-extended-2 (v7.17.0). Bulk upsert: best-effort revertibility. Insert
-path → delete-by-id; update path → reapply before_csv. The wrapper queries
-existing rows by external-id BEFORE the bulk, stores into before.csv.
+path → delete-by-id; update path → reviewed replay CSV. The wrapper queries
+existing rows by external-id BEFORE the bulk and retains their typed before-state.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
-import io
 import json
 import sys
 import time
 from pathlib import Path
 
 from . import _common as c
+from . import _bulk_csv
+from jsc_common.soql import soql_literal
 
 
 def run(args: argparse.Namespace) -> int:
@@ -45,7 +45,14 @@ def run(args: argparse.Namespace) -> int:
             ctx.save()
             return c.EXIT_PRESNAP_FAILED_PROD if ctx.org.is_production else c.EXIT_PRESNAP_FAILED_SANDBOX
 
-        ext_values, fields = _parse_bulk_csv_ext_id(input_path, args.external_id)
+        try:
+            ext_values, fields = _parse_bulk_csv_ext_id(input_path, args.external_id)
+        except (ValueError, OSError, UnicodeError) as exc:
+            ctx.manifest['snapshot_status'] = 'failed'
+            ctx.update_phase('pre_snapshot', status='failed', error=str(exc))
+            ctx.save()
+            print(f'error: before-state capture failed: {exc}', file=sys.stderr)
+            return c.EXIT_PRESNAP_FAILED_PROD if ctx.org.is_production else c.EXIT_PRESNAP_FAILED_SANDBOX
         before_csv_path = ctx.snap_dir / "before.csv"
         # Codex-R2-P1-03: tagged pre-query — distinguish clean-no-match from
         # query error so production fails closed on error.
@@ -57,7 +64,10 @@ def run(args: argparse.Namespace) -> int:
             "external_id_field": args.external_id,
             "input_file": str(input_path),
             "input_row_count": len(ext_values),
+            "blank_key_insert_count": sum(not value.strip() for value in ext_values),
             "before_csv": str(before_csv_path) if before_count else None,
+            "before_json": str(before_csv_path.with_suffix('.json')) if before_count else None,
+            "replay_csv": str(before_csv_path.with_name('replay.csv')) if before_count else None,
             "before_record_count": before_count,
             "pre_query_status": pre_status,  # "ok" | "no_match" | "error"
             "upsert_mode": "mixed",  # insert+update combined
@@ -159,15 +169,7 @@ def _fetch_bulk_results(target_org: str, job_id: str, out_path: Path) -> bool:
 
 
 def _parse_bulk_csv_ext_id(path: Path, ext_field: str) -> tuple[list[str], list[str]]:
-    text = path.read_text(encoding="utf-8")
-    reader = csv.DictReader(io.StringIO(text))
-    fields = list(reader.fieldnames or [])
-    vals: list[str] = []
-    for row in reader:
-        v = row.get(ext_field)
-        if v:
-            vals.append(v)
-    return vals, fields
+    return _bulk_csv.parse_identifiers(path, ext_field, allow_blank=True)
 
 
 PAGE_SIZE = 200
@@ -183,13 +185,14 @@ def _query_by_ext_ids_tagged(target_org: str, sobject: str, ext_field: str,
       "no_match" — query succeeded; zero matching rows (legitimate all-insert)
       "error"    — query failed (CLI non-zero exit or malformed JSON) on ANY chunk
     """
+    ext_values = [value for value in ext_values if value.strip()]
     if not ext_values or not fields:
-        return ("no_match", 0)
-    field_list = ",".join(fields)
+        return ("error", 0)
+    field_list = ",".join(_bulk_csv.capture_fields(fields))
     all_records: list[dict] = []
     for chunk_start in range(0, len(ext_values), PAGE_SIZE):
         chunk = ext_values[chunk_start:chunk_start + PAGE_SIZE]
-        val_list = ",".join(f"'{v.replace(chr(39), chr(39)+chr(39))}'" for v in chunk)
+        val_list = ",".join(f"'{soql_literal(v)}'" for v in chunk)
         query = f"SELECT {field_list} FROM {sobject} WHERE {ext_field} IN ({val_list})"
         cmd = ["sf", "data", "query", "--target-org", target_org,
                "--query", query, "--json"]
@@ -203,9 +206,4 @@ def _query_by_ext_ids_tagged(target_org: str, sobject: str, ext_field: str,
         all_records.extend(chunk_records)
     if not all_records:
         return ("no_match", 0)
-    with out_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        for r in all_records:
-            w.writerow({k: r.get(k, "") for k in fields})
-    return ("ok", len(all_records))
+    return ("ok", len(all_records)) if _bulk_csv.write_capture(out_path, fields, all_records) else ("error", 0)

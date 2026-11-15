@@ -56,9 +56,13 @@ Not verified in this release:
 
 Known limits that remain:
 
-- On Windows, permission and owner checks on the approval key, grants, consent evidence and
-  before-state files are skipped, a launch record is not tied to a process, and tier 2
-  (a separate approver account) is not available.
+- On Windows, a launch record is not tied to a process, and tier 2 (a separate approver
+  account) is not available. The approval key, grants, consent evidence and before-state files
+  are created with you as owner and an access list for you, SYSTEM and Administrators only. A
+  key or grant that you do not own, or that others can read or change, is refused. Only the key and grants are
+  checked when read: such a file from an earlier release is refused until it is deleted and
+  written again, while older consent evidence, before-state files and change records keep their
+  inherited access (see `connected-approval.md`).
 - Connected mode's command reader does not read a PowerShell path written with backslashes
   (`.\.venv\Scripts\torque.exe`) as a path. It then asks instead of deciding.
 - A before-state deeper than the 260-character path limit is refused on Windows when long

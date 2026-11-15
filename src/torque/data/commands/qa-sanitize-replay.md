@@ -14,6 +14,8 @@ Use the actual path supplied by the user:
 torque browser sanitize-replay <script-path>
 ```
 
+It scans the text as written and after up to four rounds of percent-decoding; it cannot prove
+that code which builds or decodes an address at run time holds none.
 This inspection does not need an org connection. Report detected category, file and
 line; never echo the matched secret. Inspect the installed help for exit semantics
 and distinguish a missing/unreadable file from a clean scan.

@@ -14,8 +14,9 @@ continue with existing tools, and leave a handoff another consultant can use.
 The assistant should maintain useful continuity during work without requiring a
 form, new approval ceremony or prescribed sequence for every operation.
 
-The [market review](competitive-landscape.md) covers Salesforce CLI, official
-skills/plugin/MCP, Agentforce DX, CumulusCI, sfdx-hardis, SFDMU, Snowfakery, Gearset,
+The [market review](competitive-landscape.md) covers Salesforce CLI, the official
+skills and plugin (and the retired DX MCP server), Agentforce DX, CumulusCI, sfdx-hardis,
+SFDMU, Snowfakery (archived), Gearset,
 Copado, Elements.cloud and Salto. AI assistance, local execution, full lifecycle
 workflows and requirement traceability all have precedents. Torque's proposed
 advantage is a compact, portable assembled experience across consulting clients

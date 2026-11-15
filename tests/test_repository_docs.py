@@ -1,6 +1,7 @@
 """Contributor and first-use documentation contracts from the public audit."""
 from pathlib import Path
 
+import torque
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,8 +21,9 @@ def test_readme_demonstrates_value_and_limits_before_control_details():
                  "development alpha", "not a universal undo or Salesforce backup"):
         assert readme.index(text) < install
     assert install < readme.index("[delegated approver]")
-    assert "git checkout --detach REVIEWED_COMMIT_SHA" in readme
-    assert "git rev-parse HEAD" in readme
+    # The quick start can be pasted as it is: it checks out this release's tag.
+    assert f"git checkout --detach v{torque.__version__}\ngit rev-parse HEAD\n" in readme
+    assert f"tag `v{torque.__version__}`" in readme
 
 
 def test_validation_measured_results_precede_review_process():

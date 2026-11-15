@@ -295,14 +295,17 @@ def test_the_gate_refuses_a_credential_command_and_names_the_safe_query(w):
         if set("*?") & set(command):
             continue  # a glob at the workspace root is refused by the path checks first
         assert "credential" in decision.reason and "with or without an approval" in decision.reason, command
-        assert 'sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"' in decision.reason
+        assert gc.ORG_IDENTITY_QUERY in decision.reason, command
 
 
 def test_the_safe_query_it_names_is_an_allowed_read(w, tmp_path):
     assert run(w, "Bash", {"command": QUERY}).action == "allow"
-    # It reads the Organization record, so the consent must cover record data.
+    # It reads only the org's own identity, which the consent records, so metadata consent covers it.
     record(w, tmp_path, ["metadata"])
-    decision = run(w, "Bash", {"command": QUERY})
+    assert run(w, "Bash", {"command": QUERY}).action == "allow"
+    assert run(w, "Bash", {"command": gc.ORG_IDENTITY_QUERY.replace("ALIAS", "acme-prod")}).action == "allow"
+    # Any other query of the Organization record still needs record data.
+    decision = run(w, "Bash", {"command": 'sf data query -o acme-prod -q "SELECT Id, Address FROM Organization"'})
     assert decision.action == "deny" and "record data" in decision.reason
 
 
@@ -419,7 +422,7 @@ def test_hook_end_to_end(w, monkeypatch, capsys):
             "permission_mode": "default"}
     for tool, command in (("Bash", "sf org display -o acme-sbx"), ("PowerShell", "iex 'sf org display -o acme-sbx'")):
         code, out, err = _hook(monkeypatch, capsys, {**base, "tool_name": tool, "tool_input": {"command": command}})
-        assert code == 2 and out == "" and "SELECT Id, Name, IsSandbox FROM Organization" in err, (tool, err)
+        assert code == 2 and out == "" and gc.ORG_IDENTITY_QUERY in err, (tool, err)
     code, out, err = _hook(monkeypatch, capsys, {**base, "tool_name": "Bash", "tool_input": {"command": "sf org list"}})
     assert code == 2 and out == "" and "lists every org" in err
     code, out, _ = _hook(monkeypatch, capsys, {**base, "tool_name": "Bash", "tool_input": {"command": QUERY}})

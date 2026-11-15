@@ -1,100 +1,276 @@
-"""Storage tests — L1/L2/L3 transitions + lesson lookup."""
+"""Scopes are folders; files are written whole; one lock; bad files are skipped and named."""
+from datetime import datetime, timezone
 import json
-import time
+import os
+import subprocess
+import sys
 
+import pytest
+
+from jsc_memory import lesson as record
 from jsc_memory import storage
+from jsc_memory.lesson import Lesson
 
 
-def _make_lesson(suffix="abc") -> storage.Lesson:
-    now = int(time.time())
-    # Build a 16-char id where the suffix lives at the START so id[:12]
-    # differs across test lessons (filename uses id[:12]).
-    full_id = (suffix + ("0" * 16))[:16]
-    return storage.Lesson(
-        id=full_id,
-        title=f"Test {suffix}",
-        short=f"short {suffix}",
-        full_text=f"full {suffix}",
-        confidence="MEDIUM",
-        trigger="tool_error",
-        captured_at=now + (abs(hash(suffix)) % 1000),
-        last_seen=now,
-        state="review_pending",
-    )
+def make(folder, number, scope="client", **fields):
+    item = Lesson(id=f"L-20250303-{number:04x}", title=fields.pop("title", f"Lesson {number}"), scope=scope,
+                  state=fields.pop("state", "active"), created="2026-11-14", **fields)
+    storage.save(item, folder)
+    return item
 
 
-def test_ensure_dirs_mode_0700(isolated_memory_dir):
-    """Memory tree dirs must be 0o700 — operator-private (audit 2026-06-13).
-    ensure_dirs also tightens a pre-existing looser dir. POSIX only: Windows
-    has no equivalent mode bits."""
-    import os
-    import stat
-    storage.ensure_dirs()
-    if os.name == "nt":
-        assert storage.memory_root().is_dir()
-        return
-    for d in (storage.spool_dir(), storage.review_queue_dir(), storage.archive_dir(),
-              storage._lessons_dir(), storage.memory_root()):
-        assert stat.S_IMODE(os.stat(d).st_mode) == 0o700, f"{d} not 0o700"
-    # loosen one, then ensure_dirs must re-tighten it
-    os.chmod(storage.spool_dir(), 0o755)
-    storage.ensure_dirs()
-    assert stat.S_IMODE(os.stat(storage.spool_dir()).st_mode) == 0o700
+def test_a_folder_selects_its_scopes_and_nothing_else(workspace, scopes):
+    alpha, firm, playbook = scopes("alpha"), scopes(None), scopes("playbook")
+    assert (alpha.kind, alpha.slug, alpha.workspace) == ("client", "alpha", workspace)
+    assert alpha.folder("client") == workspace / "clients" / "alpha" / "lessons"
+    assert alpha.folder("firm") == workspace / "lessons" and alpha.folder("platform") is None
+    assert alpha.folder("initiative") is None            # a client is selected, not an initiative
+    assert (firm.engagement, firm.default_scope(), firm.label()) == (None, None, "firm + platform")
+    assert (playbook.kind, playbook.default_scope()) == ("initiative", "initiative")
+    assert alpha.label() == "client alpha + firm + platform"
+    # A folder that is neither a workspace nor an engagement in one selects nothing.
+    for stray in (workspace / "clients", workspace / "clients" / "missing", workspace.parent):
+        assert storage.scopes_for(stray) == storage.Scopes()
+    assert storage.Scopes().label() == "platform"
 
 
-def test_write_and_list_review_pending(isolated_memory_dir):
-    l = _make_lesson("aaa")
-    storage.write_review_candidate(l)
-    pending = storage.list_review_pending()
-    assert len(pending) == 1
-    assert pending[0].id == l.id
+def test_the_environment_selects_scopes_at_call_time(workspace, monkeypatch):
+    monkeypatch.setenv("JSC_ROOT", str(workspace / "clients" / "beta"))      # legacy: never a selection
+    assert storage.scopes_from_env() == storage.Scopes()
+    for slug in ("alpha", "beta"):
+        monkeypatch.setenv("TORQUE_WORKSPACE", str(workspace / "clients" / slug))
+        assert storage.scopes_from_env().slug == slug
 
 
-def test_promote_to_active(isolated_memory_dir):
-    l = _make_lesson("bbb")
-    storage.write_review_candidate(l)
-    promoted = storage.promote_to_active(l.id)
-    assert promoted is not None
-    assert promoted.state == "active"
-    assert promoted.helpful_count == 1
-    assert len(storage.list_review_pending()) == 0
-    assert len(storage.list_active()) == 1
+def test_loading_reads_the_selected_engagement_and_the_firm_and_never_another_client(workspace, scopes):
+    make(scopes("alpha").folder("client"), 1)
+    make(scopes("beta").folder("client"), 2)
+    make(scopes(None).folder("firm"), 3, scope="firm")
+    make(scopes("playbook").folder("initiative"), 4, scope="initiative")
+    ids = lambda selected: sorted(item.id[-4:] for item in storage.load(selected))
+    assert ids(scopes("alpha")) == ["0001", "0003"]
+    assert ids(scopes("beta")) == ["0002", "0003"]
+    assert ids(scopes("playbook")) == ["0003", "0004"]
+    assert ids(scopes(None)) == ["0003"]
+    assert ids(storage.Scopes()) == []
 
 
-def test_mark_stale_archives_at_2(isolated_memory_dir):
-    l = _make_lesson("ccc")
-    storage.write_review_candidate(l)
-    # First stale: still pending
-    storage.mark_stale(l.id)
-    pending = storage.list_review_pending()
-    assert len(pending) == 1
-    assert pending[0].stale_count == 1
-    # Second stale: archived
-    storage.mark_stale(l.id)
-    assert len(storage.list_review_pending()) == 0
-    archive_files = list(storage.archive_dir().glob("*.json"))
-    assert len(archive_files) == 1
+def test_an_unreadable_file_is_skipped_and_named_and_the_rest_still_loads(workspace, scopes):
+    alpha = scopes("alpha")
+    folder = alpha.folder("client")
+    good = make(folder, 1)
+    (folder / "broken.md").write_text("---\nid: [unclosed\n---\n", encoding="utf-8")
+    (folder / "no-front-matter.md").write_text("just a note\n", encoding="utf-8")
+    (folder / "binary.md").write_bytes(b"\xff\xfe\x00junk")
+    (folder / "wrong-scope.md").write_text(record.render(Lesson(id="L-20250303-0009", title="t", scope="firm")),
+                                           encoding="utf-8")
+    (folder / "copy.md").write_text(record.render(good), encoding="utf-8")
+    (folder / "huge.md").write_bytes(b"x" * (storage.MAX_BYTES + 1))
+    (folder / "README.md").write_text("Notes about this folder.\n", encoding="utf-8")
+    problems = []
+    loaded = storage.load(alpha, problems)
+    assert [item.id for item in loaded] == [good.id]
+    named = {problem["path"]: problem["reason"] for problem in problems}
+    assert set(named) == {f"clients/alpha/lessons/{name}" for name in
+                          ("broken.md", "no-front-matter.md", "binary.md", "wrong-scope.md", "copy.md", "huge.md")}
+    assert "not valid YAML" in named["clients/alpha/lessons/broken.md"]
+    assert "scope says firm" in named["clients/alpha/lessons/wrong-scope.md"]
+    assert "already used" in named["clients/alpha/lessons/copy.md"]
+    assert named["clients/alpha/lessons/binary.md"] == "not UTF-8 text"
 
 
-def test_find_lesson_by_prefix(isolated_memory_dir):
-    l = _make_lesson("ddd")
-    storage.write_review_candidate(l)
-    result = storage.find_lesson(l.id[:12])
-    assert result is not None
-    found_lesson, state = result
-    assert found_lesson.id == l.id
-    assert state == "review_pending"
+def test_a_linked_lessons_folder_is_not_followed(workspace, scopes):
+    make(scopes("beta").folder("client"), 2)
+    try:
+        (workspace / "clients" / "alpha" / "lessons").symlink_to(workspace / "clients" / "beta" / "lessons",
+                                                                target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    problems = []
+    assert storage.load(scopes("alpha"), problems) == []
+    assert "symbolic link" in problems[0]["reason"]
 
 
-def test_review_queue_size(isolated_memory_dir):
-    assert storage.review_queue_size() == 0
-    for s in ("a", "b", "c"):
-        storage.write_review_candidate(_make_lesson(s))
-    assert storage.review_queue_size() == 3
+def test_an_id_resolves_exactly_or_by_a_unique_start(scopes):
+    folder = scopes("alpha").folder("client")
+    for suffix in ("a3f2", "a3f9", "b111"):
+        storage.save(Lesson(id=f"L-20250303-{suffix}", title=suffix, created="2026-11-14"), folder)
+    lessons = storage.load(scopes("alpha"))
+    assert storage.resolve(lessons, "L-20250303-a3f2").title == "a3f2"
+    assert storage.resolve(lessons, "L-20250303-b").title == "b111"
+    assert storage.resolve(lessons, "20250303-b1").title == "b111"       # without the L-
+    with pytest.raises(storage.Ambiguous) as caught:
+        storage.resolve(lessons, "L-20250303-a3f")
+    assert [item.title for item in caught.value.candidates] == ["a3f2", "a3f9"]
+    for nothing in ("", "   ", "L-", "L-20"):
+        with pytest.raises(storage.Ambiguous):
+            storage.resolve(lessons, nothing)
+    with pytest.raises(storage.NotFound):
+        storage.resolve(lessons, "L-20991231-ffff")
 
 
-def test_load_framework_memory_compat_shim():
-    """Shim returns object with empty .lessons list (compat with session_start_context)."""
-    fm = storage.load_framework_memory()
-    assert hasattr(fm, "lessons")
-    assert fm.lessons == []
+def test_a_lesson_shown_again_in_one_session_on_one_surface_counts_once(scopes):
+    from jsc_memory import review
+    alpha = scopes("alpha")
+    root = alpha.engagement
+    for _ in range(3):
+        storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s1"}])
+    storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s1"},
+                       {"event": "shown", "id": "L-20261114-c0de1234", "via": "context", "session": "s1"},
+                       {"event": "shown", "id": "L-20261114-c0de1234", "via": "for", "session": "s2"},
+                       {"event": "helpful", "id": "L-20261114-c0de1234", "session": "s1"},
+                       {"event": "helpful", "id": "L-20261114-c0de1234", "session": "s1"}])
+    for _ in range(2):                                  # no session id: every print counts
+        storage.log(root, [{"event": "shown", "id": "L-20261114-c0de1234", "via": "deploy"}])
+    rows = storage.read_events(root)
+    assert sum(row["event"] == "shown" for row in rows) == 5 and sum(row["event"] == "helpful" for row in rows) == 2
+    assert storage.tally(rows)["L-20261114-c0de1234"].shown == 5
+    assert "shown counts prints of a lesson" in review.render_stats(review.stats(alpha))
+
+
+def test_the_part_of_an_id_after_its_date_is_enough(scopes):
+    folder = scopes("alpha").folder("client")
+    for identifier in ("L-20261114-c0de1234", "L-20261114-c0ffee99", "L-20261115-beef5678", "L-20250303-a3f2"):
+        storage.save(Lesson(id=identifier, title=identifier, created="2026-11-14"), folder)
+    lessons = storage.load(scopes("alpha"))
+    assert storage.resolve(lessons, "beef5678").id == "L-20261115-beef5678"
+    assert storage.resolve(lessons, "beef").id == "L-20261115-beef5678"          # a unique start of it
+    assert storage.resolve(lessons, "c0de").id == "L-20261114-c0de1234"
+    assert storage.resolve(lessons, "a3f2").id == "L-20250303-a3f2"              # an earlier, four-character id
+    with pytest.raises(storage.Ambiguous) as caught:
+        storage.resolve(lessons, "2026")                                          # the year alone names many
+    assert "the part of an id after its date is enough" in str(caught.value)
+    with pytest.raises(storage.Ambiguous):
+        storage.resolve(lessons, "c0")                                            # too short
+    assert record.short_id("L-20261114-c0de1234") == "c0de1234" and record.short_id("A-deploy-order") == "deploy-order"
+
+
+@pytest.mark.parametrize("damage", [
+    {"via": ["malformed"]}, {"via": {"a": 1}}, {"reason": 7}, {"session": ["x"]}, {"superseded_by": 3},
+    {"note": {"x": 1}}, {"id": ""}, {"id": 5}, {"at": 20261114}, {"at": "yesterday"}, {"event": "deleted"},
+])
+def test_a_damaged_event_row_is_skipped_and_counted_and_no_command_breaks(scopes, damage):
+    from jsc_memory import recall, review
+    alpha = scopes("alpha")
+    item = intake_lesson(alpha)
+    good = {"event": "shown", "id": item.id, "at": "2026-11-14T10:00:00-05:00", "via": "for"}
+    path = storage.events_path(alpha.engagement)
+    with open(path, "a", encoding="utf-8") as stream:
+        stream.write(json.dumps({**good, **damage}) + "\n" + "not json\n" + json.dumps(good) + "\n")
+    damaged: list = []
+    rows = storage.read_events(alpha.engagement, damaged)
+    assert len(damaged) == 2 and all(row in rows for row in [good])
+    report = review.stats(alpha)
+    assert report["damaged_events"] == 2 and report["shown_by_surface"] == {"for": 1}
+    assert "Damaged event rows skipped: 2" in review.render_stats(report)
+    lines = review.health_lines(review.health(alpha))
+    assert "damaged event rows skipped 2" in lines[1]
+    assert storage.tally(storage.events_for(alpha))[item.id].shown == 1
+    recall.find(alpha, types=["Flow"])                 # recall reads the same log and does not break
+    review.build(alpha)
+
+
+def intake_lesson(alpha):
+    from jsc_memory import intake
+    return intake.add(alpha, text="When: you deploy a flow. Do: read it back.", source="consultant").lesson
+
+
+def test_events_go_to_the_scope_root_and_counters_come_from_them(workspace, scopes):
+    alpha = scopes("alpha")
+    assert alpha.event_root("client") == workspace / "clients" / "alpha"
+    assert alpha.event_root("firm") == alpha.event_root("platform") == workspace
+    assert storage.Scopes().event_root("platform") is None
+    assert storage.log(alpha.event_root("client"), [{"event": "shown", "id": "L-1", "via": "for"}] * 3)
+    storage.log(alpha.event_root("client"), [{"event": "helpful", "id": "L-1"},
+                                             {"event": "stale", "id": "L-1", "reason": "fixed in the org"}])
+    storage.log(alpha.event_root("firm"), [{"event": "shown", "id": "L-2", "via": "context"}])
+    with open(storage.events_path(alpha.engagement), "a", encoding="utf-8") as stream:
+        stream.write("{not json\n" + json.dumps({"event": "unknown", "id": "L-1", "at": "x"}) + "\n")
+    tallies = storage.tally(storage.events_for(alpha))
+    assert tallies["L-1"].counters() == {"shown": 3, "helpful": 1, "stale": 1} and tallies["L-1"].score == 0
+    assert tallies["L-1"].stale_mark["reason"] == "fixed in the org"
+    assert tallies["L-2"].shown == 1
+    # Another client reads the firm's events and none of this client's.
+    assert set(storage.tally(storage.events_for(scopes("beta")))) == {"L-2"}
+    storage.log(alpha.engagement, [{"event": "verified", "id": "L-1"}])
+    assert storage.tally(storage.events_for(alpha))["L-1"].stale_mark is None
+    text = storage.events_path(alpha.engagement).read_text(encoding="utf-8")
+    assert "fixed in the org" in text and '"via": "for"' in text
+
+
+def test_an_event_is_stamped_with_the_local_time_and_its_offset():
+    # Its day is then the day a lesson saved at that moment is dated, also late in the evening.
+    at = storage.now()
+    moment = datetime.fromisoformat(at)
+    assert moment.utcoffset() is not None and at[:10] == record.today()
+    assert abs((datetime.now(timezone.utc) - moment).total_seconds()) < 60
+
+
+def test_showing_a_lesson_never_fails_when_the_log_cannot_be_written(scopes, monkeypatch):
+    alpha = scopes("alpha")
+    monkeypatch.setattr(storage, "events_path", lambda root: root / "missing-folder" / "deeper" / "events.jsonl")
+    assert storage.log(alpha.engagement, [{"event": "shown", "id": "L-1"}]) is False
+    with pytest.raises(OSError):
+        storage.log(alpha.engagement, [{"event": "helpful", "id": "L-1"}], must=True)
+    assert storage.log(None, [{"event": "shown", "id": "L-1"}]) is False
+
+
+def test_a_failed_write_leaves_the_old_file_and_no_temporary_file(scopes, monkeypatch):
+    folder = scopes("alpha").folder("client")
+    item = make(folder, 1, title="Before")
+    before = item.path.read_bytes()
+    item.title = "After"
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", lambda *args: (_ for _ in ()).throw(OSError("synthetic failure")))
+        with pytest.raises(OSError):
+            storage.save(item, folder)
+    assert item.path.read_bytes() == before
+    assert [path.name for path in folder.iterdir()] == [item.path.name]
+
+
+def test_a_lock_held_elsewhere_is_reported_after_a_bounded_wait_on_every_system(scopes, monkeypatch):
+    root = scopes("alpha").engagement
+    script = ("import sys, time\nfrom pathlib import Path\nfrom jsc_memory import storage\n"
+              "with storage.transaction(Path(sys.argv[1])):\n    print('held', flush=True)\n    sys.stdin.readline()\n")
+    holder = subprocess.Popen([sys.executable, "-c", script, str(root)], stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, text=True, encoding="utf-8")
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        monkeypatch.setattr(storage, "LOCK_SECONDS", 0.3)
+        with pytest.raises(storage.Busy, match="Nothing was written"):
+            with storage.transaction(root):
+                pytest.fail("the lock was taken twice")
+    finally:
+        holder.communicate("release\n", timeout=30)
+    with storage.transaction(root):       # free again once the holder is gone
+        with storage.transaction(root):   # and re-entrant within one process
+            pass
+
+
+def test_concurrent_writers_lose_no_event_and_no_lesson(scopes):
+    alpha = scopes("alpha")
+    script = ("import sys\nfrom pathlib import Path\nfrom jsc_memory import storage\nfrom jsc_memory.lesson import Lesson\n"
+              "root, worker = Path(sys.argv[1]), sys.argv[2]\nprint('ready', flush=True)\nsys.stdin.readline()\n"
+              "for number in range(25):\n"
+              "    storage.log(root, [{'event': 'helpful', 'id': 'L-shared'}], must=True)\n"
+              "    storage.save(Lesson(id=f'L-20250303-{worker}{number:03d}', title='t', created='2026-11-14'), root / 'lessons')\n")
+    workers = [subprocess.Popen([sys.executable, "-c", script, str(alpha.engagement), str(number)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                encoding="utf-8") for number in range(4)]
+    try:
+        for worker in workers:
+            assert worker.stdout.readline().strip() == "ready"
+        for worker in workers:
+            worker.stdin.write("go\n")
+            worker.stdin.flush()
+        for worker in workers:
+            _, error = worker.communicate(timeout=60)
+            assert worker.returncode == 0, error
+    finally:
+        for worker in workers:
+            if worker.poll() is None:
+                worker.kill()
+            worker.wait(timeout=10)
+    assert storage.tally(storage.events_for(alpha))["L-shared"].helpful == 100
+    problems = []
+    assert len(storage.load(alpha, problems)) == 100 and problems == []

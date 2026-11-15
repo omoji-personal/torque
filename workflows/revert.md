@@ -9,7 +9,7 @@ Review exact scope, recovery files and intervening drift; use existing authoriza
 for the requested reversal. Then use the supported delegate:
 
 ```sh
-torque revert revert exec <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
+torque recover run <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
 ```
 
 A refusal due to missing pre-state or unsupported reversal is a real capability

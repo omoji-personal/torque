@@ -8,21 +8,20 @@ claim an automatic recovery plan.
 from __future__ import annotations
 
 import argparse
+import shlex
 import json
 import re
 import sys
 import time
 
 from . import _common as c
+from . import _assignment_capture as capture
 
 
-_PSA_ID = re.compile(r"0Pa[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?\Z")
-
-
-def _assignment_result(stdout: str) -> dict:
+def _assignment_result(stdout: str, *, kind='psa', prefix='0Pa') -> dict:
     """Normalize supported result shapes without trusting arbitrary IDs as PSA IDs."""
-    unknown = {"created_psa_ids": [], "assignment_success_count": None,
-               "assignment_failure_count": None, "psa_id_capture_status": "unrecognized_response"}
+    unknown = {f"created_{kind}_ids": [], "assignment_success_count": None,
+               "assignment_failure_count": None, f"{kind}_id_capture_status": "unrecognized_response"}
     try:
         envelope = json.loads(stdout)
     except (json.JSONDecodeError, TypeError):
@@ -53,7 +52,7 @@ def _assignment_result(stdout: str) -> dict:
         candidate = value.get("id") if isinstance(value, dict) else None
         if candidate is None:
             candidate = row.get("id")
-        if isinstance(candidate, str) and _PSA_ID.fullmatch(candidate):
+        if isinstance(candidate, str) and re.fullmatch(prefix + r'[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?', candidate):
             ids_returned += 1
             if candidate not in ids:
                 ids.append(candidate)
@@ -61,19 +60,21 @@ def _assignment_result(stdout: str) -> dict:
     capture_status = "not_returned"
     if ids_returned:
         capture_status = "captured" if ids_returned == success_count else "partial"
-    return {"created_psa_ids": ids, "assignment_success_count": success_count,
+    evidence = {f"created_{kind}_ids": ids, "assignment_success_count": success_count,
             "assignment_failure_count": len(failures) + unsuccessful,
-            "psa_id_capture_status": capture_status}
+            f"{kind}_id_capture_status": capture_status}
+    return evidence
 
 
 def run(args: argparse.Namespace) -> int:
-    perm_set = args.perm_set_name
-    # Codex-R1-P2-02: `sf org assign permset` flag is --on-behalf-of (-b), NOT --on-user
-    on_behalf_of = getattr(args, "on_behalf_of", None) or getattr(args, "on_user", None) or ""
-    wrapper_command = (
-        f"jsc org assign permset -o {args.target_org} --name {perm_set}"
-        + (f" --on-behalf-of {on_behalf_of}" if on_behalf_of else "")
-    )
+    def values(value):
+        return value if isinstance(value, list) else [value] if value else []
+
+    perm_set = values(args.perm_set_name)
+    on_behalf_of = values(getattr(args, "on_behalf_of", None)) + values(getattr(args, "on_user", None))
+    options = [token for name in perm_set for token in ("--name", name)]
+    options += [token for user in on_behalf_of for token in ("--on-behalf-of", user)]
+    wrapper_command = shlex.join(["jsc", "org", "assign", "permset", "-o", args.target_org] + options)
     ctx = c.WrapperContext(
         operation_type="org_assign_permset",
         target_org=args.target_org,
@@ -93,22 +94,25 @@ def run(args: argparse.Namespace) -> int:
             "created_psa_ids": [],
         }
         ctx.set_revert_capabilities()
+        query = capture.assignment_query(ctx.org, perm_set, on_behalf_of)
+        before = capture.read_ids(args.target_org, query, '0Pa')
+        ctx.manifest['payload']['assignment_before_ids'] = list(before.values()) if before is not None else None
         ctx.update_phase("pre_snapshot", status="complete",
             duration_seconds=round(time.monotonic() - t0, 2))
         ctx.save()
 
         t0 = time.monotonic()
         cmd = ["sf", "org", "assign", "permset",
-               "--target-org", args.target_org,
-               "--name", perm_set, "--json"]
-        if on_behalf_of:
-            cmd.extend(["--on-behalf-of", on_behalf_of])
+               "--target-org", args.target_org, "--json"] + options
         exit_code, stdout, stderr = c.run_sf_subprocess(cmd, timeout_seconds=60)
         duration = round(time.monotonic() - t0, 2)
         (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
 
         evidence = _assignment_result(stdout)
         ctx.manifest["payload"].update(evidence)
+        after = capture.read_ids(args.target_org, query, '0Pa')
+        capture.record_difference(ctx.manifest['payload'], before, after, 'psa')
+        evidence = ctx.manifest['payload']
         successes = evidence["assignment_success_count"] or 0
         failures = evidence["assignment_failure_count"] or 0
         if successes and (exit_code != 0 or failures):

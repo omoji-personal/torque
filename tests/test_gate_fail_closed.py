@@ -77,13 +77,25 @@ def test_the_hook_exits_2_with_the_reason(tmp_path, monkeypatch, capsys, home, m
 
 
 def test_full_mode_still_lets_the_call_through(tmp_path, monkeypatch, capsys, home):
-    # Documented in docs/ai-access.md: the full-mode check never blocks by failing.
+    # Documented in docs/ai-access.md: the full-mode check never blocks by running
+    # long or by failing in a way a retry would repeat. When it cannot finish, full
+    # mode falls back to a cheap text net: a command whose own text names a record
+    # or a records-holding folder is blocked, everything else is allowed as before.
     root = make(tmp_path, "full")
     code, err = hook(monkeypatch, capsys, root, "Bash", {"command": "rm clients/acme/consent.json"})
     assert code == 2 and "consent" in err
     monkeypatch.setattr(gate, "_approval_file_targets_reason", boom)
-    for tool, tool_input in [*CALLS, ("Bash", {"command": "rm clients/acme/consent.json"})]:
+    # Ordinary commands, which name no record folder, still pass on the error path.
+    for tool, tool_input in CALLS:
         assert hook(monkeypatch, capsys, root, tool, tool_input) == (0, ""), tool
+    # A command whose text names a record or the folder that holds it is blocked now,
+    # instead of failing open, even though the resolving check could not run.
+    for tool, tool_input in [("Bash", {"command": "rm clients/acme/consent.json"}),
+                             ("Bash", {"command": "rm -rf clients"}),
+                             ("Write", {"file_path": "clients/acme/consent.json", "content": "x"}),
+                             ("mcp__shell__run", {"command": "rm initiatives/plan/binding.json"})]:
+        code, err = hook(monkeypatch, capsys, root, tool, tool_input)
+        assert code == 2 and "torque commands" in err, (tool, tool_input)
     assert gate._approval_file_reason("Bash", {"command": "ls"}, root) == ""
     assert "fail closed" in gate._approval_file_reason("Bash", {"command": "ls"}, root, strict=True)
 

@@ -1,41 +1,40 @@
 # /qa
 
-Select and execute useful QA surfaces for the change, with explicit coverage and gaps.
+Choose and run the checks a change needs, from its acceptance criteria, and report each one's result and what stayed uncovered. Use it after a build or deploy, before calling a change ready.
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-Start with the client's requested behavior and acceptance criteria. Identify the
-intended user, positive and relevant negative cases, repeated edits/idempotence,
-permissions and cleanup needs. Read the optional change record when present; do
-not replace a meaningful business check with a metadata or process-exit check.
+First, ask for the lessons that fit this work and read them before you act:
+`torque lesson for --task testing --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
+and what is wrong with `torque lesson stale <id> --reason <why>`.
 
-Reuse the project's existing tests and browser acceptance setup (including
-CumulusCI/Robot or an established commercial suite) when appropriate. Keep their
-actual report references and gaps in the change record; `change check` attachments
-remain operator-reported unless a specific verifier evaluated them. Do not run two
-browser drivers against the same session or rerun equivalent checks just to obtain
-a Torque-branded result.
+1. Start with the client's requested behavior and acceptance criteria: the intended user,
+   positive and negative cases, a repeated edit, permissions and cleanup. Read the change record
+   when there is one. Skill `salesforce-delivery`
+   (`salesforce-delivery/references/testing-and-uat.md`) lists the checks that caught what escaped
+   before.
+2. Reuse the project's own tests and browser suites (CumulusCI and Robot, or a commercial suite)
+   and keep their report references and gaps with the change. Do not rerun equivalent checks only
+   to get a Torque result.
+3. Torque's router can suggest further surfaces for a described change:
 
-Use the change description and explicit target from the current task. The Torque
-router is an additional aid for selecting coverage. Inspect its selected surfaces
-and reasons; when useful, run the existing QA delegate:
+   ```sh
+   torque qa run <change-description> --org <org-alias> --workspace <private-path> --client <client-name>
+   ```
 
-```sh
-torque qa run <change-description> --org <org-alias> --workspace <private-path> --client <client-name>
-```
+   To check a deployment, pass its exact `--deploy-job-id` and unchanged `--deploy-manifest`, or
+   one `--deploy-component <Type:FullName>` per component; no result falls back to the most recent
+   deploy. `torque qa run --help` lists the surface and change-type selectors. For the static
+   metadata checks run `torque check metadata` (`/validate-change`); for the deployed state,
+   `torque check deployed` (`/verify-change`); for the page as a user sees it, `/qa-browser`.
+4. Read each surface on its own: passed, failed, manual, deferred, unsupported or not applicable.
+   A missing browser tool or a skipped optional surface is not a pass. The legacy `/qa-token-*`
+   helpers authorize nothing and no normal run needs them.
+5. Test records: save each created record's Id when it is created, in the private task
+   directory, and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv`
+   with an Id column), never records matched by name, title, creator or date; if the Id list is
+   lost or incomplete, stop and ask instead of matching.
 
-When verifying a deployment, pass its exact `--deploy-job-id` and unchanged
-`--deploy-manifest`, or repeat `--deploy-component <Type:FullName>` for each exact
-component. Check `torque qa run --help` for supported surface/change-type selectors.
-No result may fall back to an arbitrary most-recent deploy.
-
-Interpret each surface independently: passed, failed, manual, deferred, unsupported
-or not applicable. Missing browser tooling or a skipped optional surface is not a
-hidden success. Continue useful checks rather than requiring a token to proceed.
-The optional legacy `/qa-token-*` helpers do not authorize changes and are never
-required by the successor's normal workflow.
-
-Tests may change records depending on the selected surface. Keep them within the
-task's authorization and intended environment, label artifacts by actual user/profile
-and fidelity, reconcile test records and verify cleanup. Save concise results and
-continue fixing implementation defects when that is part of the request.
+Label each result with the user, the profile and how it was observed. Save the results and keep
+fixing defects when that is part of the request.

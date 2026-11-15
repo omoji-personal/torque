@@ -476,7 +476,7 @@ def _evidence(client: Path) -> dict:
         ],
         "acceptance": [{"criterion": item, "status": "NOT_RUN", "basis": "No selected org, user, browser or live record."} for item in ("AC1", "AC2", "AC3")],
         "deployment": {"status": "NOT_RUN", "job_id": None},
-        "files": [{"path": str(path.relative_to(client)), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in xml_paths],
+        "files": [{"path": path.relative_to(client).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in xml_paths],
     }
 
 

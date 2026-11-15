@@ -1,12 +1,19 @@
 # /triage-alert
 
-Turn a Salesforce flow or Apex error notification into cause, fix and verification.
+Turn a Salesforce flow or Apex error notification into its cause, the narrowest fix, a retest and a note for the client. Use it when a fault email, an error screenshot or a user report of a failed save arrives.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
 Start from the exact notification: object, flow or Apex class name, element or line,
 error code, message and the triggering record. A forwarded email or screenshot is a
 starting point, not the whole evidence; confirm the live version still matches it.
+
+First, ask what fixed this error before:
+`torque lesson for --error "<first line of the error>" --task diagnose --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions; mark one that helped with
+`torque lesson helpful <id>`. If a candidate hint fixed it, verify it:
+`torque lesson verify <id> --evidence reproduced` (it becomes active for this client). For a flow, read skill `salesforce-flow`
+(`salesforce-flow/references/gotchas.md`).
 
 1. Identify the flow (or class) and the active version that actually ran. Flow fault
    notifications report the version that failed; confirm it is still the active one
@@ -32,8 +39,14 @@ starting point, not the whole evidence; confirm the live version still matches i
    users affected, over what period), the fix, and any past records the fix does not
    retroactively repair.
 
+8. Save the outcome, and what fixed it, with the session record:
+
+   ```sh
+   torque session add --workspace <private-path> --client <client-name> --summary <summary-text> --status <status> --learned "When: ... Do: ... Because: ..."
+   ```
+
 Report observed cause versus remaining hypotheses; do not describe a fix as verified
-before it has actually been retested. Save the outcome to the client session.
+before it has actually been retested.
 
 ## In build-only mode
 

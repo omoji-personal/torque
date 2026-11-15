@@ -7,7 +7,7 @@ Preview a specific restoration against current state without executing it.
 Resolve snapshot ID and intended org from the request or `/revert-show`:
 
 ```sh
-torque revert revert preview <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
+torque recover preview <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
 ```
 
 Inspect original operation, snapshot completeness, target binding, exact recovery

@@ -5,6 +5,7 @@ import ast
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import shlex
@@ -30,13 +31,10 @@ def harness():
 def _sentinel(directory, name, marker):
     directory.mkdir(exist_ok=True)
     if os.name == "nt":
-        from distlib.scripts import ScriptMaker
-        maker = ScriptMaker(None, str(directory))
-        maker.executable = sys.executable
-        maker.variants = {""}
-        maker.script_template = f"from pathlib import Path\nPath({str(marker)!r}).write_text('reached')\n"
-        maker.make(f"{name} = builtins:print")
-        return directory / (name + ".exe")
+        # A script, not a fresh unsigned launcher, which Smart App Control may block.
+        path = directory / (name + ".cmd")
+        path.write_bytes(f'@>"{marker}" echo reached'.encode("utf-8") + b"\r\n")
+        return path
     path = directory / name
     path.write_text("#!/bin/sh\nprintf reached > " + shlex.quote(str(marker)) + "\n", encoding="utf-8")
     path.chmod(0o755)
@@ -68,7 +66,78 @@ def test_bare_resolved_and_absolute_live_tools_cannot_reach_sentinels(harness, m
     assert not marker.exists()
     assert Path(env["TORQUE_TEST_LIVE_SENTINEL"]).read_text().splitlines() == ["sf"] * (4 if os.name == "nt" else 3)
     if os.name == "nt":
-        assert (scratch / "tools/bin/sf.exe").read_bytes().startswith(b"MZ")
+        assert (scratch / "tools/bin/sf.cmd").is_file()
+
+
+TOOLS = ("sf", "sfdx", "gemini", "claude", "codex", "curl", "wget", "ssh")
+TRICKY = ["two words", 'say "hi"', "100% %PATH%", "a^b", "x&y|z", "trailing\\", "two words\\", "", "-c", "!x!"]
+STUB_SUFFIX = ".cmd" if os.name == "nt" else ""
+
+
+def test_stub_folder_holds_no_unsigned_executable(harness, tmp_path):
+    # Smart App Control blocks freshly written unsigned launchers at random (WinError 4551);
+    # scripts for the trusted interpreter are not executables to it.
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    harness.offline_environment(ROOT, scratch)
+    names = {path.name for path in (scratch / "tools/bin").iterdir()}
+    if os.name == "nt":
+        assert not [name for name in names if name.lower().endswith((".exe", ".com", ".dll"))]
+    assert {name + STUB_SUFFIX for name in (*TOOLS, "python", "torque")} <= names
+
+
+def test_every_stub_resolves_by_path_lookup_and_explicit_path(harness, tmp_path):
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    code = f"""
+import json, shutil, subprocess
+from pathlib import Path
+bins = Path({str(scratch / 'tools/bin')!r})
+for name in {TOOLS!r}:
+    found = shutil.which(name)
+    explicit = bins / (name + {STUB_SUFFIX!r})
+    assert found and Path(found).resolve() == explicit.resolve(), (name, found)
+    for command in (name, found, str(explicit)):
+        run = subprocess.run([command, 'org', 'display'], capture_output=True, text=True)
+        assert run.returncode == 1 and json.loads(run.stdout)['name'] == 'OfflineBackendUnavailable', (command, run)
+"""
+    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert Path(env["TORQUE_TEST_LIVE_SENTINEL"]).read_text().splitlines() == [name for name in TOOLS for _ in range(3)]
+
+
+def test_arguments_reach_a_stubbed_program_unchanged(harness, tmp_path):
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    code = f"""
+import json, shutil, subprocess
+explicit = {str(scratch / 'tools/bin' / ('python' + STUB_SUFFIX))!r}
+arguments = {TRICKY!r}
+show = ['-c', 'import json, sys; print(json.dumps(sys.argv[1:]))']
+for command in ('python', 'python3', shutil.which('python'), explicit):
+    run = subprocess.run([command, *show, *arguments], capture_output=True, text=True)
+    assert run.returncode == 0, (command, run.stderr)
+    assert json.loads(run.stdout) == arguments, (command, run.stdout)
+"""
+    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the .cmd shims are the Windows stubs")
+def test_a_shim_started_by_cmd_exe_still_reaches_the_stub(harness, tmp_path):
+    # A caller that is not Python (a batch file, another shell) starts the shim itself.
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    command = f'"{env["COMSPEC"]}" /d /c ""{scratch / "tools/bin/sf.cmd"}" org display"'
+    code = (f"import subprocess; run = subprocess.run({command!r}, executable={env['COMSPEC']!r}, "
+            "capture_output=True, text=True); print(run.returncode, run.stdout)")
+    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert run.stdout.startswith("1 ") and "OfflineBackendUnavailable" in run.stdout
+    assert Path(env["TORQUE_TEST_LIVE_SENTINEL"]).read_text().splitlines() == ["sf"]
 
 
 def test_auth_environment_and_directories_are_isolated(harness, monkeypatch, tmp_path):
@@ -365,3 +434,141 @@ def test_qa_load_timeout_entry_point_exits_incomplete(monkeypatch, capsys):
     assert "INCOMPLETE" in output.err
     assert "PASSED" not in output.out + output.err
     assert "0/0" not in output.out + output.err
+
+
+@pytest.mark.parametrize("arguments,expected", [
+    (["-q"], []),
+    (["-q", "--workers", "1"], []),
+    (["-q", "--workers", "4"], ["-p", "xdist", "-n", "4"]),
+])
+def test_workers_spread_pytest_across_processes_and_keep_executable_suites_serial(
+        harness, monkeypatch, tmp_path, arguments, expected):
+    _fake_repository(harness, monkeypatch, tmp_path, ["test_measured.py"])
+    monkeypatch.setattr(sys, "argv", ["test-offline.py", *arguments])
+    monkeypatch.setattr(harness.importlib.util, "find_spec", lambda name: object() if name == "xdist" else None)
+    calls = []
+
+    def child(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="example self-test PASSED (1 fixtures)\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", child)
+    assert harness.main() == 0
+    pytest_call, suite_call = calls
+    assert pytest_call[1:3] == ["-m", "pytest"] and "--workers" not in pytest_call
+    assert [arg for arg in pytest_call if arg in ("-p", "xdist", "-n", "4")] == expected
+    assert suite_call[-1].endswith("test_measured.py") and "-n" not in suite_call
+
+
+def test_workers_without_pytest_xdist_say_how_to_install_it(harness, monkeypatch, tmp_path, capsys):
+    _fake_repository(harness, monkeypatch, tmp_path, ["test_measured.py"])
+    monkeypatch.setattr(sys, "argv", ["test-offline.py", "-q", "--workers", "4"])
+    monkeypatch.setattr(harness.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("nothing may run"))
+    assert harness.main() == 2
+    assert "pip install '.[dev]'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("arguments,given", [(["-q"], None), (["-q", "--basetemp", "chosen"], "chosen"),
+                                             (["-q", "--basetemp=chosen"], "chosen")])
+def test_tmp_paths_start_from_a_short_base_in_the_scratch_folder_unless_one_is_given(
+        harness, monkeypatch, tmp_path, arguments, given):
+    _fake_repository(harness, monkeypatch, tmp_path, [])
+    monkeypatch.setattr(sys, "argv", ["test-offline.py", "--pytest-only", *arguments])
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs["env"]))
+                        or subprocess.CompletedProcess(command, 0))
+    assert harness.main() == 0
+    [(command, env)] = calls
+    options = [arg for arg in command if arg.startswith("--basetemp")]
+    if given:
+        assert options == [arguments[1]]  # only the caller's own
+    else:
+        [option] = options
+        base = Path(option.split("=", 1)[1])
+        assert base.parent == Path(env["HOME"]).parent and len(base.name) == 1
+
+
+@pytest.mark.parametrize("scratch,limited,noted", [
+    ("C:/tq/qa/torque-offline-abcdefgh", True, False),
+    ("C:/" + "deep-temporary-folder/" * 3 + "torque-offline-abcdefgh", True, True),
+    ("C:/" + "deep-temporary-folder/" * 3 + "torque-offline-abcdefgh", False, False),
+])
+def test_a_deep_temporary_folder_under_the_windows_path_limit_is_named_with_the_fix(harness, scratch, limited, noted):
+    note = harness.path_limit_note(Path(scratch), limited)
+    assert bool(note) is noted
+    if noted:
+        assert "Set TMP and TEMP to a short folder" in note and "LongPathsEnabled" in note
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs a Bash")
+def test_bash_finds_and_runs_every_stub_on_the_isolated_path(harness, tmp_path):
+    # Git Bash resolves a bare name only to a file without an extension.
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    code = f"""
+import json, subprocess
+for name in {(*TOOLS, "python", "git")!r}:
+    found = subprocess.run(['bash', '--noprofile', '--norc', '-c', 'command -v ' + name],
+                           capture_output=True, text=True)
+    assert found.returncode == 0 and '/tools/bin/' in found.stdout.replace(chr(92), '/'), (name, found)
+live = subprocess.run(['bash', '--noprofile', '--norc', '-c', 'sf org list'], capture_output=True, text=True)
+assert live.returncode == 1 and json.loads(live.stdout)['name'] == 'OfflineBackendUnavailable', live
+local = subprocess.run(['bash', '--noprofile', '--norc', '-c', 'git --version'], capture_output=True, text=True)
+assert local.returncode == 0 and local.stdout.startswith('git version'), local
+shown = subprocess.run(['bash', '--noprofile', '--norc', '-c',
+                        'python -c "import json, sys; print(json.dumps(sys.argv[1:]))" "$@"', '_',
+                        'two words', 'say "hi"', 'x&y', 'a^b', '100%'], capture_output=True, text=True)
+assert json.loads(shown.stdout) == ['two words', 'say "hi"', 'x&y', 'a^b', '100%'], shown
+"""
+    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert Path(env["TORQUE_TEST_LIVE_SENTINEL"]).read_text().splitlines() == ["sf"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows names are case-insensitive and carry .exe")
+def test_windows_spellings_of_a_stub_name_reach_the_stub_with_arguments_unchanged(harness, tmp_path):
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    code = f"""
+import json, subprocess
+from jsc_common.tools import run
+arguments = ['line' + chr(10) + 'break', '100% %PATH%', 'x&y', 'say "hi"', 'end' + chr(92)]
+show = ['-c', 'import json, sys; print(json.dumps(sys.argv[1:]))']
+for launch in (subprocess.run, run):
+    for name in ('python.exe', 'python3.exe', 'Python', 'PYTHON', 'PYTHON.EXE'):
+        done = launch([name, *show, *arguments], capture_output=True, text=True)
+        assert done.returncode == 0 and json.loads(done.stdout) == arguments, (name, done)
+    git = launch(['git.exe', '--version'], capture_output=True, text=True)
+    assert git.returncode == 0 and git.stdout.startswith('git version'), git
+    for name in ('SF', 'Sf.exe'):
+        sf = launch([name, 'data', 'query', '--query', 'SELECT Id' + chr(10) + 'FROM Account'],
+                    capture_output=True, text=True)
+        assert sf.returncode == 1 and json.loads(sf.stdout)['name'] == 'OfflineBackendUnavailable', (name, sf)
+"""
+    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+
+
+def test_the_launch_helper_reaches_a_stub_with_every_argument_unchanged(harness, tmp_path):
+    # jsc_common.tools.run is how Torque starts sf; on Windows it quotes a .cmd file for
+    # cmd.exe and cannot carry a line break, so the stub must be dispatched before that.
+    scratch = tmp_path / "isolated"
+    scratch.mkdir()
+    env = harness.offline_environment(ROOT, scratch)
+    code = f"""
+import json
+from jsc_common.tools import run
+query = 'SELECT Id' + chr(10) + 'FROM Account'
+live = run(['sf', 'data', 'query', '--query', query], capture_output=True, text=True)
+assert live.returncode == 1 and json.loads(live.stdout)['name'] == 'OfflineBackendUnavailable', live
+arguments = {TRICKY!r} + [query]
+show = ['-c', 'import json, sys; print(json.dumps(sys.argv[1:]))']
+shown = run(['python', *show, *arguments], capture_output=True, text=True)
+assert shown.returncode == 0 and json.loads(shown.stdout) == arguments, shown
+"""
+    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert Path(env["TORQUE_TEST_LIVE_SENTINEL"]).read_text().splitlines() == ["sf"]

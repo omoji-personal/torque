@@ -165,3 +165,97 @@ def test_simple_commands():
     assert is_simple("sf data update record -v \"Name='a b'\" -o acme-prod")
     for cmd in ("a && b", "a; b", "a | b", "echo $(x)", "a > f", "`x`", "a &", "a\nb", "a <(b)", "a 2>&1"):
         assert not is_simple(cmd), cmd
+
+
+# torque check (docs/checks.md). `check deployed` retrieves into a temporary folder and runs
+# `sf data query` on setup objects; as plain sf commands those are a metadata read and record
+# reads, so the command is a read of the org it names, held to record-data consent, never a
+# write. `check metadata` and `check result` read local files only.
+CHECK_DEPLOYED_CALLS = [
+    "sf project retrieve start --target-org acme-sbx --target-metadata-dir T --unzip --json --metadata Flow:X",
+    "sf data query --target-org acme-sbx --json --query \"SELECT DeveloperName, ActiveVersionId, LatestVersionId "
+    "FROM FlowDefinition WHERE DeveloperName = 'X'\" --use-tooling-api",
+    "sf data query --target-org acme-sbx --json --query \"SELECT ApiName, IsActive, ProcessType, TriggerType "
+    "FROM FlowDefinitionView WHERE ApiName = 'X'\"",
+    "sf data query --target-org acme-sbx --json --query \"SELECT Field, Parent.Name, Parent.IsOwnedByProfile, "
+    "Parent.Profile.Name, PermissionsRead, PermissionsEdit FROM FieldPermissions WHERE Field IN ('A.B__c')\"",
+    "sf data query --target-org acme-sbx --json --query \"SELECT ValidationName, Active, "
+    "EntityDefinition.QualifiedApiName FROM ValidationRule WHERE ValidationName IN ('R')\" --use-tooling-api",
+]
+STRICTNESS = ("local", "read", "check_only", "org_write")
+
+
+def test_check_deployed_is_a_read_at_least_as_strict_as_its_own_calls():
+    plain = [classify("Bash", {"command": c})[0] for c in CHECK_DEPLOYED_CALLS]
+    assert {(r.kind, r.org) for r in plain} == {("read", "acme-sbx")}
+    assert "records" in {r.data for r in plain}
+    route, = classify("Bash", {"command": "torque check deployed --target-org acme-sbx --changed-from r.json"})
+    assert (route.kind, route.org, route.data) == ("read", "acme-sbx", "records")
+    assert all(STRICTNESS.index(route.kind) >= STRICTNESS.index(r.kind) for r in plain)
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    ("torque check deployed --target-org acme-sbx --changed-from r.json", [("read", "acme-sbx")]),
+    ("torque check deployed --target-org=acme-sbx --only Flow:X --as-permission-set Ops", [("read", "acme-sbx")]),
+    ("python -m torque check deployed --target-org acme-sbx --source-dir force-app", [("read", "acme-sbx")]),
+    ("torque check deployed --changed-from r.json", [("no_org", None)]),
+    ("torque check deployed --target-org a --target-org b --changed-from r.json", [("no_org", None)]),
+    ("torque check deployed --target acme-sbx --changed-from r.json", [("admin", None)]),
+    ("torque check deployed --help", [("local", None)]),
+    ("torque check metadata force-app --changed-from r.json", [("local", None)]),
+    ("torque check result r.json --json", [("local", None)]),
+    ("torque check metadata force-app --target-org acme-sbx", [("org_write", "acme-sbx")]),
+])
+def test_check_routes(cmd, expected):
+    assert B(cmd) == expected, cmd
+
+
+def test_check_deployed_carries_the_client_it_names():
+    route, = classify("Bash", {"command": "torque check deployed --target-org acme-sbx --changed-from r.json "
+                                          "--workspace . --client acme"})
+    assert (route.kind, route.org, route.client) == ("read", "acme-sbx", "acme")
+
+
+def _connected(tmp_path, monkeypatch, data):
+    import os
+    from pathlib import Path
+    from torque import consent, workspace as wsmod
+    from torque.presence import Presence
+    yes = lambda: Presence(True, "")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    root = wsmod.init_workspace(tmp_path / "firm", "Firm")
+    wsmod.add_client(root, "Acme")
+    wsmod.set_ai_access(root, "connected", approval="required", presence=yes)
+    letter = tmp_path / "a.pdf"
+    letter.write_bytes(b"agreement")
+    orgs = {"acme-sbx": type("O", (), {"org_id_18": "00D000000000003AAA", "detected_org_type": "sandbox",
+                                       "is_production": False, "instance_url": "https://acme.example.invalid"})()}
+    consent.record_consent(root, "Acme", "2026-09-30", letter, data, ["acme-sbx"], ["Contact"],
+                           presence=yes, resolve=orgs.get)
+    consent.sign_off(root, "Acme", "Reviewer", presence=yes)
+    return Path(os.path.realpath(root))
+
+
+def _decide(root, command):
+    from torque import gate_connected as gc
+    return gc.decide_connected("Bash", {"command": command}, root, root, env={"TORQUE_CLIENT": "acme"},
+                               permission_mode="default", session_id="s", tool_use_id="t").action
+
+
+def test_connected_check_deployed_needs_the_consent_its_queries_need(tmp_path, monkeypatch):
+    # Run from the workspace root, so the source folder is named (the default, the root, holds every client).
+    deployed = "torque check deployed --target-org acme-sbx --changed-from r.json --source-dir clients/acme"
+    query = CHECK_DEPLOYED_CALLS[3]
+    root = _connected(tmp_path, monkeypatch, ["metadata", "records"])
+    assert _decide(root, deployed) == _decide(root, query) == "allow"
+    assert _decide(root, "torque check deployed --target-org other-org --changed-from r.json "
+                         "--source-dir clients/acme") == "deny"
+    assert _decide(root, "torque check metadata clients/acme/force-app --analyzer off") == "allow"
+    assert _decide(root, "torque check result r.json") == "allow"
+
+
+def test_connected_check_deployed_without_records_consent_is_refused(tmp_path, monkeypatch):
+    root = _connected(tmp_path, monkeypatch, ["metadata"])
+    assert _decide(root, CHECK_DEPLOYED_CALLS[3]) == "deny"
+    assert _decide(root, "torque check deployed --target-org acme-sbx --changed-from r.json") == "deny"

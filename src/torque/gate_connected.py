@@ -20,20 +20,28 @@ import shutil
 import urllib.parse
 
 from . import approval, consent, gate, workspace as ws
-from .connected_routes import BROWSER_DATA_CLASSES, INITIATIVE_OWNER, Route, classify, is_simple
+from .connected_routes import (BROWSER_DATA_CLASSES, INITIATIVE_OWNER, ORG_IDENTITY, Route, classify,
+                               is_simple)
 
 RANK = {"allow": 0, "ask": 1, "deny": 2}
 PREFIX = "Connected mode: "
-# A query that answers "which org is this alias?" without printing a credential. It reads a
-# record, so it needs record consent; without it a guarded workspace has its own command.
-ORG_IDENTITY_QUERY = 'sf data query --target-org ALIAS -q "SELECT Id, Name, IsSandbox FROM Organization"'
-ORG_IDENTITY_GUARDED = "torque guarded org --workspace . --client {client} --target-org ALIAS"
+# The query that answers "which org is this alias?" without printing a credential. It reads
+# the org's own identity, which the consent records, so metadata consent covers it
+# (connected_routes.ORG_IDENTITY).
+ORG_IDENTITY_QUERY = ('sf data query --query "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization" '
+                      '--target-org ALIAS')
 CREDENTIAL_REASON = ("`{detail}` prints or takes a credential (an access token, a login URL or a password), so "
-                     "the session never runs it, with or without an approval. To check which org an alias "
-                     "points to, run {identity}; the consultant runs logins in their own terminal.")
+                     "the session never runs it, with or without an approval. {identity} The consultant runs "
+                     "logins in their own terminal.")
+# The approval requests a refusal names, written out so they parse as given. {workspace} is the
+# workspace's own path (_workspace_word): a write runs in a project folder below it.
+WRITE_REQUEST = ("torque approval request --workspace {workspace} --client {client} --change ID --org {org} "
+                 "-- <this exact command>")
+BROWSER_REQUEST = ("torque approval request --workspace {workspace} --client {client} --change ID --org {org} "
+                   "--browser --minutes 20 --purpose TEXT")
 ALL_ORGS_REASON = ("`{detail}` lists every org this machine is logged in to, including orgs outside "
                    "{client}'s consent, so the session never runs it. Use the org aliases in the client's "
-                   "consent (`torque client consent show --workspace . --client {name}`).")
+                   "consent (`torque client consent show --workspace {workspace} --client {name}`).")
 GUARDED_HINT = (" Record data is any plain query or export of the org's records, even one that only counts "
                 "them. What this org's consent covers instead is guarded reads: `torque guarded` with {lanes}; "
                 "each takes --workspace, --client and --target-org, and `torque guarded --help` lists them.")
@@ -99,6 +107,24 @@ def _bound_client(env, workspace: Path) -> str | None:
     except ws.WorkspaceError:
         return None
     return slug if (workspace / "clients" / slug / "client.json").is_file() else None
+
+
+def _workspace_word(workspace: Path, tool_name: str) -> str:
+    """The workspace's path as one word of the shell the session runs its commands in: a
+    PowerShell call gets PowerShell's quoting, a Bash call POSIX quoting (Git Bash on Windows
+    too), any other tool the platform's (ws.command_text)."""
+    windows = True if "powershell" in tool_name.casefold() else False if tool_name == "Bash" else None
+    return ws.command_text([os.path.realpath(str(workspace))], windows=windows)
+
+
+def _identity_advice(bound: str | None, item: dict | None, problems: list[str]) -> str:
+    """How the session learns which org an alias points to: the identity query where the bound
+    client's consent lets it run for an approved org, otherwise from the consultant. A refusal
+    never names a command the gate would refuse in turn."""
+    if bound and not problems and any({"metadata", "records"} & consent.data_allowed(item, org["alias"])
+                                      for org in consent._orgs(item)):
+        return f"To check which org one of {bound}'s approved aliases points to, run {ORG_IDENTITY_QUERY}."
+    return "To check which org an alias points to, ask the consultant."
 
 
 def _guarded(workspace: Path, bound: str | None) -> list[Path]:
@@ -273,6 +299,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
     skipping = bool(permission_mode) and permission_mode not in PROMPT_MODES
     guarded_on = ws.guarded_reads_on(config)
     name = bound or "NAME"
+    here = _workspace_word(workspace, tool_name)
 
     def lanes(org) -> str:
         """What guarded reads can answer for this org where a plain record read cannot, or ''."""
@@ -296,13 +323,11 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         client = _route_client(route)
         if route.kind == "credential":
             # Refused before anything else, bound or not: no consent or approval covers it.
-            # The route carries no org, so with guarded reads on the refusal names both commands.
-            identity = (ORG_IDENTITY_GUARDED.format(client=name) + " (or, where the consent covers record "
-                        "data for that org, " + ORG_IDENTITY_QUERY + ")" if guarded_on else ORG_IDENTITY_QUERY)
-            decisions.append(_deny(CREDENTIAL_REASON.format(detail=route.detail, identity=identity)))
+            decisions.append(_deny(CREDENTIAL_REASON.format(detail=route.detail,
+                                                            identity=_identity_advice(bound, item, problems))))
         elif route.kind == "all_orgs":
             decisions.append(_deny(ALL_ORGS_REASON.format(detail=route.detail, client=bound or "the bound client",
-                                                          name=name)))
+                                                          name=name, workspace=here)))
         elif not bound and (client is not None or route.kind not in ("local", "admin", "unverifiable")):
             decisions.append(unbound)
         elif client not in (None, bound):
@@ -350,6 +375,10 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         elif route.kind in ("read", "check_only"):
             category = route.data or "metadata"
             allowed_data = consent.data_allowed(item, route.org)
+            if category == ORG_IDENTITY:
+                # The org's own identity: metadata consent covers it, and so does record data
+                # (the Organization row is a record), as it did before.
+                category = "records" if "records" in allowed_data and "metadata" not in allowed_data else "metadata"
             lane = category in consent.GUARDED_CLASSES
             # Every `torque guarded` read carries its workspace: the two that read only
             # metadata (`org`, `policy candidates`) are behind the same switch.
@@ -390,7 +419,7 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
                 decisions.append(Decision("allow", ""))
             else:
                 decisions.append(_deny(f"browser changes in {route.org} need a browser window for {route.org}: "
-                                       "`torque approval request --browser --purpose TEXT ...`, "
+                                       f"`{BROWSER_REQUEST.format(workspace=here, client=name, org=route.org)}`, "
                                        "then the consultant grants it."))
         elif route.kind == "org_write":
             if len(writes) != 1 or (command and not is_simple(command, tool_name)):
@@ -419,8 +448,8 @@ def decide_connected(tool_name, tool_input, workspace, cwd, *, env, permission_m
         used, why = approval.consume(workspace, bound, key, pending_write.org, config=config,
                                      session_id=session_id, tool_use_id=tool_use_id, cwd=cwd)
         if not used:
-            return _deny(f"{why}. Ask for it with `torque approval request ... -- <this exact command>`, "
-                         "then stop until the consultant grants it.")
+            request = WRITE_REQUEST.format(workspace=here, client=bound, org=pending_write.org)
+            return _deny(f"{why}. Ask for it with `{request}`, then stop until the consultant grants it.")
         approved_id = why
     try:
         for record in after_allow:

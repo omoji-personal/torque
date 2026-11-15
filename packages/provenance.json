@@ -35,7 +35,7 @@
       "source_path": "packages/qa_orchestrator/qa-router.yaml",
       "source_sha256": "d9f1c7a56817580d7692405aaf4d64bf79b94576bf0d2d88a6abf402688119bd",
       "source_tracked": true,
-      "destination_sha256": "9e9e6c2877c9e42d559e1656fc229ef22f24ecdc55a3cb43c97e39d008e651bb",
+      "destination_sha256": "b54b44ddbeb89fdc7fb854801f8069f0102e9ddd5b409fe009bf93fd775f67f0",
       "adapted": true
     },
     {
@@ -98,7 +98,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/dispatcher.py",
       "source_sha256": "d37863fc4bb6f32935244976631e9a0fe509c3660d67df4968f5b13e87e8c20d",
       "source_tracked": true,
-      "destination_sha256": "bf4928659ff914e9940ac38e0228e0cd226c4c24cb11a2cfe95150e419f1c65a",
+      "destination_sha256": "6e582461b34dcac69a598ad75089b38527c17ca34292d7d47de2944d4dd6c50e",
       "adapted": true
     },
     {
@@ -107,7 +107,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/seed_validator.py",
       "source_sha256": "fa556cd4affb85af87c63837a4305ce9574574c17761fa0491af7ea245ecf292",
       "source_tracked": true,
-      "destination_sha256": "dd309d491105b8b032da7445c1135da3d26a7607e947da5e96d605a338c36125",
+      "destination_sha256": "063b2fb46027f9b8e75fabb2d03b2ee3a5e28b89fe172267628eeae6a5f90d7e",
       "adapted": true
     },
     {
@@ -134,7 +134,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/cli.py",
       "source_sha256": "96bb6753ada72ab93a4cd4dc94a466dc86735269f6edc09d22ca396e42917438",
       "source_tracked": true,
-      "destination_sha256": "e2104aa5af09a8c96724ee09da62b06511d4119e63654b31a7feebf09aeb8240",
+      "destination_sha256": "fcf2be32c440dd6993b8ef6a52802c99aefc146bf1d5bd077a44a86565d53ba0",
       "adapted": true
     },
     {
@@ -152,7 +152,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/report.py",
       "source_sha256": "352695a00986bab15b6f989ee1494665494eea53965055b7f2b9ebfc7ad9c154",
       "source_tracked": true,
-      "destination_sha256": "dabe3f2e3c07817a6f03a96d426fa6f677d9ed216c231bb47872419acf5ae28f",
+      "destination_sha256": "7fb9c99ce7b99511f18faaa5c5f2564e212528405b847a5dbfb4c6dae679fb42",
       "adapted": true
     },
     {
@@ -269,7 +269,7 @@
       "source_path": "packages/revert/jsc_revert/bundle.py",
       "source_sha256": "cf7852c890f13fc4f0519f034c76924cb984ab7f2ee520e69648acc59755fbcb",
       "source_tracked": true,
-      "destination_sha256": "5bc4ac3bbcbb5852421ea4d25c41ebc614e7f2c56d82428eff0976097cc5ac0d",
+      "destination_sha256": "1a968a3b04aa757ad12ddb05e8e8a34aa0c95dfed932eb98077eddc868149b47",
       "adapted": true
     },
     {
@@ -278,7 +278,7 @@
       "source_path": "packages/revert/jsc_revert/org_detect.py",
       "source_sha256": "4e8c78a2c456e040941393430dd1950e65c1a772d890a12d632d13c3865f3eba",
       "source_tracked": true,
-      "destination_sha256": "ee7892c054856aeca16a352f34720e6513fe31eca1211613df2ce3b2c19462c1",
+      "destination_sha256": "7a438af3331ae850e5cd3a4f817f7ba3db69af8456f53211064029bf5318fdee",
       "adapted": true
     },
     {
@@ -296,7 +296,7 @@
       "source_path": "packages/revert/jsc_revert/revert_executor.py",
       "source_sha256": "8d2a28bef1758779a50eeef4af4c88f86e8676a2f474a2104d2c98b79ba6de0f",
       "source_tracked": true,
-      "destination_sha256": "8bc277235a705cdf374a123324cc50272a0a8075b2d854d6b2b9c0e5dd29dd65",
+      "destination_sha256": "b91e30df6ba755383357dd82a45101f0f8b9299de0e66779e4e0ce4637dc3339",
       "adapted": true
     },
     {
@@ -314,7 +314,7 @@
       "source_path": "packages/revert/jsc_revert/post_deploy_polling.py",
       "source_sha256": "565c95f63d6f1e4078c172a25370c46be1d990b1e896d9c3514c0ddf5aafaec2",
       "source_tracked": true,
-      "destination_sha256": "89ca5c95de343b6c9c647b645fabb0b75fbc5df63b01462c14a912c1ed9de529",
+      "destination_sha256": "7643b69c8ee5c681a655be036854e80513e8ce1c01f01b3b594246ef34d5cdaa",
       "adapted": true
     },
     {
@@ -368,7 +368,7 @@
       "source_path": "packages/revert/jsc_revert/cli.py",
       "source_sha256": "c2cd6105a45d7ce342063ec2be0b556eec6b0057e458d95644818adcec421e26",
       "source_tracked": true,
-      "destination_sha256": "606dc2f6fc44160c55b673386f02ae0df65c766bf563aaabb95dedab51b63f32",
+      "destination_sha256": "eae8793ae04c4f66639b3d1650398c8ec307ac999ca28aafd9e2c81da6bd462b",
       "adapted": true
     },
     {
@@ -377,7 +377,7 @@
       "source_path": "packages/revert/jsc_revert/revert_capabilities.py",
       "source_sha256": "54a0081d9b2c3b49322abf6516195394a6578c043608969417a971b03b19721a",
       "source_tracked": true,
-      "destination_sha256": "e337b63c05eddf62d711215d3c9571f440e06326495c030dc019f1c15b1252c3",
+      "destination_sha256": "961ee9fec6bc9be03d67d32f3ea543e884d12c00ab273fc2e7acb72c1805b175",
       "adapted": true
     },
     {
@@ -404,7 +404,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/data_upsert.py",
       "source_sha256": "75386581e0b3426dbc8f0da6c2a191933c2eac2efaff6b4f280fe8a4e85d6f01",
       "source_tracked": true,
-      "destination_sha256": "a6c0896870ccf6c127f0bff21c371ed43ddb7ff82a73486733b16718c4795b50",
+      "destination_sha256": "bd17a49f9736c79dba3e4a6864a058c40cd9bbd3774a96f99658a33a618610b4",
       "adapted": true
     },
     {
@@ -413,7 +413,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/apex_run.py",
       "source_sha256": "0d9092505d222052b957709b4094b89c14ebdf2077b1776bfd4a7bff2405af31",
       "source_tracked": true,
-      "destination_sha256": "49dfe29b6420ef5ba4e156cafa6922d51f07682e424286a9e49e536b187a25cb",
+      "destination_sha256": "f62a6da955db8286948073e34c18958dddcc61ed54e5753d0c9c1c60d9614cc6",
       "adapted": true
     },
     {
@@ -422,7 +422,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/deploy.py",
       "source_sha256": "47bade899a92565ce12a2af9eaaefac4de44b3123d7e2bbb4b140ac31460ced9",
       "source_tracked": true,
-      "destination_sha256": "fd74b37425faa4b159e00ec871093eb2c613b4f0d94b4437236bac4e047da1cf",
+      "destination_sha256": "c4660868e2bb88bed192a2a28b468ac0022d67e4ab76507b33ae76e254f4a60d",
       "adapted": true
     },
     {
@@ -449,7 +449,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/_common.py",
       "source_sha256": "3cce54873ffdd043fe0fd87f4d892e75375e1cfd6872ee63660cbbb1b67b751b",
       "source_tracked": true,
-      "destination_sha256": "b7eb03e71bf6bba1a688484f3660d4dc284ccc4eff0b8867a7fd17097a52c174",
+      "destination_sha256": "a2901eaf9b628342ab52339a11ac1a38ad30cbb19bcfd7bd0c0e963fe69f5a36",
       "adapted": true
     },
     {
@@ -458,7 +458,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_upsert.py",
       "source_sha256": "fdcc02f8ed1e04d456a6999b882d3379fd037de0f71cb42f9e809e13be514926",
       "source_tracked": true,
-      "destination_sha256": "2d6ca2c8fc87dd1592f90c9768ea09510f0b2a687e4c8a9d1dafcdae325fc6ec",
+      "destination_sha256": "7ea5df36fb17cadf05abef95186faafd51d8bfc96f8da2ff33a2b11f61255abf",
       "adapted": true
     },
     {
@@ -485,7 +485,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permset.py",
       "source_sha256": "6af95d8dfc50358bad566ab981ca8d6b9bf8e25be3df2be51d8137307950ab98",
       "source_tracked": true,
-      "destination_sha256": "1e7744522718de2777ae4ecd7fa54e899bc87ee123283c705ff54c7e38be383e",
+      "destination_sha256": "31a76da7b411c09914e21c9dec81e69cff7e3dd693459a4e5201e73f247840c7",
       "adapted": true
     },
     {
@@ -503,7 +503,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/data_bulk_update.py",
       "source_sha256": "554ca9553aed70d3fed647f8f7833bb6b5c81d883bbf5ac42a5483977d68a3a3",
       "source_tracked": true,
-      "destination_sha256": "4b5891230d4c0f0cf0e5a0927d44f7ceeae963133318348568578a47a93c2aea",
+      "destination_sha256": "2f0172308694c4ea413b0bc125d4263e0438fc6b7f8f04f68f978239ba0b53f9",
       "adapted": true
     },
     {
@@ -530,7 +530,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/deploy_quick.py",
       "source_sha256": "2aa16f52373df2b2c0f308bc573ed6d1b79ba03580519509dd1926aa4ac57e83",
       "source_tracked": true,
-      "destination_sha256": "3573013da5de85a2ba0b9c15d2a1f352c2f127522f49f7b84908fbdeb5fc1673",
+      "destination_sha256": "14a81fe46c61448b856a9e6f800c07508fc208bf3db3f666abb9b4c8078f5162",
       "adapted": true
     },
     {
@@ -557,7 +557,7 @@
       "source_path": "packages/revert/jsc_revert/wrappers/org_assign_permsetlicense.py",
       "source_sha256": "e753ebf09e20917ddf7bd9f3cf80c799274a45e1ad2e26c33d9e9cb8e1818c76",
       "source_tracked": true,
-      "destination_sha256": "e8fad76c13f6fd1ae1b57d25153470e07f97490eb30e37182d99f124be208137",
+      "destination_sha256": "33ace7352b8399c2db47035db151dc89717cdcd7284705029354634fe2e9c6f0",
       "adapted": true
     },
     {
@@ -584,8 +584,8 @@
       "source_path": "packages/debug_log_analyzer/tests/test_parsers.py",
       "source_sha256": "299bb3254a61d7af165e8cbcd1f5753a2b9cbdffe26b47b23fdb4791564e0323",
       "source_tracked": true,
-      "destination_sha256": "299bb3254a61d7af165e8cbcd1f5753a2b9cbdffe26b47b23fdb4791564e0323",
-      "adapted": false
+      "destination_sha256": "267923e03c94a68c65d7233cae00bd68b08e326207062aaec22e305984e71073",
+      "adapted": true
     },
     {
       "path": "packages/debug_log_analyzer/tests/test_code_analyzer.py",
@@ -611,8 +611,8 @@
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/parsers.py",
       "source_sha256": "1bebad6428a31266b521af0cdb5cc0ed51f8773e70bb360a320088163821bcc3",
       "source_tracked": true,
-      "destination_sha256": "1bebad6428a31266b521af0cdb5cc0ed51f8773e70bb360a320088163821bcc3",
-      "adapted": false
+      "destination_sha256": "94ce007be36e723fcdca0d00ea47028311b0fdc903cc82e54ae18b6f2f203efd",
+      "adapted": true
     },
     {
       "path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
@@ -620,7 +620,7 @@
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
       "source_sha256": "9e4f018f0645b45951bb8339c7069fd49c308f1242b3958b8313b6adf5a6856e",
       "source_tracked": true,
-      "destination_sha256": "1d4c47a829e3a6192af7da68f7356b72585c6e23eecd35c432a5930ccc4023f3",
+      "destination_sha256": "524462ddd194f9f6ec0604fdc3c7541d015625783700eed85908cbb06817d2c3",
       "adapted": true
     },
     {
@@ -629,7 +629,7 @@
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/code_analyzer.py",
       "source_sha256": "7c7b580ac21280df04cf34c93a318c8881a32ff34322537544a9395d70d991ec",
       "source_tracked": true,
-      "destination_sha256": "efb85817e9e63e6e5b816ff112a6aecfb8c5b2506c52d162ab949abc26556191",
+      "destination_sha256": "d820e243d5360d6a66076bdd2540ba631dbd389085d5fcf157d827d4942c01bc",
       "adapted": true
     },
     {
@@ -647,7 +647,7 @@
       "source_path": "packages/memory/tests/conftest.py",
       "source_sha256": "6138cc44d565adacaeadba92970574bb96638348076732939861e3c7ff45d037",
       "source_tracked": true,
-      "destination_sha256": "0ddc0ae0a42b4183ddafdce9174870794423dc62bd557afd18b59a0760b5ec33",
+      "destination_sha256": "f9306db3a2bd853469661d4108f0e4c027146154b4e0c015586f2211107106d7",
       "adapted": true
     },
     {
@@ -656,26 +656,8 @@
       "source_path": "packages/memory/tests/test_scrubber.py",
       "source_sha256": "5ba8c4e611c36dd4df662d19e37d90dd0e3603c750734547124412dd7bdf4c45",
       "source_tracked": true,
-      "destination_sha256": "1a9c9cc12f818031164eeb85e44d66cba291634e2005179375730ef2e0acef79",
+      "destination_sha256": "9af9d875375afcaafad0b8fa08d56749b6c03b4392c3155fa5febde20cc6af90",
       "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_ranker.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_ranker.py",
-      "source_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
-      "source_tracked": true,
-      "destination_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
-      "adapted": false
-    },
-    {
-      "path": "packages/memory/tests/test_injector.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_injector.py",
-      "source_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
-      "source_tracked": true,
-      "destination_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
-      "adapted": false
     },
     {
       "path": "packages/memory/tests/__init__.py",
@@ -692,52 +674,7 @@
       "source_path": "packages/memory/tests/test_storage.py",
       "source_sha256": "723bb889ebc8cf059b05aa284ee861a9c4162797ae2e3f04179e96048f1d23ba",
       "source_tracked": true,
-      "destination_sha256": "e06fe609f7e83c3b734a2e27bd4947afb8900be19c46810ce9e3a0d4a705c041",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_capture.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_capture.py",
-      "source_sha256": "b949eb1c10fc233640684bd4e932f8b0c33ed62287a6e26127a0b596dbdab41c",
-      "source_tracked": true,
-      "destination_sha256": "036584cc7cda32d5854a7a769695f8bf18ce14f01f197f9843b088e563bd2592",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_index.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_index.py",
-      "source_sha256": "d6aec1c1d3b565a38c3486bdfcf6730c5d5b5d2bf9b49803bc4f87223c738132",
-      "source_tracked": true,
-      "destination_sha256": "388d169e52e480d1a2a59624845a396f7087595291ff92e958f0206ebe95193d",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/tests/test_spool.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/test_spool.py",
-      "source_sha256": "2929d9c0ef196e823af91c3abf75599769164480119bda1c32f5c390fcac366b",
-      "source_tracked": true,
-      "destination_sha256": "1af585a9158556f68347ebeb9e9d5a36991f0d34a29902c71cf479af4177e163",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/index.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/index.py",
-      "source_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
-      "source_tracked": true,
-      "destination_sha256": "a5fc69fb4c660f15868a852416ba36643457c14ff175c5ad821dfd01bb6e4b1a",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/spool.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/spool.py",
-      "source_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
-      "source_tracked": true,
-      "destination_sha256": "546d623aaae986b8f3293e8a6b33426c6e00121c13ff828c479ba9a5366379af",
+      "destination_sha256": "738e1e9f4f3caaa27f84455bea0a579afe8d6ee837bb44cd503fa3caae157638",
       "adapted": true
     },
     {
@@ -746,8 +683,8 @@
       "source_path": "packages/memory/jsc_memory/scrubber.py",
       "source_sha256": "50867444b425b53bfc7209596b267bd842d094a28f814791ed68d6b44f5f4283",
       "source_tracked": true,
-      "destination_sha256": "50867444b425b53bfc7209596b267bd842d094a28f814791ed68d6b44f5f4283",
-      "adapted": false
+      "destination_sha256": "c59d5dffc2a2de90b3e2a669e2d305b8959a4c97153d3035f26b5a1a24f2c70e",
+      "adapted": true
     },
     {
       "path": "packages/memory/jsc_memory/__init__.py",
@@ -755,25 +692,7 @@
       "source_path": "packages/memory/jsc_memory/__init__.py",
       "source_sha256": "b879d0aac327e28b7f9ddfa3f1705902421def0fe5652febca1e239746e20bde",
       "source_tracked": true,
-      "destination_sha256": "db30b99ad681f603d9023cfd27843717483237b42ff771bab1ef2e7714adfcd6",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/injector.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/injector.py",
-      "source_sha256": "9fa7188913da15edd38b49e2340281e173277a99d5f56f03ad84c317676987f4",
-      "source_tracked": true,
-      "destination_sha256": "bd133e43c153afe4997920e105f3c5617ad15161f3ce5e3cba04cd573e972aa8",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/capture.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/capture.py",
-      "source_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
-      "source_tracked": true,
-      "destination_sha256": "e58ca75e1c54e31e88e79f40000a12c80738c5a71d4565abb7301198f99fc3de",
+      "destination_sha256": "33e5af635c52006efbd5baa24dfe6683014613a7bb9bf7ea43990bd91d236f29",
       "adapted": true
     },
     {
@@ -782,7 +701,7 @@
       "source_path": "packages/memory/jsc_memory/cli.py",
       "source_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
       "source_tracked": true,
-      "destination_sha256": "c36d06c061689ff91ea3bbb13cb96d9834b5d9b4d47d5ab04c4f36e880be8723",
+      "destination_sha256": "6e1e929efc0bda72f1378d5d87fdfe6ef83f02cd2d7e8c7e27c59426156d3cbf",
       "adapted": true
     },
     {
@@ -791,25 +710,7 @@
       "source_path": "packages/memory/jsc_memory/storage.py",
       "source_sha256": "6a815a6a996f2d1359c3ba8dbab6a2aa04d9fb3ab70a510feb7c6c3115e9c1a9",
       "source_tracked": true,
-      "destination_sha256": "e31ee9e12c38b2cacd97288f10285bc9b895445fb440ece15a506613d00c4cec",
-      "adapted": true
-    },
-    {
-      "path": "packages/memory/jsc_memory/ranker.py",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/jsc_memory/ranker.py",
-      "source_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
-      "source_tracked": true,
-      "destination_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
-      "adapted": false
-    },
-    {
-      "path": "packages/memory/tests/fixtures/pii_shapes.yaml",
-      "source_repository": "prior-toolkit",
-      "source_path": "packages/memory/tests/fixtures/pii_shapes.yaml",
-      "source_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
-      "source_tracked": true,
-      "destination_sha256": "7366cf8137e188a12a37423531245caca57c36c3ab9d7641caa8ef8f360dc75d",
+      "destination_sha256": "e997c0fd3e6a723c30eccd52f33bb5eefba6487fb0a536b100bd79c1b2e91223",
       "adapted": true
     },
     {
@@ -827,7 +728,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/matrix.py",
       "source_sha256": "5ee5e491f99e98316ac492800e8225cbb3e9ef45bd1ddd886efa5604a24360d4",
       "source_tracked": true,
-      "destination_sha256": "d41e521903af2aadde8c0991e13b099f08a3fa719daa9149575c0a09e3143126",
+      "destination_sha256": "c1887e9bf275789df97f7da0b038e510a5bf4745ffc45dae70d390ca573af8c7",
       "adapted": true
     },
     {
@@ -836,7 +737,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/auth.py",
       "source_sha256": "b3ca642951f151b96fc22d675a6ceadb85ec12ec60198c788437cbe2d8595e4c",
       "source_tracked": true,
-      "destination_sha256": "0d04bfcde63fe3a7c5e1fd7f6814fca40978a61c3dd9ade462c89798e0a0309c",
+      "destination_sha256": "08737473c8092b08d4a7cc7f591793f184bc90a61396807330efc7455d4daab0",
       "adapted": true
     },
     {
@@ -845,7 +746,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/runner.py",
       "source_sha256": "2dd2825125d554bd79dc5d0d623445d98ddac520bf3a7ba10327d55b0392c769",
       "source_tracked": true,
-      "destination_sha256": "0f2a91c34c051426cf6d68943847c958487c407d019d5228c27e95a2e6f4387f",
+      "destination_sha256": "af8b3e1c11123d4d013cf31d0871e73484d3b49506ddfda2612f93a6ed2d201c",
       "adapted": true
     },
     {
@@ -854,7 +755,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/suite.py",
       "source_sha256": "40e81f606e0e88b7862ca72367b2662a192ec9be8a0af567979f1c41893de125",
       "source_tracked": true,
-      "destination_sha256": "cf2a5fadf19753e62b6296a2aa4cb1bc62524b721b2b35e4f25d7c87188ab054",
+      "destination_sha256": "e5db1e101414bb6236915e93f8482775f56493fcb63f093f974b7886f4596314",
       "adapted": true
     },
     {
@@ -863,7 +764,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/vision.py",
       "source_sha256": "60fa4ccb2379b4827eaaa92ea8e6b41ca01e2abbdf2a5f7925c278f31dbfb394",
       "source_tracked": true,
-      "destination_sha256": "3073bf018f390ec3210c886ede03b93c75e0502e2337e8b5f76d8833aff10a3d",
+      "destination_sha256": "22387dfbfb392ba86cab6dc7698d6c85ea20eca301dd9646222c17d4290025af",
       "adapted": true
     },
     {
@@ -872,7 +773,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/manifest.py",
       "source_sha256": "5d52ad56d5acbf075b8cf8f96b28694253edee4dc33b3867ce048ac0b224fc25",
       "source_tracked": true,
-      "destination_sha256": "7b5e78b908903f57bc7a8b717bfd064c58bba72ccd816793be2e126a10c83a0d",
+      "destination_sha256": "457c548de00274a7d4b1c573687de2983fb04a2db087b57a72b52eac159299a0",
       "adapted": true
     },
     {
@@ -890,7 +791,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/flow_spec.py",
       "source_sha256": "2a98b35da36cbf3d6032f6facaf6b93996d4f0883896e9e317403403152458fb",
       "source_tracked": true,
-      "destination_sha256": "33b8bf9babce54a6d2f287b562cdf0084ef8db638af4d5d685fd584a1d1b21a3",
+      "destination_sha256": "8e023d6dc0e99bd199ec6f73374a1a695c7c5185283b7f413611713b30ff173d",
       "adapted": true
     },
     {
@@ -899,7 +800,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
       "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
       "source_tracked": true,
-      "destination_sha256": "24626c451009b32751a2d51fb1e4d54b274fa13f484665db29dc8ffecf1692f8",
+      "destination_sha256": "9c9c67c25e1a4c18e50407968bf5788b58b44f2748c1cae9f0f64fc2d83d1a48",
       "adapted": true
     },
     {
@@ -926,7 +827,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/sf_client.py",
       "source_sha256": "8e6979337830478d413126b80272eb2ed0ae4a4669952475fa51dfd3d05c48c9",
       "source_tracked": true,
-      "destination_sha256": "bd5fdce5135084cde11c3023fb644605b4cfe1049354d49ff7dfc64f0fefa661",
+      "destination_sha256": "9186ce32768f710f8aa2c39372a45eb2749a6b73e51993a0d42f3cbcb0dabb18",
       "adapted": true
     },
     {
@@ -935,7 +836,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/report.py",
       "source_sha256": "32ddc229bdc0e9eb2c7012f734cafe23f8ea10bdcf7da2c3a225f2c5df5511e2",
       "source_tracked": true,
-      "destination_sha256": "3347cbfc5ad938e1ec10d3adb0b78de47435303a864ad76848122305fd4d9eb8",
+      "destination_sha256": "1e0afe1038e9d33edfbc3db7219c56b1e4e7c201d15d1246159276d71fc67d17",
       "adapted": true
     },
     {
@@ -962,8 +863,8 @@
       "source_path": "packages/browser_tests/tests/test_sf_client.py",
       "source_sha256": "8a2b0d03026aad7b8f20b09707c821d0d72923c561b55b4c9154f599fe137585",
       "source_tracked": true,
-      "destination_sha256": "8a2b0d03026aad7b8f20b09707c821d0d72923c561b55b4c9154f599fe137585",
-      "adapted": false
+      "destination_sha256": "fe264454097c38c534ad90e45f140929a982bc69bcbf43885f6e36f60b871bb4",
+      "adapted": true
     },
     {
       "path": "packages/browser_tests/tests/__init__.py",
@@ -980,7 +881,7 @@
       "source_path": "packages/browser_tests/tests/test_matrix.py",
       "source_sha256": "9244ab6248e134e0b63631e98b0bd872b1e06938412b0c41e3ee920fb2f64c5b",
       "source_tracked": true,
-      "destination_sha256": "86932f938bfb226513824156549aa9a1ed40b38c1e5e6c429d9084c8c314dcce",
+      "destination_sha256": "b14a6e02fc69882b967dd47cff9bdad0a4c1a2cf58c1724d6893d331bc3955fd",
       "adapted": true
     },
     {
@@ -989,7 +890,7 @@
       "source_path": "packages/browser_tests/tests/test_report_scorer.py",
       "source_sha256": "df3452cea2535fe79e9fe50539b6045e37362262f693cd487ac2e72eb4364812",
       "source_tracked": true,
-      "destination_sha256": "f1b89e9c5c66d357183b9c43c581021ecefffb01e614643dec64e982f1bc1134",
+      "destination_sha256": "24df866a5cfc7227043ce365125066b44e8ab1c59749e1658ff73380a1f8cd04",
       "adapted": true
     },
     {
@@ -1142,8 +1043,8 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/toast.py",
       "source_sha256": "8e6bfd0c7f5caf0df69c1c1af18176e85b8b3178e82292f7aa125b1e62680034",
       "source_tracked": true,
-      "destination_sha256": "8e6bfd0c7f5caf0df69c1c1af18176e85b8b3178e82292f7aa125b1e62680034",
-      "adapted": false
+      "destination_sha256": "006497d6fed79a30b09c7de1e7ac40a6006614e648b0cf3d4a610970606a05eb",
+      "adapted": true
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/modal.py",
@@ -1160,8 +1061,8 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/library/lightning_components/record_form.py",
       "source_sha256": "4226897103d24165a4f740baeed177513d0c672c8eac0f40995a41bb3e9cf1f8",
       "source_tracked": true,
-      "destination_sha256": "4226897103d24165a4f740baeed177513d0c672c8eac0f40995a41bb3e9cf1f8",
-      "adapted": false
+      "destination_sha256": "b087533dca8298cb0fd6cf523ebcb596ee3d74f4674f24588e837834f11649f3",
+      "adapted": true
     },
     {
       "path": "packages/meeting_processor/tests/test_meeting_processor.py",
@@ -1169,7 +1070,7 @@
       "source_path": "packages/meeting_processor/tests/test_meeting_processor.py",
       "source_sha256": "53107a85e270eb9f74af35f92626f352e2db8b36311dede73cda8399b8f7f256",
       "source_tracked": true,
-      "destination_sha256": "938f391ebef9f90d8dc7e9ef17f441a05282a4ef10d1399759636c35811ab6d7",
+      "destination_sha256": "d7acf530640a71cf5cf6c64c73fe250aa5e5d5265c33e80e0e9fb601d124fd0c",
       "adapted": true
     },
     {
@@ -1268,7 +1169,7 @@
       "source_path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/harness.py",
       "source_sha256": "a5794b54bb021fd20706ccbcef50515fd95e43ea549803025ac0181bed2d5dec",
       "source_tracked": true,
-      "destination_sha256": "2ef26d92696900bf81fb2ad3d22e7f9e20acfdf0ebc6cd0c33823b66eb6efce9",
+      "destination_sha256": "1fc5536079b523760b5a1be7b85fedaa3fa0c6df50a4cc5b39ea6fa7eca15c68",
       "adapted": true
     },
     {
@@ -1340,7 +1241,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/sf.py",
       "source_sha256": "f75b960146b7640af07f4d3ddb3080ff7213070a4d2c523119fe9d618c830f1c",
       "source_tracked": true,
-      "destination_sha256": "932f1393442150a010eded1e33b3189c2f83fabaad9cc909fc4ed5d79ae5d9aa",
+      "destination_sha256": "38580cd4322dd8ee0d874493d3b992713d01cdfbb6ce7104012d22c707d1125b",
       "adapted": true
     },
     {
@@ -1367,7 +1268,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
       "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
       "source_tracked": true,
-      "destination_sha256": "a227aaa47c862edf54bf0c72fae4888162110d171703c1cf289ea20528c2eb5e",
+      "destination_sha256": "e5e3f56704af5cc9f1db57187a0febc1212c02e93e80a9980f94468274807be0",
       "adapted": true
     },
     {
@@ -1421,7 +1322,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/provenance.json",
       "source_sha256": "3d2f4d9da6fe038d03b08f0b6df2063451d03c7b95fef4a89f8c79fc2edcfbf0",
       "source_tracked": true,
-      "destination_sha256": "0e29a384674d89e726996a86adcc8966f61124bcae1758434d2c358171370d09",
+      "destination_sha256": "015c5c7bea1952507a55ba57e6054b0ebbe47cb2f8008e07a0dc639e20cc3e8d",
       "adapted": true
     },
     {
@@ -1430,8 +1331,8 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
       "source_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
       "source_tracked": true,
-      "destination_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
-      "adapted": false
+      "destination_sha256": "15257065b6cfc222e3ef7464830509433ec890fea3c3137a7d296f06dadba81b",
+      "adapted": true
     },
     {
       "path": "packages/ai_prompt_regression/jsc_ai_prompt_regression/fixtures/insight_action_minimal/input.txt",
@@ -1456,7 +1357,7 @@
     {
       "path": "packages/browser_tests/jsc_browser_tests/diagnostics.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "4856bf3eaad9a751a4722cb0ad47dbb27a4f21b78e4d8df048cad2d834a781ee"
+      "destination_sha256": "ddda6c08bb1c4eef91d0466cee1b484770d8102ea23904a2abc1e5146c04522b"
     },
     {
       "path": "packages/browser_tests/jsc_browser_tests/provisioning/fixtures.py",
@@ -1481,7 +1382,7 @@
     {
       "path": "packages/jsc_common/tests/test_continuation.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "74b2c9f734b1498f29bf411cb904443c67541aabc546cc880a2f9bb228819cbf"
+      "destination_sha256": "711455fe7db025aaadfa6e4c4959254a8a163560d34a88f1034f861465ae3846"
     },
     {
       "path": "packages/licenses/Apache-2.0.txt",
@@ -1501,7 +1402,7 @@
     {
       "path": "packages/qa_orchestrator/tests/test_report_completeness.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "a23430e686a0190c0a7ae156b073437663438eef6dd88e12cdbc5a3ba52d7f52"
+      "destination_sha256": "aa623bb2eb164445e30bc13047c069941b40491c7f3d4fa8e26645bb87791ce7"
     },
     {
       "path": "packages/revert/jsc_revert/update_fields.py",
@@ -1526,7 +1427,7 @@
     {
       "path": "packages/revert/tests/test_org_assign_permset.py",
       "origin": "authored for Torque continuation public product work",
-      "destination_sha256": "ef8defb74f7ab6df0797b8fe046e26b32cd4613050be8a77ccd631d6d3a1dca6"
+      "destination_sha256": "6ceec0b34efd9d5e3615b5855222f31ad392b5e5ce0c99d94543979e99c333ff"
     },
     {
       "path": "packages/qa_orchestrator/tests/test_meta_api_transport.py",
@@ -1673,5 +1574,85 @@
     "org/auth state, actual debug logs, snapshots and meeting artifacts",
     "global hooks, restrictive command shims and shell installation",
     "node_modules, caches and egg metadata"
-  ]
+  ],
+  "removed_files": [
+    {
+      "path": "packages/memory/tests/test_ranker.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_ranker.py",
+      "source_sha256": "db469ddd4e7bb642099a93a8bda34ebad21053efb0afc88e9eb2bfeff2545f2c",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_injector.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_injector.py",
+      "source_sha256": "ae43ff070ce8f207ba46627a5bd08606c45fc3566c6136350202242eb82981d1",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_capture.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_capture.py",
+      "source_sha256": "b949eb1c10fc233640684bd4e932f8b0c33ed62287a6e26127a0b596dbdab41c",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_index.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_index.py",
+      "source_sha256": "d6aec1c1d3b565a38c3486bdfcf6730c5d5b5d2bf9b49803bc4f87223c738132",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/test_spool.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/test_spool.py",
+      "source_sha256": "2929d9c0ef196e823af91c3abf75599769164480119bda1c32f5c390fcac366b",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/index.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/index.py",
+      "source_sha256": "e2e335d0938f5559b7d3b568c5d986c36788268b492c14d57e9b4d6308d1727d",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/spool.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/spool.py",
+      "source_sha256": "93471b4e8c0940caaab1ffec96ff21220432f28137e235671962d42e42fdb1a2",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/injector.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/injector.py",
+      "source_sha256": "9fa7188913da15edd38b49e2340281e173277a99d5f56f03ad84c317676987f4",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/capture.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/capture.py",
+      "source_sha256": "c4b92350b9c0080f43f9a33e53c4170dc62fc995f58af8cddbed485e0c6b1a10",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/jsc_memory/ranker.py",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/jsc_memory/ranker.py",
+      "source_sha256": "7c2b27d052f31945d5e7701e194e9f556f06326050f3dfee092ab14323a1cd3f",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    },
+    {
+      "path": "packages/memory/tests/fixtures/pii_shapes.yaml",
+      "source_repository": "prior-toolkit",
+      "source_path": "packages/memory/tests/fixtures/pii_shapes.yaml",
+      "source_sha256": "56d4349b24ae58aa512ee166121d79fea5232513d2184bfe2c63df41316f4ad0",
+      "removed": "retired with the lessons rework (2026-11): the hook-driven capture, spool, ranker, index and injector had no caller; the record format, store, scrub and commands were rewritten"
+    }
+  ],
+  "removed_files_meaning": "Files selected from the source and later removed here; the source hash is retained, there is no destination."
 }

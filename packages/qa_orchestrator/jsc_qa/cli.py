@@ -42,12 +42,17 @@ ONE_OF_DEFAULT_PREFERENCE = ["Funct-Pl", "Funct-MCP", "Funct-Inspect"]
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """`jsc-qa run <change-description> --org <alias>` — main entry point."""
+    """`jsc-qa run <change-description> --org <alias>`: the main entry point.
+
+    Exit codes (report.result_exit_code): 0 every check passed; 1 a check failed;
+    2 nothing failed but checks could not run (or the run itself could not start);
+    3 incomplete coverage.
+    """
     try:
         rt = router.load_router()
     except (FileNotFoundError, router.RouterValidationError) as e:
         print(f"error: {e}", file=sys.stderr)
-        return 1
+        return 2
 
     # Scored, ranked match (A1.2/A1.3) — preserves MULTI-change-type matching.
     # A deploy that touches N metadata types routes to N CT rows; we proceed with
@@ -83,7 +88,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"  Or check qa-router.yaml for taxonomy.",
             file=sys.stderr,
         )
-        return 1
+        return 2
 
     # When multiple CTs match, print the ranked list so the operator sees WHY
     # each one routed + PROCEED with the full set (A1.3).
@@ -182,7 +187,10 @@ def cmd_token_grant(args: argparse.Namespace) -> int:
     org_id_18 = _get_org_id_18(args.org)
     if org_id_18 is None:
         print(f"error: cannot resolve org id for {args.org!r}", file=sys.stderr)
-        print(f"  is sf CLI authenticated to that alias? Try: sf org display --target-org {args.org}",
+        # The Organization query prints no credential (`sf org display` printed the access
+        # token before Salesforce CLI 2.136.8).
+        print("  is sf CLI authenticated to that alias? Try: sf data query --query "
+              f"\"SELECT Id, Name, IsSandbox, OrganizationType FROM Organization\" --target-org {args.org}",
               file=sys.stderr)
         print(f"  to skip live detect and mint with a placeholder anyway, set JSC_QA_TOKEN_ALLOW_PLACEHOLDER=1",
               file=sys.stderr)
@@ -249,7 +257,9 @@ def _is_production_alias(alias: str) -> bool:
 
 
 def _get_org_id_18(target_org: str) -> str | None:
-    """Best-effort org_id_18 resolution via sf CLI."""
+    """Best-effort org_id_18 resolution via sf CLI, through the Organization query.
+    It prints no credential; the CLI's org display command is not used because
+    Salesforce CLI releases before 2.136.8 print the access token there."""
     import json
     import subprocess
     try:  # the shared launcher finds sf where Windows installs it as a batch file
@@ -258,15 +268,17 @@ def _get_org_id_18(target_org: str) -> str | None:
         run_tool = subprocess.run
     try:
         proc = run_tool(
-            ["sf", "org", "display", "--target-org", target_org, "--json"],
-            capture_output=True, text=True, timeout=10,
+            ["sf", "data", "query", "--query", "SELECT Id FROM Organization",
+             "--target-org", target_org, "--json"],
+            capture_output=True, text=True, timeout=30,
         )
         if proc.returncode != 0:
             return None
         data = json.loads(proc.stdout)
-        org_id = data.get("result", {}).get("id", "")
-        return org_id if len(org_id) == 18 else None
-    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+        records = (data.get("result") or {}).get("records") or []
+        org_id = records[0].get("Id", "") if records and isinstance(records[0], dict) else ""
+        return org_id if isinstance(org_id, str) and len(org_id) == 18 and org_id.startswith("00D") else None
+    except (subprocess.TimeoutExpired, OSError, ValueError, AttributeError):
         return None
 
 

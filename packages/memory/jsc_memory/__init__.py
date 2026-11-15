@@ -1,31 +1,22 @@
-"""jsc_memory — recursive lesson capture system, continued from the earlier toolkit.
+"""jsc_memory: Torque's lessons loop (capture, store, find again at the point of use,
+judge, review, promote). The package name is kept from the earlier toolkit.
 
-See `.claude/rules/lesson-capture.md` for the operator-facing contract.
-See `audits/2026-05-12-lesson-capture-redesign/plan-v5.md` for the design.
+- `lesson`    one lesson, one Markdown file with a small YAML front matter
+- `storage`   scopes are folders (client, initiative, firm; the platform ships with the
+              package); atomic writes, one lock, an events log, tolerance of bad files
+- `scrubber`  what may not be saved: credentials in every scope, client names in firm scope
+- `vocab`     words to tasks, metadata types and error matchers, for capture and recall
+- `intake`    capture a lesson, save what a session taught, list a host's own memory
+              files, import the earlier JSON store
+- `recall`    match, rank and print lessons; `recall.for_command` is the function other
+              packages call before a consequential step
+- `feedback`  helpful, stale, verify, retire, restore, edit
+- `review`    the review report, the counts, the doctor report and the self-check
+- `promote`   a proposal for a wider or stronger form; client-to-firm is applied here
+- `cli`       `torque lesson` (the `jsc-memory` script runs the same commands)
 
-Public API:
-- `storage`: load/save L1 (review queue) / L2 (active) / L3 (archive)
-- `spool`: per-session event spool (capture-time)
-- `scrubber`: source-typed PII scrubber (SOQL/JSON/CLI-table/narrative)
-- `capture`: Stop hook synthesis (spool → candidates)
-- `ranker`: surface_score formula + decay
-- `injector`: index-backed top-K relevance match for SessionStart
-- `index`: atomic + locked index updates
-- `cli`: CLI entry point (capture, helpful, stale, show)
-
-Compatibility shim:
-- `storage.load_framework_memory()` preserves the symbol referenced in
-  `packages/hooks/session_start_context.py:_proactive_l3_section`. It returns
-  an object whose `.lessons` attribute is empty (no L3 framework lessons in v1).
+User guide: docs/lessons.md.
 """
 
-__version__ = "1.0.0"
-__schema_version__ = 1
-
-from . import storage  # noqa: F401
-from . import scrubber  # noqa: F401
-from . import spool  # noqa: F401
-from . import index  # noqa: F401
-from . import ranker  # noqa: F401
-from . import capture  # noqa: F401
-from . import injector  # noqa: F401
+__version__ = "2.0.0"
+__schema_version__ = 2

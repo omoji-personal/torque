@@ -145,7 +145,7 @@ def handle(event: dict, environ) -> int:
             if not isinstance(tool_input, dict) or not isinstance(event.get("tool_name"), str):
                 return 0
             cwd = Path(os.path.realpath(str(event.get("cwd") or ".")))
-            for root in gate._connected_workspaces(cwd, tool_input):
+            for root in gate._connected_workspaces(cwd, gate._touched_paths(tool_input, cwd)):
                 env = launch.bound_env(environ, root)
                 if env.get("TORQUE_CLIENT"):
                     _record(Path(root), env["TORQUE_CLIENT"], event)

@@ -9,7 +9,7 @@ surfaces:
       and/or by a strict SHA-256-fingerprinted local package.xml to report terminal
       success in the explicit target-org context
     status: production
-    invocation: jsc-qa run <change-description> --org <alias> --deploy-job-id <0Af...>
+    invocation: torque qa run <change-description> --org <alias> --deploy-job-id <0Af...>
       (--deploy-manifest <package.xml> and/or --deploy-component <TYPE:FULL_NAME>
       [...]) (invokes sf project deploy report --target-org <alias> --job-id <0Af...>
       --json; rejects manifest wildcards, never uses most-recent, and excludes package.xml
@@ -17,34 +17,35 @@ surfaces:
   Funct-Pl:
     description: Functional UI walkthrough via Playwright Python (scripted/CI lane).
       Uses Layer-1 UTAM-mirrored wrappers under jsc_browser_tests/library/lightning_components/
-      + Layer-2 LightningPage thin core. Per docs/superpowers/specs/2026-05-21-sf-browser-testing-playwright-mcp-design.md
-      (v3).
+      + Layer-2 LightningPage thin core.
     status: production
-    invocation: /qa-browser <flow> <org>
+    invocation: torque browser browser <flow> --target-org <alias> --workspace <workspace>
+      --client <client>
   Funct-MCP:
-    description: Functional UI walkthrough via playwright-mcp (Claude-driven operator-UAT,
-      turn-by-turn). Replaces chrome-devtools-mcp as the driver per design-v3 empirical
-      benchmark on sample-dev 2026-05-21 (Lightning sub-tab click 130ms via playwright-mcp
-      vs documented failure on chrome-devtools-mcp).
+    description: Functional UI walkthrough in the host's browser tab, driven turn by
+      turn by the agent with whatever browser tool the host provides. The tab is signed
+      in through the Salesforce front door with `torque browser login`, with no password.
+      A tool that drives through the DevTools protocol alone has dropped Lightning sub-tab
+      clicks; prefer a Playwright-based or extension-based tool for driving.
     status: production
-    invocation: (operator/Claude drives mcp__playwright_* tools directly; install
-      via `claude mcp add playwright "npx @playwright/mcp@latest"`)
+    invocation: torque browser login --target-org <alias> --workspace <workspace> --client
+      <client>, then navigate the tab to the local address it prints and walk the change
+      with the host's browser tool
   Funct-Inspect:
-    description: "Non-driving inspection: Lighthouse audits, network request capture,\
-      \ console history, accessibility snapshots via chrome-devtools-mcp. Narrowed\
-      \ role per design-v3 \u2014 retired from primary-driver duty."
+    description: "Non-driving inspection: performance and accessibility audits, network\
+      \ request capture and console history with a browser inspection tool the host\
+      \ provides. Not for driving a Lightning page."
     status: production
-    invocation: (operator/Claude drives mcp__plugin_chrome-devtools-mcp_chrome-devtools__*
-      tools directly; Lighthouse via lighthouse_audit, network via list_network_requests,
-      console via list_console_messages)
+    invocation: the host's browser inspection tool, on a tab signed in with `torque
+      browser login`
   Side-Eff:
     description: 'Side-effect verification: SOQL post-check + jsc_loganalyzer health
       score (packages/debug_log_analyzer)'
     status: production
-    invocation: jsc_loganalyzer.cli --target-org <explicit-org>
+    invocation: torque logs --target-org <explicit-org>
   Parity:
-    description: Cross-org per-field SOQL parity check (verify-deploy.py); DATA rows
-      only
+    description: Cross-org per-field SOQL parity check (the client's own script, named
+      in config/parity.json); DATA rows only
     status: production
     invocation: TORQUE_PARITY_SCRIPT with explicit TORQUE_BASELINE_ORG
   Vision:
@@ -53,10 +54,13 @@ surfaces:
     status: production
     invocation: Optional configured screenshot analysis; client/provider scope required
   Multi-Prof:
-    description: "Multi-profile UAT via Login As (admin \u2192 Standard User / Platform\
-      \ User)"
+    description: Multi-profile UAT as each user in the client's test-user seed, through
+      Log in as from the admin session; the signed-in user is confirmed in the page before
+      each journey.
     status: production
-    invocation: /qa-multiprofile <flow> <org>
+    invocation: torque browser multiprofile <flow> --target-org <alias> --workspace <workspace>
+      --client <client>; one user in a host tab with torque browser login --as-alias
+      or --as-user
   Adv-Probe:
     description: "Editable Apex null/empty test drafts for direct public/global methods.\
       \ Every case contains an intentionally failing DRAFT assertion; replace it with\
@@ -66,22 +70,21 @@ surfaces:
     status: available_draft_generation
     invocation: "Auto-invoked when /qa change-description names .cls paths (.trigger\
       \ paths are filtered + surfaced as dropped \u2014 jsc_probes does not yet support\
-      \ trigger-aware synthesis per R1-Codex-007). Also accessible directly: PYTHONPATH=packages/adversarial_probes\
-      \ python3 -m jsc_probes.cli --target-class <file> --output <dir>. Honors JSC_QA_ADV_PROBE_MAX_FILES\
+      \ trigger-aware synthesis per R1-Codex-007). Also accessible directly: torque probes\
+      \ --target-class <file> --output <dir>. Honors JSC_QA_ADV_PROBE_MAX_FILES\
       \ (default 10, min 1), JSC_QA_ADV_PROBE_BUDGET_S (default 300, min 10), JSC_QA_ADV_PROBE_OUT\
       \ (default per-dispatch uuid'd subdir under $TMPDIR; if operator-set, must be\
       \ a writable directory; existing generated files are preserved)."
   Hook-Gate:
-    description: PreToolUse hook gates (deploy_gate, namespace_touch_gate, knowledge_readonly_gate,
-      revert_warning_pretool)
+    description: Retired. Torque installs no global command hooks; the name is kept
+      so that a router file that still lists it loads. It never reports a check as done.
     status: deferred
     invocation: No global command hooks installed
   TAA:
-    description: Multi-model adversarial audit (Claude + Gemini + Codex per multi-model-audit.md)
+    description: Multi-model adversarial audit (three independent model reviews and a synthesis)
     status: production
-    invocation: scripts/run-taa-audit.sh OR manual dispatch per multi-model-audit.md
-    cost_warning: "EXPENSIVE \u2014 reserve for behavioral-rule changes + ship-gates\
-      \ per multi-model-audit.md"
+    invocation: Manual dispatch of the reviews when the consultant asks; Torque ships no runner
+    cost_warning: "EXPENSIVE \u2014 reserve for behavioral-rule changes + ship-gates"
   Hostile-QA:
     description: Adversarial QA via hostile-qa-auditor subagent (Opus)
     status: production

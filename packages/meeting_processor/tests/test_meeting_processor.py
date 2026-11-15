@@ -6,6 +6,12 @@ import sys
 import os
 import textwrap
 
+if __name__ != "__main__":
+    # The checks below run at module level and end in sys.exit, so importing this
+    # file (pytest collection) must stop here; scripts/test-offline.py runs it as a script.
+    import pytest
+    pytest.skip("standalone fixture suite; scripts/test-offline.py runs it", allow_module_level=True)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from meeting_processor.parse_transcript import detect_format, parse_transcript, Segment

@@ -34,5 +34,5 @@ class FlowCtx:
     values: dict                        # client-values.yaml overrides (baseline defaults)
     seed: dict                          # test-users.json entry for `profile`
     handles: dict                       # ids from provision(), consumed by run/verify/teardown
-    page: Any                           # playwright Page (None in offline tests)
+    page: Any = field(repr=False)       # playwright Page (None in offline tests); its repr names its address
     sf: Any                             # SfClient (FakeSfClient offline)

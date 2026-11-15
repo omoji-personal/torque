@@ -1,17 +1,9 @@
 # /lesson-stale
 
-Mark a specific lesson outdated while preserving its history.
+Take a wrong or outdated lesson out of recall at once, with the reason, keeping its history. Use it when a lesson Torque showed you no longer holds.
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-Use the selected client and supplied lesson ID:
-
-```sh
-torque lesson stale <lesson-id> --workspace <private-path> --client <client-name>
-```
-
-Record why the lesson is no longer applicable when context provides that evidence.
-The inherited store increments stale state and may archive after repeated marks;
-inspect the actual result rather than promising immediate deletion. Keep the prior
-record as history and create a corrected scoped lesson when useful. This action
-does not edit public rules, other clients' lessons or model memory automatically.
+`torque lesson stale <id> --reason <why> --workspace <private-path> --client <client-name>` (the reason is required).
+Name the lesson that replaces it with `--superseded-by <id>`; `torque lesson restore <id>` undoes the mark.
+Every lesson command is in `/lesson`.

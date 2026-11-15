@@ -45,7 +45,8 @@ def test_the_rule_file_no_longer_says_reading_pages_is_fine(w):
     text = flat(RULE)
     assert "Reading pages is fine" not in text
     assert "for reading a page as well as for changing one" in text
-    assert "torque browser ... --target-org ALIAS" in text and "torque approval request --browser" in text
+    assert "torque browser ... --target-org ALIAS" in text
+    assert gc.BROWSER_REQUEST.format(workspace="W", client="NAME", org="ALIAS") in text
     # What it says is what the gate does: a page read through a browser tool is refused,
     # with or without a window, and Torque's own browser is the route that needs one.
     for tool, arguments in (("mcp__claude-in-chrome__read_page", {"tabId": 1}),
@@ -72,7 +73,9 @@ def test_the_rule_file_names_the_refused_commands_and_the_safe_query(w):
 def test_connected_doc_lists_what_is_refused_and_what_gets_past():
     text = flat(REPO / "docs" / "connected-approval.md")
     section = text.split("## Credential and org-listing commands", 1)[1].split("## Two approval tiers", 1)[0]
-    assert gc.ORG_IDENTITY_QUERY in section and "must cover `records`" in section
+    assert gc.ORG_IDENTITY_QUERY in section and "metadata consent covers it" in section
+    for command in ("org auth show-access-token", "org auth show-sfdx-auth-url", "org auth show-user-password"):
+        assert f"`{command}`" in section, command
     for phrase in ("`org display` and `org display user`, with any flags", "`--url-only`", "`--flags-dir`",
                    "`SF_CONTAINER_MODE`", "`org generate password`", "every `org login` variant",
                    "`auth list`, `alias list` and `env list`", "`force:org:display`", "`sf display org`",
@@ -119,7 +122,9 @@ def test_build_only_doc_states_the_new_blocks_and_their_limits():
                    "Desktop Commander"):
         assert phrase in limits, phrase
     assert "In build-only and connected mode the same check fails closed" in text
-    assert "The `full`-mode check never blocks by failing" in text
+    # Full mode's record check: best effort, with a text-only floor on its error path.
+    assert "the check never blocks by running long" in text
+    assert "falls back to a cheap text test that cannot itself fail" in text
 
 
 @pytest.mark.parametrize("name", ["docs/ai-access.md", "docs/connected-approval.md",

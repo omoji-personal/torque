@@ -93,7 +93,8 @@ def test_login_as_preflight_login_then_logout():
     m.login_as_user, auth.logout_as_user = fake_login, fake_logout
     try:
         seed = {"users": {"standard": {"user_id": "005x1"}, "platform": {"user_id": "005x2"}}}
-        results = asyncio.run(m.login_as_preflight(object(), seed, FakeSfClient()))
+        admin = auth.get_admin_auth(FakeSfClient(), "sf-fake")
+        results = asyncio.run(m.login_as_preflight(object(), seed, admin))
     finally:
         m.login_as_user, auth.logout_as_user, m.observe_user_id, auth.observe_user_id = orig_login, orig_logout, orig_observe, orig_auth_observe
     assert results == {"standard": "PASS", "platform": "PASS"}

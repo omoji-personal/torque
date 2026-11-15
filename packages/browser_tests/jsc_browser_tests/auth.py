@@ -6,8 +6,9 @@ non-admin profiles. NEVER stores passwords/tokens in test-user seed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import NamedTuple
+from urllib.parse import unquote, urlsplit
 from .diagnostics import exception_detail
 
 
@@ -23,23 +24,38 @@ class AdminAuth(NamedTuple):
     username: str = ""  # the username sf resolves for the alias
     api_version: str = ""
 
+    def __repr__(self) -> str:
+        # The sign-in address is kept out, so that an accidental print, log line or
+        # traceback of this object cannot show it (as relay.Minted does).
+        return (f"AdminAuth(target_org={self.target_org!r}, org_id_18={self.org_id_18!r}, "
+                f"instance_url={self.instance_url!r}, frontdoor_url='[hidden]', username={self.username!r}, "
+                f"api_version={self.api_version!r})")
 
-def get_admin_auth(sf_client, target_org: str) -> AdminAuth:
-    """Authenticate as admin via the injected SfClient; return frontdoor URL.
+    __str__ = __repr__
 
-    The frontdoor URL contains an access token — never log/commit it.
+
+def get_admin_auth(sf_client, target_org: str, *, path: str | None = None,
+                   api_version: str | None = None) -> AdminAuth:
+    """Authenticate as the alias's user via the injected SfClient; return frontdoor URL.
+
+    One CLI call answers everything: the single-use address, the org ID and the
+    username it is for. The instance address is the address's own origin. No
+    `sf org display` call is made (older CLIs print the access token there).
+    The frontdoor URL signs a browser in: never log/commit it, and navigate to it
+    at once (it is valid once, for about a minute).
     """
-    frontdoor = sf_client.org_frontdoor_url(target_org)
-    if not frontdoor:
+    minted = sf_client.org_frontdoor(target_org, path=path, api_version=api_version)
+    frontdoor = minted.get("url") or ""
+    origin = urlsplit(frontdoor)
+    if origin.scheme != "https" or not origin.hostname:
         raise AuthError(f"sf org open returned no url for {target_org}")
-    d2 = sf_client.org_display(target_org)
     return AdminAuth(
         target_org=target_org,
-        org_id_18=d2.get("id", ""),
-        instance_url=d2.get("instanceUrl", ""),
+        org_id_18=minted.get("org_id") or "",
+        instance_url=f"https://{origin.netloc}",
         frontdoor_url=frontdoor,
-        username=d2.get("username", "") or "",
-        api_version=d2.get("apiVersion", "") or "",
+        username=minted.get("username") or "",
+        api_version=api_version or "",
     )
 
 
@@ -54,12 +70,14 @@ class BrowserSession:
       token cannot carry the second factor and Salesforce serves the login form instead.
     * **cdp** — attach to a browser the OPERATOR already launched and authenticated. Required for
       passkey orgs: automation-launched Chrome disables extensions, so a password manager holding
-      the passkey is unreachable by construction. See docs/browser-testing-authenticated-setup.md.
+      the passkey is unreachable by construction. See docs/browser-sign-in.md.
     """
-    page: object
+    # Playwright's objects name the page's address in their repr, which can be the sign-in
+    # address while it loads: kept out of this object's repr.
+    page: object = field(repr=False)
     channel: str          # "frontdoor" | "cdp"
-    browser: object
-    context: object
+    browser: object = field(repr=False)
+    context: object = field(repr=False)
     owns_browser: bool    # False when attached — never close the operator's browser
     guarded: bool = False  # connected mode: the page's username must match the alias's
 
@@ -82,8 +100,11 @@ async def open_session(pw, admin_auth, *, cdp_endpoint: str | None = None,
             guard = connected_guard(admin_auth.target_org)
         except GuardRefused as exc:
             raise AuthError(f"connected mode: {exc}") from None
-    if guard is not None and debug_env_problem():
-        raise AuthError("connected mode: " + debug_env_problem())
+    # The last check before a navigation to the sign-in address, in every mode (an attached
+    # browser is sent to the org's own address instead, and is refused in connected mode).
+    problem = debug_env_problem()
+    if problem and (guard is not None or not cdp_endpoint):
+        raise AuthError(("connected mode: " if guard is not None else "") + problem)
     if guard is not None and getattr(guard, "delegated", True) and headed:
         raise AuthError("connected mode: a browser window granted by a delegated approver runs headless "
                         "only; run without --headed")
@@ -152,15 +173,58 @@ async def close_session(sess) -> None:
 
 def debug_env_problem(env=None) -> str | None:
     """Playwright settings that would print the navigated frontdoor URL (DEBUG, DEBUG_FILE)
-    or force a visible browser (PWDEBUG), else None. Any non-empty DEBUG counts: Node's
-    debug module turns Playwright's pw:* logs on for *, pw*, p* and other patterns."""
+    or show it in a visible inspector (PWDEBUG), else None. Any non-empty DEBUG counts:
+    Node's debug module turns Playwright's pw:* logs on for *, pw*, p* and other patterns."""
     import os
     env = os.environ if env is None else env
     found = [name for name in ("DEBUG", "PWDEBUG", "DEBUG_FILE") if env.get(name)]
     if not found:
         return None
-    return (f"{', '.join(found)} is set; Playwright debugging prints the session URL or opens a visible "
-            "browser, so a connected run does not start with it. Unset it and run again")
+    return (f"{', '.join(found)} is set; Playwright debugging prints the sign-in address the browser is sent "
+            "to, or shows it in a visible inspector, so a browser run that signs in does not start with it. "
+            "Unset it and run again. To debug a journey, sign in with `torque browser login --storage-state "
+            "PATH` first and debug a script that loads that file")
+
+
+def refuse_debug_env_before_sign_in(cdp_endpoint: str | None = None) -> None:
+    """Call before Playwright starts (its driver reads these variables when it starts), in
+    every mode. Refused whenever the run will navigate to a sign-in address: always in
+    connected mode, and otherwise unless the run attaches to a browser (cdp_endpoint) that
+    is sent to the org's own address instead."""
+    problem = debug_env_problem()
+    if not problem:
+        return
+    if in_connected_mode():
+        raise AuthError("connected mode: " + problem)
+    if not cdp_endpoint:
+        raise AuthError(problem)
+
+
+def in_build_only_mode() -> bool:
+    """This run is in a build-only Torque workspace, read as the gate reads it
+    (torque.gate._workspace_mode: the strictest workspace wins, and one whose
+    configuration cannot be read is build-only): the workspace TORQUE_WORKSPACE selects,
+    or one at or above the working folder. Without Torque installed there is no
+    workspace mode to read."""
+    import os
+    from pathlib import Path
+    try:
+        from torque import gate
+    except ImportError:
+        return False
+    folders = []
+    selected = os.environ.get("TORQUE_WORKSPACE")
+    if selected:
+        path = Path(selected).expanduser()
+        folders.append(path.parent.parent if (path / "client.json").is_file() else path)
+    folders.append(Path(os.getcwd()))
+    for folder in folders:
+        try:
+            if gate._workspace_mode(Path(os.path.realpath(folder)))[1] == "build-only":
+                return True
+        except OSError:
+            return True
+    return False
 
 
 def in_connected_mode() -> bool:
@@ -173,13 +237,6 @@ def in_connected_mode() -> bool:
         return _common._connected_scope() is not None
     except _common.IndeterminateScope:
         return True
-
-
-def refuse_debug_env_when_connected() -> None:
-    """Call before Playwright starts: its driver reads these variables when it starts."""
-    problem = debug_env_problem()
-    if problem and in_connected_mode():
-        raise AuthError("connected mode: " + problem)
 
 
 def cdp_endpoint_from_env() -> str | None:
@@ -255,8 +312,25 @@ async def observe_username(page, user_id: str, api_version: str | None = None) -
     return username
 
 
+def login_as_path(org_id: str, user_id: str) -> str:
+    """The Login As servlet's path inside the org, for an admin's session. It holds no
+    credential (an org ID and a User Id). The address is not a documented Salesforce
+    interface; the user's Setup page (user_setup_path) is the documented way in."""
+    return f"/servlet/servlet.su?oid={org_id}&suorgadminid={user_id[:15]}&retURL=%2F&targetURL=%2F"
+
+
+def user_setup_path(user_id: str) -> str:
+    """The user's page in Setup, where an admin finds the Login button."""
+    return f"/lightning/setup/ManageUsers/page?address=%2F{user_id}%3Fnoredirect%3D1"
+
+
 def same_user(observed: str, expected: str) -> bool:
     return bool(observed and expected and observed[:15] == expected[:15])
+
+
+LOGIN_AS_CHECKS = ("Check in Setup that Login Access Policies has \"Administrators Can Log in as Any User\" on "
+                   "(or that the user granted login access), that the signed-in admin has Modify All Data, and "
+                   "that the test user is active and not an API-only user.")
 
 
 async def login_as_user(page, instance_url: str, target_user_id: str,
@@ -282,10 +356,23 @@ async def login_as_user(page, instance_url: str, target_user_id: str,
         raise AuthError("Login As requires a valid 15- or 18-character User Id")
     if org_id_18:
         uid15 = target_user_id[:15]
-        su = (f"{instance_url}/servlet/servlet.su?oid={org_id_18}"
-              f"&suorgadminid={uid15}&retURL=%2F&targetURL=%2F")
-        await page.goto(su, wait_until="domcontentloaded", timeout=30000)
+        su = instance_url + login_as_path(org_id_18, uid15)
+        try:
+            response = await page.goto(su, wait_until="domcontentloaded", timeout=30000)
+        except Exception as exc:
+            # The address holds no credential, but the error text is not needed: its type is.
+            raise AuthError(f"Login As could not be opened ({type(exc).__name__}). " + LOGIN_AS_CHECKS) from None
         await page.wait_for_timeout(2500)  # impersonation handshake
+        status = getattr(response, "status", None)
+        if isinstance(status, int) and status >= 400:
+            raise AuthError(f"Login As was refused by the org (HTTP {status}); the user was not switched. "
+                            + LOGIN_AS_CHECKS)
+        if "/servlet/servlet.su" in str(getattr(page, "url", "") or ""):
+            # With the org's Log in as policy off the servlet answers nothing: the browser
+            # simply stays there, still as the admin. Say so, instead of going on to a
+            # Lightning page that would render as the admin.
+            raise AuthError("Login As did not switch user: the browser stayed on the Login As address. "
+                            + LOGIN_AS_CHECKS)
         await page.goto(f"{instance_url}/lightning/page/home",
                         wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_load_state("domcontentloaded", timeout=30000)
@@ -312,14 +399,21 @@ async def logout_as_user(page, instance_url: str) -> None:
     # Navigate home; Logout As link is typically in the global header
     await page.goto(f"{instance_url}/lightning/page/home",
                     wait_until="domcontentloaded", timeout=30000)
-    try:
-        await page.get_by_role("link", name="Log out as").click(timeout=10000)
-    except Exception:
-        # Try alternative selector
+    # Three lookups, each waiting for its element (the banner renders later than the
+    # Lightning shell): the banner's link by its accessible name; the banner's text, for a
+    # Lightning page that does not expose it as a named link; and the Classic link by its
+    # address, which Lightning pages do not have.
+    lookups = (lambda: page.get_by_role("link", name="Log out as"),
+               lambda: page.get_by_text("Log out as", exact=False).first,
+               lambda: page.locator("a[href*='servlet.sulogout']"))
+    for lookup in lookups:
         try:
-            await page.locator("a[href*='servlet.sulogout']").click(timeout=10000)
+            await lookup().click(timeout=10000)
+            break
         except Exception:
-            raise AuthError("Could not return from Login As; stop this browser run and restore the admin session.")
+            continue
+    else:
+        raise AuthError("Could not return from Login As; stop this browser run and restore the admin session.")
     await page.wait_for_load_state("domcontentloaded", timeout=15000)
     # Logout As can land on a Classic Setup page. The active-user observer reads
     # Lightning's Aura value provider, so return to Lightning before observing.
@@ -375,6 +469,10 @@ import re
 FORBIDDEN_REPLAY_PATTERNS = [
     re.compile(r"frontdoor\.jsp\?sid="),
     re.compile(r"\bsid=[\w!.\-]+", re.IGNORECASE),
+    # The single-use sign-in address the CLI issues today (frontdoor.jsp?otp=...), also
+    # URL-encoded, and the endpoint that issues it.
+    re.compile(r"frontdoor\.jsp(?:\?|%3f)[^\s\"'<>]*?otp(?:=|%3d)", re.IGNORECASE),
+    re.compile(r"services(?:/|%2f)oauth2(?:/|%2f)singleaccess", re.IGNORECASE),
     re.compile(r"access_?token", re.IGNORECASE),
     re.compile(r"Bearer\s+[\w.\-]+"),
     re.compile(r"Authorization:\s*\w+"),
@@ -384,18 +482,43 @@ FORBIDDEN_REPLAY_PATTERNS = [
 ]
 
 
-def scan_replay_script(content: str) -> list[str]:
-    """Scan replay-script content for forbidden credential patterns.
+# A script can hold an address percent-encoded several times and decode it before it
+# navigates. The text is decoded up to this many times and every round is scanned.
+DECODE_ROUNDS = 4
+SCAN_LIMIT = ("This is a scan of the script's text for known credential shapes: it cannot prove that code "
+              "which builds or decodes an address at run time holds none.")
 
-    Returns list of human-readable violation descriptions (empty if clean).
+
+def _decoded_rounds(content: str) -> tuple[list[str], bool]:
+    """The text, then each percent-decoding of it that changes something, up to
+    DECODE_ROUNDS; and whether it would still change after the last round."""
+    rounds = [content]
+    for _ in range(DECODE_ROUNDS):
+        decoded = unquote(rounds[-1])
+        if decoded == rounds[-1]:
+            return rounds, False
+        rounds.append(decoded)
+    return rounds, unquote(rounds[-1]) != rounds[-1]
+
+
+def scan_replay_script(content: str) -> list[str]:
+    """Scan replay-script content for forbidden credential patterns, in the text as it
+    is and after each of up to DECODE_ROUNDS rounds of percent-decoding.
+
+    Returns list of human-readable violation descriptions (empty if clean). A
+    description never contains the matched value.
     """
     violations = []
+    rounds, deeper = _decoded_rounds(content)
     for pattern in FORBIDDEN_REPLAY_PATTERNS:
-        matches = pattern.findall(content)
-        if matches:
-            
-            violations.append(
-                f"forbidden pattern {pattern.pattern!r} found "
-                f"({len(matches)} occurrence(s); matched values redacted)"
-            )
+        for depth, text in enumerate(rounds):
+            matches = pattern.findall(text)
+            if matches:
+                found = "found" if depth == 0 else f"found after {depth} round(s) of percent-decoding"
+                violations.append(f"forbidden pattern {pattern.pattern!r} {found} "
+                                  f"({len(matches)} occurrence(s); matched values redacted)")
+                break
+    if deeper:
+        violations.append(f"text is still percent-encoded after {DECODE_ROUNDS} rounds of decoding, so what it "
+                          "holds cannot be scanned; decode it by hand and scan the result")
     return violations

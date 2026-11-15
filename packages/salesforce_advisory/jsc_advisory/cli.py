@@ -24,6 +24,26 @@ def _emit(payload: dict | list, human: str, as_json: bool) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True) if as_json else human)
 
 
+def _scoped_lessons(command: str, limit: int) -> tuple[list, str] | None:
+    """The lessons that match the command for the selected client (`--workspace W --client
+    C`): that client's, the firm's and the lessons shipped with Torque, each labelled with
+    its scope. None when no client is selected, so the answer keeps its earlier shape. The
+    catalogue's own notes are not repeated here: they are the platform notes."""
+    try:
+        from jsc_memory import recall, storage
+        scopes = storage.scopes_from_env()
+        if scopes.workspace is None:
+            return None
+        result = recall.find(scopes, command=command, limit=max(1, limit), advisory=False)
+        recall.mark_shown(scopes, [hit.lesson for hit in result.hits], "advisory")
+        result.candidates = 0
+        lessons = [{**recall.summary(hit.lesson, hit.tally), "match": {"score": hit.score, "reasons": hit.reasons}}
+                   for hit in result.hits]
+        return lessons, recall.render(result)
+    except Exception:  # Lessons are an addition; the catalogue's answer stands without them.
+        return None
+
+
 def _advisory_exit(strict: bool, complete: bool) -> int:
     """Default informational contract; strictness exists only by explicit request."""
     return 3 if strict and not complete else 0
@@ -61,8 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     notes = sub.add_parser("notes", help="rank operational notes for a command")
     notes.add_argument("--command", required=True)
-    notes.add_argument("--limit", type=int, default=2)
+    notes.add_argument("--limit", type=int, default=3,
+                       help="notes to show (default 3, as many as Torque prints before a deploy)")
     notes.add_argument("--json", action="store_true")
+    notes.add_argument("--with-lessons", action="store_true",
+                       help="JSON as an object: platform_notes and scoped_lessons (the selected client's, the "
+                            "firm's and the shipped lessons; empty without a selected workspace). Without it the "
+                            "JSON is the list of notes, whatever the environment selects")
 
     needs = sub.add_parser("needs", help="show known direct requirements for a command")
     needs.add_argument("--command", required=True)
@@ -120,7 +145,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"  symptom: {item['symptom']}\n  remedy : {item['remedy']}"
                 for item in found
             ) or "No catalogue note matched. That is a knowledge gap, not proof there is no risk."
-            _emit(found, human, args.json)
+            scoped = _scoped_lessons(args.command, args.limit)
+            if scoped is not None:
+                human += "\n\n" + scoped[1]
+            # The JSON shape depends on the option only, never on the launcher's environment.
+            if args.with_lessons:
+                _emit({"platform_notes": found, "scoped_lessons": scoped[0] if scoped else []}, human, args.json)
+            else:
+                _emit(found, human, args.json)
             return 0
 
         if args.subcommand == "needs":

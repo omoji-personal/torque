@@ -49,8 +49,8 @@ def main():
         call("workspace", "init", str(private), "--name", "Synthetic consulting firm", "--profile", "solution-lead")
         assert (private / "AGENTS.md").is_file()
         assert len(list((private / ".claude/commands").glob("*.md"))) == len(rows)
-        # Five packaged skills, and every recipe again as an Antigravity skill.
-        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 5 + len(rows)
+        # Eight packaged skills, and every recipe again as an Antigravity skill.
+        assert len(list((private / ".agents/skills").glob("*/SKILL.md"))) == 8 + len(rows)
         for group in ("rules", "agents"):
             assert (len(list((private / ".agents" / group).glob("*.md")))
                     == len(list((private / ".claude" / group).glob("*.md"))) > 0), group
@@ -113,7 +113,10 @@ def main():
         recipe = private / ".claude/commands/diagnose.md"
         recipe.write_text(recipe.read_text(encoding="utf-8") + "\nLocal synthetic customization.\n", encoding="utf-8")
         preview = json.loads(call("workspace", "upgrade", str(private), "--check", "--json"))
-        assert preview["check"] and preview["conflicts"]
+        # The packaged recipe has not changed since it was recorded: kept, and not a conflict.
+        assert preview["check"] and not preview["conflicts"]
+        assert any(row["path"] == ".claude/commands/diagnose.md" and row["action"] == "customized"
+                   for row in preview["actions"])
         call("workspace", "upgrade", str(private), "--json")
         assert "Local synthetic customization." in recipe.read_text(encoding="utf-8")
         selected_recipe = call("workflows", "show", "diagnose", "--workspace", str(private))

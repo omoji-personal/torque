@@ -86,8 +86,9 @@ schedule-triggered flows or the Manage Fundraising DPE Definitions flow action (
 the Batch Job Status Changed Event with a timeout under 24 hours); show results with the
 Related Record Detail Display component.
 
-Limits: 50 active definitions; 30 runtime hours and 10 million rows per month; 1 GB
-writeback per 24 hours. Space overlapping runs at least 15 minutes and order dependent
+Limits: active definitions, runtime hours, rows processed and writeback volume are capped.
+The figures in community sources were not confirmed on a Salesforce page (**verify**): read
+the org's own usage and limits before sizing a design. Space overlapping runs at least 15 minutes and order dependent
 ones. Monitor at Setup > Monitor Workflow Services (30 days). SAQL filters are
 case-sensitive. Alternatives: Record Rollups (`RecordAggregationDefinition`) and
 flow-based rollups.
@@ -144,3 +145,8 @@ Revenue reports use GiftTransaction (Status Paid, TransactionDate), not Opportun
 Remove the standard Campaign statistics section, which counts Opportunities. For fiscal
 years, report on GiftTransaction with fiscal date filters or build a custom rollup.
 In-kind transactions count in donor summaries unless excluded.
+
+## Sources
+
+- Nonprofit Cloud Developer Guide, version 68.0: https://developer.salesforce.com/docs/atlas.en-us.nonprofit_cloud.meta/nonprofit_cloud/
+- The other sources listed in SKILL.md. **verify** marks unconfirmed claims.

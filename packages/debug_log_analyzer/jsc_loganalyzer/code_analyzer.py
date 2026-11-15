@@ -111,12 +111,31 @@ def violations_to_findings(report: dict) -> list[Finding]:
     return findings
 
 
-def run_code_analyzer(workspace: str | None, output_file: str) -> dict:
+class NotInstalled(RuntimeError):
+    """The sf CLI or its code-analyzer plugin is not installed."""
+
+
+INSTALL_HINT = ("install the Salesforce CLI, then `sf plugins install code-analyzer` "
+                "(the flow engine also needs Python 3.10+ on PATH)")
+_MISSING_PLUGIN = ("is not a sf command", "command code-analyzer", "not found: code-analyzer",
+                   "code-analyzer:run not found")
+
+
+def run_code_analyzer(workspace: str | None, output_file: str, *, targets=(), rule_selectors=(),
+                      cwd: str | None = None, env: dict | None = None) -> dict:
     """Shell `sf code-analyzer run` and return the parsed v5 JSON report.
 
     Static analysis: NO target org. Honors a bounded subprocess timeout per
-    verify-harness-patterns.md. Raises RuntimeError on failure to invoke or
-    parse so the caller can surface an actionable message.
+    verify-harness-patterns.md. Raises NotInstalled when sf or the plugin is
+    missing and RuntimeError on any other failure to invoke or parse, so the
+    caller can surface an actionable message.
+
+    targets: files or folders inside the workspace (`--target`, repeated).
+    rule_selectors: `--rule-selector` values, repeated; their union runs. The
+    default run is "Recommended", which leaves out the flow engine's
+    MissingFaultHandler, MissingDescription, UnreachableElement and
+    UnusedResource rules; add "flow" to include every flow rule.
+    cwd: where the analyzer runs, so a project's code-analyzer.yml applies.
     """
     cmd = [
         "sf", "code-analyzer", "run",
@@ -125,6 +144,10 @@ def run_code_analyzer(workspace: str | None, output_file: str) -> dict:
     ]
     if workspace:
         cmd += ["--workspace", workspace]
+    for selector in rule_selectors:
+        cmd += ["--rule-selector", selector]
+    for target in targets:
+        cmd += ["--target", target]
     # R4-4: remove any pre-existing report at this path BEFORE the run, so a STALE
     # file from a prior run can never be parsed as if it were this run's output.
     out_path = Path(output_file)
@@ -139,6 +162,8 @@ def run_code_analyzer(workspace: str | None, output_file: str) -> dict:
             text=True,
             timeout=ANALYZER_TIMEOUT_SECONDS,
             check=False,
+            **({"cwd": cwd} if cwd else {}),
+            **({"env": env} if env is not None else {}),
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(
@@ -146,10 +171,9 @@ def run_code_analyzer(workspace: str | None, output_file: str) -> dict:
             f"narrow the --workspace to a smaller dir/file and retry."
         )
     except FileNotFoundError:
-        raise RuntimeError(
-            "sf CLI not found on PATH; install @salesforce/cli + the "
-            "code-analyzer plugin (sf plugins install code-analyzer)."
-        )
+        raise NotInstalled(f"sf CLI not found on PATH; {INSTALL_HINT}.")
+    if not out_path.exists() and any(m in (proc.stderr or "") + (proc.stdout or "") for m in _MISSING_PLUGIN):
+        raise NotInstalled(f"the code-analyzer plugin is not installed; {INSTALL_HINT}.")
     # `sf code-analyzer run` exits non-zero ONLY when --severity-threshold is met
     # (we don't pass it), so a non-zero return code is not by itself failure — the
     # authoritative signal is a NON-EMPTY report written by THIS run (the path was
@@ -180,7 +204,7 @@ def render_report(findings: list[Finding], report: dict) -> str:
     versions = report.get("versions") or {}
 
     lines: list[str] = []
-    lines.append(f"jsc code-analyzer health score: {score}/100")
+    lines.append(f"Code Analyzer health score: {score}/100")
     ca_ver = versions.get("code-analyzer", "?")
     lines.append(f"  (Code Analyzer engine bundle: code-analyzer {ca_ver})")
     lines.append(f"  P0 (Critical): {p0}")

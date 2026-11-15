@@ -135,14 +135,17 @@ def connected_guard(target_org: str, resolve=None) -> Guard | None:
         from jsc_revert.org_detect import resolve_org as resolve
     info = resolve(target_org)
     if info is None:
-        raise GuardRefused(f"could not resolve {target_org!r} live")
+        raise GuardRefused(f"could not resolve {target_org!r} live (not authenticated, or no answer in time)")
     if info.org_id_18 != entry["org_id_18"]:
         raise GuardRefused(f"the org ID for {target_org!r} is now {info.org_id_18}; the consent records "
                            f"{entry['org_id_18']}")
-    config = ws.load_workspace(workspace)[1]
+    root, config = ws.load_workspace(workspace)
     window = approval.find_browser_approval(workspace, client, target_org, config=config)
     if window is None or window.get("org_id_18") != info.org_id_18:
-        raise GuardRefused(f"no granted browser window for {target_org}; ask with torque approval request --browser")
+        # The workspace's own path: the browser can run in a project folder below it.
+        from .gate_connected import BROWSER_REQUEST
+        request = BROWSER_REQUEST.format(workspace=ws.command_text([str(root)]), client=client, org=target_org)
+        raise GuardRefused(f"no granted browser window for {target_org}; ask for one with `{request}`")
     host_key = org_key(entry.get("instance_url") or "") or org_key(getattr(info, "instance_url", "") or "")
     if host_key is None:
         raise GuardRefused(f"the My Domain address of {target_org} is not known; record the consent again")

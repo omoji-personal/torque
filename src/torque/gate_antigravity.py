@@ -17,7 +17,7 @@ Antigravity has no answer that means "no opinion". A call the gate has no
 objection to is answered "allow" only when it is a read inside the folders the
 session was started with, which Antigravity runs without asking anyway, and
 "ask" otherwise, which hands it to Antigravity's own permission flow. The gate
-never widens what that flow allows.
+never widens what that flow allows, and never turns this "ask" into a refusal.
 
 Connected mode. `torque launch --host antigravity` (or a workspace whose
 workspace.json names "host": "antigravity") starts `agy` with a launch record
@@ -29,23 +29,51 @@ folder are refused. A bound call gets the same connected-mode decision as under
 Claude Code, with a call ID built from `conversationId` and `stepIdx`. What
 differs:
 
-- Antigravity sends no permission mode, so the gate cannot refuse a call it
-  cannot check because prompts are skipped; it answers "ask" as it does in a
-  prompting session.
+- Antigravity sends no permission mode, so the gate cannot tell that prompts are
+  skipped (`--dangerously-skip-permissions`), where an "ask" would run the call.
+  The gate's own explicit ask (a call it cannot check) is therefore answered
+  "deny" in every session, with the exact command and the step the consultant
+  takes in their own terminal.
 - Only the before-call event is handled, so no execution record is written
   after an approved call ran.
 - Antigravity's own browser tools are checked as browser tools, which connected
   mode refuses, as it refuses a browser MCP server under Claude Code.
-- A session launched with a launch binding is unattended. Where the gate would
-  ask, this hook refuses: under `claude -p` an ask no one answers is a refusal,
-  and it is not known that `agy -p` treats one the same way.
+- A session launched with a launch binding is unattended, and its refusal says
+  so: under `claude -p` an ask no one answers is a refusal, and it is not known
+  that `agy -p` treats one the same way.
 
 Connected mode here is verified offline only: tests feed this module the hook
 input Antigravity was observed to send. No connected session has been run in a
 live Antigravity session, and it is not known that `conversationId` with
 `stepIdx` is unique when one step makes several calls.
 
-Tool names and arguments as observed with Antigravity CLI 1.3.1.
+Tool names and arguments as observed with Antigravity CLI 1.3.1, and with 1.4.9
+on 2026-10-28. 1.4.9 sends its file tools as read_file {Path}, write_file {Path,
+Content} and edit_file {Path, Target, Replacement}, where Target is the text to
+replace, not a path. 1.3.1 sent view_file {AbsolutePath}, write_to_file,
+replace_file_content and multi_replace_file_content {TargetFile}. Both sets are
+read, so a session on either version is gated. 1.4.9's run_command sends no
+Cwd, so its command is read from the session's folder. A connector call arrives
+as call_mcp_tool {ServerName, ToolName, Arguments}, as before, or as a tool of
+its own named mcp_SERVER_TOOL. The 1.4.9 shapes are verified offline only: the
+tests feed this module the hook input 1.4.9 was observed to send.
+
+mcp_SERVER_TOOL joins the two names with one underscore, and either name can
+hold underscores of its own: mcp_notes_add_note is the tool add_note of the
+server notes, or note of notes_add. A name with exactly one underscore after
+`mcp_` splits one way only, so mcp_notes_add is read as the MCP tool
+mcp__notes__add, the form call_mcp_tool gets, and decided as that call is. Any
+other keeps its own name, which build-only and connected mode block as a tool
+they do not recognise.
+
+A call this module passes on under its own name (a tool it does not know, or one
+it cannot read) is also refused in every mode when a string argument, or a word
+of one, names an engagement's binding, a client's consent, consent evidence,
+approval, control, request or claim record, or the approval key. The gate keeps
+those records from the tools it knows in every mode, but full mode has no
+objection to a tool it does not know, so a tool Antigravity adds or renames
+later would reach them there. The check is made here rather than in the gate, so
+Claude Code's calls are decided as before.
 """
 from __future__ import annotations
 
@@ -68,10 +96,17 @@ HOOK_TIMEOUT = 30
 # Antigravity runs commands in PowerShell on Windows and in the user's shell elsewhere.
 SHELL_TOOL = "PowerShell" if os.name == "nt" else "Bash"
 # Antigravity tool -> (the gate's tool, its path argument, where Antigravity puts the path).
+# read_file, write_file and edit_file are 1.4.9's file tools; the others are 1.3.1's.
+# list_dir also takes Path, the name 1.4.9's file tools use: a list_dir that names no
+# folder is checked as a listing of the session's folder, which would leave a Path
+# it does name unchecked.
 FILE_TOOLS = {"view_file": ("Read", "file_path", ("AbsolutePath",)),
-              "list_dir": ("LS", "path", ("DirectoryPath",)),
+              "read_file": ("Read", "file_path", ("Path",)),
+              "list_dir": ("LS", "path", ("DirectoryPath", "Path")),
               "write_to_file": ("Write", "file_path", ("TargetFile",)),
+              "write_file": ("Write", "file_path", ("Path",)),
               "replace_file_content": ("Edit", "file_path", ("TargetFile",)),
+              "edit_file": ("Edit", "file_path", ("Path",)),
               "multi_replace_file_content": ("MultiEdit", "file_path", ("TargetFile",)),
               "sed_file": ("Edit", "file_path", ("TargetFile", "AbsolutePath")),
               "notebook_edit": ("NotebookEdit", "notebook_path", ("TargetFile", "AbsolutePath"))}
@@ -109,8 +144,10 @@ SCANNED_TOOLS = frozenset({
 # browser tools get one it reads as a browser.
 SCANNED_SERVER = "antigravity"
 BROWSER_SERVER = "antigravity_browser"
-READ_ONLY = ("view_file", "list_dir", "grep_search", "find_by_name")
-_PATH_ARGUMENTS = ("AbsolutePath", "DirectoryPath", "SearchPath", "SearchDirectory")
+# How 1.4.9 names a connector's tool when it sends it as a tool of its own: mcp_SERVER_TOOL.
+DIRECT_MCP = "mcp_"
+READ_ONLY = ("view_file", "read_file", "list_dir", "grep_search", "find_by_name")
+_PATH_ARGUMENTS = ("AbsolutePath", "Path", "DirectoryPath", "SearchPath", "SearchDirectory")
 # How a launch record says its session was started with `torque launch --delegated`.
 UNATTENDED = "binding"
 
@@ -176,7 +213,8 @@ def gate_event(payload: dict) -> dict:
     know keeps its own name, which build-only and connected mode block as a tool
     they do not recognise. So does a known one this module cannot read: a file
     tool without the argument that names its file, typed input that is not
-    text, and an MCP call without a usable server or tool name."""
+    text, an MCP call without a usable server or tool name, and an
+    mcp_SERVER_TOOL name that does not split one way only."""
     call = payload.get("toolCall")
     if not isinstance(call, dict) or not isinstance(call.get("name"), str) or not call["name"]:
         raise ValueError("the hook input has no tool name")
@@ -225,6 +263,11 @@ def gate_event(payload: dict) -> dict:
                     arguments = {"value": arguments}
             tool = f"mcp__{server}__{called}"
             tool_input = arguments if isinstance(arguments, dict) else {"value": arguments}
+    elif name.startswith(DIRECT_MCP) and not name.startswith("mcp__"):
+        # A connector's tool sent as a tool of its own, its arguments its own (1.4.9).
+        server, _, called = name[len(DIRECT_MCP):].partition("_")
+        if "_" not in called and _mcp_name(server) and _mcp_name(called):
+            tool = f"mcp__{server}__{called}"
     elif name in PLAIN_TOOLS or name in NETWORK_TOOLS:
         tool, tool_input = "Task", {}
     elif name in SCANNED_TOOLS:
@@ -264,6 +307,19 @@ def _inside_session(payload: dict, args: dict) -> bool:
         for path in named)
 
 
+def _record_reason(event: dict) -> str:
+    """Why a call this module passes on under its own name is refused in every
+    mode, or "": a string argument, or a word of one, names a record the gate
+    keeps from the tools it knows, or the approval key (see the module docstring)."""
+    cwd = Path(os.path.realpath(str(event["cwd"])))
+    for target in gate._touched_paths(event["tool_input"], cwd):
+        if gate.APPROVAL_KEY_RE.search(target.as_posix()) or gate._protected_record(target):
+            return (f"Torque gate: {event['tool_name']} is not a tool this hook can read, and it names a client's "
+                    "consent, approval or control record, an engagement's binding or the approval key. Only the "
+                    "consultant's torque commands change those, in every mode.")
+    return ""
+
+
 def _no_objection(payload: dict) -> str:
     """Antigravity's decision for a call the gate lets through: "allow" only for
     a read inside the session's folders, which Antigravity runs without asking
@@ -283,6 +339,19 @@ def _explicit(text: str) -> tuple[str, str] | None:
     if decision not in ("allow", "ask", "deny"):
         return None
     return decision, str(output.get("permissionDecisionReason") or "")
+
+
+def _asked_reason(reason: str, event: dict, unattended: bool) -> str:
+    """The gate's reason for an ask, now a refusal: the exact call, and how the consultant
+    approves it (as gate_connected.SKIPPED_REASON says: in their own terminal)."""
+    tool_input = event["tool_input"]
+    command = tool_input.get("command") if isinstance(tool_input.get("command"), str) else ""
+    shown = f"`{command}`" if command else f"this {event['tool_name']} call"
+    why = ("This session was launched unattended, with a launch binding, so there is no one to ask. "
+           if unattended else "Antigravity cannot be relied on to show the consultant a prompt (a session "
+                              "started with --dangerously-skip-permissions skips it). ")
+    return (f"{reason} {why}The call is refused and nothing ran. Stop and tell the consultant: they read {shown} "
+            "and, if it is safe, run it in their own terminal. Do not change the session's permission settings.")
 
 
 def _say(stream, decision: str, reason: str = "") -> int:
@@ -322,6 +391,12 @@ def main() -> int:
             # under Claude Code: leaving that folder does not end the gating.
             os.environ["CLAUDE_PROJECT_DIR"] = _folder(payload)
             launched = _binding(payload)
+            if event["tool_name"] == payload["toolCall"]["name"]:
+                # Not read by this module: checked before the gate, so a refusal here never
+                # comes after connected mode has used an approval for the call.
+                refused = _record_reason(event)
+                if refused:
+                    return _say(stdout, "deny", refused)
             out, err = io.StringIO(), io.StringIO()
             with redirect_stdout(out), redirect_stderr(err):
                 code = gate.evaluate(json.dumps(event))
@@ -332,11 +407,11 @@ def main() -> int:
             reason = err.getvalue().strip().replace(hosts.CLAUDE.tool_hint, hosts.ANTIGRAVITY.tool_hint)
             return _say(stdout, "deny", reason or "Torque gate: this call is blocked.")
         explicit = _explicit(out.getvalue())
-        if explicit and explicit[0] == "ask" and launched == UNATTENDED:
-            # Under `claude -p` the gate's ask is a refusal, because no one answers it.
-            # It is not known that `agy -p` refuses one, so the refusal is made here.
-            return _say(stdout, "deny", explicit[1] + " This session was launched unattended, with a launch "
-                                                      "binding, so there is no one to ask and the call is refused.")
+        if explicit and explicit[0] == "ask":
+            # The hook input carries no permission mode, so a session run with
+            # --dangerously-skip-permissions would run the call the gate asked about, and it is not
+            # known that `agy -p` refuses one. The refusal is made here, for every session.
+            return _say(stdout, "deny", _asked_reason(explicit[1], event, launched == UNATTENDED))
         if explicit:
             return _say(stdout, *explicit)
         return _say(stdout, _no_objection(payload))

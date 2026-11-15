@@ -45,7 +45,8 @@ def test_render_md_has_grid_and_score():
     c = _cell("PASS")
     c.flow_name = "e2e_conflict_check"
     md = render_md([c], {"score": 100, "p0": 0, "p1": 0, "p2": 0, "counted": 1})
-    assert "| Flow | Profile | Status |" in md
+    assert "| Flow | Variation | Profile | Status |" in md
+    assert "| e2e_conflict_check | - | " in md, "a cell without a variation still has its row"
     assert "Score: 100" in md
 
 def test_manifest_round_trips_and_audit_is_bounded():

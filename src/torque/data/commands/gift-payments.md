@@ -1,32 +1,40 @@
 ---
-description: "Design a record-triggered flow that keeps NPSP payments and gift batches in sync."
+description: "Design automation that keeps an NPSP payment's date in step with its gift batch, before save where it only changes the payment. Use it when batch gift entry leaves paid payments without a payment date."
 ---
 
 # /gift-payments
 
-Design automation that keeps a payment's processed date in step with its gift batch.
+Design automation that keeps an NPSP payment's date in step with its gift batch, before save where it only changes the payment. Use it when batch gift entry leaves paid payments without a payment date.
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-Confirm the actual request before designing: which payment field should be set, what
-"batch closes" means in the client's org (the NPSP Batch Gift Entry template and its
-default payment status), and whether existing unpaid or partially processed payments
-need a one-time backfill separate from the ongoing automation.
+First, ask for the lessons that fit this work and read them before you act:
+`torque lesson for --task flow-build --type Flow --workspace <private-path> --client <client-name>`.
+They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
+and what is wrong with `torque lesson stale <id> --reason <why>`.
 
-1. Design a record-triggered flow on `npe01__OppPayment__c` (NPSP payments), running
-   after save. Entry criteria: `npe01__Paid__c` equals True and
-   `npe01__Payment_Date__c` is null. This targets a payment the batch just marked
-   paid, not one already dated.
+Read skill `salesforce-npsp` and skill `salesforce-flow` first. Confirm the actual request before
+designing: which payment field should be set, what "batch closes" means in the client's org (the
+NPSP Batch Gift Entry template and its default payment status), and whether existing unpaid or
+partially processed payments need a one-time backfill separate from the ongoing automation.
+
+1. Design a record-triggered flow on `npe01__OppPayment__c` (NPSP payments), running before
+   save. Before-save is the default when a flow only sets fields on the record being saved and
+   nothing depends on the saved values. After save is right when the work needs the record's Id
+   or changes other records, for example creating a task or a related record for each payment.
+   Whichever you choose, write the reason in the flow's description. Entry criteria:
+   `npe01__Paid__c` equals True and `npe01__Payment_Date__c` is null. This targets a payment the
+   batch just marked paid, not one already dated.
 2. Set `npe01__Payment_Date__c` to the appropriate date: today, or the batch's own
    transaction date if the org's batch template exposes one. Proposal, not verified
    behavior: confirm whether the client's Batch Gift Entry template sets
    `npe01__Paid__c` to True directly, since that assumption drives the entry
    criteria; if the template instead leaves payments unpaid until a separate step,
    the trigger condition changes.
-3. Bulk-safety: the flow must evaluate the whole triggering record collection, not
-   one record at a time, with no SOQL or DML inside a loop. Confirm the entry
-   criteria and update stay inside Salesforce's per-transaction limits for a full
-   batch-gift close, which can produce hundreds of payments in one transaction.
+3. Bulk safety: a before-save flow changes the triggering records without a query or a DML
+   statement. Confirm the entry criteria stay inside Salesforce's per-transaction limits for a
+   full batch close, which can produce hundreds of payments in one transaction, and list what
+   else already runs on the payment object.
 4. Test plan, three cases: (a) a single payment marked Paid with no processed date,
    confirm the date is set and no duplicate update fires on a later unrelated save;
    (b) a bulk batch close producing 200+ payments in one transaction, confirm every
@@ -38,8 +46,8 @@ need a one-time backfill separate from the ongoing automation.
    deactivation.
 
 Mark the batch-template assumption in step 2 as a proposal until confirmed against
-the client's actual configuration. Save the design and open questions to the client
-session.
+the client's actual configuration. Validate the flow with `/validate-change` before deploying.
+Save the design and open questions to the client session.
 
 ## In build-only mode
 

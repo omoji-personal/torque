@@ -93,7 +93,7 @@ def test_runner_preserves_login_mismatch_without_executing_flow_or_false_logout(
 
 
 def test_preflight_retains_original_login_error_when_restoration_also_fails(monkeypatch):
-    sf = types.SimpleNamespace(org_display=lambda: {"instanceUrl": INSTANCE, "id": "00D000000000001AAA"})
+    sf = types.SimpleNamespace(instance_url=INSTANCE, org_id_18="00D000000000001AAA")  # the admin sign-in
     monkeypatch.setattr(matrix, "observe_user_id", AsyncMock(return_value=ADMIN))
     monkeypatch.setattr(matrix, "login_as_user", AsyncMock(side_effect=auth.AuthError("login action unavailable")))
     monkeypatch.setattr(matrix, "restore_original_user", AsyncMock(side_effect=auth.AuthError("restoration unknown")))
@@ -103,7 +103,7 @@ def test_preflight_retains_original_login_error_when_restoration_also_fails(monk
 
 
 def test_preflight_failed_login_with_baseline_present_remains_login_failure(monkeypatch):
-    sf = types.SimpleNamespace(org_display=lambda: {"instanceUrl": INSTANCE, "id": "00D000000000001AAA"})
+    sf = types.SimpleNamespace(instance_url=INSTANCE, org_id_18="00D000000000001AAA")  # the admin sign-in
     monkeypatch.setattr(matrix, "observe_user_id", AsyncMock(side_effect=[ADMIN, ADMIN]))
     monkeypatch.setattr(matrix, "login_as_user", AsyncMock())
     monkeypatch.setattr(matrix, "restore_original_user", AsyncMock(return_value={"status": "OBSERVED", "user_id": ADMIN, "action": "ALREADY_BASELINE"}))

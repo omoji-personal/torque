@@ -109,8 +109,10 @@ def cmd_sanitize_replay(args: argparse.Namespace) -> int:
         print(f"REJECTED: {p} contains {len(violations)} forbidden pattern(s):")
         for v in violations:
             print(f"  - {v}")
+        print(auth.SCAN_LIMIT)
         return 2
-    print(f"CLEAN: {p} — no forbidden patterns detected.")
+    print(f"CLEAN: {p}: no known credential shape found in its text, as written or after up to "
+          f"{auth.DECODE_ROUNDS} rounds of percent-decoding. {auth.SCAN_LIMIT}")
     return 0
 
 
@@ -188,7 +190,8 @@ def _print_flow_result(result: runner.FlowResult) -> None:
 
 def _result_to_dict(r: runner.FlowResult) -> dict:
     return redact({
-        "flow": r.flow_name, "profile": r.profile, "target_org": r.target_org,
+        "flow": r.flow_name, "variation": getattr(r, "variation", ""), "profile": r.profile,
+        "target_org": r.target_org,
         "status": r.overall_status, "duration_seconds": r.duration_seconds,
         "error": r.error,
         "steps": [
@@ -302,7 +305,8 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--allow-production-writes", action="store_true", help="Run test-record mutations on an explicitly selected production org")
     m.set_defaults(func=cmd_multiprofile)
 
-    s = sub.add_parser("sanitize-replay", help="scan a replay script for forbidden patterns")
+    s = sub.add_parser("sanitize-replay", help="scan a replay script's text for known credential shapes "
+                                               "(also percent-encoded, up to four times)")
     s.add_argument("script_path")
     s.set_defaults(func=cmd_sanitize_replay)
 
@@ -323,6 +327,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ss = sub.add_parser("suite-self-test", help="run the suite's offline test files")
     ss.set_defaults(func=cmd_suite_selftest)
+
+    from . import login
+    login.add_parsers(sub)
 
     return p
 

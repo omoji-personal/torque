@@ -13,7 +13,8 @@ torque client add <client-name> --workspace <private-path> --org <org-alias>
 torque context --workspace <private-path> --client <client-name> --json
 ```
 
-Omit `--org` when connection is not available yet. `solution-lead` is an optional
+Without a Salesforce org yet, omit `--org`; set it later with
+`torque client set-org --workspace <private-path> --client <client-name> --target-org <org-alias>`. `solution-lead` is an optional
 workspace profile, not a client identity or proof of employer tool approval.
 Record engagement purpose, stakeholders supplied by the user, systems, current task,
 artifact locations and org connections. The CLI's client configuration is authoritative

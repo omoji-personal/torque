@@ -264,7 +264,9 @@ def test_n3_doctor_ignores_links_inside_the_tree_and_skipped_folders(tmp_path):
     _, report = _doctor_report(root)
     links = report["ai_access"]["links_out"]
     assert links["found"] == [] and links["complete"] is True, links
-    assert not any("link" in action for action in report["next_actions"])
+    # Only the two link messages: other advice names the workspace path, and tmp_path carries this test's name.
+    assert not any("link(s) in the workspace" in action or "link scan" in action
+                   for action in report["next_actions"])
 
 
 def test_n3_doctor_reports_a_two_hop_link_through_an_outside_folder(tmp_path):

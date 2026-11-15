@@ -21,79 +21,89 @@ import re
 # folder form, ending "/", must contain a file). A -meta.xml companion alone does
 # not cover source such as Apex. A child (field, rule) is covered by its own file
 # or by its parent object's file.
-TYPE_NEEDLES = {
-    "Flow": ("flows/{name}.flow-meta.xml", "flows/{name}.flow"),
-    # A tuple lists files that must all be present (the recovery needs each one).
-    "ApexClass": (("classes/{name}.cls", "classes/{name}.cls-meta.xml"),),
-    "ApexTrigger": (("triggers/{name}.trigger", "triggers/{name}.trigger-meta.xml"),),
-    "ApexPage": (("pages/{name}.page", "pages/{name}.page-meta.xml"),),
-    "ApexComponent": (("components/{name}.component", "components/{name}.component-meta.xml"),),
-    "Layout": ("layouts/{name}.layout-meta.xml", "layouts/{name}.layout"),
-    "FlexiPage": ("flexipages/{name}.flexipage-meta.xml", "flexipages/{name}.flexipage"),
-    "PermissionSet": ("permissionsets/{name}.permissionset-meta.xml", "permissionsets/{name}.permissionset"),
-    "CustomObject": ("objects/{name}/{name}.object-meta.xml", "objects/{name}.object"),
-    "LightningComponentBundle": (("lwc/{name}/{name}.js", "lwc/{name}/{name}.js-meta.xml"),),
-    "StaticResource": (("staticresources/{name}.resource-meta.xml", "staticresources/{name}.resource"),
-                       ("staticresources/{name}.resource-meta.xml", "staticresources/{name}/")),
-    "AuraDefinitionBundle": ("aura/{name}/{name}.cmp", "aura/{name}/{name}.app", "aura/{name}/{name}.evt",
-                             "aura/{name}/{name}.intf", "aura/{name}/{name}.tokens"),
-    "CustomLabel": ("labels/CustomLabels.labels-meta.xml", "labels/CustomLabels.labels"),
-    "WorkflowRule": ("workflows/{parent}.workflow-meta.xml", "workflows/{parent}.workflow"),
-    "WorkflowFieldUpdate": ("workflows/{parent}.workflow-meta.xml", "workflows/{parent}.workflow"),
-    "WorkflowAlert": ("workflows/{parent}.workflow-meta.xml", "workflows/{parent}.workflow"),
-    "SharingCriteriaRule": ("sharingRules/{parent}.sharingRules-meta.xml", "sharingRules/{parent}.sharingRules"),
-    "SharingOwnerRule": ("sharingRules/{parent}.sharingRules-meta.xml", "sharingRules/{parent}.sharingRules"),
-    "CustomField": ("objects/{parent}/fields/{child}.field-meta.xml", "objects/{parent}.object"),
-    "ValidationRule": ("objects/{parent}/validationRules/{child}.validationRule-meta.xml",
-                       "objects/{parent}.object"),
-    "RecordType": ("objects/{parent}/recordTypes/{child}.recordType-meta.xml", "objects/{parent}.object"),
-    "ListView": ("objects/{parent}/listViews/{child}.listView-meta.xml", "objects/{parent}.object"),
-    "Record": ("records/{record}",),
-}
-# Source-format file (relative to a package folder) -> component, for source-directory deploys.
-SOURCE_PATTERNS = (
-    (r"(?:^|/)classes/([^/]+)\.cls(?:-meta\.xml)?$", "ApexClass:{0}"),
-    (r"(?:^|/)triggers/([^/]+)\.trigger(?:-meta\.xml)?$", "ApexTrigger:{0}"),
-    (r"(?:^|/)pages/([^/]+)\.page(?:-meta\.xml)?$", "ApexPage:{0}"),
-    (r"(?:^|/)components/([^/]+)\.component(?:-meta\.xml)?$", "ApexComponent:{0}"),
-    (r"(?:^|/)flows/([^/]+)\.flow(?:-meta\.xml)?$", "Flow:{0}"),
-    (r"(?:^|/)layouts/([^/]+)\.layout(?:-meta\.xml)?$", "Layout:{0}"),
-    (r"(?:^|/)flexipages/([^/]+)\.flexipage(?:-meta\.xml)?$", "FlexiPage:{0}"),
-    (r"(?:^|/)permissionsets/([^/]+)\.permissionset(?:-meta\.xml)?$", "PermissionSet:{0}"),
-    (r"(?:^|/)objects/([^/]+)/fields/([^/]+)\.field-meta\.xml$", "CustomField:{0}.{1}"),
-    (r"(?:^|/)objects/([^/]+)/validationRules/([^/]+)\.validationRule-meta\.xml$", "ValidationRule:{0}.{1}"),
-    (r"(?:^|/)objects/([^/]+)/recordTypes/([^/]+)\.recordType-meta\.xml$", "RecordType:{0}.{1}"),
-    (r"(?:^|/)objects/([^/]+)/listViews/([^/]+)\.listView-meta\.xml$", "ListView:{0}.{1}"),
-    (r"(?:^|/)objects/([^/]+)/[^/]+\.object-meta\.xml$", "CustomObject:{0}"),
-    (r"(?:^|/)lwc/([^/]+)/", "LightningComponentBundle:{0}"),
-    (r"(?:^|/)aura/([^/]+)/", "AuraDefinitionBundle:{0}"),
-)
+# Each entry owns its recovery alternatives, source mapping and payload binding.
+# Completeness requirements (for example Apex companions) remain explicit.
+METADATA_LAYOUTS = {}
+
+
+def _layout(kind, alternatives, source=(), binding=()):
+    METADATA_LAYOUTS[kind] = (alternatives, source, binding)
+
+
+for _kind, _folder, _suffix in (
+    ("Flow", "flows", "flow"), ("Layout", "layouts", "layout"),
+    ("FlexiPage", "flexipages", "flexipage"), ("PermissionSet", "permissionsets", "permissionset"),
+    ("CustomMetadata", "customMetadata", "md"), ("PermissionSetGroup", "permissionsetgroups", "permissionsetgroup"),
+    ("Profile", "profiles", "profile"), ("QuickAction", "quickActions", "quickAction"),
+    ("GlobalValueSet", "globalValueSets", "globalValueSet"), ("StandardValueSet", "standardValueSets", "standardValueSet"),
+    ("CustomTab", "tabs", "tab"), ("CustomApplication", "applications", "app"),
+    ("CustomPermission", "customPermissions", "customPermission"),
+):
+    _layout(_kind, (f"{_folder}/{{name}}.{_suffix}-meta.xml", f"{_folder}/{{name}}.{_suffix}"),
+            ((rf"(?:^|/){_folder}/([^/]+)\.{_suffix}(?:-meta\.xml)?$", _kind + ":{0}"),))
+
+for _kind, _folder, _suffix in (
+    ("ApexClass", "classes", "cls"), ("ApexTrigger", "triggers", "trigger"),
+    ("ApexPage", "pages", "page"), ("ApexComponent", "components", "component"),
+):
+    _layout(_kind, ((f"{_folder}/{{name}}.{_suffix}", f"{_folder}/{{name}}.{_suffix}-meta.xml"),),
+            ((rf"(?:^|/){_folder}/([^/]+)\.{_suffix}(?:-meta\.xml)?$", _kind + ":{0}"),))
+
+for _kind, _folder, _suffix in (
+    ("CustomField", "fields", "field"), ("ValidationRule", "validationRules", "validationRule"),
+    ("RecordType", "recordTypes", "recordType"), ("ListView", "listViews", "listView"),
+    ("CompactLayout", "compactLayouts", "compactLayout"), ("FieldSet", "fieldSets", "fieldSet"),
+    ("WebLink", "webLinks", "webLink"), ("BusinessProcess", "businessProcesses", "businessProcess"),
+    ("Index", "indexes", "index"),
+):
+    _layout(_kind, (f"objects/{{parent}}/{_folder}/{{child}}.{_suffix}-meta.xml", "objects/{parent}.object"),
+            ((rf"(?:^|/)objects/([^/]+)/{_folder}/([^/]+)\.{_suffix}-meta\.xml$", _kind + ":{0}.{1}"),),
+            (("/objects/{parent}/", "/objects/{parent}.") if _kind in
+             ("CompactLayout", "FieldSet", "WebLink", "BusinessProcess", "Index") else
+             (f"/objects/{{parent}}/{_folder}/{{child}}.", "/objects/{parent}.")))
+
+for _parent_kind, _children, _folder, _suffix in (
+    ("Workflow", ("WorkflowRule", "WorkflowFieldUpdate", "WorkflowAlert", "WorkflowOutboundMessage", "WorkflowTask"), "workflows", "workflow"),
+    ("SharingRules", ("SharingCriteriaRule", "SharingOwnerRule"), "sharingRules", "sharingRules"),
+    ("AssignmentRules", ("AssignmentRule",), "assignmentRules", "assignmentRules"),
+    ("AutoResponseRules", ("AutoResponseRule",), "autoResponseRules", "autoResponseRules"),
+    ("EscalationRules", ("EscalationRule",), "escalationRules", "escalationRules"),
+    ("MatchingRules", ("MatchingRule",), "matchingRules", "matchingRule"),
+):
+    _layout(_parent_kind, (f"{_folder}/{{name}}.{_suffix}-meta.xml", f"{_folder}/{{name}}.{_suffix}"),
+            ((rf"(?:^|/){_folder}/([^/]+)\.{_suffix}(?:-meta\.xml)?$", _parent_kind + ":{0}"),),
+            (f"/{_folder}/{{name}}.{_suffix}",))
+    for _child_kind in _children:
+        _layout(_child_kind, (f"{_folder}/{{parent}}.{_suffix}-meta.xml", f"{_folder}/{{parent}}.{_suffix}"),
+                binding=(f"/{_folder}/{{parent}}.{_suffix}",))
+
+_layout("CustomObject", ("objects/{name}/{name}.object-meta.xml", "objects/{name}.object"),
+        ((r"(?:^|/)objects/([^/]+)/[^/]+\.object-meta\.xml$", "CustomObject:{0}"),),
+        ("/objects/{name}/", "/objects/{name}."))
+_layout("LightningComponentBundle", (("lwc/{name}/{name}.js", "lwc/{name}/{name}.js-meta.xml"),),
+        ((r"(?:^|/)lwc/([^/]+)/", "LightningComponentBundle:{0}"),), ("/lwc/{name}/",))
+_layout("AuraDefinitionBundle", tuple("aura/{name}/{name}." + suffix for suffix in ("cmp", "app", "evt", "intf", "tokens")),
+        ((r"(?:^|/)aura/([^/]+)/", "AuraDefinitionBundle:{0}"),), ("/aura/{name}/",))
+_layout("StaticResource", (("staticresources/{name}.resource-meta.xml", "staticresources/{name}.resource"),
+                           ("staticresources/{name}.resource-meta.xml", "staticresources/{name}/")),
+        binding=("/staticresources/{name}.", "/staticresources/{name}/"))
+for _kind in ("CustomLabel", "CustomLabels"):
+    _layout(_kind, ("labels/CustomLabels.labels-meta.xml", "labels/CustomLabels.labels"),
+            binding=("/labels/",))
+_layout("Record", ("records/{record}",))
+# These keep their existing generic recovery matching and broader file bindings.
+for _kind, _binding in (
+    ("ExperienceBundle", ("/experiences/{name}/", "/experiences/{name}.")),
+    ("Document", ("/documents/{name}",)), ("EmailTemplate", ("/email/{name}.", "/email/{name}/")),
+):
+    _layout(_kind, None, binding=_binding)
+
+TYPE_NEEDLES = {kind: layout[0] for kind, layout in METADATA_LAYOUTS.items() if layout[0] is not None}
+SOURCE_PATTERNS = tuple(pattern for layout in METADATA_LAYOUTS.values() for pattern in layout[1])
+CONTAINER_NEEDLES = {kind: layout[2] for kind, layout in METADATA_LAYOUTS.items() if layout[2]}
 SOURCE_DIR_FLAGS = ("-d", "--source-dir", "--sourcepath", "-p")
 DESTRUCTIVE_FLAGS = ("--pre-destructive-changes", "--post-destructive-changes", "--predestructivechanges",
                      "--postdestructivechanges")
-# Where a component's local files live, for the approval's file binding. Components
-# kept in a shared file (labels, workflows, sharing rules) bind that whole file;
-# object children bind their object folder.
-CONTAINER_NEEDLES = {
-    "CustomLabel": ("/labels/",), "CustomLabels": ("/labels/",),
-    "WorkflowRule": ("/workflows/{parent}.workflow",), "WorkflowFieldUpdate": ("/workflows/{parent}.workflow",),
-    "WorkflowAlert": ("/workflows/{parent}.workflow",), "WorkflowOutboundMessage": ("/workflows/{parent}.workflow",),
-    "WorkflowTask": ("/workflows/{parent}.workflow",), "Workflow": ("/workflows/{name}.workflow",),
-    "SharingCriteriaRule": ("/sharingRules/{parent}.sharingRules",),
-    "SharingOwnerRule": ("/sharingRules/{parent}.sharingRules",), "SharingRules": ("/sharingRules/{name}.",),
-    "AssignmentRule": ("/assignmentRules/{parent}.assignmentRules",),
-    "AutoResponseRule": ("/autoResponseRules/{parent}.autoResponseRules",),
-    "EscalationRule": ("/escalationRules/{parent}.escalationRules",),
-    "MatchingRule": ("/matchingRules/{parent}.matchingRule",),
-    "CompactLayout": ("/objects/{parent}/",), "FieldSet": ("/objects/{parent}/",),
-    "WebLink": ("/objects/{parent}/",), "BusinessProcess": ("/objects/{parent}/",), "Index": ("/objects/{parent}/",),
-    "CustomField": ("/objects/{parent}/fields/{child}.",), "CustomObject": ("/objects/{name}/", "/objects/{name}."),
-    # A bundle deploys every file in its folder.
-    "AuraDefinitionBundle": ("/aura/{name}/",), "LightningComponentBundle": ("/lwc/{name}/",),
-    "ExperienceBundle": ("/experiences/{name}/", "/experiences/{name}."),
-    "StaticResource": ("/staticresources/{name}.", "/staticresources/{name}/"),
-    "Document": ("/documents/{name}", ), "EmailTemplate": ("/email/{name}.", "/email/{name}/"),
-}
 
 
 def payload_needles(component: str) -> list[str]:
@@ -164,15 +174,13 @@ def _store(workspace, client, change_id, source_dir: Path, job: str | None, how:
     if problem:
         raise ws.WorkspaceError(problem)
     evidence.mkdir(mode=0o700, exist_ok=True)
-    shutil.copytree(source_dir, target, symlinks=True)
+    shutil.copytree(source_dir, target, symlinks=True, copy_function=ws.copy_private)
     files = []
     for path in sorted(target.rglob("*")):
         if path.is_symlink():
             shutil.rmtree(target)
             raise ws.WorkspaceError(f"a before-state must not contain links: {path.relative_to(target)}")
         if path.is_file():
-            if os.name != "nt":
-                path.chmod(0o600)
             files.append({"path": path.relative_to(root).as_posix(), "sha256": _file_sha(path)})
     if not files:
         shutil.rmtree(target)
@@ -347,9 +355,16 @@ def component_for_path(relative: str) -> str:
     return "File:" + relative
 
 
-def _source_components(root: Path) -> list[str]:
+def _source_components(root: Path, cwd: Path | None = None) -> list[str]:
+    def component(path):
+        try:
+            relative = Path(os.path.relpath(path, cwd)) if cwd is not None else path
+        except ValueError:  # Windows paths on different drives have no relative form.
+            relative = path
+        return component_for_path(relative.as_posix())
+
     if root.is_file():
-        return [component_for_path(root.as_posix())]
+        return [component(root)]
     out, seen = [], 0
     for folder, _dirs, files in os.walk(root):
         for name in files:
@@ -357,7 +372,7 @@ def _source_components(root: Path) -> list[str]:
             if seen > DEPLOY_WALK_CAP:
                 raise ws.WorkspaceError(f"{root} holds more than {DEPLOY_WALK_CAP} files; deploy a narrower folder")
             path = Path(folder) / name
-            out.append(component_for_path(path.relative_to(root.parent).as_posix()))
+            out.append(component(path))
     return out
 
 
@@ -378,7 +393,7 @@ def deploy_components(argv: list[str], cwd: Path) -> list[str]:
         out += _manifest_components(Path(cwd) / value)
     source_flags = SOURCE_DIR_FLAGS if legacy or "deploy" in argv[:4] else ("-d", "--source-dir")
     for value in argv_flags.values(argv, source_flags, legacy=legacy):
-        out += _source_components(Path(cwd) / value)
+        out += _source_components(Path(cwd) / value, cwd)
     return list(dict.fromkeys(out))
 
 

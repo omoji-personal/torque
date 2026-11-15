@@ -94,13 +94,22 @@ class LightningToast:
         try:
             btn = self._root.locator("lightning-button-icon").first
             await btn.click(timeout=timeout)
-            # Wait for toast root to detach or hide (UTAM waitForAbsence)
+            # Wait for toast root to detach or hide (UTAM waitForAbsence). A detached
+            # toast counts as hidden, so a failed wait means the toast may still be there:
+            # look once more, and only an observed absence is a success.
             try:
-                await self._root.wait_for(state="hidden", timeout=5000)
-            except Exception:
-                # If hidden never lands, the toast may have already
-                # detached from DOM — treat that as success too
-                pass
+                await self._root.wait_for(state="hidden", timeout=timeout)
+            except Exception as stuck:
+                try:
+                    still_visible = bool(await self._root.is_visible())
+                except Exception:
+                    still_visible = True  # not observed gone
+                if still_visible:
+                    return StepResult(
+                        step_name=step, status="FAIL", fidelity="USER_FIDELITY",
+                        duration_seconds=time.monotonic() - t0,
+                        detail=f"the toast was still visible after close ({timeout} ms, {type(stuck).__name__})",
+                    )
             return StepResult(
                 step_name=step, status="PASS", fidelity="USER_FIDELITY",
                 duration_seconds=time.monotonic() - t0,

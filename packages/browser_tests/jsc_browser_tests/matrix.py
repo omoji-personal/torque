@@ -46,15 +46,19 @@ def expand_cells(flows, profiles) -> list[Cell]:
     return cells
 
 
-async def login_as_preflight(page, seed, sf) -> dict:
+async def login_as_preflight(page, seed, admin_auth) -> dict:
     """Attempt Login-As + Logout-As once per declared non-admin user BEFORE the
     matrix runs. Any identity/restoration failure stops the preflight; subsequent
     cells must not run in an uncertain session.
+
+    `admin_auth` is the sign-in the page was opened with (auth.get_admin_auth): its
+    instance address and org ID are used, so no second CLI call is made here.
     """
-    display = sf.org_display()
-    instance_url = display.get("instanceUrl", "")
+    instance_url = getattr(admin_auth, "instance_url", "") or ""
+    display = {"id": getattr(admin_auth, "org_id_18", "") or ""}
     baseline = await observe_user_id(page)
     results: dict[str, str] = {}
+    notes: list[str] = []
     for role, user in (seed.get("users") or {}).items():
         if role == "admin":
             continue
@@ -71,12 +75,17 @@ async def login_as_preflight(page, seed, sf) -> dict:
             try:
                 restoration = await restore_original_user(page, instance_url, baseline)
                 if restoration.get("action_warning"):
-                    detail = "Logout As action reported an error, but the original browser user is now observed: " + restoration["action_warning"]
-                    failure = (failure + "; " if failure else "") + detail
+                    # The original user was observed again, so the session is restored and
+                    # the role passes. What the Logout As action reported is kept as a
+                    # note; it is not a reason to stop the run.
+                    notes.append(f"{role}: Logout As action reported an error, but the original browser user "
+                                 "is now observed: " + restoration["action_warning"])
             except Exception as exc:
                 failure = (failure + "; " if failure else "") + "Session restoration failed: " + exception_detail(exc)
         if failure:
             results[role] = "FAIL"
             results["preflight_error"] = failure
             break
+    if notes:
+        results["preflight_warning"] = "; ".join(notes)
     return results

@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 from uuid import uuid4
 
 from . import workspace as ws
@@ -103,9 +102,9 @@ def _user() -> str:
 def _save(path: Path, item: dict, *, delegated: bool = False) -> None:
     text = json.dumps(item, indent=2, ensure_ascii=False) + "\n"
     if path.exists():
-        ws._atomic_replace_text(path, text)
+        ws._atomic_replace_text(path, text, private=True)
     else:
-        ws._write_json(path, item)
+        ws._write_json(path, item, private=True)
     if os.name != "nt":
         # F12: the a15 owner path keeps 0600 (unchanged). A setup delegate's own
         # uid writes 0644 instead, so the different account the gate and hooks
@@ -141,10 +140,11 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
     for alias in dict.fromkeys(orgs):
         info = resolve(alias)
         if info is None:
+            from .gate_connected import ORG_IDENTITY_QUERY
             raise ws.WorkspaceError(f"could not resolve org alias {alias!r}: the Salesforce CLI did not confirm "
                                     f"it (not authenticated, or no answer within {_RESOLVE_SECONDS} seconds for "
-                                    "one call). Check it with `sf org display --target-org ALIAS`, then run "
-                                    "this again")
+                                    f"one call). Check it with `{ORG_IDENTITY_QUERY.replace('ALIAS', alias)}`, "
+                                    "which prints no credential, then run this again")
         entry = {"alias": alias, "org_id_18": info.org_id_18, "kind": info.detected_org_type}
         instance = getattr(info, "instance_url", None)
         if isinstance(instance, str) and instance:
@@ -159,9 +159,7 @@ def record_consent(workspace, client, agreed_on: str, evidence, data_allowed: li
     target_dir = ws._inside(folder, folder / EVIDENCE_DIR)
     target_dir.mkdir(mode=0o700, exist_ok=True)
     target = ws._inside(folder, target_dir / (uuid4().hex + re.sub(r"[^A-Za-z0-9.]", "", source.suffix)[:16]))
-    shutil.copyfile(source, target)
-    if os.name != "nt":
-        target.chmod(0o600)
+    ws.copy_private(source, target)
     guarded = any(c in GUARDED_CLASSES for classes in org_data.values() for c in classes)
     item = {"schema": SCHEMA_GUARDED if guarded else SCHEMA, "client": ws.slug_for(client), "status": "pending",
             "agreed_on": agreed_on,

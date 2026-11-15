@@ -6,10 +6,10 @@ Codex-R1-P1-07 closure: deploy-quick previously claimed `deploy_metadata`
 revertability (and therefore inherited the metadata-before redeploy plan), but
 it did NOT capture `metadata-before/` bytes — only a 50-element component list.
 For v7.17.0, the operation_type is `deploy_quick_promote` (a distinct op_type)
-and the revertibility is REVERTIBLE_FALSE. Operators are directed to run
-`jsc deploy --dry-run` against the validation job's component manifest BEFORE
-promotion to capture a snapshot with metadata-before bytes; revert then targets
-that earlier snapshot.
+and the revertibility is REVERTIBLE_FALSE. Before promotion, explicitly retrieve
+the validated components with `sf project retrieve start --metadata Type:Name --target-metadata-dir <baseline> --unzip`
+into a private baseline directory and verify the files. This is a manual recovery
+baseline, not an automatic Torque recovery bundle.
 
 v7.17.1 may add `sf project retrieve start --metadata` pre-promotion to capture
 metadata-before for the validation job's component list, at which point this
@@ -22,6 +22,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
 from . import _common as c
 
@@ -55,6 +56,7 @@ def run(args: argparse.Namespace) -> int:
             "expected_component_count": len(components),
             "expected_components": components,  # no cap — forensic record
             "deploy_mode": "quick_promote",
+            "report_cwd": str(Path.cwd()),
         }
         ctx.set_revert_capabilities()
         ctx.update_phase("pre_snapshot", status="complete",
@@ -74,9 +76,11 @@ def run(args: argparse.Namespace) -> int:
         duration = round(time.monotonic() - t0, 2)
         (ctx.snap_dir / "underlying-result.json").write_text(stdout, encoding="utf-8")
         sf_json = c.parse_sf_json_safely(stdout)
-        if sf_json:
-            ctx.manifest["payload"]["deploy_id"] = sf_json.get("result", {}).get("id")
-        snap_status, wrapper_exit = c.classify_deploy_status(sf_json, exit_code)
+        from ..job_outcomes import deploy_outcome
+        snap_status, deploy_id = deploy_outcome(sf_json, exit_code)
+        wrapper_exit = c._outcome_exit(snap_status)
+        ctx.manifest['payload']['deploy_id'] = deploy_id
+        ctx.manifest['payload']['recovery_readiness'] = 'unknown'
         ctx.manifest["snapshot_status"] = snap_status
         ctx.update_phase("underlying_command",
             status=snap_status, exit_code=exit_code, duration_seconds=duration,

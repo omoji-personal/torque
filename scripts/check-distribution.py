@@ -14,7 +14,7 @@ REQUIRED = {
     "torque/cli.py", "torque/workspace.py", "torque/data/catalogue.json",
     "torque/changes.py", "torque/demo.py", "torque/template_updates.py",
     "jsc_common/workspace.py", "jsc_qa/data/qa-router.yaml",
-    "jsc_revert/cli.py", "jsc_loganalyzer/cli.py", "jsc_memory/cli.py",
+    "jsc_revert/cli.py", "jsc_loganalyzer/cli.py", "jsc_memory/cli.py", "jsc_memory/recall.py",
     "jsc_browser_tests/cli.py", "meeting_processor/cli.py", "jsc_probes/cli.py",
     "jsc_ai_prompt_regression/cli.py", "jsc_advisory/data/salesforce-platform.json",
 }
@@ -49,6 +49,12 @@ def main():
         for row in rows:
             if f"torque/data/commands/{row['name']}.md" not in names:
                 raise SystemExit(f"Missing packaged recipe: {row['name']}")
+        lessons = [name for name in names if name.startswith("torque/data/lessons/") and name.endswith(".md")]
+        if not lessons:
+            raise SystemExit("Wheel holds no platform lessons (torque/data/lessons/*.md)")
+        if "torque/data/floor/AGENTS-floor.md" not in names:
+            raise SystemExit("Wheel holds no floor block (torque/data/floor/AGENTS-floor.md): "
+                             "workspace init could not write AGENTS.md")
         home_prefix = (Path.home().as_posix().rstrip("/") + "/").encode()
         home_paths = [n for n in names if n.endswith((".py", ".md", ".json", ".yaml"))
                       and home_prefix in archive.read(n)]
@@ -65,6 +71,7 @@ def main():
                 raise SystemExit(f"Private/generated source distribution content: {bad}")
             relative = {Path(*p.parts[1:]).as_posix() for p in paths}
             required = {"scripts/test-offline.py", "workflows/catalogue.json", "AGENTS.md", "pyproject.toml", "MANIFEST.in",
+                        "lessons/describe-before-deploy.md",
                         "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "docs/installation.md"}
             if not required <= relative:
                 raise SystemExit(f"Source distribution missing: {sorted(required - relative)}")

@@ -96,26 +96,32 @@ async def _live_preflight(config):
     if missing:
         return {**{p: "FAIL" for p in missing}, "preflight_error": "Missing test user for requested profile(s)"}
     from . import auth
-    auth.refuse_debug_env_when_connected()
+    auth.refuse_debug_env_before_sign_in(auth.cdp_endpoint_from_env())
     from playwright.async_api import async_playwright
     from .matrix import login_as_preflight
     sf = config["sf"]
-    admin_auth = auth.get_admin_auth(sf, config["target_org"])
     async with async_playwright() as pw:
+        # Asked for once Playwright runs, just before the browser is sent to it.
+        admin_auth = auth.get_admin_auth(sf, config["target_org"])
         sess = await auth.open_session(pw, admin_auth,
                                        cdp_endpoint=auth.cdp_endpoint_from_env(),
                                        headed=config.get("headed", False))
         try:
             selected_seed = {"users": {p: seed["users"][p] for p in needed}}
-            return await login_as_preflight(sess.page, selected_seed, sf)
+            return await login_as_preflight(sess.page, selected_seed, admin_auth)
         finally:
             await auth.close_session(sess)
+
+
+# Keys of a preflight result that are text about the run, not a role's PASS or FAIL.
+# A warning is kept in the manifest and does not stop the run; an error does.
+PREFLIGHT_NOTES = ("preflight_error", "preflight_warning")
 
 
 def _not_executed(preflight_results: dict) -> str:
     """Why no cell ran, with the preflight's own (redacted) reason and each role's result,
     so --json and the console show the cause, not only that the preflight failed."""
-    roles = ", ".join(f"{k}={v}" for k, v in preflight_results.items() if k != "preflight_error")
+    roles = ", ".join(f"{k}={v}" for k, v in preflight_results.items() if k not in PREFLIGHT_NOTES)
     reason = preflight_results.get("preflight_error") or "a role did not pass"
     return redact("Not executed: browser preflight failed: " + str(reason) + (f" ({roles})" if roles else ""))
 
@@ -174,13 +180,14 @@ async def run_suite(config) -> int:
         except Exception as e:
             preflight_results = {"preflight_error": exception_detail(e)}
         preflight_failed = bool(preflight_results.get("preflight_error")) or any(
-            value != "PASS" for key, value in preflight_results.items() if key != "preflight_error")
+            value != "PASS" for key, value in preflight_results.items() if key not in PREFLIGHT_NOTES)
         stopped = preflight_failed
         if preflight_failed:
             cleanup_status = "NOT_APPLICABLE"
             cleanup_detail = "No flow executed because browser-session preflight failed"
 
         executor = config.get("cell_executor") or _live_cell_executor
+        executed = 0
         for cell in cells:
             if not cell.applicable:
                 not_applicable = FlowResult(flow_name=cell.flow.spec.name, profile=cell.profile,
@@ -189,18 +196,30 @@ async def run_suite(config) -> int:
                 if config.get("on_result"):
                     config["on_result"](not_applicable)
                 continue
+            variation = str(getattr(cell.variation, "name", "") or "")
+            cell_id = f"{cell.flow.spec.name}/{variation}/{cell.profile}"
+            artifact_dir = ""
             if stopped:
                 fr = FlowResult(flow_name=cell.flow.spec.name, profile=cell.profile,
                                 target_org=target_org, overall_status="INCOMPLETE",
                                 error=_not_executed(preflight_results) if preflight_failed else
                                 "Not executed: browser session restoration failed in an earlier cell")
             else:
+                # Each executed cell gets its own evidence folder, so a later variation or
+                # user cannot overwrite an earlier one's screenshot of the same name. The
+                # name is short on purpose (Windows path length); the manifest says which
+                # flow, variation and profile it belongs to.
+                artifact_dir = f"c{executed}"
+                executed += 1
+                cell_dir = run_dir / artifact_dir
                 try:
-                    fr = await executor(cell, cell_config)
+                    cell_dir.mkdir(exist_ok=True, mode=0o700)
+                    fr = await executor(cell, {**cell_config, "run_dir": str(cell_dir), "cell_id": cell_id})
                 except Exception as exc:
                     fr = FlowResult(flow_name=cell.flow.spec.name, profile=cell.profile,
                                     target_org=target_org, overall_status="FAIL",
                                     error=exception_detail(exc))
+            fr.variation, fr.cell_id, fr.artifact_dir = variation, cell_id, artifact_dir
             fr.side_effects = fr.side_effects or {}
             fr.side_effects["is_happy"] = (getattr(cell.variation, "expect", "success") == "success")
             fr.side_effects["is_crud"] = (cell.flow.spec.workflow == "CRUD")

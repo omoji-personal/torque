@@ -238,7 +238,7 @@ def test_wrapper_recovery_uses_only_scoped_source_even_inside_unrelated_project(
     observed = {}
     class Context:
         def __init__(self, **kwargs):
-            self.manifest = {}; self.snap_dir = tmp_path / "revert-child"; self.snapshot_id = "child"
+            self.manifest = {'snapshot_id': 'child'}; self.snap_dir = tmp_path / "revert-child"; self.snapshot_id = "child"
         def resolve_org(self): return 0
         def acquire_org_lock(self): return 0
         def release_lock(self): pass

@@ -25,6 +25,89 @@ def _fixture_tool(path):
     return bool(path) and (Path(path).resolve().parent / FIXTURE_MARKER).is_file()
 
 
+def _stub_argv(name, local):
+    """What a stub stands for, as a command: the trusted interpreter or local tool itself."""
+    if name in LIVE:
+        return [sys.executable, str(BASE / "offline_support.py"), name]
+    if name in SOURCE_TOOLS:
+        return [sys.executable, "-m", SOURCE_TOOLS[name]]
+    if name in ("python", "python3"):
+        return [sys.executable]
+    return [local[name]] if name in local else None
+
+
+def _shim_command(executable, local):
+    """What a Windows .cmd stub shim stands for, or None for any other file.
+
+    CreateProcess would run a shim through cmd.exe, which rereads %, ^, & and quotes
+    in the arguments; starting what it stands for passes them as given.
+    """
+    if os.name != "nt" or Path(executable).suffix.lower() != ".cmd":
+        return None
+    folder = Path(executable).resolve().parent
+    if folder == BINS or (folder.parent / "bootstrap" / "offline_support.py").is_file():
+        return _stub_argv(Path(executable).stem.lower(), local)
+    return None
+
+
+def _stub_alias(name):
+    """The stub shim for a bare Windows spelling (python.exe, GIT, Sf.cmd), or None.
+
+    Windows names are case-insensitive and callers add .exe; the stubs are .cmd shims.
+    """
+    if os.name != "nt" or os.path.dirname(name) or Path(name).suffix.lower() not in ("", ".exe", ".cmd"):
+        return None
+    shim = BINS / (Path(name).stem.lower() + ".cmd")
+    return str(shim) if shim.is_file() else None
+
+
+def _patch_launch_helper(local):
+    """Dispatch stubs before jsc_common.tools quotes a command for cmd.exe.
+
+    That helper sees a .cmd stub on PATH, as it would a real npm shim, and builds a
+    cmd.exe line it cannot give a line break. Real batch files keep the helper's quoting.
+    """
+    import importlib.abc
+    import importlib.util
+
+    class Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname != "jsc_common.tools":
+                return None
+            sys.meta_path.remove(self)
+            try:
+                spec = importlib.util.find_spec(fullname)
+            finally:
+                sys.meta_path.insert(0, self)
+            if spec is None or spec.loader is None:
+                return spec
+            execute = spec.loader.exec_module
+
+            def exec_module(module):
+                execute(module)
+                original = module.command
+
+                def command(argv, env=None, *, windows=module.os.name == "nt"):
+                    first = os.fspath(argv[0]) if argv else ""
+                    found = first if os.path.dirname(first) else (shutil.which(
+                        first, path=(os.environ if env is None else env).get("PATH", ""))
+                        or (_stub_alias(first) if first.lower().endswith(".exe") else None))
+                    stub = _shim_command(found, local) if found else None
+                    if windows and stub:
+                        # The command as given, as a list: the shape a real .exe gives, no cmd.exe line, so code
+                        # that reads the call sees it unchanged. OfflinePopen resolves the shim and starts what it
+                        # stands for.
+                        return [first, *(os.fspath(a) for a in argv[1:])], {}
+                    return original(argv, env, windows=windows)
+
+                module.command = command
+
+            spec.loader.exec_module = exec_module
+            return spec
+
+    sys.meta_path.insert(0, Finder())
+
+
 def tool_main():
     name = Path(sys.argv[0]).stem
     args = sys.argv[1:]
@@ -69,7 +152,7 @@ def install():
                     os.environ["COMSPEC"] if os.name == "nt" else "/bin/sh")
             if not kwargs.get("shell") and isinstance(args, (list, tuple)) and args:
                 executable = os.fsdecode(kwargs.get("executable") or args[0])
-                name = Path(executable).stem if os.name == "nt" else Path(executable).name
+                name = Path(executable).stem.lower() if os.name == "nt" else Path(executable).name
                 environment = kwargs.get("env") if kwargs.get("env") is not None else os.environ
                 found = executable if os.path.dirname(executable) else shutil.which(
                     executable, path=environment.get("PATH", ""))
@@ -77,9 +160,11 @@ def install():
                     executable = found
                 elif name in LIVE or name in SOURCE_TOOLS:
                     # Not shutil.which: on Windows it searches the CWD first.
-                    target = BINS / (name + ".exe" if os.name == "nt" else name)
+                    target = BINS / (name + ".cmd" if os.name == "nt" else name)
                     if target.is_file():
                         executable = str(target)
+                elif _stub_alias(executable) and (not found or Path(found).resolve().parent == BINS):
+                    executable = _stub_alias(executable)
                 elif found:
                     executable = found
                     # A nested launcher puts its own tool folder on PATH; its
@@ -89,6 +174,10 @@ def install():
                     if (folder != BINS and target.is_file()
                             and (folder.parent / "bootstrap" / "offline_support.py").is_file()):
                         executable = str(target)
+                stub = _shim_command(executable, local)
+                if stub:
+                    args = [*stub, *args[1:]]
+                    executable = stub[0]
                 kwargs["executable"] = executable
                 # Subprocess overrides must retain the guard for fresh Python
                 # interpreters (e.g. a test supplying its own PYTHONPATH).
@@ -125,6 +214,8 @@ def install():
             raise PermissionError("Offline suite requires subprocess with an explicit executable")
 
     subprocess.Popen = OfflinePopen
+    if os.name == "nt":
+        _patch_launch_helper(local)
     sys.addaudithook(audit)
 
 

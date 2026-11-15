@@ -2,14 +2,32 @@
 
 from __future__ import annotations
 
-import shutil
 import argparse
+import shlex
 import sys
 import time
 from pathlib import Path
 
 from . import _common as c
-from .. import snapshot_pre, stale_detector
+from .. import deploy_stage, snapshot_pre, stale_detector
+
+
+def _options(args: argparse.Namespace) -> list[str]:
+    options = []
+    for key in ('test_level', 'api_version', 'post_destructive_changes'):
+        value = getattr(args, key, None)
+        if value:
+            options += ['--' + key.replace('_', '-'), value]
+    for name in getattr(args, 'tests', []):
+        options += ['--tests', name]
+    for key in ('ignore_conflicts', 'ignore_warnings'):
+        if getattr(args, key, False):
+            options.append('--' + key.replace('_', '-'))
+    if getattr(args, 'async_deploy', False):
+        options.append('--async')
+    else:
+        options += ['--wait', str(getattr(args, 'wait', 33))]
+    return options
 
 
 def run(args: argparse.Namespace) -> int:
@@ -20,7 +38,8 @@ def run(args: argparse.Namespace) -> int:
     for sd in args.source_dir: parts += ["--source-dir", sd]
     if args.pre_destructive_changes: parts += ["--pre-destructive-changes", args.pre_destructive_changes]
     if args.dry_run: parts.append("--dry-run")
-    wrapper_command = " ".join(parts)
+    options = _options(args)
+    wrapper_command = shlex.join(parts + options)
 
     invoking_intent = None
     if args.invoking_intent:
@@ -34,6 +53,7 @@ def run(args: argparse.Namespace) -> int:
         wrapper_command=wrapper_command,
         invoking_intent=invoking_intent,
         parent_snapshot_id=args.parent_snapshot_id,
+        dry_run=args.dry_run,
     )
 
     rc = ctx.resolve_org()
@@ -48,12 +68,16 @@ def run(args: argparse.Namespace) -> int:
             "selectors": {
                 "metadata_args": args.metadata,
                 "manifest_paths": args.manifest,
-                "destructive_manifest_paths": [args.pre_destructive_changes] if args.pre_destructive_changes else [],
+                "destructive_manifest_paths": [path for path in (args.pre_destructive_changes,
+                    getattr(args, 'post_destructive_changes', None)) if path],
                 "source_dirs": args.source_dir,
                 "target_org": args.target_org,
+                "deploy_options": options,
+                "dry_run": args.dry_run,
             },
             "deploy_id": None,
             "deploy_status_code": None,
+            "recovery_readiness": "in_flight",
             "files": [],
             "messages": [],
         }
@@ -122,6 +146,11 @@ def run(args: argparse.Namespace) -> int:
         if source_dirs and not args.metadata and not args.manifest \
                 and (args.operation_type == "revert" or not c.in_sfdx_project()):
             stage_dir, source_dirs = c.stage_source_project(source_dirs)
+            # Keep the short temporary path: moving into a deep snapshot can
+            # exceed Windows MAX_PATH. Report needs this project until terminal.
+            deploy_stage.retain(stage_dir, ctx.manifest)
+        report_cwd = stage_dir or str(Path.cwd())
+        ctx.manifest['payload']['report_cwd'] = report_cwd
 
         sf_cmd = ["sf", "project", "deploy", "start", "--target-org", args.target_org, "--json"]
         for m in args.metadata: sf_cmd += ["--metadata", m]
@@ -129,14 +158,19 @@ def run(args: argparse.Namespace) -> int:
         for sd in source_dirs: sf_cmd += ["--source-dir", sd]
         if args.pre_destructive_changes: sf_cmd += ["--pre-destructive-changes", args.pre_destructive_changes]
         if args.dry_run: sf_cmd.append("--dry-run")
+        # Submission never waits for deployment completion. Save its ID before
+        # a separate report call so a client timeout cannot lose the handle.
+        sf_cmd += options[:-1] if getattr(args, 'async_deploy', False) else options[:-2]
+        sf_cmd.append('--async')
+        if stage_dir:
+            for flag in ('--pre-destructive-changes', '--post-destructive-changes'):
+                if flag in sf_cmd:
+                    index = sf_cmd.index(flag) + 1
+                    sf_cmd[index] = str(Path(sf_cmd[index]).absolute())
 
         t0 = time.monotonic()
-        try:
-            exit_code, stdout, stderr = c.run_sf_subprocess(
-                sf_cmd, timeout_seconds=1800, cwd=stage_dir)
-        finally:
-            if stage_dir:
-                shutil.rmtree(stage_dir, ignore_errors=True)
+        exit_code, stdout, stderr = c.run_sf_subprocess(
+            sf_cmd, timeout_seconds=1800, cwd=stage_dir)
         duration = round(time.monotonic() - t0, 2)
 
         raw_path = ctx.snap_dir / "underlying-result.json"
@@ -146,17 +180,32 @@ def run(args: argparse.Namespace) -> int:
         sf_json = c.parse_sf_json_safely(stdout)
         from ..job_outcomes import deploy_outcome
         snapshot_status, deploy_id = deploy_outcome(sf_json, exit_code)
+        ctx.manifest['payload']['deploy_id'] = deploy_id
+        ctx.manifest['payload']['recovery_readiness'] = 'unknown'
+        ctx.manifest['snapshot_status'] = snapshot_status
+        ctx.set_revert_capabilities()
+        ctx.save()
+        c.auto_enqueue_if_pending(ctx, snapshot_status, deploy_id,
+            ['sf', 'project', 'deploy', 'report', '--target-org', args.target_org,
+             '--job-id', deploy_id, '--json'])
+        ctx.save()
+        if snapshot_status == 'pending_finalize_required' and deploy_id and not getattr(args, 'async_deploy', False):
+            wait = getattr(args, 'wait', 33)
+            report_cmd = ['sf', 'project', 'deploy', 'report', '--target-org', args.target_org,
+                          '--job-id', deploy_id, '--wait', str(wait), '--json']
+            exit_code, stdout, stderr = c.run_sf_subprocess(report_cmd, timeout_seconds=wait * 60 + 600, cwd=report_cwd)
+            raw_path = ctx.snap_dir / 'deploy-report.json'
+            c.bundle.atomic_write_json(raw_path, {'command': report_cmd, 'exit_code': exit_code,
+                                                'stdout': stdout, 'stderr': stderr})
+            sf_json = c.parse_sf_json_safely(stdout)
+            snapshot_status, _ = deploy_outcome(sf_json, exit_code, deploy_id)
+            duration = round(time.monotonic() - t0, 2)
+        result = sf_json.get('result') if isinstance(sf_json, dict) else None
         wrapper_exit = c._outcome_exit(snapshot_status)
         ctx.manifest["snapshot_status"] = snapshot_status
         ctx.manifest["payload"]["deploy_id"] = deploy_id
-        result = sf_json.get("result") if isinstance(sf_json, dict) else None
         if isinstance(result, dict):
             ctx.manifest["payload"]["deploy_status_code"] = result.get("status")
-        if snapshot_status == "pending_finalize_required" and deploy_id:
-            c.auto_enqueue_if_pending(ctx, snapshot_status, deploy_id,
-                ["sf", "project", "deploy", "report", "--target-org", args.target_org,
-                 "--job-id", deploy_id, "--json"])
-
         ctx.update_phase("underlying_command",
             status=snapshot_status,
             exit_code=exit_code,
@@ -172,14 +221,21 @@ def run(args: argparse.Namespace) -> int:
         if wrapper_exit == 0 and args.metadata and not args.dry_run:
             try:
                 stale_detector.capture_deployment_state(ctx.snap_dir, ctx.manifest, args.target_org)
+                ctx.manifest['payload']['recovery_readiness'] = 'captured'
             except Exception as exc:
                 snapshot_status = ctx.manifest["snapshot_status"] = "partial"
                 ctx.update_phase("post_finalize", status="failed", error=str(exc))
                 wrapper_exit = c.EXIT_POST_FINALIZE_FAILED
                 print("Deployment succeeded, but post-deployment capture failed; do not retry the write.", file=sys.stderr)
+        if snapshot_status == 'pending_finalize_required' or (not deploy_id and exit_code == -1):
+            print('warning: deploy outcome is unknown; the server-side deploy may still be running. '
+                  'Inspect deployment status in the org before retrying.', file=sys.stderr)
+        ctx.set_revert_capabilities()
         ctx.save()
+        deploy_stage.cleanup(ctx.manifest)
 
         if wrapper_exit != 0:
+            c.print_sf_failure(sf_json, stderr)
             print(f"warning: deploy returned status={snapshot_status}, wrapper_exit={wrapper_exit}", file=sys.stderr)
         else:
             print(f"deploy success: snapshot {ctx.snapshot_id} captured at {ctx.snap_dir}", file=sys.stderr)

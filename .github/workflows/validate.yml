@@ -5,6 +5,8 @@ permissions:
 jobs:
   offline:
     runs-on: ${{ matrix.os }}
+    # Windows jobs take about an hour; a hang stops here, not at the 6-hour default.
+    timeout-minutes: 120
     # Windows runners default the `run:` shell to pwsh, which does not glob
     # `dist/*.whl`-style arguments to external commands the way bash does.
     # Bash is present on windows-latest (Git for Windows) and keeps every
@@ -26,7 +28,8 @@ jobs:
       - run: python workflows/sync_adapters.py --check
       - run: python scripts/sync-workflows.py --check
       - run: python scripts/check-provenance.py
-      - run: python scripts/test-offline.py -q
+      # Four pytest workers, about the runners' CPU count; the executable suites stay serial.
+      - run: python scripts/test-offline.py -q --workers 4
       - run: python -m build
       - run: python scripts/check-distribution.py dist/*.whl --sdist dist/*.tar.gz
       - name: Verify the installed wheel outside the source checkout
@@ -39,6 +42,11 @@ jobs:
           "$venv_python" -m pip install dist/*.whl
           "$venv_python" -m pip check
           "$venv_python" scripts/smoke-installed.py --require-wheel
+      # The checksums go into the candidate artifact and this log, for the release notes.
+      - name: Record the candidate checksums
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        working-directory: dist
+        run: sha256sum -- *.whl *.tar.gz | tee SHA256SUMS
       - name: Keep reviewed candidate artifacts
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

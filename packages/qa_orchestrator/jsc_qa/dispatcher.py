@@ -832,7 +832,12 @@ def dispatch_side_eff(target_org: str, change_description: str) -> DispatchResul
     except (OSError, subprocess.TimeoutExpired) as exc:
         return DispatchResult("Side-Eff", "ERROR", f"Log analysis could not run: {type(exc).__name__}.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
     if proc.returncode != 0:
-        return DispatchResult("Side-Eff", "ERROR", f"Log analysis unavailable (exit {proc.returncode}); runtime health remains unknown.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
+        try:  # the analyzer's own reason, such as a failed ApexLog query
+            reason = json.loads(proc.stdout)["error"]
+        except (ValueError, KeyError, TypeError):
+            reason = ""
+        reason = f": {reason}" if isinstance(reason, str) and reason else ""
+        return DispatchResult("Side-Eff", "ERROR", f"Log analysis unavailable (exit {proc.returncode}){reason}; runtime health remains unknown.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
     try:
         data = json.loads(proc.stdout)
         findings, summary = data["findings"], data["summary"]
@@ -841,10 +846,20 @@ def dispatch_side_eff(target_org: str, change_description: str) -> DispatchResul
         if not all(isinstance(item, dict) and type(item.get("severity")) is int and item["severity"] in (1,2,3) for item in findings): raise ValueError("finding")
         if not all(type(summary.get(key)) is int and summary[key] == value for key, value in counts.items()): raise ValueError("counts")
         if type(summary.get("total")) is not int or summary["total"] != len(findings): raise ValueError("total")
-        if type(data.get("logs_analyzed")) is not int or data["logs_analyzed"] <= 0: raise ValueError("coverage")
+        if type(data.get("logs_analyzed")) is not int or data["logs_analyzed"] < 0: raise ValueError("coverage")
+        # Zero coverage counts only as the analyzer's explicit "the query ran and found no log".
+        no_logs = data["logs_analyzed"] == 0
+        if no_logs and (data.get("analysis_scope") != "no_logs_found" or findings): raise ValueError("coverage")
         if data.get("error"): raise ValueError("error")
     except (ValueError, KeyError, TypeError, AssertionError):
         return DispatchResult("Side-Eff", "ERROR", "Analyzer evidence is missing, malformed or inconsistent; runtime health remains unknown.", duration_seconds=time.monotonic()-started, invocation_command=invocation)
+    if no_logs:
+        return DispatchResult(
+            "Side-Eff", "MANUAL_REQUIRED",
+            f"No debug log was found in {target_org}, so runtime side effects were not checked. Set a debug-log trace flag for the user who runs the change, reproduce it, then rerun QA, or analyze that log with `torque logs --target-org {target_org} --since <a time just before the reproduction>`.",
+            duration_seconds=time.monotonic()-started, invocation_command=invocation,
+            metadata={"logs_analyzed": 0, "analysis_scope": "no_logs_found", "change_execution_proven": False},
+        )
     status = "FAIL" if counts["p0_count"] or counts["p1_count"] else "PASS"
     return DispatchResult(
         "Side-Eff", status,
@@ -877,6 +892,25 @@ def dispatch_parity(target_org: str, change_description: str) -> DispatchResult:
     except (OSError, subprocess.TimeoutExpired) as exc:
         return DispatchResult("Parity", "ERROR", str(exc))
     return DispatchResult("Parity", "PASS" if proc.returncode == 0 else "FAIL", "Configured parity adapter completed; scope is defined by that adapter.", duration_seconds=time.monotonic()-started, invocation_command=" ".join(cmd), raw_output=proc.stdout[-1500:])
+
+
+# The client scope every `torque browser` command takes, as the recipes write it.
+SCOPE_WORDS = "--workspace <workspace> --client <client>"
+
+
+def host_tab_steps(target_org: str, change_description: str) -> str:
+    """How an agent walks a change in the host's browser tab, whatever the host and its
+    browser tool are. The tab is signed in through `torque browser login`: no password,
+    and the Salesforce sign-in address never reaches the session."""
+    return (
+        "For a journey without a flow, drive the host's browser tab turn by turn:\n"
+        f"  1. Run `torque browser login --target-org {target_org} {SCOPE_WORDS}`; it prints a local "
+        "address and waits\n"
+        "  2. Navigate the tab to that address with the host's browser tool (do not fetch it), wait for the "
+        "org to load and confirm the signed-in user\n"
+        f"  3. Walk through: {change_description[:200]}\n"
+        "  4. Take screenshots at key steps; read back side effects with a query."
+    )
 
 
 def _discover_available_flows(browser_tests_dir, library_dir) -> list[str]:
@@ -985,9 +1019,8 @@ def dispatch_funct_pl(target_org: str, change_description: str) -> DispatchResul
             detail=(
                 f"No unique library flow matched description "
                 f"(matched={matched!r}). Available: {available_flows}.\n"
-                f"To run: PYTHONPATH=packages/browser_tests python3 -m "
-                f"jsc_browser_tests.cli browser <flow> --target-org {target_org}\n"
-                f"Or use Chrome DevTools MCP turn-by-turn for ad-hoc."
+                f"To run a flow: torque browser browser <flow> --target-org {target_org} {SCOPE_WORDS}\n"
+                + host_tab_steps(target_org, change_description)
             ),
             duration_seconds=time.monotonic() - t0,
             invocation_command="(manual)",
@@ -1028,17 +1061,12 @@ def dispatch_funct_pl(target_org: str, change_description: str) -> DispatchResul
 
 
 def dispatch_funct_mcp(target_org: str, change_description: str) -> DispatchResult:
-    """Funct-MCP surface: operator/Claude drives via mcp__plugin_chrome-devtools-mcp_*."""
+    """Funct-MCP surface: the agent drives the host's browser tab turn by turn, with
+    whatever browser tool the host provides. The steps name no host and no tool family."""
     return DispatchResult(
         surface="Funct-MCP", status="MANUAL_REQUIRED",
-        detail=(
-            "Drive via Chrome DevTools MCP turn-by-turn. Per feedback_browser_testing_tool.md:\n"
-            f"  1. mcp__plugin_chrome-devtools-mcp_chrome-devtools__list_pages\n"
-            f"  2. mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page → {target_org} login URL\n"
-            f"  3. Walk through: {change_description[:200]}\n"
-            f"  4. Take screenshots at key steps; verify side effects via SOQL."
-        ),
-        invocation_command="(Claude turn-by-turn via DevTools MCP)",
+        detail=host_tab_steps(target_org, change_description),
+        invocation_command="(agent-driven host browser tab; sign-in: torque browser login)",
     )
 
 
@@ -1057,9 +1085,9 @@ def dispatch_multi_prof(target_org: str, change_description: str) -> DispatchRes
             detail=(
                 "packages/browser_tests/ not found. Manual checklist:\n"
                 f"  1. Verify test-users.json seed exists: <selected-client>/config/test-users.json\n"
-                f"  2. As Standard User: walk feature, verify FLS\n"
-                f"  3. As Platform User: same walk\n"
-                f"  4. Logout As back to admin"
+                f"  2. As each intended user: walk the feature, verify field and record access\n"
+                f"  3. Confirm the signed-in user in the page before each walk; an unconfirmed user is not coverage\n"
+                f"  4. To change user, sign in again; do not click \"Log out as\" (it can end the whole session)"
             ),
             invocation_command="(manual)",
         )
@@ -1073,8 +1101,11 @@ def dispatch_multi_prof(target_org: str, change_description: str) -> DispatchRes
             detail=(
                 f"No unique library flow matched (matched={matched!r}). "
                 f"Available: {available_flows}.\n"
-                f"To run: PYTHONPATH=packages/browser_tests python3 -m "
-                f"jsc_browser_tests.cli multiprofile <flow> --target-org {target_org}"
+                f"To run a flow as every user in the test-user seed: torque browser multiprofile <flow> "
+                f"--target-org {target_org} {SCOPE_WORDS}\n"
+                f"For one user in the host's browser tab: torque browser login --target-org {target_org} "
+                f"--as-alias <alias authorized as that user> {SCOPE_WORDS} (or --as-user <username> for Log in as); "
+                "confirm the signed-in user in the page before the walk."
             ),
             duration_seconds=time.monotonic() - t0,
             invocation_command="(manual)",
@@ -1177,8 +1208,7 @@ def dispatch_adv_probe(target_org: str, change_description: str) -> DispatchResu
             f"  Raw matches: {raw_paths}\n"
             f"  Dropped (not found relative to repo root or as absolute paths): {dropped_paths}\n"
             f"To probe, include paths to existing apex files. Manual run:\n"
-            f"  PYTHONPATH={probes_dir} python3 -m jsc_probes.cli "
-            f"--target-class <path/to/file.cls> --output \"${{JSC_QA_ADV_PROBE_OUT:-/tmp/jsc-probes-out}}\""
+            "  torque probes --target-class <path/to/file.cls> --output <private-output-directory>"
         )
         return DispatchResult(
             surface="Adv-Probe", status="MANUAL_REQUIRED",
@@ -1386,9 +1416,8 @@ def dispatch_taa(target_org: str, change_description: str) -> DispatchResult:
         surface="TAA", status="MANUAL_REQUIRED",
         detail=(
             "TAA is EXPENSIVE (3-model panel + synthesis). Operator opt-in only.\n"
-            "Per multi-model-audit.md: reserve for behavioral-rule changes + ship gates.\n"
-            "To invoke: scripts/run-taa-audit.sh OR manual dispatch per "
-            ".claude/rules/multi-model-audit.md."
+            "Reserve it for changes to behavioral rules and for release gates.\n"
+            "Torque ships no runner for it: dispatch the reviews by hand when the consultant asks."
         ),
         invocation_command="(operator-explicit)",
     )
@@ -1400,7 +1429,7 @@ def dispatch_hostile_qa(target_org: str, change_description: str) -> DispatchRes
         surface="Hostile-QA", status="MANUAL_REQUIRED",
         detail=(
             "Hostile-QA is EXPENSIVE (Opus subagent dispatch). Operator opt-in only.\n"
-            "Per Gemini-R1-P0-1 + multi-model-audit.md: do NOT auto-dispatch on QA failure.\n"
+            "Do NOT dispatch it automatically on a QA failure.\n"
             "To invoke: dispatch the hostile-qa-auditor subagent via Agent tool with a "
             "specific brief about the change."
         ),
@@ -1418,8 +1447,8 @@ _TARGET_ORG_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # (privacy-and-logging.md). Closes R2-CONSENSUS-1.
 CLAUDE_ONLY_CAVEAT = (
     "\n\n[ORCHESTRATION CAVEAT — claude_only environment]\n"
-    "Per .claude/rules/model-orchestration.md, this surface is gemini-optional. "
-    "Operator should re-audit at higher capability environment when CLI becomes available."
+    "This surface uses the Gemini CLI when it is installed, and it ran without it. "
+    "Run it again where that CLI is available."
 )
 
 
@@ -1546,6 +1575,8 @@ def _vision_manifest_inventory(target_org: str):
             raise ValueError("Browser manifest mixes target orgs")
         flow = cell.get("flow", cell.get("flow_name"))
         profile = cell.get("profile")
+        # A flow can run several variations for one profile; each is its own cell.
+        variation = cell.get("variation") if isinstance(cell.get("variation"), str) else ""
         steps = cell.get("steps", [])
         if not isinstance(steps, list):
             raise ValueError("Browser manifest contains invalid steps")
@@ -1570,13 +1601,16 @@ def _vision_manifest_inventory(target_org: str):
                     or not resolved.is_relative_to(qa_base)
                     or not resolved.is_file() or resolved.suffix.lower() != ".png"):
                 raise ValueError("Browser screenshot is missing or outside its selected run")
-            context = (flow, profile, step_name)
+            context = (flow, profile, step_name, variation)
             if resolved in seen:
                 if seen[resolved] != context:
-                    raise ValueError("Browser screenshot has conflicting manifest flow/profile/step context")
+                    # One file claimed by two cells is one cell's evidence overwritten by
+                    # the other's: report it, do not review it as either.
+                    raise ValueError("Browser screenshot has conflicting manifest flow/variation/profile/step "
+                                     "context: the same file is listed for two cells")
                 continue
             seen[resolved] = context
-            screenshots.append({"path": str(resolved), "flow": flow,
+            screenshots.append({"path": str(resolved), "flow": flow, "variation": variation,
                                 "profile": profile, "step_name": step_name})
     metadata = {
         "target_org": target_org,
@@ -1587,6 +1621,7 @@ def _vision_manifest_inventory(target_org: str):
         "screenshot_count": len(screenshots),
         "screenshots": screenshots,
         "browser_cells": [{"flow": cell.get("flow", cell.get("flow_name")),
+                           "variation": cell.get("variation"),
                            "profile": cell.get("profile"),
                            "status": cell.get("status", cell.get("overall_status"))}
                           for cell in cells],
@@ -1777,7 +1812,7 @@ def _dispatch_ai_prompt_active(target_org: str, change_description: str) -> Disp
         return DispatchResult(
             surface="AI-Prompt", status="MANUAL_REQUIRED",
             detail=(
-                f"gemini CLI not installed (AI-Prompt optional per model-orchestration.md). "
+                f"gemini CLI not installed (the AI-Prompt surface is optional). "
                 f"{len(fixture_dirs)} fixture(s) available for manual review: "
                 + ", ".join(fixture_dirs[:10])
                 + ("…" if len(fixture_dirs) > 10 else "")
@@ -1821,10 +1856,7 @@ def _dispatch_ai_prompt_active(target_org: str, change_description: str) -> Disp
         detail_lines.append(f"  …and {len(results) - 5} more")
 
     # R1 gemini-R1-P2-04: invocation_command must be runnable shell form
-    invocation = (
-        "PYTHONPATH=packages/ai_prompt_regression python3 -m "
-        f"jsc_ai_prompt_regression.cli replay-all {fixtures_root}"
-    )
+    invocation = f"torque ai-regression replay-all {fixtures_root}"
     return DispatchResult(
         surface="AI-Prompt", status=status,
         detail="\n".join(detail_lines) + "\nFixture contract checks do not prove deployed Salesforce prompt execution.",

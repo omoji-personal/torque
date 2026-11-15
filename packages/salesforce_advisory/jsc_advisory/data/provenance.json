@@ -10,6 +10,30 @@
     {
       "entry": "flow-activation-on-deploy",
       "reason": "Corrected the source remedy's retrieved-XML contradiction to use definition-scoped activation sources; the Torque handoff records the upstream fix."
+    },
+    {
+      "entry": "developer-edition-is-not-sandbox",
+      "reason": "The detect step reads the Organization record instead of sf org display, which printed the access token before Salesforce CLI 2.136.8."
+    },
+    {
+      "entry": "sandbox-refresh-changes-orgid",
+      "reason": "The detect step reads the Organization record instead of sf org display, which printed the access token before Salesforce CLI 2.136.8."
+    },
+    {
+      "entry": "tooling-api-refuses-permission-objects",
+      "reason": "2026-11-14: no longer says FieldDefinition and EntityDefinition exist only in the Tooling API; 48 field-reported queries on them succeeded on the standard API."
+    },
+    {
+      "entry": "deploy-order",
+      "reason": "2026-11-14: the remedy and the requires text gave two orders for Apex and permission sets; both now state the dependency rule, with Salesforce's deploy skill order as its common case."
+    },
+    {
+      "entry": "governor-limits-core",
+      "reason": "2026-11-14: heap is 10 MB synchronous and 25 MB asynchronous from Winter '27, per Salesforce's Winter '27 architect release highlights."
+    },
+    {
+      "entry": "all entries",
+      "reason": "2026-11-14: each entry carries a hand-written applies object (tasks, types, optional error matchers) that the lessons recall reads instead of guessing from the title."
     }
   ],
   "note": "Confidence labels describe the Torque source catalogue. The advisory layer re-verifies a fact when a dedicated read-only verifier is available and never uses a catalogue entry to deny an operation."

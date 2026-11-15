@@ -530,9 +530,11 @@ def test_r3_05_doctor_without_client_allowed():
 ])
 def test_r3_05_cli_rejects_abbreviated_options(argv, capsys):
     from torque import cli
-    with pytest.raises(SystemExit) as exc:
-        cli.main(argv)
-    assert exc.value.code == 2
+    try:                              # a usage error is now returned as exit code 2 with the subcommand's usage;
+        code = cli.main(argv)         # a parser that still exits by itself is accepted as well
+    except SystemExit as exc:
+        code = exc.code
+    assert code == 2
     assert "unrecognized arguments" in capsys.readouterr().err
 
 

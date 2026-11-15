@@ -35,12 +35,12 @@ def test_failed_new_client_leaves_no_occupied_slug_and_retry_works(firm, monkeyp
     root, alpha, beta = firm
     existing = {path: path.read_bytes() for client in (alpha, beta) for path in client.rglob('*') if path.is_file()}
     original_write, original_atomic, original_rename = ws._write_json, ws.atomic_write_new, Path.rename
-    def fail_config(path, value):
+    def fail_config(path, value, **options):  # options: the writers' private= (owner-only on Windows)
         if path.name == 'client.json': raise OSError('Synthetic configuration write failure')
-        return original_write(path, value)
-    def fail_context(path, text):
+        return original_write(path, value, **options)
+    def fail_context(path, text, **options):
         if path.name == 'context.md': raise OSError('Synthetic context write failure')
-        return original_atomic(path, text)
+        return original_atomic(path, text, **options)
     def fail_publish(path, target):
         if Path(target).name == 'new-client': raise OSError('Synthetic publication failure')
         return original_rename(path, target)
@@ -63,10 +63,10 @@ import os, sys
 sys.path.insert(0, {src!r})
 from torque import workspace as ws
 original = ws._write_json
-def crash(path, data):
+def crash(path, data, **options):
     if path.name == 'client.json':
         os._exit(86)
-    return original(path, data)
+    return original(path, data, **options)
 ws._write_json = crash
 ws.add_client({root!r}, 'Interrupted')
 """
@@ -120,11 +120,11 @@ def test_client_discovery_never_sees_staging_with_published_config(firm, monkeyp
     root, _, _ = firm
     waiting, release = threading.Event(), threading.Event()
     original = ws.atomic_write_new
-    def pause(path, text):
+    def pause(path, text, **options):
         if path.name == 'context.md' and path.parent.name.startswith('discoverable-'):
             waiting.set()
             assert release.wait(timeout=5)
-        return original(path, text)
+        return original(path, text, **options)
     monkeypatch.setattr(ws, 'atomic_write_new', pause)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(ws.add_client, root, 'Discoverable')
@@ -149,8 +149,10 @@ def test_handoff_includes_same_bounded_notes_as_context_without_sibling_data(fir
     target = alpha / 'artifacts/handoff.md'
     assert invoke('handoff', '--workspace', str(root), '--client', 'Alpha', '--output', str(target))[0] == 0
     body = target.read_text(encoding="utf-8")
-    for text in ws.get_context(root, 'Alpha')['notes'].values(): assert text.rstrip() in body
-    assert '[truncated at 65,536 characters]' in body and 'SYNTHETIC_TRUNCATED_TAIL' not in body
+    for text in ws.get_context(root, 'Alpha', max_chars=ws.NOTES_BUDGET)['notes'].values(): assert text.rstrip() in body
+    assert 'read the rest in clients/alpha/context/long.md]' in body and 'SYNTHETIC_TRUNCATED_TAIL' not in body
+    full = ws.render_handoff(root, 'Alpha', everything=True)
+    assert '[truncated at 65,536 characters]' in full and 'SYNTHETIC_TRUNCATED_TAIL' not in full
     assert 'SYNTHETIC_BETA_PRIVATE' not in body
     assert all(x in body for x in ('SYNTHETIC_JOURNAL', 'SYNTHETIC_CHANGE_OUTCOME', 'SYNTHETIC_REPORTED_FAILURE', 'user-reported', 'operator-reported'))
 
@@ -161,10 +163,10 @@ def test_multibyte_context_and_handoff_use_character_limit_without_sibling_data(
     marker = '[truncated at 65,536 characters]'
     (alpha / 'context/multibyte.md').write_text(contents + 'SYNTHETIC_MULTIBYTE_TAIL', encoding="utf-8")
     (beta / 'context.md').write_text('SYNTHETIC_BETA_PRIVATE', encoding="utf-8")
-    notes = ws.get_context(root, 'Alpha')['notes']
+    notes = ws.get_context(root, 'Alpha', max_chars=None)['notes']
     assert notes['Client context: multibyte.md'] == contents + '\n' + marker
     assert len(contents.encode('utf-8')) > 65536
-    body = ws.render_handoff(root, 'Alpha')
+    body = ws.render_handoff(root, 'Alpha', everything=True)
     assert contents + '\n' + marker in body
     assert 'SYNTHETIC_MULTIBYTE_TAIL' not in body and 'SYNTHETIC_BETA_PRIVATE' not in body
     assert '64 KiB' not in body
@@ -192,7 +194,8 @@ def test_workflow_show_prefers_preserved_customization_in_selected_workspace(fir
     root, _, _ = firm
     local = root / '.claude/commands/qa.md'; local.write_text('SYNTHETIC_FIRM_QA_CUSTOMIZATION', encoding="utf-8")
     report = updates.update_templates(root)
-    assert next(a for a in report['actions'] if a['path'] == '.claude/commands/qa.md')['action'] == 'preserve'
+    # The packaged recipe has not changed since it was recorded: the edit is kept, not a conflict.
+    assert next(a for a in report['actions'] if a['path'] == '.claude/commands/qa.md')['action'] == 'customized'
     code, output, error = invoke('workflows', 'show', 'qa', '--workspace', str(root))
     assert code == 0 and error == '' and output.strip() == local.read_text(encoding="utf-8")
     assert 'torque workflows show NAME --workspace .' in (root / 'AGENTS.md').read_text(encoding="utf-8")

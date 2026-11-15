@@ -12,6 +12,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from typing import Sequence
+from jsc_common.soql import soql_literal
 
 try:  # the shared launcher finds sf where Windows installs it as a batch file
     from jsc_common.tools import run as run_tool
@@ -33,11 +34,6 @@ def require_api_name(value: str, label: str = "API name") -> str:
     if not value or not _API_NAME.fullmatch(value):
         raise ValueError(f"invalid {label}: {value!r}")
     return value
-
-
-def soql_literal(value: str) -> str:
-    """Escape an operator-supplied string for a single-quoted SOQL literal."""
-    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def first_reason(stderr: str, stdout: str = "") -> str:

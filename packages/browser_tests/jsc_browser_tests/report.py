@@ -65,11 +65,11 @@ def render_md(cells, score) -> str:
         f"P0={score['p0']} P1={score['p1']} P2={score['p2']} counted={score['counted']} "
         f"incomplete={score.get('incomplete', 0)}",
         "",
-        "| Flow | Profile | Status |",
-        "|---|---|---|",
+        "| Flow | Variation | Profile | Status |",
+        "|---|---|---|---|",
     ]
     for c in cells:
-        lines.append(f"| {c.flow_name} | {c.profile} | {c.overall_status} |")
+        lines.append(f"| {c.flow_name} | {getattr(c, 'variation', '') or '-'} | {c.profile} | {c.overall_status} |")
     skipped = [c for c in cells if c.overall_status == "SKIP"]
     na = [c for c in cells if c.overall_status == "NOT_APPLICABLE"]
     warned = [c for c in cells if (c.side_effects or {}).get("teardown_error")]
@@ -86,7 +86,8 @@ def render_md(cells, score) -> str:
 def render_html(cells, score) -> str:
     """Minimal self-contained HTML report (same data as render_md)."""
     rows = "\n".join(
-        f"<tr><td>{c.flow_name}</td><td>{c.profile}</td><td>{c.overall_status}</td></tr>"
+        f"<tr><td>{c.flow_name}</td><td>{getattr(c, 'variation', '') or '-'}</td><td>{c.profile}</td>"
+        f"<td>{c.overall_status}</td></tr>"
         for c in cells
     )
     return (
@@ -95,6 +96,6 @@ def render_html(cells, score) -> str:
         "<h1>Gold-Standard Suite Report</h1>"
         f"<p><strong>Score: {score['score']}/100</strong> "
         f"(P0={score['p0']} P1={score['p1']} P2={score['p2']} counted={score['counted']})</p>"
-        "<table border='1'><tr><th>Flow</th><th>Profile</th><th>Status</th></tr>"
+        "<table border='1'><tr><th>Flow</th><th>Variation</th><th>Profile</th><th>Status</th></tr>"
         f"{rows}</table></body></html>"
     )

@@ -213,6 +213,26 @@ def connected_approval(target_org: str, org_id_18: str, dry_run: bool = False):
     return 0, {**record, "_scope": (workspace, client)}
 
 
+def print_sf_failure(data, stderr=''):
+    """Print useful CLI failure details, including error.data envelopes."""
+    messages = []
+    def visit(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ('message', 'problem', 'exceptionMessage', 'compileProblem') and isinstance(item, str):
+                    messages.append(item)
+                elif key in ('result', 'data', 'details', 'componentFailures', 'runTestResult', 'failures'):
+                    visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+    visit(data)
+    for message in dict.fromkeys(messages):
+        print(message, file=sys.stderr)
+    if not messages and stderr:
+        print(stderr.strip(), file=sys.stderr)
+
+
 class WrapperContext:
     """Holds wrapper state across the 3 phases."""
     def __init__(
@@ -222,12 +242,14 @@ class WrapperContext:
         wrapper_command: str,
         invoking_intent: dict | None = None,
         parent_snapshot_id: str | None = None,
+        dry_run: bool = False,
     ):
         self.operation_type = operation_type
         self.target_org = target_org
         self.wrapper_command = wrapper_command
         self.invoking_intent = invoking_intent
         self.parent_snapshot_id = parent_snapshot_id
+        self.dry_run = dry_run
 
         self.snapshot_id = uuid.uuid4().hex[:16]
         self.org: org_detect.OrgInfo | None = None
@@ -253,7 +275,7 @@ class WrapperContext:
             release_after_resolution_failure(self.target_org)
             return EXIT_TOKEN_INVALID
         rc, _ = connected_approval(self.target_org, self.org.org_id_18,
-                                   dry_run="--dry-run" in str(self.wrapper_command).split())
+                                   dry_run=self.dry_run)
         return rc
 
     def acquire_org_lock(self) -> int:
@@ -481,12 +503,15 @@ def stage_source_project(source_dirs: list[str]) -> tuple[str, list[str]]:
 
     The caller is responsible for cleaning up the returned directory.
     """
-    stage = pathlib.Path(tempfile.mkdtemp(prefix="jsc-deploy-stage-")).resolve()
-    (stage / "sfdx-project.json").write_text(json.dumps(
+    stage = pathlib.Path(tempfile.mkdtemp(prefix="tqds-")).resolve()
+    bundle.atomic_write_json(stage / "sfdx-project.json",
         {"packageDirectories": [{"path": "force-app", "default": True}],
-         "namespace": ""}), encoding="utf-8")
+         "namespace": ""})
     pkg = stage / "force-app"
     pkg.mkdir(parents=True, exist_ok=True)   # must EXIST, not just be declared
+    def private_copy(source, destination):
+        bundle.atomic_write_bytes(pathlib.Path(destination), pathlib.Path(source).read_bytes())
+        return destination
     try:
         for sd in source_dirs:
             src = pathlib.Path(sd)
@@ -495,7 +520,7 @@ def stage_source_project(source_dirs: list[str]) -> tuple[str, list[str]]:
                 # without importing the parent object or neighboring fields.
                 dest = pkg / captured_source_relative(src)
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
+                private_copy(src, dest)
                 continue
             if not src.is_dir():
                 shutil.rmtree(stage, ignore_errors=True)
@@ -505,9 +530,9 @@ def stage_source_project(source_dirs: list[str]) -> tuple[str, list[str]]:
                     continue          # .retrieve-result.json is forensics, not source
                 dest = pkg / item.name
                 if item.is_dir():
-                    shutil.copytree(item, dest, dirs_exist_ok=True)
+                    shutil.copytree(item, dest, dirs_exist_ok=True, copy_function=private_copy)
                 else:
-                    shutil.copy2(item, dest)
+                    private_copy(item, dest)
     except Exception:
         shutil.rmtree(stage, ignore_errors=True)
         raise

@@ -8,7 +8,7 @@ import pytest
 from jsc_browser_tests.sf_client import SfClient, SfError
 
 
-@pytest.mark.parametrize("method,args", [("_run", ["data", "query"]), ("_run_raw", ["org", "display"])])
+@pytest.mark.parametrize("method,args", [("_run", ["data", "query"]), ("_run_raw", ["org", "open"])])
 def test_browser_sf_uses_utf8_with_legacy_locale(monkeypatch, method, args):
     monkeypatch.setattr(locale, "getencoding", lambda: "cp1252", raising=False)
     monkeypatch.setattr(locale, "getpreferredencoding", lambda *a: "cp1252")

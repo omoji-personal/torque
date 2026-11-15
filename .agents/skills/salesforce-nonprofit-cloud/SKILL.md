@@ -1,6 +1,6 @@
 ---
 name: salesforce-nonprofit-cloud
-description: Work in Salesforce Nonprofit Cloud (Agentforce Nonprofit), the native successor to NPSP. Covers Fundraising, Program and Case Management, Grantmaking, Volunteer Management and Outcome Management, Person Accounts and households, Data Processing Engine rollups, gift entry, licenses and permission sets, metadata versus UI-only setup, gotchas with checks, and NPSP to Nonprofit Cloud migration.
+description: Work in Salesforce Nonprofit Cloud (Agentforce Nonprofit), the native successor to NPSP. Use it before any design, build, data load or diagnosis in an org with Nonprofit Cloud objects such as GiftTransaction, and when planning a move from NPSP. Covers Fundraising, Program and Case Management, Grantmaking, Volunteer Management and Outcome Management, Person Accounts and households, Data Processing Engine rollups, gift entry, licenses and permission sets, metadata versus UI-only setup, gotchas with checks, and NPSP to Nonprofit Cloud migration.
 ---
 
 # Salesforce Nonprofit Cloud
@@ -30,8 +30,13 @@ Reference files in this folder:
 | Which features are licensed? | Setup > Company Information > Permission Set Licenses: Fundraising Access, Grantmaking, VolunteerManagementPsl, Record Aggregation, Data Pipelines Base User |
 | Person Accounts on? | `SELECT IsPersonAccount FROM Account LIMIT 1` compiles |
 | Rollups running? | Setup > Data Processing Engine has an active copy of each template in use; Setup > Monitor Workflow Services shows recent Completed runs |
-| Commitment processing healthy? | `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null` |
+| Commitment processing healthy? | `SELECT COUNT() FROM GiftCommitment WHERE LastNextGenCmtProcError != null` (describe first; if the field is not `filterable`, select it and count non-empty rows) |
 | Fundraising settings | `FundraisingConfig` (retrieve it): donor matching, lapsed and failing counts, next-transaction creation, household soft credits |
+
+A query that errors can also mean the running user lacks the licence or access: treat an
+error as "not checked" and confirm with the permission set licences. General build practice
+is in skills `salesforce-build` and `salesforce-flow`; this skill holds what is specific to
+Nonprofit Cloud.
 
 A plain Developer Edition cannot be switched to NPC. For testing, use the 30-day trial, a
 scratch org with the `Fundraising`, `ProgramManagement`, `Grantmaking`,
@@ -76,7 +81,7 @@ features, or a sandbox of a licensed org.
 | Grantmaking | Grantmaking Manager, reviewer and Experience Cloud permission sets; every viewer needs a paid license |
 | Volunteer Management | Volunteer Management User group; portal and guest sets for sign-up sites |
 | Outcome Management | Outcome Management permission set |
-| DPE | Data Pipelines Base User (only 3 included, and `Fundraising_Admin` uses one per admin) |
+| DPE | Data Pipelines Base User (few are included, and `Fundraising_Admin` uses one per admin; count them in Setup > Company Information, **verify**) |
 
 Assign permission set groups and extend with custom or muting sets, not ad hoc object
 permissions. Person Account object access comes from Account permissions, field-level

@@ -82,9 +82,13 @@ def _hook_probe(root: Path, commands: list[str]):
         env.pop("CLAUDE_PROJECT_DIR", None)
         worst = (0, "")
         for command in commands:
-            shell = _hook_shell()
+            # Exec form (a tuple) is the argument vector, run with no shell, as Claude Code spawns it.
+            shell = None if isinstance(command, tuple) else _hook_shell()
             try:
-                if shell:
+                if isinstance(command, tuple):
+                    run = subprocess.run(list(command), cwd=root, input=json.dumps(event), env=env,
+                                         capture_output=True, text=True, timeout=60)
+                elif shell:
                     run = subprocess.run([shell, "-c", command], cwd=root, input=json.dumps(event), env=env,
                                          capture_output=True, text=True, timeout=60)
                 else:
@@ -237,9 +241,10 @@ def _who(item: dict) -> str:
     return f"{item.get('actor')} (uid {item.get('uid')}, {item.get('kind')}{model}"
 
 
-def _hook_entries(root: Path) -> dict[str, list[tuple[str, str]]]:
+def _hook_entries(root: Path) -> dict[str, list[tuple[str, object]]]:
     """(matcher, command) for each torque.gate hook, per event, from the workspace's
-    settings.json and settings.local.json."""
+    settings.json and settings.local.json; the command is an exec-form argument vector
+    (a tuple) or a shell-form command line (permissions.gate_hook_call)."""
     found: dict[str, list[tuple[str, str]]] = {event: [] for event in HOOK_EVENTS}
     for name in ("settings.json", "settings.local.json"):
         try:
@@ -256,13 +261,15 @@ def _hook_entries(root: Path) -> dict[str, list[tuple[str, str]]]:
                     continue
                 matcher = str(entry.get("matcher") or "")
                 for item in entry.get("hooks") or []:
-                    command = str(item.get("command") or "") if isinstance(item, dict) else ""
-                    if "torque.gate" in command:
+                    command = permissions.gate_hook_call(item)
+                    if command is not None:
                         found[event].append((matcher, command))
     return found
 
 
-def _interpreter(command: str) -> str | None:
+def _interpreter(command) -> str | None:
+    if isinstance(command, tuple):
+        return command[0]
     match = _INTERPRETER_RE.match(command)
     return (match.group(1) or match.group(2)) if match else None
 
@@ -298,8 +305,9 @@ def _interpreter_problem(command: str, fix: str) -> str:
     path = python if os.path.isabs(python) or "/" in python else shutil.which(python)
     if not path or not os.path.isfile(path) or not os.access(path, os.X_OK):
         return (f"the torque.gate hook's interpreter {python} is missing or not executable by this account, so the "
-                f"host would run no gate for any call (the hook fails open); rewrite the rules with: {fix} (PYTHON "
-                "is an interpreter the agent account can run)")
+                f"host would run no gate for any call (the hook fails open, or with \"onFailure\": \"block\" the host "
+                f"blocks every call); rewrite the rules with: {fix} (PYTHON is an interpreter the agent account can "
+                "run)")
     return ""
 
 
@@ -410,6 +418,12 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
         key = key_path()
         if key.exists() and os.name != "nt" and (key.stat().st_mode & 0o077 or key.is_symlink()):
             problems.append(f"{key} must be a regular file readable by its owner only (chmod 600)")
+        elif key.exists() and os.name == "nt":
+            from jsc_common import winacl
+            message = winacl.refusal(key, key=True) if key.is_file() and not key.is_symlink() \
+                else f"{key} must be a regular file readable by its owner only"
+            if message:
+                problems.append(message)
         advice.append("approvals use tier 1 (a key in this account's home): a script the session runs can read "
                       "it and forge an approval. Tier 2 (a separate approver account) is recommended.")
     elif verify == "owner-uid":
@@ -421,6 +435,14 @@ def report(root: Path, client: str | None, live: bool = False, resolve=None, pro
         problems.append(f"unknown approval_verify {verify!r}")
     advice += _sf_shadowing()
     client_view = None
+    if client and verify == "hmac" and os.name == "nt":
+        from jsc_common import winacl
+        from .approval import _dirs
+        for grant in sorted(_dirs(root, client, create=False)["granted"].glob("*.json")):
+            if not grant.is_symlink():
+                message = winacl.refusal(grant, "grant " + grant.name)
+                if message:
+                    problems.append(f"{client}: {message}")
     if client:
         item = consent.load_consent(root, client)
         issues = consent.consent_problems(item)
