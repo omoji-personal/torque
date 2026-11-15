@@ -22,8 +22,13 @@ source distribution, checked their contents and ran the installed smoke suite. T
 found what the local runs on one machine could not: a Windows test whose setup cannot take effect on an elevated
 runner, a temporary-file loop that hung for two hours on Python 3.10 (a product fix: a folder that refuses new
 files now fails at once), a folder-access difference on older Python releases (see the known limits), and a test
-of the sign-in relay that assumed one Python version's error page. One macOS 3.10 job once ran a gate timing test
-past its budget; it passed on every other run and job.
+of the sign-in relay that assumed one Python version's error page.
+
+One gate timing test, `test_any_shape_below_the_limit_finishes_inside_the_budget[ansi-c]`, ran past its limit
+(the 5-second budget plus 1 second) on macOS runners three times: twice on Python 3.10 (6.47 s on the pull
+request's run of `7aa1511`, and once in the first round) and once on Python 3.12 in the run on `main` after the
+merge (6.82 s). Each passed when rerun, and it has not failed on Linux or Windows; on Windows it takes 0.1 to
+0.3 s. See the known limits for the likely cause.
 
 On Windows 11 with Python 3.13, from the source tree, the full offline suite passed in 14 chunks (one pytest
 process each, because the machine was short of memory): about 9,480 tests, all twelve standalone fixture suites,
@@ -59,7 +64,8 @@ Not verified in this release:
 - Lightning pages after `torque browser login`, a second user (`--as-alias`, `--as-user`), and the scripted-browser
   mode (`--storage-state`).
 - Claude Code as a host in the behaviour test, and every host on macOS.
-- Under Antigravity: the gate hook called by a live session, connected mode, and the mode rules loading.
+- Under Antigravity: connected mode. (After the release, on 2026-11-14, a live Antigravity 1.5.9 session called
+  the gate hook in build-only and full mode and loaded the build-only rule: see [hosts](hosts.md).)
 - Connected mode with `torque check deployed`, live.
 
 Known limits:
@@ -72,6 +78,13 @@ Known limits:
   folder inherits its parent's access (CI's Python 3.10.11 does; newer releases apply an owner-only list).
   Records and evidence files are still created private by Torque itself; the folders around them are private
   only where the Python release honours the mode. An explicit private-folder helper is planned.
+- On macOS runners the gate can overrun its 5-second budget by about 2 seconds on one long ANSI-C quoting shape
+  (above). The hook timeouts Torque writes (600 seconds for Claude Code, 30 for Antigravity) are not reached, so
+  the call is decided, late. The likely cause, found after the release: the gate copied a folder path into the
+  token for each of its unknown expansions and resolved the result (up to 174,160 characters) in one call that the
+  budget does not interrupt; Windows refuses such a path at once, macOS walks it. The fix after alpha 22 keeps
+  each variant to one folder path per expansion and refuses a word with more than 64 (see the changelog); it is
+  not yet proven on a macOS runner.
 - The known limits listed for alpha 21 remain, except where the changelog says otherwise.
 
 No package-index release and no demo readiness is claimed.

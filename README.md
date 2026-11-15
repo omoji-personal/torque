@@ -26,7 +26,7 @@ Then open `../torque-private` in your agent. [Getting started](docs/getting-star
 one made-up ticket from there to a checked deploy; the
 [consulting walkthrough](examples/consulting-walkthrough.md) shows the same in conversation.
 
-**Status: development alpha, version 2.0.0a22.** It has not been published to a
+**Status: development alpha, version 2.0.0a23.** It has not been published to a
 package index; install it from a checkout as shown below. Core workspace functions
 have offline acceptance coverage; live operations have narrower coverage, stated
 separately in [validation](docs/validation.md).
@@ -79,7 +79,7 @@ remaining work so the next consultant can see where to continue.
 
 ## Install and try the offline demo
 
-The commands below install the current release, tag `v2.0.0a22`; `git rev-parse HEAD`
+The commands below install the current release, tag `v2.0.0a23`; `git rev-parse HEAD`
 prints the commit it points to. If your firm reviewed a specific commit, check out its
 full SHA instead of the tag and compare it with that output before installing. A release
 wheel can also be used, checked against its SHA-256 checksums when the release lists
@@ -92,7 +92,7 @@ and see the [Windows installation steps](docs/installation.md#windows).
 ```sh
 git clone https://github.com/omoji-personal/torque.git
 cd torque
-git checkout --detach v2.0.0a22
+git checkout --detach v2.0.0a23
 git rev-parse HEAD
 python3 -m venv .venv
 .venv/bin/python -m pip install .

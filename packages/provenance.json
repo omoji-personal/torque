@@ -1331,7 +1331,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/data/salesforce-platform.json",
       "source_sha256": "5788cc4894075a63a1c5feba0f218d977676d81d71fbce25067d2b57f87842c3",
       "source_tracked": true,
-      "destination_sha256": "15257065b6cfc222e3ef7464830509433ec890fea3c3137a7d296f06dadba81b",
+      "destination_sha256": "6ff7f452a793fffe4f8868fca58fd591e362c66d2b4143155d337d0283621c7a",
       "adapted": true
     },
     {

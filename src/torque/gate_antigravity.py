@@ -55,8 +55,10 @@ replace_file_content and multi_replace_file_content {TargetFile}. Both sets are
 read, so a session on either version is gated. 1.4.9's run_command sends no
 Cwd, so its command is read from the session's folder. A connector call arrives
 as call_mcp_tool {ServerName, ToolName, Arguments}, as before, or as a tool of
-its own named mcp_SERVER_TOOL. The 1.4.9 shapes are verified offline only: the
-tests feed this module the hook input 1.4.9 was observed to send.
+its own named mcp_SERVER_TOOL. On 2026-11-14 a live 1.5.9 session called this
+hook (docs/hosts.md): read_file also sends StartLine and EndLine, write_file also
+sends Overwrite, and the hook input adds cwd; the tests replay those shapes.
+edit_file and the mcp_ form are still verified offline only.
 
 mcp_SERVER_TOOL joins the two names with one underscore, and either name can
 hold underscores of its own: mcp_notes_add_note is the tool add_note of the

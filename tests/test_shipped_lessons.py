@@ -165,3 +165,12 @@ def test_the_shipped_lessons_carry_no_credential_personal_data_private_path_or_p
         for url in re.findall(r"https?://[^\s\"'`)>]+", text):
             host = url.split("/")[2]
             assert host in ALLOWED_HOSTS, f"{path.name}: {host}"
+
+
+def test_shipped_lesson_text_has_no_long_dashes():
+    """Lessons and catalogue notes are printed into host sessions: Antigravity on Windows showed a long dash in
+    command output as a replacement character (docs/hosts.md), and the project's style avoids them."""
+    catalogue = ROOT / "packages" / "salesforce_advisory" / "jsc_advisory" / "data" / "salesforce-platform.json"
+    for path in [*FILES, catalogue]:
+        text = path.read_text(encoding="utf-8")
+        assert "—" not in text and "–" not in text, path.name

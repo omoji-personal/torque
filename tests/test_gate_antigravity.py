@@ -260,6 +260,35 @@ def test_only_the_tool_call_is_read_from_antigravity_14s_hook_input(root, monkey
     assert reply["decision"] == "allow", reply
 
 
+def test_the_shapes_a_live_antigravity_159_session_sent_are_gated(root, monkeypatch, capsys):
+    # Seen on 2026-11-14 from a live Antigravity CLI 1.5.9 session on Windows, through a recorder in front of this
+    # hook: the hook input's keys, and per tool the argument keys. read_file adds StartLine and EndLine, write_file
+    # adds Overwrite, run_command sends WaitMsBeforeAsync and toolSummary and no Cwd.
+    extra = {"hookEventName": "PreToolUse", "cwd": root.as_posix(), "lastUserInput": "x", "modelName": "a-model",
+             "transcriptPath": str(root / "t.jsonl"), "artifactDirectoryPath": str(root / "artifacts")}
+    notes = str(root / "clients" / "acme" / "notes.md")
+    command = {"WaitMsBeforeAsync": 500, "toolSummary": "Run it"}
+    (root / "project" / "force-app").mkdir(parents=True)
+    (root / "project" / "sfdx-project.json").write_text('{"packageDirectories": [{"path": "force-app"}]}',
+                                                        encoding="utf-8")
+    cases = [
+        ("deny", "read_file", {"Path": notes}),
+        ("deny", "read_file", {"Path": notes, "StartLine": 1, "EndLine": 40}),
+        ("deny", "write_file", {"Path": notes, "Content": "test", "Overwrite": False}),
+        ("deny", "run_command", {"CommandLine": 'sf data query -o made-up -q "SELECT Id FROM Account"', **command}),
+        ("allow", "read_file", {"Path": str(root / "src" / "a.md"), "StartLine": 1, "EndLine": 40}),
+        ("ask", "run_command", {"CommandLine": "git --version", **command}),
+        ("ask", "run_command", {"CommandLine": "torque check metadata project", **command}),
+    ]
+    for expected, name, args in cases:
+        reply = answer(monkeypatch, capsys, payload(root, name, args, **extra))
+        assert reply["decision"] == expected, (name, args, reply)
+    set_mode(root, None)
+    consent = {"Path": str(root / "clients" / "acme" / "consent.json"), "Content": '{"test": true}', "Overwrite": False}
+    reply = answer(monkeypatch, capsys, payload(root, "write_file", consent, **extra))
+    assert reply["decision"] == "deny" and "consent" in reply["reason"], reply
+
+
 def test_leaving_the_working_folder_keeps_the_session_gated(root, monkeypatch, capsys):
     call = {"CommandLine": "sf data query -o example", "Cwd": str(root.parent)}
     assert decision(monkeypatch, capsys, root, "run_command", call) == "deny"
