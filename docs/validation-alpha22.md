@@ -8,7 +8,22 @@ cover, and what was not run.
 
 ## Observed results
 
-CI on the merged tree: CI_RESULT.
+CI on the tree of this release (`2eed1f9`, pull request 53): all nine jobs pass, each with 154 subtests.
+
+| System | Python | Passed | Skipped |
+|---|---|---|---|
+| Linux | 3.10, 3.12, 3.14 | 10,293 | 50 |
+| macOS | 3.10, 3.12, 3.14 | 10,257 | 86 |
+| Windows | 3.10, 3.12, 3.14 | 9,561 | 782 |
+
+Windows skips the tests that apply only on macOS and Linux and those that build a symbolic link; macOS skips the
+real-Bash comparisons. Each job also ran the workflow sync checks and the provenance check, built the wheel and
+source distribution, checked their contents and ran the installed smoke suite. The first CI run on this branch
+found what the local runs on one machine could not: a Windows test whose setup cannot take effect on an elevated
+runner, a temporary-file loop that hung for two hours on Python 3.10 (a product fix: a folder that refuses new
+files now fails at once), a folder-access difference on older Python releases (see the known limits), and a test
+of the sign-in relay that assumed one Python version's error page. One macOS 3.10 job once ran a gate timing test
+past its budget; it passed on every other run and job.
 
 On Windows 11 with Python 3.13, from the source tree, the full offline suite passed in 14 chunks (one pytest
 process each, because the machine was short of memory): about 9,480 tests, all twelve standalone fixture suites,
