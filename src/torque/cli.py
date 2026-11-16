@@ -423,7 +423,19 @@ def build_parser() -> argparse.ArgumentParser:
     c_retire.add_argument("criterion_id", metavar="CRITERION", help="AC1, AC2, ...")
     c_retire.add_argument("--reason", required=True, help="why it no longer applies")
     c_retire.add_argument("--json", action="store_true")
-    workflows = sub.add_parser("workflows", help="discover bundled conversational and native workflows")
+    workflows = sub.add_parser(
+        "workflows", help="discover bundled conversational and native workflows",
+        description="List and read Torque's recipes and the practice skills. A recipe name is an instruction for "
+                    "the assistant, not a shell command; natural language works as well as a name.",
+        epilog="list: each recipe's name and when to use it, then the practice skills (their first line). "
+               "list --json: the catalogue, one entry per recipe with name, group, description, use_when, kind "
+               "(guided: a recipe that uses existing tools; native: a Torque command read with conversational "
+               "interpretation; compatibility: an old name kept so it still works), implementation and "
+               "source_command (the original command name, null for a later addition). "
+               "show NAME (a catalogue name): the recipe as the selected workspace's host runs it; with "
+               "--workspace that workspace's own copy comes first, local edits included, and without one the "
+               "packaged recipe is shown. show NAME also prints a practice skill, and show NAME/REFERENCE one of "
+               "its references.")
     workflows.add_argument("action", nargs="?", choices=("list", "show"), default="list")
     workflows.add_argument("name", nargs="?")
     workflows.add_argument("--json", action="store_true")
@@ -744,9 +756,10 @@ def _workflows(args: argparse.Namespace) -> int:
     elif args.json:
         _print_json(entries)
     else:
+        # One short line per recipe; the description and kind are in --json and in the recipe itself.
+        print("Recipes and when to use each (torque workflows show NAME prints one; --json has the catalogue):")
         for entry in entries:
-            print(f"{entry['name']:22} [{entry.get('kind', 'guided')}] {entry.get('description', '')}")
-        print("\nRead a workflow: torque workflows show NAME")
+            print(f"  {entry['name']:22} {entry.get('use_when') or entry.get('description', '')}")
         skills = _packaged_skills()
         if skills:
             # Skills are not recipes: the catalogue and its --json stay as they are.

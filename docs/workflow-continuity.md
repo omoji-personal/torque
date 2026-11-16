@@ -8,8 +8,9 @@ authorized change and verification using the tools available in the user's envir
 
 All **42 source command names** are retained. Eleven additional names make discovery,
 portable context, session resumption and four delivery recipes explicit. The complete machine-readable
-index is `workflows/catalogue.json`; `torque workflows list` displays it and
-`torque workflows show <name>` displays a recipe.
+index is `workflows/catalogue.json`; `torque workflows list` shows each recipe's name and a
+short use-when line (`use_when` in the catalogue, at most 80 characters), `list --json` the whole
+catalogue, and `torque workflows show <name>` a recipe. `torque workflows --help` says what each holds.
 
 ## One workflow, multiple ways to start it
 

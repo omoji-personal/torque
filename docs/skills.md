@@ -2,8 +2,9 @@
 
 Torque packages portable skills for the assistant. `torque workspace init` copies them to
 `.claude/skills/` and `.agents/skills/` in the private workspace, and `torque workspace
-upgrade` updates them while keeping local edits. Skills are guidance, not workflows: they do
-not appear in `torque workflows list`.
+upgrade` updates them while keeping local edits. Skills are guidance, not workflows: they are
+not in the recipe catalogue (`torque workflows list --json`); `torque workflows list` shows them
+after the recipes, one line each.
 
 | Skill | Use it for |
 | --- | --- |

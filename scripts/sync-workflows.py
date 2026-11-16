@@ -5,7 +5,7 @@ Edit only the sources:
   workflows/NAME.md         one recipe each. A line `{{lessons --task T}}` or an inline `{{test-records}}`
                             pulls in the text of workflows/shared/NAME.md, written once for every recipe
   workflows/shared/*.md     text several recipes carry: `{args}` stands for the words after the name
-  workflows/catalogue.json  each recipe's name, group, description and kind
+  workflows/catalogue.json  each recipe's name, group, description, use_when line and kind
   .claude/rules/  .claude/agents/  .agents/skills/  lessons/  floor/AGENTS-floor.md
 
 Generated, never edited by hand:
@@ -33,6 +33,8 @@ FOOTER = ("\n**Conversation input:** $ARGUMENTS\n"
 SHARED = re.compile(r"\{\{([a-z][a-z0-9-]*)((?: [^{}\n]+)?)\}\}")
 BUNDLED = {"catalogue.json", "commands", "rules", "agents", "skills", "lessons", "floor"}
 LOCAL_ONLY = {".claude/agents/torque-marketing.md"}   # git-ignored, never shipped
+# `torque workflows list` prints one line per recipe: its name and this short use-when line.
+USE_WHEN_LIMIT = 80
 
 
 def catalogue(root: Path) -> list:
@@ -75,13 +77,16 @@ def recipes(root: Path, problems: list) -> dict:
     for record in records:
         name = record.get("name")
         source = root / "workflows" / f"{name}.md"
-        missing = [key for key in ("name", "group", "description", "kind") if not record.get(key)]
+        missing = [key for key in ("name", "group", "description", "use_when", "kind") if not record.get(key)]
         if missing:
             problems.append(f"workflows/catalogue.json: {name} has no {', '.join(missing)}")
             continue
         if record["kind"] not in KINDS:
             problems.append(f"workflows/catalogue.json: {name} has the unknown kind {record['kind']}")
             continue
+        if "\n" in record["use_when"] or len(record["use_when"]) > USE_WHEN_LIMIT:
+            problems.append(f"workflows/catalogue.json: {name}'s use_when is not one line of at most "
+                            f"{USE_WHEN_LIMIT} characters")
         if not source.is_file():
             problems.append(f"workflows/{name}.md is missing (the catalogue lists {name})")
             continue
