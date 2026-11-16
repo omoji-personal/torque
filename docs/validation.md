@@ -15,6 +15,7 @@ Alpha 20 adds Windows support and Antigravity as a second host: [validation for 
 Alpha 21 reads connected-mode commands as the shells run them and adds consent per org and guarded reads: [validation for alpha 21](validation-alpha21.md).
 Alpha 22 adds browser sign-in without a password, checks before and after a deploy, practice skills, a working lessons loop and an always-loaded block: [validation for alpha 22](validation-alpha22.md).
 Alpha 23 fixes how the gate reads an unknown variable in a path and records the first live Antigravity 1.5.9 hook call: [validation for alpha 23](validation-alpha23.md).
+Alpha 24 renders every recipe copy from one source with one drift check, moves the command reference into each command's help and shortens the recipe list: [validation for alpha 24](validation-alpha24.md).
 
 Alpha 9 is a development build with no package-index release. It improves session continuity,
 local diagnostics, source/private separation and the offline verification runner.
@@ -95,7 +96,6 @@ production readiness or a universal recovery capability.
 Install development dependencies into an isolated environment, then run:
 
 ```sh
-python workflows/sync_adapters.py --check
 python scripts/sync-workflows.py --check
 python scripts/check-provenance.py
 python scripts/test-offline.py -q

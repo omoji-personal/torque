@@ -306,7 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
     m.set_defaults(func=cmd_multiprofile)
 
     s = sub.add_parser("sanitize-replay", help="scan a replay script's text for known credential shapes "
-                                               "(also percent-encoded, up to four times)")
+                                               "(also percent-encoded, up to four times)",
+                       description="Scan a replay script's text for known credential shapes, as written and after "
+                                   "up to four rounds of percent-decoding; needs no org connection. It cannot prove "
+                                   "that code which builds or decodes an address at run time holds none, and a "
+                                   "clean scan is not a full secret audit or proof that the replay is safe to "
+                                   "publish. Exit 0: no known shape found. Exit 2: rejected; each pattern found is "
+                                   "listed with its count, the matched values redacted (text still encoded after "
+                                   "four rounds is rejected too). Exit 1: the file does not exist, which is not a "
+                                   "clean scan.")
     s.add_argument("script_path")
     s.set_defaults(func=cmd_sanitize_replay)
 

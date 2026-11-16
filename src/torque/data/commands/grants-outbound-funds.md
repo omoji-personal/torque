@@ -44,10 +44,7 @@ schedule is wanted.
    request re-saved with an unrelated field change, to confirm no duplicate
    disbursement is created; a request saved in a non-approved status, to confirm
    nothing is created. Test records, including the Disbursements the flow creates:
-   save each created record's Id when it is created, in the private task directory,
-   and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv`
-   with an Id column), never records matched by name, title, creator or date; if the
-   Id list is lost or incomplete, stop and ask instead of matching.
+   save each created record's Id when it is created, in the private task directory, and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title, creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
 5. Acceptance criteria: approving a funding request creates the expected
    Disbursement record(s) with the correct amount, schedule and lookup; re-saving an
    already-approved request creates no duplicate; a rejected or pending request

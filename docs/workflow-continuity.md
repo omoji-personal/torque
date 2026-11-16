@@ -8,8 +8,9 @@ authorized change and verification using the tools available in the user's envir
 
 All **42 source command names** are retained. Eleven additional names make discovery,
 portable context, session resumption and four delivery recipes explicit. The complete machine-readable
-index is `workflows/catalogue.json`; `torque workflows list` displays it and
-`torque workflows show <name>` displays a recipe.
+index is `workflows/catalogue.json`; `torque workflows list` shows each recipe's name and a
+short use-when line (`use_when` in the catalogue, at most 80 characters), `list --json` the whole
+catalogue, and `torque workflows show <name>` a recipe. `torque workflows --help` says what each holds.
 
 ## One workflow, multiple ways to start it
 
@@ -126,18 +127,27 @@ and package help rather than being injected into every task.
 
 ## Keeping adapters synchronized
 
-`workflows/*.md` and `workflows/catalogue.json` are the authoring sources. Claude
-command adapters embed the complete recipe so installed commands work outside a
-source checkout. Regenerate or verify them in the source checkout:
+`workflows/*.md` and `workflows/catalogue.json` are the authoring sources. A text several
+recipes carry is written once in `workflows/shared/NAME.md` (the lesson preamble, the
+test-record rule): a recipe pulls it in with `{{lessons --task T}}` on its own line or
+`{{test-records}}` inside a sentence, and `{args}` in the shared text stands for the words after
+the name. Claude command adapters embed the complete rendered recipe, so installed commands work
+outside a source checkout and a host that opens one recipe reads the whole text. One generator
+writes the adapters and the wheel's copy, and verifies both, in the source checkout:
 
 ```sh
-python3 workflows/sync_adapters.py
-python3 workflows/sync_adapters.py --check
+python3 scripts/sync-workflows.py
+python3 scripts/sync-workflows.py --check
 ```
 
-The sync tool updates only command files named in the catalogue; it does not delete
-user-added adapters. Root packaging bundles the catalogue and recipes for the
-agent-neutral runtime. Validation should check all 42 source-name mappings, every
+In this repository `.claude/commands/` and `src/torque/data/` are generated only: the check
+fails on a copy edited by hand, a missing one and one no source produces, and on a recipe
+whose heading, description or interface line differs from the catalogue, names a shared text
+that does not exist or gives it the wrong words; a shared text no recipe uses fails too. Writing
+removes a stray copy. A workspace's own recipes are a different matter: `torque workspace
+upgrade` keeps local edits (`docs/workspace-upgrades.md`). The copies in a workspace's `.agents/`
+(Antigravity's, which Codex also reads) are derived from the wheel's copy when the workspace
+is created or upgraded. Validation should check all 42 source-name mappings, every
 recipe/adapter pair and the actual installed native parser contracts.
 
 ## Scope of this port

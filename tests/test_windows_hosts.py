@@ -43,15 +43,16 @@ def test_hook_reads_utf8_input_whatever_the_stream_encoding(tmp_path):
 
 
 def test_regenerated_adapters_keep_unix_line_endings(tmp_path):
-    source = Path(__file__).resolve().parents[1] / "workflows"
-    shutil.copytree(source, tmp_path / "workflows", ignore=shutil.ignore_patterns("__pycache__"))
-    done = subprocess.run([sys.executable, str(tmp_path / "workflows" / "sync_adapters.py")], capture_output=True,
-                          text=True, timeout=120)
-    assert done.returncode == 0, done.stderr
+    checkout = Path(__file__).resolve().parents[1]
+    for relative in ("workflows", ".claude/rules", ".claude/agents", ".agents/skills", "lessons", "floor"):
+        shutil.copytree(checkout / relative, tmp_path / relative, ignore=shutil.ignore_patterns("__pycache__"))
+    done = subprocess.run([sys.executable, str(checkout / "scripts" / "sync-workflows.py"), "--root", str(tmp_path)],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr
     written = sorted((tmp_path / ".claude" / "commands").glob("*.md"))
     assert written and not any(b"\r" in path.read_bytes() for path in written)
-    # Byte for byte what the checkout holds, so the bundle check stays quiet on Windows.
-    tracked = source.parent / ".claude" / "commands"
+    # Byte for byte what the checkout holds, so the drift check stays quiet on Windows.
+    tracked = checkout / ".claude" / "commands"
     assert all(path.read_bytes() == (tracked / path.name).read_bytes().replace(b"\r\n", b"\n") for path in written)
 
 

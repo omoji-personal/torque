@@ -4,10 +4,7 @@ Design automation that keeps an NPSP payment's date in step with its gift batch,
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task flow-build --type Flow --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task flow-build --type Flow}}
 
 Read skill `salesforce-npsp` and skill `salesforce-flow` first. Confirm the actual request before
 designing: which payment field should be set, what "batch closes" means in the client's org (the

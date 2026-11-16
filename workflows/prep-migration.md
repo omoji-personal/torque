@@ -4,10 +4,7 @@ Plan, rehearse and run a scoped data load or bulk change, then reconcile it and 
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task data-load --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task data-load}}
 
 Read skill `salesforce-delivery` (`salesforce-delivery/references/data-migration.md`) first.
 
@@ -39,11 +36,7 @@ Read skill `salesforce-delivery` (`salesforce-delivery/references/data-migration
    `replay.csv` (Id plus null markers); removing inserts uses the Ids from the exact job's
    successful results. Keep manifests, job IDs, row results, mappings and recovery files in the
    private task directory, and read the row failures even when the command exits 0.
-6. Rehearsal and test records: save each created record's Id when it is created, in the private
-   task directory, and delete only those Ids (an Id-file delete such as
-   `sf data delete bulk --file ids.csv` with an Id column, or the Torque route above), never records
-   matched by name, title, creator or date; if the Id list is lost or incomplete, stop and ask
-   instead of matching.
+6. Rehearsal and test records: {{test-records}} The Torque route above deletes by Id as well.
 7. Reconcile source against destination by stable keys; totals and "created today" counts are
    not enough. Check relationships, duplicates, representative business outcomes and side effects.
    Restore temporary settings to their exact prior values after success or failure, and check that

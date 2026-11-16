@@ -34,7 +34,8 @@ import pytest
 from torque import cli
 
 REPO = Path(__file__).resolve().parents[1]
-SOURCES = ("workflows/*.md", ".claude/rules/*.md", "floor/AGENTS-floor.md", "docs/getting-started.md")
+# The rendered recipes (.claude/commands), so the shared texts the sources pull in are read too.
+SOURCES = (".claude/commands/*.md", ".claude/rules/*.md", "floor/AGENTS-floor.md", "docs/getting-started.md")
 
 # (file, start of the command as written): why it is not checked as a command.
 ALLOWED: dict[tuple[str, str], str] = {}

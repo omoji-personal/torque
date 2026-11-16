@@ -4,10 +4,7 @@ Generate editable Apex test drafts (null and empty inputs for each public method
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task apex --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task apex}}
 
 The native command generates Apex test source from supplied class files; it does
 not run live platform probes, deploy classes or execute tests by itself.
@@ -18,33 +15,21 @@ torque probes --target-class <class-path.cls> --output <private-output-directory
 
 Use `--target-dir <source-directory>` instead to generate from a directory. Always
 choose an explicit private output directory so generated files do not unexpectedly
-appear alongside the input source. Inspect `torque probes --help` for the installed
-generator contract. Actual `@isTest` or legacy `testMethod` classes are skipped;
-production names containing `Test` remain eligible. Existing generated class and
-metadata files are preserved. Choose a new output directory to regenerate, or use
-`--force` when you explicitly intend to replace both. API version follows the
-source companion metadata, with 61.0 as fallback; `--api-version` overrides it.
+appear alongside the input source. `torque probes --help` gives the generator contract:
+which classes and methods it drafts, what each case holds, how regeneration, `--force` and
+the API version work, and how QA reports generation. Use `--force` only when you explicitly
+intend to replace generated files.
 
-Each discovered supported public/global method has typed null inputs and, where
-applicable, an empty-collection case. Nonvoid returns are stored as `actual`.
-Every case intentionally fails at its `DRAFT` assertion until you replace that
-assertion with an explicit expected value, state or exception. Unexpected target
-exceptions also fail; they are not logged as success. Unsupported signatures or
-receivers remain visible in comments and a review case rather than guessed calls.
-
-Review client prerequisites, target side effects, permissions and applicable API
-version. The generator does not invent Account/User data, bulk work, governor
-budgets or FLS coverage. Drafts may require adaptation before they compile or
-test the intended business behavior. QA reports generation as `MANUAL_REQUIRED`
-with compiled/executed false, even when all draft files were generated. When execution
+Replace each `DRAFT` assertion with an explicit expected value, state or exception, and
+review the cases left in comments rather than guessing those calls. Review client
+prerequisites, target side effects, permissions and applicable API version. The generator
+does not invent Account/User data, bulk work, governor budgets or FLS coverage. Drafts may
+require adaptation before they compile or test the intended business behavior. When execution
 is requested, use normal Salesforce validation/test tools in the selected authorized
 org; that is a guided continuation, not a built-in probe-runner capability.
 
 If a probe creates or changes records outside the test transaction, capture the exact
-pre-values of any record it alters, save each created record's Id when it is created, in the
-private task directory, and delete only those Ids (an Id-file delete such as
-`sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title,
-creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
+pre-values of any record it alters, {{test-records}}
 
 Capture actual test results and cleanup when execution occurs. “Files generated”
 is different from “compiled,” “tests passed,” and “business behavior verified.”

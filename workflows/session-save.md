@@ -31,12 +31,11 @@ Save what this session did, what each check rested on and what it taught, so the
    torque session add --workspace <private-path> --client <client-name> --status <status> --summary <summary-text> [--check read-back|scripted|rendered|live|reviewed] [--as-user <role>] [--in-org <org-alias>] [--not-covered <what>] [--evidence <file>] [--change <change-id>] [--corrects <session-id>] [--learned "When: ... Do: ... Because: ..."]
    ```
 
-   Repeat `--check` and `--evidence` as needed; each evidence file is referenced and hashed, not
-   copied, so leave it where it is, and never invent a path. When an earlier record was wrong, add
-   a new one with `--corrects <its id>`; never edit the old file. For a long summary, write the
-   fields to a JSON or YAML file and pass `--input <file>`. If the command exits 4, the record IS
-   saved: do not run it again; save the lesson with the `torque lesson add ... --session <id>` it
-   printed (it held a credential-looking value, or a firm lesson named a client).
+   Never invent an evidence path, and leave each evidence file where it is. When an earlier record
+   was wrong, add a new one with `--corrects <its id>`; never edit the old file. For a long summary,
+   pass the fields in a file with `--input <file>`. Read what the command prints before you run it
+   again: `torque session add --help` says what each exit code means (exit 4: the record is saved
+   and only a lesson was refused; save that lesson with the line it printed).
 6. Mark the lessons Torque showed you in this session: `torque lesson helpful <id>` for one that
    helped, `torque lesson stale <id> --reason <why>` for one that was wrong. If a candidate hint
    fixed something, verify it: `torque lesson verify <id> --evidence reproduced` (it becomes

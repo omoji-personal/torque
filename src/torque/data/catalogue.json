@@ -3,6 +3,7 @@
     "name": "help",
     "group": "Workspace",
     "description": "Show the complete command catalogue and choose the workflow for the task.",
+    "use_when": "you do not know which recipe fits the request",
     "kind": "native",
     "implementation": "torque workflows list",
     "source_command": "help"
@@ -11,6 +12,7 @@
     "name": "status",
     "group": "Workspace",
     "description": "Check the selected workspace, the installed tools and the requested org connections without printing a credential. Use it at the start of a session, after an install or upgrade, or when a command fails for an unclear reason.",
+    "use_when": "at session start, after an install or upgrade, or when a command fails oddly",
     "kind": "guided",
     "implementation": "workflows/status.md",
     "source_command": "status"
@@ -19,6 +21,7 @@
     "name": "context",
     "group": "Workspace",
     "description": "Load the selected client's configuration, recent sessions, change records and lessons from earlier work. Use it at the start of client work and whenever the client changes.",
+    "use_when": "at the start of client work and whenever the client changes",
     "kind": "native",
     "implementation": "torque context",
     "source_command": null
@@ -27,6 +30,7 @@
     "name": "new-client",
     "group": "Workspace",
     "description": "Create a private client workspace and establish a useful engagement baseline.",
+    "use_when": "a new client needs a private workspace and an engagement baseline",
     "kind": "guided",
     "implementation": "workflows/new-client.md",
     "source_command": "new-client"
@@ -35,6 +39,7 @@
     "name": "connect-org",
     "group": "Workspace",
     "description": "Connect an org through the Salesforce CLI or the host's integration and confirm which org the alias reaches. Use it when a client's org is not connected yet or its authorization expired.",
+    "use_when": "an org is not connected yet or its authorization expired",
     "kind": "guided",
     "implementation": "workflows/connect-org.md",
     "source_command": "connect-org"
@@ -43,6 +48,7 @@
     "name": "diagnose",
     "group": "Investigate",
     "description": "Find the cause of an org, tool, deployment, context or access problem and carry the authorized fix through to a check. Use it when something fails or behaves differently than expected.",
+    "use_when": "something fails or behaves differently than expected",
     "kind": "guided",
     "implementation": "workflows/diagnose.md",
     "source_command": "diagnose"
@@ -51,6 +57,7 @@
     "name": "triage-alert",
     "group": "Support",
     "description": "Turn a Salesforce flow or Apex error notification into its cause, the narrowest fix, a retest and a note for the client. Use it when a fault email, an error screenshot or a user report of a failed save arrives.",
+    "use_when": "a flow or Apex fault email, error screenshot or failed-save report arrives",
     "kind": "guided",
     "implementation": "workflows/triage-alert.md",
     "source_command": null
@@ -59,6 +66,7 @@
     "name": "audit-org",
     "group": "Investigate",
     "description": "Audit an org across configuration, automation, access, data and operational health.",
+    "use_when": "an org needs a configuration, automation, access, data and health audit",
     "kind": "guided",
     "implementation": "workflows/audit-org.md",
     "source_command": "audit-org"
@@ -67,6 +75,7 @@
     "name": "compare-orgs",
     "group": "Investigate",
     "description": "Compare two orgs or an org and baseline to explain meaningful differences.",
+    "use_when": "two orgs, or an org and a baseline, differ in ways that matter",
     "kind": "guided",
     "implementation": "workflows/compare-orgs.md",
     "source_command": "compare-orgs"
@@ -75,6 +84,7 @@
     "name": "field-audit",
     "group": "Investigate",
     "description": "Review a set of fields for how they are defined, how full they are and what uses them, and group them for cleanup or data-quality work. Use it before deleting, merging or documenting fields.",
+    "use_when": "before deleting, merging or documenting a set of fields",
     "kind": "guided",
     "implementation": "workflows/field-audit.md",
     "source_command": "field-audit"
@@ -83,6 +93,7 @@
     "name": "flow-analyzer",
     "group": "Investigate",
     "description": "Explain, review or fix a flow from its active definition and its actual behavior. Use it when someone asks what a flow does, why it failed, or how to improve it.",
+    "use_when": "someone asks what a flow does, why it failed or how to improve it",
     "kind": "guided",
     "implementation": "workflows/flow-analyzer.md",
     "source_command": "flow-analyzer"
@@ -91,6 +102,7 @@
     "name": "preflight-org",
     "group": "Delivery",
     "description": "Confirm which org an alias reaches and what the task needs from it (objects, fields, packages, current components) before live work. Use it at the start of work in an org, or when the selected client and the alias may disagree.",
+    "use_when": "before live work: which org an alias reaches and what the task needs",
     "kind": "guided",
     "implementation": "workflows/preflight-org.md",
     "source_command": "preflight-org"
@@ -99,6 +111,7 @@
     "name": "small-change",
     "group": "Delivery",
     "description": "Make one small, everyday change end to end: a new field, a changed field or validation rule, a report, or \"a user cannot see X\", from the client's context to a deploy checked in the org and tested as the user. Use it for a change of a few components; larger work goes through `/requirements-to-build` and `/prep-changeset`.",
+    "use_when": "a new or changed field, validation rule, report, or a user cannot see X",
     "kind": "guided",
     "implementation": "workflows/small-change.md",
     "source_command": null
@@ -107,6 +120,7 @@
     "name": "retrieve-current",
     "group": "Delivery",
     "description": "Retrieve the current version of the components a change touches, keep it as the baseline, and stage an editable copy. Use it before changing anything that already exists in an org.",
+    "use_when": "before changing anything that already exists in an org",
     "kind": "guided",
     "implementation": "workflows/retrieve-current.md",
     "source_command": "retrieve-current"
@@ -115,6 +129,7 @@
     "name": "prep-changeset",
     "group": "Delivery",
     "description": "Build the deployment packet for one change: the exact components, their order, the permission set that grants each new field, the checks and the recovery references. Use it when a change is ready to go to another org.",
+    "use_when": "a change is ready to go to another org and needs its deployment packet",
     "kind": "guided",
     "implementation": "workflows/prep-changeset.md",
     "source_command": "prep-changeset"
@@ -123,6 +138,7 @@
     "name": "gift-payments",
     "group": "Delivery",
     "description": "Design automation that keeps an NPSP payment's date in step with its gift batch, before save where it only changes the payment. Use it when batch gift entry leaves paid payments without a payment date.",
+    "use_when": "batch gift entry leaves paid NPSP payments without a payment date",
     "kind": "guided",
     "implementation": "workflows/gift-payments.md",
     "source_command": null
@@ -131,6 +147,7 @@
     "name": "grants-outbound-funds",
     "group": "Delivery",
     "description": "Build the automation that turns an approved Outbound Funds funding request into its disbursement records, without duplicates on a re-save. Use it when a grants team approves funding requests in Salesforce and wants the awards created for them.",
+    "use_when": "approved Outbound Funds requests should create their disbursements",
     "kind": "guided",
     "implementation": "workflows/grants-outbound-funds.md",
     "source_command": null
@@ -139,6 +156,7 @@
     "name": "prep-migration",
     "group": "Delivery",
     "description": "Plan, rehearse and run a scoped data load or bulk change, then reconcile it and restore any setting changed for it. Use it for imports, migrations between orgs and bulk updates of existing records.",
+    "use_when": "imports, migrations between orgs and bulk updates of existing records",
     "kind": "guided",
     "implementation": "workflows/prep-migration.md",
     "source_command": "prep-migration"
@@ -147,6 +165,7 @@
     "name": "validate-change",
     "group": "Delivery",
     "description": "Validate a change before it is deployed: a check-only deploy read from a file, Torque's metadata check on what that deploy would create or change, and the tests the change needs. Use it before every real deploy.",
+    "use_when": "before every real deploy: check-only deploy, metadata check, tests",
     "kind": "guided",
     "implementation": "workflows/validate-change.md",
     "source_command": "validate-change"
@@ -155,6 +174,7 @@
     "name": "verify-change",
     "group": "Delivery",
     "description": "Verify that a deployed or configured change is in the org as intended and works for the people it is for, and record what is still unchecked. Use it after every deploy or configuration change.",
+    "use_when": "after every deploy or configuration change",
     "kind": "guided",
     "implementation": "workflows/verify-change.md",
     "source_command": "verify-change"
@@ -163,6 +183,7 @@
     "name": "sandbox-refresh",
     "group": "Delivery",
     "description": "Reconnect to a sandbox after it was refreshed and restore its intended settings, users and integrations from the saved baseline. Use it after a refresh has actually happened; it does not start one.",
+    "use_when": "after a sandbox refresh has actually happened",
     "kind": "guided",
     "implementation": "workflows/sandbox-refresh.md",
     "source_command": "sandbox-refresh"
@@ -171,6 +192,7 @@
     "name": "security-review",
     "group": "Investigate",
     "description": "Review who can see and change which objects, fields and records against what the business process needs, and fix what is asked. Use it when users report missing or excess access, or before a change that grants access ships.",
+    "use_when": "users report missing or excess access, or a change grants access",
     "kind": "guided",
     "implementation": "workflows/security-review.md",
     "source_command": "security-review"
@@ -179,6 +201,7 @@
     "name": "snapshot",
     "group": "Recovery",
     "description": "Capture a dated baseline of the metadata, settings or records a task may change, and say what it can restore and what it only documents. Use it before a risky change, a refresh or an audit that needs a fixed point to compare against.",
+    "use_when": "before a risky change, refresh or audit that needs a fixed baseline",
     "kind": "guided",
     "implementation": "workflows/snapshot.md",
     "source_command": "snapshot"
@@ -187,6 +210,7 @@
     "name": "undo",
     "group": "Recovery",
     "description": "Reverse a specific recent change from its own evidence: the recovery bundle when one exists, otherwise a scoped inverse built from the saved pre-state. Use it when the user says to undo, roll back or revert something that was done.",
+    "use_when": "the user says undo, roll back or revert something that was done",
     "kind": "guided",
     "implementation": "workflows/undo.md",
     "source_command": "undo"
@@ -195,6 +219,7 @@
     "name": "advisory",
     "group": "Investigate",
     "description": "Use platform notes, Flow activation, impact and evidence helpers without changing the org.",
+    "use_when": "platform notes, flow activation, impact or evidence, without changing the org",
     "kind": "native",
     "implementation": "torque advisory",
     "source_command": "advisory"
@@ -203,6 +228,7 @@
     "name": "qa",
     "group": "QA",
     "description": "Choose and run the checks a change needs, from its acceptance criteria, and report each one's result and what stayed uncovered. Use it after a build or deploy, before calling a change ready.",
+    "use_when": "after a build or deploy, before calling a change ready",
     "kind": "native",
     "implementation": "torque qa run",
     "source_command": "qa"
@@ -211,6 +237,7 @@
     "name": "qa-browser",
     "group": "QA",
     "description": "Test a page or a journey in a browser as a named user, sent in through the Salesforce CLI's existing authorization, and check what it changed. Use it to see a change as its user sees it, or to run one of Torque's packaged browser journeys.",
+    "use_when": "to see a change as its user sees it, or to run a packaged browser journey",
     "kind": "native",
     "implementation": "torque browser browser",
     "source_command": "qa-browser"
@@ -219,6 +246,7 @@
     "name": "qa-multiprofile",
     "group": "QA",
     "description": "Run the same journey as each intended user and compare what each one can see and do. Use it when access, pages or automation differ by profile, permission set or role, and before calling such a change ready.",
+    "use_when": "access, pages or automation differ by profile, permission set or role",
     "kind": "native",
     "implementation": "torque browser multiprofile",
     "source_command": "qa-multiprofile"
@@ -227,6 +255,7 @@
     "name": "qa-sanitize-replay",
     "group": "QA",
     "description": "Scan a replay script for credential patterns and report masked findings.",
+    "use_when": "a browser replay script must be scanned for credentials",
     "kind": "native",
     "implementation": "torque browser sanitize-replay",
     "source_command": "qa-sanitize-replay"
@@ -235,6 +264,7 @@
     "name": "qa-token-grant",
     "group": "Compatibility",
     "description": "Explain or manage an explicitly requested legacy QA skip token.",
+    "use_when": "the user explicitly asks to mint a legacy QA skip token",
     "kind": "compatibility",
     "implementation": "torque qa token-grant",
     "source_command": "qa-token-grant"
@@ -243,6 +273,7 @@
     "name": "qa-token-show",
     "group": "Compatibility",
     "description": "Inspect an optional legacy QA skip token without affecting ordinary work.",
+    "use_when": "the user explicitly asks to see a legacy QA skip token",
     "kind": "compatibility",
     "implementation": "torque qa token-show",
     "source_command": "qa-token-show"
@@ -251,6 +282,7 @@
     "name": "qa-token-revoke",
     "group": "Compatibility",
     "description": "Remove an optional legacy QA skip token when requested.",
+    "use_when": "the user explicitly asks to remove a legacy QA skip token",
     "kind": "compatibility",
     "implementation": "torque qa token-revoke",
     "source_command": "qa-token-revoke"
@@ -259,6 +291,7 @@
     "name": "revert-show",
     "group": "Recovery",
     "description": "List available operation snapshots and their actual recovery state.",
+    "use_when": "to list captured snapshots and their recovery state",
     "kind": "native",
     "implementation": "torque recover show",
     "source_command": "revert-show"
@@ -267,6 +300,7 @@
     "name": "revert-preview",
     "group": "Recovery",
     "description": "Preview a specific restoration against current state without executing it.",
+    "use_when": "to preview one restoration against the org's current state",
     "kind": "native",
     "implementation": "torque recover preview",
     "source_command": "revert-preview"
@@ -275,6 +309,7 @@
     "name": "revert",
     "group": "Recovery",
     "description": "Restore a supported captured operation and verify the resulting state.",
+    "use_when": "to restore a supported captured operation and verify it",
     "kind": "native",
     "implementation": "torque recover run",
     "source_command": "revert"
@@ -283,6 +318,7 @@
     "name": "revert-discard",
     "group": "Recovery",
     "description": "Mark a selected snapshot abandoned while keeping its recovery artifacts.",
+    "use_when": "to mark a snapshot abandoned, keeping its recovery artifacts",
     "kind": "native",
     "implementation": "torque recover discard",
     "source_command": "revert-discard"
@@ -291,6 +327,7 @@
     "name": "lesson",
     "group": "Learning",
     "description": "Save, find, judge, review and promote lessons from earlier work. Use it when the consultant corrects you, when something that failed now works, and before work that earlier lessons may cover.",
+    "use_when": "a correction, a failure that now works, or work earlier lessons may cover",
     "kind": "native",
     "implementation": "torque lesson",
     "source_command": "lesson"
@@ -299,6 +336,7 @@
     "name": "lesson-show",
     "group": "Learning",
     "description": "Read saved lessons: the ones that fit the work, one in full, or a list by state. Use it before work earlier lessons may cover, or when the consultant asks what Torque has learned.",
+    "use_when": "before work earlier lessons may cover, or to read what Torque has learned",
     "kind": "native",
     "implementation": "torque lesson show",
     "source_command": "lesson-show"
@@ -307,6 +345,7 @@
     "name": "lesson-helpful",
     "group": "Learning",
     "description": "Count a lesson as helpful when it saved time or prevented a mistake. Use it right after a lesson Torque showed you made a difference.",
+    "use_when": "right after a lesson Torque showed you made a difference",
     "kind": "native",
     "implementation": "torque lesson helpful",
     "source_command": "lesson-helpful"
@@ -315,6 +354,7 @@
     "name": "lesson-stale",
     "group": "Learning",
     "description": "Take a wrong or outdated lesson out of recall at once, with the reason, keeping its history. Use it when a lesson Torque showed you no longer holds.",
+    "use_when": "a lesson Torque showed you no longer holds",
     "kind": "native",
     "implementation": "torque lesson stale",
     "source_command": "lesson-stale"
@@ -323,6 +363,7 @@
     "name": "collect-lessons",
     "group": "Learning",
     "description": "Review the lessons waiting for a decision and propose which to keep, retire or promote to the firm, a rule, a skill, a recipe or a check. Use it when the consultant asks, or when the context shows candidates waiting.",
+    "use_when": "the consultant asks, or the context shows lessons waiting for review",
     "kind": "guided",
     "implementation": "workflows/collect-lessons.md",
     "source_command": "collect-lessons"
@@ -331,6 +372,7 @@
     "name": "session-save",
     "group": "Continuity",
     "description": "Save what this session did, what each check rested on and what it taught, so the next session starts from facts. Use it after meaningful client work, before a hand-off, and when the consultant corrects you.",
+    "use_when": "after meaningful client work, before a hand-off, or after a correction",
     "kind": "native",
     "implementation": "torque session add",
     "source_command": null
@@ -339,6 +381,7 @@
     "name": "session-resume",
     "group": "Continuity",
     "description": "Pick up a client task where the last session left it: its records, the lessons that fit, and fresh checks of what may have drifted. Use it at the start of a session on work already under way.",
+    "use_when": "at the start of a session on work already under way",
     "kind": "native",
     "implementation": "torque session list",
     "source_command": null
@@ -347,6 +390,7 @@
     "name": "export-session",
     "group": "Continuity",
     "description": "Export selected session work as an internal record, client update or change log.",
+    "use_when": "session work must become an internal record, client update or change log",
     "kind": "guided",
     "implementation": "workflows/export-session.md",
     "source_command": "export-session"
@@ -355,6 +399,7 @@
     "name": "handoff",
     "group": "Continuity",
     "description": "Produce a resumable handoff from the client history and current task evidence.",
+    "use_when": "another person must be able to pick the work up",
     "kind": "native",
     "implementation": "torque handoff",
     "source_command": "handoff"
@@ -363,6 +408,7 @@
     "name": "discovery",
     "group": "Discovery",
     "description": "Carry discovery from stakeholder input to implementable requirements and an agreed next step.",
+    "use_when": "stakeholder input must become requirements and an agreed next step",
     "kind": "guided",
     "implementation": "workflows/discovery.md",
     "source_command": null
@@ -371,6 +417,7 @@
     "name": "requirements-to-build",
     "group": "Discovery",
     "description": "Turn a stakeholder requirements note into user stories, a metadata list that starts from what the org already has, a test script and open questions. Use it when a request arrives as prose and has to become buildable work.",
+    "use_when": "a request arrives as prose and must become buildable work",
     "kind": "guided",
     "implementation": "workflows/requirements-to-build.md",
     "source_command": null
@@ -379,6 +426,7 @@
     "name": "training",
     "group": "Documentation",
     "description": "Write a practical guide for end users or administrators of a configured process, checked against the interface they actually see. Use it when a change goes live or a client asks how their staff should use it.",
+    "use_when": "a change goes live, or staff need a guide checked against what they see",
     "kind": "guided",
     "implementation": "workflows/training.md",
     "source_command": "training"
@@ -387,6 +435,7 @@
     "name": "release-notes",
     "group": "Documentation",
     "description": "Write technical and client-facing release notes from the evidence of what was actually deployed and verified. Use it when a set of changes is released or handed to a client.",
+    "use_when": "a set of changes is released or handed to a client",
     "kind": "guided",
     "implementation": "workflows/release-notes.md",
     "source_command": "release-notes"
@@ -395,6 +444,7 @@
     "name": "process-meeting",
     "group": "Discovery",
     "description": "Extract a recording timeline and turn supplied meeting material into decisions and delivery work.",
+    "use_when": "a meeting recording or transcript must become decisions and work",
     "kind": "native",
     "implementation": "torque meeting",
     "source_command": "process-meeting"
@@ -403,6 +453,7 @@
     "name": "logs",
     "group": "Investigate",
     "description": "Analyze Salesforce debug logs and relate what they show to the reported problem. Use it when an error, a slow transaction or an automation path needs evidence from a log.",
+    "use_when": "an error, slow transaction or automation path needs evidence from a log",
     "kind": "native",
     "implementation": "torque logs",
     "source_command": null
@@ -411,6 +462,7 @@
     "name": "probes",
     "group": "QA",
     "description": "Generate editable Apex test drafts (null and empty inputs for each public method) from class files, then turn them into real tests. Use it when Apex needs edge-case tests written quickly.",
+    "use_when": "Apex needs edge-case test drafts written quickly",
     "kind": "native",
     "implementation": "torque probes",
     "source_command": null
@@ -419,6 +471,7 @@
     "name": "update-torque",
     "group": "Workspace",
     "description": "Update the Torque installation, then carry its new recipes, rules and skills into the private workspace while keeping local edits. Use it when a new Torque release is out or the consultant asks to update.",
+    "use_when": "a new Torque release is out or the consultant asks to update",
     "kind": "guided",
     "implementation": "workflows/update-torque.md",
     "source_command": null
@@ -427,6 +480,7 @@
     "name": "update-jsc",
     "group": "Compatibility",
     "description": "Continue the old update command name through the Torque update workflow.",
+    "use_when": "the old update-jsc name is used: it runs update-torque",
     "kind": "compatibility",
     "implementation": "workflows/update-jsc.md",
     "source_command": "update-jsc"

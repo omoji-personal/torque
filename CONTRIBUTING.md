@@ -47,7 +47,6 @@ credentials.
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install '.[dev]'
-.venv/bin/python workflows/sync_adapters.py --check
 .venv/bin/python scripts/sync-workflows.py --check
 .venv/bin/python scripts/test-offline.py -q --workers 4
 ```
@@ -86,8 +85,8 @@ fixture suites, so full qualification stays with the runner, and it stops with t
 runner commands when that environment cannot be set up, for example when an
 installed Torque was already imported.
 
-Keep conversational recipes under `workflows/`, then run `workflows/sync_adapters.py`
-and `scripts/sync-workflows.py` to refresh adapters and wheel resources. See
+Keep conversational recipes under `workflows/`, then run `scripts/sync-workflows.py` to
+refresh the adapters and wheel resources (`--check` fails on any copy edited by hand). See
 [validation](docs/validation.md) for the clean-wheel check. A source test does not
 establish that an installed package or optional live adapter works.
 

@@ -61,10 +61,7 @@ as the CLI's admin user: label its results admin-only.
 
 ## Evidence and cleanup
 
-Test records: save each created record's Id when it is created, in the private task directory,
-and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv` with an
-Id column), never records matched by name, title, creator or date; if the Id list is lost or
-incomplete, stop and ask instead of matching.
+Test records: save each created record's Id when it is created, in the private task directory, and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title, creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
 
 Save screenshots and the manifest privately, tell real UI events from backend calls, read back
 the records the journey changed, and report the user, the route, missing coverage and any cleanup

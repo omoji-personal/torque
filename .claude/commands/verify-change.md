@@ -52,10 +52,7 @@ and what is wrong with `torque lesson stale <id> --reason <why>`.
    `torque browser login --target-org <org-alias> --as-alias <user-alias>` sends a tab to the org
    as that user; it cannot see the tab, so wait for the org's page and check which user it shows
    (`/qa-browser`, `/qa-multiprofile`). Label each result with the user and the route. Test
-   records, including records automation creates: save each created record's Id when it is
-   created, in the private task directory, and delete only those Ids (an Id-file delete such as
-   `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title,
-   creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
+   records, including records automation creates: save each created record's Id when it is created, in the private task directory, and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title, creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
 5. When a change record exists, record each criterion with `torque change check` and the exact
    deploy observation with `torque change verify-deploy`; neither stands in for the other.
 

@@ -4,10 +4,7 @@ Review a set of fields for how they are defined, how full they are and what uses
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task field-build --type CustomField --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task field-build --type CustomField}}
 
 Use the requested objects or the selected client's object scope; “all” means that scope,
 not a hardcoded product schema. Describe actual fields: type, requirement, formula,

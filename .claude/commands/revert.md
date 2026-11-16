@@ -16,11 +16,10 @@ for the requested reversal. Then use the supported delegate:
 torque recover run <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
 ```
 
-A refusal due to missing pre-state or unsupported reversal is a real capability
-limit, not an invitation to invent a restore. Diagnose it and use a scoped manual
-inverse where actually possible. Never append `--force` automatically: inspect
-its installed semantics and the concrete consequences before considering it within
-the user's scope. No Torque approval/allowlist/token step is added.
+A refusal (`torque recover run --help` says when it refuses) is a real capability limit,
+not an invitation to invent a restore. Diagnose it and use a scoped manual inverse where
+actually possible. Never append `--force` automatically: read what it proceeds past and the
+concrete consequences before considering it within the user's scope. No Torque approval/allowlist/token step is added.
 
 Track the restoration's own job/results and any parent snapshot chain. Verify exact
 metadata/record readback and the user's intended outcome. Restore-related metadata

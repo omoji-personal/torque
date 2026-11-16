@@ -14,19 +14,18 @@ Analyze Salesforce debug logs and relate what they show to the reported problem.
    `torque lesson helpful <id>`. If a candidate hint fixed it, verify it:
    `torque lesson verify <id> --evidence reproduced` (it becomes active for this client).
 2. Analyze a local log (the exact one is the strongest evidence; retrieve it with the Salesforce
-   CLI first when needed), or let the analyzer fetch recent ones:
+   CLI first when needed), or let the analyzer fetch recent ones. `torque logs --help` says what
+   each mode reads and what each exit code and count means:
 
    ```sh
    torque logs --log-file <private-log-path> --json
    torque logs --target-org <org-alias> --since <ISO-timestamp> --limit <count> --json
    ```
 
-   `--target-org` mode reads a bounded recent set, not the log of an exact job or user;
-   `--since-deploy` is a recent-time approximation. When no log exists in the window the analyzer
-   exits 0 with `logs_analyzed: 0`: nothing was checked, so set a trace flag for the intended user
-   and reproduce first. A failed query or retrieval exits 2; logs that were read are still
-   analyzed, and `logs_unread` counts the rest. Avoid broad trace-flag changes only to read an
-   existing log.
+   A recent-logs run is not the log of an exact job or user. When it found no log in the window,
+   nothing was checked: set a trace flag for the intended user and reproduce first. A partial run
+   counts the logs it could not read (`logs_unread`); do not report it as complete. Avoid broad
+   trace-flag changes only to read an existing log.
 3. Identify the relevant errors, transaction boundaries, execution path, repeated queries and DML,
    limits and automation interactions. Keep the timestamp, user and request with each finding, and
    separate heuristics from demonstrated causes: a log without an error does not prove the page or

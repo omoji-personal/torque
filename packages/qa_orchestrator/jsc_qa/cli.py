@@ -325,7 +325,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(func=cmd_run)
 
-    grant = sub.add_parser("token-grant", help="mint QA skip TTL token")
+    legacy = ("Legacy, kept for compatibility with existing token records. Torque's normal QA and execution "
+              "workflows need no skip token, org allowlist, terminal grant or maintainer window. A legacy QA skip "
+              "token only records an optional surface-selection override for qa run; it does not grant "
+              "Salesforce access or authorize a write.")
+    grant = sub.add_parser("token-grant", help="mint QA skip TTL token",
+                           description="Mint a legacy QA skip token for the selected client. " + legacy
+                                       + " --org, --skip-target and --reason are required; --operation-type and "
+                                         "--expires-in (minutes, capped per operation type) are optional.")
     grant.add_argument("--org", required=True)
     grant.add_argument("--skip-target", required=True,
                        help="change_type id (e.g. 'A3') OR surface name (e.g. 'Vision') OR command_fingerprint")
@@ -335,10 +342,14 @@ def build_parser() -> argparse.ArgumentParser:
     grant.add_argument("--expires-in", type=int, help="TTL in minutes (capped per op type)")
     grant.set_defaults(func=cmd_token_grant)
 
-    show = sub.add_parser("token-show", help="print current QA skip token")
+    show = sub.add_parser("token-show", help="print current QA skip token",
+                          description="Print the selected client's current legacy QA skip token as JSON, or say "
+                                      "that none is present. " + legacy)
     show.set_defaults(func=cmd_token_show)
 
-    revoke = sub.add_parser("token-revoke", help="revoke current QA skip token")
+    revoke = sub.add_parser("token-revoke", help="revoke current QA skip token",
+                            description="Remove the selected client's current legacy QA skip token only; evidence "
+                                        "and other clients' state stay as they are. " + legacy)
     revoke.set_defaults(func=cmd_token_revoke)
 
     return p

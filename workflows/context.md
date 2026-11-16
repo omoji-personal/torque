@@ -9,8 +9,8 @@ torque context --workspace <private-path> --client <client-name> --json
 ```
 
 Read `Where things stand` first. If the output says records, notes or corrections were cut or not
-shown, run the command it names before you rely on what is missing (`--since <date>`, `--limit <n>`
-or `--all` select records; `--json` is complete). The output starts with this client's lessons from earlier work; read them, and ask for the ones
+shown, run the command it names before you rely on what is missing (`torque context --help` says
+what each option selects). The output starts with this client's lessons from earlier work; read them, and ask for the ones
 that fit the task with the `torque lesson for` command it prints. Then read the requirements,
 decision notes and change files the output points to, only as far as the present task needs.
 

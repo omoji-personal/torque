@@ -16,9 +16,9 @@ entry. Generate the native Markdown starting point:
 torque handoff --workspace <private-path> --client <client-name> [--since <date>] [--change <change-id>] --output <handoff-path>
 ```
 
-Run it again to refresh the same file. If it says the file was edited and the new render is in
-`FILE.new`, compare them with the consultant and replace only on their word (`--force`). Without
-`--output` the command prints Markdown. Review the result and expand it with
+Run it again to refresh the same file (`torque handoff --help` says what happens to one edited
+since). When it keeps an edited file and writes the new render beside it, compare the two with the
+consultant and replace only on their word. Review the result and expand it with
 actual artifact evidence when the engagement needs more detail. Include objective,
 scope, current environment identity, implemented changes, exact source/diff references,
 job/test evidence, unfinished work, recovery references, known issues, decisions,
