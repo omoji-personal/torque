@@ -95,7 +95,6 @@ production readiness or a universal recovery capability.
 Install development dependencies into an isolated environment, then run:
 
 ```sh
-python workflows/sync_adapters.py --check
 python scripts/sync-workflows.py --check
 python scripts/check-provenance.py
 python scripts/test-offline.py -q

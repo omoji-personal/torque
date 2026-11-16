@@ -126,18 +126,22 @@ and package help rather than being injected into every task.
 
 ## Keeping adapters synchronized
 
-`workflows/*.md` and `workflows/catalogue.json` are the authoring sources. Claude
-command adapters embed the complete recipe so installed commands work outside a
-source checkout. Regenerate or verify them in the source checkout:
+`workflows/*.md` and `workflows/catalogue.json` are the authoring sources. Claude command
+adapters embed the complete recipe so installed commands work outside a source checkout. One
+generator writes the adapters and the wheel's copy, and verifies both, in the source checkout:
 
 ```sh
-python3 workflows/sync_adapters.py
-python3 workflows/sync_adapters.py --check
+python3 scripts/sync-workflows.py
+python3 scripts/sync-workflows.py --check
 ```
 
-The sync tool updates only command files named in the catalogue; it does not delete
-user-added adapters. Root packaging bundles the catalogue and recipes for the
-agent-neutral runtime. Validation should check all 42 source-name mappings, every
+In this repository `.claude/commands/` and `src/torque/data/` are generated only: the check
+fails on a copy edited by hand, a missing one and one no source produces, and on a recipe
+whose heading, description or interface line differs from the catalogue. Writing removes a
+stray copy. A workspace's own recipes are a different matter: `torque workspace upgrade`
+keeps local edits (`docs/workspace-upgrades.md`). The copies in a workspace's `.agents/`
+(Antigravity's, which Codex also reads) are derived from the wheel's copy when the workspace
+is created or upgraded. Validation should check all 42 source-name mappings, every
 recipe/adapter pair and the actual installed native parser contracts.
 
 ## Scope of this port

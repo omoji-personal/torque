@@ -10,7 +10,8 @@ def test_recipe_editing_instructions_name_sources_and_generation_order():
     instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     rule = next(line for line in instructions.splitlines() if line.startswith("- Edit recipes"))
     assert "`workflows/*.md`" in rule
-    assert rule.index("python workflows/sync_adapters.py") < rule.index("python scripts/sync-workflows.py")
+    # One generator writes every copy; the one it replaced is gone from the instructions.
+    assert "python scripts/sync-workflows.py" in rule and "sync_adapters" not in instructions
     assert "Generated workflow adapters" in instructions
 
 
