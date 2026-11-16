@@ -10,14 +10,12 @@ Use the actual path supplied by the user:
 torque browser sanitize-replay <script-path>
 ```
 
-It scans the text as written and after up to four rounds of percent-decoding; it cannot prove
-that code which builds or decodes an address at run time holds none.
-This inspection does not need an org connection. Report detected category, file and
-line; never echo the matched secret. Inspect the installed help for exit semantics
-and distinguish a missing/unreadable file from a clean scan.
+`torque browser sanitize-replay --help` says what the scan reads, what it cannot see and what
+each exit code means. Report detected category, file and line; never echo the matched secret.
+Distinguish a missing or unreadable file from a clean scan, and do not present a clean scan as a
+full secret audit or as proof that a replay is safe to publish.
 
-A clean pattern scan is not a full secret audit or proof that a replay is safe to
-publish. Inspect fixture inputs, screenshots, embedded URLs and any generated outputs
+Inspect fixture inputs, screenshots, embedded URLs and any generated outputs
 included in the requested review. If removal is requested, replace embedded credentials
 with runtime authentication and verify the sanitized script remains meaningful.
 Do not claim a credential was revoked merely because its literal text was removed.

@@ -8,8 +8,8 @@ Take a wrong or outdated lesson out of recall at once, with the reason, keeping 
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-`torque lesson stale <id> --reason <why> --workspace <private-path> --client <client-name>` (the reason is required).
-Name the lesson that replaces it with `--superseded-by <id>`; `torque lesson restore <id>` undoes the mark.
+`torque lesson stale <id> --reason <why> --workspace <private-path> --client <client-name>`.
+`torque lesson stale --help` says how to name the lesson that replaces it and how to undo the mark.
 Every lesson command is in `/lesson`.
 
 **Conversation input:** $ARGUMENTS

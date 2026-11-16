@@ -279,7 +279,15 @@ def build_parser() -> argparse.ArgumentParser:
     e_list.add_argument("--workspace", required=True)
     e_list.add_argument("--kind", choices=("client", "initiative"))
     e_list.add_argument("--json", action="store_true")
-    context = sub.add_parser("context", help="read only the selected client's context and recent sessions")
+    context = sub.add_parser(
+        "context", help="read only the selected client's context and recent sessions",
+        description="Print the selected client's context: where things stand, its lessons from earlier work (with "
+                    "the torque lesson for command that finds the ones for a task), change summaries, recent "
+                    "session records and notes.",
+        epilog="Whatever is cut or not shown (records outside --limit, --since or --all, notes past --max-chars, "
+               "corrections) is named with the command that shows it. A record another record corrects is shown "
+               "as corrected. With --json and no --max-chars the notes are complete; the records still follow "
+               "--limit, --since and --all.")
     _client_args(context)
     _window_args(context)
     context.add_argument("--max-chars", type=int, metavar="N",
@@ -287,9 +295,20 @@ def build_parser() -> argparse.ArgumentParser:
                               "stand, lessons, changes, history and notes together; whatever is cut is named with "
                               "the command that shows it. With --json it bounds the notes, which are otherwise complete")
     context.add_argument("--json", action="store_true")
-    session = sub.add_parser("session", help="append or read user-reported session records")
+    session = sub.add_parser(
+        "session", help="append or read user-reported session records",
+        description="Append or read user-reported session records. list and show read every record of the "
+                    "client, recheck each referenced evidence file against its recorded hash and show a changed "
+                    "or missing one; the journal is not rewritten, and an unchanged hash does not prove the "
+                    "recorded result. A record another record corrects is shown as corrected.")
     sessions = session.add_subparsers(dest="action", required=True)
-    entry = sessions.add_parser("add")
+    entry = sessions.add_parser(
+        "add", description="Append one session record; earlier records are never changed.",
+        epilog="Repeat --check and --evidence as needed. Each --evidence file is referenced and hashed, not "
+               "copied: leave it where it is. A wrong earlier record gets a new one with --corrects ID; the old "
+               "file is not edited. Exit 4: the record IS saved but a --learned lesson was not (it held a "
+               "credential-looking value, or a firm lesson named a client); do not run session add again, save "
+               "the lesson with the torque lesson add ... --session ID line it prints.")
     _client_args(entry)
     entry.add_argument("--summary", help="what was done and what it rests on (required here or in --input)")
     entry.add_argument("--status", choices=ws.STATUSES, help="default: prepared")
@@ -342,10 +361,12 @@ def build_parser() -> argparse.ArgumentParser:
     handoff.add_argument("--format", choices=("markdown", "json"), default="markdown",
                          help="the document's format (default markdown)")
     handoff.add_argument("--output", metavar="FILE",
-                         help="write the document to FILE; run again, it replaces the file and keeps the previous "
-                              "one as FILE.bak. Otherwise print it")
+                         help="write the document to FILE; run again, it replaces the file it wrote and keeps the "
+                              "previous one as FILE.bak, and leaves a file edited since (or one Torque did not "
+                              "write) as it is, writing the new render to FILE.new. Otherwise print it")
     handoff.add_argument("--force", action="store_true",
-                         help="with --output: replace the file even when it was edited since Torque wrote it")
+                         help="with --output: replace the file even when it was edited since Torque wrote it (the "
+                              "previous content is kept as FILE.bak)")
     handoff.add_argument("--json", action="store_true",
                          help="report as JSON: with --output, where it was written; without, the document as JSON")
     doctor = sub.add_parser("doctor", help="inspect local dependencies and config; makes no org calls")

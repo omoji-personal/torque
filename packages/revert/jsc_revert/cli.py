@@ -485,20 +485,37 @@ def build_parser() -> argparse.ArgumentParser:
         (["--queue-dir", a.queue_dir] if a.queue_dir else [])))
 
     # ── revert subcommands ───────────────────────────────────────────────
-    rv = sub.add_parser("revert", help="snapshot revert subcommands (or revert <id>)")
+    rv = sub.add_parser(
+        "revert", help="snapshot revert subcommands (or revert <id>)",
+        description="Recovery of the operations Torque captured (torque deploy, data and org). show lists the "
+                    "snapshots, preview reads one against the org now, run restores a supported one and discard "
+                    "marks one abandoned. Each takes the explicit --org and, for client work, --workspace PATH "
+                    "--client NAME. The legacy spelling torque revert revert show|preview|discard still works.")
     rv_sub = rv.add_subparsers(dest="revert_action", required=True)
 
-    rv_show = rv_sub.add_parser("show", help="list snapshots")
+    rv_show = rv_sub.add_parser(
+        "show", help="list snapshots",
+        description="List the org's snapshots, newest first: status, ID, operation, capture time and auto-revert "
+                    "(a check mark when automatic revert is supported, ? otherwise), worked out again as preview "
+                    "and run do. An existing manifest does not prove the operation completed or can be reversed: "
+                    "partial captures, unfinished finalization and unsupported operations stay listed.")
     rv_show.add_argument("--org", required=True)
     rv_show.add_argument("--limit", type=int, default=20)
     rv_show.set_defaults(func=cmd_revert_show)
 
-    rv_preview = rv_sub.add_parser("preview", help="preview revert plan")
+    rv_preview = rv_sub.add_parser(
+        "preview", help="preview revert plan",
+        description="Preview one snapshot's restoration against the org's current state. Preview does not "
+                    "execute a restore.")
     rv_preview.add_argument("snapshot_id")
     rv_preview.add_argument("--org", required=True)
     rv_preview.set_defaults(func=cmd_revert_preview)
 
-    rv_exec = rv_sub.add_parser("exec", help="execute revert (or use 'torque recover' shorthand)")
+    rv_exec = rv_sub.add_parser(
+        "exec", help="execute revert (or use 'torque recover' shorthand)",
+        description="Restore a supported snapshot and report its own results. A refusal for missing pre-state or "
+                    "an unsupported reversal is a capability limit. Restoring metadata does not undo downstream "
+                    "data or external effects.")
     rv_exec.add_argument("snapshot_id")
     rv_exec.add_argument("--org", required=True)
     rv_exec.add_argument("--force", action="store_true",
@@ -506,7 +523,10 @@ def build_parser() -> argparse.ArgumentParser:
     rv_exec.add_argument("--reason", default=None)
     rv_exec.set_defaults(func=cmd_revert)
 
-    rv_discard = rv_sub.add_parser("discard", help="mark snapshot abandoned")
+    rv_discard = rv_sub.add_parser(
+        "discard", help="mark snapshot abandoned",
+        description="Mark a snapshot abandoned: only its lifecycle state changes. The org is not reverted, and the "
+                    "bundle and its recovery artifacts are kept.")
     rv_discard.add_argument("snapshot_id")
     rv_discard.add_argument("--org", required=True)
     rv_discard.set_defaults(func=cmd_revert_discard)

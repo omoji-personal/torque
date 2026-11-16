@@ -26,6 +26,16 @@ DEFAULT_APEX_API_VERSION = "61.0"
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate editable Apex null/empty test drafts. Draft assertions intentionally fail until replaced with business expectations; nothing is compiled or executed.",
+        epilog=("Each discovered supported public or global method gets typed null inputs and, where it applies, an "
+                "empty-collection case; a nonvoid return is stored as `actual`. Every case fails at its DRAFT "
+                "assertion until you replace that assertion with an explicit expected value, state or exception; an "
+                "unexpected exception from the target also fails and is never logged as success. Unsupported "
+                "signatures or receivers stay visible in comments and a review case rather than guessed calls. "
+                "Actual @isTest classes and legacy testMethod classes are skipped; production class names "
+                "containing Test are still drafted. Existing generated class and metadata files are kept: choose a "
+                "new --output to regenerate, or --force to replace both. The API version follows the source "
+                "class's companion metadata, then 61.0; --api-version overrides it. QA reports generation as "
+                "MANUAL_REQUIRED with compiled and executed false, even when every draft file was written."),
     )
     grp = parser.add_mutually_exclusive_group(required=True)
     grp.add_argument("--target-class", help="Path to a single .cls file")

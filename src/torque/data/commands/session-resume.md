@@ -16,8 +16,8 @@ torque session show <entry-id> --workspace <private-path> --client <client-name>
 ```
 
 Read `Where things stand` first. If the output says records, notes or corrections were cut or not
-shown, run the command it names before you rely on what is missing; `--json` is complete. A record
-another record corrects is shown as corrected: rely on the correction. The context output starts
+shown, run the command it names before you rely on what is missing. Where a record was corrected,
+rely on the correction. The context output starts
 with this client's lessons from earlier work: read them, and before
 the next step ask for the ones that fit it with
 `torque lesson for --task <task> --workspace <private-path> --client <client-name>`. They are
@@ -34,9 +34,8 @@ When the engagement has change records, read the summary in `context`, then
 from unresolved criteria and the latest decision. A Metadata API success establishes its
 technical scope, not business acceptance.
 
-Session reads recheck each referenced file against its recorded hash; a changed or missing file
-is shown, and the journal is not rewritten. An unchanged hash does not prove the recorded result.
-`torque doctor --workspace <private-path> --client <client-name>` checks every session and change
+A changed or missing evidence file is a gap to name, and an unchanged one does not prove the
+recorded result (`torque session --help`). `torque doctor --workspace <private-path> --client <client-name>` checks every session and change
 of the client and names the installed copy that is running.
 
 **Conversation input:** $ARGUMENTS

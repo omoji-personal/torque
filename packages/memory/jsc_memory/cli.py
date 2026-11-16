@@ -362,7 +362,36 @@ def cmd_selfcheck(args: argparse.Namespace, scopes: Scopes) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Lessons: capture what was learned, find it again at the point of use, judge it.",
-        epilog="Select the scope with --workspace PATH and --client NAME or --initiative NAME. "
+        epilog="Select the scope with --workspace PATH and --client NAME or --initiative NAME; every command "
+               "takes --json. An id: the part after its date is enough; one that matches several lessons changes "
+               "nothing and lists them. "
+               "Find: `for [WORDS] [--task T] [--type T] [--command TEXT] [--path FILE] [--error TEXT]` (prefer "
+               "--task and --type: topic words such as report or flow are read as a task or type), `show ID`, "
+               "`list [--state candidate|active|retired|stale]`, `search WORDS`. `for` also shows the selected "
+               "client's own candidates, marked `candidate, not reviewed: a hint, check it`, each with the "
+               "`verify ID --evidence reproduced` line to run once it worked. "
+               "Save: with the session record (torque session add ... --learned \"When: ... Do: ... Because: "
+               "...\") or on its own (`add --when ... --do ... --because ... [--evidence reproduced:REF | "
+               "official-doc:URL]`); --source consultant only for the consultant's own correction or "
+               "instruction; --scope firm only for what holds for every client and names none. Torque refuses a "
+               "credential-looking value, masks personal data and prints what it inferred (tasks, types, "
+               "errors): correct that with `edit ID --set applies.types=...`. A firm lesson and a promotion "
+               "proposal pass a pattern-based scrub: it refuses known secret shapes, a value after a secret label "
+               "and, in firm scope, this workspace's client and initiative names, org Ids and org hosts. It "
+               "cannot catch every secret or name. "
+               "Judge: `helpful ID`; `stale ID --reason WHY [--superseded-by ID]` (out of recall at once; "
+               "`restore ID` undoes the mark); `verify ID --evidence TYPE`, which is also how a candidate becomes "
+               "active, with its basis: reproduced, official-doc, second-occurrence or consultant-said. "
+               "Review: `review` lists what waits, repeats, needs a re-check or could be promoted, and changes "
+               "nothing; each line names its command. "
+               "Promote: `promote ID --to firm|platform|rule|skill|recipe|check [--name N]` writes a proposal and "
+               "applies nothing; a proposal lists keys left out and custom names to confirm. `promote --apply "
+               "PROPOSAL` applies a firm proposal; a rule, skill, recipe, check or platform proposal is applied "
+               "by a person and recorded with `edit ID --set promoted_to=KIND:NAME`. "
+               "Harvest: `harvest --host claude|codex|antigravity [--dir PATH]` lists the memory files a host "
+               "changed and copies nothing; distil one with `add --from-file PATH --when ... --do ... --because "
+               "... [--scope firm]`. "
+               "`stats` and torque doctor show whether the loop runs; the guide is docs/lessons.md. "
                "Exit codes: 0 done, 1 no such lesson, 2 not understood, 3 ambiguous id, 4 refused by the scrub, "
                "5 read-only, 6 a check failed, 7 busy.", allow_abbrev=False)
     sub = parser.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
@@ -424,11 +453,16 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("terms", nargs="+")
 
     helpful = command("helpful", cmd_helpful, "a lesson helped: count it")
+    helpful.description = ("a lesson helped (it saved time or prevented a mistake): count it. An id that matches "
+                           "several lessons changes nothing and lists them: choose one.")
     helpful.add_argument("id")
     helpful.add_argument("--note", help="what it saved, in a few words")
     helpful.add_argument("--session", metavar="ID", help="the session record it helped in")
 
     stale = command("stale", cmd_stale, "a lesson is wrong or out of date: take it out of recall at once")
+    stale.description = ("a lesson is wrong or out of date: take it out of recall at once, keeping its history. "
+                         "--reason is required; --superseded-by names the lesson that replaces it; "
+                         "torque lesson restore ID undoes the mark.")
     stale.add_argument("id")
     stale.add_argument("--reason", required=True, help="what changed, or what is wrong with it")
     stale.add_argument("--superseded-by", metavar="ID", help="the lesson that replaces it")

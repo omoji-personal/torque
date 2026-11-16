@@ -20,8 +20,7 @@ cannot restore. Missing, changed, renamed or unreadable components require a
 specific reconciliation; an unknown drift result is not unchanged state.
 
 Present proposed inverse operations, affected scope and current evidence. Preview
-does not execute a restore. It is a useful operational check, not a new permission
-ceremony: if the user already asked to revert this exact change, continue through
+is a useful operational check, not a new permission ceremony: if the user already asked to revert this exact change, continue through
 the applicable supported restore after resolving material mismatches.
 
 **Conversation input:** $ARGUMENTS

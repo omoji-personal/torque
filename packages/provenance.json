@@ -134,7 +134,7 @@
       "source_path": "packages/qa_orchestrator/jsc_qa/cli.py",
       "source_sha256": "96bb6753ada72ab93a4cd4dc94a466dc86735269f6edc09d22ca396e42917438",
       "source_tracked": true,
-      "destination_sha256": "fcf2be32c440dd6993b8ef6a52802c99aefc146bf1d5bd077a44a86565d53ba0",
+      "destination_sha256": "f8e2ed295d877d3d9b2ee572eef17affb3b0187788d50d1eb0e8f856cc882870",
       "adapted": true
     },
     {
@@ -368,7 +368,7 @@
       "source_path": "packages/revert/jsc_revert/cli.py",
       "source_sha256": "c2cd6105a45d7ce342063ec2be0b556eec6b0057e458d95644818adcec421e26",
       "source_tracked": true,
-      "destination_sha256": "eae8793ae04c4f66639b3d1650398c8ec307ac999ca28aafd9e2c81da6bd462b",
+      "destination_sha256": "92e5ab819ab7aed92c2eac67e53eaa9edb10c298708f9afade7703bd2dd7b71d",
       "adapted": true
     },
     {
@@ -620,7 +620,7 @@
       "source_path": "packages/debug_log_analyzer/jsc_loganalyzer/cli.py",
       "source_sha256": "9e4f018f0645b45951bb8339c7069fd49c308f1242b3958b8313b6adf5a6856e",
       "source_tracked": true,
-      "destination_sha256": "524462ddd194f9f6ec0604fdc3c7541d015625783700eed85908cbb06817d2c3",
+      "destination_sha256": "77f5fe6bf69c73a467eae5272960bd43a8666a8a6882680a94244763a76ced0b",
       "adapted": true
     },
     {
@@ -701,7 +701,7 @@
       "source_path": "packages/memory/jsc_memory/cli.py",
       "source_sha256": "ef62ac774e0ed1037500b0996315fea13b2ba3b2c18ec04030cf211fc397e9c9",
       "source_tracked": true,
-      "destination_sha256": "6e1e929efc0bda72f1378d5d87fdfe6ef83f02cd2d7e8c7e27c59426156d3cbf",
+      "destination_sha256": "8d2d89d929a815245bb3434b29235c2e46fae758c6aaca80e16b43d3ce5c99ba",
       "adapted": true
     },
     {
@@ -800,7 +800,7 @@
       "source_path": "packages/browser_tests/jsc_browser_tests/cli.py",
       "source_sha256": "37a5c5d64147c0a56a9927d46dbea5bf9f69970acf722793b986dd6080652753",
       "source_tracked": true,
-      "destination_sha256": "9c9c67c25e1a4c18e50407968bf5788b58b44f2748c1cae9f0f64fc2d83d1a48",
+      "destination_sha256": "342d71f302336fb3e8a7142ed1c6b6ef9104e463de9b366ec4dfc4b9d1feaddb",
       "adapted": true
     },
     {
@@ -1115,7 +1115,7 @@
       "source_path": "packages/meeting_processor/meeting_processor/cli.py",
       "source_sha256": "8b9eda69d758c314886019e2d4773fc2a4ac316cf09e6e27f416e711b465c7dd",
       "source_tracked": true,
-      "destination_sha256": "40228baf01c23c664a95c0fad8aa6e81d212d65db862ebe3b11ca81697d73203",
+      "destination_sha256": "55733b8b53cac1a0e3e187b499e3dbdb28eefaca9c6077b26549b366e4a83f2d",
       "adapted": true
     },
     {
@@ -1160,7 +1160,7 @@
       "source_path": "packages/adversarial_probes/jsc_probes/cli.py",
       "source_sha256": "a1b06f634d0a937dcfa1e6125a2df40e4c3ffc7aeb9deaf7da87cae95169a898",
       "source_tracked": true,
-      "destination_sha256": "c9c929113ee515b6d219974c91142a59570922b9b1dd13589e84c949c4b0113f",
+      "destination_sha256": "2189c5484edc110df288ca3ce3404bf09cc7ee7f6894458cb9d61730e953aedf",
       "adapted": true
     },
     {
@@ -1268,7 +1268,7 @@
       "source_path": "packages/salesforce_advisory/jsc_advisory/cli.py",
       "source_sha256": "10afca8c5aa22f08708279c6ee30916ec4f4d4502afa5b22c17e9f264cf8e0cc",
       "source_tracked": true,
-      "destination_sha256": "e5e3f56704af5cc9f1db57187a0febc1212c02e93e80a9980f94468274807be0",
+      "destination_sha256": "b3fe6563e5559ecd51c9b6d29919db9f336b5b1e70ae77684b3a3eeaef990fbc",
       "adapted": true
     },
     {

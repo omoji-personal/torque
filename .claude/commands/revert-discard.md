@@ -14,8 +14,8 @@ Use the snapshot and org specified by the user:
 torque recover discard <snapshot-id> --org <org-alias> --workspace <private-path> --client <client-name>
 ```
 
-This updates snapshot lifecycle state; it does not revert the org or delete the
-bundle. Verify the updated status with `/revert-show`. Keep history and exact
+`torque recover discard --help` says what changes and what is kept. Verify the updated
+status with `/revert-show`. Keep history and exact
 recovery artifacts unless deletion is separately requested. If the user merely
 asks to view or preview a snapshot, do not mark it abandoned as housekeeping.
 

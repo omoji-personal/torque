@@ -61,6 +61,12 @@ class UnreadLogs(LogFetchError):
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Closed-loop debug-log analyzer with 0–100 health score.",
+        epilog="Two modes. --log-file analyzes one local log, the strongest evidence when it is the exact one. "
+               "--target-org fetches and analyzes a bounded recent set (--since, --limit), not the log of an exact "
+               "job or user; --since-deploy is a recent-time approximation. Exit 0 with logs_analyzed: 0 when no log "
+               "exists in the window: nothing was checked. Exit 2 when a query or retrieval failed: the logs that "
+               "were read are still analyzed, and logs_unread counts the rest. The score summarizes the analyzer's "
+               "heuristics, not org health.",
     )
     parser.add_argument("--log-file", help="Local path to a debug log to analyze")
     parser.add_argument("--target-org", help="sf CLI alias to fetch logs from")

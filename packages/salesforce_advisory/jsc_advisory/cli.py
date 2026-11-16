@@ -75,6 +75,18 @@ def build_parser() -> argparse.ArgumentParser:
             "Read-only Salesforce knowledge, impact, and evidence. No subcommand authorizes, "
             "denies, or executes a change."
         ),
+        epilog=(
+            "notes ranks the bundled operational notes for a command and needs lists its known direct "
+            "requirements; catalogue describes the bundled catalogue and its provenance; flow checks a "
+            "flow's activation through both APIs that report it; impact previews the known effect of an "
+            "insert, update or delete on an object without running it; evidence assembles a nonblocking "
+            "outcome ledger for a field; receipt composes knowledge, impact and evidence. A receipt is "
+            "evidence about the checks it covers, not a write authorization and not proof of a complete "
+            "outcome. Without --strict a report only informs and exits 0; --strict, an explicit opt-in for "
+            "callers that request it, exits 3 when the report is incomplete or a verifier's positive "
+            "outcome is absent. Pass arguments as separate values, not a shell expression; for client work "
+            "add --workspace PATH --client NAME."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="subcommand", required=True)

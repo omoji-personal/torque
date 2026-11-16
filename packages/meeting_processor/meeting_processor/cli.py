@@ -24,6 +24,12 @@ except ImportError:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Adaptive frame extraction from meeting recordings with transcript correlation.",
+        epilog="Runs locally: frames are sampled from the video and timeline.json in the output directory ties them "
+               "to the transcript. Omit --transcript when there is none. It needs ffmpeg; the sampling and "
+               "sensitivity options tune long recordings. Frame sampling does not capture every moment. --analyze "
+               "is optional and is the inherited adapter that sends each selected frame image to the Gemini CLI "
+               "(gemini on PATH) for a visual description; it is not a generic provider selector. Missing or failed "
+               "analysis is distinct from a successful local extraction.",
     )
     parser.add_argument("--video", required=True, help="Path to video file")
     parser.add_argument("--transcript", help="Path to transcript file (VTT, SRT, or Zoom plaintext)")
