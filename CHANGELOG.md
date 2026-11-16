@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.0a24 - recipes from one source, command reference in --help, a shorter recipe list, 2026-11-16 (not published to a package index)
 
 The 54 recipes keep their names, descriptions and routing; what each one carries, and what an agent reads
 before it opens one, is smaller.
