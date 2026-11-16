@@ -4,10 +4,7 @@ Connect an org through the Salesforce CLI or the host's integration and confirm 
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task sign-in --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task sign-in}}
 
 Use the requested alias and login domain. Infer the intended environment from supplied
 context, then let actual org metadata establish identity after login. Inspect existing

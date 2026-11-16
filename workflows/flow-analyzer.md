@@ -6,10 +6,7 @@ Explain, review or fix a flow from its active definition and its actual behavior
 
 Read skill `salesforce-flow` (`salesforce-flow/references/review.md`) first.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task flow-build --type Flow --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task flow-build --type Flow}}
 
 1. Locate the flow in the selected org or the supplied metadata. Retrieve its current definition
    (`/retrieve-current`) and name the active version apart from the latest or draft one:

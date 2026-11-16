@@ -126,9 +126,13 @@ and package help rather than being injected into every task.
 
 ## Keeping adapters synchronized
 
-`workflows/*.md` and `workflows/catalogue.json` are the authoring sources. Claude command
-adapters embed the complete recipe so installed commands work outside a source checkout. One
-generator writes the adapters and the wheel's copy, and verifies both, in the source checkout:
+`workflows/*.md` and `workflows/catalogue.json` are the authoring sources. A text several
+recipes carry is written once in `workflows/shared/NAME.md` (the lesson preamble, the
+test-record rule): a recipe pulls it in with `{{lessons --task T}}` on its own line or
+`{{test-records}}` inside a sentence, and `{args}` in the shared text stands for the words after
+the name. Claude command adapters embed the complete rendered recipe, so installed commands work
+outside a source checkout and a host that opens one recipe reads the whole text. One generator
+writes the adapters and the wheel's copy, and verifies both, in the source checkout:
 
 ```sh
 python3 scripts/sync-workflows.py
@@ -137,9 +141,10 @@ python3 scripts/sync-workflows.py --check
 
 In this repository `.claude/commands/` and `src/torque/data/` are generated only: the check
 fails on a copy edited by hand, a missing one and one no source produces, and on a recipe
-whose heading, description or interface line differs from the catalogue. Writing removes a
-stray copy. A workspace's own recipes are a different matter: `torque workspace upgrade`
-keeps local edits (`docs/workspace-upgrades.md`). The copies in a workspace's `.agents/`
+whose heading, description or interface line differs from the catalogue, names a shared text
+that does not exist or gives it the wrong words; a shared text no recipe uses fails too. Writing
+removes a stray copy. A workspace's own recipes are a different matter: `torque workspace
+upgrade` keeps local edits (`docs/workspace-upgrades.md`). The copies in a workspace's `.agents/`
 (Antigravity's, which Codex also reads) are derived from the wheel's copy when the workspace
 is created or upgraded. Validation should check all 42 source-name mappings, every
 recipe/adapter pair and the actual installed native parser contracts.

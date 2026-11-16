@@ -4,10 +4,7 @@ Write technical and client-facing release notes from the evidence of what was ac
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task documentation --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task documentation}}
 
 Identify the product/project, requested version, source range, release state and
 audience. Read supplied release notes, actual commits/diffs, deployment artifacts,

@@ -4,10 +4,7 @@ Build the automation that turns an approved Outbound Funds funding request into 
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task flow-build --type Flow --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task flow-build --type Flow}}
 
 Read skill `salesforce-npsp` (`salesforce-npsp/references/pmm-ofm.md`) and skill
 `salesforce-flow` first. Confirm the actual request: what "approved" means in the client's process (a
@@ -40,10 +37,7 @@ schedule is wanted.
    request re-saved with an unrelated field change, to confirm no duplicate
    disbursement is created; a request saved in a non-approved status, to confirm
    nothing is created. Test records, including the Disbursements the flow creates:
-   save each created record's Id when it is created, in the private task directory,
-   and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv`
-   with an Id column), never records matched by name, title, creator or date; if the
-   Id list is lost or incomplete, stop and ask instead of matching.
+   {{test-records}}
 5. Acceptance criteria: approving a funding request creates the expected
    Disbursement record(s) with the correct amount, schedule and lookup; re-saving an
    already-approved request creates no duplicate; a rejected or pending request

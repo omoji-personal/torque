@@ -42,10 +42,7 @@ and what is wrong with `torque lesson stale <id> --reason <why>`.
    Apex, validate with `--test-level RunSpecifiedTests` and one `--tests` per test class the change
    needs.
 4. Test what the change is for, as the intended user (`/qa`, `/qa-browser`). Test records,
-   including records automation creates: save each created record's Id when it is created, in the
-   private task directory, and delete only those Ids (an Id-file delete such as
-   `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title,
-   creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
+   including records automation creates: save each created record's Id when it is created, in the private task directory, and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title, creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
 5. Deploy. A validation creates no Torque recovery bundle. When the write needs one, deploy with
    `torque deploy --metadata Type:Name --target-org <org-alias> --workspace <private-path> --client <client-name>`,
    one `--metadata` per component. Manifest, source-directory and dry-run deploys capture no

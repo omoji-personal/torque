@@ -4,10 +4,7 @@ Generate editable Apex test drafts (null and empty inputs for each public method
 
 **Interface:** Native CLI with conversational interpretation. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task apex --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task apex}}
 
 The native command generates Apex test source from supplied class files; it does
 not run live platform probes, deploy classes or execute tests by itself.
@@ -41,10 +38,7 @@ is requested, use normal Salesforce validation/test tools in the selected author
 org; that is a guided continuation, not a built-in probe-runner capability.
 
 If a probe creates or changes records outside the test transaction, capture the exact
-pre-values of any record it alters, save each created record's Id when it is created, in the
-private task directory, and delete only those Ids (an Id-file delete such as
-`sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title,
-creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
+pre-values of any record it alters, {{test-records}}
 
 Capture actual test results and cleanup when execution occurs. “Files generated”
 is different from “compiled,” “tests passed,” and “business behavior verified.”

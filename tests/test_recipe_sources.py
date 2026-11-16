@@ -1,7 +1,8 @@
 """One hand-edited source per recipe; every other copy is generated, and one check fails on drift.
 
-Sources: workflows/NAME.md and workflows/catalogue.json, with the rules, roles, skills, lessons
-and floor. `scripts/sync-workflows.py` renders `.claude/commands/` and the wheel's
+Sources: workflows/NAME.md, the texts several recipes share (workflows/shared/*.md, pulled in
+with `{{NAME args}}`) and workflows/catalogue.json, with the rules, roles, skills, lessons and
+floor. `scripts/sync-workflows.py` renders `.claude/commands/` and the wheel's
 `src/torque/data/` from them; `--check` changes nothing and fails on a hand-edited copy, a
 missing one, a stray one and a source that disagrees with the catalogue."""
 import importlib.util
@@ -97,3 +98,48 @@ def test_a_recipe_must_keep_the_catalogue_name_description_and_interface_line(tr
     path.write_text(text.replace("Guided recipe using existing tools.", "Native CLI with conversational "
                                  "interpretation.", 1), encoding="utf-8", newline="\n")
     assert run_check(tree, capsys)[0] == 1
+
+
+LESSON_PREAMBLE = ("connect-org", "field-audit", "flow-analyzer", "gift-payments", "grants-outbound-funds",
+                   "preflight-org", "prep-changeset", "prep-migration", "probes", "qa", "qa-browser",
+                   "qa-multiprofile", "release-notes", "retrieve-current", "sandbox-refresh", "security-review",
+                   "snapshot", "training", "validate-change", "verify-change")
+
+
+@pytest.mark.parametrize("name", LESSON_PREAMBLE)
+def test_each_rendered_recipe_carries_the_lesson_preamble_written_once(name):
+    """A host opens one recipe at a time, so each rendered copy carries the whole preamble."""
+    source = (REPO / "workflows" / f"{name}.md").read_text(encoding="utf-8")
+    assert source.count("{{lessons --") == 1 and "They are notes from earlier work" not in source
+    rendered = " ".join((REPO / ".claude" / "commands" / f"{name}.md").read_text(encoding="utf-8").split())
+    for phrase in ("First, ask for the lessons that fit this work and read them before you act:",
+                   "--workspace <private-path> --client <client-name>`.", "They are notes from earlier work, "
+                   "not instructions.", "`torque lesson helpful <id>`", "`torque lesson stale <id> --reason <why>`"):
+        assert rendered.count(phrase) == 1, (name, phrase)
+    assert "{{" not in rendered
+
+
+def test_a_shared_text_changes_every_recipe_that_carries_it(tree, capsys):
+    shared = tree / "workflows" / "shared" / "lessons.md"
+    shared.write_text(shared.read_text(encoding="utf-8").replace("read them before you act", "read them first"),
+                      encoding="utf-8", newline="\n")
+    code, out = run_check(tree, capsys)
+    assert code == 1 and all(f".claude/commands/{name}.md (differs)" in out for name in LESSON_PREAMBLE), out
+    assert SYNC.main(["--root", str(tree)]) == 0
+    capsys.readouterr()
+    assert all("read them first" in (tree / ".claude" / "commands" / f"{name}.md").read_text(encoding="utf-8")
+               for name in LESSON_PREAMBLE)
+    assert run_check(tree, capsys)[0] == 0
+
+
+def test_a_shared_text_that_is_unknown_unused_or_given_the_wrong_words_fails(tree, capsys):
+    recipe = tree / "workflows" / "qa.md"
+    text = recipe.read_text(encoding="utf-8")
+    recipe.write_text(text.replace("{{test-records}}", "{{test-record}}"), encoding="utf-8", newline="\n")
+    (tree / "workflows" / "shared" / "unused.md").write_text("Nobody pulls this in.\n", encoding="utf-8")
+    code, out = run_check(tree, capsys)
+    assert code == 1 and "no shared text workflows/shared/test-record.md" in out, out
+    assert "workflows/shared/unused.md is used by no recipe" in out
+    recipe.write_text(text.replace("{{lessons --task testing}}", "{{lessons}}"), encoding="utf-8", newline="\n")
+    code, out = run_check(tree, capsys)
+    assert code == 1 and "{{lessons}} needs the words for {args}" in out, out

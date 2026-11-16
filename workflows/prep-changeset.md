@@ -4,10 +4,7 @@ Build the deployment packet for one change: the exact components, their order, t
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task deploy --path <source-folder-or-package.xml> --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task deploy --path <source-folder-or-package.xml>}}
 
 1. Read the project's build and release setup and follow it, including an established CumulusCI,
    sfdx-hardis or commercial pipeline. Torque needs no second pipeline or package format.

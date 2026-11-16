@@ -7,7 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CREATING = ("qa", "qa-browser", "qa-multiprofile", "probes", "prep-migration",
             "grants-outbound-funds", "verify-change", "validate-change")
 RECIPES = (*CREATING, "undo")
-COPIES = ("workflows", ".claude/commands", "src/torque/data/commands")
+# The rendered copies a host reads; the sources write the rule once (workflows/shared/test-records.md).
+COPIES = (".claude/commands", "src/torque/data/commands")
 
 
 @pytest.mark.parametrize("copy", COPIES)
@@ -27,3 +28,10 @@ def test_recipe_deletes_only_recorded_ids(name, copy):
     assert "only those Ids" in text or "only the Ids" in text
     assert "name, title, creator or date" in text
     assert "stop and ask instead of matching" in text
+
+
+@pytest.mark.parametrize("name", CREATING)
+def test_recipe_sources_take_the_rule_from_its_one_shared_text(name):
+    assert "{{test-records}}" in (ROOT / "workflows" / f"{name}.md").read_text(encoding="utf-8")
+    rule = (ROOT / "workflows" / "shared" / "test-records.md").read_text(encoding="utf-8").strip()
+    assert rule in (ROOT / ".claude" / "commands" / f"{name}.md").read_text(encoding="utf-8")

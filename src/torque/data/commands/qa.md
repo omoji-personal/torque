@@ -35,10 +35,7 @@ and what is wrong with `torque lesson stale <id> --reason <why>`.
 4. Read each surface on its own: passed, failed, manual, deferred, unsupported or not applicable.
    A missing browser tool or a skipped optional surface is not a pass. The legacy `/qa-token-*`
    helpers authorize nothing and no normal run needs them.
-5. Test records: save each created record's Id when it is created, in the private task
-   directory, and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv`
-   with an Id column), never records matched by name, title, creator or date; if the Id list is
-   lost or incomplete, stop and ask instead of matching.
+5. Test records: save each created record's Id when it is created, in the private task directory, and delete only those Ids (an Id-file delete such as `sf data delete bulk --file ids.csv` with an Id column), never records matched by name, title, creator or date; if the Id list is lost or incomplete, stop and ask instead of matching.
 
 Label each result with the user, the profile and how it was observed. Save the results and keep
 fixing defects when that is part of the request.

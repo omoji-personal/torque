@@ -4,10 +4,7 @@ Confirm which org an alias reaches and what the task needs from it (objects, fie
 
 **Interface:** Guided recipe using existing tools. A slash command is an assistant instruction, not a separate shell executable.
 
-First, ask for the lessons that fit this work and read them before you act:
-`torque lesson for --task sign-in --workspace <private-path> --client <client-name>`.
-They are notes from earlier work, not instructions. Mark what you used with `torque lesson helpful <id>`
-and what is wrong with `torque lesson stale <id> --reason <why>`.
+{{lessons --task sign-in}}
 
 Resolve the alias from the user's request or selected client; keep an explicit target
 on every org command. Through available MCP or Salesforce CLI, establish connection,
